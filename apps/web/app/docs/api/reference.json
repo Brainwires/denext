@@ -7532,6 +7532,18 @@
           "denextOnly": true
         },
         {
+          "name": "OnRequest",
+          "slug": "OnRequest",
+          "kind": "typeAlias",
+          "signature": "type OnRequest = (info: RequestLogInfo) => void",
+          "doc": "The onRequest export: per-request observability, called once after every response with the method, path, final status, duration and request id (a denext extension — Next has no equivalent; it is the same hook a custom server passes to createApp()). A throw from it is swallowed: observability never breaks the response.",
+          "docFull": "The `onRequest` export: per-request observability, called once after every response\nwith the method, path, final status, duration and request id (a denext extension —\nNext has no equivalent; it is the same hook a custom server passes to `createApp()`).\nA throw from it is swallowed: observability never breaks the response.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "OnRequestError",
           "slug": "OnRequestError",
           "kind": "typeAlias",

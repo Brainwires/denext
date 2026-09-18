@@ -29,7 +29,11 @@ emit correct denext instead of Next.js.
    `app/layout.tsx`, `app/loading.tsx`, `app/error.tsx`, `app/not-found.tsx`,
    `app/api/x/route.ts`, `app/blog/[slug]/page.tsx`, `middleware.ts`. Server
    Components by default; add `"use client"` at the top of a file for
-   interactivity.
+   interactivity. Keep hooks and event handlers in that `"use client"` file and
+   render it from the page — a `page.tsx`/layout that calls a hook itself turns
+   the whole route into a client bundle (a compatibility path for migrated apps),
+   and that build fails the moment the route reaches a server-only module such as
+   `lib/db.ts`.
 4. **Async Server Components work**
    (`export default async function Page() { const d =
    await db.query(); ... }`).
