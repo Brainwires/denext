@@ -18,8 +18,7 @@ import { join, resolve } from "@std/path";
 import {
   entrypointArg,
   isStandaloneBinary,
-  pinnedDenextCli,
-  samePin,
+  maybeReexecPinned as reexecPinned,
 } from "./src/cli/self-exec.ts";
 import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
 import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
@@ -122,56 +121,59 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
 }
 
 /**
- * A compiled binary never loads an app's modules in its own process — it re-execs the denext the
- * project pins and lets that child do the work.
- *
- * Two reasons, and the second is why this happens even when the pin names this binary's own
- * version. First, skew: the binary carries ONE framework version while a project pins its own,
- * and building an app with the wrong one silently swaps its framework. Second, a binary simply
- * cannot bundle in-process. `frameworkFileUrl()` resolves the generated client entry's imports
- * (`denext/client-runtime`, `denext/class-runtime`, `denext/devtools` — see `writeMergedConfig`
- * in src/build/bundle.ts) against `import.meta.url`, which inside a binary is a `deno-compile://`
- * path visible only to that process; the child `deno bundle` is a separate process and fails with
- * `Module not found …/deno-compile-denext/src/client/client-runtime.ts`. A compat app fails even
- * earlier, inside esbuild's Node child-process shim. A `deno run` child has a real framework root
- * and both paths work, so deferring is the fix for both.
- *
- * Only a standalone binary does this. Under `deno run` the CLI and the framework are the same
- * package by construction, so there is nothing to defer to.
+ * Forward the shutdown signals this process receives to `child` (as SIGTERM on Unix; as a
+ * plain termination on Windows, which has no signals), so `kill <pid>` / `docker stop` / Ctrl-C
+ * reach a re-exec'd server instead of orphaning it, then resolve with the code the process
+ * should exit with: the child's own, or — when the child died of a signal — `128 + signal`,
+ * as a shell would report (Deno's `status.code` already carries that on Unix).
+ */
+async function forwardShutdown(child: Deno.ChildProcess): Promise<number> {
+  const forward = () => {
+    try {
+      // Windows has no signal to forward: `kill()` terminates the child outright.
+      if (Deno.build.os === "windows") child.kill();
+      else child.kill("SIGTERM");
+    } catch { /* already exited */ }
+  };
+  for (const sig of SHUTDOWN_SIGNALS) {
+    try {
+      Deno.addSignalListener(sig, forward);
+    } catch { /* unsupported */ }
+  }
+  const { code } = await child.status;
+  for (const sig of SHUTDOWN_SIGNALS) {
+    try {
+      Deno.removeSignalListener(sig, forward);
+    } catch { /* not installed */ }
+  }
+  return code;
+}
+
+/**
+ * A compiled binary defers a module verb to the denext the project pins — the decision is
+ * {@linkcode reexecPinned} (src/cli/self-exec.ts, where it is testable); this wires it to the
+ * process: the pinned CLI runs as a `deno run` child with stdio and shutdown signals forwarded,
+ * and the process exits with the child's code. Returns whether the caller should stop.
  *
  * @param dir The project directory the verb targets.
- * @returns Whether the process re-exec'd (the caller should stop).
  */
-async function maybeReexecPinned(dir: string): Promise<boolean> {
-  // The child runs under `deno run`, where `isStandaloneBinary()` is false — but it may itself
-  // re-exec for CSS/modules, so the guard env var (not the version comparison) is what makes a
-  // loop impossible.
-  if (!isStandaloneBinary() || Deno.env.get("DENEXT_PINNED_ACTIVE")) return false;
-  const cli = pinnedDenextCli(dir);
-  if (cli === null) {
-    console.error(
-      `denext: this directory pins no denext, and a compiled binary cannot build an app in its ` +
-        `own process.\n  Add denext to the project's deno.json imports (\`denext create\` does ` +
-        `this), or run the CLI as:\n    deno run -A jsr:@denext/denext@${VERSION}/cli ` +
-        `${Deno.args.join(" ")}`,
-    );
-    Deno.exit(1);
-  }
-  const pinned = cli.slice("jsr:@denext/denext@".length).replace(/\/cli$/, "");
-  // Only worth saying when it is a DIFFERENT denext; announcing a switch to the version already
-  // running would be noise at best and a lie at worst.
-  if (!samePin(cli, VERSION)) {
-    console.error(`denext: using this project's pinned denext (${pinned})`);
-  }
-  const child = new Deno.Command(denoExecutable(), {
-    args: ["run", "-A", ...minDepAgeArgs(), cli, ...Deno.args],
-    env: { DENEXT_PINNED_ACTIVE: "1" },
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  const { code } = await child.status;
-  Deno.exit(code);
+function maybeReexecPinned(dir: string): Promise<boolean> {
+  return reexecPinned(dir, VERSION, Deno.args, {
+    standalone: isStandaloneBinary,
+    env: (name) => Deno.env.get(name),
+    spawn: (cli) =>
+      forwardShutdown(
+        new Deno.Command(denoExecutable(), {
+          args: ["run", "-A", ...minDepAgeArgs(), cli, ...Deno.args],
+          env: { DENEXT_PINNED_ACTIVE: "1" },
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        }).spawn(),
+      ),
+    exit: (code) => Deno.exit(code),
+    warn: (message) => console.error(message),
+  });
 }
 
 /**
@@ -211,17 +213,7 @@ async function reexecWithConfig(
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const forward = () => {
-    try {
-      child.kill("SIGTERM");
-    } catch { /* already exited */ }
-  };
-  for (const sig of SHUTDOWN_SIGNALS) {
-    try {
-      Deno.addSignalListener(sig, forward);
-    } catch { /* unsupported */ }
-  }
-  const { code } = await child.status;
+  const code = await forwardShutdown(child);
   // Restore any transiently-mutated app config now the build child is done (runs on a
   // clean exit AND after a forwarded shutdown signal — the child exits, status resolves).
   if (cleanup) await cleanup().catch(() => {});
