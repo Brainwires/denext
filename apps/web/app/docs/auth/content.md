@@ -684,6 +684,8 @@ client:
 ```ts
 await signIn("email", { credentials: { email } }); // { ok: true }, whether or not mail went out
 await signIn("email-otp", { credentials: { email, code } }); // { ok: true, user } or { ok: true, mfa: "required" }
+// a wrong code: { ok: false, error: "invalid_credentials", status: 401 }; a spent budget:
+// { ok: false, error: "throttled", status: 429, retryAfter } — a refusal never rejects
 ```
 
 **Sending answers the same for everyone.** A real send, an unknown address under
@@ -1211,10 +1213,21 @@ test. Pass `credentials` to POST a Credentials form to the callback endpoint ins
 
 ```ts
 const url = await signIn("google", { redirect: false, callbackUrl: "/dashboard" });
-await signIn("credentials", { credentials: { email, password } }); // throws on a bad login
+const result = await signIn("credentials", { credentials: { email, password } });
+if (result.ok) location.href = "/dashboard";
+else if (result.error === "throttled") show(`try again in ${result.retryAfter}s`);
+else show("wrong email or password"); // "invalid_credentials" — never says which
 await signIn("email", { credentials: { email } }); // mails a magic link
 await signOut({ callbackUrl: "/" });
 ```
+
+A `credentials` sign-in resolves `{ ok, … }` and never rejects for a refusal — only a
+network failure or a non-JSON answer (no auth mounted at `basePath`) throws. On `ok: false`
+the `error` is a stable code derived from the callback's status, because the server's own
+`error` text is generic by design: `"invalid_credentials"` (`401`: a wrong password, an
+unknown user or a wrong one-time code), `"throttled"` (`429`, with `retryAfter` in
+seconds), `"access_denied"` (`403`: your `signIn` callback refused), `"unavailable"`
+(`5xx`) or `"rejected"` (anything else — read `status`).
 
 A credentials or email sign-in that still owes a second factor resolves
 `{ ok: true, mfa: "required" }` instead of `{ ok: true, user }` — send the user on to your

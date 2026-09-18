@@ -291,15 +291,44 @@ function sameOriginPath(requested: string | undefined, fallback: string): string
   return requested;
 }
 
-/** What a `credentials` sign-in resolves; a refused sign-in rejects instead. */
-export interface CredentialsSignInResult {
-  /** Always `true`. */
-  ok: true;
-  /** The signed-in user, when the sign-in completed. */
-  user?: SessionUser;
-  /** `"required"` when the user still owes a second factor (the session is pending). */
-  mfa?: "required";
-}
+/**
+ * What a `credentials` sign-in resolves — the sign-in, or why the callback refused it.
+ * The refusal code is derived from the callback's status, because the server's `error`
+ * text is a generic message by design (a `401` never says whether the account exists).
+ * Only a network failure or a non-JSON answer rejects.
+ */
+export type CredentialsSignInResult =
+  | {
+    /** Signed in — or, with `mfa`, half-way there. */
+    ok: true;
+    /** The signed-in user, when the sign-in completed. */
+    user?: SessionUser;
+    /** `"required"` when the user still owes a second factor (the session is pending). */
+    mfa?: "required";
+  }
+  | {
+    /** Refused. */
+    ok: false;
+    /**
+     * `"invalid_credentials"` (`401`): a wrong password, an unknown user or a wrong one-time
+     * code — the server never says which. `"access_denied"` (`403`): the app's `signIn`
+     * callback refused, or the POST was not same-origin. `"unavailable"` (`5xx`): the adapter
+     * or session store failed. `"rejected"`: any other status — read `status`.
+     */
+    error: "invalid_credentials" | "access_denied" | "unavailable" | "rejected";
+    /** The callback's HTTP status. */
+    status: number;
+  }
+  | {
+    /** Refused: the attempt budget is spent. */
+    ok: false;
+    /** A `429`. */
+    error: "throttled";
+    /** The callback's HTTP status. */
+    status: number;
+    /** Seconds until the client may try again (the `Retry-After` header). */
+    retryAfter: number;
+  };
 
 /** Options for {@link signIn}. */
 export interface SignInOptions {
@@ -327,7 +356,9 @@ export interface SignInOptions {
 /**
  * Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with
  * `redirect: false`, resolves with the URL it would have gone to); for a Credentials
- * provider (pass `credentials`) it POSTs and resolves with the result.
+ * provider (pass `credentials`) it POSTs and resolves with the result — `{ ok: false }`
+ * for a refusal (a wrong password, a spent attempt budget), never a rejection; test
+ * `result.ok`.
  *
  * @param provider The provider id (e.g. `"google"`, `"credentials"`).
  * @param options {@link SignInOptions}.
@@ -362,7 +393,12 @@ export function signIn(
   return Promise.resolve(url);
 }
 
-/** POST the Credentials form to the callback endpoint and unwrap its JSON. */
+/**
+ * POST the Credentials form to the callback endpoint and unwrap its JSON. A refusal the
+ * server answered in JSON (`{ error }` with a `4xx`/`5xx`) resolves `{ ok: false }`; a
+ * network failure rejects, and so does a non-JSON answer (a proxy's error page, no auth
+ * mounted at `basePath`), which describes the endpoint rather than the attempt.
+ */
 async function submitCredentials(
   basePath: string,
   provider: string,
@@ -379,9 +415,25 @@ async function submitCredentials(
     credentials: "same-origin",
     body: JSON.stringify({ ...credentials, callbackUrl }),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? "sign in failed");
-  return data as CredentialsSignInResult;
+  const data: unknown = await res.json().catch(() => undefined);
+  if (res.ok) return data as CredentialsSignInResult;
+  if (typeof data !== "object" || data === null || !("error" in data)) {
+    throw new Error(`sign in failed: ${res.status}`);
+  }
+  const status = res.status;
+  if (status === 429) {
+    return { ok: false, error: "throttled", status, retryAfter: retryAfterMs(res) / 1000 };
+  }
+  return { ok: false, error: refusalCode(status), status };
+}
+
+/** The refusal code a non-`429` error status maps to (see {@link CredentialsSignInResult}). */
+function refusalCode(
+  status: number,
+): "invalid_credentials" | "access_denied" | "unavailable" | "rejected" {
+  if (status === 401) return "invalid_credentials";
+  if (status === 403) return "access_denied";
+  return status >= 500 ? "unavailable" : "rejected";
 }
 
 /** Options for {@link signOut}. */
