@@ -461,7 +461,7 @@ function DockerPanel(
     { name: "Docker", title: "Docker" },
     h(PanelLead, { dir: state.dir }),
     h(DockerTabs, { tab }),
-    state.error ? h(Note, null, `denext ui: ${state.error}`) : null,
+    state.error ? h(Note, { tone: "warn" }, `denext ui: ${state.error}`) : null,
     state.notice ?? null,
     tab === "files"
       ? h(
@@ -528,7 +528,7 @@ function DockerForm({ state }: ViewProps): VNode {
       { type: "submit", name: "confirm", value: "1", class: "ghost", disabled: state.readOnly },
       "Write files",
     ),
-    state.readOnly ? h(Note, null, "Read-only mode — writing is refused.") : null,
+    state.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — writing is refused.") : null,
   );
 }
 

@@ -437,14 +437,19 @@ function Card({ ctx, row }: { readonly ctx: UiContext; readonly row: PluginRow }
     "article",
     { class: "card", id: entry.name },
     h("strong", null, entry.name),
-    " ",
-    h(Badge, { tone: "info" }, entry.version),
-    " ",
-    h(Badge, { tone }, state),
-    " ",
-    entry.verb ? h(Badge, { tone: "info" }, `denext ${entry.verb}`) : null,
-    " ",
-    h("span", null, entry.blurb),
+    // The pills on a line of their own, then the blurb as a paragraph: run together, the
+    // blurb's first words read as one more pill, and a long one crowds the links below it.
+    h(
+      "p",
+      { class: "card-meta" },
+      h(Badge, { tone: "info" }, entry.version),
+      " ",
+      h(Badge, { tone }, state),
+      entry.verb
+        ? h(Fragment, null, " ", h(Badge, { tone: "info" }, `denext ${entry.verb}`))
+        : null,
+    ),
+    h("p", { class: "card-blurb" }, entry.blurb),
     h(CardLinks, { row }),
     h(PluginForm, {
       ctx,
@@ -530,8 +535,8 @@ function PluginsPanel(
       " command and a diff of your config before anything is written. ",
       h("a", { href: "https://denext.dev/docs/ui#plugins" }, "Plugins ↗"),
     ),
-    ctx.readOnly ? h(Note, null, "Read-only mode — add and remove are refused.") : null,
-    ctx.offline === true ? h(Note, null, OFFLINE_NOTE) : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — add and remove are refused.") : null,
+    ctx.offline === true ? h(Note, { tone: "warn" }, OFFLINE_NOTE) : null,
     notice ?? null,
     h("h2", null, "Plugins"),
     group("plugin"),
@@ -608,7 +613,7 @@ function OutcomeNotice(
   return h(
     Fragment,
     null,
-    h(Note, null, outcomeHead(plan, outcome)),
+    h(Note, { tone: outcome.code === 0 ? "ok" : "warn" }, outcomeHead(plan, outcome)),
     outcome.output ? h(Out, null, outcome.output) : null,
   );
 }

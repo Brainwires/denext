@@ -15,6 +15,7 @@ import { type NextConfigRead, setNextConfigEvaluator } from "../src/ui/features/
 import { loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
 import { widgetFor } from "../src/ui/form/widget.ts";
 import { encode } from "../src/ui/form/value.ts";
+import { browserPostByName, formContaining } from "./helpers/browser-form.ts";
 
 const CONFIG = `import { openapi } from "@denext/openapi";
 
@@ -180,25 +181,38 @@ Deno.test("a scalar change previews a diff touching only that value, then writes
   }
 });
 
-Deno.test("a list op previews the new row, and confirming keeps comments, wrapper and order", async () => {
+Deno.test("a list op hands the form back unvalidated; saving keeps comments, wrapper and order", async () => {
   const dir = await project();
   try {
-    // + Add at the end: the preview shows a third row, nothing is written.
+    // + Add at the end: the editor comes back with a blank third row and NO validation
+    // message — a row button is not a save, and refusing the blank row it just added (for the
+    // `source` nobody has typed yet) is what the old preview did. Nothing is written.
     const added = await call(dir, "/config?section=redirects", {
       form: { ...fieldsFor("redirects", RULES), op: "add:2:redirects" },
     });
     assertEquals(added.status, 200);
-    const preview = await added.text();
-    assertStringIncludes(preview, 'name="redirects[2].source"');
+    const draft = await added.text();
+    assertStringIncludes(draft, 'name="redirects[2].source"');
+    assert(!draft.includes("invalid denext.config.ts"), "a blank row is not an error yet");
+    assert(!draft.includes("Confirm"), "a row op is not a preview");
     assertEquals(await onDisk(dir), CONFIG);
 
-    // Type into the new row and move it up — one submit, exactly what the browser posts.
+    // Type into the new row and move it up — one submit, exactly what the browser posts. The
+    // editor comes back with the rows in their new order.
     const typed = [...RULES, { source: "/c", destination: "/d", permanent: false }];
-    const form = { ...fieldsFor("redirects", typed), op: "up:2:redirects" };
-    const moved = await call(dir, "/config?section=redirects", { form });
+    const moved = await call(dir, "/config?section=redirects", {
+      form: { ...fieldsFor("redirects", typed), op: "up:2:redirects" },
+    });
     assertEquals(moved.status, 200);
     assert(hasField(await moved.text(), "redirects[1].source", "/c"));
+    assertEquals(await onDisk(dir), CONFIG);
 
+    // Save posts the rows as the browser now shows them: a preview, then the confirm.
+    const reordered = [RULES[0], typed[2], RULES[1]];
+    const form = fieldsFor("redirects", reordered);
+    const preview = await call(dir, "/config?section=redirects", { form });
+    assertEquals(preview.status, 200);
+    assertStringIncludes(await preview.text(), "Confirm");
     const applied = await call(dir, "/config?section=redirects", {
       form: { ...form, confirm: "1" },
     });
@@ -237,6 +251,41 @@ Deno.test("a partial save touches only the keys it carried — silence never del
     const after = await onDisk(dir);
     assertStringIncludes(after, 'basePath: "/docs"', "an unmentioned key survives the save");
     assertStringIncludes(after, "// keep this comment");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** The body a browser posts for a view's scalar band, untouched — read off the real markup. */
+function bandBody(markup: string): Record<string, string[]> {
+  return browserPostByName(formContaining(markup, 'class="band" data-dirty-track="1"'));
+}
+
+Deno.test("saving one view's band never touches a key another view owns", async () => {
+  // `basePath` is Routing's; `cacheComponents` and `streaming` are Rendering's. A save posted
+  // from the Rendering page carries only what that page rendered, and the writer has to read
+  // the keys it was never sent as "leave alone" — across views, not just within one.
+  const dir = await project(
+    'export default {\n  basePath: "/docs",\n  cacheComponents: true,\n};\n',
+  );
+  try {
+    const page = await (await call(dir, "/config/rendering")).text();
+    const untouched = bandBody(page);
+    assertEquals(untouched.cacheComponents, ["off", "on"], "a set key posts its companion pair");
+    assertEquals(untouched.basePath, undefined, "Routing's key is not on this page at all");
+
+    // Tick Disable on streaming — the one edit — and save the band as the browser would.
+    const edited = { ...untouched, streaming: ["off"] };
+    const preview = await call(dir, "/config/rendering", { form: edited });
+    assertEquals(preview.status, 200);
+    assertEquals(changed(diffText(await preview.text())), ["+  streaming: false,"]);
+
+    const applied = await call(dir, "/config/rendering", { form: { ...edited, confirm: "1" } });
+    assertEquals(applied.status, 303);
+    const after = await onDisk(dir);
+    assertStringIncludes(after, 'basePath: "/docs"', "another view's key survives the save");
+    assertStringIncludes(after, "cacheComponents: true", "an untouched key on this view too");
+    assertStringIncludes(after, "streaming: false", "and the one edit landed");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -723,16 +772,38 @@ Deno.test("a key that is on by default can finally be turned off", async () => {
     // could not be turned off from the editor at all.
     const off = await call(dir, "/api/config/rendering", { form: { streaming: ["on", "off"] } });
     assertEquals(off.status, 200);
-    assertStringIncludes(
-      (await off.json()).diff,
-      "streaming",
-      "opting out of a default-on key has to reach the file",
+    const proposed = changed((await off.json()).diff);
+    assertEquals(
+      proposed,
+      ["+  streaming: false,"],
+      "opting out of a default-on key proposes exactly that line, and nothing else",
     );
+    assertEquals(await onDisk(dir), CONFIG, "a preview never touches the file");
+
+    // Confirmed, the opt-out is in the file — and the view now renders the box TICKED, because
+    // ticking it is what `false` means for a default-on key. A re-render that showed it clear
+    // would invite the next save to "turn it off" again.
+    const applied = await call(dir, "/api/config/rendering", {
+      form: { streaming: ["on", "off"], confirm: "1" },
+    });
+    assertEquals(applied.status, 200);
+    assertEquals((await applied.json()).applied, true);
+    assertStringIncludes(await onDisk(dir), "streaming: false,");
+    const view = await (await call(dir, "/config/rendering")).text();
+    const box = view.match(/<input[^>]*name="streaming"[^>]*type="checkbox"[^>]*>/)?.[0];
+    assert(box, "the Rendering view renders the streaming toggle");
+    assertMatch(box, /\schecked(?=[\s>])/);
+    assertStringIncludes(box, 'value="off"', "ticking the box is what writes false");
 
     // Left alone, the box posts only its hidden companion: `true`, which is what the key already
     // is. That must propose nothing, or every untouched opt-out toggle would write noise.
-    const left = await call(dir, "/api/config/rendering", { form: { streaming: ["on"] } });
-    assertEquals((await left.json()).diff, "", "a key left at its default proposes nothing");
+    const fresh = await project();
+    try {
+      const left = await call(fresh, "/api/config/rendering", { form: { streaming: ["on"] } });
+      assertEquals((await left.json()).diff, "", "a key left at its default proposes nothing");
+    } finally {
+      await Deno.remove(fresh, { recursive: true });
+    }
 
     // And an absent opt-in key, unticked, behaves exactly as it always did.
     const optIn = await call(dir, "/api/config/rendering", { form: { cacheComponents: ["off"] } });

@@ -25,7 +25,7 @@ import { layout, type LayoutOptions, UI_CSS_PATH, UI_JS_PATH } from "../src/ui/l
 import { Raw, renderView } from "../src/ui/view.ts";
 import { UI_ROUTES } from "../src/ui/routes.ts";
 import { startUiServer } from "../src/ui/server.ts";
-import { UI_COOKIE } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { UI_JS } from "../src/ui/client.ts";
 
 /** The named references the renderer (or literal markup) emits. */
@@ -251,6 +251,12 @@ Deno.test("DiffBlock renders its golden markup, every newline kept as content", 
 
 Deno.test("Note and Out render the panels' note and output block", () => {
   assertEquals(toHtml(renderView(h(Note, null, "a <b>"))), '<p class="note">a &lt;b&gt;</p>');
+  // A tone is a class the stylesheet colours; a plain note is neutral, not a caution.
+  assertEquals(
+    toHtml(renderView(h(Note, { tone: "ok" }, "saved"))),
+    '<p class="note ok">saved</p>',
+  );
+  assertEquals(toHtml(renderView(h(Note, { tone: "warn" }, "x"))), '<p class="note warn">x</p>');
   assertEquals(
     toHtml(renderView(h(Note, { role: "alert" }, "a"))),
     '<p class="note" role="alert">a</p>',
@@ -324,7 +330,7 @@ async function fetchVia(path: string, view: () => unknown): Promise<Response[]> 
     handle: () => Promise.resolve(htmlResponse(renderPage(view as () => string, undefined))),
   };
   const server = await startUiServer({ dir, port: 0 });
-  const headers = { cookie: `${UI_COOKIE}=${server.token}` };
+  const { headers } = await uiHandshake(server);
   const base = `http://127.0.0.1:${server.port}`;
   const logged = console.error;
   console.error = () => {};

@@ -1095,9 +1095,9 @@ function ComposeEditor({ ctx, file, view }: EditorProps & { readonly view: Compo
   const notices = h(
     Fragment,
     null,
-    saved ? h(Note, null, `Saved ${file.name}.`) : null,
+    saved ? h(Note, { tone: "ok" }, `Saved ${file.name}.`) : null,
     file.model.sentinel ? h(SentinelNote, null) : null,
-    ctx.readOnly ? h(Note, null, "Read-only mode — editing is refused.") : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — editing is refused.") : null,
     h(Warnings, { warnings: [...volumeWarnings(file.model), ...networkWarnings(file.model)] }),
   );
   if (view === "names") {

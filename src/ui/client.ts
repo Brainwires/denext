@@ -404,12 +404,22 @@ document.addEventListener("submit", (event) => {
 // and the --ui-dev reload. Each frame is one JSON object with a "type"; anything unknown is
 // ignored, so a newer server never breaks an older page.
 
-/** Re-fetch the panel this page is showing, so a change made elsewhere lands here too. */
+/**
+ * Re-fetch the panel this page is showing, so a change made elsewhere lands here too.
+ *
+ * Output this page streamed into its <pre class="out"> is carried across the swap: the server
+ * renders that block empty, and a "task-done" refresh would otherwise wipe the very output the
+ * task just finished producing, exit line and all, the moment it was worth reading.
+ */
 async function refresh() {
   const response = await fetch(location.pathname + location.search, {
     headers: { accept: "text/html-fragment" },
   });
-  if (response.ok) swapPanel(await response.text());
+  if (!response.ok) return;
+  const streamed = document.querySelector("#panel pre.out")?.textContent ?? "";
+  swapPanel(await response.text());
+  const sink = document.querySelector("#panel pre.out");
+  if (sink && streamed !== "" && sink.textContent === "") sink.textContent = streamed;
 }
 
 /** Append one line to the panel's output block, if it is showing one. */

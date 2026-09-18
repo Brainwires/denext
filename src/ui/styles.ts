@@ -256,17 +256,19 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 /* ── surfaces ──────────────────────────────────────────────────────────── */
 .note {
   border: 1px solid var(--border);
-  border-left: 3px solid var(--warning);
+  border-left: 3px solid var(--muted-foreground);
   background: var(--muted);
   border-radius: var(--radius);
   padding: 10px 14px;
   color: var(--muted-foreground);
 }
+.note.ok { border-left-color: var(--success); }
+.note.warn { border-left-color: var(--warning); }
 .note[role="alert"] { border-left-color: var(--destructive); }
 .cards {
   display: grid;
   gap: var(--space-3);
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
 }
 .card {
   display: block;
@@ -280,6 +282,10 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 .card:hover { border-color: var(--primary); }
 .card strong { display: block; margin-bottom: 2px; }
 .card span { color: var(--muted-foreground); font-size: var(--text-sm); }
+.card .card-meta { margin: 4px 0 6px; }
+.card .card-blurb { margin: 0 0 8px; color: var(--muted-foreground); font-size: var(--text-sm); }
+/* A jsr: spec is one unbreakable word; let it wrap inside the card instead of being clipped. */
+.card .mono { overflow-wrap: anywhere; }
 .outcome {
   border: 1px solid var(--border);
   border-left: 3px solid var(--primary);

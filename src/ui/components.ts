@@ -27,17 +27,29 @@ export function Panel(
   return h("section", { id: "panel", "data-panel": name }, h("h1", null, title), children);
 }
 
+/** How a {@linkcode Note} reads: a plain remark, something that went right, or a caution. */
+export type NoteTone = "ok" | "warn";
+
 /**
  * A `<p class="note">` — the panels' one-line remark (a refusal, a mode, a result). With
- * `role="alert"` it is a message the page announces: a validation failure, a warning.
+ * `role="alert"` it is a message the page announces: a validation failure, an error.
  *
- * @param props `role`: `"alert"` to announce it; `children`: the note's content.
+ * A note with no `tone` is neutral — a fact ("No change", "None — this project contributes no
+ * verbs"). `"ok"` is a result to be glad of ("Wrote denext.config.ts."), `"warn"` a caution the
+ * reader should weigh (a mode that refuses writes, a lookup that failed). Every note used to
+ * carry the caution's amber bar, so a saved file and an empty list both read as something wrong.
+ *
+ * @param props `role`: `"alert"` to announce it; `tone`: how it reads; `children`: its content.
  * @returns The paragraph.
  */
 export function Note(
-  { role, children }: { readonly role?: "alert"; readonly children?: VNodeChildren },
+  { role, tone, children }: {
+    readonly role?: "alert";
+    readonly tone?: NoteTone;
+    readonly children?: VNodeChildren;
+  },
 ): VNode {
-  return h("p", { class: "note", role }, children);
+  return h("p", { class: tone === undefined ? "note" : `note ${tone}`, role }, children);
 }
 
 /**

@@ -403,11 +403,15 @@ Deno.test("an opt-out toggle says Disable, and ticking it writes false", () => {
   assertEquals(spec.default, true, "the schema states the default the widget reads");
   const markup = render(spec, undefined);
   assertStringIncludes(markup, ">Disable</label>");
-  // Only the two wire values swap. The hidden companion carries "on" so an UNTICKED box posts
-  // the default, and the checkbox carries "off" so a ticked one posts the opt-out.
-  assertStringIncludes(markup, 'type="hidden" value="on"');
+  // Only the two wire values swap: the checkbox carries "off" so a ticked box posts the opt-out.
+  // Unset, there is NO hidden companion — an unticked box for a key the file never mentions
+  // posts nothing, and nothing is "leave it alone" (a companion made every save write `false`
+  // for every boolean the view happened to show). Set, the companion carries "on" so an
+  // UNTICKED box posts the default back, which is how opting out is undone.
   assertStringIncludes(markup, 'type="checkbox"');
   assertStringIncludes(markup, 'value="off"');
+  assert(!markup.includes('type="hidden" value="on"'), "unset: no companion");
+  assertStringIncludes(render(spec, false), 'type="hidden" value="on"');
 
   // The codec is untouched: it reads values, not checkboxes, so the posted pair still decodes.
   const name = fieldName(spec.path);
@@ -432,7 +436,11 @@ Deno.test("an opt-in toggle is unchanged by any of that", () => {
   assertEquals(spec.default, undefined);
   const markup = render(spec, undefined);
   assertStringIncludes(markup, ">Enable</label>");
-  assertStringIncludes(markup, 'type="hidden" value="off"');
+  assert(
+    !markup.includes('type="hidden" value="off"'),
+    "unset: no companion, so unticked posts nothing",
+  );
+  assertStringIncludes(render(spec, true), 'type="hidden" value="off"');
   assertStringIncludes(render(spec, true), "checked");
 });
 

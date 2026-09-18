@@ -31,6 +31,11 @@ export const KEY_SUFFIX = "~key";
 /**
  * The suffix of the hidden field that marks a list, chip list or map as *present*. Without it an
  * empty list and an absent key would post identically, and clearing a list would be impossible.
+ *
+ * It is only rendered for a key the config holds (`render.ts`): an absent key posts neither the
+ * marker nor rows and decodes to `undefined`, while a set key emptied of its rows posts the marker
+ * alone and decodes to `[]`. Rows without a marker — a box ticked under an unset multi-select —
+ * count as present too, so a key can go from unset to a value in one save.
  */
 export const COUNT_SUFFIX = "~n";
 
@@ -225,13 +230,17 @@ function lookupOf(entries: readonly FormEntry[]): Lookup {
 type Decoder = (spec: WidgetSpec, lookup: Lookup, prefix: string) => unknown;
 
 /**
- * A posted scalar: absent stays absent, and so does an empty optional field. A field with an
- * `enum` comes back as the declared member, so `hsts: false` does not round-trip to `"false"`.
+ * A posted scalar: absent stays absent, and so does an empty field — required or not. A required
+ * field left empty is not a value to write; it is a field nobody filled in, and reading it as
+ * `""` turned an untouched form for an unset group into a half-object the validator refused
+ * (`tailwind.input must be a non-empty path`) before the user had typed a thing. Whether the
+ * key is required is the validator's call, made once the group holds something. A field with
+ * an `enum` comes back as the declared member, so `hsts: false` does not round-trip to
+ * `"false"`.
  */
 function decodeText(spec: WidgetSpec, lookup: Lookup, prefix: string): unknown {
   const posted = lookup.first(fieldName(spec.path, prefix));
-  if (posted === undefined) return undefined;
-  if (posted === "" && !spec.required) return undefined;
+  if (posted === undefined || posted === "") return undefined;
   // An option that declares the value it stands for wins: a union flattened into one choice
   // holds values its node does not list together, and they must keep their types.
   const option = spec.options?.find((entry) => entry.value === posted && entry.typed !== undefined);
@@ -274,9 +283,10 @@ function decodeCode(spec: WidgetSpec, lookup: Lookup, prefix: string): unknown {
   }
 }
 
-/** Whether the form carried this list/map at all (see `COUNT_SUFFIX`). */
+/** Whether the form carried this list/map at all — its marker, or any row (see `COUNT_SUFFIX`). */
 function present(spec: WidgetSpec, lookup: Lookup, prefix: string): boolean {
-  return lookup.first(fieldName(spec.path, prefix) + COUNT_SUFFIX) !== undefined;
+  const name = fieldName(spec.path, prefix);
+  return lookup.first(name + COUNT_SUFFIX) !== undefined || lookup.rows(name).length > 0;
 }
 
 /** Indexed rows, reassembled in index order; a row that posted nothing is dropped. */

@@ -163,10 +163,24 @@ function Choice(
   return h("label", { for: props.for, style: CHOICE_STYLE }, props.children, props.label);
 }
 
-/** The hidden marker that tells `decode` a list or map was present in the form. */
+/**
+ * The hidden marker that tells `decode` a list or map was present in the form.
+ *
+ * Rendered only for a value the config actually holds. A key the file never set has no rows to
+ * mark, and marking it anyway made every save of the section write `[]` for it — an empty
+ * allowlist where the runtime's default was meant (`images.deviceSizes: []` refuses every
+ * width). Silence about an absent key must post nothing, so `decode` leaves it alone; a row
+ * added later is rendered with its marker, because by then the value is a real list.
+ */
 function Marker(
-  props: { readonly name: string; readonly length: number; readonly ctx: RenderContext },
+  props: {
+    readonly name: string;
+    /** The row count, or `undefined` when the key is not set at all. */
+    readonly length: number | undefined;
+    readonly ctx: RenderContext;
+  },
 ): VNode {
+  if (props.length === undefined) return h(Fragment, null);
   return h(Control, {
     tag: "input",
     type: "hidden",
@@ -233,7 +247,15 @@ const TextareaWidget = scalar("textarea");
 /** A number input, carrying the schema's bounds. */
 const NumberWidget = scalar("input", "number");
 
-/** A checkbox with a hidden `off` companion, so "unchecked" posts a real `false`. */
+/**
+ * A checkbox with a hidden companion, so "unchecked" posts a real value for a key the file sets.
+ *
+ * The companion is rendered only when the key IS set. An unticked box for a key the file never
+ * mentions then posts nothing, which `decode` reads as "leave it alone" — where a companion
+ * would have turned every save of the section into `<key>: false` for each boolean it happened
+ * to show. Ticking such a box still posts its own value, so a key can be switched on (or, for a
+ * default-on key, off) from unset in one save.
+ */
 function ToggleWidget({ spec, value, ctx }: WidgetProps): VNode {
   const name = nameOf(spec, ctx);
   const id = idOf(name);
@@ -247,7 +269,9 @@ function ToggleWidget({ spec, value, ctx }: WidgetProps): VNode {
     // The hidden companion stays FIRST: `decode` takes the last posted value, which is what makes
     // an unticked box post a real value rather than nothing at all. Only the two wire values swap
     // between the polarities — `decode` reads values, not checkboxes, so the codec is untouched.
-    h(Control, { ...common, type: "hidden", value: optOut ? "on" : "off" }),
+    value === undefined
+      ? null
+      : h(Control, { ...common, type: "hidden", value: optOut ? "on" : "off" }),
     // A checkbox alone on a line says nothing about what ticking it does, and gives the pointer a
     // 13px target. The word rides in the same `Choice` the radios use, so it is part of the
     // control's own label and clicking it toggles the box.
@@ -326,7 +350,16 @@ function MultiSelectWidget({ spec, value, ctx }: WidgetProps): VNode {
   return h(
     Wrap,
     { spec, ctx, value },
-    h("div", null, h(Marker, { name, length: chosen.length, ctx }), spaced(boxes)),
+    h(
+      "div",
+      null,
+      h(Marker, {
+        name,
+        length: Array.isArray(value) ? chosen.length : undefined,
+        ctx,
+      }),
+      spaced(boxes),
+    ),
   );
 }
 
@@ -348,15 +381,15 @@ type RowProps = {
   readonly name: string;
 };
 
-/** The value of a list widget, as the rows it holds. */
-type ToRows = (value: unknown) => readonly unknown[];
+/** The value of a list widget, as the rows it holds — `undefined` when the key is not set. */
+type ToRows = (value: unknown) => readonly unknown[] | undefined;
 
 /** An array value (the default row source). */
-const asArray: ToRows = (value) => Array.isArray(value) ? value : [];
+const asArray: ToRows = (value) => Array.isArray(value) ? value : undefined;
 
 /** A record value, as `[key, value]` rows. */
 const asPairs: ToRows = (value) =>
-  typeof value === "object" && value !== null ? Object.entries(value) : [];
+  typeof value === "object" && value !== null ? Object.entries(value) : undefined;
 
 /** A row's `↑ ↓ ✕` buttons. */
 function rowButtonsOf(one: RowProps): VNode {
@@ -370,7 +403,8 @@ function rowButtonsOf(one: RowProps): VNode {
 function listWidget(Row: (props: RowProps) => VNode, toRows: ToRows = asArray): WidgetComponent {
   return ({ spec, value, ctx }) => {
     const name = nameOf(spec, ctx);
-    const list = toRows(value);
+    const held = toRows(value);
+    const list = held ?? [];
     const last = list.length - 1;
     const rows = list.map((entry, index) =>
       h(Row, { key: index, spec, row: rowSpec(spec, index), entry, index, last, ctx, name })
@@ -386,7 +420,7 @@ function listWidget(Row: (props: RowProps) => VNode, toRows: ToRows = asArray): 
     return h(
       Wrap,
       { spec, ctx, value },
-      h("div", null, h(Marker, { name, length: rows.length, ctx }), rows, add),
+      h("div", null, h(Marker, { name, length: held?.length, ctx }), rows, add),
     );
   };
 }

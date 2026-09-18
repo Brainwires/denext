@@ -564,7 +564,7 @@ function OptionsView(
       ", rendered from the plugin's options schema. A change is previewed as a diff before ",
       "anything is written.",
     ),
-    ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — every change is refused.") : null,
     draft.notice ?? null,
     h(
       "form",
@@ -587,7 +587,7 @@ function BailView(
   return h(
     Frame,
     { title: titleOf(target) },
-    h(Note, null, failure.reason),
+    h(Note, { tone: "warn" }, failure.reason),
     failure.snippet ? h(SourceBlock, { source: failure.snippet }) : null,
     h(
       "p",
@@ -718,7 +718,7 @@ async function write(
     return new Response(null, { status: 303, headers: { location } });
   }
   const next = { ...target, source: edit.source, base: await stamp(edit.source) };
-  const notice = h(Note, null, `Wrote ${target.configName}.`);
+  const notice = h(Note, { tone: "ok" }, `Wrote ${target.configName}.`);
   return show(ctx, next, reading, { value: values, notice });
 }
 

@@ -165,8 +165,8 @@ function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
     Panel,
     { title: "Project" },
     h("p", { class: "lead mono" }, ctx.dir),
-    ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
-    ctx.offline === true ? h(Note, null, OFFLINE_OVERVIEW) : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — every change is refused.") : null,
+    ctx.offline === true ? h(Note, { tone: "warn" }, OFFLINE_OVERVIEW) : null,
     h("div", { class: "cards" }, cards),
   );
 }

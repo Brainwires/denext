@@ -10,7 +10,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { setProcRunner } from "../src/ui/features/plugins.ts";
 import { setJsrClient } from "../src/ui/features/plugin-search.ts";
 import { sanitizeOptionsSchema } from "../src/ui/features/third-party-options.ts";
@@ -39,7 +40,6 @@ const UNTOUCHED: Record<string, string> = {
   "o.info.title": "",
   "o.info.version": "",
   "o.info.description": "",
-  "o.servers~n": "0",
   "o.expose": "",
   "o.outFile~branch": "0",
   "o.outFile": "",
@@ -65,6 +65,9 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The session cookie the handshake minted (never the launch token). */
+  cookie: string;
+  /** The CSRF token derived from that cookie. */
   csrf: string;
   /** Every stubbed `deno` argv. */
   ran: string[][];
@@ -91,11 +94,13 @@ async function ui(files: Record<string, string>, options: HarnessOptions = {}): 
     readOnly: options.readOnly,
     offline: options.offline,
   });
+  const { cookie, csrf } = await uiHandshake(server);
   const h: Harness = {
     server,
     dir,
     base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
+    cookie,
+    csrf,
     ran: [],
     searches: [],
     metas: [],
@@ -126,12 +131,12 @@ async function stop(h: Harness): Promise<void> {
 
 /** GET a UI path with the session cookie. */
 function get(h: Harness, path: string): Promise<Response> {
-  return fetch(`${h.base}${path}`, { headers: { cookie: `${UI_COOKIE}=${h.server.token}` } });
+  return fetch(`${h.base}${path}`, { headers: { cookie: h.cookie } });
 }
 
 /** The session headers every mutation carries. */
 function mutationHeaders(h: Harness): Record<string, string> {
-  return { cookie: `${UI_COOKIE}=${h.server.token}`, origin: h.base, [UI_CSRF_HEADER]: h.csrf };
+  return { cookie: h.cookie, origin: h.base, [UI_CSRF_HEADER]: h.csrf };
 }
 
 /** POST a form with the session cookie, a same-origin `Origin` and the CSRF token. */
@@ -197,10 +202,12 @@ Deno.test("the options form renders from the plugin's optionsSchema with the con
     assertStringIncludes(body, `action="${OPTIONS}"`);
     assertStringIncludes(body, 'name="o.path" id="f-o-path" type="text" value="/spec.json"');
     // An enum → radios with the file's value checked; a nested object → a group; an array of
-    // objects → a list editor with its presence marker.
+    // objects → a list editor. `servers` is not in the file, so it carries NO presence marker: an
+    // untouched save must post nothing for it, not an empty list.
     assertStringIncludes(body, 'type="radio" value="scalar" checked');
     assertStringIncludes(body, 'name="o.info.title"');
-    assertStringIncludes(body, 'name="o.servers~n" type="hidden" value="0"');
+    assertStringIncludes(body, 'value="add:0:o.servers"');
+    assert(!body.includes('name="o.servers~n"'), "an unset list has no marker to post");
     assertStringIncludes(body, 'name="_base"');
     assertStringIncludes(body, ">Preview<");
   } finally {

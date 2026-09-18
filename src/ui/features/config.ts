@@ -63,7 +63,7 @@ import {
   writeFileAtomic,
 } from "../security.ts";
 import { loadConfigSchema, resolveAt, type SchemaNode } from "../form/schema.ts";
-import { widgetFor, type WidgetKind, type WidgetSpec } from "../form/widget.ts";
+import { selectedBranch, widgetFor, type WidgetKind, type WidgetSpec } from "../form/widget.ts";
 import { readWidget, renderWidget, renderWidgets } from "../form/render.ts";
 import { control } from "../form/control.ts";
 import {
@@ -479,6 +479,44 @@ function isList(spec: WidgetSpec | undefined): boolean {
     spec?.kind === "multi-select";
 }
 
+/** A plain object (the only shape whose keys can be carried). */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The posted object, with every key of the file's object that the form has no field for carried
+ * across unchanged.
+ *
+ * A grouped key is written whole, from what its form posted — and the form only knows the keys
+ * the schema lists. A key this build's schema does not know (a legacy spelling the runtime still
+ * honours, or one a newer denext added while an older binary edits the file) would otherwise be
+ * dropped by any save of the group, visibly in the diff but with nothing to say it was not asked
+ * for. Keys keep the file's order; a union recurses into the branch the posted value selects.
+ *
+ * @param spec The group's widget.
+ * @param current What the file holds at the key.
+ * @param next What the form posted for it.
+ * @returns `next`, with the file's unknown keys restored.
+ */
+function carryUnknown(spec: WidgetSpec | undefined, current: unknown, next: unknown): unknown {
+  if (spec?.kind === "union" && next !== undefined) {
+    return carryUnknown(selectedBranch(spec, next).branch?.spec, current, next);
+  }
+  if (spec?.kind !== "group" || !isRecord(current) || !isRecord(next)) return next;
+  const children = new Map(
+    (spec.children ?? []).map((child) => [child.path[child.path.length - 1], child]),
+  );
+  const out: Record<string, unknown> = {};
+  for (const [key, held] of Object.entries(current)) {
+    const child = children.get(key);
+    if (child === undefined) out[key] = held;
+    else if (key in next) out[key] = carryUnknown(child, held, next[key]);
+  }
+  for (const [key, value] of Object.entries(next)) if (!(key in out)) out[key] = value;
+  return out;
+}
+
 /** Compute the source edit one section write needs. */
 async function editFor(state: ConfigState, plan: Omit<Plan, "result">): Promise<EditResult> {
   const { section, posted, next, request } = plan;
@@ -511,7 +549,8 @@ async function buildPlan(
   posted: unknown,
   request?: ListOpRequest,
 ): Promise<Plan> {
-  const next = request ? applyRowOp(loadConfigSchema(), posted, request) : posted;
+  const applied = request ? applyRowOp(loadConfigSchema(), posted, request) : posted;
+  const next = carryUnknown(section.spec, section.value, applied);
   const draft = { section, posted, next, request };
   return { ...draft, result: await editFor(state, draft) };
 }
@@ -656,11 +695,14 @@ const KEY_LABELS: Readonly<Record<string, string>> = {
   hsts: "HSTS",
   mdx: "MDX",
   spa: "SPA",
+  publicEnv: "Public env",
+  apiBatch: "API batch",
 };
 
-/** A config key as its tab says it. */
+/** A config key as its tab says it: a listed name, else the camelCase split into words. */
 function tabLabel(key: string): string {
-  return KEY_LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+  const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+  return KEY_LABELS[key] ?? words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 /**
@@ -872,7 +914,7 @@ function ConfigPanel(
       }),
       compat ? h("a", { class: "lead head-aside", href: "/config/next" }, "next.config ↗") : null,
     ),
-    ctx.readOnly ? h(Note, null, "Read-only mode — every change is refused.") : null,
+    ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — every change is refused.") : null,
     state.exists ? null : h(CreateOffer, { ctx, state }),
     state.exists && state.form === "unsupported" ? h(UnsupportedNote, { name: state.name }) : null,
     notice ?? null,
@@ -1166,7 +1208,7 @@ async function write(
   }
   const next = await readState(ctx.dir);
   if (ctx.json) return jsonResponse({ ok: true, applied: true, file: next.name });
-  const notice = h(Note, null, `Wrote ${next.name}.`);
+  const notice = h(Note, { tone: "ok" }, `Wrote ${next.name}.`);
   if (ctx.fragment) return await editorResponse(ctx, next, { notice });
   // A key is only rendered by the view that owns it, and a grouping only by its own tab, so the
   // redirect names the exact page the change is visible on.
@@ -1246,8 +1288,11 @@ function sectionPreview(ctx: UiContext, state: ConfigState, plan: Plan): Respons
     );
   }
   const spec = section.spec as WidgetSpec;
+  // A clear posts no value at all, so the confirm step says so explicitly: an empty form is
+  // otherwise indistinguishable from a caller that carried nothing, and silence must never delete.
   const fields = [
     hidden("section", section.key),
+    ...(plan.posted === undefined ? [hidden("clear", "1")] : []),
     ...encode(spec, plan.posted).map((entry) => hidden(entry.name, entry.value)),
     ...(plan.request ? [hidden(OP_FIELD, postedField(ctx, OP_FIELD))] : []),
   ];
@@ -1292,6 +1337,24 @@ async function writeSection(
   if ("error" in posted) return invalid(ctx, state, section.key, section.value, posted.error);
   const request = parseOp(postedField(ctx, OP_FIELD));
   const plan = await buildPlan(state, section, posted.value, request);
+  // A row button is not a save. It reshapes the form — a blank row to fill in, a row gone, two
+  // swapped — and hands it back to be edited; validating it now would refuse the very blank row
+  // the user has just asked for, with a message about a key they have not typed yet. Save is
+  // where the value is checked and previewed.
+  if (request && !ctx.json) {
+    const feedback: Feedback = { key: section.key, value: plan.next, errors: {} };
+    return await editorResponse(ctx, state, { feedback });
+  }
+  // An untouched form is a no-op, said as one. An unset key's form decodes to nothing, and
+  // "delete a key that is not there" is a refusal the writer would otherwise raise; a set key's
+  // form decodes to the value it already holds, which the writer would re-serialise into a diff
+  // of pure formatting. Neither is a change the user made.
+  if (!section.present ? plan.next === undefined : stable(plan.next) === stable(section.value)) {
+    return sectionPreview(ctx, state, {
+      ...plan,
+      result: { ok: true, source: state.source, diff: "" },
+    });
+  }
   const proposed = proposedConfig(state, new Map([[section.key, plan.next]]));
   const error = validationError(proposed, state.name);
   if (error) return invalid(ctx, state, section.key, plan.next, error);
@@ -1420,9 +1483,13 @@ function bandPreview(
 ): Response {
   const fields = [...changes].flatMap(([key, value]) => {
     const section = sectionFor(state, key);
-    return section
-      ? encode(section.spec as WidgetSpec, value).map((entry) => hidden(entry.name, entry.value))
-      : [];
+    if (!section) return [];
+    const spec = section.spec as WidgetSpec;
+    // A cleared key encodes to no field, and an uncarried field is left alone on purpose
+    // (`bandChanges`) — so the confirm form carries the clear as the emptied control a browser
+    // would have posted, which decodes back to `undefined` for a key the file still holds.
+    if (value === undefined) return [hidden(fieldName(spec.path), "")];
+    return encode(spec, value).map((entry) => hidden(entry.name, entry.value));
   });
   return previewResponse(ctx, {
     title: `Config · ${GROUP_LABEL[group]}`,

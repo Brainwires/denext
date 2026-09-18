@@ -713,7 +713,7 @@ function CommandsPanel({ list, view, output, query }: PanelProps): VNode {
     h(FilterForm, { action: PATH, query, label: "Filter verbs" }),
     h(Notices, { list }),
     view.notice === undefined ? null : h(Note, { role: "alert" }, view.notice),
-    view.offline ? h(Note, null, OFFLINE_NOTE) : null,
+    view.offline ? h(Note, { tone: "warn" }, OFFLINE_NOTE) : null,
     query === ""
       ? null
       : h("p", { class: "filter-note" }, matchNote(commands.length, query, "verb")),

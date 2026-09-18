@@ -204,7 +204,7 @@ export function JsrDiscovery(
       ".",
     ),
     h(SearchBox, { discovery }),
-    discovery.available ? null : h(Note, null, UNAVAILABLE),
+    discovery.available ? null : h(Note, { tone: "warn" }, UNAVAILABLE),
     discovery.result ? h(SearchResults, { ctx, result: discovery.result }) : null,
   );
 }
@@ -232,7 +232,7 @@ function SearchBox({ discovery }: { readonly discovery: Discovery }): VNode {
 function SearchResults(
   { ctx, result }: { readonly ctx: UiContext; readonly result: JsrSearchResult },
 ): VNode {
-  if (!result.ok) return h(Note, null, `JSR search failed: ${result.reason}`);
+  if (!result.ok) return h(Note, { tone: "warn" }, `JSR search failed: ${result.reason}`);
   if (result.hits.length === 0) return h(Note, null, "No JSR package matched.");
   return h(
     "div",
