@@ -149,14 +149,14 @@ caveat — being a denext original is not the same as being incomplete.
 - **The dropped-function warning covers what the renderer can attribute.** A `"use client"`
   component's props warn on every Flight renderer; a host element's `onClick` in a Server
   Component warns on the streaming and PPR renderers, which know whether they are inside an
-  island — the buffered `renderToHtmlFlight` does not expose that for host elements, so a
-  `<button onClick>` in a plain (non-streaming) Server Component is dropped silently there.
-  Under streaming, an island's own Suspense content that resolves after the island finished
-  is attributed to the server, so a handler it renders may warn spuriously (dev only).
-- **The server-only leak check runs where a bundle is produced** — `denext build`,
-  `denext export`, and the bundled dev path. The unbundled per-module dev loop (the default
-  `denext dev`) serves each module on its own and does not bundle, so it does not run the
-  check; the browser then fails on the `node:` import or the `Deno` access at runtime instead.
+  island. Under streaming, an island's own Suspense content that resolves after the island
+  finished is attributed to the server, so a handler it renders may warn spuriously (dev only).
+- **The server-only leak check reads the bundle where one is produced** (`denext build`,
+  `denext export`, the bundled dev path: the source map's shipped modules, so a helper that
+  tree-shaking removed is not a leak). The unbundled per-module dev loop (the default
+  `denext dev`) never bundles, so it checks the route's import graph instead — every local
+  module counts, only `"use server"` modules are exempt — and only for a route the build would
+  hydrate; a route the build ships without JavaScript is never checked there.
 - **`denext/no-handlers-in-async` resolves module-local bindings only.** An imported handler
   or a prop-passed one is not flagged (it may be a server action), and a function inside a
   string or a non-`on*` prop is out of scope.

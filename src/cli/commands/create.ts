@@ -59,6 +59,11 @@ const SCAFFOLD_FLAGS = [
     help: `Starter template (${SCAFFOLD_TEMPLATES.join(" | ")}; default: default)`,
   },
   {
+    name: "no-vscode",
+    type: "boolean" as const,
+    help: "Don't write .vscode/settings.json + extensions.json (Deno LSP)",
+  },
+  {
     name: "yes",
     alias: "y",
     type: "boolean" as const,
@@ -91,6 +96,7 @@ async function runCreate(
     desktop: on("desktop"),
     capacitor: on("capacitor"),
     compatibilityMode: on("compatibility"),
+    vscode: ctx.flags["no-vscode"] !== true,
     allowExisting: mode === "init",
   });
   for (const p of written) console.log(`   + ${p}`);
@@ -109,7 +115,7 @@ function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
   if (target) return target;
   console.error(
     "denext create: missing target directory.\n" +
-      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility]\n" +
+      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility] [--no-vscode]\n" +
       "  denext init            (scaffold into the current directory)",
   );
   Deno.exit(1);

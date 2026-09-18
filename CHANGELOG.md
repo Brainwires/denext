@@ -67,6 +67,11 @@ and this project adheres to
 
 ### Added
 
+- Getting started gains "Server and client code — what ships to the browser" (what crosses the
+  boundary, server-only modules and the build-time leak failure, the isomorphic-route
+  compatibility path) and "Editor setup"; the tutorial gains a chapter that crosses the boundary
+  — a `"use client"` island with `useFormStatus` and `useOptimistic` that keeps the no-JS path —
+  pinned by a test that type-checks and runs its snippets against a copy of `examples/notes`.
 - `denext.config.ts` gains the production-server keys `canonicalOrigin`, `trustForwardedHeaders`,
   `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes` and `cacheKeyParams`
   — validated at boot and forwarded by `denext start` and `denext dev`. They were `createApp()`
@@ -185,6 +190,11 @@ and this project adheres to
 
 ### Changed
 
+- `denext create`'s default template is the App Router shape: `app/page.tsx` is a Server
+  Component that renders a `"use client"` counter island (`app/counter.tsx`) — the shape
+  `denext generate component` writes — instead of a hooks-bearing page that hydrated the whole
+  route. `create` and `init` also write `.vscode/settings.json` + `extensions.json` for the Deno
+  LSP (merged additively; `--no-vscode` skips them), with the writer `denext migrate` uses.
 - `denext create` scaffolds the `start` task with `--allow-write=.denext`: the durable
   `node:sqlite` cache is the default and, without the grant, production ran on the memory store
   in silence. When the durable cache cannot open, denext now logs one boot line in every mode

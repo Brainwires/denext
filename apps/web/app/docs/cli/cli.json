@@ -209,6 +209,11 @@
           "description": "Starter template (default | minimal; default: default)"
         },
         {
+          "name": "no-vscode",
+          "type": "boolean",
+          "description": "Don't write .vscode/settings.json + extensions.json (Deno LSP)"
+        },
+        {
           "name": "yes",
           "alias": "y",
           "type": "boolean",
@@ -426,6 +431,11 @@
           "type": "string",
           "valueName": "<name>",
           "description": "Starter template (default | minimal; default: default)"
+        },
+        {
+          "name": "no-vscode",
+          "type": "boolean",
+          "description": "Don't write .vscode/settings.json + extensions.json (Deno LSP)"
         },
         {
           "name": "yes",

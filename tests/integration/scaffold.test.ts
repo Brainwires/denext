@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
+import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
   const files = scaffoldFiles({ dir: "/x" });
@@ -11,6 +12,7 @@ Deno.test("scaffoldFiles: plain project", () => {
   assertEquals(paths, [
     ".gitignore",
     "README.md",
+    "app/counter.tsx",
     "app/layout.tsx",
     "app/page.tsx",
     "deno.json",
@@ -20,6 +22,42 @@ Deno.test("scaffoldFiles: plain project", () => {
   assertStringIncludes(denoJson, "jsr:@denext/denext");
   assertStringIncludes(denoJson, '"jsxImportSource": "denext"');
   assert(!files.some((f) => f.path === "denext.config.ts"), "no config without options");
+});
+
+Deno.test("scaffoldFiles: the page is a Server Component and the counter is a 'use client' island", () => {
+  // ONE story, Next's: Server Components by default, interactivity in "use client" islands —
+  // the same shape `denext generate component` writes and AGENTS.md teaches. A hooks-bearing
+  // route would hydrate as a whole (the isomorphic-route compatibility path) and fail the
+  // build the moment it imported a server-only `lib/db.ts`.
+  const files = scaffoldFiles({ dir: "/x" });
+  const page = files.find((f) => f.path === "app/page.tsx")!.content;
+  assert(!page.includes("use client"), "the page must not be a client component");
+  assert(!/\buse[A-Z]\w*\(/.test(page), `the page must not call a hook:\n${page}`);
+  assert(!page.includes("onClick"), "the page must not carry an event handler");
+  assertStringIncludes(page, 'import { Counter } from "./counter.tsx"');
+  assertStringIncludes(page, "<Counter />");
+
+  const counter = files.find((f) => f.path === "app/counter.tsx")!.content;
+  assert(counter.startsWith('"use client";'), "the island opens with the directive");
+  assertStringIncludes(counter, 'from "denext"');
+  assertStringIncludes(counter, "useState(0)");
+  assertStringIncludes(counter, "onClick=");
+  assertStringIncludes(counter, "export function Counter()");
+  // Tailwind variant: the classes move with the markup they style.
+  const tw = scaffoldFiles({ dir: "/x", tailwind: true });
+  assertStringIncludes(tw.find((f) => f.path === "app/counter.tsx")!.content, "text-green-600");
+  assertStringIncludes(tw.find((f) => f.path === "app/page.tsx")!.content, "max-w-xl");
+  // The README points at the island.
+  assertStringIncludes(files.find((f) => f.path === "README.md")!.content, "app/counter.tsx");
+});
+
+Deno.test("scaffoldFiles: the minimal template has no island", () => {
+  const files = scaffoldFiles({ dir: "/x", template: "minimal" });
+  const paths = files.map((f) => f.path);
+  assert(!paths.includes("app/counter.tsx"), "minimal is a bare page");
+  const page = files.find((f) => f.path === "app/page.tsx")!.content;
+  assert(!page.includes("counter"), "minimal's page imports nothing");
+  assert(!files.find((f) => f.path === "README.md")!.content.includes("counter.tsx"));
 });
 
 Deno.test("scaffoldFiles: tailwind wires globals import + input + config", () => {
@@ -253,6 +291,63 @@ Deno.test("scaffoldProject refuses a non-empty directory", async () => {
   }
 });
 
+Deno.test("scaffoldProject writes the .vscode files that turn on the Deno LSP (unless vscode: false)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_scaffold_" });
+  try {
+    const written = await scaffoldProject({ dir });
+    // Reported relative, like every other scaffolded path.
+    assert(written.includes(".vscode/settings.json"), written.join(", "));
+    assert(written.includes(".vscode/extensions.json"), written.join(", "));
+    assert(written.includes("app/counter.tsx"), "the island is written to disk");
+    const settings = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "settings.json")));
+    assertEquals(settings["deno.enable"], true);
+    const ext = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "extensions.json")));
+    assertEquals(ext.recommendations, ["denoland.vscode-deno"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+
+  const bare = await Deno.makeTempDir({ prefix: "denext_scaffold_" });
+  try {
+    const written = await scaffoldProject({ dir: bare, vscode: false });
+    assert(!written.some((p) => p.startsWith(".vscode/")), "--no-vscode writes no editor files");
+    let exists = true;
+    try {
+      await Deno.stat(join(bare, ".vscode"));
+    } catch {
+      exists = false;
+    }
+    assert(!exists, ".vscode/ must not be created");
+    assert(!(await Deno.readTextFile(join(bare, "README.md"))).includes(".vscode"));
+  } finally {
+    await Deno.remove(bare, { recursive: true });
+  }
+});
+
+Deno.test("init merges into an existing .vscode/settings.json instead of refusing or clobbering", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_init_" });
+  try {
+    await Deno.mkdir(join(dir, ".vscode"));
+    // VSCode settings are JSONC — a comment must not make the file unreadable.
+    await Deno.writeTextFile(
+      join(dir, ".vscode", "settings.json"),
+      '{\n  // keep me\n  "editor.tabSize": 2\n}\n',
+    );
+    await Deno.writeTextFile(
+      join(dir, ".vscode", "extensions.json"),
+      '{ "recommendations": ["esbenp.prettier-vscode"] }\n',
+    );
+    const written = await scaffoldProject({ dir, allowExisting: true });
+    assert(written.includes(".vscode/settings.json"));
+    const settings = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "settings.json")));
+    assertEquals(settings, { "editor.tabSize": 2, "deno.enable": true });
+    const ext = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "extensions.json")));
+    assertEquals(ext.recommendations, ["esbenp.prettier-vscode", "denoland.vscode-deno"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("init scaffolds into an existing dir but won't overwrite existing files", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_init_" });
   try {
@@ -270,6 +365,23 @@ Deno.test("init scaffolds into an existing dir but won't overwrite existing file
       threw = true;
     }
     assert(threw, "init must refuse to overwrite an existing generated file");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a scaffolded app serves its home page with the island server-rendered", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_scaffold_" });
+  try {
+    await scaffoldProject({ dir });
+    // In-process, no build: the modules resolve `denext` through this test's import map.
+    const client = createTestClient(await createTestApp(dir));
+    const res = await client.get("/");
+    assertEquals(res.status, 200);
+    assertStringIncludes(res.text, "Hello from denext");
+    // The island is server-rendered (its pre-hydration state), inside the server page.
+    assertStringIncludes(res.text, "server-rendered (not yet hydrated)");
+    assertStringIncludes(res.text, "Clicked 0 times");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -305,6 +417,7 @@ Deno.test("a scaffolded app type-checks against the framework", async () => {
         join(dir, "deno.json"),
         join(dir, "app", "page.tsx"),
         join(dir, "app", "layout.tsx"),
+        join(dir, "app", "counter.tsx"),
       ],
       stdout: "piped",
       stderr: "piped",

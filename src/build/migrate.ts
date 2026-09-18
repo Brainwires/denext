@@ -19,6 +19,7 @@ import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { appendGitignore } from "./gitignore.ts";
+import { ensureVscodeDeno } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
@@ -2013,60 +2014,6 @@ async function ensureGitignore(
 ): Promise<void> {
   const path = await appendGitignore(dir, entries);
   if (path) written.push(path);
-}
-
-/**
- * Enable the Deno language server for the migrated project so editors resolve the `denext`
- * import map (and the react aliases) exactly the way `deno` does. Without this, VSCode's
- * built-in TypeScript server — which knows nothing about `deno.json`'s `imports` — flags
- * `denext`/`denext/desktop` and the aliased `react` as unresolved even though `deno check`
- * passes and the app builds.
- *
- * Writes `.vscode/settings.json` (`"deno.enable": true`) and `.vscode/extensions.json`
- * (recommending `denoland.vscode-deno`, so the LSP is one prompt away). Both are merged
- * additively: any existing keys/recommendations are preserved, the entry is added only when
- * missing, and a re-run with it already present writes nothing (idempotent). Pushes each
- * changed path onto `written`. Scoped to this app dir — VSCode only reads a folder's
- * `.vscode` when that folder is a workspace root, so a monorepo's other (Node) packages are
- * unaffected unless this app is opened directly.
- *
- * @param dir The app directory.
- * @param written Accumulator each changed `.vscode` path is pushed onto.
- */
-async function ensureVscodeDeno(dir: string, written: string[]): Promise<void> {
-  const vscodeDir = join(dir, ".vscode");
-
-  // settings.json → turn on the Deno LSP for this workspace folder.
-  const settingsPath = join(vscodeDir, "settings.json");
-  const settings = (await readJson(settingsPath)) ?? {};
-  if (settings["deno.enable"] !== true) {
-    settings["deno.enable"] = true;
-    await writeVscodeJson(vscodeDir, settingsPath, settings, written);
-  }
-
-  // extensions.json → recommend the Deno extension so the LSP is a click away.
-  const extPath = join(vscodeDir, "extensions.json");
-  const ext = (await readJson(extPath)) ?? {};
-  const recs = Array.isArray(ext.recommendations) ? ext.recommendations as string[] : [];
-  if (!recs.includes("denoland.vscode-deno")) {
-    ext.recommendations = [...recs, "denoland.vscode-deno"];
-    await writeVscodeJson(vscodeDir, extPath, ext, written);
-  }
-}
-
-/** Write a `.vscode/*.json` file (mkdir + symlink-safe overwrite), pushing it to `written`. */
-async function writeVscodeJson(
-  vscodeDir: string,
-  path: string,
-  obj: Record<string, unknown>,
-  written: string[],
-): Promise<void> {
-  await Deno.mkdir(vscodeDir, { recursive: true });
-  // Same symlink guard as `ensureGitignore`: unlink first so a symlinked target (possible in
-  // a cloned third-party repo) isn't followed out of tree.
-  await Deno.remove(path).catch(() => {});
-  await Deno.writeTextFile(path, JSON.stringify(obj, null, 2) + "\n");
-  written.push(path);
 }
 
 /**

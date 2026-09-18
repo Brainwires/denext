@@ -64,7 +64,14 @@ cd my-app
 deno task dev`}
       </Code>
       <p>
-        Or start by hand — the minimum is a <code>deno.json</code>, a root layout, and a page.
+        That writes a{" "}
+        <code>deno.json</code>, a root layout, a home page that is a Server Component, one{" "}
+        <code>"use client"</code> counter island (<code>app/counter.tsx</code>) it renders, and the
+        {" "}
+        <code>.vscode</code> files that turn on the Deno language server (see{" "}
+        <a href="#editor-setup">Editor setup</a>; <code>--no-vscode</code> skips them).{" "}
+        <code>--template minimal</code> is a bare page. Or start by hand — the minimum is a{" "}
+        <code>deno.json</code>, a root layout, and a page.
       </p>
 
       <h2>deno.json</h2>
@@ -104,6 +111,124 @@ export default function Home() {
         at the top of a file only for interactivity — everything else stays on the server and ships
         no JavaScript.
       </Callout>
+
+      <h2 id="server-and-client">Server and client code — what ships to the browser</h2>
+      <p>
+        There is one model, and it is the App Router's. A file under <code>app/</code> is a{" "}
+        <strong>Server Component</strong>{" "}
+        unless it says otherwise: it runs only on the server, it can be <code>async</code>{" "}
+        and await a database or a <code>fetch</code>{" "}
+        directly, and none of its code reaches the browser. Interactivity — state, effects, event
+        handlers, any hook — lives in a file that opens with <code>"use client"</code>: a{" "}
+        <strong>client island</strong>{" "}
+        that is server-rendered like everything else, then bundled and hydrated in the browser. This
+        is exactly what <code>denext create</code> scaffolds and{" "}
+        <code>
+          denext generate component
+        </code>{" "}
+        writes:
+      </p>
+      <Code lang="tsx">
+        {`// app/page.tsx — a Server Component: no "use client", no hooks, ships no JS
+import { listNotes } from "../lib/db.ts"; // node:sqlite — stays on the server
+import { Counter } from "./counter.tsx";
+
+export default async function Home() {
+  const notes = await listNotes();
+  return (
+    <>
+      <ul>{notes.map((n) => <li key={n.id}>{n.title}</li>)}</ul>
+      <Counter initial={notes.length} />
+    </>
+  );
+}
+
+// app/counter.tsx — the island: the one file the browser runs
+"use client";
+import { useState } from "denext";
+
+export function Counter({ initial }: { initial: number }) {
+  const [n, setN] = useState(initial);
+  return <button type="button" onClick={() => setN(n + 1)}>{n}</button>;
+}`}
+      </Code>
+      <h3>What crosses the boundary</h3>
+      <p>
+        The page renders the island with props, and those props travel as data — so they must be
+        {" "}
+        <strong>serialisable</strong>: strings, numbers, booleans, plain objects and arrays, Dates,
+        Maps, Sets, URLs, promises (read them with <code>use()</code>), and <code>children</code>
+        {" "}
+        (which may itself contain Server Components). Two kinds of function cross as a{" "}
+        <em>reference</em>: a <strong>Server Action</strong> (an export of a{" "}
+        <code>"use server"</code> module, passed as <code>action</code>{" "}
+        to a form or as any prop) and a Live channel. A plain function does not — an{" "}
+        <code>onClick={"{() => …}"}</code>{" "}
+        passed from a Server Component to a client component is dropped, and in dev the renderer
+        warns naming the component and the prop. Move the handler into the island, or hand the
+        island a Server Action.
+      </p>
+      <h3>Modules that must never ship</h3>
+      <p>
+        A <code>lib/db.ts</code> that opens <code>node:sqlite</code> or reads{" "}
+        <code>Deno.env.get(…)</code> is{" "}
+        <strong>server-only</strong>. Imported from a Server Component it is fine; imported from
+        {" "}
+        <code>"use client"</code>{" "}
+        code it would be bundled for the browser. denext fails that build —{" "}
+        <code>denext build</code> / <code>export</code>{" "}
+        name the module, why it is server-only and the entry that pulled it in, and{" "}
+        <code>denext dev</code>{" "}
+        refuses the route's entry with the same message instead of letting the page fail in the
+        browser. Mark the module so the intent is explicit and the failure is about the marker
+        rather than an incidental <code>node:</code> import:
+      </p>
+      <Code lang="ts">
+        {`// lib/db.ts
+import { serverOnly } from "denext";
+serverOnly(); // or \`import "server-only"\` in a migrated / --compatibility app
+
+import { DatabaseSync } from "node:sqlite";
+const db = new DatabaseSync(Deno.env.get("DB_PATH") ?? "app.db");
+export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
+      </Code>
+      <p>
+        Type-only imports (<code>import type {"{ Note }"} from "../lib/db.ts"</code>) are erased and
+        never count — an island can share the page's types freely.
+      </p>
+      <h3>The compatibility path: a whole route as client code</h3>
+      <p>
+        denext also runs a route that has <em>no</em> <code>"use client"</code>{" "}
+        boundary but does use hooks or event handlers directly in <code>page.tsx</code>{" "}
+        or a layout — the whole route (page, layouts, everything they import) is then bundled and
+        hydrated as one unit. That is a <strong>compatibility mode</strong>{" "}
+        for apps written that way (many migrated ones are); it works, it navigates correctly, and
+        {" "}
+        <a href="/docs/architecture#soft-navigation-two-mechanisms-one-correct-behavior">
+          Architecture
+        </a>{" "}
+        explains what it costs. Do not write new code this way: the moment such a route imports a
+        server-only module, the build fails as above, and the fix is the model on this page — keep
+        the page a Server Component and move the interactive part into an island. See{" "}
+        <a href="/docs/client-components">Client Components</a>,{" "}
+        <a href="/docs/server-actions">Server Actions</a> and{" "}
+        <a href="/docs/islands">Islands &amp; hydration</a> for the rest.
+      </p>
+
+      <h2 id="editor-setup">Editor setup</h2>
+      <p>
+        A denext project resolves <code>denext</code> through <code>deno.json</code>'s{" "}
+        <code>imports</code>, which the built-in TypeScript server in VS Code does not read — it
+        would flag every <code>denext</code> import as unresolved while <code>deno check</code>{" "}
+        passes. <code>denext create</code> (and <code>denext migrate</code>) write{" "}
+        <code>.vscode/settings.json</code> with <code>"deno.enable": true</code> and{" "}
+        <code>.vscode/extensions.json</code> recommending{" "}
+        <code>denoland.vscode-deno</code>; install the extension when prompted and the editor uses
+        the same resolution, types and lint plugin as the CLI. Any editor that speaks the Deno
+        language server works the same way. Type-check from the terminal with{" "}
+        <code>deno check app/</code>, and lint with <code>deno lint</code> — the{" "}
+        <code>denext/*</code> rules (rules-of-hooks, directive placement) run there too.
+      </p>
 
       <h2>Coming from Next.js?</h2>
       <p>

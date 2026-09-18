@@ -1,7 +1,7 @@
 ---
 title: "Tutorial: a notes app, end to end"
 slug: tutorial
-lead: Build the repository's examples/notes app step by step — SQLite, a Server Component list, a Server Action form that works without JavaScript, signed-cookie sessions, ISR, an in-process test, and a production build.
+lead: Build the repository's examples/notes app step by step — SQLite, a Server Component list, a Server Action form that works without JavaScript, signed-cookie sessions, ISR, an in-process test, a "use client" island that crosses the boundary, and a production build.
 ---
 
 Everything below is a real, running application: [examples/notes](https://github.com/Brainwires/denext/blob/main/examples/notes)
@@ -9,8 +9,9 @@ in this repository. It signs users in, stores notes in SQLite, lists them per us
 and on a public feed, and **every flow works with JavaScript disabled**. Each code
 block on this page is copied verbatim from a file in that directory — a test in the
 repository pins the two together, so the tutorial cannot drift from the code it
-describes. Read it top to bottom to build the app, or clone the directory and follow
-along.
+describes. (Step 8 adds two files the example deliberately does not ship; a second
+test type-checks and runs them against a copy of the example.) Read it top to bottom
+to build the app, or clone the directory and follow along.
 
 ## 1. Create the project
 
@@ -460,7 +461,164 @@ Run it with `deno test -A tests/integration/example-notes.test.ts`. Component-le
 tests (`render`, `fireEvent`) and the route conformance probe live on
 [Testing](/docs/testing).
 
-## 8. Build and run
+## 8. Cross the boundary: a client island
+
+Everything so far ships **no JavaScript** — every file under `app/` is a Server
+Component, and the forms post natively. That is the default, and it is the right
+default. Now add the two things only JavaScript can do: show the "Add note" button as
+pending while the action runs, and make a deleted note disappear before the server
+confirms. Both need hooks, and hooks live on the other side of the boundary: in a file
+that opens with `"use client"` — a **client island** the page renders. The page stays a
+Server Component; the island is the one file the browser runs.
+
+The rule for what the page may hand an island: props travel as data, so they must be
+serialisable (the `notes` array is), and a **Server Action crosses as a reference** — the
+island receives `create`/`remove` and can pass them straight to `<form action>`, which
+keeps the no-JS path intact. A plain function does not cross: `onClick={() => …}` from a
+Server Component is dropped, and in dev the renderer warns naming the component and the
+prop. [Getting started](/docs/getting-started#server-and-client) has the full list.
+
+The create form becomes an island. `useFormStatus` reads the _nearest enclosing_ form's
+in-flight state, so it is called from a child of the `<form>`, not beside it:
+
+```tsx
+// app/notes/note-form.tsx (new in this step — not in examples/notes)
+"use client";
+
+// The create form as a client island. `action` is the `create` Server Action the page
+// hands in — a reference that crosses the boundary — so with JavaScript off the form
+// still posts natively to the action's endpoint, exactly as before. With JavaScript on,
+// `useFormStatus` reads the enclosing form's in-flight state and disables the button.
+
+import { useFormStatus } from "denext";
+
+export function NoteForm({ action }: { action: (formData: FormData) => Promise<void> }) {
+  return (
+    <form action={action} method="post" class="stack card">
+      <h2>New note</h2>
+      <label>
+        Title
+        <input name="title" required maxLength={80} placeholder="A short title" />
+      </label>
+      <label>
+        Body
+        <textarea name="body" rows={3} placeholder="Write something…" />
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" name="visibility" value="public" />
+        Public (show on the home feed)
+      </label>
+      <SubmitButton />
+    </form>
+  );
+}
+
+/** `useFormStatus` is scoped to the nearest enclosing <form>, so it lives in a child. */
+function SubmitButton() {
+  const { pending } = useFormStatus();
+  return (
+    <button type="submit" disabled={pending}>
+      {pending ? "Adding…" : "Add note"}
+    </button>
+  );
+}
+```
+
+The list becomes the second island. `useOptimistic(notes, reducer)` returns the list to
+render and a function that applies the reducer to it _now_; the value holds until the
+real `notes` prop changes — here, when the action redirects back to `/notes`. Each delete
+form keeps `action={remove}` (the Server Action, so it still renders an endpoint URL and
+posts natively without JavaScript) and gains an `onSubmit` that only exists once the
+island has hydrated. The `Note` type comes from `lib/db.ts` as a **type-only** import,
+which is erased — nothing of the database module ships:
+
+```tsx
+// app/notes/note-list.tsx (new in this step — not in examples/notes)
+"use client";
+
+// The list as a client island. `notes` arrives as plain data and `remove` as a Server
+// Action reference. Each delete form keeps `action={remove}` — the no-JS path is
+// unchanged — and, once hydrated, `onSubmit` hides the note optimistically while the
+// action runs. The page re-renders with the real list when the action redirects.
+
+import { useOptimistic } from "denext";
+import type { Note } from "../../lib/db.ts"; // type-only: nothing of lib/db.ts ships
+
+export function NoteList(
+  { notes, remove }: { notes: Note[]; remove: (formData: FormData) => Promise<void> },
+) {
+  const [shown, hide] = useOptimistic(
+    notes,
+    (current: Note[], id: number) => current.filter((n) => n.id !== id),
+  );
+  if (shown.length === 0) return <p class="empty">No notes yet — add one above.</p>;
+  return (
+    <ul class="feed">
+      {shown.map((n) => (
+        <li key={n.id} class="card">
+          <h2>{n.title}</h2>
+          <p>{n.body}</p>
+          <footer class="row">
+            <span class={n.visibility === "public" ? "tag pub" : "tag priv"}>
+              {n.visibility}
+            </span>
+            <span class="grow" />
+            <a href={`/notes/${n.id}/edit`} class="linkbtn">Edit</a>
+            <form action={remove} method="post" class="inline" onSubmit={() => hide(n.id)}>
+              <input type="hidden" name="id" value={String(n.id)} />
+              <button type="submit" class="linkbtn danger">Delete</button>
+            </form>
+          </footer>
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+The page shrinks to the part that belongs on the server — the session, the query, and
+the wiring. It is still `async`, still imports `lib/db.ts` at value level (a Server
+Component may), and still has no `"use client"`:
+
+```tsx
+// app/notes/page.tsx (replaces the step-4 version — not in examples/notes)
+// The signed-in user's notes. Still a Server Component: it reads the session and the
+// database, then hands two islands their data and the Server Actions they call.
+
+import { currentUser } from "../../lib/auth.ts";
+import { listUserNotes } from "../../lib/db.ts";
+import { create, remove } from "../actions.ts";
+import { NoteForm } from "./note-form.tsx";
+import { NoteList } from "./note-list.tsx";
+
+export default async function MyNotes() {
+  const user = await currentUser();
+  const notes = user ? listUserNotes(user.id) : [];
+  return (
+    <section>
+      <h1>My notes</h1>
+      <NoteForm action={create} />
+      <NoteList notes={notes} remove={remove} />
+    </section>
+  );
+}
+```
+
+Run `deno task dev`, open `/notes`, and the route now ships one small bundle — the two
+islands and the runtime — while the page, the session and SQLite stay on the server.
+The step-7 test still passes unchanged: with JavaScript off the same forms post to the
+same endpoints. Two things to keep in mind as you add islands of your own:
+
+- **Do not put the hooks in `page.tsx`.** A page or layout that calls a hook itself, with
+  no `"use client"` boundary, makes denext bundle and hydrate the _whole route_ — page,
+  layouts and everything they import. That is a compatibility path for apps written that
+  way; here it would try to ship `lib/db.ts`, and the build (and `deno task dev`) refuse
+  it, naming the module and the route. The fix is always this chapter's shape.
+- **Mark server-only modules.** `lib/db.ts` is server-only by nature (`node:sqlite`,
+  `Deno.env`); call `serverOnly()` from `denext` at its top (or `import "server-only"` in a
+  migrated app) so the intent is explicit and the build failure names the marker.
+
+## 9. Build and run
 
 `deno task dev` serves the app with hot reloading at `http://localhost:3000`;
 `deno task build` emits the production output and `deno task start` serves it, with
