@@ -131,12 +131,248 @@ export const POST = defineApi({
         server push — is on the <a href="/docs/typed-api">Typed API</a> page.
       </p>
 
-      <h2>Navigation & middleware</h2>
+      <h2 id="navigation">Navigation</h2>
+      <p>
+        Client navigation is a soft (SPA) transition that reconciles in place; a page with no
+        interactivity still ships no JavaScript and navigates via full requests. Everything below is
+        exported from <code>denext</code>; the hooks are for <code>"use client"</code> components.
+      </p>
+
+      <h3 id="link">
+        <code>Link</code>
+      </h3>
       <Code lang="tsx">
         {`import { Link } from "denext";
-<Link href="/blog/hello">Read</Link>;
 
-// middleware.ts — runs before routing
+<Link href="/blog/hello">Read</Link>
+<Link href={{ pathname: "/search", query: { q: "deno", page: 2 } }}>Search</Link>
+<Link href="/settings" replace scroll={false} prefetch={false}>Settings</Link>`}
+      </Code>
+      <p>
+        An <code>&lt;a&gt;</code> that soft-navigates on a plain click (modifier keys,{" "}
+        <code>target</code>, <code>download</code> and a user <code>onClick</code> that calls{" "}
+        <code>preventDefault()</code> are left to the browser). Props beyond the anchor's own:
+      </p>
+      <ul>
+        <li>
+          <code>href</code> — a string, or an object with <code>pathname</code>, <code>query</code>
+          {" "}
+          (a record; nullish values are dropped) or <code>search</code>, and{" "}
+          <code>hash</code>. With typed routes wired (below) the object form is{" "}
+          <code>{'{ pathname: "/blog/[slug]", params: { slug } }'}</code>{" "}
+          and denext fills the pattern.
+        </li>
+        <li>
+          <code>replace</code> — replace the history entry instead of pushing one.
+        </li>
+        <li>
+          <code>scroll</code> — scroll to the top after navigating (default <code>true</code>).
+        </li>
+        <li>
+          <code>prefetch</code> — <code>null</code>{" "}
+          (default) prefetches when the link scrolls into view; <code>true</code>{" "}
+          also prefetches on hover; <code>false</code> disables prefetching.
+        </li>
+        <li>
+          <code>legacyBehavior</code>, <code>passHref</code>, <code>shallow</code>,{" "}
+          <code>locale</code>{" "}
+          — accepted for Next.js compatibility; the last two are no-ops (shallow routing is not a
+          denext concept; locales are routed by the <code>i18n</code> config).
+        </li>
+      </ul>
+      <p>
+        <code>useLinkStatus()</code> returns <code>{"{ pending }"}</code> for the <em>enclosing</em>
+        {" "}
+        <code>Link</code>{" "}
+        — true from its click until that navigation settles, and always false outside a link — for
+        an inline spinner:
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { Link, useLinkStatus } from "denext";
+
+function Spinner() {
+  const { pending } = useLinkStatus();
+  return pending ? <span aria-label="loading" class="spinner" /> : null;
+}
+
+export function NavItem({ href, children }) {
+  return <Link href={href}>{children} <Spinner /></Link>;
+}`}
+      </Code>
+
+      <h3 id="userouter">
+        <code>useRouter</code> — programmatic navigation
+      </h3>
+      <Code lang="tsx">
+        {`"use client";
+import { useRouter } from "denext";
+
+export function SaveButton({ id }: { id: string }) {
+  const router = useRouter(); // one stable object — safe in effect deps
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        await fetch(\`/api/items/\${id}\`, { method: "PUT" });
+        router.push(\`/items/\${id}\`);        // push a history entry (soft navigation)
+        // router.replace(href, { scroll: false }) — replace it instead
+        // router.refresh()                       — re-fetch and re-render the current route
+        // router.prefetch(href)                  — warm the cache for a later push
+        // router.back() / router.forward()       — history
+      }}
+    >
+      Save
+    </button>
+  );
+}`}
+      </Code>
+      <p>
+        <code>refresh()</code>{" "}
+        drops the prefetch cache and re-renders the current URL without a history entry — the way to
+        show a Server Component's new data after a mutation you made outside a Server Action. (A
+        Server Action that calls <code>revalidatePath</code> / <code>revalidateTag</code>{" "}
+        refreshes the route on its own.)
+      </p>
+
+      <h3 id="reading-the-url">Reading the URL</h3>
+      <Code lang="tsx">
+        {`"use client";
+import { useParams, usePathname, useSearchParams, useSelectedLayoutSegment } from "denext";
+
+export function Crumbs() {
+  const pathname = usePathname();          // "/blog/hello" — re-renders on navigation
+  const params = useParams();              // { slug: "hello" } — [x] is a string, [...x] a string[]
+  const search = useSearchParams();        // a read-only URLSearchParams; search.get("page")
+  const segment = useSelectedLayoutSegment(); // the active child segment below this layout
+  return <nav>{pathname} · {String(params.slug)} · {search.get("page") ?? 1} · {segment}</nav>;
+}`}
+      </Code>
+      <p>
+        <code>useSearchParams()</code> returns a <code>ReadonlyURLSearchParams</code>{" "}
+        — reads and iteration work, the mutators throw (change the URL by navigating). Pass a{" "}
+        <strong>Standard Schema</strong>{" "}
+        (Zod, Valibot, ArkType) instead to get the query parsed and typed; repeated keys arrive as
+        arrays, and an invalid query throws a <code>SearchParamsValidationError</code> (with{" "}
+        <code>fieldErrors</code>) that the nearest <code>error.tsx</code> catches:
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useSearchParams } from "denext";
+import { z } from "zod";
+
+const Query = z.object({ page: z.coerce.number().int().min(1).default(1), tag: z.string().optional() });
+
+export function Pager() {
+  const { page, tag } = useSearchParams(Query); // typed: page is a number
+  return <p>page {page}{tag ? \` · #\${tag}\` : ""}</p>;
+}`}
+      </Code>
+      <p>
+        Keep the schema a module constant so its identity is stable across renders (the hook
+        memoizes on it), and keep it synchronous — a hook cannot await an async refinement.
+      </p>
+
+      <h3 id="active-links">Active links</h3>
+      <Code lang="tsx">
+        {`"use client";
+import { Link, usePathname } from "denext";
+
+export function NavLink({ href, children }: { href: string; children: string }) {
+  const pathname = usePathname();
+  const active = pathname === href || pathname.startsWith(href + "/");
+  return (
+    <Link href={href} aria-current={active ? "page" : undefined} class={active ? "active" : undefined}>
+      {children}
+    </Link>
+  );
+}`}
+      </Code>
+      <p>
+        <code>aria-current="page"</code> is both the accessibility signal and a CSS hook (<code>
+          a[aria-current="page"]
+        </code>). Inside a layout, <code>useSelectedLayoutSegment()</code>{" "}
+        gives the same answer per child segment without string-matching the pathname.
+      </p>
+
+      <h3 id="navigate-after-a-server-action">
+        Navigating after a Server Action
+      </h3>
+      <p>
+        Two options, with different semantics:
+      </p>
+      <Code lang="tsx">
+        {`// 1. redirect() inside the action — works with JavaScript off, ends the action.
+"use server";
+import { redirect, RedirectType } from "denext";
+export async function createPost(formData: FormData) {
+  const id = await db.posts.insert({ title: String(formData.get("title")) });
+  redirect(\`/posts/\${id}\`);                      // a same-origin 303 for a native post; a full navigation for the client runtime
+  // redirect("/posts", RedirectType.replace)    — replace the history entry instead of pushing
+}
+
+// 2. router.push() after the action resolves — a soft navigation, from the component.
+"use client";
+import { idleActionState, useActionState, useEffect, useRouter } from "denext";
+import { createPost } from "./actions.ts";
+export function NewPost() {
+  const router = useRouter();
+  const [state, action] = useActionState(createPost, idleActionState<{ id: string }>());
+  useEffect(() => {
+    if (state.ok) router.push(\`/posts/\${state.data.id}\`);
+  }, [state, router]);
+  return <form action={action}>…</form>;
+}`}
+      </Code>
+      <p>
+        Prefer <code>redirect()</code>{" "}
+        when the destination is decided on the server or the form must work without JavaScript.
+        Prefer <code>router.push</code>{" "}
+        when you want the soft transition (layouts keep their state), or need the action's result
+        first — note that a <code>redirect()</code>{" "}
+        from an action is a full navigation for the client runtime, not a soft one.
+      </p>
+
+      <h3 id="typed-routes">Typed routes</h3>
+      <p>
+        <code>denext build</code> and <code>denext dev</code> write <code>.denext/routes.ts</code>:
+        {" "}
+        <code>Routes</code> (every page path, dynamic segments as <code>{"${string}"}</code>),{" "}
+        <code>ApiRoutes</code>, <code>RouteParams</code> and{" "}
+        <code>ParamsOf&lt;R&gt;</code>. Importing the file once registers the routes with denext,
+        and from then on:
+      </p>
+      <ul>
+        <li>
+          <code>&lt;Link href&gt;</code>, <code>router.push</code>/<code>replace</code> and{" "}
+          <code>redirect()</code> only accept real paths — a typo is a compile error.
+        </li>
+        <li>
+          The object form is checked too:{" "}
+          <code>{'{ pathname: "/blog/[slug]", params: { slug } }'}</code>{" "}
+          requires the params the pattern needs and fills it for you.
+        </li>
+        <li>
+          <code>useParams&lt;"/blog/[slug]"&gt;()</code> is <code>{"{ slug: string }"}</code>.
+        </li>
+      </ul>
+      <Code lang="tsx">
+        {`import "./.denext/routes.ts"; // once, anywhere (e.g. app/layout.tsx) — registers the routes
+import type { ParamsOf, Routes } from "./.denext/routes.ts";
+
+const go = (href: Routes) => router.push(href);              // only real paths compile
+router.push({ pathname: "/blog/[slug]", params: { slug } });  // → /blog/<slug>
+type BlogParams = ParamsOf<"/blog/[slug]">;                    // { slug: string }
+const { slug } = useParams<"/blog/[slug]">();                  // typed`}
+      </Code>
+      <p>
+        Nothing changes at runtime; before the import, <code>href</code> is a plain{" "}
+        <code>string</code> and the object form is the loose Next.js <code>UrlObject</code>.
+      </p>
+
+      <h2>Middleware</h2>
+      <Code lang="tsx">
+        {`// middleware.ts — runs before routing
 import { next, redirectResponse } from "denext/server";
 export default function middleware(req, ctx) {
   if (ctx.url.pathname === "/old") return redirectResponse("/new", 308);
@@ -144,8 +380,8 @@ export default function middleware(req, ctx) {
 }`}
       </Code>
       <p>
-        Client navigation is a soft (SPA) transition that reconciles in place; a page with no
-        interactivity still ships no JavaScript and navigates via full requests.
+        The full hook — matchers, rewrites, headers, auth gating — is on the{" "}
+        <a href="/docs/middleware">Middleware</a> page.
       </p>
     </DocsShell>
   );

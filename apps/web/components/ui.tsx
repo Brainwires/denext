@@ -32,6 +32,8 @@ export const NAV: {
       { slug: "graphql", label: "GraphQL" },
       { slug: "rendering", label: "Rendering strategies" },
       { slug: "server-actions", label: "Server Actions" },
+      { slug: "client-components", label: "Client Components" },
+      { slug: "uploads", label: "File uploads" },
       { slug: "error-handling", label: "Error handling" },
       { slug: "tasks", label: "Scheduled tasks" },
       { slug: "live", label: "Live components" },
@@ -45,6 +47,8 @@ export const NAV: {
       { slug: "middleware", label: "Middleware" },
       { slug: "auth", label: "Auth" },
       { slug: "database", label: "Databases" },
+      { slug: "environment", label: "Environment variables" },
+      { slug: "npm-react-libraries", label: "npm React libraries" },
     ],
   },
   {

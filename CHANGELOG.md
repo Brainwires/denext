@@ -67,6 +67,14 @@ and this project adheres to
 
 ### Added
 
+- New guides: Environment variables (`.env` tiers, the mode each verb loads, `publicEnv()`, a
+  boot-time validation recipe, every `DENEXT_*` variable), npm React libraries in a native app
+  (the compat build path, setup, cost, what is verified), File uploads (action, route handler and
+  streamed; the body caps; progress), Client Components (form hooks, `dynamic`/`lazy`, portals,
+  providers, the SSR-safe utility hooks); a full Navigation section on the Routing page (`Link`,
+  `useRouter`, the URL hooks incl. `useSearchParams(schema)`, typed routes, navigating after an
+  action); five Troubleshooting entries (hydration mismatch, `window is not defined`,
+  `redirect()` in try/catch, a dropped handler in a Server Component, a server-only leak).
 - Getting started gains "Server and client code — what ships to the browser" (what crosses the
   boundary, server-only modules and the build-time leak failure, the isomorphic-route
   compatibility path) and "Editor setup"; the tutorial gains a chapter that crosses the boundary
