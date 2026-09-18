@@ -102,7 +102,13 @@ export async function rollChangelog(version: string, dry: boolean): Promise<Chan
   const updated = isStable(version)
     ? foldPrereleases(text, version, date)
     : text.replace(marker, `${marker}\n\n## [${version}] - ${date}`);
-  if (!dry) await Deno.writeTextFile(path, withLinkRef(updated, version));
+  if (!dry) {
+    await Deno.writeTextFile(path, withLinkRef(updated, version));
+    // A stable fold merges seven sections' bullets into one; their continuation indents do not
+    // always agree with the formatter, and the gate's `fmt --check` would abort the release for
+    // it (cutting 2.5.0 did). Format what was just written, so the gate sees canonical text.
+    if (await run("deno", "fmt", path) !== 0) die("deno fmt CHANGELOG.md failed");
+  }
   const relinked = isStable(version)
     ? await relinkDocsPages(foldedAnchorRewrites(text, version, date), dry)
     : [];
