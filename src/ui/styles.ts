@@ -316,6 +316,9 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 .card .card-blurb { margin: 0 0 8px; color: var(--muted-foreground); font-size: var(--text-sm); }
 /* A jsr: spec is one unbreakable word; let it wrap inside the card instead of being clipped. */
 .card .mono { overflow-wrap: anywhere; }
+/* A path or a command is one unbreakable run (a browser breaks at neither "/" nor "-" inside a
+   word); on a phone it must wrap rather than widen the page. */
+p.mono { overflow-wrap: anywhere; }
 /* The overview's status block: what the project's files say, as a two-column list. The labels
    are short, so the pair fits a phone; a long origin or name wraps in its own column. */
 .status {
