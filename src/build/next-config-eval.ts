@@ -156,6 +156,18 @@ export async function evalNextConfigProgram(
 ): Promise<NextConfigEvalResult> {
   const timeoutMs = timeoutFor(options.timeoutMs);
   const dir = await canonical(options.dir);
+  // `--allow-read=<a>,<b>` is a LIST: Deno splits the value on commas, and the `,,` escape its
+  // docs describe is refused by 2.9 ("Empty path is not allowed"). A project directory with a
+  // comma in its path would therefore be granted as its pieces — never itself, and a piece
+  // may well name a real directory outside the project. Refused up front, with the reason.
+  if (dir.includes(",")) {
+    return {
+      ok: false,
+      reason: `the project directory path contains a comma (${JSON.stringify(dir)}), which ` +
+        "Deno's --allow-read reads as a list separator; move the project to a path without one " +
+        "(a symlink does not help: the real path is what is granted)",
+    };
+  }
   const file = await canonical(resolve(options.dir, options.file));
   const signal = AbortSignal.timeout(timeoutMs);
   // A per-run nonce on the marker. It exists only in the piped program, which the evaluated

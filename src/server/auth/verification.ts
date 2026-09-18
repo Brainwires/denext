@@ -25,6 +25,7 @@
 
 import type { AuthAdapter, VerificationPurpose, VerificationTokenRecord } from "./adapter.ts";
 import { fromBase64Url, hmacSign } from "../session.ts";
+import { asciiDomain } from "./email-key.ts";
 import { constantTimeEqualHex, sha256Hex } from "./hash.ts";
 import { randomToken } from "./oauth.ts";
 import { resolveAuthOptions } from "./options.ts";
@@ -152,29 +153,6 @@ export function normalizeEmailIdentifier(input: unknown): string | null {
     return null;
   }
   return address.indexOf("@") <= MAX_LOCAL_LENGTH ? address : null;
-}
-
-/** Printable ASCII — anything else in a domain is an internationalised name. */
-const PRINTABLE_ASCII = /^[ -~]*$/;
-/** Characters the URL parser would read as more than a host name. */
-const NOT_A_HOST = /[\s/?#:@\\%[\]]/;
-
-/**
- * `address` with an internationalised domain in its ASCII (punycode) form — `a@bücher.de`
- * becomes `a@xn--bcher-kva.de` — so the identifier and the recipient are what SMTP carries.
- * The local part is left as is (an SMTPUTF8 one still fails the address check), and a domain
- * the URL parser would read as more than a host name is refused.
- */
-function asciiDomain(address: string): string | null {
-  const at = address.lastIndexOf("@");
-  const domain = address.slice(at + 1);
-  if (at < 0 || PRINTABLE_ASCII.test(domain)) return address;
-  if (NOT_A_HOST.test(domain)) return null;
-  try {
-    return address.slice(0, at + 1) + new URL(`http://${domain}`).hostname;
-  } catch {
-    return null;
-  }
 }
 
 /**

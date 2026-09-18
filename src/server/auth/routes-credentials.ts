@@ -26,6 +26,7 @@
  */
 
 import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts";
+import { emailKey } from "./email-key.ts";
 import { emitAuthEvent } from "./events.ts";
 import {
   clientIpBucket,
@@ -167,7 +168,9 @@ async function storedCredential(
   email: string,
 ): Promise<{ user: AdapterUser; hash: string } | undefined> {
   const adapter = ctx.options.adapter;
-  const address = email.trim().toLowerCase();
+  // The same key the adapters and the emailed flows use — so `a@bücher.de` finds the record
+  // a magic link created as `a@xn--bcher-kva.de`, through a custom adapter too.
+  const address = emailKey(email);
   if (address === "" || !adapter?.getCredential) return undefined;
   const user = await adapter.getUserByEmail(address);
   const hash = user ? await adapter.getCredential(user.id) : undefined;

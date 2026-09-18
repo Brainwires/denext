@@ -275,7 +275,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     },
     deliver(ev) {
       if (ev.kind === "revoke") return revokeAll(ev);
-      pendingEvents.set(`${ev.channelId} ${ev.key}`, ev); // latest publish wins in the window
+      pendingEvents.set(`${ev.channelId}\0${ev.key}`, ev); // latest publish wins in the window
       if (flushTimer === null) flushTimer = setTimeout(flush, COALESCE_MS);
     },
     replayPending(conn) {

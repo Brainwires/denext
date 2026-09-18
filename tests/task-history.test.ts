@@ -95,10 +95,105 @@ Deno.test("a quiet task's history is never evicted by a noisy one", async () => 
     assertEquals(daily.successes, 1);
     // The cap is enforced by an amortised prune, not on every insert, so it is deliberately not
     // a hard ceiling between prunes: 250 inserts prune once at 200 (down to 10) and the rest
-    // accumulate. What matters is that pruning happened at all — and that it touched only
-    // the task whose run triggered it.
+    // accumulate. What matters is that pruning happened at all — and that the quiet task,
+    // under its cap, kept every row.
     const noisy = history.tasks.find((t) => t.task === "noisy")!;
     assert(noisy.successes < 250, `the noisy task was pruned, got ${noisy.successes}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Seed a database the way an earlier process would have left it: `n` rows for `task`. */
+function seed(path: string, task: string, n: number): void {
+  const store = taskHistoryRecorder({ path, maxRuns: 100_000 });
+  const t0 = Date.now() - n * 1000;
+  for (let i = 0; i < n; i++) store.record(run({ name: task, startedAt: t0 + i * 1000 }));
+  store.close();
+}
+
+Deno.test("a fresh process prunes on its first insert, not after 200 of them", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const path = join(dir, "tasks.db");
+  try {
+    // What system cron leaves behind: `denext task backup` once a night, one row per process,
+    // and no process ever lived long enough to prune. The file is far over the cap.
+    seed(path, "backup", 40);
+    // The next one-shot process writes exactly one row — and must prune what it found.
+    const store = taskHistoryRecorder({ path, maxRuns: 10 });
+    store.record(run({ name: "backup" }));
+    store.close();
+
+    const history = readTaskHistory({ path });
+    assert(history.available, history.reason ?? "");
+    const backup = history.tasks.find((t) => t.task === "backup")!;
+    assertEquals(backup.successes, 10, "capped to maxRuns on the first insert");
+    // And the newest rows are the ones kept: the run just recorded is still the last one.
+    assert(backup.lastRunAt >= Date.now() - 5000, "the newest run survived the prune");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the per-task cap applies to every task, not only the one that triggered the prune", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const path = join(dir, "tasks.db");
+  try {
+    seed(path, "backup", 30);
+    seed(path, "digest", 25);
+    // A run of a THIRD task triggers the prune; the other two are over the cap and must both
+    // come down to it, since neither will ever be the trigger in a one-shot process.
+    const store = taskHistoryRecorder({ path, maxRuns: 10 });
+    store.record(run({ name: "cleanup" }));
+    store.close();
+
+    const history = readTaskHistory({ path });
+    assert(history.available, history.reason ?? "");
+    const counts = Object.fromEntries(history.tasks.map((t) => [t.task, t.successes]));
+    assertEquals(counts, { cleanup: 1, backup: 10, digest: 10 });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the database is created owner-only, and stamped with a schema version", {
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const path = join(dir, "tasks.db");
+  try {
+    const store = taskHistoryRecorder({ path });
+    store.record(run({ name: "cleanup", detail: "the output is the task's, not every user's" }));
+    // The main file and the WAL siblings SQLite derives from its mode: none readable by others.
+    // Checked while the writer is open — closing it checkpoints and removes the siblings.
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const mode = (await Deno.stat(path + suffix)).mode! & 0o777;
+      assertEquals(mode.toString(8), "600", `${suffix || "db"} is owner-only`);
+    }
+    store.close();
+    const { DatabaseSync } = await import("node:sqlite");
+    const raw = new DatabaseSync(path, { readOnly: true });
+    try {
+      const row = raw.prepare("PRAGMA user_version").get() as { user_version: number };
+      assertEquals(Number(row.user_version), 1);
+    } finally {
+      raw.close();
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("reading a history that never existed creates nothing, not even the directory", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  try {
+    // The UI renders the Cron page for a project that never recorded a run. That read must not
+    // leave a `.denext/` behind in the project.
+    const outDir = join(dir, ".denext");
+    const history = readTaskHistory({ path: join(outDir, "tasks.db") });
+    assertEquals(history.available, false);
+    assertEquals(history.reason, "no history recorded yet");
+    assertEquals(await present(outDir), false, "a reader creates no directory");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -160,9 +255,10 @@ Deno.test("an enabled store with nothing recorded is distinguishable from a miss
   try {
     // Opening the writer creates the file and the schema without recording anything.
     const store = taskHistoryRecorder({ path });
-    store.record(run({ name: "cleanup", startedAt: Date.now() - 40 * 86_400_000 }));
+    // Outside the 7-day window, inside the 14-day retention (which now runs on the first insert).
+    store.record(run({ name: "cleanup", startedAt: Date.now() - 10 * 86_400_000 }));
     store.close();
-    // The row is far outside the 7-day window: readable, but nothing to show.
+    // The row is outside the window: readable, but nothing to show.
     const history = readTaskHistory({ path });
     assertEquals(history.available, true, "the database is readable");
     assertEquals(history.tasks, [], "and simply has nothing inside the window");

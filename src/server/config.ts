@@ -354,6 +354,12 @@ export interface TasksConfig {
    *
    * Off unless set: denext writes no run history unasked. Once on, recording can never fail or
    * delay a run — a read-only filesystem or a locked file degrades to no history instead.
+   *
+   * Each row keeps the run's output in plain text: the tail of a string the handler returned
+   * (up to 2 KB) and, for a failure, the error's message and stack. A task that returns a token,
+   * a DSN or another secret should return nothing instead. The file is `tasks.db` (with its
+   * `-wal`/`-shm` siblings) inside the build output directory, `.denext/` by default, created
+   * owner-only (mode 0600) where the platform has file modes.
    */
   history?: boolean;
   /**

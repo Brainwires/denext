@@ -213,6 +213,68 @@ Deno.test("sqliteAuthAdapter: a unique index keeps one account per email address
   await adapter.close?.();
 });
 
+Deno.test("sqliteAuthAdapter: an internationalised domain is one address in either spelling", async () => {
+  const adapter = sqliteAuthAdapter({ path: ":memory:" });
+  // Registered the way a person types it (a credentials sign-up) …
+  const ada = await adapter.createUser({ email: "Ada@Bücher.de" });
+  // … found the way SMTP — and so the magic-link / reset flows — spell it, and vice versa.
+  assertEquals((await adapter.getUserByEmail("ada@xn--bcher-kva.de"))?.id, ada.id);
+  assertEquals((await adapter.getUserByEmail(" ada@bücher.de "))?.id, ada.id);
+  assertEquals((await adapter.getUser(ada.id))?.email, "Ada@Bücher.de", "stored as given");
+  assertThrows(
+    () => void adapter.createUser({ email: "ada@xn--bcher-kva.de" }),
+    Error,
+    undefined,
+    "the punycode spelling is the same account, not a second one",
+  );
+  const punycoded = await adapter.createUser({ email: "grace@xn--mnchen-3ya.de" });
+  assertEquals((await adapter.getUserByEmail("grace@münchen.de"))?.id, punycoded.id);
+  await adapter.close?.();
+});
+
+Deno.test("sqliteAuthAdapter: a row an older adapter keyed under a Unicode domain is re-keyed on open", async () => {
+  const path = tempDbPath();
+  const raw = new DatabaseSync(path);
+  // What 2.5.0-rc wrote: `email_lc` is only trimmed + lower-cased, so the key holds `ü`.
+  raw.exec("CREATE TABLE auth_users (id TEXT PRIMARY KEY, email TEXT, email_lc TEXT)");
+  raw.prepare("INSERT INTO auth_users VALUES (?, ?, ?)").run(
+    "legacy",
+    "Ada@Bücher.de",
+    "ada@bücher.de",
+  );
+  raw.prepare("INSERT INTO auth_users VALUES (?, ?, ?)").run("plain", "bob@x.test", "bob@x.test");
+  raw.close();
+
+  const adapter = sqliteAuthAdapter({ path });
+  assertEquals(
+    (await adapter.getUserByEmail("ada@bücher.de"))?.id,
+    "legacy",
+    "still found as typed",
+  );
+  assertEquals(
+    (await adapter.getUserByEmail("ada@xn--bcher-kva.de"))?.id,
+    "legacy",
+    "and as mailed",
+  );
+  assertEquals(
+    (await adapter.getUserByEmail("bob@x.test"))?.id,
+    "plain",
+    "an ASCII key is untouched",
+  );
+  await adapter.close?.();
+
+  const check = new DatabaseSync(path);
+  try {
+    const keys = check.prepare("SELECT id, email_lc FROM auth_users ORDER BY id").all();
+    assertEquals(keys, [
+      { id: "legacy", email_lc: "ada@xn--bcher-kva.de" },
+      { id: "plain", email_lc: "bob@x.test" },
+    ]);
+  } finally {
+    check.close();
+  }
+});
+
 // ---- clock, sweep, races -----------------------------------------------------
 
 Deno.test("sqliteAuthAdapter: `now` drives expiry, and the sweep reclaims spent tokens", async () => {
@@ -340,7 +402,7 @@ Deno.test("sqliteAuthAdapter: a closed adapter refuses to reopen the file", asyn
   await adapter.close?.(); // still idempotent
 });
 
-Deno.test("sqliteAuthAdapter: the handle waits out a second writer (busy_timeout) instead of failing at once", async () => {
+Deno.test("sqliteAuthAdapter: opening the handle issues a PRAGMA busy_timeout (checked as issued, not timed)", async () => {
   const { open, sql } = recordingHandle();
   const adapter = sqliteAuthAdapter({ path: "/virtual/auth.db", openDb: open });
   await adapter.createUser({ email: "busy@x.test" });

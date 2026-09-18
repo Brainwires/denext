@@ -43,6 +43,7 @@ import type {
   MfaRecord,
   VerificationTokenRecord,
 } from "./adapter.ts";
+import { emailKey } from "./email-key.ts";
 import { sqliteSessionStore } from "./sqlite-session-store.ts";
 
 /** Options for {@linkcode sqliteAuthAdapter}. */
@@ -266,6 +267,38 @@ function initSchema(db: SqliteDb): void {
     db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
   } catch { /* a handle that refuses pragmas keeps its defaults */ }
   for (const spec of SCHEMA) reconcileTable(db, spec);
+  rekeyInternationalisedEmails(db);
+}
+
+/**
+ * Re-key `email_lc` for rows an older adapter wrote under a Unicode domain.
+ *
+ * Before {@link emailKey} punycoded the domain, `a@bücher.de` was keyed as itself while the
+ * emailed flows already looked it up as `a@xn--bcher-kva.de` — so without this, upgrading
+ * would make every such account unfindable by address. SQL cannot punycode, so the handful
+ * of rows whose key holds a non-ASCII character are re-keyed here; the `backfill` above
+ * runs first, so a column that was just added is covered too. A row whose new key is
+ * already taken (the duplicate the old key hid) is left as it was and reported once, the
+ * way an uncreatable index is.
+ */
+function rekeyInternationalisedEmails(db: SqliteDb): void {
+  const rows = db.query<{ id: string; email: string }>(
+    "SELECT id, email FROM auth_users WHERE email IS NOT NULL AND email_lc GLOB '*[^ -~]*'",
+  );
+  for (const row of rows) {
+    try {
+      db.exec("UPDATE auth_users SET email_lc = ? WHERE id = ?", [emailKey(row.email), row.id]);
+    } catch (error) {
+      const key = `rekey:${row.id}`;
+      if (reportedIndexFailures.has(key)) continue;
+      reportedIndexFailures.add(key);
+      console.error(
+        `sqliteAuthAdapter: could not re-key the email of user ${row.id} to its ASCII ` +
+          `(punycode) form (${error instanceof Error ? error.message : String(error)}). ` +
+          "Another row already holds that address — merge or delete one of them.",
+      );
+    }
+  }
 }
 
 // ---- rows ------------------------------------------------------------------
@@ -438,11 +471,6 @@ function one(
   params: SqlValue[],
 ): Record<string, SqlValue> | undefined {
   return db.query<Record<string, SqlValue>>(sql, params)[0];
-}
-
-/** Case-insensitive, whitespace-trimmed email key — what `auth_users.email_lc` holds. */
-function emailKey(email: string): string {
-  return email.trim().toLowerCase();
 }
 
 /** Everything one adapter instance owns: the lazy handle, the clock and the sweep. */

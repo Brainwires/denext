@@ -306,7 +306,7 @@ async function publish<T>(
   if (new TextEncoder().encode(encoded).byteLength > payloadCap) {
     throw new RangeError(`channel.publish: payload exceeds ${payloadCap} bytes`);
   }
-  const seqKey = `${ch.id} ${key}`;
+  const seqKey = `${ch.id}\0${key}`;
   const seq = (seqs.get(seqKey) ?? 0) + 1;
   // Bounded: a hot key keeps its counter (re-inserted at the tail); the oldest cold key goes.
   seqs.delete(seqKey);

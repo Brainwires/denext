@@ -20,7 +20,7 @@ Deno.test("sanitizeUrlAttr defeats whitespace/control-char scheme obfuscation", 
   assertEquals(sanitizeUrlAttr("a", "href", "  javascript:alert(1)"), null);
   assertEquals(sanitizeUrlAttr("a", "href", "java\tscript:alert(1)"), null);
   assertEquals(sanitizeUrlAttr("a", "href", "java\nscript:alert(1)"), null);
-  assertEquals(sanitizeUrlAttr("a", "href", "javascript:alert(1)"), null);
+  assertEquals(sanitizeUrlAttr("a", "href", "\x01javascript:alert(1)"), null);
   assertEquals(sanitizeUrlAttr("a", "href", "JaVaScRiPt:alert(1)"), null);
 });
 

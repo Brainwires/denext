@@ -13,7 +13,7 @@
 // The handle is opened lazily on the first recorded run: enabling happens in the UI process,
 // which must never create files in `.denext/` on the app's behalf.
 
-import { statSync } from "node:fs";
+import { chmodSync, statSync } from "node:fs";
 import { openSqliteFile, type SqliteDb } from "./sqlite-cache.ts";
 import type { TaskRunRecord } from "./tasks.ts";
 
@@ -46,6 +46,12 @@ const PRUNE_EVERY = 200;
 
 /** Minimum ms between prunes, however many rows were written. */
 const PRUNE_INTERVAL_MS = 600_000;
+
+/**
+ * The schema version stamped into `PRAGMA user_version` when the file is created, so a later
+ * shape has a number to migrate from. A file at 0 predates the stamp and has this same schema.
+ */
+const SCHEMA_VERSION = 1;
 
 /** Options for {@linkcode taskHistoryRecorder} and {@linkcode readTaskHistory}. */
 export interface TaskHistoryOptions {
@@ -127,6 +133,25 @@ function initSchema(d: SqliteDb, busyMs: number): void {
   );
   d.exec("CREATE INDEX IF NOT EXISTS runs_task_started ON runs (task, started_at DESC)");
   d.exec("CREATE INDEX IF NOT EXISTS runs_started ON runs (started_at DESC)");
+  // Stamp only an unversioned file: a future version must never be wound back to 1 by an older
+  // writer, and a 0 is a file from before the stamp existed, whose schema is this one.
+  try {
+    const [row] = d.query<{ user_version: number }>("PRAGMA user_version");
+    if (Number(row?.user_version ?? 0) === 0) d.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+  } catch { /* keep going: the version is bookkeeping, not the schema */ }
+}
+
+/**
+ * Make the file readable by its owner only, best-effort. The rows hold each run's returned
+ * string and error text, which are the task's own output and not for every local user; SQLite
+ * copies the main file's mode onto the `-wal`/`-shm` siblings it creates later, which is why
+ * this runs before the first write. Windows has no POSIX mode to set; `:memory:` has no file.
+ */
+function restrictFileMode(path: string): void {
+  if (path === ":memory:" || Deno.build.os === "windows") return;
+  try {
+    chmodSync(path, 0o600);
+  } catch { /* a filesystem that refuses is still a filesystem that opened */ }
 }
 
 /**
@@ -149,12 +174,14 @@ export function taskHistoryRecorder(
   let failures = 0;
   let sincePrune = 0;
   let lastPrune = 0;
+  let prunedOnce = false;
 
   const handle = (): SqliteDb | null => {
     if (disabled) return null;
     if (db) return db;
     try {
       const opened = open(options.path);
+      restrictFileMode(options.path);
       initSchema(opened, BUSY_WRITE_MS);
       db = opened;
       return db;
@@ -166,15 +193,17 @@ export function taskHistoryRecorder(
     }
   };
 
-  const prune = (d: SqliteDb, task: string): void => {
+  const prune = (d: SqliteDb): void => {
     const cutoff = Date.now() - RETAIN_DAYS * 86_400_000;
     d.exec("DELETE FROM runs WHERE started_at < ?", [cutoff]);
     // Per task, not global: a global cap would let a minute-cron task evict a daily task's whole
-    // history and silently corrupt the quiet task's counts.
+    // history and silently corrupt the quiet task's counts. And EVERY task, not the one whose
+    // run triggered this: a task that only ever runs from `denext task <name>` gets one row per
+    // process and would otherwise never be the trigger. One windowed DELETE (SQLite ≥ 3.25).
     d.exec(
-      "DELETE FROM runs WHERE task = ? AND id NOT IN " +
-        "(SELECT id FROM runs WHERE task = ? ORDER BY id DESC LIMIT ?)",
-      [task, task, maxRuns],
+      "DELETE FROM runs WHERE id IN (SELECT id FROM (SELECT id, row_number() OVER " +
+        "(PARTITION BY task ORDER BY started_at DESC, id DESC) AS rn FROM runs) WHERE rn > ?)",
+      [maxRuns],
     );
   };
 
@@ -197,10 +226,17 @@ export function taskHistoryRecorder(
         failures = 0;
         sincePrune += 1;
         const now = Date.now();
-        if (sincePrune >= PRUNE_EVERY && now - lastPrune >= PRUNE_INTERVAL_MS) {
+        // The first insert of a process always prunes, outside the amortised cadence: a one-shot
+        // `denext task <name>` from system cron writes ONE row per process and would never reach
+        // 200 inserts, so retention would never run for it and the file would grow without
+        // bound. The cadence below is untouched by it — it starts counting from the same zero.
+        if (!prunedOnce) {
+          prunedOnce = true;
+          prune(d);
+        } else if (sincePrune >= PRUNE_EVERY && now - lastPrune >= PRUNE_INTERVAL_MS) {
           sincePrune = 0;
           lastPrune = now;
-          prune(d, run.name);
+          prune(d);
         }
       } catch {
         // A busy database, a full disk, a schema that went missing. Drop the row; a run is never

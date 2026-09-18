@@ -105,14 +105,16 @@ const encodePprExtras = (page: CachedPage): string | null => {
  * same handle is how two database layers quietly drift apart.
  *
  * @param path The database file, or `:memory:`.
- * @param options `readOnly`: open a reader that cannot write (what another process uses).
+ * @param options `readOnly`: open a reader that cannot write (what another process uses). A
+ *   reader creates nothing — not the file, and not its directory either: a missing parent
+ *   throws the same "unable to open database file" a missing file does.
  * @returns The handle.
  */
 export function openSqliteFile(
   path: string,
   options: { readonly readOnly?: boolean } = {},
 ): SqliteDb {
-  if (path !== ":memory:") {
+  if (path !== ":memory:" && !options.readOnly) {
     try {
       mkdirSync(dirname(path), { recursive: true });
     } catch {
