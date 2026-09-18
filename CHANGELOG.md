@@ -67,6 +67,12 @@ and this project adheres to
 
 ### Added
 
+- **`denext ui` — the wizard is three pages.** `/setup` readies a project (detect, the Deno
+  runtime, `deno.json`, dependencies, environment variables, doctor, scaffold; a write answers
+  `303` to `/setup#step-<id>`), `/dev` starts and stops the dev server and shows its console, and
+  `/tasks` runs the scripts `deno.json` declares. `/wizard` and `/api/wizard` are gone; the twins
+  are `/api/setup`, `/api/dev` and `/api/tasks`. Cron's task table is headed "Scheduled tasks" —
+  those are `defineTask` modules, not `deno.json` scripts.
 - Four more guides — Production checklist, Route handler recipes (webhooks, SSE past the request
   deadline, a verified WebSocket upgrade in a route handler, CORS by hand), Multi-instance
   deployments (every per-node store and its interface) and Deployment targets — plus a verified
@@ -183,8 +189,8 @@ and this project adheres to
 - **`denext ui` — navigation without a page rebuild.** With JavaScript on, a same-origin link
   (sidebar, tabs, a filter, the cron builder's `GET`) fetches the panel as a fragment, swaps it in
   place and pushes the address, so Back and Forward work; a `?q=` search or filter box swaps its
-  results in place and keeps the caret; the dev server's console streams into the wizard's Finish
-  step and survives a reload, a second tab or a panel swap; a running dev server offers **Stop**,
+  results in place and keeps the caret; the dev server's console streams into the Dev page and
+  survives a reload, a second tab or a panel swap; a running dev server offers **Stop**,
   which works after `denext ui` itself has been restarted. Leaving a view with unsaved edits asks
   — Save, Discard or Cancel — through a native `<dialog>` `ui.js` builds at runtime. Everything
   still works with JavaScript off.
@@ -353,10 +359,10 @@ and this project adheres to
   mutation still has to come from the UI's own page and pass the CSRF gate. Present since the UI
   landed in 2.5.0-rc.1: curl sends no fetch-metadata header and the end-to-end suite drives the
   server with `fetch`, so every test passed while no browser could open the UI.
-- `denext ui`: starting `denext dev` from the wizard looked like it did nothing — the op
+- `denext ui`: starting `denext dev` from the UI looked like it did nothing — the op
   redirected, which rebuilt the document and took the output sink and the single `EventSource`
   with it. The dev ops answer in place and the console lines are kept per project.
-- `denext ui`: the wizard's Dependencies step says when there is nothing to install (no imports
+- `denext ui`: the Setup page's Dependencies step says when there is nothing to install (no imports
   declared, so Deno writes no `deno.lock`) instead of staying a to-do forever; the plugin cards put
   their pills on one line and the blurb under them; tab labels read `Public env`, `API batch`,
   `Compatibility mode`; a config view's active sidebar entry is right on reload and with scripting
