@@ -9847,6 +9847,18 @@
           "denextOnly": true
         },
         {
+          "name": "TasksConfig",
+          "slug": "TasksConfig",
+          "kind": "interface",
+          "signature": "interface TasksConfig",
+          "doc": "Scheduled/background task behaviour (DenextConfig.tasks).",
+          "docFull": "Scheduled/background task behaviour ({@link DenextConfig.tasks}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ThemeColorDescriptor",
           "slug": "ThemeColorDescriptor",
           "kind": "interface",
@@ -14346,6 +14358,23 @@
           "denextOnly": true
         },
         {
+          "name": "plainText",
+          "slug": "plainText",
+          "kind": "function",
+          "signature": "plainText(text: string): string",
+          "doc": "text with every control character removed — C0 (\\x00–\\x1f), DEL and C1 (\\x7f–\\x9f). A verb name or summary is project content on its way to the terminal: ESC opens every ANSI/OSC sequence (cursor moves, line clears, title changes, hyperlinks), and removing the control bytes disarms them all while keeping the words.",
+          "docFull": "`text` with every control character removed — C0 (`\\x00`–`\\x1f`), DEL and C1\n(`\\x7f`–`\\x9f`). A verb name or summary is project content on its way to the terminal:\nESC opens every ANSI/OSC sequence (cursor moves, line clears, title changes, hyperlinks),\nand removing the control bytes disarms them all while keeping the words.",
+          "params": [
+            {
+              "name": "text",
+              "doc": "Text a project wrote."
+            }
+          ],
+          "returns": "The same text, printable characters only.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "PositionalSpec",
           "slug": "PositionalSpec",
           "kind": "interface",
@@ -14376,6 +14405,18 @@
           "signature": "suggest(input: string, candidates: typeOperator): string | undefined",
           "doc": "The closest name in candidates to input within a small edit-distance threshold (scaled to the input length), or undefined when nothing is close — powering \"did you mean\" hints for both unknown verbs and unknown flags.",
           "docFull": "The closest name in `candidates` to `input` within a small edit-distance\nthreshold (scaled to the input length), or `undefined` when nothing is close —\npowering \"did you mean\" hints for both unknown verbs and unknown flags.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "VERB_NAME",
+          "slug": "VERB_NAME",
+          "kind": "variable",
+          "signature": "VERB_NAME: RegExp",
+          "doc": "A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar denext.config.ts's commands: validation enforces (src/server/config-validate.ts), and what the help cache accepts back from disk.",
+          "docFull": "A project CLI verb name: lowercase, digits and dashes, starting with a letter. The grammar\n`denext.config.ts`'s `commands:` validation enforces (`src/server/config-validate.ts`), and\nwhat the help cache accepts back from disk.",
           "params": [],
           "returns": "",
           "examples": [],

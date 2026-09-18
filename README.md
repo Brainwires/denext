@@ -147,8 +147,10 @@ rendered at [denext.dev/docs/features](https://denext.dev/docs/features).
 What a Next app normally installs is first-party here: **auth** — OAuth/OIDC, passwords, magic
 links and one-time codes, email verification and reset, TOTP two-factor
 ([Auth](https://denext.dev/docs/auth)) — and **`denext ui`**, a loopback GUI over the project
-with a comment-preserving config editor, per-plugin option forms and a `docker-compose.yml`
-editor ([Project UI](https://denext.dev/docs/ui)).
+with a comment-preserving config editor, a Cron page (every schedule, when it next fires, and the
+run history when you turn it on), per-plugin option forms, a `docker-compose.yml` editor and a
+Desktop panel that sets up code signing from the identities your keychain already holds
+([Project UI](https://denext.dev/docs/ui)).
 
 ## Desktop & mobile
 
@@ -216,13 +218,17 @@ denext JSX toolchain and import map:
     "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
   },
   "imports": {
-    "denext": "jsr:@denext/denext",
-    "denext/jsx-runtime": "jsr:@denext/denext/jsx-runtime",
-    "denext/server": "jsr:@denext/denext/server",
-    "denext/client": "jsr:@denext/denext/client"
+    "denext": "jsr:@denext/denext@^2.5.0",
+    "denext/jsx-runtime": "jsr:@denext/denext@^2.5.0/jsx-runtime",
+    "denext/server": "jsr:@denext/denext@^2.5.0/server",
+    "denext/client": "jsr:@denext/denext@^2.5.0/client"
   }
 }
 ```
+
+The version on the `denext` import is the project's **pin** — the `denext` binary defers to it,
+and `denext create` writes one. An unversioned `jsr:@denext/denext` is a pin to the latest
+published version, which is reproducible only until the next release.
 
 Then run the CLI — with `denext` installed (see [The `denext` command](#the-denext-command)):
 
@@ -242,7 +248,7 @@ See [`examples/hello`](./examples/hello) for a complete working app.
 
 Get a real `denext` command instead of typing `deno run -A .../cli.ts` every time:
 
-**1. Install the released binary** (no Deno needed to _install_ it):
+**1. Install the released binary** (macOS and Linux; no Deno needed to _install_ it):
 
 ```
 curl -fsSL https://denext.dev/install.sh | sh
@@ -250,10 +256,20 @@ denext --version        # reports "(binary)" so you know which one ran
 ```
 
 It lands in `~/.denext/bin/denext`; add that to your `PATH` (the script tells you how). Pick a
-version with `DENEXT_VERSION=v2.5.0`, or a location with `DENEXT_INSTALL=/opt/denext`. The
-installer verifies the published checksum and, on macOS, strips the quarantine attribute.
+version with `DENEXT_VERSION=v2.5.0`, or a location with `DENEXT_INSTALL=/opt/denext`. With no
+`DENEXT_VERSION` it resolves the **latest stable** release: a release candidate is a GitHub
+prerelease and is never "latest", so `curl | sh` needs a published non-prerelease release to
+exist. The installer verifies the archive against the release's `SHA256SUMS` (or the per-archive
+`<archive>.sha256`) and refuses to install without a checksum — `DENEXT_INSECURE=1` is the one
+loud override; a mismatch is never installed. On macOS it strips the quarantine attribute. Gatekeeper
+is not part of this path by design: a `curl` download never carries the attribute, and a bare
+executable cannot be stapled, so the CLI binary runs whether or not the release was signed — it
+_is_ code-signed and notarised when the release was built with the Apple Developer ID secrets,
+and ships unsigned otherwise. **Windows:** there is no installer script; download
+`denext-x86_64-pc-windows-msvc.zip` from the [release page](https://github.com/Brainwires/denext/releases)
+or use route 2.
 
-**2. Install it globally with Deno** (a thin launcher that uses your installed Deno):
+**2. Install it globally with Deno** (a thin launcher that uses your installed Deno; every platform):
 
 ```
 deno install -A -g -n denext jsr:@denext/denext/cli
@@ -269,9 +285,14 @@ deno task compile        # produces ./denext  (deno compile -A --output denext c
 > Note: the binary is a **CLI, not a second copy of the framework**. Inside a project, every verb
 > that loads your app (`dev`, `build`, `export`, `start`, `task`, `doctor`, …) re-execs the denext
 > that project pins, so `denext build` produces exactly what `deno task build` would — and those
-> verbs therefore need a reachable `deno` (via `DENO_BIN`, `~/.deno/bin/deno`, or `PATH`). A
-> directory that pins no denext is refused with a message naming the fix. `ui`, `create`, `init`,
-> `commands`, `completions` and `--version` run inside the binary and need nothing else.
+> verbs therefore need a reachable `deno` (via `DENO_BIN`, `~/.deno/bin/deno`, or `PATH`). The
+> pin is read the way `deno run` would resolve it — `deno.json` or `deno.jsonc`, a separate
+> `importMap` file, a workspace member's root config — and an unversioned `jsr:@denext/denext`
+> means "latest". A directory that pins no denext is refused with a message naming the fix.
+> `create`, `init`, `commands`, `completions` and `--version` run inside the binary and need
+> nothing else; `ui` starts without Deno too, but its panels spawn `deno` for every
+> project-touching operation (discovering verbs, the doctor, `deno task`, `deno add`, starting
+> `denext dev`), so those need one. Shutdown signals are forwarded to the re-exec'd child.
 > Browser bundling shells out to `deno bundle`; see
 > [Known limitations](./KNOWN-LIMITATIONS.md).
 

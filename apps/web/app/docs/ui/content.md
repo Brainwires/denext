@@ -1,7 +1,7 @@
 ---
 title: Project UI
 slug: ui
-lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a setup wizard, and your project's own CLI verbs.
+lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a setup wizard, and your project's own CLI verbs.
 ---
 
 `denext ui` is a browser GUI for the project you are standing in — the `vue ui` idea,
@@ -48,14 +48,14 @@ The UI writes your project's files, so it is defended like a public server even 
 it only ever listens on `127.0.0.1`. Six layers, all in
 [`src/ui/security.ts`](https://github.com/Brainwires/denext/blob/main/src/ui/security.ts):
 
-| Layer                   | What it enforces                                                                                                   |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Bind                    | `127.0.0.1` only. There is no `--host` — see the note below                                                        |
-| Host + `Sec-Fetch-Site` | The `Host` the browser sent must name a loopback interface, and a present `Sec-Fetch-Site` must read `same-origin` |
-| Session token           | A per-launch 256-bit token, handed over once in `?t=` and exchanged for an `HttpOnly; SameSite=Strict` cookie      |
-| CSRF                    | Every mutation needs a same-origin `Origin`/`Referer` plus a token derived as `HMAC-SHA256(sessionToken, "csrf")`  |
-| Containment             | Every project path goes through `uiSafeJoin` / `uiSafeUnder` — see below                                           |
-| Headers                 | A strict CSP plus COOP, CORP, a `same-origin` referrer policy, `no-store`, `nosniff` on every response             |
+| Layer                   | What it enforces                                                                                                                                                                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bind                    | `127.0.0.1` only, and the printed URL says `127.0.0.1` too — never `localhost`. There is no `--host` — see the note below                                                                                                                          |
+| Host + `Sec-Fetch-Site` | The `Host` the browser sent must name a loopback interface. A present `Sec-Fetch-Site` must read `same-origin`, except that `none` — a navigation the user started themselves, which no other site's page can produce — is accepted for a **read** |
+| Session token           | A per-launch 256-bit token, handed over once in `?t=` and exchanged for an `HttpOnly; SameSite=Strict` cookie holding a **second, freshly minted** secret — the token itself is never accepted as a cookie                                         |
+| CSRF                    | Every mutation needs a same-origin `Origin`/`Referer` plus a token derived as `HMAC-SHA256(cookieSecret, "csrf")`                                                                                                                                  |
+| Containment             | Every project path goes through `uiSafeJoin` / `uiSafeUnder` — see below                                                                                                                                                                           |
+| Headers                 | A strict CSP plus COOP, CORP, a `same-origin` referrer policy, `no-store`, `nosniff` on every response                                                                                                                                             |
 
 **Why no `--host`.** A project GUI that writes files is a remote-code-execution surface
 by construction: it edits `denext.config.ts`, scaffolds modules, and spawns `deno`. There
@@ -64,16 +64,22 @@ bind address is not configurable. Reach it from another machine with an SSH tunn
 (`ssh -L 5177:127.0.0.1:5177 host`), which keeps authentication where it belongs.
 
 **The token handshake.** The URL the verb prints ends in `?t=<token>`. The first request
-carrying it gets a `302` to the same path with the query stripped and the token parked in
-an `HttpOnly; SameSite=Strict; Path=/` cookie — so the secret never survives in the
-address bar, in `document.referrer`, in history, or in a link you paste to someone. The
-exchange is **single-use**: once it has run, a `?t=` is honoured only for a caller that
+carrying it gets a `302` to `/` — the overview, always, whatever path the link carried, so
+nothing from the request reaches the `Location` header — with a **fresh** 256-bit secret
+parked in an `HttpOnly; SameSite=Strict; Path=/` cookie. The cookie never holds the launch
+token: a cookie set by a loopback host is sent to every port of that host, so whatever the
+browser sends to the project's own `denext dev` (or anything else listening on the machine)
+must not be the credential the launcher printed. Serving the UI at `127.0.0.1` rather than
+`localhost` keeps even that second secret off the name every other local server shares.
+The launch token itself never survives in the address bar, in `document.referrer`, in
+history, or in a link you paste to someone, and takes part in nothing after the exchange.
+The exchange is **single-use**: once it has run, a `?t=` is honoured only for a caller that
 already holds the session cookie (the same tab re-opening its own link), so replaying the
 copied URL in another browser is a `401`, not a second session. A request without the
 cookie is a `401` before any route runs; a bad `Host` or a cross-site caller is a `403`
-before the token is even consulted. Pages publish the derived CSRF token as
-`<meta name="denext-csrf">`; forms post it in a hidden `_csrf` field and `fetch` sends it
-in `x-denext-ui-csrf`.
+before the token is even consulted. Pages publish the CSRF token — derived from the cookie
+secret — as `<meta name="denext-csrf">`; forms post it in a hidden `_csrf` field and `fetch`
+sends it in `x-denext-ui-csrf`.
 
 A `--token` you supply yourself must be at least 22 characters (base64url, ≥ 128 bits of
 entropy); a shorter one is refused at launch rather than quietly weakening the only
@@ -139,8 +145,13 @@ failed write leaves the previous bytes exactly as they were.
 > [!NOTE]
 > On a shared machine, loopback is not a boundary: any local user can reach
 > `127.0.0.1:5177`, and the session cookie is the only thing between them and a write. The
-> token is 256 bits and is never printed except on your own terminal, but if you don't
-> control every account on the box, run `denext ui --read-only`, or don't run it at all.
+> launch token is 256 bits and is never printed except on your own terminal, and the cookie
+> secret is another 256 bits that only your browser ever holds — but if you don't control
+> every account on the box, run `denext ui --read-only`, or don't run it at all.
+
+Every write also preserves the file's permission bits: the atomic write's temp file is given
+the mode of the file it replaces, so a `0600` config stays `0600` after an edit (a new file
+takes the default mode).
 
 ### Working offline
 
@@ -185,12 +196,25 @@ diffed once, so you review one diff; if any one of them cannot be spliced the wh
 refused and nothing is written. Clearing a field you submitted removes its key — which is what
 General offers instead of a per-key "Remove key", the button a grouping's own tab still has.
 
-Two deliberate exceptions, both about not writing something you did not ask for. A key whose field
-the submit never **carried** is left alone: a browser posts every control the band rendered, but
-the `/api` twin takes whatever a caller sends, and a cleared field and an unsent one look
-identical once decoded — so silence is never read as a deletion. And a key that is not in the file
+Three deliberate exceptions, all about not writing something you did not ask for. A key whose
+field the submit never **carried** is left alone: a browser posts every control the band rendered,
+but the `/api` twin takes whatever a caller sends, and a cleared field and an unsent one look
+identical once decoded — so silence is never read as a deletion. A key that is not in the file
 whose box is unchecked is left alone too, because `false` is what an absent boolean already
-means.
+means. And a key the file never set posts **nothing** for its lists and toggles: the hidden marker
+that tells the decoder "a list was here" and the hidden companion that turns an unticked box into
+a real `false` are rendered only for a value the file actually holds. Without that rule a save of
+Rendering wrote `images.deviceSizes: []` and `images.qualities: []` for a project that had never
+set either — an empty allowlist, which refused every width — along with `false` for every boolean
+the tab happened to show. A group save also carries the sub-keys the form does not render (a
+legacy `experimental.cacheComponents`, an unknown key) through unchanged, an untouched save
+answers "No change" and writes nothing, and a required field left empty is a field nobody filled
+in, not a `""` to write.
+
+A **superseded** key (`experimental.compiler`, `images.domains`) carries a `deprecated` pill and the
+sentence naming its replacement, and is shown only when your config actually sets it — offering
+it otherwise would be an invitation to start using the old name. Hiding is inert: an unrendered
+field posts nothing, and nothing for an absent key means "leave it alone".
 
 Each field gets the control its type deserves:
 
@@ -262,25 +286,36 @@ to overwrite code shows the patch it would have written; a module whose shape th
 does not recognise at all has nothing to diff against, so it shows the reason and the head
 of the file instead.
 
-Each section's form carries three controls. **Save** is inert until you actually change
+Each tab's form carries three controls. **Save** is inert until you actually change
 something: `ui.js` snapshots the form when the page renders and wakes Save on the first edit,
-adding a **Discard** button beside it that puts the section back the way the server rendered it.
+adding a **Discard** button beside it that puts the tab back the way the server rendered it.
 **Remove key** is a submit, not a form reset — it deletes that key from the config, which is why
 it only appears when the key is set (it was called "Clear", which read like "clear the field").
-With JavaScript off none of the tracking runs and Save simply works, so the server never renders
-it disabled; under `--read-only` every one of them is disabled regardless.
+A **+ Add** row on a list hands the editor back with the new row in place; it is not a save, so it
+is not validated as one. With JavaScript off none of the tracking runs and Save simply works, so
+the server never renders it disabled; under `--read-only` every one of them is disabled regardless.
+
+**Leaving a tab with unsaved edits asks first.** A panel swap replaces the section wholesale, so
+with JavaScript on a sidebar, tab or filter click on a half-finished form stops and offers Save,
+Discard or Cancel in a native `<dialog>` that `ui.js` builds at runtime (Discard is the same
+discard the button beside Save runs; Save submits through Save, so the diff-then-confirm flow is
+what follows, and the pending navigation is dropped rather than resumed behind a confirmation
+nobody has given). Back and Forward are not guarded — the browser has already moved by the time
+`popstate` fires, so a guard there could only pretend. With JavaScript off there is no swap to
+intercept and the dialog does not exist.
 
 Every write is two steps, and both run the whole _proposed_ config through
 `validateDenextConfig`:
 
 1. The first `POST` computes the new source and answers with a unified diff. Nothing has
    touched disk.
-2. A second `POST` carrying `confirm=1` applies it and answers `303` back to
-   `/config#<section>`.
+2. A second `POST` carrying `confirm=1` applies it and answers `303` back to the view and tab
+   that show the change — `/config/<view>?key=<key>`, or `?key=general` for a scalar. A confirm
+   carries exactly the change you reviewed, a cleared scalar included.
 
 A value the validator rejects is a `422` with the message rendered against its own field,
-never a broken config on disk. At the bottom of the panel there is a raw-file escape
-hatch: the whole file in a textarea, saved only if it still parses as a denext config.
+never a broken config on disk. The raw-file escape hatch is the **The file itself** tab on
+Advanced: the whole file in a textarea, saved only if it still parses as a denext config.
 
 Two more guarantees around the file itself. Every form carries `_base`, a SHA-256 of the
 source it was rendered from: a `POST` whose stamp no longer matches what is on disk is a
@@ -565,7 +600,10 @@ driven by `DENEXT_*` environment variables, and nothing told you what to put in 
 without those scripts is told so, rather than shown controls that cannot do anything.
 
 **macOS.** The panel lists the Developer ID Application identities actually in your keychain, so
-`DENEXT_CODESIGN_IDENTITY` becomes a value you copy rather than a string you have to know. Only
+`DENEXT_CODESIGN_IDENTITY` becomes a value you copy rather than a string you have to know — the
+composed `export DENEXT_CODESIGN_IDENTITY='Developer ID Application: …'` line is single-quoted
+(a `'` inside spelled `'\''`), because an identity's name is text the panel did not write, pasted
+into a shell by the person reading it. Only
 Developer ID Application certificates are listed: a developer Mac usually also holds an
 `Apple Development` certificate, and a build signed with that one neither distributes nor keeps
 its permission grants. That last point is the reason to bother — macOS keys **TCC** grants
@@ -620,10 +658,18 @@ what made starting a dev server look like it did nothing at all.
 
 While a server is running the step offers **Stop**, and that works even after `denext ui` has itself
 been restarted: the dev server records its own pid in `.denext/dev.json`, so stopping never needs
-the child's process handle. Nothing is signalled until the address that file names answers as a
-denext dev server — a stale file is cleared instead, because the pid it carries may since have been
-handed to an unrelated process. Stopping asks the server to drain first and kills the process tree
-only if it will not; on Windows, which has no such signal, it is a hard kill and says so.
+the child's process handle. That file is project content — a clone can commit one — so nothing in
+it is trusted on its own. The pid must be a safe integer above 1 (never `-1`, which would signal
+every process you may, `0`, or `init`) and is never the UI's own process or its parent, whatever
+the file says. Then the origin the file names is asked who it is: `GET /_denext/dev-state`, which
+only a denext dev server answers, reports its own `pid` and `projectDir`, and both must match — the
+pid the file recorded, and this project's directory (compared by realpath, so a symlinked spelling
+still matches). A stale file whose origin answers nothing is cleared instead, because the pid it
+carries may since have been handed to an unrelated process; an origin that answers as some **other**
+server (another project's dev server that took the port, say) is reported as a mismatch and neither
+signalled nor cleaned up. Stopping asks the server to drain first and kills the process tree only
+if it will not — and "gone" means the origin no longer answers as _that_ server; on Windows, which
+has no such signal, it is a hard kill and says so.
 
 ## Cron
 
@@ -631,7 +677,7 @@ only if it will not; on Windows, which has no such signal, it is a hard kill and
 registers at
 server startup, when each next fires, and which of them will not fire at all.
 
-A schedule reaches the scheduler from one of two places, and the tab is explicit about which:
+A schedule reaches the scheduler from one of two places, and the page is explicit about which:
 
 | Source                                          | Shown | Editable                                        |
 | ----------------------------------------------- | ----- | ----------------------------------------------- |
@@ -640,17 +686,25 @@ A schedule reaches the scheduler from one of two places, and the tab is explicit
 
 The listing comes from one subprocess (`denext task --list --json`), never from this process:
 listing tasks means importing the project's task modules. The child returns the schedule
-`collectSchedules` computes — the same function the server calls at boot — so the tab shows what
-will really happen rather than re-deriving the merge.
+`collectSchedules` computes — the same function the server calls at boot — so the page shows what
+will really happen rather than re-deriving the merge. A successful listing is reused for a few
+seconds, but only for the config file it was computed from: it is keyed on the file's stamp, so a
+hand edit never has rows from before it proposed back at it. When the child fails, the page repeats
+the child's own last meaningful line ("invalid denext.config.ts: `redirects` must be a function")
+rather than "printed no listing".
 
 Two kinds of entry are flagged **never fires**, because the scheduler skips them at startup with
 nothing more than a log line: a malformed cron expression, and a schedule naming a task that is
-not defined. Times are UTC, which is what `Deno.cron` and the userland scheduler both use.
+not defined. Times are UTC, which is what `Deno.cron` and the userland scheduler both use, and
+weekdays are POSIX — `0–6` with `0` (or `7`) for Sunday — which the server translates into names
+for `Deno.cron` (see [Scheduled tasks](/docs/tasks#cron-syntax)).
 
 The config half is editable here: one row per schedule — the expression, the task it runs, and a
-box that drops it — plus a blank row to add another. Every expression is parsed before anything is
-written and every task name is checked against the tasks that actually exist, so a schedule that
-could never fire is refused rather than saved. The write is the same one the
+box that drops it — plus a blank row to add another, whose task picker starts on "— choose a
+task —" (a `<select>` always posts something, so without that blank option an untouched add row
+posted the first task's name and every save was refused). Every expression is parsed before
+anything is written and every task name is checked against the tasks that actually exist, so a
+schedule that could never fire is refused rather than saved. The write is the same one the
 [configuration editor](#configuration-editor) performs: `setConfigValue` splices the key, you get
 a unified diff to review, and only a confirm writes — atomically, and refused with a `409` if the
 file changed since the form was rendered.
@@ -682,22 +736,29 @@ field or a stale tab would otherwise read as "delete them all". See
 
 ### Run history
 
-The tab can also answer what actually ran, and whether it worked — but only if the project asks.
+The page can also answer what actually ran, and whether it worked — but only if the project asks.
 Run history is **off by default**: denext records nothing and writes no file until you turn it on,
 so upgrading never gives an app a side effect nobody requested.
 
-Turning it on from this tab writes `tasks: { history: true }` to your denext config through the
+Turning it on from this page writes `tasks: { history: true }` to your denext config through the
 same diff-then-confirm as everything else here — you see the exact change before anything lands.
-From then on every run is recorded, scheduled and manual alike, into `.denext/tasks.db`, and the
-tab shows each task's last result, how long it took, and its successes and failures over the last
-seven days.
+From then on every run is recorded, scheduled and manual alike (`runTask`, the scheduler, and
+`denext task <name>` from the command line), into `.denext/tasks.db`, and the page shows each
+task's last result, how long it took, and its successes and failures over the last seven days.
+Each row keeps the run's output in plain text — the tail of a string the handler returned, up to
+2 KB, and for a failure the error's message and stack — so a task that would return a token or a
+DSN should return nothing instead. The file is created owner-only (`0600`; its `-wal`/`-shm`
+siblings inherit the mode). Retention is 14 days and `tasks.historyMaxRuns` runs per task (default
+500; per task, so a minute-cron task cannot evict a daily task's history), applied on the first
+recorded run of every process — a one-shot `denext task` prunes too. `historyMaxRuns` is not
+offered here; set it in the config. See [Run history](/docs/tasks#run-history) for the key.
 
 Two things are worth knowing. It takes effect **the next time the app starts**, including under
 `denext dev`: the recorder is installed at server boot, and the dev server's watcher re-bundles
 routes without re-running task boot. And recording can never fail or delay a run — a read-only
 filesystem, a full disk or a locked file degrades to no history rather than to a broken job.
 
-The tab distinguishes four states rather than showing one empty table: history off, on but nothing
+The page distinguishes four states rather than showing one empty table: history off, on but nothing
 recorded yet, on with no runs inside the window, and on with results. "Off" and "on but nothing
 yet" are different facts, and reading one as the other is how you end up waiting for data that was
 never going to arrive.
@@ -715,7 +776,10 @@ is worse than none, so the caveat is printed at boot rather than the setting bei
 
 `/commands` lists every verb available in this project — built-ins, verbs a plugin
 contributed through `addCommand`, and your own `commands:` entries — and runs the ones it
-can.
+can. It is a reference listing of thirty-odd verbs, so it has a search box: `/commands?q=build`
+narrows the page to the verbs whose name or summary matches (every term must match), with an
+honest line when nothing does. It is a plain `GET` form, so it works with scripting off and the
+query is in the URL; Clear is a link that drops `?q=`.
 
 A project verb is a literal in `denext.config.ts`. No plugin, no `setup`; it is the
 shorthand for a one-off project script:
@@ -758,7 +822,10 @@ found in `.denext/commands.json`, with a fingerprint of `denext.config.*`, `deno
 `deno.lock`, and help prints that listing while the fingerprint holds. Before the first run — or
 once one of those files changes — help prints a one-line pointer at `denext commands` instead.
 A plugin that changes which verbs it contributes without any of those files changing is the one
-case a listing can be stale, so the footer under it says where it came from.
+case a listing can be stale, so the footer under it says where it came from. That cache is project
+content (a clone can commit one), so a name is accepted back only if it fits the verb-name grammar
+(`^[a-z][a-z0-9-]*$`), and every name and summary the CLI prints has its control characters
+removed — a summary is not a place to carry an escape sequence to your terminal.
 `denext completions bash|zsh|fish` enumerates them live instead (a shell can only complete a
 name it was handed) under the same 1.5 s budget, then exits. **A built-in verb always wins a
 name collision** — a `commands:` entry named `dev` is ignored, never shadowing the core
@@ -848,7 +915,11 @@ needed, and none parses a cron expression — the reading and the composing are 
 **How the views are built.** Every panel is a component tree built with `h()` from denext's
 own JSX runtime, in plain `.ts` modules, and rendered once to a string on the server. That
 changes nothing on the wire: there is still no client bundle, no hydration and no island,
-`/_ui/ui.js` is the only script, and every page works with it switched off.
+`/_ui/ui.js` is the only script, and every page works with it switched off. A panel's notes
+carry a tone: a plain note is neutral — a fact ("No change", "None — this project contributes no
+verbs"); `ok` is a result to be glad of ("Wrote denext.config.ts."); `warn` is a caution to weigh
+(a mode that refuses writes, a lookup that failed). A `role="alert"` note is one the page
+announces: a validation failure, an error.
 
 ## The JSON API
 
@@ -902,13 +973,15 @@ one.
 
 ```sh
 denext ui --no-open --json --port 0
-# {"url":"http://localhost:54321/?t=…","port":54321,"token":"…"}
-curl -s "http://localhost:54321/?t=$TOKEN" -D - -o /dev/null   # 302 + Set-Cookie
-curl -s http://localhost:54321/api/config -b "denext_ui_token=$TOKEN" | jq .
+# {"url":"http://127.0.0.1:54321/?t=…","port":54321,"token":"…"}
+curl -s "http://127.0.0.1:54321/?t=$TOKEN" -c jar -o /dev/null   # 302 + Set-Cookie (a fresh secret)
+curl -s http://127.0.0.1:54321/api/config -b jar | jq .
 ```
 
-The bind is always `127.0.0.1`; the printed URL says `localhost` because that is what a
-browser (and the `Host` gate, which accepts either) wants.
+The bind is always `127.0.0.1`, and so is the printed URL: the `Host` gate accepts `localhost`
+too, but a session cookie set on `localhost` would be sent to every other local server on that
+name, so the UI is opened on the address only it uses. The cookie is not the token — keep the
+jar the handshake filled rather than sending `denext_ui_token=$TOKEN`, which is refused.
 
 Those envelopes are deliberate: they are the shape an MCP tool would front. Driving the
 project UI from an agent is **not** in this release — the surface is only the HTTP API

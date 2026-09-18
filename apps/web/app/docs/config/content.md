@@ -218,6 +218,30 @@ Both are top-level fields — shipped, complete capabilities, not experiments.
   subscriptions. Resource caps in `LiveLimits` always apply. See
   [Live components](/docs/live).
 
+## Tasks
+
+- **`scheduledTasks`** — `Record<string, string | string[]>`. Cron expression → the
+  task name(s) it runs, merged with each task's own `schedule:`. Five-field Vixie
+  cron in **UTC**, weekdays POSIX (`0–6`, `0` = Sunday); denext translates the
+  weekday field into names for `Deno.cron`, which numbers days differently. A
+  malformed expression or an unknown task is skipped at boot with an error. See
+  [Scheduled tasks](/docs/tasks#cron-syntax).
+- **`tasks`** — `TasksConfig`. Run history. `history: true` records every run —
+  scheduled, `runTask`, and `denext task <name>` — to `.denext/tasks.db` (created
+  `0600`; each row keeps a returned string's tail and a failure's message/stack in
+  plain text, up to 2 KB). Off unless set, and never able to fail or delay a run.
+  `historyMaxRuns` (whole number ≥ 1, default `500`) is the runs kept **per task**;
+  rows older than 14 days go regardless. See
+  [Run history](/docs/tasks#run-history) and the Project UI's
+  [Cron page](/docs/ui#cron), which owns both keys in the editor.
+
+```ts
+export default {
+  scheduledTasks: { "0 3 * * *": "cleanup", "0 0 * * 1": ["digest", "warm-cache"] },
+  tasks: { history: true, historyMaxRuns: 200 },
+} satisfies DenextConfig;
+```
+
 ## Experimental
 
 A feature stays here only while it is genuinely **incomplete** — being new is

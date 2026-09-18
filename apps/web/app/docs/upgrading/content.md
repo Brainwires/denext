@@ -26,8 +26,36 @@ links back to the release that introduced it.
 
 ## Upgrading to 2.5
 
-2.5 is in release candidates; this section covers every rc so far.
+2.5 shipped through six release candidates; this section covers every change that needs
+action since 2.4, whichever rc introduced it.
 
+- **The binary's checksum assets are named `<archive>.sha256`** —
+  `denext-x86_64-apple-darwin.tar.gz.sha256`, not `denext-<target>.sha256` — and a combined
+  `SHA256SUMS` sits beside them. Nothing installed is affected (no release had shipped with the
+  old name); a script written against the earlier workflow reads the new names, and the
+  installer now refuses to install without a checksum (`DENEXT_INSECURE=1` overrides).
+  ([2.5.0](/docs/changelog))
+- **The `denext` binary treats an unversioned `jsr:@denext/denext` import as a pin to the
+  latest published version** and re-execs `jsr:@denext/denext/cli`, where it used to refuse
+  the directory as unpinned. Pin a version (`jsr:@denext/denext@^2.5.0`) for a reproducible
+  build. ([2.5.0](/docs/changelog))
+- **Schedules reach `Deno.cron` under a new registration name and with the weekday field
+  respelled.** The old `task@cron` name was refused by `Deno.cron` for every expression, so
+  nothing on Deno Deploy had ever registered — there is nothing to migrate, but a Deploy
+  dashboard will show crons for the first time. Weekdays are POSIX (`0` = Sunday) and are
+  translated to names; if you had written a schedule in `Deno.cron`'s `1–7` numbering to work
+  around the difference, rewrite it as POSIX. A cron token that is not plain digits (`-5`,
+  `0x10`, `1e1`, `5,,`) is now refused at parse time, and `N/S` on a lone number means
+  `N`-to-max. ([2.5.0](/docs/changelog))
+- **`runTask` rejects instead of throwing synchronously** when a handler throws before its
+  first `await`; a `try { runTask(…) } catch` that expected a synchronous throw needs an
+  `await`. ([2.5.0](/docs/changelog))
+- **`denext ui` is served and opened at `http://127.0.0.1:<port>`**, not `localhost`, and its
+  session cookie is a secret minted at the handshake rather than the launch token. A script that
+  reconstructed a `localhost` origin from `--json`'s `port`, or sent the token as the cookie,
+  uses the printed `url` and the cookie the handshake set. Config writes redirect to
+  `/config/<view>?key=<key>` rather than `/config#<section>`.
+  ([2.5.0](/docs/changelog))
 - **The TOTP and email-request functions answer `{ ok, … }` unions.**
   `enrollTotp(config, session)` (was `(config, user)`) answers
   `{ ok: true, secret, uri }` or `{ ok: false, error }` and refuses a complete
@@ -54,7 +82,7 @@ links back to the release that introduced it.
   per client IP per 15 minutes and 300 per minute. A load test, or many users
   behind one address, can meet a `429`; `SessionProvider` keeps its session
   through one. Tune `rateLimit.signin` / `rateLimit.session`, or turn every
-  limiter off with `rateLimit: false`. ([2.5](/docs/changelog))
+  limiter off with `rateLimit: false`. ([2.5.0](/docs/changelog))
 
 - **A help flag before the verb prints help instead of running the verb.**
   `denext --help build` used to run a build; it now prints `build`'s help. A
@@ -83,9 +111,12 @@ links back to the release that introduced it.
 - **A custom `SessionStore` needs `update` for sliding expiry.** Without it a
   session is never slid forward, and the store warns once.
   ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
-- **`denext --help` no longer lists a project's own verbs** — `denext commands`
-  does, and shell completions still include them.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+- **`denext --help` lists a project's own verbs only from the cache `denext commands`
+  wrote** (`.denext/commands.json`, fingerprinted against `denext.config.*`, `deno.json` and
+  `deno.lock`) — it never imports your config. Before the first `denext commands`, or once one
+  of those files changes, help points at `denext commands` instead; shell completions still
+  enumerate them live. ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14),
+  [2.5.0-rc.6](/docs/changelog#250-rc6---2026-09-16))
 
 ## Upgrading to 2.4
 

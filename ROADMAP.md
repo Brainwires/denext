@@ -7,11 +7,12 @@
 > pillars in [MISSION.md](./MISSION.md); the standing engineering guardrails and the
 > security policy in [POLICIES.md](./POLICIES.md).
 >
-> `development` is on the **2.5 rc series** (the version line `deno task bump` rewrites).
-> rc.1 carried `denext ui`, the auth flexibility cut + database adapter + bearer tokens, and
-> the DevTools completeness pass; rc.2 added the emailed auth flows and TOTP two-factor, the
-> rest of the `denext ui` list and the last three DevTools items; rc.3 onwards is hardening —
-> all in [CHANGELOG.md](./CHANGELOG.md). What remains is the 2.6 candidates, the last
+> `development` is closing out **2.5** (the version line `deno task bump` rewrites). The
+> line carried `denext ui` (the config editor, Cron and Desktop pages, the wizard, the compose
+> editor), the auth flexibility cut + database adapter + bearer tokens, the emailed auth flows
+> and TOTP two-factor, the DevTools completeness pass, the compiled `denext` binary and task
+> run history, then six release candidates of hardening — all in
+> [CHANGELOG.md](./CHANGELOG.md). What remains is the 2.6 candidates, the last
 > build-time-purity item, the TanStack Start depth of the router plugins, and the
 > unscheduled candidates. Items target the next minor unless marked otherwise; this file is
 > rewritten each cycle.

@@ -247,15 +247,19 @@ export default {
 };
 // `denext seed` — same flag parsing, --help and did-you-mean as a built-in. List this
 // project's own verbs with `denext commands [--json]`; they are in shell completions too.
-// `denext --help` shows only the built-ins, because help never imports your config.
+// `denext --help` lists them from the cache `denext commands` wrote (`.denext/commands.json`,
+// fingerprinted against denext.config.* / deno.json / deno.lock) without importing your
+// config; before the first run, or once one of those files changes, it points at `denext commands`.
 ```
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
-value span it replaces, the file keeps its bytes), plugins with option forms for the
-first-party ones and JSR search, every `generate` kind, Docker files plus in-place
-`docker-compose.yml` editing, a
-setup wizard and the project's own verbs. It works with JavaScript disabled, and
+value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
+next fires, an editor with a shape builder, and run history when `tasks.history` is on),
+plugins with option forms for the first-party ones and JSR search, every `generate` kind,
+Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
+signing setup from the identities the keychain holds, a setup wizard and the project's own
+verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
@@ -282,7 +286,10 @@ Open the connection once at module scope; do writes in Server Actions.
 `denext.config.ts` (`scheduledTasks`) or per-task; run it on demand with `runTask(name)`
 or `denext task <name>`. Uses `Deno.cron` where available (Deno Deploy), else a userland
 tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching `Deno.cron`),
+weekdays are **POSIX** (`0–6`, `0` = Sunday; denext translates them to names for `Deno.cron`),
 and a schedule never fires on startup nor overlaps a still-running instance of the same task.
+`tasks: { history: true }` records every run to `.denext/tasks.db` (`historyMaxRuns` per task,
+14 days); the Cron page of `denext ui` shows it.
 
 ```ts
 // tasks/cleanup.ts

@@ -8,6 +8,248 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **`denext ui`'s session cookie is no longer the launch token.** The `?t=` handshake now mints a
+  second, fresh 256-bit secret and parks _that_ in the `HttpOnly; SameSite=Strict` cookie; the
+  CSRF token is derived from the cookie secret (`HMAC-SHA256(cookieSecret, "csrf")`), and the
+  launch token takes part in nothing after the exchange. A cookie set by a loopback host is sent
+  to every port of that host, so the project's own `denext dev` — or anything else listening on
+  the machine — used to receive the very credential the launcher had printed. The UI is also now
+  served and opened at `http://127.0.0.1:<port>`, never `localhost`, so the cookie is not shared
+  with dev servers on that name at all. The printed URL and `--json`'s `url` say `127.0.0.1`.
+- **`denext ui`'s Stop-dev-server button proves who it is stopping.** `.denext/dev.json` is
+  project content — a clone can commit one — and its `pid` was signalled after nothing more than
+  a `200` from the origin it named. Now the pid must be a safe integer above 1 (never `-1`, the
+  caller's process group, or `init`), is never the UI's own process or its parent, and the probe
+  (`GET /_denext/dev-state`, which now answers `{ pid, projectDir }` alongside the events) must
+  report the same pid **and** this project's directory (realpath-compared) before any signal is
+  sent. A different server on that port is reported as a mismatch and neither signalled nor
+  cleaned up. The MCP dev tools apply the same pid rule when they read `dev.json`.
+- **`Deno.cron` weekdays.** Every schedule handed to `Deno.cron` is respelled first: `Deno.cron`
+  numbers weekdays `1–7` with `1` = Sunday and rejects `0` and `?`, while denext's convention (and
+  every documented example) is POSIX `0–6` with `0` = Sunday. A `0 0 * * 1` (Monday) handed over
+  verbatim fired on Sunday on Deno Deploy, and any `0` or `?` was refused outright. The
+  day-of-week field is now spelled in names (`MON`, `MON-FRI`, an exact list for anything
+  stepped) and `?` becomes `*`, which both readers agree on. See the Fixed entry below for the
+  registration-name defect that meant none of this had ever reached Deploy.
+- `denext ui` writes keep the file's permission bits: a `0600` `denext.config.ts`,
+  `docker-compose.yml` or `deno.json` came back `0644` after one edit, because the atomic write's
+  temp file was created at the default mode. Windows and a new file are unaffected.
+- `denext ui`'s Desktop panel shell-quotes the `export DENEXT_CODESIGN_IDENTITY=…` line it
+  composes (single quotes, `'\''` inside), so a keychain identity name is never pasted into a
+  shell as something the shell would expand; it was JSON-quoted.
+- A project verb's name and summary are held to the verb-name grammar (`^[a-z][a-z0-9-]*$`) when
+  read back from `.denext/commands.json`, and every name, summary and child error line the CLI
+  prints (`denext --help`, `denext commands`) has its control characters removed, so a committed
+  cache or a plugin cannot put an escape sequence on your terminal. `VERB_NAME` and `plainText`
+  are exported from `denext/cli/command`.
+- The task run-history database (`.denext/tasks.db`) is created owner-only (`0600`; its
+  `-wal`/`-shm` siblings inherit the mode), since each row keeps a run's returned text and error
+  message in plain text. The UI opens it read-only without creating its directory.
+- The next.config evaluator refuses a project directory whose path contains a comma, with the
+  reason: `--allow-read=<a>,<b>` is a list to Deno, and the `,,` escape its docs describe is refused
+  by Deno 2.9, so such a path was granted as its pieces — never itself, and a piece may name a real
+  directory outside the project.
+- The emailed auth flows, the credentials provider, the OAuth match-by-email step and both
+  bundled adapters key an address the same way (`emailKey`: trimmed, lower-cased, an
+  internationalised domain in its punycode form), so `a@bücher.de` and `a@xn--bcher-kva.de` are
+  one account through every flow and a custom adapter. Only the token paths punycoded before, so
+  a credentials sign-up at the Unicode spelling was duplicated by a magic link and unfindable by a
+  password reset. The SQLite adapter re-keys existing rows on open (a row whose new key another
+  row already holds is left alone and reported once).
+- `scripts/install.sh` (served as `denext.dev/install.sh`) fails closed: a download whose
+  checksum cannot be fetched is not installed (it used to warn and install anyway), a mismatch
+  never is, and `DENEXT_INSECURE=1` is the one loud override for the missing-checksum case. Every
+  `curl` is `--proto '=https' --tlsv1.2`, the script runs entirely inside `main()` called on its
+  last line (a truncated download executes nothing), and it warns when no `deno` is on `PATH`.
+- The binary release job pins every action by commit SHA.
+
+### Added
+
+- **A compiled `denext` binary** — `curl -fsSL https://denext.dev/install.sh | sh` (or
+  `deno install -A -g -n denext jsr:@denext/denext/cli`, or `deno task compile` from a checkout).
+  It is a CLI, not a second copy of the framework: inside a project every module-loading verb
+  (`dev`, `build`, `export`, `start`, `task`, `doctor`, `analyze`, `profile`, `desktop`) re-execs
+  the denext the project pins as a `deno run` child, so `denext build` produces exactly what
+  `deno task build` would, and a directory that pins no denext is refused with a message naming
+  the fix. `--version` reports `(binary)`. The pin is read the way `deno run` would resolve it:
+  `deno.json` or `deno.jsonc` (comments and trailing commas), the import under `denext`,
+  `denext/` or `@denext/denext`, an `imports` map held in a separate `importMap` file, and a
+  workspace member's root config; an **unversioned** `jsr:@denext/denext` is a pin to the latest
+  published version. Shutdown signals (`kill`, `docker stop`, Ctrl-C) are forwarded to the child,
+  so a re-exec'd server is never orphaned. Releases publish five archives
+  (`denext-<target>.tar.gz`, `.zip` on Windows), a combined `SHA256SUMS` and a per-archive
+  `<archive>.sha256`; an rc tag is a GitHub prerelease and never "latest", so the installer with no
+  `DENEXT_VERSION` resolves a stable version. macOS binaries are signed and notarised when the
+  Developer ID secrets are configured. The `ui` verb runs inside the binary, but its panels spawn
+  `deno` for every project-touching operation.
+- **Task run history** — `tasks: { history: true }` in `denext.config.ts` records every run,
+  scheduled and on demand alike (`runTask`, the scheduler, and `denext task <name>`), to
+  `.denext/tasks.db`: status, duration, the tail of a returned string (2 KB) and, for a failure,
+  the error's message and stack. Off unless set, and once on it can never fail or delay a run — a
+  read-only filesystem, a full disk or a locked file degrades to no history. Retention is 14 days
+  and `tasks.historyMaxRuns` (default 500) per task, applied on the first recorded run of every
+  process, so a one-shot `denext task` from system cron prunes too. `denext task --list --json`
+  reports `history`. `TasksConfig` is exported from `denext/server`. On Deno Deploy the file is
+  per-isolate and ephemeral; recording still happens and a warning says so at boot.
+- **`denext ui` — Cron page** (`/config/cron`, a page of the Configuration section that owns
+  `scheduledTasks` and `tasks`): every schedule that will register at boot with its next two
+  firings in UTC and an English reading (`describeCron`: "every day at 03:30 UTC"), which half it
+  came from (config, editable; a task file's own `schedule:`, code), which will **never fire** (a
+  malformed expression, an unknown task), and whether this runtime has `Deno.cron`. Schedules are
+  edited as rows — expression, a task picker, a drop box — with a builder that composes the
+  expression on the server from a shape (every minute, hourly, daily, weekly, monthly; Custom
+  steps aside) and a preview that follows what you type (`/_ui/cron-preview`; the client parses no
+  cron). Run history is shown per task with a switch to turn recording on and a two-step Clear
+  that deletes rows and leaves the database file in place.
+- **`denext ui` — Desktop panel** (`/desktop`): macOS, Windows and Linux as three views, reading
+  what the machine has (the Developer ID Application identities in the keychain, `signtool` on
+  `PATH`, which `DENEXT_*` variables are set) and composing the `denext desktop package`
+  invocation with a copy-paste `export` line per unset variable. It runs no build, writes no
+  file, and never reads `DENEXT_WINDOWS_CERT_PASSWORD` (only whether it is set).
+- **`denext ui` — the shell.** A persistent sidebar (a drawer below 860px, opened by a
+  `<label>`-driven checkbox — no script) with **Configuration** as a section listing one page per
+  view (`/config/routing`, `/config/rendering`, `/config/security`, `/config/advanced`,
+  `/config/cron`; `/config` is an index of them); the `--read-only` / `--offline` mode badges on
+  every page; a design-token stylesheet (semantic surfaces, intent colours, a spacing scale, both
+  colour schemes) with no inline styles; toned status pills (`ok`/`todo`/`warn`/`info`/`fail`);
+  a per-view document title; zebra-striped tables; a sidebar that scrolls when it is taller than
+  the window.
+- **`denext ui` — navigation without a page rebuild.** With JavaScript on, a same-origin link
+  (sidebar, tabs, a filter, the cron builder's `GET`) fetches the panel as a fragment, swaps it in
+  place and pushes the address, so Back and Forward work; a `?q=` search or filter box swaps its
+  results in place and keeps the caret; the dev server's console streams into the wizard's Finish
+  step and survives a reload, a second tab or a panel swap; a running dev server offers **Stop**,
+  which works after `denext ui` itself has been restarted. Leaving a view with unsaved edits asks
+  — Save, Discard or Cancel — through a native `<dialog>` `ui.js` builds at runtime. Everything
+  still works with JavaScript off.
+- **`denext ui` — the config editor's views.** A view shows its plain scalars together under one
+  Save (General) and gives every key that wants room a tab of its own; nothing collapses. Each
+  key carries its own set/unset pill, a toggle says what ticking it does (Enable / Disable, read
+  from the schema's `@default`), a default-on key can be turned off, `boolean | "auto"` is one row
+  of radios, JSDoc prose is formatted (code spans and bold) instead of shown raw, a superseded
+  key explains what replaced it and is hidden until a config actually sets it, and every named
+  schema key now describes itself (a test holds the line). `/commands?q=` filters verbs by name
+  and summary; every panel links to its section of the guide.
+- **`denext ui` — Docker as three views** (`?tab=files|services|names`), `next.config` as a
+  link on the config views instead of a top-level destination, and a `Libraries` heading that
+  says a library is pinned without being wired.
+- Note tones in `denext ui`: a plain note is neutral, `ok` marks a result to be glad of ("Wrote
+  denext.config.ts."), `warn` a caution; every note used to carry the amber bar.
+- CI runs the fast `check` job on every push to `development` (a newer push cancels the run
+  before it); the heavy jobs stay on pull requests and `main`. The release workflow builds the
+  five binaries, smoke-tests the two it can execute (`--version`, `--help`, and the unpinned-build
+  refusal), and creates ONE release after every leg has uploaded.
+
+### Changed
+
+- **Breaking (checksum assets):** the per-archive checksum is named `<archive>.sha256`
+  (`denext-x86_64-apple-darwin.tar.gz.sha256`), not `denext-<target>.sha256`, and a combined
+  `SHA256SUMS` is published beside them. No release had shipped with the old name, so nothing
+  installed is affected; a script written against the earlier workflow needs the new name.
+- **Breaking (binary, unversioned pin):** a `deno.json` whose `denext` import is an unversioned
+  `jsr:@denext/denext` is treated as a pin to the latest published version and re-exec'd
+  (`jsr:@denext/denext/cli`), rather than counting as "no pin" and being refused. Pin a version
+  (`jsr:@denext/denext@^2.5.0`) to make the binary defer to something reproducible.
+- **`Deno.cron` registration names.** A (task, cron) pairing is registered as
+  `<task> <cron with non-name characters folded to _> <fnv1a fingerprint>` (at most 64
+  characters), not `task@cron`. `Deno.cron` refuses a name outside `[A-Za-z0-9 _-]`, so the old
+  name was refused for every expression (see Fixed); nothing on Deploy was ever registered under
+  it, so there is nothing to migrate.
+- **`runTask` rejects instead of throwing synchronously** when a handler throws before its first
+  `await`. The declared type was already `Promise<unknown>`; a scheduled failure of that shape
+  used to escape the scheduler's `.catch` into the timer tick, and would have bypassed run history.
+- `cronError()` / `parseCron()` are strict about what a field item may be: `*`, a number, `a-b`,
+  each with an optional `/step` — digits only. `-5`, `+5`, `0x10`, `1e1`, `5.` and an empty item
+  (`5,,`) used to pass through `Number()` and were then refused by `Deno.cron`, so a schedule that
+  parsed here never ran on Deploy. `n/step` on a lone number means `n` to the field's maximum
+  (`5/15` is `5-59/15`), as Vixie and `Deno.cron` read it; it used to match the single value.
+- `denext ui`'s config editor tracks whether a section actually changed: Save is inert until you
+  edit something, and a Discard button appears beside it to put the section back the way it was.
+  `Clear` is now `Remove key`, which is what it always did — it deletes the key from the config,
+  it does not clear the form. With JavaScript off none of this applies and Save simply works, so
+  the server never renders it disabled; `--read-only` still disables everything.
+- `denext ui`'s config writes land on the page that shows the change:
+  `/config/<view>?key=<key>` (`?key=general` for a scalar), rather than `/config#<section>`; a
+  compose write lands on `/docker?tab=services`. The `?t=` handshake always redirects to `/`
+  (the overview) rather than echoing the path the link carried.
+- `denext ui`'s `/config` twin, `/api/config`, still reports `scheduledTasks` and `tasks` but a
+  write posted at them through a config view is refused with a pointer at the Cron page, which
+  owns them; the former Data view is retired (`cache` sits on Rendering).
+- The nightly end-to-end suite compares a generated file against the child's **stdout** alone
+  (a stderr warning no longer ends up "inside" a generated file), picks the newest published
+  denext by semver for the JSR-runtime prebuild comparison (prereleases included, skipping
+  entries the tree has that the registry does not), and drives the UI's sidebar at a desktop
+  viewport. New suites: the installer (`tests/install-sh.test.ts`), the binary's pin lookup and
+  re-exec decision, a table over every UI route's guards, and browser-shaped config posts
+  (`tests/ui-config-browser-post.test.ts`, which builds each body from the rendered form's own
+  controls — the shape that let the `[]`/`false` bug below ship).
+- Six source files that keyed maps on a literal NUL byte spell it `"\0"`, so git diffs them as
+  text again.
+
+### Fixed
+
+- **`denext ui`'s config editor wrote values you never set.** Saving _any_ change on a view
+  (toggling `images.formats`, say) materialised every unset child of the key's object — `[]` for
+  each list, `false` for each boolean — so a save of Rendering wrote `images.deviceSizes: []`,
+  `images.qualities: []` and `images.remotePatterns: []`, and an empty `deviceSizes` allowlist
+  made the image endpoint refuse every width. The list marker and a toggle's hidden companion are
+  now rendered only for a key the file actually holds, an absent key posts nothing and decodes to
+  "leave it alone", and a set key emptied of its rows still decodes to `[]`. A group save also
+  carries the sub-keys the form does not show (`experimental.cacheComponents`, an unknown key)
+  through unchanged instead of dropping them; an untouched save answers "No change" and writes
+  nothing; a required field left empty is not written as `""`.
+- `denext ui`: a **+ Add** row on a list hands the editor back with the row instead of running the
+  whole form through the validator as if it were a save (the red "invalid denext.config.ts" that
+  followed, and the pills flipping to set, were that); clearing a scalar survives the confirm
+  step (the confirm form used to carry nothing, so the diff you reviewed and the change applied
+  could differ); a view's save touches only the keys the submit carried, so an `/api/config` post
+  naming two keys cannot delete a third.
+- `denext ui`'s Cron editor could not save from a browser: the add row's task `<select>` had no
+  blank option, so an untouched row posted the first task's name and every save was refused as
+  "`<task>` has no cron expression". It starts on "— choose a task —" now. The page also reports
+  the child's real error ("invalid denext.config.ts: `redirects` must be a function") instead of
+  "printed no listing", and its cached listing is keyed on the file's stamp, so a hand edit is
+  never overwritten with rows from before it.
+- **No schedule was ever registered with `Deno.cron`.** The registration name was `task@cron`,
+  and `Deno.cron` refuses a name outside `[A-Za-z0-9 _-]` — `*`, `/` and `,` are most of a cron
+  expression — so every registration threw, was caught and logged, and on Deno Deploy (and a
+  self-host started with `--unstable-cron`) nothing scheduled ever fired. The userland scheduler
+  was unaffected. See Security for the weekday respelling that the same hand-off needed.
+- The cron builder's reading of `0 0 5 * 0-6` — both day fields written out — is `custom`, not
+  "monthly": Vixie fires when **either** day field matches, so that schedule runs daily, and
+  recomposing it as `0 0 5 * *` would have changed it.
+- `denext task <name>` records its run when history is on, like a scheduled run does; it never
+  booted the scheduler, so it never installed the recorder.
+- Task-history retention could never run for a task that only ever ran from `denext task`: the
+  prune was amortised to one in 200 inserts per process, and a one-shot process writes one row.
+  The first insert of a process now prunes (every task, in one windowed `DELETE`), and the file
+  stamps `PRAGMA user_version = 1` so a later schema has a number to migrate from.
+- `denext ui` opens in a browser again. Its origin gate accepted only
+  `Sec-Fetch-Site: same-origin`, but a browser sends `none` for the navigation that starts a
+  session — the printed URL handed to the launcher, typed, or opened from a bookmark — so the
+  first load was refused with `{"ok":false,"reason":"forbidden origin"}`, the token handshake
+  never ran, and no session could be established. A user-initiated navigation is now read; a
+  mutation still has to come from the UI's own page and pass the CSRF gate. Present since the UI
+  landed in 2.5.0-rc.1: curl sends no fetch-metadata header and the end-to-end suite drives the
+  server with `fetch`, so every test passed while no browser could open the UI.
+- `denext ui`: starting `denext dev` from the wizard looked like it did nothing — the op
+  redirected, which rebuilt the document and took the output sink and the single `EventSource`
+  with it. The dev ops answer in place and the console lines are kept per project.
+- `denext ui`: the wizard's Dependencies step says when there is nothing to install (no imports
+  declared, so Deno writes no `deno.lock`) instead of staying a to-do forever; the plugin cards put
+  their pills on one line and the blurb under them; tab labels read `Public env`, `API batch`,
+  `Compatibility mode`; a config view's active sidebar entry is right on reload and with scripting
+  off (one hard-coded `/config` marked Routing current everywhere); a value's source in a code
+  cell lines up with its own first line; the phone layout no longer scrolls sideways.
+- The installer and the release workflow disagreed about the checksum file's name (the script's
+  first URL, `<archive>.sha256`, was never uploaded; the workflow wrote `denext-<target>.sha256`
+  over a glob that could include the checksum file itself), and five matrix legs each created the
+  release independently, so a failed leg left a half-populated "latest". The workflow now writes
+  `<archive>.sha256` per leg, the release job concatenates them into `SHA256SUMS`, verifies every
+  archive is listed and present, and creates the release once.
+
 ## [2.5.0-rc.6] - 2026-09-16
 
 ### Added
@@ -72,11 +314,6 @@ and this project adheres to
 
 ### Changed
 
-- `denext ui`'s config editor tracks whether a section actually changed: Save is inert until you
-  edit something, and a Discard button appears beside it to put the section back the way it was.
-  `Clear` is now `Remove key`, which is what it always did — it deletes the key from the config,
-  it does not clear the form. With JavaScript off none of this applies and Save simply works, so
-  the server never renders it disabled; `--read-only` still disables everything.
 - Decided: `/config/next` being read-only (denext never loads `next.config.*`), and a project
   verb costing plugin discovery in its own child, are how those features work rather than gaps.
   Both moved out of KNOWN-LIMITATIONS into the
@@ -89,14 +326,6 @@ and this project adheres to
 
 ### Fixed
 
-- `denext ui` opens in a browser again. Its origin gate accepted only
-  `Sec-Fetch-Site: same-origin`, but a browser sends `none` for the navigation that starts a
-  session — the printed URL handed to the launcher, typed, or opened from a bookmark — so the
-  first load was refused with `{"ok":false,"reason":"forbidden origin"}`, the token handshake
-  never ran, and no session could be established. A user-initiated navigation is now read; a
-  mutation still has to come from the UI's own page and pass the CSRF gate. Present since the UI
-  landed in 2.5.0-rc.1: curl sends no fetch-metadata header and the end-to-end suite drives the
-  server with `fetch`, so every test passed while no browser could open the UI.
 - `denext ui`: a refused Commands run (an unknown or built-in verb, a bad flag or argument
   value, `--read-only`) answers a form post with the panel, the reason as an alert and the
   submitted values kept. It answered raw JSON, which replaced the page when JavaScript was off.

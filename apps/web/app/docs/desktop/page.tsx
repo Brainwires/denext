@@ -155,6 +155,23 @@ deno task desktop:package --arch universal`}
         <code>DENEXT_ENTITLEMENTS=/path/to/entitlements.plist</code>{" "}
         if your app needs specific capabilities.
       </p>
+      <h3>
+        Set up signing from <code>denext ui</code>
+      </h3>
+      <p>
+        You do not have to know the identity string. The{" "}
+        <a href="/docs/ui#desktop">Desktop panel</a> of <code>denext ui</code>{" "}
+        lists the Developer ID Application identities actually in your keychain (and only those — an
+        {" "}
+        <em>Apple Development</em> certificate is filtered out on purpose), shows which{" "}
+        <code>DENEXT_*</code> variables are already set, and composes the{" "}
+        <code>denext desktop package</code>{" "}
+        invocation with one copy-paste line per variable still unset — for the identity, a
+        shell-quoted{" "}
+        <code>export DENEXT_CODESIGN_IDENTITY='Developer ID Application: Your Name (TEAMID)'</code>.
+        It runs no build and writes no file, and it never reads{" "}
+        <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, only whether it is set.
+      </p>
 
       <h2>Notarization</h2>
       <p>

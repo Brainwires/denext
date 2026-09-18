@@ -19,15 +19,41 @@ export default function GettingStarted() {
         command in your PATH, so every example below is one word instead of a URL:
       </p>
       <Code lang="sh">
-        {`curl -fsSL https://denext.dev/install.sh | sh   # ~/.denext/bin/denext
-# or, with Deno already installed:
+        {`curl -fsSL https://denext.dev/install.sh | sh   # ~/.denext/bin/denext (macOS, Linux)
+# or, with Deno already installed (Windows too):
 deno install -A -g -n denext jsr:@denext/denext/cli`}
       </Code>
       <p>
         The binary is a CLI, not a second copy of the framework: inside a project it runs the denext
-        that project pins, so it never silently swaps your app's framework version. Every command on
-        this page also works with nothing installed — replace <code>denext</code> with{" "}
-        <code>deno run -A jsr:@denext/denext/cli</code>.
+        that project pins in <code>deno.json</code> (a <code>deno run</code>{" "}
+        child, so it needs a Deno), so it never silently swaps your app's framework version. Pin a
+        version — <code>jsr:@denext/denext@^2.5.0</code>, as <code>denext create</code>{" "}
+        writes — and that is what the binary defers to; an unversioned{" "}
+        <code>jsr:@denext/denext</code>{" "}
+        means "the latest published version", which is reproducible only until the next release.
+        Every command on this page also works with nothing installed — replace <code>denext</code>
+        {" "}
+        with <code>deno run -A jsr:@denext/denext/cli</code>.
+      </p>
+      <p>
+        The installer downloads the release archive for your platform (<code>
+          denext-&lt;target&gt;.tar.gz
+        </code>), verifies it against the release's <code>SHA256SUMS</code> (or the per-archive{" "}
+        <code>&lt;archive&gt;.sha256</code>) and refuses to install without a checksum —{" "}
+        <code>DENEXT_INSECURE=1</code> is the one loud override. It resolves the{" "}
+        <em>latest stable</em>{" "}
+        release: release candidates are GitHub prereleases and are never "latest", so pick one with
+        {" "}
+        <code>DENEXT_VERSION=v2.5.0-rc.6</code>{" "}
+        if you want it. Gatekeeper is not part of this path by design: a file fetched by{" "}
+        <code>curl | sh</code>{" "}
+        never carries the quarantine attribute (the script strips it anyway, for a binary that
+        arrived by browser), so the macOS CLI binary is not stapled — a bare executable cannot be —
+        and runs whether or not the release was signed. It <em>is</em>{" "}
+        code-signed and notarized when the release was built with the Apple Developer ID secrets,
+        and ships unsigned otherwise. On Windows, download{" "}
+        <code>denext-x86_64-pc-windows-msvc.zip</code> from the release page or use the{" "}
+        <code>deno install</code> line.
       </p>
 
       <h2>Create a project</h2>
@@ -45,14 +71,20 @@ deno task dev`}
       <Code lang="jsonc">
         {`{
   "tasks": {
-    "dev": "deno run -A jsr:@denext/denext/cli dev .",
-    "build": "deno run -A jsr:@denext/denext/cli build .",
-    "start": "deno run -A jsr:@denext/denext/cli start ."
+    "dev": "deno run -A jsr:@denext/denext@^2.5.0/cli dev .",
+    "build": "deno run -A jsr:@denext/denext@^2.5.0/cli build .",
+    "start": "deno run -A jsr:@denext/denext@^2.5.0/cli start ."
   },
   "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },
-  "imports": { "denext": "jsr:@denext/denext" }
+  "imports": { "denext": "jsr:@denext/denext@^2.5.0" }
 }`}
       </Code>
+      <p>
+        The version in <code>imports</code> is the project's pin — what the <code>denext</code>{" "}
+        binary defers to — and the tasks name the same version, so <code>deno task build</code> and
+        {" "}
+        <code>denext build</code> run the same framework. <code>denext create</code> writes both.
+      </p>
 
       <h2>Your first page</h2>
       <Code lang="tsx">

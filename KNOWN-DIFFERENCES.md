@@ -109,6 +109,12 @@ internal design choice with no observable difference lives in
   without a build salt.
 - **`userAgent().device.type`** is `undefined` for a desktop browser (matching
   ua-parser-js); the older denext value was `"desktop"`.
+- **Cron expressions use POSIX weekday numbers** — `0–6` with `0` (or `7`) for Sunday, so
+  `0 0 * * 1` is Monday, as every Vixie cron and the userland scheduler read it. `Deno.cron`
+  numbers weekdays `1–7` from Sunday and rejects `0` and `?`, so denext never hands it an
+  expression verbatim: the day-of-week field is translated into names (`MON`, `MON-FRI`, an
+  exact list for a stepped range) and `?` becomes `*`. Write POSIX; the translation is denext's.
+  (Next has no scheduler; this differs from `Deno.cron`'s own convention.)
 - **`client-only` is inert at build time.** Next fails a build that imports `client-only`
   from the `react-server` layer. denext's compat SSR bundle server-renders the `"use client"`
   tree as well, so it has no such layer and treats `client-only` as an empty marker on both

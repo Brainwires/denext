@@ -531,10 +531,16 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   because the generated client entry resolves `denext/client-runtime` and friends against
   `import.meta.url`, which inside a binary is a `deno-compile://` path the child bundler cannot
   see. **Consequence:** those verbs need a reachable `deno`, and a directory that pins no denext
-  is refused with a message naming the fix, rather than built. `ui`, `create`, `init`,
-  `commands`, `completions` and `--version` run in the binary itself and need nothing.
-  The `curl … | sh` installer ships the binary unsigned unless the release was built with the
-  Apple Developer ID secrets configured; on macOS it strips the quarantine attribute for you.
+  is refused with a message naming the fix, rather than built. `create`, `init`, `commands`,
+  `completions` and `--version` run in the binary itself and need nothing; `ui` starts without
+  Deno but its panels spawn `deno` for every project-touching operation. Signing is not a gap:
+  the release workflow code-signs and notarises the macOS binary when the Apple Developer ID
+  secrets are configured, and a `curl | sh` download never carries the quarantine attribute (a
+  bare executable cannot be stapled either) — that is documented in
+  [The `denext` command](./README.md#the-denext-command). What _is_ still missing: a Windows
+  installer script (the `.zip` is on the release page; `deno install` covers it), and the
+  installer's `curl | sh` path needs a published non-prerelease release to resolve, because a
+  release candidate is a GitHub prerelease and never "latest" — pass `DENEXT_VERSION`.
 
 - **`next/font/local`: no metric-matched fallback face.** Google fonts get Next's
   `adjustFontFallback` fallback face from a bundled metrics table (the same Capsize set Next
