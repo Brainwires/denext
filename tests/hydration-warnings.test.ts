@@ -61,6 +61,35 @@ Deno.test("dev hydration: warns on a text-content mismatch", () => {
   assertStringIncludes(warnings[0], "hydration mismatch");
 });
 
+Deno.test("dev hydration: suppressHydrationWarning silences a text mismatch on that element only", () => {
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  // Server rendered <time>10:00</time>; the client's clock says 10:01 — React's opt-out.
+  const time = doc.createElement("time");
+  time.appendChild(doc.createTextNode("10:00"));
+  container.appendChild(time);
+
+  const warnings = capture(true, () => {
+    hydrateRoot(asEl(container), h("time", { suppressHydrationWarning: true }, "10:01"));
+  });
+  assertEquals(warnings, [], "the element opted out, so its text mismatch is not reported");
+  assertEquals(time.textContent, "10:01", "the client value still wins");
+  assert(!("suppressHydrationWarning" in time.attributes), "the marker is not an attribute");
+
+  // One level only: a mismatch in a descendant still warns.
+  const { doc: doc2, container: c2 } = makeDom();
+  setDocument(asDoc(doc2));
+  const outer = doc2.createElement("div");
+  const inner = doc2.createElement("span");
+  inner.appendChild(doc2.createTextNode("a"));
+  outer.appendChild(inner);
+  c2.appendChild(outer);
+  const deeper = capture(true, () => {
+    hydrateRoot(asEl(c2), h("div", { suppressHydrationWarning: true }, h("span", null, "b")));
+  });
+  assert(deeper.length >= 1, "a descendant's mismatch is still reported");
+});
+
 Deno.test("production hydration: mismatch is silent without the dev flag", () => {
   const { doc, container } = makeDom();
   setDocument(asDoc(doc));

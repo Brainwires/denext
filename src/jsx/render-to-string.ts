@@ -1019,6 +1019,9 @@ const STRUCTURAL_PROPS = new Set([
   "key",
   "ref",
   "dangerouslySetInnerHTML",
+  // React's opt-out for a text child that legitimately differs between server and client
+  // (a timestamp); the hydrator reads it off the vnode, the DOM never sees it.
+  "suppressHydrationWarning",
   PROVIDER_KEY,
 ]);
 

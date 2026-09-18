@@ -303,9 +303,9 @@ value afterwards:
 - A component that cannot render on the server:
   `dynamic(() => import(…), { ssr: false })`.
 
-`suppressHydrationWarning` is **not** implemented: it does not silence the
-warning and is serialised as a plain attribute. See
-[Client Components](/docs/client-components).
+- A value that legitimately differs (a clock): `<time suppressHydrationWarning>` silences
+  the warning for that element's own text, as in React — one level, never its descendants —
+  and the client value still wins. The marker never reaches the DOM.
 
 ## `ReferenceError: window is not defined` (or `document`, `localStorage`)
 

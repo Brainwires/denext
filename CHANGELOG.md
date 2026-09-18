@@ -67,6 +67,10 @@ and this project adheres to
 
 ### Added
 
+- `suppressHydrationWarning` (React's opt-out for a text child that differs between server and
+  client, such as a clock) is honoured: the element's own text mismatch is not reported, one
+  level deep, and the marker is never serialised as an attribute. It used to render as a bare
+  attribute and silence nothing.
 - New guides: Environment variables (`.env` tiers, the mode each verb loads, `publicEnv()`, a
   boot-time validation recipe, every `DENEXT_*` variable), npm React libraries in a native app
   (the compat build path, setup, cost, what is verified), File uploads (action, route handler and
