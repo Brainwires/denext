@@ -8,7 +8,8 @@
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { type DoctorCheck, setDoctorRunner } from "../src/ui/features/wizard.ts";
 import { envExampleSource, envNamesIn, scanEnvUsage } from "../src/ui/env-scan.ts";
 import { readDenoConfig, taskMap } from "../src/ui/tasks.ts";
@@ -31,7 +32,9 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The CSRF token derived from the session cookie. */
   csrf: string;
+  /** The session cookie the handshake minted (never the launch token). */
   headers: Record<string, string>;
 }
 
@@ -47,13 +50,8 @@ async function ui(
     await Deno.writeTextFile(abs, content);
   }
   const server = await startUiServer({ dir, port: 0, ...opts });
-  return {
-    server,
-    dir,
-    base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
-    headers: { cookie: `${UI_COOKIE}=${server.token}` },
-  };
+  const { cookie, csrf } = await uiHandshake(server);
+  return { server, dir, base: `http://127.0.0.1:${server.port}`, csrf, headers: { cookie } };
 }
 
 async function stop(h: Harness): Promise<void> {

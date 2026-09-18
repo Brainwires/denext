@@ -23,7 +23,8 @@ import {
 } from "../src/ui/features/commands.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { startUiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 
 /** The three built-ins the stubbed `denext commands --json` reports. */
 const CORE: UiCommandInfo[] = [
@@ -452,7 +453,7 @@ Deno.test("the panel is reachable through the kernel, and read-only stops the mu
   await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
   const server = await startUiServer({ dir, port: 0, readOnly: true });
   const base = `http://127.0.0.1:${server.port}`;
-  const headers = { cookie: `${UI_COOKIE}=${server.token}` };
+  const { headers, csrf } = await uiHandshake(server);
   try {
     const page = await fetch(`${base}/commands`, { headers });
     assertEquals(page.status, 200);
@@ -460,7 +461,7 @@ Deno.test("the panel is reachable through the kernel, and read-only stops the mu
 
     const run = await fetch(`${base}/commands`, {
       method: "POST",
-      headers: { ...headers, origin: base, [UI_CSRF_HEADER]: await deriveCsrf(server.token) },
+      headers: { ...headers, origin: base, [UI_CSRF_HEADER]: csrf },
       body: runBody("greet"),
     });
     assertEquals(run.status, 403);

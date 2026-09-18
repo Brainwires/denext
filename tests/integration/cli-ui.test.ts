@@ -556,8 +556,9 @@ async function checkUnauthenticated(ui: Ui): Promise<void> {
 }
 
 /**
- * The `?t=` exchange: a 302 to the same path with the query stripped, and the token parked in an
- * `HttpOnly; SameSite=Strict` cookie. Also picks the CSRF token out of the page's `<meta>`.
+ * The `?t=` exchange: a 302 to the overview, and a freshly minted secret — never the launch
+ * token, which a loopback cookie would otherwise carry to every other local server — parked in
+ * an `HttpOnly; SameSite=Strict` cookie. Also picks the CSRF token out of the page's `<meta>`.
  */
 async function handshake(ui: Ui): Promise<void> {
   const res = await fetch(`${ui.base}/?t=${ui.token}`, { redirect: "manual" });
@@ -568,7 +569,8 @@ async function handshake(ui: Ui): Promise<void> {
   assertStringIncludes(setCookie, "HttpOnly");
   assertStringIncludes(setCookie, "SameSite=Strict");
   ui.cookie = setCookie.split(";")[0];
-  assertStringIncludes(ui.cookie, ui.token);
+  assert(!ui.cookie.includes(ui.token), "the cookie is a separate secret, not the launch token");
+  assert(ui.cookie.split("=")[1].length >= 43, "and carries 256 bits of entropy");
 
   const home = await authed(ui, "/");
   assertEquals(home.status, 200);

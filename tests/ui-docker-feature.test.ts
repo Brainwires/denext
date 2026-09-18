@@ -9,7 +9,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { deriveCsrf, UI_COOKIE, UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { UI_CSRF_FIELD, UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { dockerPanel } from "../src/ui/features/docker.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { applyComposeEdits, readCompose } from "../src/build/compose-edit.ts";
@@ -29,6 +30,9 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The session cookie the handshake minted (never the launch token). */
+  cookie: string;
+  /** The CSRF token derived from that cookie. */
   csrf: string;
 }
 
@@ -39,12 +43,8 @@ async function ui(options: { readOnly?: boolean; spa?: boolean } = {}): Promise<
     await Deno.writeTextFile(join(dir, "denext.config.ts"), `export default { mode: "spa" };\n`);
   }
   const server = await startUiServer({ dir, port: 0, readOnly: options.readOnly });
-  return {
-    server,
-    dir,
-    base: `http://127.0.0.1:${server.port}`,
-    csrf: await deriveCsrf(server.token),
-  };
+  const { cookie, csrf } = await uiHandshake(server);
+  return { server, dir, base: `http://127.0.0.1:${server.port}`, cookie, csrf };
 }
 
 async function stop(h: Harness): Promise<void> {
@@ -54,7 +54,7 @@ async function stop(h: Harness): Promise<void> {
 
 /** A `GET` past the token gate. */
 function get(h: Harness, path: string): Promise<Response> {
-  return fetch(`${h.base}${path}`, { headers: { cookie: `${UI_COOKIE}=${h.server.token}` } });
+  return fetch(`${h.base}${path}`, { headers: { cookie: h.cookie } });
 }
 
 /** A `POST` past the origin + token + CSRF gates, as a browser form submit. */
@@ -66,7 +66,7 @@ function post(h: Harness, path: string, fields: Record<string, string>): Promise
     method: "POST",
     redirect: "manual",
     headers: {
-      cookie: `${UI_COOKIE}=${h.server.token}`,
+      cookie: h.cookie,
       origin: h.base,
       [UI_CSRF_HEADER]: h.csrf,
     },
@@ -385,7 +385,7 @@ Deno.test("the JSON twin accepts a JSON body and answers the documented shape", 
     const res = await fetch(`${h.base}/api/docker`, {
       method: "POST",
       headers: {
-        cookie: `${UI_COOKIE}=${h.server.token}`,
+        cookie: h.cookie,
         origin: h.base,
         [UI_CSRF_HEADER]: h.csrf,
         "content-type": "application/json",
@@ -411,7 +411,7 @@ Deno.test("a fragment request returns only the panel section ui.js swaps", async
   const h = await ui();
   try {
     const res = await fetch(`${h.base}/docker`, {
-      headers: { cookie: `${UI_COOKIE}=${h.server.token}`, accept: "text/html-fragment" },
+      headers: { cookie: h.cookie, accept: "text/html-fragment" },
     });
     const body = await res.text();
     assert(body.trimStart().startsWith('<section id="panel"'), body.slice(0, 80));
@@ -454,7 +454,7 @@ function postJson(h: Harness, path: string, body: unknown): Promise<Response> {
     method: "POST",
     redirect: "manual",
     headers: {
-      cookie: `${UI_COOKIE}=${h.server.token}`,
+      cookie: h.cookie,
       origin: h.base,
       [UI_CSRF_HEADER]: h.csrf,
       "content-type": "application/json",
@@ -1060,7 +1060,7 @@ Deno.test("each Docker tab names itself in the title; a fragment still carries n
 
     // `ui.js` swaps one `<section>`: the per-view title must not turn that into a document.
     const fragment = await (await fetch(`${h.base}/docker?tab=services`, {
-      headers: { cookie: `${UI_COOKIE}=${h.server.token}`, accept: "text/html-fragment" },
+      headers: { cookie: h.cookie, accept: "text/html-fragment" },
     })).text();
     assert(
       !fragment.includes("<title>"),

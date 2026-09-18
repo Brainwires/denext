@@ -753,7 +753,8 @@ async function opStopDev(ctx: UiContext, _s: Survey, _form: FormData): Promise<O
   broadcast(ctx.events, { type: "dev-stopped" });
   return {
     step: "finish",
-    ok: outcome.status !== "failed" && outcome.status !== "unsupported",
+    ok: outcome.status !== "failed" && outcome.status !== "unsupported" &&
+      outcome.status !== "mismatch",
     message: outcome.message,
   };
 }

@@ -7,6 +7,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { buildRegistry } from "../src/cli/register.ts";
+import { plainText } from "../src/cli/command.ts";
+import { readCommandCache, writeCommandCache } from "../src/cli/command-cache.ts";
 
 const CLI = fromFileUrl(new URL("../cli.ts", import.meta.url));
 const DENO_JSON = fromFileUrl(new URL("../deno.json", import.meta.url));
@@ -194,6 +196,48 @@ Deno.test("a project verb never shadows a built-in in the help table", async () 
     await runCli(["commands", "--cwd", dir]);
     const res = await runCli(["--help", dir]);
     assert(!res.out.includes("Mine"), "a built-in's name is never listed as a project verb");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("help prints a project verb's name and summary with every control character removed", () => {
+  // A summary is project content on its way to the terminal. `\x1b[2K` clears the line it is
+  // printed on; an OSC sequence can retitle the window or plant a hyperlink. None of it survives.
+  const reg = buildRegistry();
+  const help = reg.formatHelp("0.0.0", [
+    { name: "seed", summary: "Load\x1b[2K fixtures\x1b]8;;https://evil.example\x07\x9b31m" },
+    { name: "wipe\x08\x08\x08\x08keep", summary: "\x00Wipe\x7f the db" },
+  ]);
+  assertStringIncludes(help, "seed");
+  assertStringIncludes(help, "Load[2K fixtures]8;;https://evil.example31m");
+  assertStringIncludes(help, "wipekeep");
+  assertStringIncludes(help, "Wipe the db");
+  // deno-lint-ignore no-control-regex
+  assert(!/[\x00-\x1f\x7f-\x9f]/.test(help.replace(/\n/g, "")), "no control byte reaches the tty");
+  assertEquals(plainText("plain"), "plain");
+  assertEquals(plainText("a\x1b[2Kb\r\n"), "a[2Kb");
+});
+
+Deno.test("a cached verb whose name is not a verb name is no listing at all", async () => {
+  // `.denext/commands.json` is project content too (a clone can commit one). Help prints the
+  // names and invites `denext <name>`, so a name outside the grammar the config validator
+  // enforces voids the whole listing; a hostile SUMMARY is kept and stripped at print time.
+  const dir = await Deno.makeTempDir({ prefix: "denext_help_cache_" });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    for (const name of ["seed\x1b[2K", "../seed", "Seed", "-x", "", "seed dev"]) {
+      await writeCommandCache(dir, [{ name, summary: "ok" }]);
+      assertEquals(await readCommandCache(dir), null, JSON.stringify(name));
+    }
+    await writeCommandCache(dir, [{ name: "seed-2", summary: "Load\x1b[2K fixtures" }]);
+    assertEquals(await readCommandCache(dir), [{
+      name: "seed-2",
+      summary: "Load\x1b[2K fixtures",
+    }]);
+    const help = buildRegistry().formatHelp("0.0.0", (await readCommandCache(dir)) ?? []);
+    assertStringIncludes(help, "seed-2");
+    assert(!help.includes("\x1b"), "the escape is gone by the time it is printed");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

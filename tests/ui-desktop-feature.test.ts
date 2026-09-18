@@ -12,7 +12,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
-import { desktopPanel } from "../src/ui/features/desktop.ts";
+import { desktopPanel, shellQuote } from "../src/ui/features/desktop.ts";
 
 /** A project, optionally scaffolded for desktop packaging. */
 async function project(scaffolded: boolean): Promise<string> {
@@ -140,4 +140,24 @@ Deno.test("the macOS view answers the question it exists to answer", async () =>
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("the copy-paste export line single-quotes the identity, so a hostile name runs nothing", () => {
+  // A keychain identity is text the panel did not write. Inside `"…"` a shell still expands
+  // `$(…)` and backticks; only `'…'` is inert, and the one character it cannot hold is spelled
+  // out as `'\''`.
+  const hostile = "Developer ID Application: $(touch /tmp/pwned) `id` $HOME O'Brien (TEAMID)";
+  const word = shellQuote(hostile);
+  assertEquals(
+    word,
+    "'Developer ID Application: $(touch /tmp/pwned) `id` $HOME O'\\''Brien (TEAMID)'",
+  );
+  // Round-trips through a real shell as the literal name, expansions and all.
+  const line = `export DENEXT_CODESIGN_IDENTITY=${word}`;
+  const { stdout } = new Deno.Command("sh", {
+    args: ["-c", `${line}; printf '%s' "$DENEXT_CODESIGN_IDENTITY"`],
+    env: { HOME: "/nope" },
+  }).outputSync();
+  assertEquals(new TextDecoder().decode(stdout), hostile);
+  assertEquals(shellQuote(""), "''", "an empty name is still one word");
 });

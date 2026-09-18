@@ -10,7 +10,7 @@
 
 import { fromFileUrl } from "@std/path";
 import type { SseClients } from "../build/sse.ts";
-import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
+import { serveWithPortFallback } from "../server/serve-utils.ts";
 import { jsonResponse, type UiContext } from "./html.ts";
 import { broadcast, closeAll } from "./events.ts";
 import { UI_ROUTES } from "./routes.ts";
@@ -21,6 +21,7 @@ import {
   createUiSession,
   handshake,
   isMutation,
+  type UiCookie,
   uiOriginAllowed,
   type UiSession,
 } from "./security.ts";
@@ -59,13 +60,17 @@ export interface UiServerOptions {
 
 /** A running UI server. */
 export interface UiServer {
-  /** The URL to open, carrying the single-use `?t=` handshake. */
+  /**
+   * The URL to open, carrying the single-use `?t=` handshake. Always `http://127.0.0.1:<port>`,
+   * never `localhost`: a cookie set on `localhost` is sent to every other local server on that
+   * name, so the UI's session lives on the address only it is opened at.
+   */
   readonly url: string;
   /** The bound port. */
   readonly port: number;
   /** The bound hostname (always loopback). */
   readonly hostname: string;
-  /** The session token. */
+  /** The launch token (the `?t=` value; the session cookie is a separate secret). */
   readonly token: string;
   /** Resolves once the server has stopped and drained. */
   readonly finished: Promise<void>;
@@ -97,7 +102,7 @@ export async function startUiServer(options: UiServerOptions): Promise<UiServer>
     onListen: () => {},
   }, (request) => handleUiRequest(request, session, events, controller.signal, options));
   const addr = server.addr as Deno.NetAddr;
-  const url = `http://${displayHost(addr.hostname)}:${addr.port}/?t=${session.token}`;
+  const url = `http://${addr.hostname}:${addr.port}/?t=${session.token}`;
   if (options.uiDev) watchUiSources(events, controller.signal);
   return {
     url,
@@ -147,13 +152,14 @@ async function dispatch(
 ): Promise<Response> {
   const url = new URL(request.url);
   if (!uiOriginAllowed(request, url)) return refuse(403, "forbidden origin");
-  const exchanged = handshake(request, url, session);
+  const exchanged = await handshake(request, url, session);
   if (exchanged) return applySecurityHeaders(exchanged);
-  if (!authorized(request, session)) return refuse(401, "unauthorized");
+  const cookie = authorized(request, session);
+  if (cookie === null) return refuse(401, "unauthorized");
   const route = UI_ROUTES[url.pathname];
   if (!route) return refuse(404, "not found");
   if (!route.methods.includes(request.method)) return refuse(405, "method not allowed");
-  const ctx = await buildContext(request, url, session, events, signal, options);
+  const ctx = await buildContext(request, url, cookie, events, signal, options);
   if ("refusal" in ctx) return ctx.refusal;
   return applySecurityHeaders(await route.handle(request, ctx.ctx));
 }
@@ -165,7 +171,7 @@ async function dispatch(
 async function buildContext(
   request: Request,
   url: URL,
-  session: UiSession,
+  cookie: UiCookie,
   events: SseClients,
   signal: AbortSignal,
   options: UiServerOptions,
@@ -174,7 +180,7 @@ async function buildContext(
   if (mutating && options.readOnly) return { refusal: refuse(403, "read-only") };
   const { form, body } = mutating ? await readBody(request) : {};
   if (mutating) {
-    const bad = checkCsrf(request, url, session, form);
+    const bad = checkCsrf(request, url, cookie, form);
     if (bad) return { refusal: refuse(403, bad) };
   }
   return {
@@ -184,7 +190,7 @@ async function buildContext(
       method: request.method,
       readOnly: options.readOnly === true,
       offline: options.offline === true,
-      csrf: session.csrf,
+      csrf: cookie.csrf,
       json: url.pathname.startsWith("/api/"),
       fragment: (request.headers.get("accept") ?? "").includes("text/html-fragment"),
       form,

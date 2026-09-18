@@ -302,6 +302,8 @@
     "ParseOutcome:typeAlias",
     "PositionalSpec:interface",
     "ProjectVerb:interface",
+    "VERB_NAME:variable",
+    "plainText:function",
     "suggest:function"
   ],
   "denext/plugin-kit": [

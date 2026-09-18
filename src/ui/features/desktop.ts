@@ -362,6 +362,20 @@ function ToolNote({ tool }: { readonly tool: ToolState }): VNode {
   );
 }
 
+/**
+ * `value` as one POSIX-shell word: single-quoted, with each `'` spelled `'\''`. Single quotes
+ * are the only quoting a shell expands nothing inside — a `"…"` still runs `$(…)` and
+ * `` `…` `` — and a keychain identity's name is text the panel did not write, pasted into a
+ * shell by the person reading it.
+ *
+ * @internal Exported for its unit test.
+ * @param value The text to quote.
+ * @returns The shell word.
+ */
+export function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 /** The command to run, composed from what this tab resolved. */
 function Command({ state }: { readonly state: DesktopState }): VNode {
   const first = state.identities[0];
@@ -370,7 +384,7 @@ function Command({ state }: { readonly state: DesktopState }): VNode {
   // so you know to set it, and says where it stays.
   const lines = state.env.filter((entry) => !entry.set).map((entry) => {
     if (entry.spec.name === "DENEXT_CODESIGN_IDENTITY" && first !== undefined) {
-      return `export ${entry.spec.name}=${JSON.stringify(first.name)}`;
+      return `export ${entry.spec.name}=${shellQuote(first.name)}`;
     }
     if (entry.spec.secret) return `export ${entry.spec.name}=...   # yours; never stored here`;
     return `export ${entry.spec.name}=...`;

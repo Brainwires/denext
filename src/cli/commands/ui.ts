@@ -94,10 +94,12 @@ export const uiCommand: CommandSpec = {
     "  denext ui --read-only        Browse without offering any write\n" +
     "  denext ui --offline          Keep the UI and every process it starts off the network\n" +
     "  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n" +
-    "  The UI binds 127.0.0.1 only. The printed URL carries a per-launch 256-bit token that\n" +
-    "  is exchanged ONCE for an HttpOnly, SameSite=Strict cookie — the query token is then\n" +
-    "  refused, so a copied link cannot open a second session. Every mutation additionally\n" +
-    "  needs a same-origin Origin and a derived CSRF token.\n" +
+    "  The UI binds and is opened at 127.0.0.1 only (never localhost, whose cookies every\n" +
+    "  local server shares). The printed URL carries a per-launch 256-bit token that is\n" +
+    "  exchanged ONCE for an HttpOnly, SameSite=Strict cookie holding a separate, freshly\n" +
+    "  minted secret — the query token is then refused, so a copied link cannot open a\n" +
+    "  second session. Every mutation additionally needs a same-origin Origin and a CSRF\n" +
+    "  token derived from the cookie.\n" +
     "  Note: with --open, the token is visible in the browser-launcher's argv on this machine.",
   loadsModules: false,
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],

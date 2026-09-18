@@ -19,7 +19,7 @@ async function withDevJson(body: unknown, fn: (dir: string) => Promise<void>): P
 
 Deno.test("readDevInfo: a loopback origin is kept, reduced to scheme, host and port", async () => {
   for (const origin of ["http://127.0.0.1:3000", "http://localhost:3000/", "http://[::1]:5173"]) {
-    await withDevJson({ origin, port: 3000 }, async (dir) => {
+    await withDevJson({ origin, port: 3000, pid: 4242 }, async (dir) => {
       assertEquals((await readDevInfo(dir))?.origin, new URL(origin).origin);
     });
   }
@@ -35,7 +35,7 @@ Deno.test("readDevInfo: any other origin reads as no dev server", async () => {
     42,
   ];
   for (const origin of planted) {
-    await withDevJson({ origin, port: 3000 }, async (dir) => {
+    await withDevJson({ origin, port: 3000, pid: 4242 }, async (dir) => {
       assertEquals(await readDevInfo(dir), null, String(origin));
     });
   }

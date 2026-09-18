@@ -7,8 +7,8 @@ import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { cliInvocation } from "../src/ui/proc.ts";
 import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
-import { UI_COOKIE, UI_CSRF_HEADER } from "../src/ui/security.ts";
-import { deriveCsrf } from "../src/ui/security.ts";
+import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { uiHandshake } from "./helpers/ui-session.ts";
 import { toHtml, UI_NAV } from "../src/ui/html.ts";
 import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { DiffBlock, OpForm } from "../src/ui/components.ts";
@@ -25,7 +25,10 @@ interface Harness {
   server: UiServer;
   base: string;
   dir: string;
+  /** The session cookie the handshake minted (never the launch token). */
   headers: Record<string, string>;
+  /** The CSRF token derived from that cookie. */
+  csrf: string;
 }
 
 async function ui(options: { offline?: boolean } = {}): Promise<Harness> {
@@ -35,12 +38,8 @@ async function ui(options: { offline?: boolean } = {}): Promise<Harness> {
     '{ "tasks": { "hello": "eval console.log(1)" } }',
   );
   const server = await startUiServer({ dir, port: 0, ...options });
-  return {
-    server,
-    dir,
-    base: `http://127.0.0.1:${server.port}`,
-    headers: { cookie: `${UI_COOKIE}=${server.token}` },
-  };
+  const { cookie, csrf } = await uiHandshake(server);
+  return { server, dir, base: `http://127.0.0.1:${server.port}`, headers: { cookie }, csrf };
 }
 
 /** POST `/tasks/run` for `task`, as the wizard's no-JS form would. */
@@ -49,7 +48,7 @@ async function postTask(h: Harness, task: string): Promise<Response> {
   form.set("task", task);
   return await fetch(`${h.base}/tasks/run`, {
     method: "POST",
-    headers: { ...h.headers, origin: h.base, [UI_CSRF_HEADER]: await deriveCsrf(h.server.token) },
+    headers: { ...h.headers, origin: h.base, [UI_CSRF_HEADER]: h.csrf },
     body: form,
   });
 }
@@ -64,9 +63,10 @@ Deno.test("the server binds loopback only and hands back its URL + token", async
   try {
     assertEquals(h.server.hostname, "127.0.0.1");
     assert(h.server.port > 0);
-    assertStringIncludes(h.server.url, `:${h.server.port}/?t=${h.server.token}`);
-    assert(/^https?:\/\/(localhost|127\.0\.0\.1)/.test(h.server.url), h.server.url);
-    assert(h.server.token.length >= 43, "the session token carries 256 bits of entropy");
+    // 127.0.0.1 by name, never `localhost`: a loopback cookie is shared across every port of
+    // its host, and `localhost` is the name every other local server is reached at.
+    assertEquals(h.server.url, `http://127.0.0.1:${h.server.port}/?t=${h.server.token}`);
+    assert(h.server.token.length >= 43, "the launch token carries 256 bits of entropy");
   } finally {
     await stop(h);
   }
@@ -323,7 +323,7 @@ Deno.test({
     // read-only: the UI refuses every write of its own, and a GET still lists verbs — the
     // discovery CHILD is allowed to execute the project, which is the whole point of the split.
     const server = await startUiServer({ dir, port: 0, readOnly: true });
-    const headers = { cookie: `${UI_COOKIE}=${server.token}` };
+    const { headers } = await uiHandshake(server);
     const base = `http://127.0.0.1:${server.port}`;
     try {
       const page = await fetch(`${base}/commands`, { headers });

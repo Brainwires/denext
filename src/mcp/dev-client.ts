@@ -40,23 +40,37 @@ export interface DevInfo {
 export interface DevStateResponse {
   events: DevEvent[];
   total: number;
+  /** The dev server's own process id — the one its `dev.json` names. */
+  pid: number;
+  /** The project directory it serves, as it resolved it. */
+  projectDir: string;
 }
 
 /**
  * Read `<dir>/.denext/dev.json`, the address a running dev server published.
  *
  * @param dir The project directory.
- * @returns The dev-server info, or null when no dev server is running (no file) or the file
- *   names anything but a loopback http(s) origin.
+ * @returns The dev-server info, or null when no dev server is running (no file), the file
+ *   names anything but a loopback http(s) origin, or its `pid` is not a real process id.
  */
 export async function readDevInfo(dir: string): Promise<DevInfo | null> {
   try {
     const info = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "dev.json")));
     const origin = loopbackOrigin(info?.origin);
-    return origin ? { ...info, origin } as DevInfo : null;
+    return origin && processId(info?.pid) ? { ...info, origin } as DevInfo : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Whether `value` can be the pid a dev server wrote about itself: a safe integer above 1. A
+ * dev server only ever writes its own `Deno.pid`; `-1` (every process the caller may signal),
+ * `0` (the caller's process group) and `1` (init) are what a committed or planted file would
+ * name to turn "stop the dev server" into something else.
+ */
+function processId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 1;
 }
 
 /** The hosts a dev server's published origin can name (it rewrites `0.0.0.0` to loopback). */
