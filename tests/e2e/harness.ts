@@ -49,17 +49,27 @@ export async function buildAndServe(dir: string): Promise<RunningServer> {
   return serveEphemeral(dir);
 }
 
+/** What both dev servers are started with here: an ephemeral loopback port, per-server mode. */
+interface DevStart {
+  paths: Awaited<ReturnType<typeof resolveProject>>;
+  port: 0;
+  hostname: "127.0.0.1";
+  signal: AbortSignal;
+  onListen: (info: { hostname: string; port: number }) => void;
+  unbundled?: boolean;
+}
+
 /**
- * Start the DEV server on `dir` (ephemeral port), for HMR / dev-loop e2e tests.
- * `env` values are set on `Deno.env` before the server boots (e.g.
- * `DENEXT_DEV_UNBUNDLED: "1"` to exercise the unbundled dev loop) and restored on
- * `close()`. No production build — the dev server bundles/transforms on demand.
+ * Start one of the dev servers on `dir` (ephemeral port). `env` values are set on
+ * `Deno.env` before the server boots (e.g. `DENEXT_DEV_UNBUNDLED: "1"` to exercise the
+ * unbundled dev loop) and restored on `close()`. No production build — the dev server
+ * bundles/transforms on demand.
  */
-/** Start the SPA dev server (`mode: "spa"`) on `dir` on an ephemeral port. */
-export async function startSpaDevOnDir(
+async function startDevKind(
+  start: (options: DevStart) => Deno.HttpServer,
   dir: string,
-  env: Record<string, string> = {},
-  opts: { unbundled?: boolean } = {},
+  env: Record<string, string>,
+  opts: { unbundled?: boolean },
 ): Promise<RunningServer> {
   const prior: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(env)) {
@@ -69,7 +79,7 @@ export async function startSpaDevOnDir(
   const paths = await resolveProject(dir);
   const controller = new AbortController();
   const { promise, resolve } = Promise.withResolvers<{ hostname: string; port: number }>();
-  const server = startSpaDevServer({
+  const server = start({
     paths,
     port: 0,
     hostname: "127.0.0.1",
@@ -92,40 +102,22 @@ export async function startSpaDevOnDir(
   };
 }
 
-export async function startDevOnDir(
+/** Start the SPA dev server (`mode: "spa"`) on `dir` on an ephemeral port. */
+export function startSpaDevOnDir(
   dir: string,
   env: Record<string, string> = {},
   opts: { unbundled?: boolean } = {},
 ): Promise<RunningServer> {
-  const prior: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(env)) {
-    prior[k] = Deno.env.get(k);
-    Deno.env.set(k, v);
-  }
-  const paths = await resolveProject(dir);
-  const controller = new AbortController();
-  const { promise, resolve } = Promise.withResolvers<{ hostname: string; port: number }>();
-  const server = startDevServer({
-    paths,
-    port: 0,
-    hostname: "127.0.0.1",
-    signal: controller.signal,
-    onListen: (info) => resolve(info),
-    // Per-server mode (parallel-safe) instead of the process-global DENEXT_DEV_UNBUNDLED.
-    unbundled: opts.unbundled,
-  });
-  const { hostname, port } = await promise;
-  return {
-    origin: `http://${hostname}:${port}`,
-    close: async () => {
-      controller.abort();
-      await server.finished;
-      for (const [k, v] of Object.entries(prior)) {
-        if (v === undefined) Deno.env.delete(k);
-        else Deno.env.set(k, v);
-      }
-    },
-  };
+  return startDevKind(startSpaDevServer, dir, env, opts);
+}
+
+/** Start the App Router DEV server on `dir` (ephemeral port), for HMR / dev-loop e2e tests. */
+export function startDevOnDir(
+  dir: string,
+  env: Record<string, string> = {},
+  opts: { unbundled?: boolean } = {},
+): Promise<RunningServer> {
+  return startDevKind(startDevServer, dir, env, opts);
 }
 
 // ── Browser-side helpers shared by the e2e tests ─────────────────────────────

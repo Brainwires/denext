@@ -5,14 +5,16 @@
 // the kernel's own gates are `tests/ui-server.test.ts`'s subject, not this file's.
 //
 // Nothing here may depend on the host having a Developer ID certificate: `listSigningIdentities`
-// really shells out, so a developer Mac and a Linux CI box legitimately render different
-// sections. The assertions below hold on both.
+// really shells out, so a developer Mac and a Linux CI box hold different keychains. The identity
+// source is swapped through `setSigningIdentitySource`, and BOTH renderings are asserted on every
+// machine — the guidance for an empty keychain and the escaped table for a full one.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import type { SseClients } from "../src/build/sse.ts";
 import type { UiContext } from "../src/ui/html.ts";
-import { desktopPanel, shellQuote } from "../src/ui/features/desktop.ts";
+import { desktopPanel, setSigningIdentitySource, shellQuote } from "../src/ui/features/desktop.ts";
+import type { SigningIdentity } from "../src/ui/signing.ts";
 
 /** A project, optionally scaffolded for desktop packaging. */
 async function project(scaffolded: boolean): Promise<string> {
@@ -127,17 +129,79 @@ Deno.test("Linux says there is nothing to sign, rather than offering empty contr
   }
 });
 
-Deno.test("the macOS view answers the question it exists to answer", async () => {
+Deno.test("a keychain with no Developer ID identity gets the guidance, not an empty table", async () => {
   const dir = await project(true);
+  setSigningIdentitySource(() => Promise.resolve([]));
   try {
     const body = await (await call(dir, "/desktop")).text();
-    // Either this machine has a Developer ID identity and they are listed, or it does not and
-    // the panel says how to get one. Both are answers; an empty section would not be.
-    const listed = body.includes("Identities in your keychain");
-    const guided = body.includes("No Developer ID Application identity in this keychain");
-    assert(listed || guided, "the identity question is answered either way");
+    assertStringIncludes(body, "No Developer ID Application identity in this keychain");
+    assert(!body.includes("Identities in your keychain"), "no table heading for an empty list");
+    // With nothing to answer for you, the identity line is a placeholder — never a quoted "".
+    assertStringIncludes(body, "export DENEXT_CODESIGN_IDENTITY=...");
     assertStringIncludes(body, "denext desktop package");
+    // The JSON twin agrees.
+    assertEquals((await (await call(dir, "/api/desktop")).json()).identities, []);
   } finally {
+    setSigningIdentitySource();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the identities found are tabled — names escaped — and the first is offered as the export", async () => {
+  const dir = await project(true);
+  // A keychain identity is text the panel did not write; the second name here is what a
+  // certificate could carry, and the page must show it as text rather than run it.
+  const hostile = "Developer ID Application: <script>alert(1)</script> & Sons (BBBBBBBBBB)";
+  const identities: SigningIdentity[] = [
+    {
+      sha1: "5D44043D1F109F96CDF66FB5D21E38573E643C23",
+      name: "Developer ID Application: A Name (AAAAAAAAAA)",
+      team: "AAAAAAAAAA",
+    },
+    { sha1: "2B58CDBD54D9C53E25BB8864B027646513CA8BA9", name: hostile, team: "BBBBBBBBBB" },
+  ];
+  setSigningIdentitySource(() => Promise.resolve(identities));
+  const KEY = "DENEXT_CODESIGN_IDENTITY";
+  const had = Deno.env.get(KEY);
+  Deno.env.delete(KEY); // unset, so the command block has an identity line to compose
+  try {
+    const body = await (await call(dir, "/desktop")).text();
+    assertStringIncludes(body, "Identities in your keychain");
+    assert(
+      !body.includes("No Developer ID Application identity"),
+      "the guidance is for an empty list",
+    );
+    // Every row: name, Team ID and fingerprint, in the order the keychain printed them.
+    for (const id of identities) {
+      assertStringIncludes(body, `<code class="mono">${id.sha1}</code>`);
+      assertStringIncludes(body, `<td>${id.team}</td>`);
+    }
+    assertStringIncludes(
+      body,
+      '<code class="mono">Developer ID Application: A Name (AAAAAAAAAA)</code>',
+    );
+    assertStringIncludes(
+      body,
+      '<code class="mono">Developer ID Application: &lt;script&gt;alert(1)&lt;/script&gt; &amp; Sons (BBBBBBBBBB)</code>',
+    );
+    assert(!body.includes("<script>alert(1)"), "a hostile name never reaches the page as markup");
+    assert(body.indexOf("A Name") < body.indexOf("Sons"), "rows keep the keychain's order");
+    // The export line is the FIRST identity, single-quoted for a shell (escaped once more for HTML).
+    assertStringIncludes(
+      body,
+      "export DENEXT_CODESIGN_IDENTITY=&#39;Developer ID Application: A Name (AAAAAAAAAA)&#39;",
+    );
+    assert(
+      !body.includes("export DENEXT_CODESIGN_IDENTITY=..."),
+      "no placeholder when it can answer",
+    );
+
+    // The JSON twin carries the same list, unescaped, because JSON is not HTML.
+    const api = await (await call(dir, "/api/desktop")).json();
+    assertEquals(api.identities, identities);
+  } finally {
+    setSigningIdentitySource();
+    if (had !== undefined) Deno.env.set(KEY, had);
     await Deno.remove(dir, { recursive: true });
   }
 });

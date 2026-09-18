@@ -132,6 +132,24 @@ interface ToolState {
   readonly purpose: string;
 }
 
+/** Lists the Developer ID identities the panel offers. */
+export type SigningIdentitySource = () => Promise<readonly SigningIdentity[]>;
+
+/** The identity source this panel uses. */
+let identitySource: SigningIdentitySource = () => listSigningIdentities();
+
+/**
+ * Swap the signing-identity source.
+ *
+ * @internal Test seam only: the suite renders both the "none found" guidance and the identities
+ * table without depending on what the host's keychain holds. Passing nothing restores the real
+ * `security find-identity` probe.
+ * @param source The replacement, or `undefined` to restore the default.
+ */
+export function setSigningIdentitySource(source?: SigningIdentitySource): void {
+  identitySource = source ?? (() => listSigningIdentities());
+}
+
 /**
  * Whether `name` is set, and its value when reading one is safe.
  *
@@ -192,7 +210,7 @@ async function readState(ctx: UiContext): Promise<DesktopState> {
     tab,
     scaffolded: await exists(ctx.dir, SCRIPT[tab]),
     env: VARS[tab].map(envState),
-    identities: tab === "macos" ? await listSigningIdentities() : [],
+    identities: tab === "macos" ? await identitySource() : [],
     tool: await toolOf(tab),
     wrongHost: tab === "macos" && Deno.build.os !== "darwin",
   };

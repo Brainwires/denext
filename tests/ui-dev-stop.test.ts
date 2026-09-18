@@ -48,12 +48,20 @@ Deno.test("dev-stop: no dev.json means nothing is running", async () => {
 });
 
 Deno.test("dev-stop: a dev.json whose server is gone is cleared, and its pid never signalled", async () => {
-  // The real probe against a port nothing listens on: the one path that needs no seam.
+  // The real probe, with no seam. The origin is a stand-in that stays LISTENING for the whole
+  // test and answers nothing but 404 — the port a dev server vacated and something else took.
+  // A port this test bound and closed would be "free" only until another `--parallel` test
+  // file bound it; a server of our own has no such window, and "not ok" is "no answer" to the
+  // probe exactly as a refused connection is.
   const dir = await Deno.makeTempDir({ prefix: "denext_dev_stop_" });
+  const ac = new AbortController();
+  const { promise, resolve } = Promise.withResolvers<number>();
+  const srv = Deno.serve(
+    { port: 0, hostname: "127.0.0.1", signal: ac.signal, onListen: ({ port }) => resolve(port) },
+    () => new Response("not found", { status: 404 }),
+  );
+  const port = await promise;
   try {
-    const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-    const port = (probe.addr as Deno.NetAddr).port;
-    probe.close();
     const devJson = await publish(dir, { origin: `http://127.0.0.1:${port}`, port, pid: PID });
     const rec = recorder();
 
@@ -61,7 +69,16 @@ Deno.test("dev-stop: a dev.json whose server is gone is cleared, and its pid nev
     assertEquals(await exists(devJson), false, "the stale dev.json must be cleared");
     assertEquals(rec.kills, [], "a pid nothing answers for is never signalled");
     assertEquals(rec.runs, []);
+
+    // And the seamed spelling of the same answer, for the path where nothing listens at all.
+    await publish(dir, { origin: `http://127.0.0.1:${port}`, port, pid: PID });
+    const gone = recorder({ probe: () => Promise.resolve(null) });
+    assertEquals((await stopDevServer(dir, gone.deps)).status, "stale");
+    assertEquals(await exists(devJson), false);
+    assertEquals(gone.kills, []);
   } finally {
+    ac.abort();
+    await srv.finished;
     await Deno.remove(dir, { recursive: true });
   }
 });

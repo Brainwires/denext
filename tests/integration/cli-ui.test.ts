@@ -34,7 +34,12 @@ const SPAWN_TIMEOUT_MS = 120_000;
 const DISCOVERY_TIMEOUT_MS = "60000";
 
 /** How long a signalled server gets to drain and exit. */
-const SHUTDOWN_TIMEOUT_MS = 5_000;
+// A failure bound, not a latency claim, for the same reason as `SPAWN_TIMEOUT_MS`: an idle
+// machine drains in well under a second, but `test:integration` runs this file `--parallel`
+// beside build tests, and a starved child's signal handler can wait many seconds for a turn
+// of its event loop. What the tests assert is that ONE signal drains the server; how fast is
+// not their subject, and a tight bound here has aborted releases on a loaded machine.
+const SHUTDOWN_TIMEOUT_MS = 120_000;
 
 /** The project's config — the fixture the config editor writes into. */
 const CONFIG = `// the app's own config — this comment must survive every write

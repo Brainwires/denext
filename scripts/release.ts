@@ -11,6 +11,8 @@
 // Order of operations:
 //   1. bump the version pins (scripts/bump-version.ts)
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
+//   2b. a stable release folds the rc sections in and re-points the docs pages' links to
+//       their anchors (`/docs/changelog#250-rc1---…`) at the folded release header
 //   3. deno task docs:api  — regenerate the in-site API reference
 //   3b. deno task badge:tests — refresh the test-count badge (CI `check` gates it)
 //   3c. deno task badge:fallow — refresh the fallow health-score badge
@@ -24,8 +26,8 @@
 // after the tag,
 // run `deno task docs:build`, then rsync the built `apps/web/out/` to your docs host.
 
-import { exists } from "@std/fs";
-import { join } from "@std/path";
+import { exists, walk } from "@std/fs";
+import { join, relative } from "@std/path";
 import { bumpVersion, REPO_ROOT, VERSION_RE } from "./bump-version.ts";
 
 /**
@@ -72,12 +74,23 @@ function die(message: string): never {
   Deno.exit(1);
 }
 
+/** What rolling the changelog did: the entries released, and the docs pages relinked. */
+export interface ChangelogRoll {
+  /** The number of `- ` entries that became this release. */
+  entries: number;
+  /** Docs pages (relative to the repo) whose folded-rc anchors were pointed at the release. */
+  relinked: string[];
+}
+
 /**
  * Roll CHANGELOG.md: insert `## [<version>] - <today>` right after `## [Unreleased]`,
  * moving the accumulated notes under the new release and leaving a fresh empty
- * [Unreleased] on top. Returns the number of `- ` entries that became this release.
+ * [Unreleased] on top. A stable release also folds the rc sections in (see
+ * {@linkcode foldPrereleases}) and, in the same step, re-points every docs link to a folded
+ * rc anchor at the release header — otherwise the upgrading page's `/docs/changelog#…-rcN…`
+ * links dangle the moment the tag lands.
  */
-export async function rollChangelog(version: string, dry: boolean): Promise<number> {
+export async function rollChangelog(version: string, dry: boolean): Promise<ChangelogRoll> {
   const path = join(REPO_ROOT, "CHANGELOG.md");
   const text = await Deno.readTextFile(path);
   const marker = "## [Unreleased]";
@@ -90,7 +103,10 @@ export async function rollChangelog(version: string, dry: boolean): Promise<numb
     ? foldPrereleases(text, version, date)
     : text.replace(marker, `${marker}\n\n## [${version}] - ${date}`);
   if (!dry) await Deno.writeTextFile(path, withLinkRef(updated, version));
-  return unreleasedEntries(text, marker);
+  const relinked = isStable(version)
+    ? await relinkDocsPages(foldedAnchorRewrites(text, version, date), dry)
+    : [];
+  return { entries: unreleasedEntries(text, marker), relinked };
 }
 
 /** A release header line: `## [<version>] - <date>`. */
@@ -213,6 +229,73 @@ function renderRelease(version: string, date: string, groups: Map<string, string
   return parts.join("\n");
 }
 
+/**
+ * The id the docs site gives a heading — `packages/content-collections/markdown.ts`'s
+ * `slugify`, which `apps/web/lib/toc.ts` mirrors: lowercase, everything but word characters,
+ * whitespace and dashes dropped, whitespace to dashes. `## [2.5.0-rc.1] - 2026-09-14` is
+ * `250-rc1---2026-09-14`, and `## [2.5.0] - 2026-09-18` is `250---2026-09-18`.
+ */
+export function headingSlug(heading: string): string {
+  return heading.replace(/^#+\s*/, "").toLowerCase().replace(/[^\w\s-]/g, "").trim()
+    .replace(/\s/g, "-");
+}
+
+/**
+ * `old anchor → new anchor` for every rc header a stable release folds: each `[<version>-rc.N]`
+ * header's slug maps to the slug of the `## [<version>] - <date>` header that replaces it.
+ */
+export function foldedAnchorRewrites(
+  text: string,
+  version: string,
+  date: string,
+): Map<string, string> {
+  const release = headingSlug(`## [${version}] - ${date}`);
+  return new Map(prereleaseHeaders(text, version).map((h) => [headingSlug(h), release]));
+}
+
+/** A link to the docs route that renders CHANGELOG.md, split at the anchor. */
+const CHANGELOG_LINK = /(\/docs\/changelog#)([\w-]+)(?![\w-])/g;
+
+/**
+ * `doc` with every `/docs/changelog#<old>` link re-pointed per `rewrites`. An anchor is
+ * matched whole (`#250-rc1---…` never claims `#250-rc10---…`); a link to a header that was
+ * not folded is untouched.
+ */
+export function rewriteFoldedAnchors(doc: string, rewrites: Map<string, string>): string {
+  return doc.replace(CHANGELOG_LINK, (whole, route: string, slug: string) => {
+    const target = rewrites.get(slug);
+    return target === undefined ? whole : `${route}${target}`;
+  });
+}
+
+/** Where the docs pages live: every `.md` under here is a candidate for a changelog link. */
+const DOCS_PAGES = join(REPO_ROOT, "apps", "web", "app");
+
+/**
+ * Re-point the folded anchors in every docs page that links one. Returns the pages (relative
+ * to the repo) that changed — or would change, under `dry`, when nothing is written.
+ *
+ * @param rewrites From {@linkcode foldedAnchorRewrites}.
+ * @param dry Report only; write nothing.
+ * @param root The docs pages directory (a test points this at a fixture).
+ */
+export async function relinkDocsPages(
+  rewrites: Map<string, string>,
+  dry: boolean,
+  root = DOCS_PAGES,
+): Promise<string[]> {
+  const changed: string[] = [];
+  if (rewrites.size === 0 || !(await exists(root, { isDirectory: true }))) return changed;
+  for await (const entry of walk(root, { exts: [".md"], includeDirs: false })) {
+    const before = await Deno.readTextFile(entry.path);
+    const after = rewriteFoldedAnchors(before, rewrites);
+    if (after === before) continue;
+    if (!dry) await Deno.writeTextFile(entry.path, after);
+    changed.push(relative(REPO_ROOT, entry.path));
+  }
+  return changed.sort();
+}
+
 /** Append the `[<version>]: https://jsr.io/…` link-reference definition if absent. */
 export function withLinkRef(text: string, version: string): string {
   const ref = `[${version}]: https://jsr.io/@denext/denext@${version}`;
@@ -288,12 +371,17 @@ export async function prepareRelease(version: string, dry: boolean): Promise<voi
   for (const { file, hits } of bump.changed) console.log(`     ${file} (${hits})`);
   // 1b. Refresh the version-pinned examples/effect migrate golden (else the gate fails).
   console.log(goldenLine(await refreshEffectGolden(dry), dry));
-  const entries = await rollChangelog(version, dry);
+  const { entries, relinked } = await rollChangelog(version, dry);
   console.log(
     `2. CHANGELOG: rolled [Unreleased] → [${version}] (${plural(entries, "entry", "entries")})`,
   );
   if (entries === 0) {
     console.warn("     warning — no entries under [Unreleased]; releasing empty notes.");
+  }
+  // 2b. A stable release folded the rc sections away, so the docs links to their anchors
+  // were re-pointed at the release header in the same step.
+  for (const page of relinked) {
+    console.log(`2b. Relinked folded rc anchors in ${page}${dry ? "  (skipped — dry run)" : ""}`);
   }
 }
 
