@@ -203,7 +203,16 @@ Deno.test('every panel GET answers a fragment request with the bare <section id=
       assert(panels.includes(`/config${view && `/${view}`}`), `/config/${view} is a route`);
     }
     for (
-      const path of ["/", "/plugins", "/generate", "/docker", "/desktop", "/wizard", "/commands"]
+      const path of [
+        "/",
+        "/plugins",
+        "/generate",
+        "/docker",
+        "/desktop",
+        "/wizard",
+        "/dev",
+        "/commands",
+      ]
     ) {
       assert(panels.includes(path), `${path} is a route`);
     }
@@ -279,7 +288,7 @@ Deno.test("the overview names the project, its pinned denext and the dev server 
     // — whose Stop is what finds out whether the server is really there.
     assertStringIncludes(body, "says running at ");
     assertStringIncludes(body, '<a href="http://127.0.0.1:3456">http://127.0.0.1:3456</a>');
-    assertStringIncludes(body, '<a href="/wizard#step-finish">Stop it from the Wizard</a>');
+    assertStringIncludes(body, '<a href="/dev">Stop it from Dev</a>');
     assert(!body.includes("Not running"), "a published address is not reported as absent");
     // The status block sits above the cards, so it is read first.
     assert(body.indexOf('<dl class="status">') < body.indexOf('<div class="cards">'));
@@ -304,7 +313,7 @@ Deno.test("the overview falls back to the directory name, 'not pinned' and 'not 
       '<dt>denext</dt><dd><span class="badge warn">not pinned</span></dd>',
     );
     assertStringIncludes(body, "<dt>Dev server</dt><dd>Not running · ");
-    assertStringIncludes(body, '<a href="/wizard#step-finish">Start it from the Wizard</a>');
+    assertStringIncludes(body, '<a href="/dev">Start it from Dev</a>');
     assert(!body.includes("says running at"), "no dev.json, no address");
 
     // An unversioned `jsr:@denext/denext` is a pin to the latest release — `deno run` resolves it

@@ -622,9 +622,13 @@ Deno.test("app ISR: a failed background regen backs the key off (5 s, doubling),
     pageCache: new PageCache(),
   });
   // The backoff window is wall-clock time; step it instead of sleeping.
+  // A frozen clock, advanced only by `skew`: the backoff windows are wall-clock, and a loaded
+  // parallel run can spend more than the 5 s base on the thousand hits below, which would let
+  // a window lapse on its own and turn the count assertions into a race.
   const realNow = Date.now;
+  const frozen = realNow();
   let skew = 0;
-  Date.now = () => realNow() + skew;
+  Date.now = () => frozen + skew;
   // Every failed regen logs its stack (a thousand of them below): keep the run readable.
   const realError = console.error;
   console.error = () => {};

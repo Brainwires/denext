@@ -7,9 +7,8 @@
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
-import { uiHandshake } from "./helpers/ui-session.ts";
+import { exists, type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
 import { type DoctorCheck, setDoctorRunner } from "../src/ui/features/wizard.ts";
 import { envExampleSource, envNamesIn, scanEnvUsage } from "../src/ui/env-scan.ts";
 import { readDenoConfig, taskMap } from "../src/ui/tasks.ts";
@@ -25,38 +24,19 @@ const STEP_IDS = [
   "doctor",
   "features",
   "tasks",
-  "finish",
 ];
 
-interface Harness {
-  server: UiServer;
-  base: string;
-  dir: string;
-  /** The CSRF token derived from the session cookie. */
-  csrf: string;
-  /** The session cookie the handshake minted (never the launch token). */
-  headers: Record<string, string>;
-}
-
-/** Start the UI on a temp dir, optionally seeded with files. */
-async function ui(
+/** Start the UI on a temp project. */
+function ui(
   files: Record<string, string> = {},
   opts: { readOnly?: boolean; offline?: boolean } = {},
 ): Promise<Harness> {
-  const dir = await Deno.makeTempDir({ prefix: "denext_ui_wizard_" });
-  for (const [path, content] of Object.entries(files)) {
-    const abs = join(dir, path);
-    await Deno.mkdir(join(abs, ".."), { recursive: true });
-    await Deno.writeTextFile(abs, content);
-  }
-  const server = await startUiServer({ dir, port: 0, ...opts });
-  const { cookie, csrf } = await uiHandshake(server);
-  return { server, dir, base: `http://127.0.0.1:${server.port}`, csrf, headers: { cookie } };
+  return uiOn(files, opts, "denext_ui_wizard_");
 }
 
-async function stop(h: Harness): Promise<void> {
-  await h.server.shutdown();
-  await Deno.remove(h.dir, { recursive: true });
+/** Shut it down and remove the project. */
+function stop(h: Harness): Promise<void> {
+  return stopUi(h);
 }
 
 /** Post one wizard operation the way a no-JS form would. */
@@ -65,14 +45,7 @@ function post(
   fields: Record<string, string>,
   path = "/wizard",
 ): Promise<Response> {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(fields)) form.set(key, value);
-  return fetch(`${h.base}${path}`, {
-    method: "POST",
-    redirect: "manual",
-    headers: { ...h.headers, origin: h.base, [UI_CSRF_HEADER]: h.csrf },
-    body: form,
-  });
+  return postTo(h, fields, path);
 }
 
 /** A `deno.json` with every wizard-managed key except the `dev` task, and comments. */
@@ -94,9 +67,9 @@ const DENO_JSON_WITHOUT_DEV = `{
 }
 `;
 
-// ── the nine steps ───────────────────────────────────────────────────────────
+// ── the steps ────────────────────────────────────────────────────────────────
 
-Deno.test("an empty directory gets nine steps in order, and is offered a scaffold", async () => {
+Deno.test("an empty directory gets every step in order, and is offered a scaffold", async () => {
   const h = await ui();
   try {
     const res = await fetch(`${h.base}/api/wizard`, { headers: h.headers });
@@ -397,8 +370,6 @@ Deno.test("the JSON twin reports { id, status, summary, actions } per step", asy
     const tasks = payload.steps.find((s: { id: string }) => s.id === "tasks");
     assertEquals(tasks.status, "ok");
     assertStringIncludes(tasks.summary, "build, start");
-    const finish = payload.steps.find((s: { id: string }) => s.id === "finish");
-    assertEquals(finish.actions, ["dev"]);
   } finally {
     await stop(h);
   }
@@ -419,16 +390,6 @@ Deno.test("a Next.js drop-in is detected from its package.json", async () => {
   }
 });
 
-/** Whether a path exists. */
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // ── --offline ────────────────────────────────────────────────────────────────
 
 /** The JSON outcome of one wizard operation. */
@@ -441,37 +402,26 @@ async function outcomeOf(h: Harness, op: string): Promise<{ ok: boolean; message
   return (await (await post(h, { op }, "/api/wizard")).json()).outcome;
 }
 
-Deno.test("--offline refuses denext dev and every task with a 503, and renders them disabled", async () => {
+Deno.test("--offline refuses every task with a 503, and renders them disabled", async () => {
   const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV }, { offline: true });
   try {
-    const dev = await post(h, { op: "dev" }, "/api/wizard");
-    assertEquals(dev.status, 503);
-    const { outcome } = await dev.json();
-    assertEquals([outcome.ok, outcome.step], [false, "finish"]);
-    assertStringIncludes(outcome.message, "a dev server needs net permission to listen");
-
     const task = await post(h, { task: "build" }, "/tasks/run");
     assertEquals(task.status, 503, "a declared task is refused, not spawned");
     assertStringIncludes((await task.json()).reason, "a task is arbitrary shell");
 
-    const page = await post(h, { op: "dev" });
-    assertEquals(page.status, 503, "the no-JS answer carries the same status");
-    const body = await page.text();
-    assertStringIncludes(body, "denext dev is unavailable — the UI runs --offline");
+    const body = await wizardPage(h);
     assertStringIncludes(body, "deno task is unavailable — the UI runs --offline");
     assertMatch(body, /<button[^>]*\sdisabled[^>]*>deno task build<\/button>/);
-    assertMatch(body, /<button[^>]*\sdisabled[^>]*>Start denext dev<\/button>/);
   } finally {
     await stop(h);
   }
 });
 
-Deno.test("online, the task and dev buttons stay live and carry no offline note", async () => {
+Deno.test("online, the task buttons stay live and carry no offline note", async () => {
   const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
   try {
-    const body = await (await fetch(`${h.base}/wizard`, { headers: h.headers })).text();
+    const body = await wizardPage(h);
     assertMatch(body, /<button type="submit">deno task build<\/button>/);
-    assertMatch(body, /<button type="submit">Start denext dev<\/button>/);
     assert(!body.includes("--offline"));
   } finally {
     await stop(h);
@@ -527,80 +477,3 @@ Deno.test("--offline runs doctor through a no-net child and deno install --cache
 });
 
 // ── the dev server: starting it must not destroy the page showing its output ──
-
-/** Publish a `.denext/dev.json` naming a port nothing listens on. */
-async function fakeDevJson(dir: string): Promise<string> {
-  const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (probe.addr as Deno.NetAddr).port;
-  probe.close();
-  await Deno.mkdir(join(dir, ".denext"), { recursive: true });
-  const path = join(dir, ".denext", "dev.json");
-  await Deno.writeTextFile(
-    path,
-    JSON.stringify({
-      origin: `http://127.0.0.1:${port}`,
-      port,
-      hostname: "127.0.0.1",
-      pid: 2147483646, // never signalled: the origin below never answers
-      startedAt: Date.now(),
-    }),
-  );
-  return path;
-}
-
-Deno.test("starting the dev server answers in place — a 303 would destroy the output sink", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
-  try {
-    await fakeDevJson(h.dir);
-    const res = await post(h, { op: "dev" });
-    // The regression: this branch used to answer `303`, which navigates, rebuilds the document,
-    // and takes `ui.js`'s one EventSource and the <pre class="out"> with it — so every streamed
-    // line was broadcast to nobody and starting a dev server looked like it did nothing.
-    assertEquals(res.status, 200, "the dev op must render in place, not redirect");
-    assertEquals(res.headers.get("location"), null, "no Location header — nothing navigates");
-    const body = await res.text();
-    assertStringIncludes(body, "Already running at");
-    assertMatch(body, /<pre class="out">/, "the output sink must survive the answer");
-  } finally {
-    await stop(h);
-  }
-});
-
-Deno.test("a running dev server is offered a Stop button instead of Start", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
-  try {
-    await fakeDevJson(h.dir);
-    const payload = await (await fetch(`${h.base}/api/wizard`, { headers: h.headers })).json();
-    const finish = payload.steps.find((s: { id: string }) => s.id === "finish");
-    assertEquals(finish.actions, ["stop"], "a running server offers stop, not start");
-    assertMatch(await wizardPage(h), /<button[^>]*>Stop denext dev<\/button>/);
-  } finally {
-    await stop(h);
-  }
-});
-
-Deno.test("the wizard always renders the dev console, so streamed output has somewhere to land", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
-  try {
-    // With no dev server at all, the sink must still be on the page: `ui.js` appends streamed
-    // lines into `#panel pre.out`, and it can only do that if the element is already there.
-    assertMatch(await wizardPage(h), /<pre class="out">/);
-  } finally {
-    await stop(h);
-  }
-});
-
-Deno.test("stopping clears a dev.json whose server is already gone, and never signals its pid", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
-  try {
-    const devJson = await fakeDevJson(h.dir);
-    const res = await post(h, { op: "stop" }, "/api/wizard");
-    assertEquals(res.status, 200);
-    const { outcome } = await res.json();
-    assertEquals(outcome.ok, true);
-    assertStringIncludes(outcome.message, "stale");
-    assertEquals(await exists(devJson), false, "the stale dev.json must be cleared");
-  } finally {
-    await stop(h);
-  }
-});

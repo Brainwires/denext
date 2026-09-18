@@ -163,7 +163,7 @@ export function Counter({ initial }: { initial: number }) {
         <em>reference</em>: a <strong>Server Action</strong> (an export of a{" "}
         <code>"use server"</code> module, passed as <code>action</code>{" "}
         to a form or as any prop) and a Live channel. A plain function does not — an{" "}
-        <code>onClick={"{() => …}"}</code>{" "}
+        <code>{"onClick={() => …}"}</code>{" "}
         passed from a Server Component to a client component is dropped, and in dev the renderer
         warns naming the component and the prop. Move the handler into the island, or hand the
         island a Server Action.

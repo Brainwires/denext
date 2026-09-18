@@ -1,6 +1,7 @@
-// `/wizard` — the nine-step setup wizard that takes a fresh clone to a running dev server.
+// `/wizard` — the setup wizard that readies a project. The dev server moved to `/dev`:
+// it is a place you come back to, not a step you finish once.
 //
-// Shape: the nine steps are a TABLE. Each entry inspects one aspect of the project (from a
+// Shape: the steps are a TABLE. Each entry inspects one aspect of the project (from a
 // single {@linkcode Survey} taken per request, so nine steps do not re-read the disk nine
 // times) and returns a {@linkcode StepView}: a status pill, a one-line summary, optional
 // detail, and the operations it offers. Each operation that WRITES previews its change as a
@@ -29,12 +30,9 @@ import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { jsonResponse, panelResponder, type UiContext, type UiHandler } from "../html.ts";
 import { Badge, DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../components.ts";
 import { renderView } from "../view.ts";
-import { broadcast, exitLine } from "../events.ts";
 import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
-import { clearDevLog, devLogText, recordDevLine } from "../dev-log.ts";
-import { stopDevServer } from "../dev-stop.ts";
-import { OFFLINE_REFUSALS, OFFLINE_STATUS } from "../offline.ts";
+import { OFFLINE_REFUSALS } from "../offline.ts";
 import { envExampleSource, type EnvScan, scanEnvUsage } from "../env-scan.ts";
 import { type DenoConfigFile, readDenoConfig, taskMap } from "../tasks.ts";
 
@@ -250,7 +248,7 @@ interface StepView {
   readonly actions: StepAction[];
 }
 
-/** The nine steps, in order. Each renders from the one survey; none of them touches disk. */
+/** The steps, in order. Each renders from the one survey; none of them touches disk. */
 const STEPS: readonly { id: string; title: string; view: (s: Survey) => StepView }[] = [
   { id: "detect", title: "Detect the project", view: stepDetect },
   { id: "runtime", title: "Deno runtime", view: stepRuntime },
@@ -260,7 +258,6 @@ const STEPS: readonly { id: string; title: string; view: (s: Survey) => StepView
   { id: "doctor", title: "Doctor", view: stepDoctor },
   { id: "features", title: "Features", view: stepFeatures },
   { id: "tasks", title: "Tasks", view: stepTasks },
-  { id: "finish", title: "Finish", view: stepFinish },
 ];
 
 /** What each project kind reads as in step 1. */
@@ -457,27 +454,6 @@ function stepTasks(s: Survey): StepView {
   };
 }
 
-/** Step 9 — start the dev server and wait for it to publish its address. */
-function stepFinish(s: Survey): StepView {
-  return {
-    id: "finish",
-    title: "Finish",
-    status: s.dev ? "ok" : "todo",
-    summary: s.dev
-      ? `The dev server is up at ${s.dev.origin}.`
-      : "Start the dev server; its address appears here once it publishes .denext/dev.json.",
-    detail: h(
-      Fragment,
-      null,
-      s.dev ? h("p", null, devLink(s.dev, "Open the app")) : null,
-      h(Out, null, devLogText(s.dir)),
-    ),
-    actions: s.dev
-      ? [{ op: "stop", label: "Stop denext dev" }]
-      : [{ op: "dev", label: "Start denext dev", offline: OFFLINE_REFUSALS.dev }],
-  };
-}
-
 // ── operations ───────────────────────────────────────────────────────────────
 
 /** One check line of `denext doctor --json` (the JSON twin of its `Check` interface). */
@@ -525,8 +501,6 @@ const OPS: Record<string, Op> = {
   doctor: opDoctor,
   "scaffold-page": opScaffoldPage,
   scaffold: opScaffold,
-  dev: opStartDev,
-  stop: opStopDev,
 };
 
 /** Step 3's write: merge the missing template keys into the project's own `deno.json`. */
@@ -702,123 +676,9 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
   }
 }
 
-/**
- * Step 9's operation: start `denext dev` in the background and stream it to every open page.
- * Refused under `--offline` with a `503`: a dev server needs net permission to listen.
- */
-function opStartDev(ctx: UiContext, s: Survey): Promise<OpOutcome> {
-  if (ctx.offline === true) {
-    return Promise.resolve({
-      step: "finish",
-      ok: false,
-      status: OFFLINE_STATUS,
-      message: OFFLINE_REFUSALS.dev,
-    });
-  }
-  if (s.dev !== null) {
-    return Promise.resolve({
-      step: "finish",
-      ok: true,
-      message: `Already running at ${s.dev.origin}.`,
-    });
-  }
-  const started = startDevServer(ctx);
-  return Promise.resolve({
-    step: "finish",
-    ok: true,
-    message: started
-      ? "Starting denext dev — its output is streaming to this page."
-      : "denext dev is already starting — its output is streaming to this page.",
-  });
-}
-
-/**
- * Step 9's other operation: stop the dev server this project published.
- *
- * Nothing here needs the child's process handle, which is exactly what lets it work after
- * `denext ui` was restarted: the dev server wrote its own pid into `.denext/dev.json`, so a UI
- * that never spawned it can still stop it. That is why the handle surviving a restart needed no
- * detached process to survive with it. `../dev-stop.ts` carries the two hazards that shape the
- * order of operations there (a reused pid, and children left holding the port).
- *
- * Deliberately NOT refused under `--offline`: the liveness probe is a loopback request to an
- * address this project published, needing no network the UI does not already have, and refusing
- * to stop a server the panel is actively showing as running would be indefensible.
- */
-async function opStopDev(ctx: UiContext, _s: Survey, _form: FormData): Promise<OpOutcome> {
-  const outcome = await stopDevServer(ctx.dir);
-  // Keep a failed stop's log: it is the only evidence of why the server would not go.
-  if (outcome.status === "stopped") clearDevLog(ctx.dir);
-  // Every other open page is still offering to stop a server that is now gone.
-  broadcast(ctx.events, { type: "dev-stopped" });
-  return {
-    step: "finish",
-    ok: outcome.status !== "failed" && outcome.status !== "unsupported" &&
-      outcome.status !== "mismatch",
-    message: outcome.message,
-  };
-}
-
-/**
- * The projects this process has already started a `denext dev` for. Two quick POSTs (a
- * double-click, or a no-JS submit the user repeated) would otherwise race two dev servers onto
- * the same project, the second one falling forward onto a different port.
- */
-const devStarting = new Set<string>();
-
-/**
- * Spawn `denext dev` (the framework's own `cli.ts`, in whatever scheme denext itself runs
- * under), stream its output to every open UI page, and announce the address as soon as the
- * dev server publishes `.denext/dev.json`. Deliberately not awaited: the request returns
- * immediately and the page follows the SSE channel.
- *
- * The child is tied to the UI's own shutdown signal, so Ctrl+C on `denext ui` takes the dev
- * server with it rather than leaving it running with nothing to stop it.
- *
- * @param ctx The request context.
- * @returns Whether a dev server was started (`false` when one is already coming up).
- */
-function startDevServer(ctx: UiContext): boolean {
-  if (devStarting.has(ctx.dir)) return false;
-  devStarting.add(ctx.dir);
-  const push = (event: unknown): void => broadcast(ctx.events, event);
-  runDeno([...cliInvocation({ dir: ctx.dir }), "dev", ctx.dir], {
-    cwd: ctx.dir,
-    onLine: (line) => {
-      recordDevLine(ctx.dir, line);
-      push({ type: "dev-output", line });
-    },
-    signal: ctx.signal,
-  })
-    .then((run) => {
-      recordDevLine(ctx.dir, exitLine(run.code));
-      push({ type: "dev-exit", code: run.code });
-    })
-    .catch((error) => {
-      const line = `denext dev failed: ${reason(error)}`;
-      recordDevLine(ctx.dir, line);
-      push({ type: "dev-output", line });
-    })
-    .finally(() => devStarting.delete(ctx.dir));
-  pollDevInfo(ctx.dir, push).catch(() => {/* the UI shut down */});
-  return true;
-}
-
 /** A per-request deadline, widened to also fire when the UI server itself shuts down. */
 function withShutdown(ctx: UiContext, deadline: AbortSignal): AbortSignal {
   return ctx.signal ? AbortSignal.any([ctx.signal, deadline]) : deadline;
-}
-
-/** Poll `.denext/dev.json` for at most 30 s, then push the address it published. */
-async function pollDevInfo(dir: string, push: (event: unknown) => void): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const info = await readDevInfo(dir);
-    if (info !== null) {
-      push({ type: "dev-ready", url: info.origin });
-      return;
-    }
-  }
 }
 
 /** The last 8 KB of a subprocess's output (a page is not a log file). */
@@ -965,15 +825,15 @@ function Step({ ctx, index, view, outcome }: StepProps): VNode {
   );
 }
 
-/** What {@linkcode WizardPanel} renders: the nine step views and the posted outcome. */
+/** What {@linkcode WizardPanel} renders: the step views and the posted outcome. */
 interface WizardProps extends CtxProps {
-  /** The nine step views, in order. */
+  /** The step views, in order. */
   readonly views: StepView[];
   /** The outcome of the operation just posted, when there is one. */
   readonly outcome?: OpOutcome;
 }
 
-/** The whole panel: the one `<section id="panel">` `ui.js` swaps, with the nine steps inside. */
+/** The whole panel: the one `<section id="panel">` `ui.js` swaps, with the steps inside. */
 function WizardPanel({ ctx, views, outcome }: WizardProps): VNode {
   return h(
     Panel,
@@ -1025,7 +885,7 @@ function seeStep(step: string): Response {
 }
 
 /**
- * Serve the setup wizard: `GET` renders the nine steps (or their JSON twin), `POST` runs one
+ * Serve the setup wizard: `GET` renders the steps (or their JSON twin), `POST` runs one
  * table-listed operation — previewing every write before it happens.
  */
 export const wizardPanel: UiHandler = async (

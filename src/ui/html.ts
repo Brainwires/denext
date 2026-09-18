@@ -116,6 +116,7 @@ export const UI_NAV_SECTIONS: readonly NavSection[] = [
       { href: "/docker", label: "Docker" },
       { href: "/desktop", label: "Desktop" },
       { href: "/wizard", label: "Wizard" },
+      { href: "/dev", label: "Dev" },
       { href: "/commands", label: "Commands" },
     ],
   },

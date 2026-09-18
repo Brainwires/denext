@@ -39,6 +39,7 @@ import { pluginOptionsPanel } from "./features/plugin-options.ts";
 import { generatePanel } from "./features/generate.ts";
 import { dockerPanel } from "./features/docker.ts";
 import { desktopPanel } from "./features/desktop.ts";
+import { devPanel } from "./features/dev.ts";
 import { wizardPanel } from "./features/wizard.ts";
 import { commandsPanel } from "./features/commands.ts";
 
@@ -69,6 +70,7 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/generate", methods: ["GET", "POST"], handle: generatePanel },
   { path: "/docker", methods: ["GET", "POST"], handle: dockerPanel },
   { path: "/desktop", methods: ["GET"], handle: desktopPanel },
+  { path: "/dev", methods: ["GET", "POST"], handle: devPanel },
   { path: "/wizard", methods: ["GET", "POST"], handle: wizardPanel },
   { path: "/commands", methods: ["GET", "POST"], handle: commandsPanel },
 ];
@@ -120,6 +122,7 @@ const CARD_LEAD: Record<string, string> = {
   "/generate": "Scaffold pages, routes, layouts, components, actions.",
   "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",
   "/desktop": "Set up code signing for a packaged desktop build.",
+  "/dev": "Start and stop the project's dev server, and watch its output.",
   "/wizard": "Take a fresh clone to a running dev server.",
   "/commands": "Run this project's own denext verbs.",
 };
@@ -178,8 +181,8 @@ interface ProjectStatus {
   readonly dev: string | null;
 }
 
-/** Where the Wizard starts and stops the dev server. */
-const WIZARD_DEV_STEP = "/wizard#step-finish";
+/** Where the dev server is started and stopped. */
+const DEV_PAGE = "/dev";
 
 /**
  * Read the project's status for the overview: three cheap file reads, nothing spawned.
@@ -220,15 +223,13 @@ function StatusBlock({ status }: { readonly status: ProjectStatus }): VNode {
     h(
       "dd",
       null,
-      status.dev === null
-        ? ["Not running · ", h("a", { href: WIZARD_DEV_STEP }, "Start it from the Wizard")]
-        : [
-          h(Mono, null, ".denext/dev.json"),
-          " says running at ",
-          h("a", { href: status.dev }, status.dev),
-          " · ",
-          h("a", { href: WIZARD_DEV_STEP }, "Stop it from the Wizard"),
-        ],
+      status.dev === null ? ["Not running · ", h("a", { href: DEV_PAGE }, "Start it from Dev")] : [
+        h(Mono, null, ".denext/dev.json"),
+        " says running at ",
+        h("a", { href: status.dev }, status.dev),
+        " · ",
+        h("a", { href: DEV_PAGE }, "Stop it from Dev"),
+      ],
     ),
   );
 }

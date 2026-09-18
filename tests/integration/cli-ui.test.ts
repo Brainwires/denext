@@ -67,6 +67,7 @@ const PAGES = [
   "/generate",
   "/docker",
   "/wizard",
+  "/dev",
   "/commands",
 ];
 
@@ -85,6 +86,7 @@ const API_TWINS = [
   "/api/generate",
   "/api/docker",
   "/api/wizard",
+  "/api/dev",
   "/api/commands",
 ];
 
