@@ -266,8 +266,9 @@ value span it replaces, the file keeps its bytes), a Cron page (every schedule, 
 next fires, an editor with a shape builder, and run history when `tasks.history` is on),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
 Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
-signing setup from the identities the keychain holds, a setup wizard and the project's own
-verbs. It works with JavaScript disabled, and
+signing setup from the identities the keychain holds, a Setup page that readies a fresh
+clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts
+`deno.json` declares, and the project's own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that
@@ -762,7 +763,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.5.0-rc.6` — The denext framework version.
+- `VERSION: 2.5.0-rc.7` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -1047,6 +1048,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface OidcOptions` — Options for a generic oidc provider.
 - `okta(options: OktaOptions): OAuthProvider` — Okta (OIDC, custom authorization server). Claims come from the verified id_token.
 - `interface OktaOptions` — Options for okta.
+- `type OnRequest = (info: RequestLogInfo) => void` — The onRequest export: per-request observability, called once after every response with the method, path, final status, duration and request id (a denext extension — Next has no equivalent; it is the same hook a custom server passes to createApp()). A throw from it is swallowed: observability never breaks the response.
 - `type OnRequestError = (error: unknown, request: InstrumentationRequest, context: RequestErrorContext) => void | Promise<void>` — The onRequestError export: report a server-side request error.
 - `interface OpenGraphImage` — A single Open Graph image (og:image plus optional dimensions/alt).
 - `type OpenGraphImageResult = VNode | Uint8Array | Response` — What an opengraph-image module's default export may return:
