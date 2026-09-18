@@ -68,6 +68,7 @@ const PAGES = [
   "/docker",
   "/wizard",
   "/dev",
+  "/tasks",
   "/commands",
 ];
 
@@ -87,6 +88,7 @@ const API_TWINS = [
   "/api/docker",
   "/api/wizard",
   "/api/dev",
+  "/api/tasks",
   "/api/commands",
 ];
 
@@ -671,13 +673,17 @@ async function checkConfigWrite(ui: Ui): Promise<void> {
   const path = join(ui.dir, "denext.config.ts");
   const form = await (await authed(ui, "/config/routing")).text();
   assertMatch(form, /name="basePath"[^>]*value="\/docs"/);
+  // A browser form carries the file's `_base` stamp; without it the editor refuses (400), so
+  // the POST sends the stamp the rendered form holds, exactly as a browser would.
+  const base = fieldValue(form, "_base");
 
-  const preview = await mutate(ui, "/config?section=basePath", { basePath: "/site" });
+  const preview = await mutate(ui, "/config?section=basePath", { basePath: "/site", _base: base });
   assertEquals(await statusOf(preview), 200, "the first POST only previews");
   assertEquals(await Deno.readTextFile(path), CONFIG, "a preview never touches the file");
 
   const applied = await mutate(ui, "/config?section=basePath", {
     basePath: "/site",
+    _base: base,
     confirm: "1",
   });
   await applied.body?.cancel();

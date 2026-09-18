@@ -1,5 +1,6 @@
-// `/wizard` — the setup wizard that readies a project. The dev server moved to `/dev`:
-// it is a place you come back to, not a step you finish once.
+// `/wizard` — the setup wizard that readies a project. The dev server moved to `/dev` and
+// the project's `deno task` scripts to `/tasks`: both are places you come back to, not
+// steps you finish once.
 //
 // Shape: the steps are a TABLE. Each entry inspects one aspect of the project (from a
 // single {@linkcode Survey} taken per request, so nine steps do not re-read the disk nine
@@ -32,7 +33,6 @@ import { Badge, DiffBlock, Hidden, Note, OpForm, Out, Panel } from "../component
 import { renderView } from "../view.ts";
 import { StaleWriteError, uiSafeJoin, writeFileAtomic } from "../security.ts";
 import { cliInvocation, runDeno } from "../proc.ts";
-import { OFFLINE_REFUSALS } from "../offline.ts";
 import { envExampleSource, type EnvScan, scanEnvUsage } from "../env-scan.ts";
 import { type DenoConfigFile, readDenoConfig, taskMap } from "../tasks.ts";
 
@@ -257,7 +257,6 @@ const STEPS: readonly { id: string; title: string; view: (s: Survey) => StepView
   { id: "env", title: "Environment variables", view: stepEnv },
   { id: "doctor", title: "Doctor", view: stepDoctor },
   { id: "features", title: "Features", view: stepFeatures },
-  { id: "tasks", title: "Tasks", view: stepTasks },
 ];
 
 /** What each project kind reads as in step 1. */
@@ -430,27 +429,6 @@ function stepFeatures(s: Survey): StepView {
       ? undefined
       : h("ul", null, FEATURES.map((f) => h("li", { key: f.key }, f.label))),
     actions: empty ? [{ op: "scaffold", label: "Scaffold the project", fields: boxes }] : [],
-  };
-}
-
-/** Step 8 — the project's own tasks, each runnable through the kernel's SSE task runner. */
-function stepTasks(s: Survey): StepView {
-  const names = Object.keys(s.tasks);
-  return {
-    id: "tasks",
-    title: "Tasks",
-    status: names.length > 0 ? "ok" : "todo",
-    summary: names.length > 0
-      ? `${names.length} task(s) declared: ${names.join(", ")}.`
-      : "No tasks are declared yet — step 3 adds dev, build and start.",
-    detail: names.length > 0 ? h(Out, null) : undefined,
-    actions: names.map((name) => ({
-      op: "task",
-      label: `deno task ${name}`,
-      action: "/tasks/run",
-      fields: h("input", { type: "hidden", name: "task", value: name }),
-      offline: OFFLINE_REFUSALS.task,
-    })),
   };
 }
 

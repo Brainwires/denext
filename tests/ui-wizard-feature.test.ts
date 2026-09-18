@@ -1,11 +1,14 @@
-// `denext ui`'s setup wizard (J9): the nine steps, the previews that precede every write, the
+// `denext ui`'s setup wizard: the readiness steps, the previews that precede every write, the
 // env scan's lexical honesty, the doctor seam, and the refusals (`--read-only`, an unknown
-// operation, a task name the project never declared).
+// operation).
+//
+// The dev server and the `deno task` scripts are no longer steps — they are `/dev` and
+// `/tasks`, and their tests live in `ui-dev-feature.test.ts` and `ui-tasks-feature.test.ts`.
 //
 // Everything runs against a real server on loopback, driven the way a browser with JavaScript
 // disabled would drive it: real form posts, `303` back to the step anchor.
 
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { exists, type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
@@ -23,7 +26,6 @@ const STEP_IDS = [
   "env",
   "doctor",
   "features",
-  "tasks",
 ];
 
 /** Start the UI on a temp project. */
@@ -285,27 +287,6 @@ Deno.test("the doctor panel renders an injected report without spawning anything
 
 // ── refusals ────────────────────────────────────────────────────────────────
 
-Deno.test("a task name the project does not declare is refused before any spawn", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
-  try {
-    const res = await post(h, { task: "rm -rf /" }, "/tasks/run");
-    assertEquals(res.status, 400);
-    const payload = await res.json();
-    assertEquals(payload.ok, false);
-    assertStringIncludes(payload.reason, "unknown task");
-    assertEquals(payload.tasks, ["build", "start"]);
-
-    // The step only ever offers names that are in the file.
-    const page = await fetch(`${h.base}/wizard`, { headers: h.headers });
-    const body = await page.text();
-    assertStringIncludes(body, 'name="task" value="build"');
-    assertStringIncludes(body, 'action="/tasks/run"');
-    assert(!body.includes('value="rm -rf /"'));
-  } finally {
-    await stop(h);
-  }
-});
-
 Deno.test("an operation outside the table never runs", async () => {
   const h = await ui();
   try {
@@ -367,9 +348,6 @@ Deno.test("the JSON twin reports { id, status, summary, actions } per step", asy
     const denojson = payload.steps.find((s: { id: string }) => s.id === "denojson");
     assertEquals(denojson.status, "todo");
     assertStringIncludes(denojson.summary, "tasks.dev");
-    const tasks = payload.steps.find((s: { id: string }) => s.id === "tasks");
-    assertEquals(tasks.status, "ok");
-    assertStringIncludes(tasks.summary, "build, start");
   } finally {
     await stop(h);
   }
@@ -401,32 +379,6 @@ async function wizardPage(h: Harness): Promise<string> {
 async function outcomeOf(h: Harness, op: string): Promise<{ ok: boolean; message: string }> {
   return (await (await post(h, { op }, "/api/wizard")).json()).outcome;
 }
-
-Deno.test("--offline refuses every task with a 503, and renders them disabled", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV }, { offline: true });
-  try {
-    const task = await post(h, { task: "build" }, "/tasks/run");
-    assertEquals(task.status, 503, "a declared task is refused, not spawned");
-    assertStringIncludes((await task.json()).reason, "a task is arbitrary shell");
-
-    const body = await wizardPage(h);
-    assertStringIncludes(body, "deno task is unavailable — the UI runs --offline");
-    assertMatch(body, /<button[^>]*\sdisabled[^>]*>deno task build<\/button>/);
-  } finally {
-    await stop(h);
-  }
-});
-
-Deno.test("online, the task buttons stay live and carry no offline note", async () => {
-  const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
-  try {
-    const body = await wizardPage(h);
-    assertMatch(body, /<button type="submit">deno task build<\/button>/);
-    assert(!body.includes("--offline"));
-  } finally {
-    await stop(h);
-  }
-});
 
 Deno.test("the Dependencies step separates 'nothing to install' from 'not installed yet'", async () => {
   // No imports at all: `deno install` has nothing to resolve and writes no lockfile, so the step

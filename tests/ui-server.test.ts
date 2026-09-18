@@ -48,7 +48,7 @@ async function ui(
   return { server, dir, base: `http://127.0.0.1:${server.port}`, headers: { cookie }, csrf };
 }
 
-/** POST `/tasks/run` for `task`, as the wizard's no-JS form would. */
+/** POST `/tasks/run` for `task`, as the Tasks page's no-JS form would. */
 async function postTask(h: Harness, task: string): Promise<Response> {
   const form = new FormData();
   form.set("task", task);
@@ -211,6 +211,7 @@ Deno.test('every panel GET answers a fragment request with the bare <section id=
         "/desktop",
         "/wizard",
         "/dev",
+        "/tasks",
         "/commands",
       ]
     ) {

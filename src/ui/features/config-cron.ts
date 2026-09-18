@@ -787,7 +787,7 @@ function CronPanel(
     h(SchedulerNote, { state }),
     h("h2", null, "Schedule"),
     h(Schedules, { state, standing: standingOf(state) }),
-    h("h2", null, "Tasks"),
+    h("h2", null, "Scheduled tasks"),
     h(Tasks, { state }),
     state.error === undefined ? h("h2", null, "Run history") : null,
     state.error === undefined ? h(History, { ctx, state }) : null,

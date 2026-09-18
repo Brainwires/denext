@@ -40,6 +40,7 @@ import { generatePanel } from "./features/generate.ts";
 import { dockerPanel } from "./features/docker.ts";
 import { desktopPanel } from "./features/desktop.ts";
 import { devPanel } from "./features/dev.ts";
+import { tasksPanel } from "./features/tasks.ts";
 import { wizardPanel } from "./features/wizard.ts";
 import { commandsPanel } from "./features/commands.ts";
 
@@ -71,6 +72,7 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/docker", methods: ["GET", "POST"], handle: dockerPanel },
   { path: "/desktop", methods: ["GET"], handle: desktopPanel },
   { path: "/dev", methods: ["GET", "POST"], handle: devPanel },
+  { path: "/tasks", methods: ["GET"], handle: tasksPanel },
   { path: "/wizard", methods: ["GET", "POST"], handle: wizardPanel },
   { path: "/commands", methods: ["GET", "POST"], handle: commandsPanel },
 ];
@@ -123,6 +125,7 @@ const CARD_LEAD: Record<string, string> = {
   "/docker": "Edit docker-compose.yml in place, or regenerate the Docker files with a diff.",
   "/desktop": "Set up code signing for a packaged desktop build.",
   "/dev": "Start and stop the project's dev server, and watch its output.",
+  "/tasks": "Run the scripts your deno.json declares, streaming their output.",
   "/wizard": "Take a fresh clone to a running dev server.",
   "/commands": "Run this project's own denext verbs.",
 };
