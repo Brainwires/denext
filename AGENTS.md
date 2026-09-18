@@ -262,8 +262,9 @@ value span it replaces, the file keeps its bytes), a Cron page (every schedule, 
 next fires, an editor with a shape builder, and run history when `tasks.history` is on),
 plugins with option forms for the first-party ones and JSR search, every `generate` kind,
 Docker files plus in-place `docker-compose.yml` editing, a Desktop panel that composes the
-signing setup from the identities the keychain holds, a setup wizard and the project's own
-verbs. It works with JavaScript disabled, and
+signing setup from the identities the keychain holds, a Setup page that readies a fresh
+clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts
+`deno.json` declares, and the project's own verbs. It works with JavaScript disabled, and
 **project code never runs in the UI's process** — every project-touching operation,
 including verb discovery (`denext commands --json`), is a `deno` subprocess.
 `--read-only` prevents writes by the UI, not execution of your config inside that

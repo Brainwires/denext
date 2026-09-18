@@ -1,7 +1,7 @@
 ---
 title: Project UI
 slug: ui
-lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a setup wizard, and your project's own CLI verbs.
+lead: denext ui serves a loopback GUI for the project in front of you — a schema-driven denext.config.ts editor that preserves your comments, a Cron page for schedules and run history, plugin management with per-plugin option forms and JSR search, a GUI over generate, Docker regeneration plus an in-place compose editor, a Desktop signing panel, a Setup page that readies a fresh clone, a Dev page for the dev server, a Tasks page for your deno.json scripts, and your project's own CLI verbs.
 ---
 
 `denext ui` is a browser GUI for the project you are standing in — the `vue ui` idea,
@@ -159,19 +159,19 @@ takes the default mode).
 own JSR search is off, the denext-CLI children it starts are sandboxed, and an operation no
 flag can sandbox is refused:
 
-| Operation                                             | Under `--offline`                                                                                                                                    |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| JSR plugin search, a JSR add                          | The search box renders disabled with a note; `op=add-jsr` is a `503`                                                                                 |
-| The commands listing, a verb run, the wizard's doctor | Runs as `deno run -A --deny-net --cached-only …`: no socket (a deny flag wins over `-A`, and it covers listening too) and no module download         |
-| The wizard's `deno install`                           | Runs as `deno install --cached-only`: a fully cached project installs; anything else fails without fetching                                          |
-| `deno task` (the wizard's Tasks step)                 | Refused with a `503` — a task is arbitrary shell, and no flag can keep it off the network                                                            |
-| The wizard's "Start denext dev"                       | Refused with a `503` — a dev server needs net permission to listen                                                                                   |
-| Plugin add and remove                                 | Refused with a `503`, preview included — `deno add` needs the registry, and `deno remove` can re-resolve the remaining dependencies over the network |
+| Operation                                        | Under `--offline`                                                                                                                                    |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JSR plugin search, a JSR add                     | The search box renders disabled with a note; `op=add-jsr` is a `503`                                                                                 |
+| The commands listing, a verb run, Setup's doctor | Runs as `deno run -A --deny-net --cached-only …`: no socket (a deny flag wins over `-A`, and it covers listening too) and no module download         |
+| Setup's `deno install`                           | Runs as `deno install --cached-only`: a fully cached project installs; anything else fails without fetching                                          |
+| `deno task` (the Tasks page)                     | Refused with a `503` — a task is arbitrary shell, and no flag can keep it off the network                                                            |
+| The Dev page's "Start denext dev"                | Refused with a `503` — a dev server needs net permission to listen                                                                                   |
+| Plugin add and remove                            | Refused with a `503`, preview included — `deno add` needs the registry, and `deno remove` can re-resolve the remaining dependencies over the network |
 
 `--cached-only` is there because the net permission does not govern Deno's module loader: a
 child denied net would still download an uncached import. A refused control renders disabled
 with a short note, and the `503` (`{ ok: false, reason }` from a JSON twin) is the real gate.
-What needs no network — the config editor, `generate`, Docker, the wizard's file writes —
+What needs no network — the config editor, `generate`, Docker, Setup's file writes —
 works as usual. `--offline` combines with `--read-only`; a mutation under both is the
 read-only `403`.
 
@@ -625,11 +625,12 @@ macOS identity and notary profile are _names_: the private key and the notary cr
 your keychain, so those values are safe to show, and showing them is the point. Set the password
 in your own shell or CI.
 
-## Setup wizard
+## Setup
 
-`/wizard` takes a fresh clone to a running dev server in nine steps. Each step inspects one
-aspect of the project and offers operations; every operation that writes previews its
-change as a unified diff and only writes on an explicit confirm.
+`/setup` readies a project in seven steps. Each inspects one aspect of it and offers the
+operation that moves it on; every operation that writes previews its change as a unified diff
+and only writes on an explicit confirm. A completed write answers `303` back to
+`/setup#step-<id>`, so a reload never re-applies it.
 
 | Step                  | What it checks                                                                                                                    | What it offers                                                                                                            |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
@@ -640,14 +641,29 @@ change as a unified diff and only writes on an explicit confirm.
 | Environment variables | Scans the source for `Deno.env.get("X")` / `process.env.X` and diffs against your `.env*` files                                   | Write `.env.example` — **never `.env`**, and values are never read                                                        |
 | Doctor                | —                                                                                                                                 | Runs `denext doctor --json` as a subprocess and renders every check; offers `app/page.tsx` when there is no app directory |
 | Features              | The feature list `denext create` offers                                                                                           | Scaffolds the project into an empty directory; on an existing project it only lists them                                  |
-| Tasks                 | The tasks your `deno.json` declares                                                                                               | Runs one, streaming its output over SSE                                                                                   |
-| Finish                | Whether the dev server is up                                                                                                      | Starts `denext dev`, shows its console, offers **Stop**                                                                   |
 
-Nothing in the wizard imports a project module: detection is filesystem probing, and
-doctor, `deno install` and `denext dev` all run as subprocesses. Under `--offline`, doctor
-runs without net, `deno install` runs `--cached-only`, and the Tasks and Finish buttons are
-disabled ([Working offline](#working-offline)). See [Doctor & audit](/docs/doctor-audit) for
-what the checks mean.
+Nothing in Setup imports a project module: detection is filesystem probing, and doctor and
+`deno install` run as subprocesses. Under `--offline`, doctor runs without net and
+`deno install` runs `--cached-only` ([Working offline](#working-offline)). See
+[Doctor & audit](/docs/doctor-audit) for what the checks mean.
+
+Setup was `/wizard`, which named the shape of the page rather than its job. Two of its nine
+steps were places rather than steps, and they are pages of their own now.
+
+## The dev server
+
+`/dev` says whether a dev server is running, starts and stops it, and keeps the console its
+output streams into. The JSON twin answers `{ ok, dir, running, origin, pid }`.
+
+## Tasks
+
+`/tasks` lists the scripts your `deno.json` declares, each with the command it runs and a
+button. The buttons post to `/tasks/run`, the SSE runner that is the only route which spawns:
+it refuses any name the project does not declare, passes it as an argv element rather than
+through a shell, and ties the child to the stream so closing the page takes the task with it.
+
+Not to be confused with the Cron page's scheduled tasks: those are `tasks/<name>.ts` modules
+registered with `defineTask`; these are `deno.json` scripts.
 
 **The dev server, and stopping it.** Starting `denext dev` answers _in place_ rather than
 redirecting, and the step keeps a `<pre class="out">` that the server's output streams into over
@@ -656,7 +672,7 @@ shows what has been printed so far instead of an empty box. A redirect used to d
 rebuilt the document and took `ui.js`'s single `EventSource` and the output block with it, which is
 what made starting a dev server look like it did nothing at all.
 
-While a server is running the step offers **Stop**, and that works even after `denext ui` has itself
+While a server is running the page offers **Stop**, and that works even after `denext ui` has itself
 been restarted: the dev server records its own pid in `.denext/dev.json`, so stopping never needs
 the child's process handle. That file is project content — a clone can commit one — so nothing in
 it is trusted on its own. The pid must be a safe integer above 1 (never `-1`, which would signal
@@ -863,7 +879,7 @@ reload never re-applies it); a preview re-renders the page with the diff in plac
 editors submit real buttons (`op=add|remove|up|down` plus the row index) and the server
 applies the operation, validates, and re-renders.
 
-The one deliberate exception is the Finish step's dev-server actions, which re-render in place: a
+The one deliberate exception is the Dev page's actions, which re-render in place: a
 redirect there would rebuild the document and take the output sink with it, so the server's console
 would stream to a page that no longer exists. Re-posting them is harmless — starting is idempotent,
 and stopping an already-stopped server simply says so.
@@ -938,7 +954,9 @@ the browser and a machine client exercise identical code:
 | `/generate`        | `GET` `POST`          | `/api/generate`        |
 | `/docker`          | `GET` `POST`          | `/api/docker`          |
 | `/desktop`         | `GET`                 | `/api/desktop`         |
-| `/wizard`          | `GET` `POST`          | `/api/wizard`          |
+| `/setup`           | `GET` `POST`          | `/api/setup`           |
+| `/dev`             | `GET` `POST`          | `/api/dev`             |
+| `/tasks`           | `GET`                 | `/api/tasks`           |
 | `/commands`        | `GET` `POST`          | `/api/commands`        |
 | `/tasks/run`       | `POST`                | `/api/tasks/run` (SSE) |
 
@@ -955,7 +973,9 @@ describes what its panel does, it does not flatten every panel into one shape:
 | `/api/generate`        | `{ ok, kinds }`                                                                       | `{ ok, written, skipped, preview? }`                                                             |
 | `/api/docker`          | `{ ok, mode, files, model, base }`                                                    | `{ ok, mode, files, written, refused }`; a compose edit `{ ok, applied, model, warnings, diff }` |
 | `/api/commands`        | `{ ok, timedOut, error?, commands }`                                                  | `{ ok, verb, code, output }`                                                                     |
-| `/api/wizard`          | `{ ok, … }` the step view                                                             | `{ ok, … }` the step outcome                                                                     |
+| `/api/setup`           | `{ ok, dir, kind, steps }` — one entry per step                                       | `{ ok, … }` the step outcome                                                                     |
+| `/api/dev`             | `{ ok, dir, running, origin, pid }`                                                   | `{ ok, … }` the start/stop outcome                                                               |
+| `/api/tasks`           | `{ ok, dir, tasks }` — the declared names                                             | — (runs go to `/api/tasks/run`)                                                                  |
 
 So `{ ok, applied, diff }` — the diff-then-confirm envelope — is what the writers that
 splice a file answer: `/api/config`, `/api/plugins`, `/api/plugins/options`, and a compose
@@ -1003,6 +1023,6 @@ above.
 - [CLI reference](/docs/cli) — every verb, including `ui`, `generate`, `plugin` and `doctor`
 - [Configuration](/docs/config) — what each `denext.config.ts` key means
 - [Writing a plugin](/docs/plugins) — the six seams, and the `addCommand` verb seam
-- [Doctor & audit](/docs/doctor-audit) — the checks the wizard's doctor step runs
+- [Doctor & audit](/docs/doctor-audit) — the checks Setup's doctor step runs
 - [Deployment](/docs/deploy) — what to do with the Dockerfile the UI regenerates
 - [Troubleshooting](/docs/troubleshooting) — when something refuses and the reason isn't obvious
