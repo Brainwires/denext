@@ -173,7 +173,37 @@ code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
 /* margin-top:auto pins the modes to the bottom of the column; the narrow layout below has
    no column, so it resets there. */
 .mode { margin: auto 0 0; display: flex; flex-wrap: wrap; gap: var(--space-1); padding: 0 10px; }
-main { max-width: 940px; padding: 28px var(--space-5) 64px; }
+/* Positioned so the pending bar below can hang from its top edge. */
+main { position: relative; max-width: 940px; padding: 28px var(--space-5) 64px; }
+
+/* ── pending ───────────────────────────────────────────────────────────── */
+/* ui.js marks the panel (and the form that asked) aria-busy while a fragment is in flight —
+   the Cron page lists tasks through a subprocess and can take seconds, and until then a click
+   looked like nothing. The panel's content dims behind a thin bar that walks the top of main.
+   The dim is on the CHILDREN so the bar, a pseudo-element of the panel, keeps its full colour;
+   the delay on the fade keeps a fast answer from flickering. With scripting off the attribute
+   is never set and none of this shows. */
+[aria-busy="true"] { cursor: progress; }
+#panel[aria-busy="true"] > * { opacity: 0.6; transition: opacity 0.2s ease 0.15s; }
+#panel[aria-busy="true"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 2px;
+  background: var(--primary);
+  animation: ui-busy 1.2s ease-in-out infinite;
+}
+/* The bar never leaves main: it shrinks to nothing at either edge rather than sliding past. */
+@keyframes ui-busy {
+  from { left: 0; width: 0; }
+  50% { width: 40%; }
+  to { left: 100%; width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #panel[aria-busy="true"]::before { animation: none; width: 100%; }
+}
 
 /* The stylesheet's only breakpoint. Below it the grid collapses to one column and the sidebar
    becomes a bar holding the brand and a button: twelve destinations laid out as a horizontal
@@ -286,6 +316,20 @@ h2 { font-size: var(--text-lg); margin: 28px 0 var(--space-2); }
 .card .card-blurb { margin: 0 0 8px; color: var(--muted-foreground); font-size: var(--text-sm); }
 /* A jsr: spec is one unbreakable word; let it wrap inside the card instead of being clipped. */
 .card .mono { overflow-wrap: anywhere; }
+/* The overview's status block: what the project's files say, as a two-column list. The labels
+   are short, so the pair fits a phone; a long origin or name wraps in its own column. */
+.status {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+  padding: var(--space-3) 14px;
+  margin: 0 0 var(--space-5);
+}
+.status dt { color: var(--muted-foreground); font-size: var(--text-sm); }
+.status dd { margin: 0; overflow-wrap: anywhere; }
 .outcome {
   border: 1px solid var(--border);
   border-left: 3px solid var(--primary);

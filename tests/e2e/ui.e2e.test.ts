@@ -15,32 +15,51 @@ import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../../src/ui/server.ts";
 import { assertNoConsoleErrors, collectConsoleErrors, launchBrowser, pollFor } from "./harness.ts";
 
-/** A project directory with a `deno.json` and, optionally, a dev server that is not there. */
-async function project(withStaleDevJson: boolean): Promise<string> {
+/** A project directory with a `deno.json`. */
+async function project(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_e2e_" });
   await Deno.writeTextFile(
     join(dir, "deno.json"),
     JSON.stringify({ imports: { denext: "jsr:@denext/denext@^2" }, tasks: { dev: "echo dev" } }),
   );
-  if (withStaleDevJson) {
-    // A port nothing listens on: bound to learn a free number, then given straight back. The
-    // panel will offer Stop for it, and stopping must discover that it is already gone.
-    const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-    const port = (probe.addr as Deno.NetAddr).port;
-    probe.close();
-    await Deno.mkdir(join(dir, ".denext"), { recursive: true });
-    await Deno.writeTextFile(
-      join(dir, ".denext", "dev.json"),
-      JSON.stringify({
-        origin: `http://127.0.0.1:${port}`,
-        port,
-        hostname: "127.0.0.1",
-        pid: 2147483646, // never signalled: the origin never answers, so this is the stale path
-        startedAt: Date.now(),
-      }),
-    );
-  }
   return dir;
+}
+
+/**
+ * Publish a `.denext/dev.json` for a dev server that is not there: the panel will offer Stop
+ * for it, and stopping must discover that it is already gone.
+ *
+ * The origin is a stand-in that stays LISTENING until `close` and answers nothing but 404 — the
+ * port a dev server vacated and something else took. A port bound and given straight back
+ * would be free only until another test bound it, and Chromium takes seconds to reach the
+ * Stop button; a server of our own has no such window, and "not ok" is "no answer" to the
+ * stop's probe exactly as a refused connection is.
+ */
+async function staleDevJson(dir: string): Promise<{ close(): Promise<void> }> {
+  const ac = new AbortController();
+  const { promise, resolve } = Promise.withResolvers<number>();
+  const srv = Deno.serve(
+    { port: 0, hostname: "127.0.0.1", signal: ac.signal, onListen: ({ port }) => resolve(port) },
+    () => new Response("not found", { status: 404 }),
+  );
+  const port = await promise;
+  await Deno.mkdir(join(dir, ".denext"), { recursive: true });
+  await Deno.writeTextFile(
+    join(dir, ".denext", "dev.json"),
+    JSON.stringify({
+      origin: `http://127.0.0.1:${port}`,
+      port,
+      hostname: "127.0.0.1",
+      pid: 2147483646, // never signalled: the origin is not a dev server, so this is the stale path
+      startedAt: Date.now(),
+    }),
+  );
+  return {
+    async close() {
+      ac.abort();
+      await srv.finished;
+    },
+  };
 }
 
 /** Tear down a UI server and its project directory. */
@@ -50,7 +69,7 @@ async function teardown(server: UiServer, dir: string): Promise<void> {
 }
 
 Deno.test("denext ui: the ?t= handshake, and ui.js actually loads under the strict CSP", async () => {
-  const dir = await project(false);
+  const dir = await project();
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();
   try {
@@ -80,7 +99,8 @@ Deno.test("denext ui: the ?t= handshake, and ui.js actually loads under the stri
 });
 
 Deno.test("denext ui: Stop swaps the panel in place — no navigation, which is the whole bug", async () => {
-  const dir = await project(true);
+  const dir = await project();
+  const stale = await staleDevJson(dir);
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();
   try {
@@ -137,12 +157,13 @@ Deno.test("denext ui: Stop swaps the panel in place — no navigation, which is 
     assertNoConsoleErrors(errors);
   } finally {
     await browser.close();
+    await stale.close();
     await teardown(server, dir);
   }
 });
 
 Deno.test("denext ui: a panel swap re-renders without losing the page's other panels", async () => {
-  const dir = await project(false);
+  const dir = await project();
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();
   try {
@@ -180,7 +201,7 @@ Deno.test("denext ui: a panel swap re-renders without losing the page's other pa
 });
 
 Deno.test("denext ui: the sidebar navigates without a reload, and Back comes home", async () => {
-  const dir = await project(false);
+  const dir = await project();
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();
   try {
@@ -245,7 +266,7 @@ Deno.test("denext ui: the sidebar navigates without a reload, and Back comes hom
 });
 
 Deno.test("denext ui: a link the browser should own is left alone", async () => {
-  const dir = await project(false);
+  const dir = await project();
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();
   try {
@@ -399,6 +420,9 @@ Deno.test("denext ui: the schedule builder composes without reloading the page",
     const page = await browser.newPage();
     const errors = collectConsoleErrors(page);
     await page.goto(server.url);
+    // Short enough that the builder sits below the fold, as it does on a laptop once the page
+    // has a schedule or two: the swap it asks for must not send the viewport back to the top.
+    await page.setViewportSize({ width: 1100, height: 320 });
     await page.goto(`${new URL(server.url).origin}/config/cron`);
     await pollFor(page, `!!document.querySelector(".builder")`);
 
@@ -406,6 +430,12 @@ Deno.test("denext ui: the schedule builder composes without reloading the page",
     // `ui.js` already treats one as a navigation it can swap in place — so this must update the
     // panel WITHOUT a page load, which is what __noReload catches.
     await page.evaluate("window.__noReload = true");
+
+    // Scroll the builder to the top of the window and remember where that left the page.
+    await page.evaluate(`document.querySelector(".builder").scrollIntoView()`);
+    await pollFor(page, "window.scrollY > 0");
+    const scrolled = Number(await page.evaluate("window.scrollY"));
+    assert(scrolled > 0, "the builder sits below the fold in this window");
 
     const weekly = await page.$('.builder input[value="weekly"]');
     assert(weekly, "the builder offers a Weekly shape");
@@ -436,6 +466,68 @@ Deno.test("denext ui: the schedule builder composes without reloading the page",
       "the composed schedule is in the address, so it can be linked and reloaded",
     );
 
+    // The swap replaced the whole panel, builder included, through the same path a nav click
+    // takes — and a nav click scrolls to the top. A form INSIDE the panel must not: the page
+    // stays where it was, and the builder is still the thing on screen.
+    const after = Number(await page.evaluate("window.scrollY"));
+    assert(
+      Math.abs(after - scrolled) <= 40,
+      `the viewport must stay put across the builder's swap (was ${scrolled}, now ${after})`,
+    );
+    const inView = await page.evaluate(
+      `(() => { const r = document.querySelector(".builder").getBoundingClientRect();` +
+        ` return r.top < innerHeight && r.bottom > 0; })()`,
+    );
+    assertEquals(inView, true, "the builder is still in view after the swap it asked for");
+
+    // The panel's mark of a request in flight is gone once the answer has landed.
+    assertEquals(
+      await page.evaluate(`document.querySelector("#panel").hasAttribute("aria-busy")`),
+      false,
+      "the swapped-in panel is not marked busy",
+    );
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});
+
+Deno.test("denext ui: the overview's status block sits above the cards, three across then one", async () => {
+  const dir = await project();
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.goto(server.url);
+    await pollFor(page, `!!document.querySelector(".status")`);
+
+    // What the block says comes from the project's files: `project()` pins ^2 and starts no
+    // dev server, and nothing on this page spawns anything to find that out.
+    const status = String(await page.evaluate(`document.querySelector(".status").textContent`));
+    assertStringIncludes(status, "^2");
+    assertStringIncludes(status, "Not running");
+
+    // The number of cards in the first row: how many share the top edge of the first one.
+    const perRow = `(() => { const tops = [...document.querySelectorAll(".cards .card")]` +
+      `.map((c) => c.getBoundingClientRect().top); return tops.filter((t) => t === tops[0]).length; })()`;
+    assertEquals(
+      await page.evaluate(perRow),
+      3,
+      "at full width the overview cards sit three across",
+    );
+
+    await page.setViewportSize({ width: 390, height: 780 });
+    await pollFor(page, `${perRow} === 1`);
+    assertEquals(
+      await page.evaluate("document.documentElement.scrollWidth <= innerWidth"),
+      true,
+      "a phone never scrolls sideways",
+    );
+
     assertNoConsoleErrors(errors);
   } finally {
     await browser.close();
@@ -444,7 +536,7 @@ Deno.test("denext ui: the schedule builder composes without reloading the page",
 });
 
 Deno.test("denext ui: on a phone the navigation is a drawer, not a strip", async () => {
-  const dir = await project(false);
+  const dir = await project();
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();
   try {
@@ -503,7 +595,7 @@ Deno.test("denext ui: on a phone the navigation is a drawer, not a strip", async
 });
 
 Deno.test("denext ui: a sidebar taller than the window scrolls to its last entry", async () => {
-  const dir = await project(false);
+  const dir = await project();
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();
   try {
@@ -557,7 +649,7 @@ Deno.test("denext ui: a sidebar taller than the window scrolls to its last entry
 });
 
 Deno.test("denext ui: leaving a config view with unsaved edits asks first", async () => {
-  const dir = await project(false);
+  const dir = await project();
   await Deno.writeTextFile(join(dir, "denext.config.ts"), "export default {};\n");
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();
@@ -691,7 +783,7 @@ Deno.test("denext ui: a task's output streams into the panel's sink as it runs",
 });
 
 Deno.test("denext ui: Save sleeps until an edit, and Discard puts the view back", async () => {
-  const dir = await project(false);
+  const dir = await project();
   await Deno.writeTextFile(join(dir, "denext.config.ts"), 'export default { basePath: "/v1" };\n');
   const server = await startUiServer({ dir, port: 0 });
   const browser = await launchBrowser();

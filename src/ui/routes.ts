@@ -6,9 +6,12 @@
 // HTML UI and a machine client exercise identical code. Anything not `GET`/`HEAD` is a mutation
 // and passes the origin + CSRF + `--read-only` gates in `server.ts` before arriving here.
 
+import { basename } from "@std/path";
 import { sseStream } from "../build/sse.ts";
+import { pinnedDenextCli, pinnedVersion } from "../cli/self-exec.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
+import { readDevInfo } from "../mcp/dev-client.ts";
 import {
   jsonResponse,
   panelResponder,
@@ -20,7 +23,7 @@ import {
   type UiRoute,
 } from "./html.ts";
 import { type NavItem, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
-import { Note, Panel } from "./components.ts";
+import { Badge, Mono, Note, Panel } from "./components.ts";
 import { renderView } from "./view.ts";
 import { UI_CSS } from "./styles.ts";
 import { UI_JS } from "./client.ts";
@@ -158,8 +161,82 @@ function overviewCards(): NavItem[] {
   return out;
 }
 
-/** The overview panel: where the UI is pointed, and a card per panel. */
-function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
+/**
+ * What the overview's status block says about the project — read from its files alone. No
+ * subprocess and no HTTP probe: the page must open instantly, and whether the dev server
+ * `dev.json` names is really answering is the Wizard's job to find out.
+ */
+interface ProjectStatus {
+  /** The `name` in `deno.json`, else the directory's own name. */
+  readonly name: string;
+  /**
+   * The denext the import map pins, as written (`^2.5.0`; `latest` for an unversioned
+   * `jsr:@denext/denext`), or null when the project pins none.
+   */
+  readonly denext: string | null;
+  /** The origin `.denext/dev.json` names, or null when there is no such file. */
+  readonly dev: string | null;
+}
+
+/** Where the Wizard starts and stops the dev server. */
+const WIZARD_DEV_STEP = "/wizard#step-finish";
+
+/**
+ * Read the project's status for the overview: three cheap file reads, nothing spawned.
+ *
+ * The pin follows the rules `deno run` would (`pinnedDenextCli`: `deno.jsonc`, an `importMap`
+ * file, a workspace root), so the overview and a compiled binary name the same denext.
+ *
+ * @param dir The project directory.
+ * @returns The status.
+ */
+async function projectStatus(dir: string): Promise<ProjectStatus> {
+  const name = (await readDenoConfig(dir))?.data?.name;
+  const cli = pinnedDenextCli(dir);
+  const dev = await readDevInfo(dir);
+  return {
+    name: typeof name === "string" && name !== "" ? name : basename(dir),
+    denext: cli === null ? null : pinnedVersion(cli) ?? "latest",
+    dev: dev === null ? null : dev.origin,
+  };
+}
+
+/** The overview's status block: the project's name, its denext, and its dev server. */
+function StatusBlock({ status }: { readonly status: ProjectStatus }): VNode {
+  return h(
+    "dl",
+    { class: "status" },
+    h("dt", null, "Project"),
+    h("dd", null, status.name),
+    h("dt", null, "denext"),
+    h(
+      "dd",
+      null,
+      status.denext === null
+        ? h(Badge, { tone: "warn" }, "not pinned")
+        : h(Mono, null, status.denext),
+    ),
+    h("dt", null, "Dev server"),
+    h(
+      "dd",
+      null,
+      status.dev === null
+        ? ["Not running · ", h("a", { href: WIZARD_DEV_STEP }, "Start it from the Wizard")]
+        : [
+          h(Mono, null, ".denext/dev.json"),
+          " says running at ",
+          h("a", { href: status.dev }, status.dev),
+          " · ",
+          h("a", { href: WIZARD_DEV_STEP }, "Stop it from the Wizard"),
+        ],
+    ),
+  );
+}
+
+/** The overview panel: where the UI is pointed, what the project is, and a card per panel. */
+function Overview(
+  { ctx, status }: { readonly ctx: UiContext; readonly status: ProjectStatus },
+): VNode {
   const cards = overviewCards().map((item) => h(Card, { key: item.href, item }));
   return h(
     Panel,
@@ -167,6 +244,7 @@ function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
     h("p", { class: "lead mono" }, ctx.dir),
     ctx.readOnly ? h(Note, { tone: "warn" }, "Read-only mode — every change is refused.") : null,
     ctx.offline === true ? h(Note, { tone: "warn" }, OFFLINE_OVERVIEW) : null,
+    h(StatusBlock, { status }),
     h("div", { class: "cards" }, cards),
   );
 }
@@ -181,19 +259,19 @@ function Overview({ ctx }: { readonly ctx: UiContext }): VNode {
  */
 const homeResponse = panelResponder("Project", "/");
 
-/** The overview page, the bare panel for a swap, or its JSON twin. */
-function home(_request: Request, ctx: UiContext): Promise<Response> {
+/** The overview page, the bare panel for a swap, or its JSON twin (the status included). */
+async function home(_request: Request, ctx: UiContext): Promise<Response> {
+  const status = await projectStatus(ctx.dir);
   if (ctx.json) {
-    return Promise.resolve(
-      jsonResponse({
-        ok: true,
-        dir: ctx.dir,
-        readOnly: ctx.readOnly,
-        routes: Object.keys(UI_ROUTES),
-      }),
-    );
+    return jsonResponse({
+      ok: true,
+      dir: ctx.dir,
+      readOnly: ctx.readOnly,
+      ...status,
+      routes: Object.keys(UI_ROUTES),
+    });
   }
-  return Promise.resolve(homeResponse(ctx, renderView(h(Overview, { ctx }))));
+  return homeResponse(ctx, renderView(h(Overview, { ctx, status })));
 }
 
 // ── `/tasks/run` ─────────────────────────────────────────────────────────────

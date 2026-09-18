@@ -35,6 +35,51 @@ function swapPanel(markup) {
   trackAll();
 }
 
+/**
+ * Mark the panel — and the form that asked, when one did — as waiting on the server, or clear
+ * the mark. The Cron page lists tasks through a subprocess and the Commands page discovers
+ * verbs through one, so an answer can take seconds; until it lands the click looked like
+ * nothing. The stylesheet draws the state. A swap replaces the panel and takes the mark with
+ * it; the form is cleared by hand because it is the one thing that may outlive its request.
+ */
+function setBusy(form, on) {
+  for (const node of [document.querySelector("#panel"), form]) {
+    if (!node) continue;
+    if (on) node.setAttribute("aria-busy", "true");
+    else node.removeAttribute("aria-busy");
+  }
+}
+
+/**
+ * Where a form inside the panel sits before a swap it asked for, so the swap can put it back.
+ *
+ * A GET form in the panel — the cron builder's shapes, a filter box — goes through the same
+ * path as a nav click, and that path scrolls to the top: a shape picked below the fold sent
+ * the viewport to the heading and left the builder out of sight. The anchor is the scroll
+ * offset plus where the form itself was on screen; it is found again by id when it has one,
+ * else by its place among the panel's forms, since the panel re-renders in the same shape.
+ */
+function anchorOf(form) {
+  return {
+    y: globalThis.scrollY,
+    id: form.id || "",
+    index: Array.from(document.querySelectorAll("#panel form")).indexOf(form),
+    top: form.getBoundingClientRect().top,
+  };
+}
+
+/** Put the viewport back where an anchored form was, after the panel around it was swapped. */
+function restoreAnchor(anchor) {
+  globalThis.scrollTo(0, anchor.y);
+  const again = anchor.id
+    ? document.getElementById(anchor.id)
+    : document.querySelectorAll("#panel form")[anchor.index];
+  if (!again) return;
+  // What sits above it may have grown or shrunk; keep the form where the eye left it.
+  const drift = again.getBoundingClientRect().top - anchor.top;
+  if (drift !== 0) globalThis.scrollBy(0, drift);
+}
+
 /** Stream a task's output into the panel's <pre class="out"> as it arrives. */
 async function streamInto(response, sink) {
   const reader = response.body?.getReader();
@@ -160,28 +205,35 @@ document.addEventListener("click", (event) => {
 async function submit(form, submitter) {
   const body = new FormData(form, submitter instanceof HTMLElement ? submitter : undefined);
   body.set(CSRF_FIELD, csrf);
-  const response = await fetch(form.action, {
-    method: "POST",
-    body,
-    headers: { accept: "text/html-fragment", [CSRF_HEADER]: csrf },
-  });
-  const type = response.headers.get("content-type") ?? "";
-  const sink = form.closest("#panel")?.querySelector("pre.out");
-  if (type.includes("text/event-stream") && sink) {
-    sink.replaceChildren();
-    await streamInto(response, sink);
-    return;
-  }
-  if (type.includes("text/html")) {
-    swapPanel(await response.text());
-    return;
-  }
-  const payload = await response.json().catch(() => null);
-  if (payload && payload.ok === false) {
-    const note = document.createElement("p");
-    note.className = "note";
-    note.textContent = "denext ui: " + (payload.reason ?? "request refused");
-    form.closest("#panel")?.prepend(note);
+  setBusy(form, true);
+  try {
+    const response = await fetch(form.action, {
+      method: "POST",
+      body,
+      headers: { accept: "text/html-fragment", [CSRF_HEADER]: csrf },
+    });
+    const type = response.headers.get("content-type") ?? "";
+    const sink = form.closest("#panel")?.querySelector("pre.out");
+    if (type.includes("text/event-stream") && sink) {
+      // The wait is over once output starts arriving: what streams in is there to be read.
+      setBusy(form, false);
+      sink.replaceChildren();
+      await streamInto(response, sink);
+      return;
+    }
+    if (type.includes("text/html")) {
+      swapPanel(await response.text());
+      return;
+    }
+    const payload = await response.json().catch(() => null);
+    if (payload && payload.ok === false) {
+      const note = document.createElement("p");
+      note.className = "note";
+      note.textContent = "denext ui: " + (payload.reason ?? "request refused");
+      form.closest("#panel")?.prepend(note);
+    }
+  } finally {
+    setBusy(form, false);
   }
 }
 
@@ -231,18 +283,24 @@ function markCurrent() {
  * Put a same-origin panel on screen without a navigation. Anything unexpected — a failed
  * request, a response that is not a panel — hands the address back to the browser, so the
  * enhancement can never strand someone on a page that will not move.
+ *
+ * \`anchor\` is where the form that asked for this panel sat (see anchorOf); a navigation link
+ * passes none and lands at the top, the way a fresh page would.
  */
-async function show(href, push, keepFocus) {
+async function show(href, push, keepFocus, anchor) {
   const seq = ++showSeq;
+  setBusy(null, true);
   let response;
   try {
     response = await fetch(href, { headers: { accept: "text/html-fragment" } });
   } catch {
+    setBusy(null, false);
     location.href = href;
     return;
   }
   const type = response.headers.get("content-type") || "";
   if (!response.ok || type.indexOf("text/html") === -1) {
+    setBusy(null, false);
     location.href = href;
     return;
   }
@@ -271,7 +329,8 @@ async function show(href, push, keepFocus) {
   markCurrent();
   closeNav();
   if (title) document.title = decodeURIComponent(title);
-  if (push) globalThis.scrollTo(0, 0);
+  if (anchor) restoreAnchor(anchor);
+  else if (push) globalThis.scrollTo(0, 0);
 }
 
 /**
@@ -392,7 +451,9 @@ document.addEventListener("submit", (event) => {
     const url = new URL(form.action, location.href);
     url.search = new URLSearchParams(new FormData(form)).toString();
     event.preventDefault();
-    show(url.pathname + url.search, true, true)
+    // A form inside the panel keeps its place on screen; one in the shell is a navigation.
+    const anchor = form.closest("#panel") ? anchorOf(form) : null;
+    show(url.pathname + url.search, true, true, anchor)
       .catch((error) => console.error("denext ui:", error));
     return;
   }

@@ -31,12 +31,18 @@ interface Harness {
   csrf: string;
 }
 
-async function ui(options: { offline?: boolean } = {}): Promise<Harness> {
+/**
+ * A UI server over a fresh project. `denoJson` is the project's `deno.json` text — the default
+ * declares one task — and `null` leaves the project with no config file at all.
+ */
+async function ui(
+  { denoJson = '{ "tasks": { "hello": "eval console.log(1)" } }', ...options }: {
+    offline?: boolean;
+    denoJson?: string | null;
+  } = {},
+): Promise<Harness> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_srv_" });
-  await Deno.writeTextFile(
-    join(dir, "deno.json"),
-    '{ "tasks": { "hello": "eval console.log(1)" } }',
-  );
+  if (denoJson !== null) await Deno.writeTextFile(join(dir, "deno.json"), denoJson);
   const server = await startUiServer({ dir, port: 0, ...options });
   const { cookie, csrf } = await uiHandshake(server);
   return { server, dir, base: `http://127.0.0.1:${server.port}`, headers: { cookie }, csrf };
@@ -96,7 +102,14 @@ Deno.test("the same-origin assets are served with the right content types", asyn
     const css = await fetch(`${h.base}/_ui/ui.css`, { headers: h.headers });
     assertEquals(css.status, 200);
     assertStringIncludes(css.headers.get("content-type") ?? "", "text/css");
-    assertStringIncludes(await css.text(), "prefers-color-scheme");
+    const sheet = await css.text();
+    assertStringIncludes(sheet, "prefers-color-scheme");
+    // A panel waiting on the server is drawn as such — dimmed, a progress cursor and a bar —
+    // and the bar holds still for someone who asked for no motion.
+    assertStringIncludes(sheet, '#panel[aria-busy="true"]');
+    assertStringIncludes(sheet, "cursor: progress");
+    assertStringIncludes(sheet, "@keyframes ui-busy");
+    assertStringIncludes(sheet, "prefers-reduced-motion");
 
     const js = await fetch(`${h.base}/_ui/ui.js`, { headers: h.headers });
     assertEquals(js.status, 200);
@@ -107,6 +120,18 @@ Deno.test("the same-origin assets are served with the right content types", asyn
     assert(!source.includes(".innerHTML ="), "untrusted text is never innerHTML'd");
     // It is a string in `client.ts`, so nothing else parses it: do it here.
     new Function(source);
+    // While a fragment is in flight the panel (and a submitting form) says so, and the mark is
+    // taken off again — a swap replaces the panel, and the form is cleared by hand.
+    assertStringIncludes(source, 'setAttribute("aria-busy", "true")');
+    assertStringIncludes(source, 'removeAttribute("aria-busy")');
+    // A GET form inside the panel (the cron builder, a filter) keeps its place on screen across
+    // the swap it asked for; only a navigation link scrolls to the top.
+    assertStringIncludes(source, "globalThis.scrollY");
+    assertStringIncludes(source, 'form.closest("#panel") ? anchorOf(form) : null');
+    assertStringIncludes(
+      source,
+      "if (anchor) restoreAnchor(anchor);\n  else if (push) globalThis.scrollTo(0, 0);",
+    );
     // Every frame the panels push is dispatched (an unknown one is ignored, not thrown on).
     const frames = [
       "reload",
@@ -170,6 +195,71 @@ Deno.test("the overview's JSON twin reports the project and the route table", as
       assert(payload.routes.includes(path), path);
       assert(Object.keys(UI_ROUTES).includes(path), path);
     }
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the overview names the project, its pinned denext and the dev server dev.json says is up", async () => {
+  const h = await ui({
+    denoJson: '{ "name": "@acme/shop", "imports": { "denext": "jsr:@denext/denext@^2.5.0" } }',
+  });
+  try {
+    await Deno.mkdir(join(h.dir, ".denext"));
+    await Deno.writeTextFile(
+      join(h.dir, ".denext", "dev.json"),
+      JSON.stringify({
+        origin: "http://127.0.0.1:3456",
+        port: 3456,
+        hostname: "127.0.0.1",
+        pid: 2147483646,
+        startedAt: Date.now(),
+      }),
+    );
+    const body = await (await fetch(`${h.base}/`, { headers: h.headers })).text();
+    assertStringIncludes(body, '<dl class="status">');
+    assertStringIncludes(body, "<dt>Project</dt><dd>@acme/shop</dd>");
+    assertStringIncludes(body, '<dt>denext</dt><dd><code class="mono">^2.5.0</code></dd>');
+    // Nothing here probes the address: the page says what the file says, and offers the Wizard
+    // — whose Stop is what finds out whether the server is really there.
+    assertStringIncludes(body, "says running at ");
+    assertStringIncludes(body, '<a href="http://127.0.0.1:3456">http://127.0.0.1:3456</a>');
+    assertStringIncludes(body, '<a href="/wizard#step-finish">Stop it from the Wizard</a>');
+    assert(!body.includes("Not running"), "a published address is not reported as absent");
+    // The status block sits above the cards, so it is read first.
+    assert(body.indexOf('<dl class="status">') < body.indexOf('<div class="cards">'));
+
+    // The JSON twin carries the same three facts.
+    const twin = await (await fetch(`${h.base}/api/overview`, { headers: h.headers })).json();
+    assertEquals(twin.name, "@acme/shop");
+    assertEquals(twin.denext, "^2.5.0");
+    assertEquals(twin.dev, "http://127.0.0.1:3456");
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("the overview falls back to the directory name, 'not pinned' and 'not running'", async () => {
+  const h = await ui({ denoJson: null });
+  try {
+    const body = await (await fetch(`${h.base}/`, { headers: h.headers })).text();
+    assertStringIncludes(body, `<dt>Project</dt><dd>${h.dir.split("/").pop()}</dd>`);
+    assertStringIncludes(
+      body,
+      '<dt>denext</dt><dd><span class="badge warn">not pinned</span></dd>',
+    );
+    assertStringIncludes(body, "<dt>Dev server</dt><dd>Not running · ");
+    assertStringIncludes(body, '<a href="/wizard#step-finish">Start it from the Wizard</a>');
+    assert(!body.includes("says running at"), "no dev.json, no address");
+
+    // An unversioned `jsr:@denext/denext` is a pin to the latest release — `deno run` resolves it
+    // to one — so it is named as such rather than counted as no pin.
+    await Deno.writeTextFile(
+      join(h.dir, "deno.jsonc"),
+      '{ /* comments are fine */ "imports": { "denext": "jsr:@denext/denext" } }',
+    );
+    const again = await (await fetch(`${h.base}/`, { headers: h.headers })).text();
+    assertStringIncludes(again, '<dt>denext</dt><dd><code class="mono">latest</code></dd>');
   } finally {
     await stop(h);
   }
