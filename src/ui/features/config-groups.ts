@@ -1,6 +1,6 @@
 // Which view of `denext.config.ts` a key belongs to, and the filter that cuts across all of them.
 //
-// The config editor renders one collapsible section per top-level key. That is 28 schema keys
+// The config editor renders one collapsible section per top-level key. That is ~30 schema keys
 // plus whatever else the file declares plus the raw-file escape hatch — ~76 KB of markup in one
 // page, which is a lot of scrolling to reach the one key you came for. The keys are grouped by
 // what they configure, so a view carries a handful of sections instead of all of them.
@@ -39,13 +39,18 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "live",
     "cacheComponents",
     "classComponents",
+    "reactCompiler",
+    "asyncContext",
     "images",
     "tailwind",
     "mdx",
     "cache",
   ],
   security: ["csp", "hsts", "publicEnv", "apiBatch", "apiMaxBodyBytes"],
-  advanced: ["experimental", "nodeResolve", "compatibilityMode", "plugins", "commands"],
+  // `features` (compile-time flags) sits with the other build-and-toolchain switches; `experimental`
+  // is the superseded block every key graduated out of, kept here so a file that still sets it
+  // is edited where it always was (the schema marks it deprecated, so an absent one is not offered).
+  advanced: ["features", "experimental", "nodeResolve", "compatibilityMode", "plugins", "commands"],
 };
 
 /**

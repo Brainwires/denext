@@ -105,7 +105,7 @@ function moduleRewritePlugin(
         if (args.path !== abs) return null;
         let src = await Deno.readTextFile(abs);
         // Fold `feature("KEY")` calls so dev matches a build (values, not DCE). Only when the
-        // app configured `experimental.features`; a throwing fold leaves the source as written.
+        // app configured `features`; a throwing fold leaves the source as written.
         const features = st.opts.features;
         if (features && Object.keys(features).length > 0) {
           try {

@@ -534,9 +534,7 @@ Deno.test("production SPA transforms emit no DevTools metadata (DCE guard)", asy
     // spaRefreshPlugin exclusively on the dev branch) — it must emit neither symbol.
     const plugin = spaSourceTransformPlugin(
       dir,
-      {
-        experimental: { features: { SOMETHING: true } },
-      } as ProjectPaths["config"],
+      { features: { SOMETHING: true } } as ProjectPaths["config"],
     );
     assert(plugin, "the feature fold is enabled for this fixture config");
     const out = (await onLoadOf(plugin)({ path: file }))!.contents;

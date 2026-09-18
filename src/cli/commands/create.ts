@@ -31,7 +31,7 @@ export const FEATURES: readonly ScaffoldFeature[] = [
   {
     key: "compiler",
     flag: "compiler",
-    label: "Auto-memo compiler (experimental)",
+    label: "Auto-memo compiler",
   },
   {
     key: "desktop",

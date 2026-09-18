@@ -1,7 +1,7 @@
 ---
 title: Configuration
 slug: config
-lead: Every field of denext.config.ts — routing, rendering mode, images, caching, security, compatibility, plugins, and experimental features. All optional; a denext app runs with no config at all.
+lead: Every field of denext.config.ts — routing, rendering mode, images, caching, security, compatibility, plugins, and the build-time switches. All optional; a denext app runs with no config at all.
 ---
 
 denext reads an optional `denext.config.ts` (or `.js`) from your project root.
@@ -242,43 +242,51 @@ export default {
 } satisfies DenextConfig;
 ```
 
-## Experimental
+## Build & optimization
 
-A feature stays here only while it is genuinely **incomplete** — being new is
-not enough. All off by default.
+Opt-in build-time switches. All off by default except `nodeResolve`.
 
-- **`experimental`** — `ExperimentalConfig`.
-- **`experimental.reactCompiler`** — `boolean` (Next.js's key; `experimental.compiler`
-  is a deprecated alias). An opt-in build-time auto-memoization
-  optimization (a React-Compiler-style pass). Conservative by construction —
+- **`reactCompiler`** — `boolean`. The build-time auto-memoization compiler (a
+  React-Compiler-style pass; Next.js's key). Conservative by construction —
   bails to identity whenever a transform isn't provably safe, so it only ever
-  adds memoization. Off while its coverage widens.
-- **`experimental.asyncContext`** — `boolean`. Scope async `startTransition` by
-  transition **identity** instead of the default time window: a build transform
-  makes denext's first-party `AsyncContext` survive `await`, so a post-`await`
-  update stays a transition while an unrelated urgent update in the pending
-  window keeps its priority. Opt-in — it instruments every client `await` (a
-  small per-`await` cost), and in v1 leaves async generators and top-level
-  `await` un-instrumented. Off by default, with the time-window behavior
-  unchanged. See [Async transitions](/docs/rendering#async-transitions).
-- **`nodeResolve`** (top-level; `experimental.nodeResolve` is a deprecated alias)
-  — `boolean` (**default on** for the compat build). denext's tolerant
-  `node_modules` resolver: a strict superset of Deno's
-  `npm:` loader that resolves bare npm specifiers straight from the app's
-  installed `node_modules`, honoring `exports` wildcard globs. This is what lets
-  an unmodified pnpm/npm/yarn/bun app build without hand-patching dependency
+  adds memoization, never changes behavior. `denext create` offers it as
+  "Auto-memo compiler", and `denext migrate` turns it on for a Vite app that ran
+  React Compiler.
+- **`asyncContext`** — `boolean`. Scope async `startTransition` by transition
+  **identity** instead of the default time window: a build transform makes
+  denext's first-party `AsyncContext` survive `await`, so a post-`await` update
+  stays a transition while an unrelated urgent update in the pending window
+  keeps its priority. Opt-in because it instruments every client `await` (a
+  small per-`await` cost); the time-window behavior is unchanged when off. See
+  [Async transitions](/docs/rendering#async-transitions).
+- **`features`** — `Record<string, boolean>`. Compile-time feature flags for
+  `feature("KEY")` from `denext/feature`: the call always returns the configured
+  value (the server and every client bundle are seeded with this map), and a
+  string-literal KEY is folded to a literal where the build can, so the untaken
+  branch is dead-code eliminated. A key not listed reads `false`; flag names and
+  states are embedded in the client bundle. See
+  [Feature flags](/docs/bundling#feature-flags-compile-time).
+- **`nodeResolve`** — `boolean` (**default on** for the compat build). denext's
+  tolerant `node_modules` resolver: a strict superset of Deno's `npm:` loader
+  that resolves bare npm specifiers straight from the app's installed
+  `node_modules`, honoring `exports` wildcard globs. This is what lets an
+  unmodified pnpm/npm/yarn/bun app build without hand-patching dependency
   `exports` — the reason `denext migrate` never rewrites `package.json`. Set
   `false` to force app deps back through Deno's strict `npm:` loader (escape
   hatch).
 
-> Graduated keys warn. `experimental.*` sub-keys are validated like top-level
-> ones (an unknown one warns with a did-you-mean). Four pre-2.0 keys moved to
-> the top level and each emits a dev warning naming the new field:
-> `experimental.streaming` → `streaming` and `experimental.live` → `live` (the
-> legacy keys are no longer read — move the value up), and
-> `experimental.cacheComponents` → `cacheComponents` and
-> `experimental.nodeResolve` → `nodeResolve` (the legacy keys are still honored,
-> so nothing breaks while you migrate).
+> **`experimental` is superseded.** Everything denext shipped under it is
+> denext's own finished work, so every key graduated to a top-level field —
+> `experimental.reactCompiler` (and the older `experimental.compiler`) →
+> `reactCompiler`, `experimental.asyncContext` → `asyncContext`,
+> `experimental.features` → `features`, `experimental.nodeResolve` →
+> `nodeResolve`, `experimental.cacheComponents` → `cacheComponents`. The legacy
+> spellings are still honored when the top-level field is absent (the top-level
+> one wins when both are set), and each emits a dev warning naming the new
+> field, so nothing breaks while you migrate; the block is removed in 3.0.
+> `experimental.streaming` → `streaming` and `experimental.live` → `live` are
+> no longer read at all — move the value up. An unknown `experimental.*` key
+> warns with a did-you-mean, like a top-level one.
 
 ## Config schema
 
@@ -291,7 +299,7 @@ can't drift.
 It describes the shape, not just the names: array `items` (so
 `redirects`, `rewrites`, `headers`, `images.remotePatterns` carry their rule
 schema), `additionalProperties` for a `Record` / index signature (the value
-schema of `scheduledTasks`, `experimental.features`), `anyOf` for a union of
+schema of `scheduledTasks`, `features`), `anyOf` for a union of
 mappable members and a single `enum` for a union of literals, and `minimum` /
 `maximum` from explicit `@minimum` / `@maximum` tags where `config-validate.ts`
 enforces that exact bound. Two `x-denext` markers tell a form renderer what a

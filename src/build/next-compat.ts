@@ -941,7 +941,7 @@ export interface BundleNextCompatModulesOptions {
    */
   catalogPackages?: string[];
   /**
-   * `experimental.nodeResolve`: resolve EVERY bare npm specifier from `node_modules`
+   * `nodeResolve`: resolve EVERY bare npm specifier from `node_modules`
    * (denext's tolerant resolver), superseding {@link catalogPackages}. Deno's strict
    * `npm:` loader then never touches app deps, so incomplete `exports` maps and
    * `catalog:`/`workspace:*` versions stop mattering — the "seamless migration" path.
@@ -1389,7 +1389,7 @@ async function selfPackageDir(fromDir: string, name: string): Promise<string | n
  *
  * @param projectDir Where the app's `node_modules` lives (for the named packages).
  * @param packages The catalog/workspace package names declared by the app, or `"all"` to
- *   resolve EVERY bare npm specifier from `node_modules` (the `experimental.nodeResolve`
+ *   resolve EVERY bare npm specifier from `node_modules` (the `nodeResolve`
  *   path — Deno's strict `npm:` loader never touches app deps, so incomplete `exports`
  *   globs and `catalog:`/`workspace:*` version strings stop mattering). denext's resolver
  *   is a strict superset of Deno's: it returns `null` for anything it can't place, so the

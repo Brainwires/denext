@@ -11,7 +11,7 @@
  * Un-bundled (dev before transform, `deno test`, `deno run`) no map exists, so
  * importing this module for its side effect installs an empty `globalThis` default
  * (every flag off) so the bare read resolves. The server seeds the real values from
- * `experimental.features` in `resolveProject` (src/build/paths.ts); the esbuild compat
+ * `features` in `resolveProject` (src/build/paths.ts); the esbuild compat
  * paths seed it via `define`. In a folded/defined build this whole block becomes
  * `typeof {…} === "undefined"` → `false` and folds away.
  *

@@ -1,7 +1,7 @@
 // Project scaffolding for `denext create`. Generates a clean minimal starter
 // (deno.json wired to the published JSR package, an app/ with a layout + an
 // interactive home page), optionally with Tailwind, a `src/` layout, and the
-// experimental compiler enabled.
+// auto-memo compiler enabled.
 
 import { basename, join } from "@std/path";
 import { VERSION } from "../../mod.ts";
@@ -24,7 +24,7 @@ export interface ScaffoldOptions {
   tailwind?: boolean;
   /** Use a `src/` directory layout (`src/app` instead of `app`). */
   srcDir?: boolean;
-  /** Enable the experimental auto-memo compiler in `denext.config.ts`. */
+  /** Enable the auto-memo compiler (`reactCompiler`) in `denext.config.ts`. */
   compiler?: boolean;
   /**
    * Wire up a native desktop app via `deno desktop`: a `desktop.ts` entry
@@ -416,7 +416,7 @@ function denextConfig(opts: ScaffoldOptions): string {
   }
   if (opts.compiler) {
     lines.push(
-      `  experimental: { reactCompiler: true }, // auto-memoization (experimental)`,
+      `  reactCompiler: true, // auto-memoization`,
     );
   }
   return `import type { DenextConfig } from "denext/server";

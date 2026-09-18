@@ -1,4 +1,4 @@
-// The experimental auto-memo compiler: the transform itself (golden + bail
+// The auto-memo compiler (`reactCompiler`): the transform itself (golden + bail
 // cases), semantic equivalence (SSR output is unchanged), and a render-count
 // proof that a compiled component's stable children skip re-render.
 

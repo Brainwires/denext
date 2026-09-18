@@ -458,27 +458,32 @@ Deno.test("a flattened union keeps the types of its values", () => {
 });
 
 Deno.test("a superseded key that IS set says so on its label", () => {
-  // `experimental.compiler` and `experimental.reactCompiler` are the SAME switch — the effective
-  // flag is `reactCompiler ?? compiler`. Side by side with no mark, they read as two features.
-  // The pill only ever appears on a key the config actually sets: an unset one is not shown.
-  const spec = specAt("experimental", "compiler");
+  // `experimental.reactCompiler` and the top-level `reactCompiler` are the SAME switch — the
+  // effective flag is `reactCompiler ?? experimental.reactCompiler ?? experimental.compiler`.
+  // Side by side with no mark, they read as two features. The pill only ever appears on a key
+  // the config actually sets: an unset one is not shown.
+  const spec = specAt("experimental", "reactCompiler");
   assertEquals(spec.deprecated, true);
   const markup = render(spec, true);
   assertStringIncludes(markup, ">deprecated<");
   assertStringIncludes(markup, ">set<", "and that it is the one the config is using");
 
   // The key that replaced it carries no such pill.
-  assert(!render(specAt("experimental", "reactCompiler"), true).includes(">deprecated<"));
+  assert(!render(specAt("reactCompiler"), true).includes(">deprecated<"));
+  assert(!render(specAt("asyncContext"), true).includes(">deprecated<"));
+  assert(!render(specAt("features"), { A: true }).includes(">deprecated<"));
 });
 
 Deno.test("a superseded key is not offered until the config actually sets it", () => {
   // Showing `experimental.compiler` to someone who never used it is an invitation to start
   // using the name that was replaced. Showing it when it IS set is the only way to clear it.
+  // Every `experimental.*` key graduated to a top-level twin, so an empty block offers none.
   const group = specAt("experimental");
+  assertEquals(group.deprecated, true, "the block itself is superseded");
   const empty = render(group, {});
-  assert(!empty.includes("experimental.compiler"), "an unset superseded key is not rendered");
-  assert(!empty.includes("experimental.nodeResolve"), "nor the other one");
-  assertStringIncludes(empty, "experimental.reactCompiler", "the key that replaced it still is");
+  for (const key of ["compiler", "reactCompiler", "asyncContext", "features", "nodeResolve"]) {
+    assert(!empty.includes(`experimental.${key}`), `an unset superseded key is not rendered`);
+  }
 
   const held = render(group, { compiler: true });
   assertStringIncludes(held, "experimental.compiler", "a key the config sets is always shown");

@@ -481,7 +481,7 @@
       ]
     },
     "mdx": {
-      "description": "MDX compilation options for `.mdx`/`.md` sources in a compat (npm-React) app. The baseline loader compiles plain MDX/CommonMark; set this to thread app-configured unified plugins (e.g. Codehike, GFM, syntax highlighting) into MDX's `compile`. Because `denext.config.ts` is a real module, import the plugins and pass function references directly:",
+      "description": "MDX compilation options for `.mdx`/`.md` sources in a compat (npm-React) app. The baseline loader compiles plain MDX/CommonMark; set this to thread app-configured unified plugins (e.g. Codehike, GFM, syntax highlighting) into MDX's `compile`. Because `denext.config.ts` is a real module, the plugins are imported and passed as function references, not named as strings.",
       "type": "object",
       "properties": {
         "remarkPlugins": {
@@ -796,25 +796,44 @@
       "description": "Cache Components (Next.js 16): the `\"use cache\"` directive is compiled into cross-request caching on the server (`src/build/use-cache-transform.ts`), plus the PPR render path — dynamic-by-default rendering with cacheable `use cache` islands (a cached shell with per-request dynamic holes spliced in). A stable, **opt-in** feature, deliberately **off by default**: caching stays a choice, because a cache bug's failure class (a poisoned or cross-user shell) is severe and must not be imposed on apps that never asked. When off, every `\"use cache\"` directive is inert (a plain no-op string statement) and rendering is unchanged.",
       "type": "boolean"
     },
+    "reactCompiler": {
+      "description": "The build-time auto-memoization compiler (a React-Compiler-style pass), an opt-in optimization that is off by default. Conservative by construction: it bails to identity whenever a transform isn't provably safe, so it only ever adds memoization, never changes behavior.",
+      "type": "boolean"
+    },
+    "asyncContext": {
+      "description": "Scope async `startTransition` by transition IDENTITY instead of a time window, so a post-`await` update is attributed to its transition while an unrelated urgent update in the pending window keeps its priority. Off by default.",
+      "type": "boolean"
+    },
+    "features": {
+      "description": "Compile-time feature flags: `feature(\"KEY\")` (from `denext/feature`) always returns the configured value, and a call with a string-literal KEY is folded to a literal where the build can, so the bundler dead-code-eliminates the untaken branch. A key not listed reads `false`.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    },
     "experimental": {
-      "description": "Experimental, opt-in features (default off).",
+      "description": "Deprecated. Every `experimental.*` key graduated to a top-level field by 2.5 (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The old spellings are still honored, with a dev warning, when the top-level field is absent; the top-level field wins when both are set. Removed in 3.0.",
+      "deprecated": true,
       "type": "object",
       "properties": {
         "reactCompiler": {
-          "description": "Enable the build-time auto-memoization compiler (a React-Compiler-style pass) — an opt-in optimization. Conservative by construction: it bails to identity whenever a transform isn't provably safe, so it only ever adds memoization, never changes behavior. Off by default.",
+          "description": "Deprecated. Graduated to the top-level `reactCompiler` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
+          "deprecated": true,
           "type": "boolean"
         },
         "compiler": {
-          "description": "Deprecated. Renamed `experimental.reactCompiler` (Next.js's key) in 2.0. Honored as an alias through 2.x; removed in 3.0.",
+          "description": "Deprecated. Renamed `reactCompiler` (Next.js's key) in 2.0, now the top-level `reactCompiler`. Honored as an alias through 2.x; removed in 3.0.",
           "deprecated": true,
           "type": "boolean"
         },
         "asyncContext": {
-          "description": "Scope async `startTransition` by transition IDENTITY instead of a time window. Enables a build-time transform that makes denext's first-party AsyncContext survive `await` (src/build/async-context-transform.ts), so a post-`await` update is attributed to its transition while an unrelated urgent update in the pending window keeps its priority. Off by default: it instruments every `await` in client code (a small per-await cost) and the default time-window behavior is unchanged. Removes the async-`startTransition` gap in KNOWN-LIMITATIONS when on.",
+          "description": "Deprecated. Graduated to the top-level `asyncContext` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
+          "deprecated": true,
           "type": "boolean"
         },
         "features": {
-          "description": "Compile-time feature flags. `feature(\"KEY\")` (from `denext/feature`) always returns the configured value — the server and every client bundle are seeded with this map — and a call with a string-literal KEY is additionally folded to a literal where the build can, so the bundler dead-code-eliminates the untaken branch (gated code costs zero bytes when off). A key not listed reads `false`. Experimental while the fold's coverage widens: DCE covers the native App Router's component (`.tsx`/`.jsx`) modules, the SPA bundle, and dev; the compat drop-in App Router path and non-component modules on the native path read the seeded value without DCE.",
+          "description": "Deprecated. Graduated to the top-level `features` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
+          "deprecated": true,
           "type": "object",
           "additionalProperties": {
             "type": "boolean"
@@ -829,7 +848,7 @@
       "additionalProperties": false
     },
     "classComponents": {
-      "description": "How the client bundle gets the React class-component runtime (`class X extends React.Component`: lifecycle, setState batching, class error boundaries). It is a code-split chunk (`denext/class-runtime`), so the default needs no configuration:",
+      "description": "How the client bundle gets the React class-component runtime (`class X extends React.Component`: lifecycle, setState batching, class error boundaries). It is a code-split chunk (`denext/class-runtime`), so the default needs no configuration. Unset, `denext build` scans your sources and installs it eagerly when a class is found, otherwise a page loads it on demand; `true` always installs it eagerly; `false` never ships it — the runtime is dead-code-eliminated and a class used anyway throws a guided error.",
       "type": "boolean"
     },
     "compatibilityMode": {

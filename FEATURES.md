@@ -119,7 +119,7 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
 - **Auto-memo compiler** (React-Compiler-style automatic memoization) ⚑.
 - **First-party `AsyncContext`** (TC39-shaped `Variable` + `Snapshot`) — the
   primitive no browser has shipped, implemented in userland. Synchronous scoping
-  everywhere; with `experimental.asyncContext` ⚑ a build transform makes it
+  everywhere; with `asyncContext` ⚑ a build transform makes it
   survive `await`, and async `startTransition` is then scoped by transition
   **identity** (a post-`await` update stays a transition; an unrelated urgent
   update in the pending window keeps its priority) instead of the default time
@@ -955,7 +955,7 @@ default").
   `reconciler.ts:865, 903, 973-998, 918-929, 1023, 838, 812`;
   `src/runtime/hooks.ts:290, 299`. (Canonical description:
   [the concurrency model](https://denext.dev/docs/architecture#concurrency-fiber-based-time-sliced-and-interruptible).)
-- **Auto-memo compiler / `useMemoCache`** **[opt-in — experimental]** — a
+- **Auto-memo compiler / `useMemoCache`** **[opt-in]** — a
   React-Compiler-style pass lifts JSX elements into `memoValue(...)` for stable
   identity → more bailouts. Client-only and provably SSR-safe (server
   `useMemoCache` returns a fresh sentinel array, so transformed code is
@@ -1098,7 +1098,7 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 
 ### 3.4 Auto-memo compiler (Deno-native)
 
-- **Build-time auto-memoization** (`experimental: { reactCompiler: true }`)
+- **Build-time auto-memoization** (`reactCompiler: true`)
   comparable in spirit to the React Compiler, running in-process via
   `@denext/swc` with no transpile hook of its own; feeds the client bundle
   through the existing import-map seam; provably SSR-safe. —
@@ -1288,7 +1288,7 @@ the reconciler. Both are opt-in and tree-shake out of apps that don't use them.
 
 When you add or change a denext-specific feature or enhancement, update the
 right part here: Part 1 for a supported feature (terse category bullet, ⚑ for
-experimental), Part 2 for a genuine advantage over React/Next (mechanism
+opt-in), Part 2 for a genuine advantage over React/Next (mechanism
 `file:line`
 
 - a **[default]/[opt-in]/[capability]** label). Keep the honesty caveats — the

@@ -21,7 +21,7 @@ import { browserPost, formsWith, unescapeAttr as unescape } from "./helpers/brow
 const POPULATED = `// the project config
 export default {
   // legacy spelling, still honoured — and unknown to the editor's schema
-  experimental: { cacheComponents: true, features: { A: true } },
+  experimental: { cacheComponents: true, reactCompiler: false, features: { A: true } },
   streaming: true,
   basePath: "/docs",
   i18n: { locales: ["en", "fr"], defaultLocale: "en", localeDetection: false },

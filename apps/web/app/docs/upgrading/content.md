@@ -35,6 +35,12 @@ action since 2.4, whichever rc introduced it.
   old name); a script written against the earlier workflow reads the new names, and the
   installer now refuses to install without a checksum (`DENEXT_INSECURE=1` overrides).
   ([2.5.0](/docs/changelog))
+- **`experimental.reactCompiler` → `reactCompiler`, `experimental.asyncContext` →
+  `asyncContext`, `experimental.features` → `features`.** Every `experimental.*` key is now a
+  top-level field (beside the earlier `nodeResolve` and `cacheComponents`); the old spellings —
+  `experimental.compiler` included — still work as deprecated aliases and dev-warn, with the
+  top-level field winning when both are set. Move them when convenient; the block is removed in
+  3.0. ([2.5.0](/docs/changelog))
 - **The `denext` binary treats an unversioned `jsr:@denext/denext` import as a pin to the
   latest published version** and re-execs `jsr:@denext/denext/cli`, where it used to refuse
   the directory as unpinned. Pin a version (`jsr:@denext/denext@^2.5.0`) for a reproducible
@@ -56,6 +62,11 @@ action since 2.4, whichever rc introduced it.
   uses the printed `url` and the cookie the handshake set. Config writes redirect to
   `/config/<view>?key=<key>` rather than `/config#<section>`.
   ([2.5.0](/docs/changelog))
+- **`signIn(provider, { credentials })` answers `{ ok: false, error, status }` for a refusal**
+  (`"invalid_credentials"`, `"throttled"` with `retryAfter`, `"access_denied"`, `"unavailable"`,
+  `"rejected"`) instead of rejecting with the server's generic message; only a network failure or
+  a non-JSON answer still throws. A `try`/`catch` around it that showed `err.message` needs
+  `if (!result.ok)`. ([2.5.0](/docs/changelog))
 - **The TOTP and email-request functions answer `{ ok, … }` unions.**
   `enrollTotp(config, session)` (was `(config, user)`) answers
   `{ ok: true, secret, uri }` or `{ ok: false, error }` and refuses a complete
@@ -157,9 +168,9 @@ below are a break only if your code depended on the old, non-Next shape.
   set top-level `streaming: false`.
   ([2.0.0](/docs/changelog#200---2026-09-05))
 - **`experimental.nodeResolve` → `nodeResolve` and `experimental.compiler` →
-  `experimental.reactCompiler`.** Both old keys still work as deprecated aliases
-  (removed in 3.0) and dev-warn — move them when convenient. Likewise
-  `experimental.cacheComponents` → top-level `cacheComponents`.
+  `experimental.reactCompiler`** (itself top-level `reactCompiler` since 2.5). Both old
+  keys still work as deprecated aliases (removed in 3.0) and dev-warn — move them when
+  convenient. Likewise `experimental.cacheComponents` → top-level `cacheComponents`.
   ([2.0.0](/docs/changelog#200---2026-09-05))
 - **`trailingSlash` defaults to Next's behavior.** An unset `trailingSlash` now
   redirects `/about/` → `/about` (308); set `trailingSlash: true` to keep the

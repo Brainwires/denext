@@ -1,4 +1,4 @@
-// Async transitions scoped by IDENTITY (experimental.asyncContext) — the fix for
+// Async transitions scoped by IDENTITY (`asyncContext` in denext.config.ts) — the fix for
 // KNOWN-LIMITATIONS' async-`startTransition` time-window gap.
 //
 // The build transform isn't run in unit tests, so each async callback is hand-

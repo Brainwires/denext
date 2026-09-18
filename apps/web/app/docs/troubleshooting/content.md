@@ -17,7 +17,7 @@ provided, so a compat build of an app importing them fails to link.
 importing them. There is no shim — the upstream surface is still a canary
 experiment.
 
-See [Known limitations](/docs/limitations) for the full list of experimental and
+See [Known limitations](/docs/limitations) for the full list of upstream-named unstable and
 unprovided APIs.
 
 ## `denext migrate` fails resolving the CLI's own build dependencies

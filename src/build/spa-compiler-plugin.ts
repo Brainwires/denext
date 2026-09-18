@@ -2,8 +2,8 @@
 // and the feature-flag fold.
 //
 // The App Router runs these as build-pipeline transforms over the app's component modules
-// (see `build-pipeline/transforms.ts` — auto-memo gated on `experimental.reactCompiler`, the
-// feature fold on `experimental.features`). A SPA has no such pipeline — its app source is
+// (see `build-pipeline/transforms.ts` — auto-memo gated on `reactCompiler`, the
+// feature fold on `features`). A SPA has no such pipeline — its app source is
 // bundled straight through esbuild (the compat path) — so without this plugin a migrated app
 // loses that transformation. This plugin closes the gap.
 //

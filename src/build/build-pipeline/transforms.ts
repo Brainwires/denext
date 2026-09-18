@@ -1,7 +1,7 @@
 // Production build, stage 1: app CSS + the client-module transforms (auto-memo compiler,
 // qrl handler extraction, AsyncContext instrumentation), merged into the bundler import map.
 
-import { featureFlags, reactCompilerEnabled } from "../../server/config.ts";
+import { asyncContextEnabled, featureFlags, reactCompilerEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { compileAsyncContextModules } from "../async-context-transform.ts";
 import { compileFeatureModules } from "../feature-transform.ts";
@@ -60,8 +60,8 @@ function warnClobbered(asyncContextMap: RewriteMap, compilerMap: RewriteMap, qrl
 /**
  * The client-only module rewrites, each keyed by original module URL. Server rendering
  * keeps the originals (every transform is behavior-neutral there), so SSR/hydration stay
- * aligned. Auto-memo (experimental, opt-in) and AsyncContext transition scoping
- * (experimental, opt-in) need their config flags; qrl auto-wrap self-filters to modules
+ * aligned. Auto-memo (opt-in) and AsyncContext transition scoping (opt-in) need their
+ * config flags; qrl auto-wrap self-filters to modules
  * that opt into resumability, so it always runs and is inert for every other app.
  * On overlap the later spread wins: qrl over auto-memo (intended), async-context over both.
  */
@@ -71,15 +71,15 @@ export async function clientTransforms(ctx: BuildContext): Promise<Record<string
   const sources = componentSourcesOnce(projectDir);
   let compilerMap: RewriteMap;
   if (reactCompilerEnabled(paths.config)) {
-    log("auto-memo compiler: transforming components (experimental)");
+    log("auto-memo compiler: transforming components");
     compilerMap = await compileModules(await sources(), { outDir });
   }
   const qrlMap = await compileQrlModules(await sources(), { outDir });
   const qrlCount = Object.keys(qrlMap).length;
   if (qrlCount > 0) log(`qrl: code-split ${qrlCount} resumable module(s)`);
   let asyncContextMap: RewriteMap;
-  if (paths.config?.experimental?.asyncContext) {
-    log("async-context: instrumenting awaits for transition scoping (experimental)");
+  if (asyncContextEnabled(paths.config)) {
+    log("async-context: instrumenting awaits for transition scoping");
     asyncContextMap = await compileAsyncContextModules(await sources(), { outDir });
   }
   warnClobbered(asyncContextMap, compilerMap, qrlMap);

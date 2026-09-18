@@ -144,6 +144,27 @@ and this project adheres to
 
 ### Changed
 
+- **The `experimental` config block graduated.** Everything denext shipped under it is denext's
+  own finished work, and the label only kept developers from using it, so `reactCompiler`,
+  `asyncContext` and `features` are now top-level `denext.config.ts` fields beside the earlier
+  graduates `nodeResolve` and `cacheComponents`. The `experimental.*` spellings (and the pre-2.0
+  `experimental.compiler`) still work and warn in dev, naming the top-level field; the top-level
+  field wins when both are set. `ExperimentalConfig` stays exported with every member
+  `@deprecated`, so an existing config keeps type-checking; the block is removed in 3.0. The
+  scaffold and `denext migrate` write `reactCompiler: true` at the top level, the create wizard's
+  toggle reads "Auto-memo compiler", and `denext ui`'s config editor places `reactCompiler` and
+  `asyncContext` on Rendering and `features` on Advanced (the superseded `experimental` block is
+  offered only when the file still sets it). If a Next.js experimental feature these track
+  changes upstream, denext adapts then.
+- **Breaking (rc):** `signIn(provider, { credentials })` answers `{ ok: false, error, status }` for a
+  refusal instead of rejecting with the server's generic message — `error` is
+  `"invalid_credentials"` (`401`), `"throttled"` (`429`, with `retryAfter` in seconds, like
+  `EmailRequestResult`), `"access_denied"` (`403`), `"unavailable"` (`5xx`) or `"rejected"`, derived
+  from the status because the server's `error` text is generic by design. `CredentialsSignInResult`
+  is now that `{ ok: true, user?, mfa? } | { ok: false, … }` union (it was an interface whose `ok`
+  could only be `true`), in line with every other `{ ok, … }` result in the auth API. Only a network
+  failure or a non-JSON answer still rejects. A `try { await signIn(…) } catch` that showed the
+  message needs `if (!result.ok)`.
 - **Breaking (checksum assets):** the per-archive checksum is named `<archive>.sha256`
   (`denext-x86_64-apple-darwin.tar.gz.sha256`), not `denext-<target>.sha256`, and a combined
   `SHA256SUMS` is published beside them. No release had shipped with the old name, so nothing

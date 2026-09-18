@@ -49,10 +49,10 @@ denext analyze --md > bundle-report.md   # a markdown report (CI artifact)`}
       <h2>Feature flags (compile-time)</h2>
       <p>
         <code>denext/feature</code>'s <code>feature("KEY")</code>{" "}
-        is a build-time flag: each call whose KEY is listed in <code>experimental.features</code>
+        is a build-time flag: each call whose KEY is listed in the top-level <code>features</code>
         {" "}
-        is replaced with the literal <code>true</code> or <code>false</code>{" "}
-        at build time, so the bundler <strong>dead-code-eliminates</strong>{" "}
+        of <code>denext.config.ts</code> is replaced with the literal <code>true</code> or{" "}
+        <code>false</code> at build time, so the bundler <strong>dead-code-eliminates</strong>{" "}
         the untaken branch — the gated code, and anything only it imports, costs{" "}
         <strong>zero bytes</strong> when the flag is off.
       </p>
@@ -69,9 +69,7 @@ export function Checkout() {
       <Code lang="ts">
         {`// denext.config.ts
 export default {
-  experimental: {
-    features: { NEW_CHECKOUT: false }, // flip to true to ship it
-  },
+  features: { NEW_CHECKOUT: false }, // flip to true to ship it
 } satisfies import("denext/server").DenextConfig;`}
       </Code>
       <p>

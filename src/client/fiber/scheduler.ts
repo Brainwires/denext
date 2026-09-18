@@ -89,7 +89,7 @@ export function scheduleUpdate(fiber: Fiber, fromState = false): void {
     fiber.forceRender = true;
     if (fiber.alternate) fiber.alternate.forceRender = true;
   }
-  // With AsyncContext scoping enabled (experimental.asyncContext + the build
+  // With AsyncContext scoping enabled (`asyncContext` + the build
   // transform), priority is decided by transition IDENTITY: an update belongs to a
   // transition iff it is enqueued inside that transition's context — which the
   // transform propagates across the user's `await`s. An unrelated urgent update in
@@ -239,13 +239,13 @@ let transitionDepth = 0;
 let asyncTransitionDepth = 0;
 
 // The current transition's identity, propagated across the user's `await`s by the
-// build transform when `experimental.asyncContext` is on. `scheduleUpdate` reads it
+// build transform when `asyncContext` is on. `scheduleUpdate` reads it
 // (in scoping mode) so only updates enqueued inside a transition's context are
 // deferred; unrelated urgent updates in the pending window keep their priority.
 const transitionVar = new Variable<object | null>();
 
 // Seeded from the build-swapped `const` (false by default; the build redirects the
-// module to `true` under experimental.asyncContext). A mutable so tests can drive the
+// module to `true` under `asyncContext`). A mutable so tests can drive the
 // scoping path without the build; production reads the seed and never calls the setter.
 let asyncCtxScoping = asyncContextScopingEnabled;
 

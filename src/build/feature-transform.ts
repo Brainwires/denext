@@ -5,7 +5,7 @@
 // no transpile hook.
 //
 // Only a `feature(...)` call with a STRING-LITERAL argument whose key is listed in
-// `experimental.features` is folded; a non-literal argument or an unlisted key is left as a
+// `features` is folded; a non-literal argument or an unlisted key is left as a
 // runtime call (it reads the seeded flag map — src/runtime/feature-flags.ts). Correctness
 // over coverage: an unparseable module is returned unchanged.
 //
@@ -95,7 +95,7 @@ function foldableKey(node: Node, names: Set<string>): string | null {
  * stays where it is.
  *
  * @param source The module source.
- * @param features The configured flags (`experimental.features`).
+ * @param features The configured flags (`features`).
  * @param opts.moduleUrl The module's own URL — pass it only when the caller relocates folded output.
  */
 export async function transformFeatures(

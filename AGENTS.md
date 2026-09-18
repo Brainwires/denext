@@ -338,7 +338,7 @@ export default async function Blog() {
 ```
 
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
-folds to a boolean literal at build time for any KEY in `experimental.features` — denext's
+folds to a boolean literal at build time for any KEY in `features` — denext's
 `feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
 branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and
 read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key
@@ -349,7 +349,7 @@ import { feature } from "denext/feature";
 export function Checkout() {
   return feature("NEW_CHECKOUT") ? <NewCheckout /> : <LegacyCheckout />;
 }
-// denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } }
+// denext.config.ts → features: { NEW_CHECKOUT: false }
 ```
 
 **Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
@@ -391,7 +391,7 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 ```
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
-i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
+i18n, images, `cacheComponents`, `streaming`, `live`, `reactCompiler`, `features`, `plugins`,
 `tailwind`, `csp`, `compatibilityMode`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
@@ -410,7 +410,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
   (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
-  legacy key still works but dev-warns.
+  legacy key still works but dev-warns. The same goes for every other
+  `experimental.*` key: `reactCompiler`, `asyncContext`, `features` and
+  `nodeResolve` are top-level fields; the old spellings work and dev-warn.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
   (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws`; the CSS + swc-AST tooling is

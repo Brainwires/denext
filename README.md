@@ -196,7 +196,7 @@ toggle · enter confirm):
   Select features  (↑/↓ move · space toggle · enter confirm)
 › ◉ Tailwind CSS
   ◯ src/ directory layout
-  ◯ Auto-memo compiler (experimental)
+  ◯ Auto-memo compiler
   ◉ Native desktop app (deno desktop)
   ◯ iOS / Android (Capacitor)
 ```
@@ -336,8 +336,8 @@ edit it where it lives, record the edit as a reviewable `patches/<name>+<version
 ## Project configuration
 
 An optional `denext.config.ts` (not `next.config.js`) carries redirects, rewrites, headers, i18n,
-images, Tailwind, CSP, caching, `cacheComponents`, streaming, Live, plugins, `experimental`, and
-`mode: "spa"`. Every field is documented at [Configuration](https://denext.dev/docs/config).
+images, Tailwind, CSP, caching, `cacheComponents`, streaming, Live, `reactCompiler`, `features`,
+plugins, and `mode: "spa"`. Every field is documented at [Configuration](https://denext.dev/docs/config).
 
 ## API surface
 

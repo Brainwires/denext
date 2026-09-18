@@ -60,12 +60,15 @@ Deno.test("the committed schema mirrors the runtime validator's contract", async
     items: { enum: ["image/webp", "image/avif"] },
   });
   // A `Record<K, V>` is an open object with one value schema — key/value rows, not fields.
-  assertEquals(schema.properties.experimental.properties.features.type, "object");
-  assertEquals(schema.properties.experimental.properties.features.additionalProperties, {
-    type: "boolean",
-  });
+  assertEquals(schema.properties.features.type, "object");
+  assertEquals(schema.properties.features.additionalProperties, { type: "boolean" });
   // No marker: a map is recognised structurally, from its `additionalProperties`.
-  assertEquals(schema.properties.experimental.properties.features["x-denext"], undefined);
+  assertEquals(schema.properties.features["x-denext"], undefined);
+  // The legacy block and every member of it carry the `@deprecated` mark the editor hides on.
+  assertEquals(schema.properties.experimental.deprecated, true);
+  for (const key of EXPERIMENTAL_KEYS) {
+    assertEquals(schema.properties.experimental.properties[key].deprecated, true, key);
+  }
   // A bound reaches the schema only from an explicit JSDoc tag backing a validator rule.
   assertEquals(schema.properties.apiBatch.properties.maxItems.minimum, 1);
   assertEquals(schema.properties.apiBatch.properties.maxItems.maximum, 100);
@@ -342,12 +345,20 @@ Deno.test("a superseded key is marked, and says what replaced it", async () => {
   assertEquals(at("experimental", "compiler").deprecated, true);
   assertStringIncludes(
     String(at("experimental", "compiler").description),
-    "experimental.reactCompiler",
+    "top-level `reactCompiler`",
   );
   assertEquals(at("experimental", "nodeResolve").deprecated, true);
+  assertEquals(at("experimental", "reactCompiler").deprecated, true);
+  assertStringIncludes(
+    String(at("experimental", "reactCompiler").description),
+    "top-level `reactCompiler`",
+  );
 
-  // The key that REPLACED it is not marked, or the pair would look equally discouraged.
-  assertEquals(at("experimental", "reactCompiler").deprecated, undefined);
+  // The keys that REPLACED them are not marked, or the pair would look equally discouraged.
+  assertEquals(at("reactCompiler").deprecated, undefined);
+  assertEquals(at("asyncContext").deprecated, undefined);
+  assertEquals(at("features").deprecated, undefined);
+  assertEquals(at("nodeResolve").deprecated, undefined);
 
   // One that has its own summary keeps it, and gains only the flag.
   assertEquals(at("images", "domains").deprecated, true);

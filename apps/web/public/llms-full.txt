@@ -342,7 +342,7 @@ export default async function Blog() {
 ```
 
 **A compile-time feature flag (dead-code-eliminated):** `feature("KEY")` from `denext/feature`
-folds to a boolean literal at build time for any KEY in `experimental.features` — denext's
+folds to a boolean literal at build time for any KEY in `features` — denext's
 `feature()` (cf. Bun's `bun:bundle`). `feature()` always returns the configured value; the untaken
 branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and
 read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key
@@ -353,7 +353,7 @@ import { feature } from "denext/feature";
 export function Checkout() {
   return feature("NEW_CHECKOUT") ? <NewCheckout /> : <LegacyCheckout />;
 }
-// denext.config.ts → experimental: { features: { NEW_CHECKOUT: false } }
+// denext.config.ts → features: { NEW_CHECKOUT: false }
 ```
 
 **Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
@@ -395,7 +395,7 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 ```
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
-i18n, images, `cacheComponents`, `streaming`, `live`, `plugins`, `experimental`,
+i18n, images, `cacheComponents`, `streaming`, `live`, `reactCompiler`, `features`, `plugins`,
 `tailwind`, `csp`, `compatibilityMode`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
@@ -414,7 +414,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
   (top-level) in `denext.config.ts`. Not `experimental.cacheComponents` — that
-  legacy key still works but dev-warns.
+  legacy key still works but dev-warns. The same goes for every other
+  `experimental.*` key: `reactCompiler`, `asyncContext`, `features` and
+  `nodeResolve` are top-level fields; the old spellings work and dev-warn.
 - **Zero runtime npm**: nothing the framework ships to the runtime pulls npm
   (CI-enforced). The build-time toolchain still uses a few npm tools — `esbuild`
   (core) plus opt-in `sass` / `@mdx-js/mdx` / `ws`; the CSS + swc-AST tooling is
@@ -512,7 +514,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createElement`
 - `createRef<T>(): object` — React.createRef — create a mutable ref object { current: null } (used by class components and imperative code).
 - `createResource<T>(factory: () => Promise<T>): () => T` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
-- `interface CredentialsSignInResult` — What a credentials sign-in resolves; a refused sign-in rejects instead.
+- `type CredentialsSignInResult = object | object | object` — What a credentials sign-in resolves — the sign-in, or why the callback refused it. The refusal code is derived from the callback's status, because the server's error text is a generic message by design (a 401 never says whether the account exists). Only a network failure or a non-JSON answer rejects.
 - `interface CSSProperties` — Inline style object (permissive).
 - `denextImageLoader(options: unknown): string` — The default ImageLoader: points at denext's /_denext/image endpoint, which resizes + re-encodes (webp/avif) the source image. Used automatically unless an image is unoptimized; also available to pass explicitly.
 - `type DependencyList = typeOperator` — A useEffect/useMemo dependency array.
@@ -661,7 +663,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SetStateAction<S> = S | parenthesized` — The updater passed to a state setter (a value or a function of the previous).
 - `type SetStoredValue<T> = (value: T | parenthesized) => void` — A useState-style setter that also accepts an updater function.
 - `interface Signal<T>` — A reactive box holding a single serializable value.
-- `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.
+- `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result — { ok: false } for a refusal (a wrong password, a spent attempt budget), never a rejection; test result.ok.
 - `interface SignInOptions` — Options for signIn.
 - `signOut(options?: SignOutOptions): Promise<void>` — Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.
 - `interface SignOutOptions` — Options for signOut.
@@ -903,7 +905,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enrollTotp(config: AuthConfig, session: AuthSession): Promise<EnrollTotpResult>` — Start a TOTP enrollment: mint a secret, store it **unconfirmed**, and return it with the provisioning URI (issuer mfa.issuer, account user.email ?? user.id). An earlier unconfirmed enrollment is replaced; a CONFIRMED factor is not — disable it first.
 - `type EnrollTotpResult = parenthesized | object` — The outcome of enrollTotp: the fresh secret and its URI, or why none was minted — "already_enrolled" (a confirmed factor exists; disable it first) or "reauth_required" (a complete session that didn't sign in recently).
 - `type ErrorSpec = number | object` — How a declared error code maps to HTTP: a status, or a status with a default message.
-- `interface ExperimentalConfig` — Opt-in experimental features, set under experimental in denext.config.ts. Each is off by default. A feature lives here only while it is genuinely **incomplete** — being new is not enough — so shipped, complete capabilities (streaming, Live, islands, resumability, SPA mode, Cache Components) are top-level config, not here.
+- `interface ExperimentalConfig` — The legacy experimental block of denext.config.ts. Every key in it graduated to a top-level DenextConfig field — what denext ships is its own finished work, and an "experimental" label only kept developers from using it — so each member is a deprecated alias of its top-level twin: still honored (with a dev warning) when the top-level field is absent, and ignored when both are set. The interface stays exported so a config written against 2.x keeps type-checking; it is removed in 3.0.
 - `facebook(options: OAuthClientOptions): OAuthProvider` — Facebook (OAuth 2.0, Graph API v19.0). The Graph /me response carries no verification flag, so the mapped user's emailVerified is always undefined, and Facebook may omit the email entirely (an account registered with a phone number, or a revoked permission).
 - `interface FlightActionRef` — A serialized server-action reference (as a node or a prop value).
 - `interface FlightBigInt` — A serialized bigint (JSON has no integer type wide enough; the digits travel as text).
@@ -1276,7 +1278,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createPortal(children: VNodeChild, container: Element, key?: string | null): VNode` — Render children into a different DOM container while keeping their place in the component and context tree. Backs react-dom's createPortal.
 - `createResource<T>(factory: () => Promise<T>): () => T` — A tiny cache for turning an async factory into a stable, suspense-friendly resource. Reading it either returns the value or suspends.
 - `createRoot(container: Element, options?: RootOptions): Root` — Mount vnode into container, creating fresh DOM.
-- `interface CredentialsSignInResult` — What a credentials sign-in resolves; a refused sign-in rejects instead.
+- `type CredentialsSignInResult = object | object | object` — What a credentials sign-in resolves — the sign-in, or why the callback refused it. The refusal code is derived from the callback's status, because the server's error text is a generic message by design (a 401 never says whether the account exists). Only a network failure or a non-JSON answer rejects.
 - `dynamic<P>(loader: DynamicLoader<P>, options?: DynamicOptions<P>): Component<P>` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
 - `type DynamicLoader<P> = parenthesized | parenthesized` — A loader returning a module (whose default is the component) or the component.
 - `interface DynamicOptions<P>` — Options for dynamic.
@@ -1353,7 +1355,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SessionProviderProps` — Props for SessionProvider.
 - `interface SessionUser` — The signed-in user exposed to the client (non-sensitive fields only).
 - `setApiInvalidationSource(source: ApiInvalidationSource | null): void` — Install the transport that delivers tag invalidations to useApi({ tags }) (the Live client does this in configureLive / useApiLive).
-- `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result.
+- `signIn(provider: string, options: SignInOptions & object): Promise<CredentialsSignInResult>` — Start sign-in. For an OAuth/OIDC provider this navigates to the provider (or, with redirect: false, resolves with the URL it would have gone to); for a Credentials provider (pass credentials) it POSTs and resolves with the result — { ok: false } for a refusal (a wrong password, a spent attempt budget), never a rejection; test result.ok.
 - `interface SignInOptions` — Options for signIn.
 - `signOut(options?: SignOutOptions): Promise<void>` — Sign out (same-origin POST to {basePath}/signout), then navigate to callbackUrl.
 - `interface SignOutOptions` — Options for signOut.

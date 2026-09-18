@@ -386,7 +386,7 @@ Deno.test("production SPA source-transform plugin keeps its .tsx/.jsx-only filte
   try {
     const plugin = spaSourceTransformPlugin(
       dir,
-      { experimental: { features: { SOMETHING: true } } } as ProjectPaths["config"],
+      { features: { SOMETHING: true } } as ProjectPaths["config"],
     );
     assert(plugin, "the feature fold is enabled for this fixture config");
     const { filter, load } = onLoadOf(plugin);

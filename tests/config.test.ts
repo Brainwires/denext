@@ -1,9 +1,12 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
+  asyncContextEnabled,
   compilePattern,
   type DenextConfig,
+  featureFlags,
   fillDestination,
   matchPattern,
+  reactCompilerEnabled,
   resolveCacheComponents,
   resolveLive,
   resolveStreaming,
@@ -64,6 +67,45 @@ Deno.test("resolveCacheComponents: top-level wins, legacy experimental alias sti
   assertEquals(resolveCacheComponents({ experimental: {} }), undefined);
   assertEquals(resolveCacheComponents(null), undefined);
   assertEquals(resolveCacheComponents(undefined), undefined);
+});
+
+Deno.test("reactCompiler/asyncContext/features: top-level wins, the experimental.* alias still reads", () => {
+  // The graduated top-level fields are the canonical home.
+  assertEquals(reactCompilerEnabled({ reactCompiler: true }), true);
+  assertEquals(asyncContextEnabled({ asyncContext: true }), true);
+  assertEquals(featureFlags({ features: { A: true, B: false } }), { A: true, B: false });
+
+  // Both spellings produce the same effective value: a 2.x config still works unchanged.
+  assertEquals(reactCompilerEnabled({ experimental: { reactCompiler: true } }), true);
+  assertEquals(reactCompilerEnabled({ experimental: { compiler: true } }), true);
+  assertEquals(asyncContextEnabled({ experimental: { asyncContext: true } }), true);
+  assertEquals(featureFlags({ experimental: { features: { A: true } } }), { A: true });
+
+  // The top-level field takes precedence when both are set — even an explicit `false`, and
+  // the maps are not merged.
+  assertEquals(
+    reactCompilerEnabled({ reactCompiler: false, experimental: { reactCompiler: true } }),
+    false,
+  );
+  assertEquals(
+    reactCompilerEnabled({ reactCompiler: true, experimental: { compiler: false } }),
+    true,
+  );
+  assertEquals(
+    asyncContextEnabled({ asyncContext: false, experimental: { asyncContext: true } }),
+    false,
+  );
+  assertEquals(
+    featureFlags({ features: { A: false }, experimental: { features: { A: true, B: true } } }),
+    { A: false },
+  );
+
+  // Neither set → off / an empty map.
+  for (const config of [{}, { experimental: {} }, null, undefined]) {
+    assertEquals(reactCompilerEnabled(config), false);
+    assertEquals(asyncContextEnabled(config), false);
+    assertEquals(featureFlags(config), {});
+  }
 });
 
 Deno.test("compilePattern + matchPattern capture named params", () => {

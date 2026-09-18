@@ -13,7 +13,7 @@ import { MEMO_CACHE_SENTINEL, useMemoCache } from "./hooks.ts";
 export { MEMO_CACHE_SENTINEL, useMemoCache };
 
 /**
- * The AsyncContext helpers the `experimental.asyncContext` build transform's output
+ * The AsyncContext helpers the `asyncContext` build transform's output
  * imports: a scope per async function body, plus the `await` / `for await` / `yield`
  * wrappers that carry the scope across each suspension point.
  */

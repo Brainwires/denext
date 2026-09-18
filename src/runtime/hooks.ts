@@ -340,9 +340,10 @@ export function useDeferredValue<T>(value: T, initialValue?: T): T {
  * An **async** callback (`startTransition(async () => { await x; setState() })`) is
  * supported: the transition stays active across the `await`, so updates scheduled
  * after it still land at transition priority. By default denext entangles by a time
- * window while the returned promise is pending; enable `experimental.asyncContext` to
- * scope by transition identity instead, so an unrelated urgent update in that window
- * keeps its priority (see the Async transitions guide / KNOWN-LIMITATIONS).
+ * window while the returned promise is pending; enable `asyncContext` in
+ * `denext.config.ts` to scope by transition identity instead, so an unrelated urgent
+ * update in that window keeps its priority (see the Async transitions guide /
+ * KNOWN-LIMITATIONS).
  */
 export function startTransition(callback: () => void): void {
   if (transitionScheduler) transitionScheduler(callback, () => {});

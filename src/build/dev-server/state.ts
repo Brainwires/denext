@@ -168,7 +168,7 @@ export interface DevState {
   cssHadEntries: boolean;
 
   /**
-   * Auto-memo compiler (experimental, opt-in) + qrl handler extraction: maps of original →
+   * Auto-memo compiler (opt-in) + qrl handler extraction: maps of original →
    * transformed module URLs, merged into the client bundle's import-map redirects.
    */
   compilerMap: Record<string, string>;

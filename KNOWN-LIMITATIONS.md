@@ -82,7 +82,7 @@ next-compat interop path — denext's own apps are unaffected):
   own `fonts` or set `offline: true` (which errors instead of fetching — see the
   Security note below).
 - **Async `startTransition` scopes by a time _window_ by default; opt into
-  identity scoping with `experimental.asyncContext`.** React scopes
+  identity scoping with `asyncContext`.** React scopes
   async-transition entanglement with an async-context primitive browsers haven't
   shipped (`AsyncLocalStorage` is server-only; TC39 `AsyncContext` is still a
   proposal). By default denext uses a time window: while any async transition's
@@ -93,7 +93,7 @@ next-compat interop path — denext's own apps are unaffected):
   raised _outside_ any event handler (e.g. from an unrelated timer) while the
   window is open. Rather than wait on the platform, denext ships its own
   first-party `AsyncContext` plus a build transform that makes it survive
-  `await`; enable `experimental: { asyncContext: true }` and priority is scoped
+  `await`; enable `asyncContext: true` in `denext.config.ts` and priority is scoped
   by transition **identity** — a post-`await` update stays a transition, an
   unrelated urgent update in the window keeps its priority. The transform
   instruments every `await` in client code (a small per-`await` cost), so it is
@@ -148,7 +148,8 @@ caveat — being a denext original is not the same as being incomplete.
 
 A stable, **opt-in** feature: enable it with top-level `cacheComponents: true`
 in `denext.config.ts` (the pre-2.0 `experimental.cacheComponents` still works
-and dev-warns to move). Off, `use cache` is inert and the render path is
+and dev-warns to move — as does every other `experimental.*` key, all of which
+graduated to top-level fields by 2.5). Off, `use cache` is inert and the render path is
 byte-for-byte unchanged. Caching is a choice, not a default — these are the
 four documented bounds of the opt-in:
 
@@ -358,7 +359,7 @@ four documented bounds of the opt-in:
 
 - **DCE covers some paths, not all — but the value is always correct.** `feature("KEY")`
   (`denext/feature`) always returns the configured value: the server and every client bundle are
-  seeded with `experimental.features`. **Dead-code elimination** of the untaken branch happens
+  seeded with the top-level `features` map. **Dead-code elimination** of the untaken branch happens
   only where the build folds the call: the native App Router's **component (`.tsx`/`.jsx`)**
   modules, the whole SPA bundle, and dev. On the **compat (drop-in) App Router** path, and for
   **non-component (`.ts`) modules on the native path**, `feature()` reads the seeded value at
@@ -436,8 +437,13 @@ provide — use denext's own panel for those.
 
 ## Experimental / unstable APIs
 
-Implemented for compatibility but tracking still-unstable upstream surfaces, so
-they may change: `unstable_cache` (still `unstable_` in Next 16),
+Nothing denext ships is experimental: every `experimental.*` config key graduated to a
+top-level field by 2.5, and the `unstable_*` / `experimental_*` export names below are
+**upstream's** names, kept for drop-in compatibility — the features behind them are stable
+in denext. In new code use the un-prefixed twins on `denext/server`: `after`, `cacheLife`,
+`cacheTag`, `noStore`, `connection` (the prefixed `unstable_after` / `unstable_cacheLife` /
+`unstable_cacheTag` / `unstable_noStore` on `next/cache` are aliases of them). Still spelled
+the upstream way because upstream is: `unstable_cache` (still `unstable_` in Next 16),
 `unstable_batchedUpdates` (a no-op — see [the architecture guide](https://denext.dev/docs/architecture)),
 `useMemoCache`/`c` (React Compiler runtime — the compiler hit 1.0 stable; this
 is an internal helper). **Not provided:** Next 16.4 canary's navigation-stage APIs

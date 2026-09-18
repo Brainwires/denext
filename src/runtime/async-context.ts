@@ -13,7 +13,7 @@
 // Propagation across an `await` is the hard part: a native `await` gives no runtime
 // hook (verified: it never calls a patched `Promise.prototype.then`), so a value set
 // before an `await` is NOT visible after it unless the module was instrumented by
-// denext's build-time transform (`experimental.asyncContext`, see
+// denext's build-time transform (`asyncContext`, see
 // src/build/async-context-transform.ts). Without that flag this behaves as a
 // synchronous-only context — documented so it can't surprise.
 //

@@ -14,6 +14,6 @@ declare const __DENEXT_CLASS_COMPONENTS__: boolean;
  * any `feature("KEY")` call the fold didn't resolve statically (unconfigured key, non-literal
  * argument, or an unreached module). Folded calls become literals and never read it. Absent
  * un-bundled until src/runtime/feature-flags.ts installs an empty default; seeded from
- * `experimental.features` by the server (resolveProject) and the esbuild compat `define`.
+ * `features` by the server (resolveProject) and the esbuild compat `define`.
  */
 declare const __DENEXT_FEATURES__: Record<string, boolean>;

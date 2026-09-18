@@ -1,6 +1,6 @@
 // Build-time transform that makes denext's first-party AsyncContext (src/runtime/
 // async-context.ts) propagate across `await` — the piece a native `await` gives no
-// runtime hook for. Enabled by `experimental.asyncContext`.
+// runtime hook for. Enabled by `asyncContext`.
 //
 // denext owns no transpile hook (`deno bundle` runs swc internally), so this is a
 // separate pass that rewrites CLIENT modules and feeds the rewritten versions into

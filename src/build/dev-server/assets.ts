@@ -37,7 +37,7 @@ export async function getCss(st: DevState): Promise<AppCss | null> {
 }
 
 /**
- * Auto-memo compiler (experimental, opt-in) + qrl handler extraction (rides on the
+ * Auto-memo compiler (opt-in) + qrl handler extraction (rides on the
  * `resumable` route export, self-filtering): original → transformed module URLs, rebuilt
  * per generation so edits are picked up on reload. qrl takes precedence on a module both
  * touch (handler extraction on resumable).

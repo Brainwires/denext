@@ -1,4 +1,4 @@
-// Incremental (Suspense) streaming for non-PPR routes (experimental.streaming).
+// Incremental (Suspense) streaming for non-PPR routes (`streaming`).
 // Streamed responses now carry the same strict hash-based CSP as buffered ones (the
 // swap runtime is a hashed constant), so streaming is no longer gated by CSP. Covers:
 // the head-collecting shell render, end-to-end streaming through createApp, the

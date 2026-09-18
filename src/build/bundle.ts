@@ -866,7 +866,7 @@ export interface BundleOptions {
    */
   usesViewTransition?: boolean;
   /**
-   * Compile-time feature flags (`experimental.features`) to seed on the CLIENT for the native
+   * Compile-time feature flags (`features`) to seed on the CLIENT for the native
    * `deno bundle` path (which has no esbuild `define`). Baked into the flight entry so an
    * un-folded `feature()` call reads the configured value instead of the empty default. Only
    * the native flight bundler passes this; compat/SPA seed via `define` instead. Defaults `{}`.

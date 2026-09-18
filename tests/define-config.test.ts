@@ -49,10 +49,18 @@ Deno.test("defineConfig warns on a typo'd experimental.* key and on graduated al
     "denext: denext.config sets `experimental.live`, which is no longer honored — set top-level `live` instead.",
     "denext: denext.config sets `experimental.cacheComponents`, which is still honored for now but has moved — set top-level `cacheComponents` instead.",
   ]);
-  // A valid experimental block (and the new top-level home) is silent.
+  // The graduated top-level homes are silent; the legacy block warns once per key it sets.
+  assertEquals(
+    captureWarn(() =>
+      defineConfig({ cacheComponents: true, reactCompiler: true, features: { A: true } })
+    ),
+    [],
+  );
   assertEquals(
     captureWarn(() => defineConfig({ cacheComponents: true, experimental: { compiler: true } })),
-    [],
+    [
+      "denext: denext.config sets `experimental.compiler`, which is still honored for now but has moved — set top-level `reactCompiler` instead.",
+    ],
   );
 });
 

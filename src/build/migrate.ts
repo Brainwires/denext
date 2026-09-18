@@ -1743,7 +1743,7 @@ function spaConfigSource(o: {
     `  compatibilityMode: true,\n` +
     // The Vite app ran React Compiler (auto-memoization); enable denext's own auto-memo
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
-    (o.reactCompiler ? `  experimental: { reactCompiler: true },\n` : "") +
+    (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
     tailwindBlock +
     `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
@@ -2243,7 +2243,7 @@ async function spaSourceFacts(
  * Whether the Vite app runs React Compiler (auto-memoization) — the `reactCompilerPreset`
  * (from `@vitejs/plugin-react`) or `babel-plugin-react-compiler`, referenced in a
  * `vite.config.*`. If so, migrate enables denext's own auto-memo compiler
- * (`experimental.reactCompiler`), so the migrated SPA keeps the pervasive memoization the app
+ * (`reactCompiler`), so the migrated SPA keeps the pervasive memoization the app
  * relied on — without it, components that were auto-memoized re-render on every parent render.
  */
 async function spaUsesReactCompiler(dir: string, source: SpaSource): Promise<boolean> {

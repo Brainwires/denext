@@ -287,14 +287,15 @@ export default function Page() {
         Rather than wait on the platform, denext ships its own first-party <code>AsyncContext</code>
         {" "}
         plus a build transform that makes it survive an <code>await</code>. Enable{" "}
-        <code>experimental.asyncContext</code> and async transitions are scoped by{" "}
-        <strong>identity</strong> instead: a post-<code>await</code>{" "}
+        <code>asyncContext</code> in <code>denext.config.ts</code>{" "}
+        and async transitions are scoped by <strong>identity</strong>{" "}
+        instead: a post-<code>await</code>{" "}
         update stays a transition, while an unrelated urgent update in the window keeps its
         priority.
       </p>
       <Code lang="tsx">
         {`// An async transition. By default (window mode) an urgent click during the
-// pending window is also deferred; with experimental.asyncContext it stays urgent.
+// pending window is also deferred; with asyncContext it stays urgent.
 const [isPending, startTransition] = useTransition();
 startTransition(async () => {
   await save();          // network work
@@ -302,11 +303,11 @@ startTransition(async () => {
 });
 
 // denext.config.ts — opt in to identity scoping
-export default { experimental: { asyncContext: true } };`}
+export default { asyncContext: true };`}
       </Code>
       <Callout kind="warn">
-        <code>experimental.asyncContext</code> is opt-in: the transform instruments every{" "}
-        <code>await</code> in client code (a small per-<code>await</code>{" "}
+        <code>asyncContext</code> is opt-in: the transform instruments every <code>await</code>{" "}
+        in client code (a small per-<code>await</code>{" "}
         cost), so it is off by default and the time-window behavior is unchanged. In v1 the
         transform leaves async generators (<code>
           async function*

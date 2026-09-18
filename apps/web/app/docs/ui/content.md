@@ -211,7 +211,7 @@ legacy `experimental.cacheComponents`, an unknown key) through unchanged, an unt
 answers "No change" and writes nothing, and a required field left empty is a field nobody filled
 in, not a `""` to write.
 
-A **superseded** key (`experimental.compiler`, `images.domains`) carries a `deprecated` pill and the
+A **superseded** key (`experimental.reactCompiler`, `images.domains`) carries a `deprecated` pill and the
 sentence naming its replacement, and is shown only when your config actually sets it — offering
 it otherwise would be an invitation to start using the old name. Hiding is inert: an unrendered
 field posts nothing, and nothing for an absent key means "leave it alone".
@@ -226,7 +226,7 @@ Each field gets the control its type deserves:
 | Array of `enum`                    | Checkbox group (`images.formats`)                                                                                                                           |
 | Array of scalars                   | Chips: add, remove, reorder (`publicEnv`, `i18n.locales`)                                                                                                   |
 | Array of objects                   | A typed sub-form per row with `↑` `↓` `✕` and `+ Add` (`redirects`, `rewrites`, `headers`, `images.remotePatterns`, `images.localPatterns`, `i18n.domains`) |
-| `Record<string, T>`                | Key/value map rows (`scheduledTasks`, `experimental.features`)                                                                                              |
+| `Record<string, T>`                | Key/value map rows (`scheduledTasks`, `features`)                                                                                                           |
 | Object with properties             | A named group of fields                                                                                                                                     |
 | `boolean` / `number` / `string`    | Toggle / number (with the schema's bounds) / one-line text                                                                                                  |
 | `string` tagged `@widget textarea` | A multi-line textarea (`spa.head`, `spa.loading`)                                                                                                           |
