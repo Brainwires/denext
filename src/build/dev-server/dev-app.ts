@@ -3,7 +3,7 @@
 // Live Server Components hub on top.
 
 import { join } from "@std/path";
-import { createApp, type RequestHandler } from "../../server/app.ts";
+import { type AppConfig, createApp, type RequestHandler } from "../../server/app.ts";
 import { applyPlugins, getPluginRequestHandler, runPluginPrepareSteps } from "../../plugin/mod.ts";
 import { resolveDefaultCacheStore } from "../../server/cache.ts";
 import { installLiveHub } from "../../server/live.ts";
@@ -13,6 +13,7 @@ import {
   resolveCacheComponents,
   resolveConfigRules,
   resolveLive,
+  resolveServerOptions,
   resolveStreaming,
   type RewriteRule,
 } from "../../server/config.ts";
@@ -47,12 +48,14 @@ function startConfigRules(st: DevState) {
 
 /**
  * Instrumentation: load + run register() once at boot (async; requests arrive after).
- * `onRequestError` forwards through the state holder so it's live once loaded.
+ * `onRequestError` forwards through the state holder so it's live once loaded; `onLoaded`
+ * runs right after the load (before `register()`), for the hooks createApp reads by value.
  */
-function startInstrumentation(st: DevState): void {
+function startInstrumentation(st: DevState, onLoaded: () => void): void {
   setNextRuntimeEnv();
   void (async () => {
     st.instrumentation = await loadInstrumentation(st.paths.instrumentationPath);
+    onLoaded();
     await runRegister(st.instrumentation);
     // Discover tasks/ and register cron schedules (dev uses the userland tick unless the dev
     // server was started with --unstable-cron). The scheduler lives for the dev-server process;
@@ -111,10 +114,9 @@ function onRequestError(
 /** The createApp handler for this dev server, plus the Live hub over it. */
 export function createDevApp(st: DevState): RequestHandler {
   const { paths } = st;
-  startInstrumentation(st);
   const rules = startConfigRules(st);
   installDefaultCacheStore(st);
-  const appHandler = createApp({
+  const appConfig: AppConfig = {
     getManifest: () => getManifest(st),
     load: st.load,
     publicDir: paths.publicDir,
@@ -152,7 +154,17 @@ export function createDevApp(st: DevState): RequestHandler {
     hsts: paths.config?.hsts,
     apiBatch: paths.config?.apiBatch,
     apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
+    // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
+    // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
+    ...resolveServerOptions(paths.config),
+  };
+  // `onRequest` is read from the config object per request, so it is set on it once the
+  // (async) instrumentation load lands — unset until then, which keeps the `DENEXT_LOG`
+  // default logger in place for a project without the export.
+  startInstrumentation(st, () => {
+    if (st.instrumentation.onRequest) appConfig.onRequest = st.instrumentation.onRequest;
   });
+  const appHandler = createApp(appConfig);
   // Live Server Components hub (dev): push `<Live>` boundary updates over a WebSocket.
   // Same-origin gate reuses the dev-origin allowlist used for SSE.
   installLiveHub({

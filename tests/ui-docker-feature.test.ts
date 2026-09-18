@@ -119,6 +119,37 @@ Deno.test("every rendered Docker file carries the sentinel, and options flow int
   assertStringIncludes(spa, `"--port", "8080"`);
 });
 
+Deno.test("the SSR Dockerfile is non-root, layer-caches dependencies, and health-checks the built-in probe", () => {
+  const server = renderDockerfile({ mode: "server", port: 8080 });
+  const at = (needle: string) => {
+    const i = server.indexOf(needle);
+    assert(i >= 0, `missing: ${needle}`);
+    return i;
+  };
+  // Non-root: /app handed to the image's `deno` user BEFORE the build writes .denext/ there,
+  // so the runtime cache (.denext/cache.db) is writable by the same user.
+  assert(at("RUN chown deno:deno /app") < at("USER deno"));
+  assert(at("USER deno") < at("RUN deno task build"));
+  assert(!/^USER root/m.test(server));
+  // Dependency layer: deno.json (+ lock) copied and installed before the sources.
+  assert(at("COPY --chown=deno:deno deno.json deno.lock* ./") < at("RUN deno install"));
+  assert(at("RUN deno install") < at("COPY --chown=deno:deno . ."));
+  assert(at("COPY --chown=deno:deno . .") < at("RUN deno task build"));
+  assert(!server.includes("\nCOPY . .\n"), "no un-chowned whole-tree copy");
+  // A real HEALTHCHECK on the framework probe, at the configured port, before the CMD.
+  const health = at("HEALTHCHECK --interval=30s");
+  assertStringIncludes(server, "http://127.0.0.1:8080/_denext/health");
+  assert(!/^# HEALTHCHECK/m.test(server), "the healthcheck is live, not a commented example");
+  assert(health < at(`CMD ["deno", "task", "start", "--", "--port", "8080"]`));
+  // The write grant the start task must carry is spelled out next to the CMD.
+  assertStringIncludes(server, "--allow-write=.denext");
+  // The static image gets the same user + dependency layer, and a probe on `/`.
+  const spa = renderDockerfile({ mode: "static", port: 8080 });
+  assertStringIncludes(spa, "USER deno");
+  assertStringIncludes(spa, "RUN deno install");
+  assertStringIncludes(spa, "http://127.0.0.1:8080/");
+});
+
 Deno.test("the compose file's Postgres service is commented out unless it is asked for", () => {
   const off = renderCompose({ mode: "server" });
   assertStringIncludes(off, `      - "3000:3000"`);

@@ -221,11 +221,20 @@ Deno.test("scaffoldFiles: desktop + capacitor together share one static-export t
   assertStringIncludes(files.find((f) => f.path === "desktop.ts")!.content, "runDesktop");
 });
 
-Deno.test("scaffoldFiles: the start task runs least-privilege (not -A)", () => {
+Deno.test("scaffoldFiles: the start task runs least-privilege (not -A) but can write the durable cache", () => {
   const files = scaffoldFiles({ dir: "/x" });
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
-  assertStringIncludes(dj.tasks.start, "--allow-net --allow-read --allow-env");
+  assertStringIncludes(
+    dj.tasks.start,
+    "--allow-net --allow-read --allow-env --allow-write=.denext",
+  );
   assert(!dj.tasks.start.includes(" -A "), "start must not grant all permissions");
+  // The default cache store is node:sqlite under .denext/ — without this grant it silently
+  // downgrades to the per-process memory store. Write is scoped to that one directory.
+  assert(!/--allow-write(?![=])/.test(dj.tasks.start), "write must be scoped, not blanket");
+  // dev/build bundle (and spawn tooling), so they keep -A and need no separate write grant.
+  assertStringIncludes(dj.tasks.dev, "deno run -A ");
+  assertStringIncludes(dj.tasks.build, "deno run -A ");
 });
 
 Deno.test("scaffoldProject refuses a non-empty directory", async () => {

@@ -4,7 +4,7 @@ import { join } from "@std/path";
 import { IMAGE_ENDPOINT } from "../../runtime/image.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
 import { applyDefaultSecurityHeaders } from "../../server/app.ts";
-import { cacheStoreHealthy } from "../../server/cache.ts";
+import { cacheStoreHealthy, cacheStoreKind } from "../../server/cache.ts";
 import { imageOptionsFromConfig, optimizeImage } from "../../server/image-optimizer.ts";
 import { handleLiveUpgrade } from "../../server/live.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
@@ -15,12 +15,14 @@ import { CLIENT_PREFIX } from "./assets.ts";
 /**
  * Liveness probe (for load balancers / k8s). Always 200 — the site serves even when the
  * cache backend is down (reads degrade to live renders) — but the body reports cache
- * reachability so operators aren't blind to an outage.
+ * reachability so operators aren't blind to an outage, and which store backs it
+ * (`cacheStore`: `sqlite` | `memory` | `custom`) so a silent fallback to the per-process
+ * memory store (a missing `--allow-write=.denext`) is visible from the probe.
  */
 async function healthResponse(paths: ProjectPaths, secure: boolean): Promise<Response> {
   const cache = (await cacheStoreHealthy()) ? "ok" : "degraded";
   return applyDefaultSecurityHeaders(
-    Response.json({ status: "ok", cache }, { status: 200 }),
+    Response.json({ status: "ok", cache, cacheStore: cacheStoreKind() }, { status: 200 }),
     secure,
     paths.config?.hsts,
   );

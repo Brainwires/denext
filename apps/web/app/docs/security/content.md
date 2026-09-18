@@ -71,10 +71,10 @@ Before the tables — the architectural facts that make many rows `🔵 N/A`:
    closing an entire SSRF family by construction.
 4. **No Turbopack, no Edge runtime, no `/_next/data` JSON routes, and no client
    streaming-resume / `Next-Resume` protocol.** Several 2026 Next.js CVEs are
-   specific to those subsystems. (denext _does_ implement Cache Components /
-   PPR — the stable `cacheComponents` opt-in — but resumes dynamic holes by
-   buffered server-side splice, not the streaming-resume mechanism the
-   Cache-Components CVE targets.)
+   specific to those subsystems. (denext _does_ implement Cache Components / PPR
+   — the stable `cacheComponents` opt-in — but resumes dynamic holes by buffered
+   server-side splice, not the streaming-resume mechanism the Cache-Components
+   CVE targets.)
 5. **Deno permission model.** The process runs under explicit `--allow-*`
    grants; an RCE or path-traversal that did land is still boxed by the sandbox
    the user granted.
@@ -112,12 +112,12 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 > The single most dangerous modern cluster. denext ships its own Flight
 > implementation, so the question is purely whether our decoder shares the flaw.
 
-| CVE / Advisory                                                                         | Description                                                                                                                                                                                     | Protection Level                                                                                                                                                                                                                                                                                                                                                        |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CVE-2025-55182** (React) / **CVE-2025-66478** (Next.js) — "React2Shell"              | Unauthenticated **RCE (CVSS 10.0)** via unsafe deserialization of Flight chunks that resolve into the `Function` constructor; crafted POST to any Server Function endpoint. Actively exploited. | ✅ **Protected (tested)** — denext's `parseFlight` is a purely structural decoder: it dispatches on a `$` discriminant, builds VNodes via `h(...)`, and resolves components/actions by **id lookup in a build-assigned registry**. No `eval`, no `Function`, no payload-driven import. A server-reference-shaped payload decodes to inert data and is never invoked.    |
-| **CVE-2025-55184** → **CVE-2025-67779** (incomplete-fix follow-up); **CVE-2026-23864** | DoS: crafted request to any App Router endpoint hangs the process in an infinite deserialization loop. Vulnerable even with no Server Functions defined. CVSS 7.5.                              | ✅ **Protected (tested)** — a deeply nested payload is bounded (`JSON.parse` throws and is caught → no hang); a `__proto__` in the payload does not pollute `Object.prototype`; oversized action bodies are refused 413 before the handler runs.                                                                                                                        |
-| **CVE-2025-55183**                                                                     | Source-code exposure — a crafted request makes the server stringify and return a Server Function's raw JS source (leaking inlined secrets). CVSS 5.3.                                           | 🟢 **Protected (by design)** — actions are resolved by a `Map` id lookup and never stringified back to the client; args deserialize with no reviver/eval. _(Add a regression test — see backlog.)_                                                                                                                                                                      |
-| **CVE-2026-23869 / CVE-2026-23870 / CVE-2026-44907**                                   | Recurring RSC/Server-Function resource-exhaustion DoS (unbounded CPU/memory, missing throttling — CWE-400/770). CVSS 7.5.                                                                       | 🟡 **Partial** — structural parsing + a 413 body cap (`actionMaxBodyBytes`, default **1 MiB**) + a **slow-body idle timeout** (→ 408) blunt the payload/trickle vectors; the `requestTimeout` deadline (**default 30 s**, armed across a streamed body) bounds a runaway handler. A per-request CPU budget + connection-slot ceiling remain deployment-layer by design. |
+| CVE / Advisory                                                                         | Description                                                                                                                                                                                     | Protection Level                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CVE-2025-55182** (React) / **CVE-2025-66478** (Next.js) — "React2Shell"              | Unauthenticated **RCE (CVSS 10.0)** via unsafe deserialization of Flight chunks that resolve into the `Function` constructor; crafted POST to any Server Function endpoint. Actively exploited. | ✅ **Protected (tested)** — denext's `parseFlight` is a purely structural decoder: it dispatches on a `$` discriminant, builds VNodes via `h(...)`, and resolves components/actions by **id lookup in a build-assigned registry**. No `eval`, no `Function`, no payload-driven import. A server-reference-shaped payload decodes to inert data and is never invoked.                                                                     |
+| **CVE-2025-55184** → **CVE-2025-67779** (incomplete-fix follow-up); **CVE-2026-23864** | DoS: crafted request to any App Router endpoint hangs the process in an infinite deserialization loop. Vulnerable even with no Server Functions defined. CVSS 7.5.                              | ✅ **Protected (tested)** — a deeply nested payload is bounded (`JSON.parse` throws and is caught → no hang); a `__proto__` in the payload does not pollute `Object.prototype`; oversized action bodies are refused 413 before the handler runs.                                                                                                                                                                                         |
+| **CVE-2025-55183**                                                                     | Source-code exposure — a crafted request makes the server stringify and return a Server Function's raw JS source (leaking inlined secrets). CVSS 5.3.                                           | 🟢 **Protected (by design)** — actions are resolved by a `Map` id lookup and never stringified back to the client; args deserialize with no reviver/eval. _(Add a regression test — see backlog.)_                                                                                                                                                                                                                                       |
+| **CVE-2026-23869 / CVE-2026-23870 / CVE-2026-44907**                                   | Recurring RSC/Server-Function resource-exhaustion DoS (unbounded CPU/memory, missing throttling — CWE-400/770). CVSS 7.5.                                                                       | 🟡 **Partial** — structural parsing + a 413 body cap (`actionMaxBodyBytes` in `denext.config.ts`, default **1 MiB**) + a **slow-body idle timeout** (→ 408) blunt the payload/trickle vectors; the `requestTimeout` deadline (config key or `DENEXT_REQUEST_TIMEOUT_MS`, **default 30 s**, armed across a streamed body) bounds a runaway handler. A per-request CPU budget + connection-slot ceiling remain deployment-layer by design. |
 
 > **Trust model — Flight props are not tainted.** Any prop a Server Component
 > passes to a Client Component is serialized into the Flight payload and shipped
@@ -135,7 +135,7 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **CVE-2024-56332** | Hanging Server Action invocations ("denial of wallet") via bad `Content-Length` / unclosed connections; low resource use evades detection. CVSS 5.3. | ✅ **Protected (tested)** — body size is hard-capped (declared `Content-Length` fast-path + streamed cap → 413) **and** the body reader now aborts on a per-chunk idle timeout (default 30s) → 408, so a trickled/never-closed body cannot pin a handler. `tests/server-action.test.ts`.                                                                                                                               |
 | **CVE-2026-64641** | DoS in App Router Server Actions via unbounded iteration (CWE-834) spiking CPU and blocking the process. CVSS 8.2.                                   | ✅ **Protected (tested)** — the multipart arg decoder now validates the attacker-controlled `fdIndex` as an in-range integer of `others` before `args[fdIndex] = fd`; an out-of-range index (which would inflate the arg array so the handler's `handler(...args)` spread iterates every hole) is rejected and falls back to a single-FormData arg. `src/runtime/server-action.ts`; `tests/nextjs-cve-parity.test.ts`. |
-| **CVE-2026-64646** | Unbounded Server-Action payload in the **Edge** runtime exhausts memory. CVSS 6.3.                                                                   | ✅ **Protected** — action bodies are capped (`actionMaxBodyBytes`) regardless of runtime; denext also has no separate Edge runtime with a different limit.                                                                                                                                                                                                                                                             |
+| **CVE-2026-64646** | Unbounded Server-Action payload in the **Edge** runtime exhausts memory. CVSS 6.3.                                                                   | ✅ **Protected** — action bodies are capped (`actionMaxBodyBytes` in `denext.config.ts`, default 1 MiB; over → 413) regardless of runtime; denext also has no separate Edge runtime with a different limit.                                                                                                                                                                                                            |
 | **CVE-2026-44579** | Cache Components connection-exhaustion DoS via malformed `Next-Resume` headers.                                                                      | 🔵 **N/A** — denext's Cache Components (opt-in, `cacheComponents: true`) resume dynamic holes by **buffered server-side splice**, with no client `Next-Resume` header or streaming-resume protocol, so the malformed-`Next-Resume` connection-exhaustion vector does not exist.                                                                                                                                        |
 
 ## 5. Cache poisoning / cache confusion
@@ -220,33 +220,36 @@ reimplement them — see [Known Gaps](#known-gaps--residual-risk).
 
 ### `denext ui` — a local write surface, fenced in six layers
 
-`denext ui` is the only denext command that serves a **state-writing** GUI, so it is
-treated as a security surface in its own right. It binds `127.0.0.1` only (there is no
-`--host`); every request passes the same DNS-rebinding / `Sec-Fetch-Site` host gate the
-dev server uses; the printed URL carries a per-launch 256-bit token that is exchanged
-**once** for an `HttpOnly; SameSite=Strict` cookie and then stripped from the query — the
-exchange is single-use, so replaying a copied link in another browser is a `401`, and an
-explicit `--token` must be at least 22 characters; every mutation is a `POST` with a
-same-origin `Origin` **and** an HMAC-derived CSRF token; and responses carry a strict CSP
-with `COOP`/`CORP` and `no-store`.
+`denext ui` is the only denext command that serves a **state-writing** GUI, so
+it is treated as a security surface in its own right. It binds `127.0.0.1` only
+(there is no `--host`); every request passes the same DNS-rebinding /
+`Sec-Fetch-Site` host gate the dev server uses; the printed URL carries a
+per-launch 256-bit token that is exchanged **once** for an
+`HttpOnly; SameSite=Strict` cookie and then stripped from the query — the
+exchange is single-use, so replaying a copied link in another browser is a
+`401`, and an explicit `--token` must be at least 22 characters; every mutation
+is a `POST` with a same-origin `Origin` **and** an HMAC-derived CSRF token; and
+responses carry a strict CSP with `COOP`/`CORP` and `no-store`.
 
-**Containment.** Every project path the UI reads or writes is refused if it is absolute,
-checked lexically, and then re-checked by `realpath`ing the deepest ancestor that exists —
-which is what catches a `denext.config.ts` or an `app/` that is a symlink out of the
-project. The same realpath gate is applied to the absolute paths a planner resolved for
-itself (a `generate` dry run, a Docker plan), because a lexical check alone cannot see
-through a symlinked directory. Every write is a `.tmp` file plus one rename, and a config
-form carries a SHA-256 of the source it was rendered from, so a file that changed on disk
+**Containment.** Every project path the UI reads or writes is refused if it is
+absolute, checked lexically, and then re-checked by `realpath`ing the deepest
+ancestor that exists — which is what catches a `denext.config.ts` or an `app/`
+that is a symlink out of the project. The same realpath gate is applied to the
+absolute paths a planner resolved for itself (a `generate` dry run, a Docker
+plan), because a lexical check alone cannot see through a symlinked directory.
+Every write is a `.tmp` file plus one rename, and a config form carries a
+SHA-256 of the source it was rendered from, so a file that changed on disk
 underneath you is a `409` rather than a lost edit.
 
 **Project code never runs in the UI's privileged process.** Doctor, tasks,
-`next.config` evaluation, `deno add`, **and discovering the project's own CLI verbs**
-(`denext commands --json`) all run as `deno` subprocesses with array arguments, never a
-shell string; a module-graph test and a runtime pid check both hold that line. Note what
-`--read-only` does and does not mean: it refuses every mutation **by the UI**, but it
-cannot stop your own config and plugin `setup()`s from executing inside that short-lived
-discovery child — which is exactly why the child, and not this process, is where they run.
-Every write is previewed as a diff before it is applied.
+`next.config` evaluation, `deno add`, **and discovering the project's own CLI
+verbs** (`denext commands --json`) all run as `deno` subprocesses with array
+arguments, never a shell string; a module-graph test and a runtime pid check
+both hold that line. Note what `--read-only` does and does not mean: it refuses
+every mutation **by the UI**, but it cannot stop your own config and plugin
+`setup()`s from executing inside that short-lived discovery child — which is
+exactly why the child, and not this process, is where they run. Every write is
+previewed as a diff before it is applied.
 
 ## 12. Security response headers / CSP / CORS
 
@@ -301,109 +304,126 @@ verdicts.
 
 ### What 2.5 added to the auth surface
 
-The adapter, bearer tokens, the emailed flows and the second factor are new attack
-surface, so each ships with its own invariant:
+The adapter, bearer tokens, the emailed flows and the second factor are new
+attack surface, so each ships with its own invariant:
 
-- **API tokens are never recoverable.** A token is `tok_` plus 256 random bits, returned
-  **once** at issue and stored only as its SHA-256; verification hashes the presented
-  string and looks the digest up by index — there is no in-process comparison of a secret,
-  so there is no timing oracle to equalise. An absent, unknown, expired or revoked token all
-  produce the same 401 (no oracle), a missing scope or role a 403, and a token with no
-  scopes satisfies no scope requirement — so scoping an endpoint can never silently admit
-  older, scopeless tokens. Bearer credentials are never accepted on `/auth/*` mutations
-  and never set a cookie.
-- **Step-up fails closed.** A session marked `mfaPending` reads as signed **out**
-  everywhere — `auth()` returns `null`, so `requireAuth`, `requireSession`, Live
-  `authorize` and Server Actions all inherit the refusal — and `GET /auth/session`
-  answers `{ user: null, expires: null, mfa: "required" }`. `/auth/tokens` mints nothing
-  under a pending second factor: a first factor alone cannot create a bearer credential.
-  A pending session lasts 15 minutes and is never slid forward. Completing the step-up
-  **mints a fresh session**: the pending one — a credential issued before authentication
-  finished — is discarded with its store record rather than upgraded in place, so there is
-  nothing to fixate. The `/mfa*` endpoints read only the cookie, so a bearer token can
-  neither step up nor enroll. The eight bypass paths — `auth()`, `requireAuth`,
-  `requireSession`, `GET /session`, Live `authorize`, `requireBearer`, `POST /auth/tokens`
-  and `/mfa/disable` — each have a case in `tests/auth-mfa-bypass.test.ts`.
-- **Consume-once is an adapter contract, not a convention.** `useVerificationToken`,
-  `consumeBackupCode` and `claimTotpStep` are specified as **atomic** delete-and-return /
-  match-and-remove / claim operations; a non-atomic implementation is documented as a
-  replay window, and both first-party adapters implement them atomically.
-- **Emailed secrets are stored as hashes, and scoped.** A verification, reset or magic-link
-  token is 256 random bits kept only as its SHA-256, bound to one `(address, purpose)` and
-  consumed atomically, so a wrong token cannot burn the real one. A one-time code is short
-  enough to brute-force from an unkeyed hash, so it is stored as an HMAC-SHA-256 under the
-  auth `secret` over `(purpose, address, code)`, and wrong codes spend a 5-per-5-minute
-  budget per address plus an IP-wide bucket. `tests/auth-email.test.ts`,
+- **API tokens are never recoverable.** A token is `tok_` plus 256 random bits,
+  returned **once** at issue and stored only as its SHA-256; verification hashes
+  the presented string and looks the digest up by index — there is no in-process
+  comparison of a secret, so there is no timing oracle to equalise. An absent,
+  unknown, expired or revoked token all produce the same 401 (no oracle), a
+  missing scope or role a 403, and a token with no scopes satisfies no scope
+  requirement — so scoping an endpoint can never silently admit older, scopeless
+  tokens. Bearer credentials are never accepted on `/auth/*` mutations and never
+  set a cookie.
+- **Step-up fails closed.** A session marked `mfaPending` reads as signed
+  **out** everywhere — `auth()` returns `null`, so `requireAuth`,
+  `requireSession`, Live `authorize` and Server Actions all inherit the refusal
+  — and `GET /auth/session` answers
+  `{ user: null, expires: null, mfa: "required" }`. `/auth/tokens` mints nothing
+  under a pending second factor: a first factor alone cannot create a bearer
+  credential. A pending session lasts 15 minutes and is never slid forward.
+  Completing the step-up **mints a fresh session**: the pending one — a
+  credential issued before authentication finished — is discarded with its store
+  record rather than upgraded in place, so there is nothing to fixate. The
+  `/mfa*` endpoints read only the cookie, so a bearer token can neither step up
+  nor enroll. The eight bypass paths — `auth()`, `requireAuth`,
+  `requireSession`, `GET /session`, Live `authorize`, `requireBearer`,
+  `POST /auth/tokens` and `/mfa/disable` — each have a case in
+  `tests/auth-mfa-bypass.test.ts`.
+- **Consume-once is an adapter contract, not a convention.**
+  `useVerificationToken`, `consumeBackupCode` and `claimTotpStep` are specified
+  as **atomic** delete-and-return / match-and-remove / claim operations; a
+  non-atomic implementation is documented as a replay window, and both
+  first-party adapters implement them atomically.
+- **Emailed secrets are stored as hashes, and scoped.** A verification, reset or
+  magic-link token is 256 random bits kept only as its SHA-256, bound to one
+  `(address, purpose)` and consumed atomically, so a wrong token cannot burn the
+  real one. A one-time code is short enough to brute-force from an unkeyed hash,
+  so it is stored as an HMAC-SHA-256 under the auth `secret` over
+  `(purpose, address, code)`, and wrong codes spend a 5-per-5-minute budget per
+  address plus an IP-wide bucket. `tests/auth-email.test.ts`,
   `tests/auth-magic-link.test.ts`.
-- **The emailed flows answer the same for every address.** A reset request, a verification
-  request and an email sign-in send are identical for a known address, an unknown one and
-  an invalid one: the per-address send budget is spent before the lookup, and inside a
-  request the mail goes out after the response (`after()`), so the mailer's latency is no
-  oracle. The input is normalised to exactly one address and a list sends nothing — the
+- **The emailed flows answer the same for every address.** A reset request, a
+  verification request and an email sign-in send are identical for a known
+  address, an unknown one and an invalid one: the per-address send budget is
+  spent before the lookup, and inside a request the mail goes out after the
+  response (`after()`), so the mailer's latency is no oracle. The input is
+  normalised to exactly one address and a list sends nothing — the
   CVE-2022-35924 row above.
-- **Pre-account hijacking is closed.** Registering a victim's address with a password and
-  waiting for the victim to sign in by email gains nothing: before a first magic-link or
-  code sign-in marks an unverified address verified, it retires the password, any TOTP
-  factor and backup codes, every bearer token and every server-side session set up without
-  that proof. If a step fails, the address stays unverified and the redeem fails
-  generically. A stateless cookie session opened earlier cannot be revoked and lives until
-  it expires — run a `sessionStore`.
-- **Resets and codes close what they open.** A completed password reset revokes every
-  server-side session and bearer API token of that user. A second-factor code works once: a TOTP step is claimed
-  through `claimTotpStep` (not even confirm-then-step-up can reuse it), backup codes are
-  stored only as `hasher` hashes and spent through `consumeBackupCode`, and every code check
-  spends the per-user budget, so a correct guess cannot reset it.
-- **Sign-in starts and session reads are rate-limited.** `GET /auth/signin/:provider`
-  allows 100 per client IP per 15 minutes (`rateLimit.signin`) and `GET /auth/session` 300
-  per minute (`rateLimit.session`), both counted on every hit, so an unauthenticated
-  visitor cannot make the app mint transaction cookies and outbound provider requests — or
-  verify cookies and read the session store — in a loop. The credentials limiter (5 per
-  client + identifier per 15 minutes) is unchanged; 2.5 adds a send budget (3 per address
-  per 15 minutes) and a second-factor budget (5 per user per 5 minutes), each with an
-  IP-wide bucket at ten times that, and `rateLimit: false` disables all five. They count per process unless a shared `rateLimit.store` is supplied.
+- **Pre-account hijacking is closed.** Registering a victim's address with a
+  password and waiting for the victim to sign in by email gains nothing: before
+  a first magic-link or code sign-in marks an unverified address verified, it
+  retires the password, any TOTP factor and backup codes, every bearer token and
+  every server-side session set up without that proof. If a step fails, the
+  address stays unverified and the redeem fails generically. A stateless cookie
+  session opened earlier cannot be revoked and lives until it expires — run a
+  `sessionStore`.
+- **Resets and codes close what they open.** A completed password reset revokes
+  every server-side session and bearer API token of that user. A second-factor
+  code works once: a TOTP step is claimed through `claimTotpStep` (not even
+  confirm-then-step-up can reuse it), backup codes are stored only as `hasher`
+  hashes and spent through `consumeBackupCode`, and every code check spends the
+  per-user budget, so a correct guess cannot reset it.
+- **Sign-in starts and session reads are rate-limited.**
+  `GET /auth/signin/:provider` allows 100 per client IP per 15 minutes
+  (`rateLimit.signin`) and `GET /auth/session` 300 per minute
+  (`rateLimit.session`), both counted on every hit, so an unauthenticated
+  visitor cannot make the app mint transaction cookies and outbound provider
+  requests — or verify cookies and read the session store — in a loop. The
+  credentials limiter (5 per client + identifier per 15 minutes) is unchanged;
+  2.5 adds a send budget (3 per address per 15 minutes) and a second-factor
+  budget (5 per user per 5 minutes), each with an IP-wide bucket at ten times
+  that, and `rateLimit: false` disables all five. They count per process unless
+  a shared `rateLimit.store` is supplied.
 
-  Three properties make the limiter dependable rather than decorative. An IPv6 client is
-  normalised and bucketed by **/64**, so rotating through a client's own prefix does not
-  buy a fresh budget. The in-memory store **never evicts a key that is mid-lockout** — a
-  flood of fresh keys cannot wash out a lockout that is doing its job; when every tracked
-  key is locked out and the cap is reached, the new key is refused instead. And behind a
-  reverse proxy the app has **not** declared (`trustForwardedHeaders` off, a private peer,
-  an `x-forwarded-for` present) the two per-IP budgets are skipped with one warning rather
-  than collapsing every visitor into one bucket — which would have been an app-wide outage
-  on the 21st sign-in. Setting `canonicalOrigin` without `trustForwardedHeaders` now warns
-  once at boot for the same reason.
-- **A revoked session cannot be resurrected by a refresh in flight.** Sliding expiry
-  rewrites a store-backed session through `SessionStore.update` — write-only-if-present —
-  rather than `create`, which is an upsert: a session revoked between this request's read
-  and its refresh stays revoked instead of coming back with a full fresh lifetime. A
-  custom store that does not implement `update` never slides a session forward and says so
-  once, which is the safe direction. Sliding expiry has **no absolute ceiling** by design:
-  an account that keeps being used keeps being extended, so end a session with revocation
+  Three properties make the limiter dependable rather than decorative. An IPv6
+  client is normalised and bucketed by **/64**, so rotating through a client's
+  own prefix does not buy a fresh budget. The in-memory store **never evicts a
+  key that is mid-lockout** — a flood of fresh keys cannot wash out a lockout
+  that is doing its job; when every tracked key is locked out and the cap is
+  reached, the new key is refused instead. And behind a reverse proxy the app
+  has **not** declared (`trustForwardedHeaders` off, a private peer, an
+  `x-forwarded-for` present) the two per-IP budgets are skipped with one warning
+  rather than collapsing every visitor into one bucket — which would have been
+  an app-wide outage on the 21st sign-in. Setting `canonicalOrigin` without
+  `trustForwardedHeaders` now warns once at boot for the same reason.
+- **A revoked session cannot be resurrected by a refresh in flight.** Sliding
+  expiry rewrites a store-backed session through `SessionStore.update` —
+  write-only-if-present — rather than `create`, which is an upsert: a session
+  revoked between this request's read and its refresh stays revoked instead of
+  coming back with a full fresh lifetime. A custom store that does not implement
+  `update` never slides a session forward and says so once, which is the safe
+  direction. Sliding expiry has **no absolute ceiling** by design: an account
+  that keeps being used keeps being extended, so end a session with revocation
   (or a shorter `maxAge`), not by waiting for a cap that does not exist.
-- **Provider tokens stay out of the event stream.** With an adapter configured, a
-  provider's access / refresh / id tokens **are** persisted on the account row — that is
-  what an adapter is for — but the `linkAccount` event payload carries identity only
-  (provider, provider-side id, type, owner). An event handler is an audit sink, and a
-  credential in an audit line is a leak; a handler that genuinely needs them reads the
-  stored account back through the adapter.
+- **Provider tokens stay out of the event stream.** With an adapter configured,
+  a provider's access / refresh / id tokens **are** persisted on the account row
+  — that is what an adapter is for — but the `linkAccount` event payload carries
+  identity only (provider, provider-side id, type, owner). An event handler is
+  an audit sink, and a credential in an audit line is a leak; a handler that
+  genuinely needs them reads the stored account back through the adapter.
 - **`hasRole` fails closed on an empty requirement.** `hasRole(session, [])` and
-  `requireAuth(request, { role: [] })` refuse: an empty list is "no role can satisfy this",
-  not "no requirement". Only an **absent** `role` means unrestricted.
-- **The client coerces its own redirects.** `signIn` / `signOut` reduce a caller-supplied
-  `callbackUrl` to a same-origin path before navigating — a `callbackUrl` is routinely read
-  out of the current query, so `javascript:…`, `//evil.test/x` and an absolute foreign URL
-  are all replaced by the fallback. The server coerces again; this is the half that guards
-  the purely client-side navigation that never reaches it.
-- **The development escape hatch re-checks every hop.** `dangerouslyAllowInsecureProviders`
-  swaps the SSRF-safe fetch for the platform one so an `http://localhost` provider works,
-  and follows redirects **manually**, re-checking each hop against the provider's host
-  allowlist. Letting the platform follow them meant a token endpoint could answer `307` and
+  `requireAuth(request, { role: [] })` refuse: an empty list is "no role can
+  satisfy this", not "no requirement". Only an **absent** `role` means
+  unrestricted.
+- **The client coerces its own redirects.** `signIn` / `signOut` reduce a
+  caller-supplied `callbackUrl` to a same-origin path before navigating — a
+  `callbackUrl` is routinely read out of the current query, so `javascript:…`,
+  `//evil.test/x` and an absolute foreign URL are all replaced by the fallback.
+  The server coerces again; this is the half that guards the purely client-side
+  navigation that never reaches it.
+- **The development escape hatch re-checks every hop.**
+  `dangerouslyAllowInsecureProviders` swaps the SSRF-safe fetch for the platform
+  one so an `http://localhost` provider works, and follows redirects
+  **manually**, re-checking each hop against the provider's host allowlist.
+  Letting the platform follow them meant a token endpoint could answer `307` and
   carry the `client_secret` in the POST body to any host it named.
-- **Account linking refuses unverified matches.** An OAuth account only links to an
-  existing user when both sides' emails are verified; anything else is
+- **Account linking refuses unverified matches.** An OAuth account only links to
+  an existing user when both sides' emails are verified; anything else is
   `?error=account_not_linked` unless the provider explicitly sets
-  `allowDangerousEmailAccountLinking`. This is stricter than Auth.js by design — see
-  [the deliberate differences](/docs/differences).
+  `allowDangerousEmailAccountLinking`. This is stricter than Auth.js by design —
+  see [the deliberate differences](/docs/differences).
 
 ---
 
@@ -421,15 +441,15 @@ or weaker than ideal.
 1. **🟡 Server-Action / RSC CPU & concurrency throttling — mostly mitigated.**
    The slow-body vector is CLOSED (idle timeout on the action body reader → 408,
    CVE-2024-56332); a handler deadline is available via `requestTimeout`
-   (default **30 s**; set `requestTimeout: 0` for legitimately slow SSR). A per-request CPU budget
-   and connection-slot ceiling remain a deployment-layer concern (reverse proxy
-   / platform), by design.
-2. **✅ OIDC `id_token` multi-`aud` acceptance — CLOSED in 2.5.** `verifyIdToken`
-   now enforces OIDC Core §3.1.3.7 steps 3–5 by default (`strictAudience`): a
-   single `aud` must equal the client id, a multi-valued `aud` must be
-   accompanied by an `azp` naming this client, and a foreign `azp` is refused
-   even when `aud` still lists us. A provider whose IdP legitimately mints
-   multi-audience tokens without `azp` can opt back into membership with
+   (default **30 s**; set `requestTimeout: 0` for legitimately slow SSR). A
+   per-request CPU budget and connection-slot ceiling remain a deployment-layer
+   concern (reverse proxy / platform), by design.
+2. **✅ OIDC `id_token` multi-`aud` acceptance — CLOSED in 2.5.**
+   `verifyIdToken` now enforces OIDC Core §3.1.3.7 steps 3–5 by default
+   (`strictAudience`): a single `aud` must equal the client id, a multi-valued
+   `aud` must be accompanied by an `azp` naming this client, and a foreign `azp`
+   is refused even when `aud` still lists us. A provider whose IdP legitimately
+   mints multi-audience tokens without `azp` can opt back into membership with
    `strictAudience: false`.
 
 The former backlog of parity checks is complete — each is now a case in
@@ -460,9 +480,8 @@ primary sources before use in remediation SLAs.
   (0.8.1 → 0.8.4).
 
 _Generated 2026-08-10; reviewed for the 1.3.0 release (2026-08-23), re-reviewed
-2026-08-28 against the Next.js August
-2026 security release (eleven parity tests — two new advisories + nine
-back-propagated rows), and extended 2026-08-29 with a round-2 pass (ten more:
-the §15 first-party-auth / next-auth CVE class + CVE-2026-29057 and
-CVE-2026-27980). Re-audit when the render, cache, middleware, image, auth, or
-Flight subsystems change._
+2026-08-28 against the Next.js August 2026 security release (eleven parity tests
+— two new advisories + nine back-propagated rows), and extended 2026-08-29 with
+a round-2 pass (ten more: the §15 first-party-auth / next-auth CVE class +
+CVE-2026-29057 and CVE-2026-27980). Re-audit when the render, cache, middleware,
+image, auth, or Flight subsystems change._

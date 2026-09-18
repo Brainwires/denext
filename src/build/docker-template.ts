@@ -120,27 +120,51 @@ function serverCmd(port: number): string {
     : `CMD ["deno", "task", "start", "--", "--port", "${port}"]`;
 }
 
+/**
+ * The image's `HEALTHCHECK`, against the built-in probe. `deno eval` runs with every
+ * permission, so no flags; the probe is GET-only and always 200 while the server is up
+ * (its body — not the status — says whether the cache store is durable).
+ */
+function healthcheck(port: number): string {
+  return `HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \\
+  CMD deno eval "fetch('http://127.0.0.1:${port}/_denext/health').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"`;
+}
+
 /** Dockerfile for an App Router / SSR app: build, then run the production server. */
 function dockerfileServerSource(options: DockerOptions): string {
   const port = portOf(options);
   return `${header("(App Router / SSR) app.")}
 FROM ${denoImage(options)}
 
+# Build and run as the image's unprivileged \`deno\` user (never root). /app must be its own:
+# the build writes \`.denext/\` there, and at runtime the durable node:sqlite cache
+# (\`.denext/cache.db\`) needs the same directory writable — a root-owned tree would
+# silently downgrade the cache to the per-process memory store.
 WORKDIR /app
+RUN chown deno:deno /app
+USER deno
+ENV DENO_DIR=/deno-dir
 
-# denext fetches its framework + deps from JSR/npm during the build, so this stage
-# needs network. Copy the whole project and build the production bundle.
-COPY . .
+# Dependency layer: only deno.json / deno.lock — cached until the dependencies change.
+# denext fetches its framework + deps from JSR/npm here, so this stage needs network.
+COPY --chown=deno:deno deno.json deno.lock* ./
+RUN deno install
+
+# The sources change every build; the dependency layer above stays cached.
+COPY --chown=deno:deno . .
 RUN deno task build
 
 # The production server listens on ${port} and binds 0.0.0.0 by default (see
 # \`deno task start\`). Override the port by appending \`-- --port <n>\` to the CMD.
 EXPOSE ${port}
-ENV DENO_DIR=/deno-dir
 
-# Optional healthcheck — point it at a route that returns 200:
-# HEALTHCHECK --interval=30s --timeout=3s CMD deno eval "fetch('http://localhost:${port}/').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"
+# The built-in liveness probe. Its JSON body also reports the cache store
+# ({"cache":"ok","cacheStore":"sqlite"}); "memory" there means the write grant is missing.
+${healthcheck(port)}
 
+# \`deno task start\` is the least-privilege task \`denext create\` writes:
+#   --allow-net --allow-read --allow-env --allow-write=.denext
+# The write grant is what keeps the cache durable — make sure your start task has it.
 ${serverCmd(port)}
 `;
 }
@@ -151,15 +175,25 @@ function dockerfileStaticSource(options: DockerOptions): string {
   return `${header('static / SPA app (`mode: "spa"`).')}
 FROM ${denoImage(options)}
 
+# Build and serve as the image's unprivileged \`deno\` user (never root).
 WORKDIR /app
+RUN chown deno:deno /app
+USER deno
+ENV DENO_DIR=/deno-dir
+
+# Dependency layer: only deno.json / deno.lock — cached until the dependencies change.
+COPY --chown=deno:deno deno.json deno.lock* ./
+RUN deno install
 
 # Build the static export into out/ (denext fetches deps from JSR/npm here).
-COPY . .
+COPY --chown=deno:deno . .
 RUN deno task export
 
 # Serve the static export with Deno's std file server (each route is a real
 # index.html, so no SPA history-fallback is needed).
 EXPOSE ${port}
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+  CMD deno eval "fetch('http://127.0.0.1:${port}/').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"
 CMD ["deno", "run", "--allow-net", "--allow-read", "--allow-sys", "jsr:@std/http/file-server", "out", "--host", "0.0.0.0", "--port", "${port}"]
 `;
 }

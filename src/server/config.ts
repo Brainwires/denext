@@ -6,6 +6,7 @@ import type { I18nConfig } from "./i18n.ts";
 import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
+import { envGet } from "../runtime/env-safe.ts";
 // Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
 // only import is a pure util, so naming it here adds no runtime edge and no cycle.
 import type { CommandContext, FlagSpec, PositionalSpec } from "../cli/command.ts";
@@ -601,6 +602,68 @@ export interface DenextConfig {
    */
   apiMaxBodyBytes?: number;
   /**
+   * The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise
+   * it only for actions that accept large payloads (multipart uploads); over the cap → 413
+   * before the action runs. `denext start`/`dev` forward it to the server; a custom server
+   * passes `actionMaxBodyBytes` to `createApp()` itself.
+   *
+   * @minimum 1
+   */
+  actionMaxBodyBytes?: number;
+  /**
+   * The app's public origin (e.g. `"https://example.com"`), pinned outright: absolute URLs
+   * (canonical, `og:image`), the Server Action origin check and HSTS all use it instead of
+   * the `Host` / forwarded headers — the robust choice behind a proxy that rewrites `Host`.
+   * A full origin (scheme + host, no path). Unset, the `DENEXT_CANONICAL_ORIGIN` env var is
+   * read at boot (config > env > derived from the request).
+   */
+  canonicalOrigin?: string;
+  /**
+   * Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the
+   * request origin (absolute URLs, the Server Action origin check, HSTS, rate-limit keys).
+   * Enable ONLY when clients cannot reach denext directly — a client that can spoofs the
+   * origin. Ignored when {@link DenextConfig.canonicalOrigin} is set. Unset, `DENEXT_TRUST_PROXY=1`
+   * turns it on (config > env > `false`).
+   */
+  trustForwardedHeaders?: boolean;
+  /**
+   * Per-request deadline in milliseconds — default 30 000. A request still running past it
+   * is aborted and answered `503`; the per-request `AbortSignal` fires so cooperative work
+   * (`fetch(url, { signal })`) cancels. `0` disables the deadline. Unset, the
+   * `DENEXT_REQUEST_TIMEOUT_MS` env var is read at boot (config > env > default).
+   *
+   * @minimum 0
+   */
+  requestTimeout?: number;
+  /**
+   * In-process concurrency ceiling: the max number of client requests one instance handles
+   * at once. A request arriving at capacity is shed immediately with `503` + `Retry-After`
+   * (never queued). Bounds work up to the point the `Response` is produced (a streaming
+   * body's client-read time is not counted); background ISR regeneration is exempt. A
+   * complement to — not a replacement for — the edge/load-balancer ceiling. Default: no
+   * limit. Unset, the `DENEXT_MAX_CONCURRENCY` env var is read at boot (config > env >
+   * unlimited).
+   *
+   * @minimum 1
+   */
+  maxConcurrency?: number;
+  /**
+   * With {@link DenextConfig.maxConcurrency} set and {@link DenextConfig.requestTimeout} `0`,
+   * the milliseconds after which a never-settling request's concurrency slot is force-freed
+   * (default 120 000). It frees only the slot — the render is not aborted, since the request
+   * timeout was opted out of. Inert while a request timeout is in place.
+   *
+   * @minimum 1
+   */
+  slotBackstop?: number;
+  /**
+   * Allowlist of query-parameter names that fork the ISR page-cache key. When set, only these
+   * params make a distinct cached entry; every other param (`?utm_*`, `?fbclid`, a random
+   * cache-buster) is ignored for keying — but still reaches the render via `searchParams`, so
+   * list every param whose value changes cacheable output. Unset, every param participates.
+   */
+  cacheKeyParams?: string[];
+  /**
    * denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.
    *
    * Every bare npm specifier is resolved straight from the app's installed `node_modules`
@@ -979,6 +1042,97 @@ export function resolveCacheComponents(
 ): boolean | undefined {
   return config?.cacheComponents ??
     (config?.experimental as { cacheComponents?: boolean } | undefined)?.cacheComponents;
+}
+
+/**
+ * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
+ * config's `canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`, `maxConcurrency`,
+ * `slotBackstop`, `actionMaxBodyBytes` and `cacheKeyParams`, each falling back to its env
+ * var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`, `DENEXT_TRUST_PROXY=1`,
+ * `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else `undefined` so `createApp`'s
+ * own default applies — config > env > default. A malformed env value (a non-numeric
+ * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
+ * env is set by an operator, not type-checked like the config.
+ */
+export interface ServerOptions {
+  /** The pinned public origin, if any. */
+  canonicalOrigin?: string;
+  /** Whether `X-Forwarded-*` headers are trusted. */
+  trustForwardedHeaders?: boolean;
+  /** The per-request deadline (ms; `0` = none). */
+  requestTimeout?: number;
+  /** The in-process concurrency ceiling. */
+  maxConcurrency?: number;
+  /** The slot backstop (ms) for `requestTimeout: 0`. */
+  slotBackstop?: number;
+  /** The Server Action body cap (bytes). */
+  actionMaxBodyBytes?: number;
+  /** The ISR cache-key query-param allowlist. */
+  cacheKeyParams?: string[];
+}
+
+/** One env var, or `undefined` when unset, empty, or not permitted (a narrowed `--allow-env`). */
+function envValue(name: string): string | undefined {
+  return envGet(name) || undefined;
+}
+
+/** A non-negative integer env value (`DENEXT_REQUEST_TIMEOUT_MS`, …), or `undefined` + a warning. */
+function envInteger(name: string, min: number): number | undefined {
+  const raw = envValue(name);
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= min) return n;
+  console.warn(`denext: ignoring ${name}="${raw}" — expected an integer >= ${min}`);
+  return undefined;
+}
+
+/** `DENEXT_CANONICAL_ORIGIN` as a bare origin, or `undefined` + a warning when it is not one. */
+function envOrigin(name: string): string | undefined {
+  const raw = envValue(name);
+  if (raw === undefined) return undefined;
+  if (isOrigin(raw)) return raw;
+  console.warn(`denext: ignoring ${name}="${raw}" — expected an origin like https://example.com`);
+  return undefined;
+}
+
+/**
+ * Whether `value` is exactly an http(s) origin — scheme + host (+ port), no path, query,
+ * hash or credentials — the shape `canonicalOrigin` accepts.
+ */
+export function isOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the {@link ServerOptions} for `createApp()` from the config, with the env-var
+ * fallbacks applied (see {@link ServerOptions}).
+ */
+export function resolveServerOptions(config: DenextConfig | null | undefined): ServerOptions {
+  return {
+    canonicalOrigin: config?.canonicalOrigin ?? envOrigin("DENEXT_CANONICAL_ORIGIN"),
+    trustForwardedHeaders: config?.trustForwardedHeaders ?? envFlag("DENEXT_TRUST_PROXY"),
+    requestTimeout: config?.requestTimeout ?? envInteger("DENEXT_REQUEST_TIMEOUT_MS", 0),
+    maxConcurrency: config?.maxConcurrency ?? envInteger("DENEXT_MAX_CONCURRENCY", 1),
+    slotBackstop: config?.slotBackstop,
+    actionMaxBodyBytes: config?.actionMaxBodyBytes,
+    cacheKeyParams: config?.cacheKeyParams,
+  };
+}
+
+/**
+ * A `=1` flag env var (`DENEXT_TRUST_PROXY`): `true` for `1`/`true`/`yes`/`on` (any case),
+ * `false` for any other value, `undefined` when unset.
+ */
+function envFlag(name: string): boolean | undefined {
+  const raw = envValue(name);
+  if (raw === undefined) return undefined;
+  const v = raw.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
 /** A source pattern compiled to a matcher with its capture keys. */

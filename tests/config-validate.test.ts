@@ -170,3 +170,79 @@ Deno.test("features is validated at both spellings, each error naming the field 
     "`experimental.features.A` must be a boolean",
   );
 });
+
+Deno.test("production-server keys: a bare origin, a boolean, whole numbers in range, a name list", () => {
+  // Every value a deploy guide would set, accepted together.
+  validateDenextConfig({
+    canonicalOrigin: "https://example.com:8443",
+    trustForwardedHeaders: true,
+    requestTimeout: 0, // 0 = no deadline
+    maxConcurrency: 100,
+    slotBackstop: 60_000,
+    actionMaxBodyBytes: 20 * 1024 * 1024,
+    cacheKeyParams: ["page", "sort"],
+  });
+  // canonicalOrigin is exactly an origin: a path, a bare host or a non-http scheme would
+  // make the Server Action origin check refuse every action (a silent 403).
+  for (const bad of ["https://example.com/app", "example.com", "ftp://example.com", ""]) {
+    assertThrows(
+      () => validateDenextConfig({ canonicalOrigin: bad }),
+      Error,
+      "`canonicalOrigin` must be an origin",
+    );
+  }
+  assertThrows(
+    () => validateDenextConfig({ trustForwardedHeaders: "1" as never }),
+    Error,
+    "`trustForwardedHeaders` must be a boolean",
+  );
+  assertThrows(
+    () => validateDenextConfig({ requestTimeout: -1 }),
+    Error,
+    "`requestTimeout` must be a finite integer >= 0",
+  );
+  assertThrows(
+    () => validateDenextConfig({ requestTimeout: 1.5 }),
+    Error,
+    "`requestTimeout` must be a finite integer >= 0",
+  );
+  assertThrows(
+    () => validateDenextConfig({ maxConcurrency: 0 }),
+    Error,
+    "`maxConcurrency` must be a finite integer >= 1",
+  );
+  assertThrows(
+    () => validateDenextConfig({ slotBackstop: Infinity }),
+    Error,
+    "`slotBackstop` must be a finite integer >= 1",
+  );
+  assertThrows(
+    () => validateDenextConfig({ actionMaxBodyBytes: 0 }),
+    Error,
+    "`actionMaxBodyBytes` must be a finite integer >= 1",
+  );
+  assertThrows(
+    () => validateDenextConfig({ cacheKeyParams: "page" as never }),
+    Error,
+    "`cacheKeyParams` must be an array of query-parameter-name strings",
+  );
+  assertThrows(
+    () => validateDenextConfig({ cacheKeyParams: [1] as never }),
+    Error,
+    "`cacheKeyParams` must be an array of query-parameter-name strings",
+  );
+  // They are known top-level keys — no unknown-key warning.
+  for (
+    const key of [
+      "canonicalOrigin",
+      "trustForwardedHeaders",
+      "requestTimeout",
+      "maxConcurrency",
+      "slotBackstop",
+      "actionMaxBodyBytes",
+      "cacheKeyParams",
+    ]
+  ) {
+    assert(KNOWN_CONFIG_KEYS.includes(key), `expected top-level key \`${key}\``);
+  }
+});

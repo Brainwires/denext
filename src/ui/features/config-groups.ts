@@ -46,7 +46,18 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "mdx",
     "cache",
   ],
-  security: ["csp", "hsts", "publicEnv", "apiBatch", "apiMaxBodyBytes"],
+  // The production-server keys a proxy or a body cap forces you to set sit with the other
+  // request-facing switches; the capacity knobs stay on Advanced by the fallback rule.
+  security: [
+    "csp",
+    "hsts",
+    "publicEnv",
+    "apiBatch",
+    "apiMaxBodyBytes",
+    "actionMaxBodyBytes",
+    "canonicalOrigin",
+    "trustForwardedHeaders",
+  ],
   // `features` (compile-time flags) sits with the other build-and-toolchain switches; `experimental`
   // is the superseded block every key graduated out of, kept here so a file that still sets it
   // is edited where it always was (the schema marks it deprecated, so an absent one is not offered).

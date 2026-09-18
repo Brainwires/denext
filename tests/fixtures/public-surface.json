@@ -570,6 +570,7 @@
     "OAuthProvider:interface",
     "OidcOptions:interface",
     "OktaOptions:interface",
+    "OnRequest:typeAlias",
     "OnRequestError:typeAlias",
     "OpenGraphImage:interface",
     "OpenGraphImageResult:typeAlias",

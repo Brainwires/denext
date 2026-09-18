@@ -121,12 +121,14 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
   const tasks: Record<string, string> = {
     // `dev`/`build` compile, write `.denext`, and spawn tooling (Tailwind, esbuild),
     // so they use broad permissions. `start` only serves, so it runs least-privilege:
-    // net + read + env (add `--allow-write=.denext` if you enable the SQLite cache).
-    // The CLI is pinned to the same range as the `denext` import so the two never skew
-    // (an unversioned `jsr:@denext/denext/cli` would resolve to JSR `latest`).
+    // net + read + env, plus write to `.denext` alone — the durable node:sqlite cache
+    // (the default) lives there, and without the grant it silently downgrades to the
+    // per-process memory store. The CLI is pinned to the same range as the `denext`
+    // import so the two never skew (an unversioned `jsr:@denext/denext/cli` would resolve
+    // to JSR `latest`).
     dev: `deno run -A ${cli} dev .`,
     build: `deno run -A ${cli} build .`,
-    start: `deno run --allow-net --allow-read --allow-env ${cli} start .`,
+    start: `deno run --allow-net --allow-read --allow-env --allow-write=.denext ${cli} start .`,
   };
   // Both native targets ship the static export (SSG) from `out/`.
   if (opts.desktop || opts.capacitor) {

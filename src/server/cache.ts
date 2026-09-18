@@ -343,6 +343,9 @@ export async function resolveDefaultCacheStore(
   setCacheStore(await chooseCacheStore(config));
 }
 
+/** Where the durable store lives when `cache.path` is unset (mirrors sqlite-cache.ts). */
+const DEFAULT_SQLITE_PATH = ".denext/cache.db";
+
 /**
  * Pure resolution of the default {@link CacheStore} for a `cache` config (no side effects
  * — the caller installs the result). Order: explicit object/`"memory"` → in-memory on
@@ -370,26 +373,51 @@ export async function chooseCacheStore(
 
   // Probe the durable node:sqlite store. A tiny read forces the file open, so a denied
   // --allow-write or an ephemeral/read-only FS surfaces here.
+  const path = config?.path ?? DEFAULT_SQLITE_PATH;
   try {
     const { sqliteCacheStore } = await import("./sqlite-cache.ts");
     const store = sqliteCacheStore({
-      path: config?.path,
+      path,
       maxDataEntries: config?.maxDataEntries,
       maxPageEntries: config?.maxPageEntries,
     });
     await store.getData("__denext_probe__");
+    storeKinds.set(store, "sqlite");
     return store;
   } catch (err) {
-    // Fall back to in-memory. Loud in dev so the reason (denied write, ephemeral FS) is
-    // visible; silent in prod (the cache still works).
-    if ((globalThis as { __denextDev?: boolean }).__denextDev) {
-      const reason = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `denext: durable node:sqlite cache unavailable — using the in-memory store. (${reason})`,
-      );
-    }
+    // Fall back to in-memory — the cache still works, but nothing survives a restart, so
+    // say so ONCE at boot (prod too: a silent downgrade left operators reading
+    // `"cache":"ok"` off /_denext/health with no durable store behind it). The line names
+    // the path and the grant that fixes it; `cache: { store: "memory" }` opts in quietly.
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `denext: durable node:sqlite cache unavailable at ${path} — using the in-memory ` +
+        "store (cached pages and data will not survive a restart). Grant " +
+        "`--allow-write=.denext` (or the directory of `cache.path`) to `denext start`, " +
+        `or set \`cache: { store: "memory" }\` to choose this deliberately. (${reason})`,
+    );
     return inMemoryCacheStore();
   }
+}
+
+/** What backs the active {@link CacheStore}: the built-in memory or sqlite store, or the app's own. */
+export type CacheStoreKind = "memory" | "sqlite" | "custom";
+
+// Which built-in store `chooseCacheStore` produced, keyed by the store object itself (the
+// sqlite module is imported lazily, so its class is never referenced here for an
+// `instanceof`). A store with no tag is the app's own.
+const storeKinds = new WeakMap<CacheStore, CacheStoreKind>();
+
+/**
+ * The kind of store currently backing the cache — `"sqlite"` (durable), `"memory"`
+ * (per-process, lost on restart) or `"custom"` (installed via {@linkcode setCacheStore}).
+ * `/_denext/health` reports it as `cacheStore`, so a silent fallback to memory is visible.
+ *
+ * @returns The active store's kind.
+ */
+export function cacheStoreKind(): CacheStoreKind {
+  return storeKinds.get(currentCacheStore) ??
+    (currentCacheStore instanceof InMemoryCache ? "memory" : "custom");
 }
 
 // Live Server Components subscribe to tag invalidations here: whenever a tag is

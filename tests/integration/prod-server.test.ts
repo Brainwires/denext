@@ -23,6 +23,8 @@ async function healthProbeIsHardened(origin: string) {
   const body = await res.json();
   assertEquals(body.status, "ok");
   assert(body.cache === "ok" || body.cache === "degraded", "reports cache reachability");
+  // Which store backs the cache, so a silent fallback to memory (no --allow-write) shows.
+  assert(["sqlite", "memory", "custom"].includes(body.cacheStore), "reports the store kind");
 }
 
 async function imageEndpointRejectsNoUrl(origin: string) {

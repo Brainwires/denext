@@ -5,10 +5,12 @@ import {
   type DenextConfig,
   featureFlags,
   fillDestination,
+  isOrigin,
   matchPattern,
   reactCompilerEnabled,
   resolveCacheComponents,
   resolveLive,
+  resolveServerOptions,
   resolveStreaming,
   safeRedirectLocation,
 } from "../src/server/config.ts";
@@ -288,4 +290,133 @@ Deno.test("basePath prefixes server-rendered <Link> hrefs and embeds itself", as
   const html = await (await app(new Request("http://localhost/docs/a"))).text();
   assertStringIncludes(html, `href="/docs/target"`); // Link prefixed with basePath
   assertStringIncludes(html, `"basePath":"/docs"`); // embedded for the client
+});
+
+// ---- resolveServerOptions: config > env > default -----------------------------
+
+/** Run `fn` with these env vars set (and restored after), for the env-fallback tests. */
+function withEnv(vars: Record<string, string | undefined>, fn: () => void): void {
+  const saved = new Map<string, string | undefined>();
+  for (const [k, v] of Object.entries(vars)) {
+    saved.set(k, Deno.env.get(k));
+    if (v === undefined) Deno.env.delete(k);
+    else Deno.env.set(k, v);
+  }
+  try {
+    fn();
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) Deno.env.delete(k);
+      else Deno.env.set(k, v);
+    }
+  }
+}
+
+const SERVER_ENV = {
+  DENEXT_CANONICAL_ORIGIN: undefined,
+  DENEXT_TRUST_PROXY: undefined,
+  DENEXT_REQUEST_TIMEOUT_MS: undefined,
+  DENEXT_MAX_CONCURRENCY: undefined,
+};
+
+Deno.test("resolveServerOptions: unset config + unset env leaves every knob undefined (createApp defaults)", () => {
+  withEnv(SERVER_ENV, () => {
+    assertEquals(resolveServerOptions(null), {
+      canonicalOrigin: undefined,
+      trustForwardedHeaders: undefined,
+      requestTimeout: undefined,
+      maxConcurrency: undefined,
+      slotBackstop: undefined,
+      actionMaxBodyBytes: undefined,
+      cacheKeyParams: undefined,
+    });
+  });
+});
+
+Deno.test("resolveServerOptions: the env vars fill in what the config leaves unset", () => {
+  withEnv({
+    DENEXT_CANONICAL_ORIGIN: "https://example.com",
+    DENEXT_TRUST_PROXY: "1",
+    DENEXT_REQUEST_TIMEOUT_MS: "0",
+    DENEXT_MAX_CONCURRENCY: "64",
+  }, () => {
+    const r = resolveServerOptions({ slotBackstop: 5000, cacheKeyParams: ["page"] });
+    assertEquals(r.canonicalOrigin, "https://example.com");
+    assertEquals(r.trustForwardedHeaders, true);
+    assertEquals(r.requestTimeout, 0);
+    assertEquals(r.maxConcurrency, 64);
+    assertEquals(r.slotBackstop, 5000);
+    assertEquals(r.cacheKeyParams, ["page"]);
+  });
+  // The flag's spellings: 1/true/yes/on are on; anything else set is an explicit off.
+  for (
+    const [raw, want] of [["true", true], ["YES", true], ["on", true], ["0", false], [
+      "no",
+      false,
+    ]] as const
+  ) {
+    withEnv({ ...SERVER_ENV, DENEXT_TRUST_PROXY: raw }, () => {
+      assertEquals(
+        resolveServerOptions({}).trustForwardedHeaders,
+        want,
+        `DENEXT_TRUST_PROXY=${raw}`,
+      );
+    });
+  }
+});
+
+Deno.test("resolveServerOptions: the config wins over the env var", () => {
+  withEnv({
+    DENEXT_CANONICAL_ORIGIN: "https://env.example",
+    DENEXT_TRUST_PROXY: "1",
+    DENEXT_REQUEST_TIMEOUT_MS: "5",
+    DENEXT_MAX_CONCURRENCY: "5",
+  }, () => {
+    const r = resolveServerOptions({
+      canonicalOrigin: "https://config.example",
+      trustForwardedHeaders: false,
+      requestTimeout: 1000,
+      maxConcurrency: 10,
+    });
+    assertEquals(r.canonicalOrigin, "https://config.example");
+    assertEquals(r.trustForwardedHeaders, false);
+    assertEquals(r.requestTimeout, 1000);
+    assertEquals(r.maxConcurrency, 10);
+  });
+});
+
+Deno.test("resolveServerOptions: a malformed env value is ignored with one warning, never a boot failure", () => {
+  const original = console.warn;
+  const warned: string[] = [];
+  console.warn = (...args: unknown[]) => warned.push(args.map(String).join(" "));
+  try {
+    withEnv({
+      ...SERVER_ENV,
+      DENEXT_CANONICAL_ORIGIN: "example.com/app",
+      DENEXT_REQUEST_TIMEOUT_MS: "soon",
+      DENEXT_MAX_CONCURRENCY: "0",
+    }, () => {
+      const r = resolveServerOptions({});
+      assertEquals(r.canonicalOrigin, undefined);
+      assertEquals(r.requestTimeout, undefined);
+      assertEquals(r.maxConcurrency, undefined);
+    });
+  } finally {
+    console.warn = original;
+  }
+  assertEquals(warned.length, 3);
+  assertStringIncludes(warned[0], 'DENEXT_CANONICAL_ORIGIN="example.com/app"');
+  assertStringIncludes(warned[1], 'DENEXT_REQUEST_TIMEOUT_MS="soon"');
+  assertStringIncludes(warned[2], 'DENEXT_MAX_CONCURRENCY="0"');
+});
+
+Deno.test("isOrigin: scheme + host (+ port) only", () => {
+  assert(isOrigin("https://example.com"));
+  assert(isOrigin("http://localhost:3000"));
+  assert(!isOrigin("https://example.com/"));
+  assert(!isOrigin("https://example.com/app"));
+  assert(!isOrigin("https://user:pw@example.com"));
+  assert(!isOrigin("https://example.com?x=1"));
+  assert(!isOrigin("example.com"));
+  assert(!isOrigin("ws://example.com"));
 });

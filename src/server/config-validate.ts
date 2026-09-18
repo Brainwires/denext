@@ -5,7 +5,7 @@
 // with a "did you mean" suggestion — a typo like `basepath` would otherwise be
 // silently dropped by the loader's field whitelist.
 
-import type { DenextConfig } from "./config.ts";
+import { type DenextConfig, isOrigin } from "./config.ts";
 import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "./config-keys.generated.ts";
 import { editDistance } from "../utils/edit-distance.ts";
 import { VERB_NAME } from "../cli/command.ts";
@@ -310,6 +310,46 @@ function validateSecurity(config: DenextConfig, fail: Fail): void {
   validateApiBatch(config.apiBatch, fail);
   if (config.apiMaxBodyBytes !== undefined) {
     num(fail, "apiMaxBodyBytes", config.apiMaxBodyBytes, { int: true, min: 1 });
+  }
+  validateServerOptions(config, fail);
+}
+
+/**
+ * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`,
+ * `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`): a bare origin,
+ * a boolean, whole numbers in range, a list of param names. A bad `canonicalOrigin` would
+ * otherwise silently 403 every Server Action (the origin check compares against it).
+ */
+function validateServerOptions(config: DenextConfig, fail: Fail): void {
+  const { canonicalOrigin, trustForwardedHeaders, cacheKeyParams } = config;
+  if (
+    canonicalOrigin !== undefined &&
+    (typeof canonicalOrigin !== "string" || !isOrigin(canonicalOrigin))
+  ) {
+    fail(
+      "canonicalOrigin",
+      'must be an origin — scheme + host, no path (e.g. "https://example.com")',
+    );
+  }
+  if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
+    fail("trustForwardedHeaders", "must be a boolean");
+  }
+  if (config.requestTimeout !== undefined) {
+    num(fail, "requestTimeout", config.requestTimeout, { int: true, min: 0 }); // ms; 0 disables
+  }
+  if (config.maxConcurrency !== undefined) {
+    num(fail, "maxConcurrency", config.maxConcurrency, { int: true, min: 1 });
+  }
+  if (config.slotBackstop !== undefined) {
+    num(fail, "slotBackstop", config.slotBackstop, { int: true, min: 1 });
+  }
+  if (config.actionMaxBodyBytes !== undefined) {
+    num(fail, "actionMaxBodyBytes", config.actionMaxBodyBytes, { int: true, min: 1 });
+  }
+  if (cacheKeyParams !== undefined) {
+    if (!Array.isArray(cacheKeyParams) || cacheKeyParams.some((p) => typeof p !== "string")) {
+      fail("cacheKeyParams", "must be an array of query-parameter-name strings");
+    }
   }
 }
 
