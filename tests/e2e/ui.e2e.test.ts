@@ -186,6 +186,11 @@ Deno.test("denext ui: the sidebar navigates without a reload, and Back comes hom
   try {
     const page = await browser.newPage();
     const errors = collectConsoleErrors(page);
+    // A desktop viewport, explicitly: below the 860px drawer breakpoint the sidebar's nav is
+    // `display: none` until the burger opens it, so a link in it has no box to click — and
+    // headless Chromium's default window on the Linux runners is 800px wide ("Unable to get
+    // stable box model"). The drawer has its own test; this one is about the wide layout.
+    await page.setViewportSize({ width: 1200, height: 900 });
     await page.goto(server.url); // the handshake lands on "/"
 
     await pollFor(page, `location.pathname === "/"`);
@@ -559,6 +564,8 @@ Deno.test("denext ui: leaving a config view with unsaved edits asks first", asyn
   try {
     const page = await browser.newPage();
     const errors = collectConsoleErrors(page);
+    // The sidebar is clicked below; it is only laid out (and clickable) at desktop widths.
+    await page.setViewportSize({ width: 1200, height: 900 });
     await page.goto(server.url);
     await pollFor(page, `location.pathname === "/"`);
 
@@ -621,6 +628,139 @@ Deno.test("denext ui: leaving a config view with unsaved edits asks first", asyn
         .find((b) => b.textContent === "Discard").click()`,
     );
     await pollFor(page, `location.pathname === "/wizard"`);
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await teardown(server, dir);
+  }
+});
+
+Deno.test("denext ui: a task's output streams into the panel's sink as it runs", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ui_e2e_" });
+  // A line nothing else on the page contains, held on screen long enough to be seen: the
+  // stream's end broadcasts `task-done`, and the client answers that with a panel refresh.
+  await Deno.writeTextFile(
+    join(dir, "deno.json"),
+    JSON.stringify({
+      imports: { denext: "jsr:@denext/denext@^2" },
+      tasks: { hello: "echo e2e-hello-from-the-task && sleep 3" },
+    }),
+  );
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.goto(server.url);
+    await page.goto(`${new URL(server.url).origin}/wizard`);
+
+    // The Tasks step lists the declared task as a real form posting to /tasks/run, with the
+    // empty output sink `ui.js` streams into next to it.
+    await pollFor(page, `!!document.querySelector('form.op input[name="task"][value="hello"]')`);
+    assertEquals(
+      await page.evaluate(`document.querySelector("#panel pre.out").textContent`),
+      "",
+      "the sink starts empty",
+    );
+    await page.evaluate("window.__noReload = true");
+
+    await page.evaluate(
+      `Array.from(document.querySelectorAll('form.op button'))` +
+        `.find((b) => b.textContent.trim() === 'deno task hello').click()`,
+    );
+
+    // The intercepted submit gets a `text/event-stream` back and appends each `data:` frame's
+    // text to the sink — this is `streamInto`, which no other test executes.
+    await pollFor(
+      page,
+      `document.querySelector("#panel pre.out").textContent.indexOf("e2e-hello-from-the-task") !== -1`,
+    );
+    assertEquals(
+      await page.evaluate("window.__noReload === true"),
+      true,
+      "a task run must stream into the page, not navigate away from it",
+    );
+
+    assertNoConsoleErrors(errors);
+  } finally {
+    await browser.close();
+    await server.shutdown();
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("denext ui: Save sleeps until an edit, and Discard puts the view back", async () => {
+  const dir = await project(false);
+  await Deno.writeTextFile(join(dir, "denext.config.ts"), 'export default { basePath: "/v1" };\n');
+  const server = await startUiServer({ dir, port: 0 });
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    const errors = collectConsoleErrors(page);
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.goto(server.url);
+    await page.goto(`${new URL(server.url).origin}/config/routing`);
+    await pollFor(page, `!!document.querySelector("#f-basePath")`);
+
+    // The tracker takes the scalar band: the server renders Save enabled (it has to — with
+    // scripting off there is no edit to wait for), and the client puts it to sleep.
+    const save =
+      `document.querySelector("#f-basePath").form.querySelector('button[type="submit"]:not([name])')`;
+    await pollFor(page, `${save}.disabled === true`);
+    assertEquals(
+      await page.evaluate(
+        `!!document.querySelector("#f-basePath").form.querySelector("[data-discard]")`,
+      ),
+      false,
+      "there is nothing to discard before an edit",
+    );
+
+    // An edit wakes Save and puts Discard beside it.
+    await page.evaluate(`
+      const field = document.querySelector("#f-basePath");
+      field.value = "/docs";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    `);
+    await pollFor(page, `${save}.disabled === false`);
+    assertEquals(
+      await page.evaluate(
+        `!!document.querySelector("#f-basePath").form.querySelector("[data-discard]")`,
+      ),
+      true,
+      "Discard appears with the first edit",
+    );
+    await page.evaluate("window.__noReload = true");
+
+    // Discard: the value the server rendered is back, Save sleeps again, and the button is gone
+    // — without a request, so nothing was written and nothing was navigated.
+    await page.evaluate(
+      `document.querySelector("#f-basePath").form.querySelector("[data-discard]").click()`,
+    );
+    await pollFor(page, `${save}.disabled === true`);
+    assertEquals(
+      await page.evaluate(`document.querySelector("#f-basePath").value`),
+      "/v1",
+      "Discard restores what the file had",
+    );
+    assertEquals(
+      await page.evaluate(
+        `!!document.querySelector("#f-basePath").form.querySelector("[data-discard]")`,
+      ),
+      false,
+      "Discard removes itself once there is nothing to discard",
+    );
+    assertEquals(
+      await page.evaluate(`!!document.querySelector('form[data-dirty-track][data-dirty="1"]')`),
+      false,
+      "the form is clean again, so leaving it will not ask",
+    );
+    assertEquals(await page.evaluate("window.__noReload === true"), true);
+    assertStringIncludes(
+      await Deno.readTextFile(join(dir, "denext.config.ts")),
+      'basePath: "/v1"',
+      "nothing reached the file",
+    );
 
     assertNoConsoleErrors(errors);
   } finally {

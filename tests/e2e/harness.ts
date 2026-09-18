@@ -372,12 +372,18 @@ export function buildCompatIndexPage(
 const DENO = Deno.execPath();
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
 
-/** Run `deno <args>` in `cwd`, bounded by `timeoutMs`. Never throws — reports instead. */
+/**
+ * Run `deno <args>` in `cwd`, bounded by `timeoutMs`. Never throws — reports instead.
+ *
+ * `out` is stdout + stderr together (for failure messages); `stdout` is the child's stdout
+ * ALONE, for asserting what a command emits — a warning the CLI prints to stderr (denextAuth's
+ * `canonicalOrigin` advice, a download progress line) must not end up inside a generated file.
+ */
 export async function runDeno(
   args: string[],
   cwd: string,
   timeoutMs: number,
-): Promise<{ ok: boolean; out: string }> {
+): Promise<{ ok: boolean; out: string; stdout: string }> {
   try {
     const cmd = new Deno.Command(DENO, {
       args,
@@ -387,15 +393,18 @@ export async function runDeno(
       signal: AbortSignal.timeout(timeoutMs),
     });
     const { success, stdout, stderr } = await cmd.output();
+    const text = new TextDecoder().decode(stdout);
     return {
       ok: success,
-      out: new TextDecoder().decode(stdout) + new TextDecoder().decode(stderr),
+      out: text + new TextDecoder().decode(stderr),
+      stdout: text,
     };
   } catch (e) {
     // AbortSignal.timeout fired (or spawn failed): the child is killed. Report, don't hang.
     return {
       ok: false,
       out: `\`deno ${args.join(" ")}\` did not finish within ${timeoutMs}ms: ${e}`,
+      stdout: "",
     };
   }
 }
