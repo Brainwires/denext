@@ -1,6 +1,9 @@
 // `denext ui --offline`, said once. The contract: nothing the UI starts reaches the network.
 // Every denext-CLI child (the commands listing, a verb run, `denext doctor`) runs under
 // `--deny-net --cached-only` (`proc.ts`), and the wizard's `deno install` under `--cached-only`.
+// The two discovery children (`commands --json`, `task --list --json`) add `--deny-run`, so the
+// config they evaluate cannot spawn its way around `--deny-net`; a verb run and `doctor` keep
+// `--allow-run`, so a process one of THOSE starts is the one thing the flags do not reach.
 // An operation no flag can keep off the network is refused instead — with the status, and the
 // kind of reason, `op=add-jsr` gives when JSR may not be queried (`features/plugin-search.ts`).
 

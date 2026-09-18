@@ -10,7 +10,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
-import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { stampOf, UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 import { setProcRunner } from "../src/ui/features/plugins.ts";
 import { setJsrClient } from "../src/ui/features/plugin-search.ts";
@@ -140,10 +140,21 @@ function mutationHeaders(h: Harness): Record<string, string> {
 }
 
 /** POST a form with the session cookie, a same-origin `Origin` and the CSRF token. */
-function post(h: Harness, path: string, fields: Record<string, string>): Promise<Response> {
+async function post(
+  h: Harness,
+  path: string,
+  fields: Record<string, string>,
+  options: { readonly unstamped?: boolean } = {},
+): Promise<Response> {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
-  return fetch(`${h.base}${path}`, {
+  // A browser form always carries the file's stamp (the panel refuses one that does not), so a
+  // post that names none gets the stamp of the file as it stands — what a fresh page would carry.
+  // `unstamped` posts exactly `fields`, for the test that proves the refusal.
+  if (path.startsWith("/plugins/options") && !("_base" in fields) && !options.unstamped) {
+    body.set("_base", await stampOf(await config(h).catch(() => "")));
+  }
+  return await fetch(`${h.base}${path}`, {
     method: "POST",
     headers: mutationHeaders(h),
     body,
@@ -390,6 +401,29 @@ Deno.test("a confirm against a file edited since the preview is a 409 and writes
     assertEquals(res.status, 409);
     assertStringIncludes(await res.text(), "changed on disk");
     assertEquals(await config(h), edited);
+  } finally {
+    await stop(h);
+  }
+});
+
+Deno.test("a browser form without _base is refused as stale; the JSON twin may omit it", async () => {
+  const h = await ui({ "denext.config.ts": CONFIG });
+  try {
+    const unstamped = [{ ...UNTOUCHED, "o.path": "/y" }, {
+      ...UNTOUCHED,
+      "o.path": "/y",
+      _base: "",
+    }];
+    for (const fields of unstamped) {
+      const res = await post(h, OPTIONS, fields, { unstamped: true });
+      assertEquals(res.status, 400);
+      assertStringIncludes(await res.text(), "carries no _base stamp");
+    }
+    assertEquals(await config(h), CONFIG, "nothing was written");
+    const sets = [{ path: ["path"], value: "/y" }];
+    const twin = await postJson(h, `/api${OPTIONS}`, { sets });
+    assertEquals(twin.status, 200);
+    assertEquals((await twin.json()).applied, false);
   } finally {
     await stop(h);
   }

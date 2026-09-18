@@ -13,7 +13,9 @@
 // and answers with the unified diff plus a confirm form carrying the exact option writes; the
 // second POST (`confirm=1`) re-reads the file, re-applies those writes and writes only when they
 // still apply. Both carry `_base`, a SHA-256 of the source the form was rendered from, so an edit
-// made elsewhere in the meantime is a `409` rather than a lost update.
+// made elsewhere in the meantime is a `409` rather than a lost update — and a browser form
+// WITHOUT the stamp is refused as stale, since no page this panel renders posts without one.
+// Only the `/api/plugins/options` twin may omit it.
 
 import { normalizeSpec } from "../../build/plugin-install.ts";
 import { publishedOptionsSchema } from "./third-party-options.ts";
@@ -762,6 +764,13 @@ function propose(ctx: UiContext, target: OptionsTarget, reading: Reading): Propo
 async function submit(ctx: UiContext, target: OptionsTarget, reading: Reading): Promise<Response> {
   if (ctx.readOnly) return refuse(ctx, titleOf(target), "read-only", 403);
   const posted = postedField(ctx, BASE_FIELD);
+  if (posted === "" && ctx.form !== undefined && !ctx.json) {
+    // A browser form always carries the stamp; one without was not built from this page.
+    const reason = `this form carries no ${BASE_FIELD} stamp, so it cannot be checked against ` +
+      `the ${target.configName} on disk — nothing was written. Reload the options and re-apply ` +
+      "your change.";
+    return refuse(ctx, titleOf(target), reason, 400);
+  }
   if (posted !== "" && posted !== target.base) {
     const reason = `${target.configName} changed on disk since this form was rendered — ` +
       "nothing was written. Reload the options and re-apply your change.";

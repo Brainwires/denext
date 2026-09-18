@@ -89,6 +89,16 @@ function loopbackOrigin(value: unknown): string | null {
 }
 
 /**
+ * How every request to the dev server is made: with a deadline (a wedged dev server must not
+ * hang the tool — the MCP loop dispatches serially) and with redirects REFUSED. The origin was
+ * checked to be loopback, and `fetch` following a `Location` would undo that check: a planted
+ * loopback listener answering `302` to another host would carry the tool off the machine.
+ */
+function devRequest(): RequestInit {
+  return { signal: AbortSignal.timeout(5000), redirect: "error" };
+}
+
+/**
  * Fetch the running dev server's recent events (server errors + browser console).
  *
  * @param dir The project directory.
@@ -106,10 +116,7 @@ export async function fetchDevState(
   if (opts.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
   try {
-    // A wedged dev server must not hang the tool (the MCP loop dispatches serially).
-    const res = await fetch(`${info.origin}/_denext/dev-state${qs ? `?${qs}` : ""}`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(`${info.origin}/_denext/dev-state${qs ? `?${qs}` : ""}`, devRequest());
     if (!res.ok) {
       await res.body?.cancel();
       return null;
@@ -151,10 +158,7 @@ export async function fetchDevInspect(dir: string, url?: string): Promise<DevIns
   if (!info) return { ok: false, reason: "no-dev-server" };
   const qs = url ? `?url=${encodeURIComponent(url)}` : "";
   try {
-    // A wedged dev server must not hang the tool (the MCP loop dispatches serially).
-    const res = await fetch(`${info.origin}${DEV_INSPECT_PATH}${qs}`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetch(`${info.origin}${DEV_INSPECT_PATH}${qs}`, devRequest());
     if (!res.ok) {
       await res.body?.cancel();
       return { ok: false, reason: res.status === 404 ? "no-snapshot" : "no-dev-server" };

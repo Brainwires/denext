@@ -16,6 +16,7 @@ import { loadConfigSchema, resolveAt } from "../src/ui/form/schema.ts";
 import { widgetFor } from "../src/ui/form/widget.ts";
 import { encode } from "../src/ui/form/value.ts";
 import { browserPostByName, formContaining } from "./helpers/browser-form.ts";
+import { readContained, stampOf } from "../src/ui/security.ts";
 
 const CONFIG = `import { openapi } from "@denext/openapi";
 
@@ -47,7 +48,12 @@ async function onDisk(dir: string): Promise<string> {
 async function call(
   dir: string,
   path: string,
-  init: { form?: Record<string, string | string[]>; readOnly?: boolean } = {},
+  init: {
+    form?: Record<string, string | string[]>;
+    readOnly?: boolean;
+    /** Post exactly `form`, without the stamp a rendered page would carry. */
+    unstamped?: boolean;
+  } = {},
 ): Promise<Response> {
   const url = new URL(`http://127.0.0.1:5177${path}`);
   const form = init.form === undefined ? undefined : new FormData();
@@ -55,6 +61,12 @@ async function call(
   // companion and then the checkbox. `decodeToggle` reads every value and takes the last.
   for (const [key, value] of Object.entries(init.form ?? {})) {
     for (const one of Array.isArray(value) ? value : [value]) form?.append(key, one);
+  }
+  // A browser form always carries `_base` (the editor refuses one that does not), so a post to
+  // the panel that names none gets the stamp a fresh page would carry: of the config as the
+  // panel reads it (through containment — a file it will not read stamps as no file).
+  if (form && !form.has("_base") && !url.pathname.startsWith("/api/") && !init.unstamped) {
+    form.set("_base", await stampOf(await readContained(dir, "denext.config.ts") ?? ""));
   }
   const ctx: UiContext = {
     dir,
@@ -691,6 +703,37 @@ Deno.test("a denext.config.ts symlinked out of the project is neither read nor w
   } finally {
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("a browser form without _base is refused as stale, for every writer; the JSON twin may omit it", async () => {
+  const dir = await project();
+  try {
+    // Every form the editor renders carries the stamp, so a post without one was not built from
+    // this page. Letting it through unchecked made the stale check optional for exactly the
+    // requests most likely to be stale (a hand-built or long-dead form).
+    const page = await (await call(dir, "/config/routing?key=redirects")).text();
+    assertMatch(page, /name="_base"[^>]*value="[0-9a-f]{64}"/);
+    const writes: Array<[string, Record<string, string>]> = [
+      ["/config?section=basePath", { ...fieldsFor("basePath", "/mine"), confirm: "1" }],
+      ["/config?section=basePath", { ...fieldsFor("basePath", "/mine"), _base: "" }],
+      ["/config?raw=1", { raw: 'export default {\n  basePath: "/raw",\n};\n', confirm: "1" }],
+      ["/config/routing", { basePath: "/band", confirm: "1" }],
+    ];
+    for (const [path, form] of writes) {
+      const res = await call(dir, path, { form, unstamped: true });
+      assertEquals(res.status, 400, `${path} ${JSON.stringify(form)}`);
+      assertStringIncludes(await res.text(), "carries no _base stamp");
+    }
+    assertEquals(await onDisk(dir), CONFIG, "nothing was written");
+    // The twin keeps the opt-out: a script that just read the file has no page to be stale.
+    const twin = await call(dir, "/api/config?section=basePath", {
+      form: fieldsFor("basePath", "/mine"),
+    });
+    assertEquals(twin.status, 200);
+    assertEquals((await twin.json()).applied, false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
 

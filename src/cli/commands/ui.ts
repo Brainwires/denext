@@ -59,20 +59,25 @@ export function uiBanner(
  */
 function uiPort(ctx: CommandContext): number | undefined {
   const raw = ctx.flags.port;
-  const ok = typeof raw === "number" && Number.isInteger(raw) && raw >= 0 && raw < 65536;
+  const ok = typeof raw === "number" && Number.isInteger(raw) && raw >= 0 &&
+    raw < 65536;
   return ok ? raw as number : undefined;
 }
 
 /**
  * The {@linkcode startUiServer} options a parsed `denext ui` invocation asks for — `--offline`
- * among them, which keeps the UI and every process it starts off the network (it combines freely
- * with `--read-only`).
+ * among them, which keeps the UI and every denext-CLI process it starts off the network — a
+ * process a project verb spawns on its own is not reached (it combines freely with
+ * `--read-only`).
  *
  * @param ctx The parsed command line.
  * @param signal The shutdown signal (SIGINT/SIGTERM, or a test's own).
  * @returns The options to start the server with.
  */
-export function uiServerOptions(ctx: CommandContext, signal: AbortSignal): UiServerOptions {
+export function uiServerOptions(
+  ctx: CommandContext,
+  signal: AbortSignal,
+): UiServerOptions {
   const port = uiPort(ctx);
   return {
     dir: projectDir(ctx),
@@ -92,7 +97,7 @@ export const uiCommand: CommandSpec = {
   usage: "  denext ui                    Serve the UI for the current project and open it\n" +
     "  denext ui ./my-app --port 6000   That exact port, or a clear error if it is taken\n" +
     "  denext ui --read-only        Browse without offering any write\n" +
-    "  denext ui --offline          Keep the UI and every process it starts off the network\n" +
+    "  denext ui --offline          Keep the UI and the processes it starts off the network\n" +
     "  denext ui --no-open --json   Print { url, port, token } and keep serving\n\n" +
     "  The UI binds and is opened at 127.0.0.1 only (never localhost, whose cookies every\n" +
     "  local server shares). The printed URL carries a per-launch 256-bit token that is\n" +
@@ -139,7 +144,13 @@ export const uiCommand: CommandSpec = {
     const server = await startUiServer(options);
     activeUiServers.add(server);
     if (ctx.global.json) {
-      console.log(JSON.stringify({ url: server.url, port: server.port, token: server.token }));
+      console.log(
+        JSON.stringify({
+          url: server.url,
+          port: server.port,
+          token: server.token,
+        }),
+      );
     } else if (!ctx.global.quiet) {
       console.log(uiBanner(server.url, options.dir, {
         readOnly: options.readOnly === true,

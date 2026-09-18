@@ -40,25 +40,53 @@ export interface RunDenoOptions {
  * precedence over `-A` (and refuses listening as well as connecting); `--cached-only` covers the
  * module loader, which the net permission does not govern — without it a child would still
  * download an uncached import.
+ *
+ * What neither flag reaches is a GRANDCHILD: `-A` grants `--allow-run`, and a process the child
+ * spawns starts with whatever permissions the OS gives it, not Deno's. That is why the discovery
+ * children add {@linkcode DENY_RUN} — see {@linkcode cliInvocation}.
  */
 const OFFLINE_FLAGS: readonly string[] = ["--deny-net", "--cached-only"];
+
+/**
+ * What closes the grandchild gap for a child that only READS the project: `--deny-run` takes
+ * precedence over `-A`, so a `denext.config.ts` (or a plugin `setup()`) evaluated inside
+ * `denext commands --json` or `denext task --list --json` cannot reach the network through a
+ * `curl` of its own. Those verbs never spawn anything themselves, so nothing legitimate is lost.
+ */
+const DENY_RUN: readonly string[] = ["--deny-run"];
+
+/** Options for {@linkcode cliInvocation}. */
+export interface CliInvocationOptions {
+  /** `denext ui --offline`: the child may neither open a socket nor download a module. */
+  readonly offline?: boolean;
+  /**
+   * The project the child will act on, which decides WHICH denext a compiled binary hands it
+   * (see {@linkcode cliModule}).
+   */
+  readonly dir?: string;
+  /**
+   * Under `offline`, also refuse the child every subprocess (`--deny-run`). For a DISCOVERY
+   * child — one that evaluates the project's config and prints a listing — so that config cannot
+   * route around `--deny-net` by spawning. Never for a verb run or `denext doctor`: a project
+   * verb may legitimately spawn (a `seed` that shells out), and doctor's route conformance runs
+   * `deno` itself; those children keep `-A`, and the panel says so.
+   */
+  readonly denyRun?: boolean;
+}
 
 /**
  * The argv prefix that runs a denext CLI as a child process — under whatever scheme denext
  * itself was loaded from, so a checkout runs its `cli.ts` and an installed copy runs the JSR
  * one.
  *
- * @param options `offline`: `denext ui --offline` — the child may neither open a socket nor
- *   download a module. `dir`: the project the child will act on, which decides WHICH denext a
- *   compiled binary hands it (see {@linkcode cliModule}).
- * @returns `["run", "-A", "<cli module>"]` (with `--deny-net --cached-only` after `-A`
- *   when offline), to be spread before the verb and its flags.
+ * @param options See {@linkcode CliInvocationOptions}.
+ * @returns `["run", "-A", "<cli module>"]` (with `--deny-net --cached-only` after `-A` when
+ *   offline, then `--deny-run` when `denyRun` too), to be spread before the verb and its flags.
  */
-export function cliInvocation(
-  options: { readonly offline?: boolean; readonly dir?: string } = {},
-): string[] {
+export function cliInvocation(options: CliInvocationOptions = {}): string[] {
   const offline = options.offline === true ? OFFLINE_FLAGS : [];
-  return ["run", "-A", ...offline, cliModule(options.dir)];
+  const denyRun = options.offline === true && options.denyRun === true ? DENY_RUN : [];
+  return ["run", "-A", ...offline, ...denyRun, cliModule(options.dir)];
 }
 
 /**

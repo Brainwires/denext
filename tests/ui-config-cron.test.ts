@@ -390,6 +390,67 @@ Deno.test("a write against a file that moved underneath the form is a 409", asyn
   }
 });
 
+Deno.test("a browser form without _base is refused as stale, for both writers; the JSON twin may omit it", async () => {
+  const dir = await project(CONFIG, { cleanup: task() });
+  const file = join(dir, "denext.config.ts");
+  try {
+    // Every form the page renders carries the stamp, so a post without one was not built from
+    // this page. Letting it through unchecked was the hole: the stale check became optional for
+    // exactly the requests that were most likely stale.
+    const page = await (await call(dir)).text();
+    assertStringIncludes(page, `name="_base" value="${stampIn(page)}"`);
+    const unstamped: Array<Record<string, string>> = [
+      { intent: "save" },
+      { intent: "save", _base: "" },
+      { intent: "clear", confirm: "1" },
+      { intent: "history", history: "on" },
+      { intent: "history", history: "on", confirm: "1", _base: "" },
+    ];
+    for (const form of unstamped) {
+      const res = await call(dir, { rows: [["0 5 * * *", "cleanup"]], form });
+      assertEquals(res.status, 400, JSON.stringify(form));
+      assertStringIncludes(await res.text(), "carries no _base stamp");
+    }
+    assertEquals(await Deno.readTextFile(file), CONFIG, "nothing was written");
+
+    // The twin keeps the opt-out: a script that just read the file has no page to be stale.
+    const twin = await call(dir, {
+      json: true,
+      rows: [["0 5 * * *", "cleanup"]],
+      form: { intent: "save" },
+    });
+    assertEquals(twin.status, 200);
+    assertEquals((await twin.json()).applied, false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the editor's rows are labelled, and the add row says it is one", async () => {
+  const dir = await project(TWO_ROWS, { cleanup: task(), digest: task() });
+  try {
+    const page = await (await call(dir)).text();
+    // Each control's accessible name says which row it is and what it holds.
+    assertStringIncludes(page, 'aria-label="Schedule 1 expression (UTC)"');
+    assertStringIncludes(page, 'aria-label="Schedule 1 task"');
+    assertStringIncludes(page, 'aria-label="Remove schedule 1"');
+    assertStringIncludes(page, 'aria-label="Schedule 2 task"');
+    // And a sighted reader gets a caption per control, not three bare boxes.
+    assertStringIncludes(page, 'for="cron-0-expr">Expression (UTC)<');
+    assertStringIncludes(page, 'for="cron-0-task">Task<');
+    // The blank row is visibly the add row: a heading, a placeholder that is a shape rather than
+    // a value, and no remove box for a schedule that does not exist yet.
+    assertStringIncludes(page, "<strong>New schedule</strong>");
+    assertStringIncludes(page, 'aria-label="New schedule expression (UTC)"');
+    assertStringIncludes(page, 'placeholder="m h dom mon dow"');
+    assert(!page.includes('placeholder="0 3 * * *"'), "no placeholder that reads as a value");
+    assert(!page.includes('name="drop.2"'), "the add row has nothing to remove");
+    assertStringIncludes(page, 'name="drop.1"');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("--read-only refuses the write before anything is computed", async () => {
   const dir = await project(CONFIG, { cleanup: task() });
   try {
@@ -447,13 +508,14 @@ Deno.test("enabling history previews a diff, writes nothing, then writes exactly
   const dir = await project(CONFIG, { cleanup: task() });
   const file = join(dir, "denext.config.ts");
   try {
-    const preview = await call(dir, { form: { intent: "history", history: "on" } });
+    const base = stampIn(await (await call(dir)).text());
+    const preview = await call(dir, { form: { intent: "history", history: "on", _base: base } });
     assertEquals(preview.status, 200);
     assertStringIncludes(await preview.text(), "Review the change");
     assertEquals(await Deno.readTextFile(file), CONFIG, "a preview writes nothing");
 
     const applied = await call(dir, {
-      form: { intent: "history", history: "on", confirm: "1" },
+      form: { intent: "history", history: "on", confirm: "1", _base: base },
     });
     assertEquals(applied.status, 303);
     assertEquals(applied.headers.get("location"), "/config/cron?saved=1&history=on");
@@ -505,8 +567,10 @@ Deno.test("the history toggle is refused read-only, and when the file moved unde
     assertEquals(await Deno.readTextFile(file), CONFIG);
 
     // A toggle that names no value is a refusal, not a silent default.
-    const empty = await call(dir, { form: { intent: "history" } });
+    const base = stampIn(await (await call(dir)).text());
+    const empty = await call(dir, { form: { intent: "history", _base: base } });
     assertEquals(empty.status, 400);
+    assertStringIncludes(await empty.text(), "named no value");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -565,6 +629,73 @@ Deno.test("clearing history is refused read-only, and the runs survive", async (
     assertEquals(readTaskHistory({ path }).recent.length, 2, "nothing was deleted");
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a history database symlinked out of the project is neither read nor cleared", async () => {
+  const dir = await project(HISTORY_ON, { cleanup: task() });
+  // The real database lives OUTSIDE the project; the project's `.denext/tasks.db` points at it.
+  const outside = await Deno.makeTempDir({ prefix: "denext_ui_cron_outside_" });
+  const target = join(outside, "tasks.db");
+  const store = taskHistoryRecorder({ path: target });
+  store.record({
+    name: "cleanup",
+    trigger: "manual",
+    startedAt: Date.now(),
+    durationMs: 1,
+    ok: true,
+  });
+  store.close();
+  await Deno.mkdir(join(dir, ".denext"));
+  await Deno.symlink(target, join(dir, ".denext", "tasks.db"));
+  try {
+    const page = await (await call(dir)).text();
+    assertStringIncludes(page, "resolves outside the project");
+    assert(!page.includes("Last result"), "no rows from a file outside the project");
+    const twin = await (await call(dir, { json: true })).json();
+    assertEquals(twin.history.enabled, true);
+    assertEquals(twin.history.available, false);
+    assertStringIncludes(twin.history.reason, "resolves outside the project");
+
+    const clears: Array<Record<string, string>> = [
+      { intent: "clear-history" },
+      { intent: "clear-history", confirm: "1" },
+    ];
+    for (const form of clears) {
+      const res = await call(dir, { form });
+      assertEquals(res.status, 403, JSON.stringify(form));
+      assertStringIncludes(await res.text(), "resolves outside the project");
+    }
+    assertEquals(readTaskHistory({ path: target }).recent.length, 1, "the outside rows survive");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("a history database whose .denext is itself a symlink out of the project is refused too", async () => {
+  const dir = await project(HISTORY_ON, { cleanup: task() });
+  const outside = await Deno.makeTempDir({ prefix: "denext_ui_cron_outside_" });
+  const target = join(outside, "tasks.db");
+  const store = taskHistoryRecorder({ path: target });
+  store.record({
+    name: "cleanup",
+    trigger: "manual",
+    startedAt: Date.now(),
+    durationMs: 1,
+    ok: true,
+  });
+  store.close();
+  await Deno.symlink(outside, join(dir, ".denext"));
+  try {
+    assertStringIncludes(await (await call(dir)).text(), "resolves outside the project");
+    const res = await call(dir, { form: { intent: "clear-history", confirm: "1" } });
+    assertEquals(res.status, 403);
+    assertEquals(readTaskHistory({ path: target }).recent.length, 1, "the outside rows survive");
+  } finally {
+    await Deno.remove(join(dir, ".denext"));
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
   }
 });
 

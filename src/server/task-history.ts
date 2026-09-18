@@ -394,6 +394,15 @@ export function clearTaskHistory(options: TaskHistoryOptions): TaskHistoryCleare
     try {
       d.exec(`PRAGMA busy_timeout = ${BUSY_READ_MS}`);
     } catch { /* keep the default */ }
+    // Only a TABLE is cleared. A `DELETE` against a view runs whatever `INSTEAD OF` trigger the
+    // view carries, so a database file someone else wrote could turn this one statement into
+    // theirs; the schema the recorder creates has no views, and none is honoured here.
+    const kind = d.query<{ type: string }>(
+      "SELECT type FROM sqlite_master WHERE name = 'runs'",
+    )[0]?.type;
+    if (kind !== undefined && kind !== "table") {
+      return { cleared: false, reason: `runs is a ${kind}, not a table — not cleared` };
+    }
     d.exec("DELETE FROM runs");
     return { cleared: true };
   } catch (err) {

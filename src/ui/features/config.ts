@@ -23,7 +23,8 @@
 // project is neither shown nor overwritten, and every write is a `.tmp` + rename. Concurrency:
 // every form carries `_base`, a SHA-256 of the source it was rendered from, and a POST whose
 // stamp no longer matches the file on disk is a `409` — an edit made in a real editor (or a
-// second tab) is never silently lost. A caller that posts no `_base` opts out.
+// second tab) is never silently lost. A browser form that posts no `_base` was not built from a
+// page this editor rendered and is refused as stale; only the `/api/config` twin may omit it.
 
 import { join } from "@std/path";
 import {
@@ -190,16 +191,37 @@ interface ConfigState {
 }
 
 /**
- * Whether a POST is writing against the file it was rendered from. A request that carries no
- * `_base` (the `/api/config` twin, or a script) opts out and is allowed through unchecked.
+ * Why a POST may not write against the file, judged by its `_base` stamp — or `null` when it may.
+ *
+ * Every form this editor renders carries the stamp, so a browser form without one was not built
+ * from a page of this file — a stale tab, or a hand-built post — and skipping the check for it
+ * would make the stale check optional for exactly the requests most likely to be stale. Only the
+ * `/api/config` twin may omit it: a script that has just read the file has no rendered page to
+ * be stale against.
  *
  * @param ctx The request context.
  * @param state The config as it stands on disk right now.
- * @returns `true` when the write may proceed.
+ * @returns The refusal's reason and status, or `null` when the write may proceed.
  */
-async function baseMatches(ctx: UiContext, state: ConfigState): Promise<boolean> {
+async function baseProblem(
+  ctx: UiContext,
+  state: ConfigState,
+): Promise<{ reason: string; status: number } | null> {
   const posted = postedField(ctx, BASE_FIELD);
-  return posted === "" || posted === await stampOf(state.source);
+  if (posted === "") {
+    if (ctx.form === undefined || ctx.json) return null;
+    return {
+      reason: `this form carries no ${BASE_FIELD} stamp, so it cannot be checked against the ` +
+        `${state.name} on disk — nothing was written. Reload the tab and re-apply your change.`,
+      status: 400,
+    };
+  }
+  if (posted === await stampOf(state.source)) return null;
+  return {
+    reason: `${state.name} changed on disk since this form was rendered — nothing was written. ` +
+      "Review the current file below and re-apply your change.",
+    status: 409,
+  };
 }
 
 /** Locate the project's config file: the first name that exists, else where one would go. */
@@ -1077,7 +1099,7 @@ const VIEW_LEAD: Readonly<Record<string, string>> = {
   "/config/routing": "Base path, trailing slash, redirects, rewrites, headers and i18n.",
   "/config/rendering": "Rendering mode, streaming, SPA, images, Tailwind, MDX, Live and cache.",
   "/config/security": "CSP, HSTS, the public env allowlist, and the API body and batch limits.",
-  "/config/advanced": "Experimental flags, compatibility, plugins, project verbs, the raw file.",
+  "/config/advanced": "Feature flags, compatibility, plugins, project verbs, the raw file.",
   "/config/cron": "Scheduled tasks, their expressions, and the run history.",
 };
 
@@ -1613,15 +1635,8 @@ function payload(state: ConfigState, schema: boolean): Record<string, unknown> {
 /** Dispatch one mutation: the raw file, the create offer, or one section. */
 async function mutate(ctx: UiContext, state: ConfigState): Promise<Response> {
   if (ctx.readOnly) return refuse(ctx, state, "read-only", 403);
-  if (!await baseMatches(ctx, state)) {
-    return refuse(
-      ctx,
-      state,
-      `${state.name} changed on disk since this form was rendered — nothing was written. ` +
-        "Review the current file below and re-apply your change.",
-      409,
-    );
-  }
+  const stale = await baseProblem(ctx, state);
+  if (stale !== null) return refuse(ctx, state, stale.reason, stale.status);
   const params = ctx.url.searchParams;
   if (params.get("raw") === "1") return await writeRaw(ctx, state);
   if (params.get("create") === "1") return await writeCreate(ctx, state);

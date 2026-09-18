@@ -10,7 +10,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import type { SqliteDb, SqlValue } from "../src/server/sqlite-cache.ts";
+import { openSqliteFile, type SqliteDb, type SqlValue } from "../src/server/sqlite-cache.ts";
 import type { TaskRunRecord } from "../src/server/tasks.ts";
 import {
   clearTaskHistory,
@@ -308,6 +308,32 @@ Deno.test("clearing a history that never existed is an ordinary answer", async (
     assertEquals(done.cleared, false);
     // Not a raw SQLite string with a filesystem path in it.
     assertEquals(done.reason, "no history recorded yet");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("clearing refuses a `runs` that is a view, so a planted trigger never runs", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_task_history_" });
+  const path = join(dir, "tasks.db");
+  try {
+    // A database file someone else wrote: `runs` is a VIEW whose INSTEAD OF DELETE trigger does
+    // something of its own. `DELETE FROM runs` would run that trigger; the clear must not.
+    const db = openSqliteFile(path);
+    db.exec("CREATE TABLE real_runs (id INTEGER PRIMARY KEY, task TEXT)");
+    db.exec("CREATE TABLE evidence (hit INTEGER)");
+    db.exec("CREATE VIEW runs AS SELECT id, task FROM real_runs");
+    db.exec(
+      "CREATE TRIGGER planted INSTEAD OF DELETE ON runs BEGIN INSERT INTO evidence VALUES (1); END",
+    );
+    db.close();
+
+    const done = clearTaskHistory({ path });
+    assertEquals(done.cleared, false);
+    assertEquals(done.reason, "runs is a view, not a table — not cleared");
+    const check = openSqliteFile(path, { readOnly: true });
+    assertEquals(check.query("SELECT hit FROM evidence"), [], "the trigger never fired");
+    check.close();
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

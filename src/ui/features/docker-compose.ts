@@ -173,9 +173,23 @@ async function readSnapshot(dir: string): Promise<Snapshot> {
   } catch {
     return { name, model: null, base: "" };
   }
-  const { model, reason } = inspectCompose(text);
+  const { model, reason } = inspect(text);
   const base = await stampOf(text);
   return reason === undefined ? { name, text, model, base } : { name, text, model, reason, base };
+}
+
+/**
+ * {@linkcode inspectCompose}, with a throw read as one more way the editor cannot follow the
+ * file. The reader caps alias expansion itself; this is the guard for whatever it did not
+ * foresee, so a file crafted against the parser is an opaque file shown read-only, never a 500.
+ */
+function inspect(text: string): ReturnType<typeof inspectCompose> {
+  try {
+    return inspectCompose(text);
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err);
+    return { model: null, reason: `reading it failed (${why})` };
+  }
 }
 
 /**
@@ -197,6 +211,14 @@ export async function composeJson(
 /** Whether `value` is a plain object. */
 function isRecord(value: unknown): value is Dict {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether this POST is a browser form submit to the panel itself — the requests every rendered
+ * form makes — as opposed to the `/api/docker` twin, which a script drives with either body.
+ */
+function isBrowserForm(ctx: UiContext): boolean {
+  return ctx.form !== undefined && !ctx.json;
 }
 
 /** Read posted fields from the form body, else from the JSON body. */
@@ -222,8 +244,20 @@ export function isComposeSubmit(ctx: UiContext): boolean {
   return getter(ctx)(EDITOR_FIELD) === EDITOR_VALUE;
 }
 
-/** The file, when it can be edited against the stamp the page was rendered with. */
-function editableFile(snap: Snapshot, base: string): Editable | Blocked {
+/**
+ * The file, when it can be edited against the stamp the page was rendered with.
+ *
+ * A browser form always carries `_base` (every editor form is rendered with it), so a form
+ * without one is not a form this page rendered — a stale or hand-built post — and is refused
+ * rather than let through unchecked. Only the `/api/docker` twin may omit the stamp: a script
+ * that has just read the file has no rendered page to be stale against.
+ *
+ * @param snap The file as it stands on disk.
+ * @param base The posted stamp (`""` when none was posted).
+ * @param stampRequired Whether an absent stamp is a refusal (a browser form) or an opt-out
+ * (the JSON twin).
+ */
+function editableFile(snap: Snapshot, base: string, stampRequired: boolean): Editable | Blocked {
   if (snap.text === undefined) {
     return {
       reason: `there is no ${snap.name} to edit — write the Docker files first`,
@@ -233,6 +267,13 @@ function editableFile(snap: Snapshot, base: string): Editable | Blocked {
   if (snap.model === null) {
     return {
       reason: `${snap.name} is read-only here — the editor cannot follow it: ${snap.reason}`,
+      status: 400,
+    };
+  }
+  if (base === "" && stampRequired) {
+    return {
+      reason: `this form carries no ${BASE_FIELD} stamp, so it cannot be checked against the ` +
+        `${snap.name} on disk — nothing was written. Reload the page and re-apply your change.`,
       status: 400,
     };
   }
@@ -266,7 +307,7 @@ export async function composeSubmit(
       ? Promise.resolve(jsonResponse({ ok: false, reason, model: snap.model, diff }, status))
       : refusePanel(h(Refusal, { reason, diff }), status);
   if (write && ctx.readOnly) return await deny("read-only", 403);
-  const file = editableFile(snap, get(BASE_FIELD) ?? get("base") ?? "");
+  const file = editableFile(snap, get(BASE_FIELD) ?? get("base") ?? "", isBrowserForm(ctx));
   if ("reason" in file) return await deny(file.reason, file.status);
   const ops = requestedOps(ctx, get, file.model);
   if (typeof ops === "string") return await deny(ops, 400);

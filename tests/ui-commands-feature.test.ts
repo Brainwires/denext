@@ -828,7 +828,7 @@ Deno.test("read-only renders the run form disabled and still refuses the run", a
 
 // ── --offline ────────────────────────────────────────────────────────────────
 
-Deno.test("--offline: discovery and every run start --deny-net --cached-only; online argv is unchanged", async () => {
+Deno.test("--offline: discovery and every run start --deny-net --cached-only; only discovery adds --deny-run", async () => {
   await withProject(listing([GREET]), async (dir) => {
     const seen: string[][] = [];
     setCommandRunner(stubRunner(["ran"], 0, seen));
@@ -838,11 +838,14 @@ Deno.test("--offline: discovery and every run start --deny-net --cached-only; on
         ctx(dir, { offline, json: true, method: "POST", form: runBody("greet") }),
       );
     assertEquals((await (await post(true)).json()).ok, true);
-    assertEquals(seen.map((argv) => argv.slice(0, 4)), [
-      ["run", "-A", "--deny-net", "--cached-only"],
-      ["run", "-A", "--deny-net", "--cached-only"],
+    // Discovery evaluates the config and may not spawn; a run keeps --allow-run, because the
+    // verb itself may legitimately shell out (the panel's note says what that leaves open).
+    assertEquals(seen.map((argv) => argv.slice(0, 5)), [
+      ["run", "-A", "--deny-net", "--cached-only", "--deny-run"],
+      ["run", "-A", "--deny-net", "--cached-only", seen[1][4]],
     ]);
-    assertEquals(seen.map((argv) => argv[5]), ["commands", "greet"], "one discovery, one run");
+    assertStringIncludes(seen[1][4], "cli.ts");
+    assertEquals([seen[0][6], seen[1][5]], ["commands", "greet"], "one discovery, one run");
 
     seen.length = 0;
     assertEquals((await (await post(false)).json()).ok, true);
@@ -861,6 +864,7 @@ Deno.test("--offline: the panel says every verb runs without the network", async
       await (await commandsPanel(new Request("http://127.0.0.1/commands"), ctx(dir, { offline })))
         .text();
     assertStringIncludes(await page(true), "every verb runs with --deny-net --cached-only");
+    assertStringIncludes(await page(true), "may still spawn processes of its own");
     assert(!(await page(false)).includes("--deny-net"));
   });
 });

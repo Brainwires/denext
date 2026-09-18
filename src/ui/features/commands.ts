@@ -26,6 +26,10 @@
 //
 // Under `denext ui --offline` both children — discovery and every run — start with `--deny-net
 // --cached-only` after `-A` (`proc.ts`): a verb can neither open a socket nor download a module.
+// Discovery adds `--deny-run`, because evaluating the config is all it does and a config that
+// spawned could reach the network through a grandchild. A run keeps `--allow-run` — a project
+// verb may legitimately shell out — so what THAT verb spawns is outside the flags, and the
+// panel's offline note says so.
 
 import { type FlagSpec, GLOBAL_FLAGS, type PositionalSpec } from "../../cli/command.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
@@ -60,7 +64,8 @@ const DOCS = "https://denext.dev/docs/plugins#project-commands";
 
 /** What the panel says under `--offline`. */
 const OFFLINE_NOTE = "Offline — every verb runs with --deny-net --cached-only: it can neither " +
-  "open a socket nor download a module.";
+  "open a socket nor download a module. A verb may still spawn processes of its own, and " +
+  "those are not covered by these flags.";
 
 /**
  * How long the whole discovery subprocess may take by default before the panel gives up on it.
@@ -223,7 +228,7 @@ function flatten(listing: CommandListing): UiCommandList {
 async function discover(dir: string, offline: boolean): Promise<UiCommandList> {
   const lines: string[] = [];
   const argv = [
-    ...cliInvocation({ offline, dir }),
+    ...cliInvocation({ offline, dir, denyRun: true }),
     "commands",
     "--json",
     "--timeout",
@@ -261,7 +266,8 @@ function cacheable(list: UiCommandList): boolean {
  * for {@linkcode LIST_TTL_MS}; a timeout or a failure is never cached.
  *
  * @param dir The project directory.
- * @param offline `denext ui --offline`: the discovery child runs `--deny-net --cached-only`.
+ * @param offline `denext ui --offline`: the discovery child runs `--deny-net --cached-only
+ *   --deny-run`.
  * @returns The verb list, plus whether discovery was cut short by the budget or a bad config.
  */
 export function listCommands(dir: string, offline = false): Promise<UiCommandList> {

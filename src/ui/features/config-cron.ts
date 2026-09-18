@@ -63,7 +63,13 @@ import {
   type TaskHistoryRow,
 } from "../../server/task-history.ts";
 import { deleteConfigValue, setConfigValue } from "../../build/config-edit.ts";
-import { readContained, StaleWriteError, stampOf, writeFileAtomic } from "../security.ts";
+import {
+  readContained,
+  StaleWriteError,
+  stampOf,
+  uiSafeJoin,
+  writeFileAtomic,
+} from "../security.ts";
 import { confirmed, postedField } from "./plugins.ts";
 
 /** Where the feature is documented. */
@@ -195,6 +201,12 @@ interface CronState {
   readonly source: string;
   /** The SHA-256 of that source — the `_base` stamp every form carries. */
   readonly base: string;
+  /**
+   * The run-history database, contained in the project — or `null` when `.denext/tasks.db` (or
+   * `.denext` itself) is a symlink resolving outside it, in which case the panel neither reads
+   * nor clears it. See {@linkcode historyPath}.
+   */
+  readonly historyDb: string | null;
 }
 
 /** The denext config as this panel reads it: its name, its bytes, and its stamp. */
@@ -281,7 +293,7 @@ function lastMeaningful(lines: readonly string[]): string | null {
 }
 
 /** The listing half of the state — what the discovery child found. */
-type Listing = Omit<CronState, "configName" | "source" | "base">;
+type Listing = Omit<CronState, "configName" | "source" | "base" | "historyDb">;
 
 /** An empty listing carrying the reason discovery produced nothing. */
 function empty(error?: string): Listing {
@@ -295,10 +307,21 @@ function empty(error?: string): Listing {
   };
 }
 
-/** Spawn `denext task --list --json` and read the listing back. Never rejects. */
+/**
+ * Spawn `denext task --list --json` and read the listing back. Never rejects. Under `offline`
+ * the child also gets `--deny-run`: it evaluates the project's config, and a config that spawns
+ * would otherwise reach the network through a grandchild `--deny-net` never sees.
+ */
 async function discover(dir: string, offline: boolean): Promise<Listing> {
   const lines: string[] = [];
-  const argv = [...cliInvocation({ offline, dir }), "task", "--list", "--json", "--cwd", dir];
+  const argv = [
+    ...cliInvocation({ offline, dir, denyRun: true }),
+    "task",
+    "--list",
+    "--json",
+    "--cwd",
+    dir,
+  ];
   try {
     await runDeno(argv, {
       cwd: dir,
@@ -335,13 +358,13 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
  * hand-wrote, with a stamp that lets it through.
  *
  * @param dir The project directory.
- * @param offline `denext ui --offline`: the child runs `--deny-net --cached-only`.
+ * @param offline `denext ui --offline`: the child runs `--deny-net --cached-only --deny-run`.
  * @returns The state the panel renders.
  */
 async function readState(dir: string, offline: boolean): Promise<CronState> {
   const config = await readConfigFile(dir);
   const listing = await listingFor(dir, offline, config.base);
-  return { ...listing, ...config };
+  return { ...listing, ...config, historyDb: await historyPath(dir) };
 }
 
 /**
@@ -400,12 +423,25 @@ const HISTORY_WINDOW_DAYS = 7;
  * wrote is data, not code — strictly less dangerous than the TypeScript source this panel
  * already reads.
  *
+ * Joined through the same containment gate as that source (`uiSafeJoin`): a `.denext` or a
+ * `tasks.db` symlinked out of the project is not opened — not for the read, and not for the
+ * `DELETE` behind Clear history — because a database is opened by path, and node:sqlite
+ * follows the link.
+ *
  * @param dir The project directory.
- * @returns The database path.
+ * @returns The database path, or `null` when it resolves outside the project.
  */
-function historyPath(dir: string): string {
-  return join(dir, ".denext", TASK_HISTORY_DB);
+async function historyPath(dir: string): Promise<string | null> {
+  try {
+    return await uiSafeJoin(dir, join(".denext", TASK_HISTORY_DB));
+  } catch {
+    return null;
+  }
 }
+
+/** What the panel says about a history database it will not open. */
+const HISTORY_ESCAPED = `.denext/${TASK_HISTORY_DB} resolves outside the project — the UI does ` +
+  "not follow it";
 
 /**
  * The history half of the JSON twin.
@@ -414,15 +450,17 @@ function historyPath(dir: string): string {
  * deserves a TTL, but a `SELECT … LIMIT 20` does not, and sharing that cache would hide a
  * just-finished run for seconds.
  *
- * @param state The panel state (only `history` and `dir` matter).
- * @param dir The project directory.
+ * @param state The panel state (only `history` and `historyDb` matter).
  * @returns `available`, the window, and the rows — never `enabled`, which the caller supplies.
  */
-function historyPayload(state: CronState, dir: string): Record<string, unknown> {
+function historyPayload(state: CronState): Record<string, unknown> {
   // Off: there is nothing to read, and opening the file would be the UI creating state the app
   // never asked for.
   if (!state.history) return { available: false, windowDays: HISTORY_WINDOW_DAYS };
-  const read = readTaskHistory({ path: historyPath(dir) }, HISTORY_WINDOW_DAYS);
+  if (state.historyDb === null) {
+    return { available: false, reason: HISTORY_ESCAPED, windowDays: HISTORY_WINDOW_DAYS };
+  }
+  const read = readTaskHistory({ path: state.historyDb }, HISTORY_WINDOW_DAYS);
   return {
     available: read.available,
     ...(read.reason === undefined ? {} : { reason: read.reason }),
@@ -447,7 +485,10 @@ function History(
   { ctx, state }: { readonly ctx: UiContext; readonly state: CronState },
 ): VNode {
   if (!state.history) return h(HistoryOff, { ctx, state });
-  const read = readTaskHistory({ path: historyPath(ctx.dir) }, HISTORY_WINDOW_DAYS);
+  if (state.historyDb === null) {
+    return h("p", { class: "lead" }, `Enabled, but the history is not read: ${HISTORY_ESCAPED}.`);
+  }
+  const read = readTaskHistory({ path: state.historyDb }, HISTORY_WINDOW_DAYS);
   if (!read.available) {
     return h(
       "p",
@@ -625,13 +666,12 @@ function LastResult({ row }: { readonly row: TaskHistoryRow | undefined }): VNod
  * schedule, and the answer is per TASK anyway: a task scheduled under two expressions has one
  * history, shown twice.
  *
- * @param ctx The request context.
  * @param state The panel state.
  * @returns The lookup, or `null` when history is off or unreadable.
  */
-function standingOf(ctx: UiContext, state: CronState): Map<string, TaskHistoryRow> | null {
-  if (!state.history) return null;
-  const read = readTaskHistory({ path: historyPath(ctx.dir) }, HISTORY_WINDOW_DAYS);
+function standingOf(state: CronState): Map<string, TaskHistoryRow> | null {
+  if (!state.history || state.historyDb === null) return null;
+  const read = readTaskHistory({ path: state.historyDb }, HISTORY_WINDOW_DAYS);
   if (!read.available) return null;
   return new Map(read.tasks.map((row) => [row.task, row]));
 }
@@ -746,7 +786,7 @@ function CronPanel(
     notice ?? null,
     h(SchedulerNote, { state }),
     h("h2", null, "Schedule"),
-    h(Schedules, { state, standing: standingOf(ctx, state) }),
+    h(Schedules, { state, standing: standingOf(state) }),
     h("h2", null, "Tasks"),
     h(Tasks, { state }),
     state.error === undefined ? h("h2", null, "Run history") : null,
@@ -927,21 +967,23 @@ function ScheduleBuilder({ parts }: { readonly parts: CronParts }): VNode {
 
 /** A task picker, or a plain text field when discovery found no tasks to pick from. */
 function TaskField(
-  { id, value, names }: {
+  { id, value, names, label }: {
     readonly id: string;
     readonly value: string;
     readonly names: readonly string[];
+    /** The accessible name — which row this is, and that it is the task. */
+    readonly label: string;
   },
 ): VNode {
   if (names.length === 0) {
-    return h(Input, { id, name: "task", value, ariaLabel: "Task name" });
+    return h(Input, { id, name: "task", value, ariaLabel: label });
   }
   // The current value is offered even when it names no task, so an entry that already points at
   // a missing task is editable rather than silently rewritten to something else on save.
   const options = names.includes(value) || value === "" ? names : [value, ...names];
   return h(
     "select",
-    { id, name: "task", "aria-label": "Task" },
+    { id, name: "task", "aria-label": label },
     // The add row starts on a blank choice. A `<select>` always posts SOMETHING — with no blank
     // option a browser posts the first task's name for the untouched add row, and every save
     // was then refused as "<task> has no cron expression", whichever row was actually edited.
@@ -950,35 +992,68 @@ function TaskField(
   );
 }
 
-/** One editable row: the expression, the task it runs, and a checkbox that drops it. */
+/**
+ * A placeholder that reads as the SHAPE of an expression, never as one: `0 3 * * *` in an empty
+ * field looked like a value the add row already had, and a row that looks filled in is one
+ * nobody fills in.
+ */
+const EXPR_PLACEHOLDER = "m h dom mon dow";
+
+/**
+ * One editable row: the expression, the task it runs, and — for a schedule the file has — a
+ * checkbox that drops it. Each control carries a visible caption (`Expression (UTC)`, `Task`),
+ * and its accessible name says which row it belongs to, so a screen reader hears "Schedule 2
+ * task" rather than three unlabelled fields per row. The add row has no remove box: there is
+ * nothing to remove, and a checkbox there read as if the blank row were already a schedule.
+ */
 function ScheduleFields(
-  { index, cron, task, names }: {
+  { index, cron, task, names, adding }: {
     readonly index: number;
     readonly cron: string;
     readonly task: string;
     readonly names: readonly string[];
+    /** The blank row that adds a schedule, rather than one the config declares. */
+    readonly adding?: boolean;
   },
 ): VNode {
   const id = `cron-${index}`;
+  const which = adding ? "New schedule" : `Schedule ${index + 1}`;
   return h(
     "div",
     { class: "field" },
+    adding ? h("p", { class: "flush-sm" }, h("strong", null, which)) : null,
     h(
       Row,
       null,
-      h(Input, {
-        id: `${id}-expr`,
-        name: "cron",
-        value: cron,
-        placeholder: "0 3 * * *",
-        ariaLabel: "Cron expression (UTC)",
-      }),
-      h(TaskField, { id: `${id}-task`, value: task, names }),
       h(
         "label",
+        { class: "builder-field", for: `${id}-expr` },
+        "Expression (UTC)",
+        h(Input, {
+          id: `${id}-expr`,
+          name: "cron",
+          value: cron,
+          placeholder: EXPR_PLACEHOLDER,
+          ariaLabel: `${which} expression (UTC)`,
+        }),
+      ),
+      h(
+        "label",
+        { class: "builder-field", for: `${id}-task` },
+        "Task",
+        h(TaskField, { id: `${id}-task`, value: task, names, label: `${which} task` }),
+      ),
+      adding ? null : h(
+        "label",
         { for: `${id}-drop` },
-        h(Input, { id: `${id}-drop`, type: "checkbox", name: `drop.${index}`, value: "on" }),
-        " remove",
+        h(Input, {
+          id: `${id}-drop`,
+          type: "checkbox",
+          name: `drop.${index}`,
+          value: "on",
+          ariaLabel: `Remove ${which.toLowerCase()}`,
+        }),
+        " Remove",
       ),
     ),
     h(CronPreview, { cron }),
@@ -1073,7 +1148,14 @@ function ScheduleEditor(
           names,
         })
       ),
-      h(ScheduleFields, { key: "new", index: rows.length, cron: draft, task: "", names }),
+      h(ScheduleFields, {
+        key: "new",
+        index: rows.length,
+        cron: draft,
+        task: "",
+        names,
+        adding: true,
+      }),
       // The ordinary submit is UNNAMED so `ui.js` recognises it as this form's Save and can hold
       // it inert until something actually changes; its intent rides in a hidden field. The
       // destructive one is named, and a named submitter's value wins over the hidden field.
@@ -1136,7 +1218,7 @@ function PreviewView(
 const panelResponse = panelResponder("Cron", "/config/cron");
 
 /** The machine view (the `/api/config/cron` payload). */
-function payload(state: CronState, dir: string): Record<string, unknown> {
+function payload(state: CronState): Record<string, unknown> {
   return {
     tasks: state.tasks,
     schedules: state.schedules.map((entry) => ({
@@ -1147,7 +1229,7 @@ function payload(state: CronState, dir: string): Record<string, unknown> {
     })),
     configScheduled: state.configScheduled,
     denoCron: state.denoCron,
-    history: { enabled: state.history, ...historyPayload(state, dir) },
+    history: { enabled: state.history, ...historyPayload(state) },
     ...(state.error === undefined ? {} : { error: state.error }),
   };
 }
@@ -1163,7 +1245,7 @@ function payload(state: CronState, dir: string): Record<string, unknown> {
 export async function cronPanel(_request: Request, ctx: UiContext): Promise<Response> {
   const state = await readState(ctx.dir, ctx.offline === true);
   if (ctx.method === "POST") return await submit(ctx, state);
-  if (ctx.json) return jsonResponse({ ok: true, ...payload(state, ctx.dir) });
+  if (ctx.json) return jsonResponse({ ok: true, ...payload(state) });
   // A write redirects here with `?saved=1` (POST/redirect/GET, so a reload never re-posts); say
   // so, or the page it lands on looks identical to the one it left and the write reads as a no-op.
   const cleared = ctx.url.searchParams.get("cleared") === "1";
@@ -1192,19 +1274,42 @@ export async function cronPanel(_request: Request, ctx: UiContext): Promise<Resp
 }
 
 /**
- * The refusal for a form built against a file that has since changed, or `null` when it has not.
+ * Why a form's `_base` stamp refuses the write, or `null` when it lets it through.
  *
- * Both writers carry `_base`, and both must refuse the same way — a second copy of this message
- * is how two paths drift into disagreeing about what a stale form means.
+ * Every form this page renders carries the stamp, so a browser form without one was not built
+ * from this page — a stale tab, or a hand-built post — and it is refused rather than let through
+ * unchecked. Only the `/api/config/cron` twin may omit it: a script that has just read the file
+ * has no rendered page to be stale against. Both writers go through here, so a second copy of
+ * either message cannot drift into disagreeing about what a stale form means.
  *
  * @param ctx The request context.
  * @param state The panel state.
- * @returns A `409`, or `null` when the stamp still matches.
+ * @returns The refusal, or `null` when the stamp matches (or the twin opted out).
+ */
+function baseProblem(ctx: UiContext, state: CronState): Refusal | null {
+  const posted = postedField(ctx, BASE_FIELD);
+  if (posted === "") {
+    if (ctx.form === undefined || ctx.json) return null;
+    return {
+      reason: `this form carries no ${BASE_FIELD} stamp, so it cannot be checked against the ` +
+        `${state.configName} on disk — nothing was written. Reload the tab and re-apply your change.`,
+      status: 400,
+    };
+  }
+  if (posted === state.base) return null;
+  return { reason: `${state.configName} ${STALE_BASE}`, status: 409 };
+}
+
+/**
+ * The refusal for a form whose stamp is missing or stale, or `null` when the write may proceed.
+ *
+ * @param ctx The request context.
+ * @param state The panel state.
+ * @returns A `400`/`409`, or `null` when the stamp still matches.
  */
 function staleBase(ctx: UiContext, state: CronState): Response | null {
-  const posted = postedField(ctx, BASE_FIELD);
-  if (posted === "" || posted === state.base) return null;
-  return refuse(ctx, state, `${state.configName} ${STALE_BASE}`, 409);
+  const problem = baseProblem(ctx, state);
+  return problem === null ? null : refuse(ctx, state, problem.reason, problem.status);
 }
 
 /**
@@ -1374,11 +1479,8 @@ function rowValue(ctx: UiContext, state: CronState): Proposal {
 
 /** What this POST proposes to write: its stamp checked, its intent named, its value read. */
 function proposed(ctx: UiContext, state: CronState): Proposal {
-  const posted = postedField(ctx, BASE_FIELD);
-  if (posted !== "" && posted !== state.base) {
-    // The message lives in `staleBase`; this resolver only reports that it is stale.
-    return { no: { reason: `${state.configName} ${STALE_BASE}`, status: 409 } };
-  }
+  const problem = baseProblem(ctx, state);
+  if (problem !== null) return { no: problem };
   const intent = postedField(ctx, INTENT_FIELD);
   if (intent === INTENT_CLEAR) return { value: {} };
   if (intent !== INTENT_SAVE) {
@@ -1462,17 +1564,18 @@ function ConfirmClear(
 }
 
 function submitClearHistory(ctx: UiContext, state: CronState): Response {
+  if (state.historyDb === null) return refuse(ctx, state, HISTORY_ESCAPED, 403);
   // Deleting run data cannot be previewed as a diff — no file changes — so the confirm step says
   // how much goes instead. Every other write here is two steps, and so is this.
   if (!confirmed(ctx)) {
-    const read = readTaskHistory({ path: historyPath(ctx.dir) }, HISTORY_WINDOW_DAYS);
+    const read = readTaskHistory({ path: state.historyDb }, HISTORY_WINDOW_DAYS);
     // The window total, not `recent.length`: the feed is capped at 20, so a project with
     // hundreds of runs would otherwise be told "at least 20", which is true but useless.
     const count = read.tasks.reduce((n, row) => n + row.successes + row.failures, 0);
     const body = h(ConfirmClear, { ctx, count, windowDays: read.windowDays });
     return panelResponse(ctx, renderView(h(CronPanel, { ctx, state, body })), 409);
   }
-  const done = clearTaskHistory({ path: historyPath(ctx.dir) });
+  const done = clearTaskHistory({ path: state.historyDb });
   if (!done.cleared) {
     return refuse(ctx, state, `the history could not be cleared: ${done.reason}`, 422);
   }
