@@ -67,6 +67,19 @@ and this project adheres to
 
 ### Added
 
+- `denext.config.ts` gains the production-server keys `canonicalOrigin`, `trustForwardedHeaders`,
+  `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes` and `cacheKeyParams`
+  — validated at boot and forwarded by `denext start` and `denext dev`. They were `createApp()`
+  options only, so a stock deployment behind a proxy that rewrites `Host` had no fix for every
+  Server Action answering 403, and no way to raise the 1 MiB action-body cap. When the config
+  leaves one unset, `DENEXT_CANONICAL_ORIGIN`, `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`
+  and `DENEXT_MAX_CONCURRENCY` fill it in (config > env > default).
+- `instrumentation.ts` may export `onRequest(info)` beside `register` and `onRequestError`:
+  called once after every response with method, path, status, duration and request id under
+  both servers — request metrics without a custom server.
+- `/_denext/health` reports `cacheStore: "sqlite" | "memory" | "custom"` beside `cache`, so a
+  silent fall-back to the per-process memory store is visible from the probe.
+
 - **A function prop that cannot cross the server→client boundary now says so.** A Server
   Component passing `onClick={() => …}` (or any plain function) to a `"use client"` component —
   Next's "Event handlers cannot be passed to Client Component props", the first mistake most
@@ -172,6 +185,16 @@ and this project adheres to
 
 ### Changed
 
+- `denext create` scaffolds the `start` task with `--allow-write=.denext`: the durable
+  `node:sqlite` cache is the default and, without the grant, production ran on the memory store
+  in silence. When the durable cache cannot open, denext now logs one boot line in every mode
+  naming the path and the grant (it was dev-only).
+- `denext generate docker` and the Project UI's Docker panel build an image that runs as the
+  unprivileged `deno` user (with `/app` owned by it so `.denext/cache.db` stays writable),
+  layer-caches `deno.json`/`deno.lock` + `deno install` before `COPY . .`, and carries a live
+  `HEALTHCHECK` on `/_denext/health`; the static image gets the same user and dependency layer.
+- The userland cron scheduler (every plain-Deno deployment) fires a minute at most once: a
+  wall-clock step backwards no longer re-fires a minute that already ran.
 - **The `experimental` config block graduated.** Everything denext shipped under it is denext's
   own finished work, and the label only kept developers from using it, so `reactCompiler`,
   `asyncContext` and `features` are now top-level `denext.config.ts` fields beside the earlier
