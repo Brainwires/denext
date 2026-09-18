@@ -7,7 +7,7 @@
 //   * a no-JS form post, which navigates and rebuilds the document (and with it `ui.js`'s one
 //     `EventSource`);
 //   * a JS-on post, where `swapPanel` replaces `#panel` and the `<pre class="out">` inside it;
-//   * opening the wizard in a second tab, or reloading the first.
+//   * opening `/dev` in a second tab, or reloading the first.
 //
 // So the lines are also kept here and rendered into the panel on every request. The SSE frames
 // stay — they are what makes the output live — but they are no longer the only copy, which is

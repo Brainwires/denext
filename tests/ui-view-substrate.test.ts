@@ -209,7 +209,7 @@ Deno.test("renderPage takes a component tree, a rendered fragment, or a markup s
 
 Deno.test("OpForm renders its golden markup: token, hidden fields, extras, button", () => {
   const options = {
-    action: '/wizard?a="b"',
+    action: '/setup?a="b"',
     label: "Apply <this> & that",
     fields: { op: "denojson", confirm: "1", odd: `"'<>&` },
     className: "op",
@@ -218,7 +218,7 @@ Deno.test("OpForm renders its golden markup: token, hidden fields, extras, butto
   const extra = h("input", { type: "hidden", name: "task", value: "build" });
   assertEquals(
     toHtml(renderView(h(OpForm, { csrf: `tok"&`, ...options, extra }))),
-    '<form method="post" action="/wizard?a=&quot;b&quot;" class="op">' +
+    '<form method="post" action="/setup?a=&quot;b&quot;" class="op">' +
       '<input type="hidden" name="_csrf" value="tok&quot;&amp;">' +
       '<input type="hidden" name="op" value="denojson">' +
       '<input type="hidden" name="confirm" value="1">' +

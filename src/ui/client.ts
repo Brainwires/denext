@@ -461,7 +461,7 @@ document.addEventListener("submit", (event) => {
   submit(form, event.submitter).catch((error) => console.error("denext ui:", error));
 });
 
-// Server-pushed events: progress broadcast to every open page, the wizard's dev-server run,
+// Server-pushed events: progress broadcast to every open page, the dev server's run,
 // and the --ui-dev reload. Each frame is one JSON object with a "type"; anything unknown is
 // ignored, so a newer server never breaks an older page.
 

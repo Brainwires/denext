@@ -223,7 +223,7 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
 }
 
 /**
- * The `deno.json` a fresh `denext create` writes — also the template the UI's setup wizard
+ * The `deno.json` a fresh `denext create` writes — also the template the UI's Setup page
  * diffs an existing project's config against.
  *
  * @param opts The scaffold options (only the feature flags are read).

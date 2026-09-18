@@ -112,9 +112,9 @@ Deno.test("denext ui: Stop swaps the panel in place — no navigation, which is 
     // Reconstructing the other spelling is a different origin, so the cookie is never sent and
     // every panel answers a refusal instead.
     await page.goto(server.url); // handshake first, so the cookie carries the next navigation
-    await page.goto(`${new URL(server.url).origin}/wizard`);
+    await page.goto(`${new URL(server.url).origin}/dev`);
 
-    // A dev server is published, so the Finish step offers Stop.
+    // A dev server is published, so the page offers Stop.
     await pollFor(page, `document.body.textContent.indexOf('Stop denext dev') !== -1`);
 
     // A full navigation would rebuild the document and clear this — which is exactly what the
@@ -122,7 +122,7 @@ Deno.test("denext ui: Stop swaps the panel in place — no navigation, which is 
     await page.evaluate("window.__noReload = true");
 
     const button = await page.$("button");
-    assert(button, "the Finish step must render a submit button");
+    assert(button, "the dev page must render a submit button");
     await page.evaluate(
       `Array.from(document.querySelectorAll('button'))` +
         `.find((b) => b.textContent.trim() === 'Stop denext dev').click()`,
@@ -170,7 +170,7 @@ Deno.test("denext ui: a panel swap re-renders without losing the page's other pa
     const page = await browser.newPage();
     const errors = collectConsoleErrors(page);
     await page.goto(server.url);
-    await page.goto(`${new URL(server.url).origin}/wizard`);
+    await page.goto(`${new URL(server.url).origin}/setup`);
 
     // The shell (nav) and the panel are separate: a fragment swap replaces only `#panel`, so
     // the navigation must still be there afterwards. This is what keeps `ui.js` an enhancement
@@ -219,11 +219,11 @@ Deno.test("denext ui: the sidebar navigates without a reload, and Back comes hom
     // A full navigation rebuilds the document and clears this.
     await page.evaluate("window.__noReload = true");
 
-    const link = await page.$('.sidebar nav a[href="/wizard"]');
-    assert(link, "the sidebar must link to the wizard");
+    const link = await page.$('.sidebar nav a[href="/setup"]');
+    assert(link, "the sidebar must link to Setup");
     await link.click();
 
-    await pollFor(page, `location.pathname === "/wizard"`);
+    await pollFor(page, `location.pathname === "/setup"`);
     await pollFor(page, `!!document.querySelector("#panel")`);
     assertEquals(
       await page.evaluate("window.__noReload === true"),
@@ -236,7 +236,7 @@ Deno.test("denext ui: the sidebar navigates without a reload, and Back comes hom
       await page.evaluate(
         `document.querySelector('.sidebar nav a[aria-current="page"]').getAttribute("href")`,
       ),
-      "/wizard",
+      "/setup",
       "aria-current must follow the panel on screen",
     );
 
@@ -683,8 +683,8 @@ Deno.test("denext ui: leaving a config view with unsaved edits asks first", asyn
     await pollFor(page, `!!document.querySelector('form[data-dirty-track][data-dirty="1"]')`);
 
     // Now the same click has to stop and ask instead of swapping the panel away.
-    const away = await page.$('.sidebar nav a[href="/wizard"]');
-    assert(away, "the sidebar must link to the wizard");
+    const away = await page.$('.sidebar nav a[href="/setup"]');
+    assert(away, "the sidebar must link to Setup");
     await away.click();
     await pollFor(page, `!!document.querySelector("dialog.nav-guard[open]")`);
     assertEquals(
@@ -719,7 +719,7 @@ Deno.test("denext ui: leaving a config view with unsaved edits asks first", asyn
       `[...document.querySelectorAll("dialog.nav-guard button")]
         .find((b) => b.textContent === "Discard").click()`,
     );
-    await pollFor(page, `location.pathname === "/wizard"`);
+    await pollFor(page, `location.pathname === "/setup"`);
 
     assertNoConsoleErrors(errors);
   } finally {
@@ -745,10 +745,10 @@ Deno.test("denext ui: a task's output streams into the panel's sink as it runs",
     const page = await browser.newPage();
     const errors = collectConsoleErrors(page);
     await page.goto(server.url);
-    await page.goto(`${new URL(server.url).origin}/wizard`);
+    await page.goto(`${new URL(server.url).origin}/tasks`);
 
-    // The Tasks step lists the declared task as a real form posting to /tasks/run, with the
-    // empty output sink `ui.js` streams into next to it.
+    // The page lists the declared task as a real form posting to /tasks/run, with the empty
+    // output sink `ui.js` streams into below it.
     await pollFor(page, `!!document.querySelector('form.op input[name="task"][value="hello"]')`);
     assertEquals(
       await page.evaluate(`document.querySelector("#panel pre.out").textContent`),

@@ -2,10 +2,10 @@
 // back comment-preservingly), the parsed document, and the task table.
 //
 // One reader for both callers: `routes.ts` asks "which task names may `/tasks/run` spawn?"
-// (the names alone), while the wizard needs the file's path and text for the merge preview in
+// (the names alone), while Setup needs the file's path and text for the merge preview in
 // step 3 and each task's command line for step 8. It lives here rather than in `routes.ts`
 // because a feature module importing `routes.ts` would close an import cycle
-// (`routes.ts` → `features/wizard.ts`). Nothing here evaluates project code: `deno.json` is
+// (`routes.ts` → `features/setup.ts`). Nothing here evaluates project code: `deno.json` is
 // *data*.
 
 import { parse as parseJsonc } from "@std/jsonc";

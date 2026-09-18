@@ -41,7 +41,7 @@ import { dockerPanel } from "./features/docker.ts";
 import { desktopPanel } from "./features/desktop.ts";
 import { devPanel } from "./features/dev.ts";
 import { tasksPanel } from "./features/tasks.ts";
-import { wizardPanel } from "./features/wizard.ts";
+import { setupPanel } from "./features/setup.ts";
 import { commandsPanel } from "./features/commands.ts";
 
 /** One feature panel: its HTML path, the methods it answers, and its module's handler. */
@@ -73,7 +73,7 @@ const FEATURES: readonly FeatureRoute[] = [
   { path: "/desktop", methods: ["GET"], handle: desktopPanel },
   { path: "/dev", methods: ["GET", "POST"], handle: devPanel },
   { path: "/tasks", methods: ["GET"], handle: tasksPanel },
-  { path: "/wizard", methods: ["GET", "POST"], handle: wizardPanel },
+  { path: "/setup", methods: ["GET", "POST"], handle: setupPanel },
   { path: "/commands", methods: ["GET", "POST"], handle: commandsPanel },
 ];
 
@@ -126,7 +126,7 @@ const CARD_LEAD: Record<string, string> = {
   "/desktop": "Set up code signing for a packaged desktop build.",
   "/dev": "Start and stop the project's dev server, and watch its output.",
   "/tasks": "Run the scripts your deno.json declares, streaming their output.",
-  "/wizard": "Take a fresh clone to a running dev server.",
+  "/setup": "Check what this project needs to run, and write the missing pieces.",
   "/commands": "Run this project's own denext verbs.",
 };
 
@@ -170,7 +170,7 @@ function overviewCards(): NavItem[] {
 /**
  * What the overview's status block says about the project — read from its files alone. No
  * subprocess and no HTTP probe: the page must open instantly, and whether the dev server
- * `dev.json` names is really answering is the Wizard's job to find out.
+ * `dev.json` names is really answering is the Dev page's job to find out.
  */
 interface ProjectStatus {
   /** The `name` in `deno.json`, else the directory's own name. */

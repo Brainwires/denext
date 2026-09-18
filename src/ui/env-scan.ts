@@ -1,12 +1,12 @@
 // What environment variables does this project read, and which of them is nothing declaring?
 //
-// Step 5 of the `denext ui` wizard answers that without evaluating a single line of the
+// The environment step of `denext ui`'s Setup page answers that without evaluating a line of the
 // project: the sources are *scanned*, never imported (the hard rule of the UI process). The
 // scan is deliberately lexical — {@linkcode stripComments} first, then a match that is
 // discarded when it lands inside a string literal — so a commented-out `Deno.env.get("X")`
 // and a `"Deno.env.get(\"X\")"` inside a doc string are both correctly ignored.
 //
-// Values are never read or printed: the wizard reports names, and the only file it offers to
+// Values are never read or printed: Setup reports names, and the only file it offers to
 // write is `.env.example` (`KEY=` lines). `.env` is never touched.
 
 import { walk } from "@std/fs";
@@ -100,7 +100,7 @@ function inside(ranges: number[][], index: number): boolean {
 }
 
 /**
- * How long one scan stays reusable. The walk is the most expensive thing `GET /wizard` does
+ * How long one scan stays reusable. The walk is the most expensive thing `GET /setup` does
  * (a second or more on a large tree) and a page render asks for it more than once, so a result
  * is held briefly — long enough for one interaction, short enough that an edit made while the
  * page is open is still picked up on the next reload.

@@ -48,7 +48,7 @@ export interface UiServerOptions {
   /**
    * `denext ui --offline`: nothing the UI starts reaches the network. No JSR search; every
    * denext-CLI child (the commands listing, verb runs, doctor) runs `--deny-net --cached-only`
-   * and `deno install` runs `--cached-only`; `deno task`, the wizard's `denext dev` and plugin
+   * and `deno install` runs `--cached-only`; `deno task`, `/dev`'s `denext dev` and plugin
    * add/remove are refused with a `503` (`offline.ts`).
    */
   readonly offline?: boolean;

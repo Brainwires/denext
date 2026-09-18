@@ -1,4 +1,4 @@
-// `denext ui`'s setup wizard: the readiness steps, the previews that precede every write, the
+// `denext ui`'s Setup page: the readiness steps, the previews that precede every write, the
 // env scan's lexical honesty, the doctor seam, and the refusals (`--read-only`, an unknown
 // operation).
 //
@@ -12,12 +12,12 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { exists, type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
-import { type DoctorCheck, setDoctorRunner } from "../src/ui/features/wizard.ts";
+import { type DoctorCheck, setDoctorRunner } from "../src/ui/features/setup.ts";
 import { envExampleSource, envNamesIn, scanEnvUsage } from "../src/ui/env-scan.ts";
 import { readDenoConfig, taskMap } from "../src/ui/tasks.ts";
 import { FEATURES } from "../src/cli/commands/create.ts";
 
-/** The step ids, in the order the wizard must present them. */
+/** The step ids, in the order Setup must present them. */
 const STEP_IDS = [
   "detect",
   "runtime",
@@ -33,7 +33,7 @@ function ui(
   files: Record<string, string> = {},
   opts: { readOnly?: boolean; offline?: boolean } = {},
 ): Promise<Harness> {
-  return uiOn(files, opts, "denext_ui_wizard_");
+  return uiOn(files, opts, "denext_ui_setup_");
 }
 
 /** Shut it down and remove the project. */
@@ -41,16 +41,16 @@ function stop(h: Harness): Promise<void> {
   return stopUi(h);
 }
 
-/** Post one wizard operation the way a no-JS form would. */
+/** Post one Setup operation the way a no-JS form would. */
 function post(
   h: Harness,
   fields: Record<string, string>,
-  path = "/wizard",
+  path = "/setup",
 ): Promise<Response> {
   return postTo(h, fields, path);
 }
 
-/** A `deno.json` with every wizard-managed key except the `dev` task, and comments. */
+/** A `deno.json` with every Setup-managed key except the `dev` task, and comments. */
 const DENO_JSON_WITHOUT_DEV = `{
   // the framework, pinned
   "imports": {
@@ -62,7 +62,7 @@ const DENO_JSON_WITHOUT_DEV = `{
   },
   "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },
   "tasks": {
-    // no dev task yet — the wizard adds it
+    // no dev task yet — Setup adds it
     "build": "deno run -A jsr:@denext/denext/cli build .",
     "start": "deno run -A jsr:@denext/denext/cli start ."
   }
@@ -74,7 +74,7 @@ const DENO_JSON_WITHOUT_DEV = `{
 Deno.test("an empty directory gets every step in order, and is offered a scaffold", async () => {
   const h = await ui();
   try {
-    const res = await fetch(`${h.base}/api/wizard`, { headers: h.headers });
+    const res = await fetch(`${h.base}/api/setup`, { headers: h.headers });
     assertEquals(res.status, 200);
     const payload = await res.json();
     assertEquals(payload.ok, true);
@@ -96,18 +96,18 @@ Deno.test("an empty directory gets every step in order, and is offered a scaffol
   }
 });
 
-Deno.test("the HTML wizard renders one section per step, each with a status pill", async () => {
+Deno.test("the HTML page renders one section per step, each with a status pill", async () => {
   const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV });
   try {
-    const res = await fetch(`${h.base}/wizard`, { headers: h.headers });
+    const res = await fetch(`${h.base}/setup`, { headers: h.headers });
     assertEquals(res.status, 200);
     const body = await res.text();
     assertStringIncludes(body, '<section id="panel"');
     for (const id of STEP_IDS) assertStringIncludes(body, `id="step-${id}"`);
     // Every step's pill carries its status as a tone, not a flat grey.
     assertStringIncludes(body, '<span class="badge ');
-    assertStringIncludes(body, '<form method="post" action="/wizard"');
-    assert(!body.includes("<script>"), "the wizard ships no inline script");
+    assertStringIncludes(body, '<form method="post" action="/setup"');
+    assert(!body.includes("<script>"), "Setup ships no inline script");
     assert(!body.includes("Not implemented yet"), "the stub is gone");
     // Every feature toggle the CLI offers is offered here too.
     for (const feature of FEATURES) assertStringIncludes(body, feature.label);
@@ -148,7 +148,7 @@ Deno.test("a missing dev task previews as a merge that adds only that key", asyn
 
     const applied = await post(h, { op: "denojson", confirm: "1" });
     assertEquals(applied.status, 303);
-    assertEquals(applied.headers.get("location"), "/wizard#step-denojson");
+    assertEquals(applied.headers.get("location"), "/setup#step-denojson");
     await applied.body?.cancel();
 
     const after = await Deno.readTextFile(join(h.dir, "deno.json"));
@@ -180,7 +180,7 @@ Deno.test("a variable read in source but declared nowhere lands in .env.example"
     assertEquals(scan.missing, ["FOO"]);
     assertEquals(scan.files, [], "the project has no .env files");
 
-    const page = await fetch(`${h.base}/api/wizard`, { headers: h.headers });
+    const page = await fetch(`${h.base}/api/setup`, { headers: h.headers });
     const env = (await page.json()).steps.find((s: { id: string }) => s.id === "env");
     assertEquals(env.status, "todo");
     assertStringIncludes(env.summary, "FOO");
@@ -192,11 +192,11 @@ Deno.test("a variable read in source but declared nowhere lands in .env.example"
 
     const applied = await post(h, { op: "envexample", confirm: "1" });
     assertEquals(applied.status, 303);
-    assertEquals(applied.headers.get("location"), "/wizard#step-env");
+    assertEquals(applied.headers.get("location"), "/setup#step-env");
     await applied.body?.cancel();
 
     assertStringIncludes(await Deno.readTextFile(join(h.dir, ".env.example")), "FOO=");
-    assertEquals(await exists(join(h.dir, ".env")), false, "the wizard never writes .env");
+    assertEquals(await exists(join(h.dir, ".env")), false, "Setup never writes .env");
   } finally {
     await stop(h);
   }
@@ -265,7 +265,7 @@ Deno.test("the doctor panel renders an injected report without spawning anything
     // The failing app-dir check offers the repair.
     assertStringIncludes(body, 'name="op" value="scaffold-page"');
 
-    const api = await fetch(`${h.base}/api/wizard`, {
+    const api = await fetch(`${h.base}/api/setup`, {
       method: "POST",
       redirect: "manual",
       headers: {
@@ -278,7 +278,7 @@ Deno.test("the doctor panel renders an injected report without spawning anything
     });
     // A JSON body carries no `op`, so the operation table refuses it.
     assertEquals(api.status, 400);
-    assertStringIncludes((await api.json()).reason, "unknown wizard operation");
+    assertStringIncludes((await api.json()).reason, "unknown setup operation");
   } finally {
     setDoctorRunner(null);
     await stop(h);
@@ -293,14 +293,14 @@ Deno.test("an operation outside the table never runs", async () => {
     for (const op of ["", "nope", "constructor", "__proto__", "toString"]) {
       const res = await post(h, { op });
       assertEquals(res.status, 400, op);
-      assertStringIncludes((await res.json()).reason, "unknown wizard operation");
+      assertStringIncludes((await res.json()).reason, "unknown setup operation");
     }
   } finally {
     await stop(h);
   }
 });
 
-Deno.test("--read-only refuses every wizard write and says so on the page", async () => {
+Deno.test("--read-only refuses every Setup write and says so on the page", async () => {
   const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV }, { readOnly: true });
   try {
     for (
@@ -323,7 +323,7 @@ Deno.test("--read-only refuses every wizard write and says so on the page", asyn
       DENO_JSON_WITHOUT_DEV,
       "nothing was written",
     );
-    const page = await fetch(`${h.base}/wizard`, { headers: h.headers });
+    const page = await fetch(`${h.base}/setup`, { headers: h.headers });
     const body = await page.text();
     assertStringIncludes(body, "Read-only mode");
     assertStringIncludes(body, '<button type="submit" disabled>');
@@ -337,7 +337,7 @@ Deno.test("--read-only refuses every wizard write and says so on the page", asyn
 Deno.test("the JSON twin reports { id, status, summary, actions } per step", async () => {
   const h = await ui({ "deno.json": DENO_JSON_WITHOUT_DEV, "app/page.tsx": "export default 1;\n" });
   try {
-    const res = await fetch(`${h.base}/api/wizard`, { headers: h.headers });
+    const res = await fetch(`${h.base}/api/setup`, { headers: h.headers });
     const payload = await res.json();
     assertEquals(payload.kind, "denext");
     for (const step of payload.steps) {
@@ -359,7 +359,7 @@ Deno.test("a Next.js drop-in is detected from its package.json", async () => {
     "app/page.tsx": "export default function Page() { return null; }\n",
   });
   try {
-    const payload = await (await fetch(`${h.base}/api/wizard`, { headers: h.headers })).json();
+    const payload = await (await fetch(`${h.base}/api/setup`, { headers: h.headers })).json();
     assertEquals(payload.kind, "compat");
     const detect = payload.steps.find((s: { id: string }) => s.id === "detect");
     assertStringIncludes(detect.summary, "Next.js");
@@ -370,14 +370,13 @@ Deno.test("a Next.js drop-in is detected from its package.json", async () => {
 
 // ── --offline ────────────────────────────────────────────────────────────────
 
-/** The JSON outcome of one wizard operation. */
-/** The wizard page's markup, the way a no-JS browser would read it. */
-async function wizardPage(h: Harness): Promise<string> {
-  return await (await fetch(`${h.base}/wizard`, { headers: h.headers })).text();
+/** The page's markup, the way a no-JS browser would read it. */
+async function setupPage(h: Harness): Promise<string> {
+  return await (await fetch(`${h.base}/setup`, { headers: h.headers })).text();
 }
 
 async function outcomeOf(h: Harness, op: string): Promise<{ ok: boolean; message: string }> {
-  return (await (await post(h, { op }, "/api/wizard")).json()).outcome;
+  return (await (await post(h, { op }, "/api/setup")).json()).outcome;
 }
 
 Deno.test("the Dependencies step separates 'nothing to install' from 'not installed yet'", async () => {
@@ -389,12 +388,12 @@ Deno.test("the Dependencies step separates 'nothing to install' from 'not instal
     "deno.json": '{ "imports": { "@std/assert": "jsr:@std/assert@^1" } }\n',
   });
   try {
-    const empty = await wizardPage(bare);
+    const empty = await setupPage(bare);
     assertStringIncludes(empty, "Nothing to install");
     assert(!empty.includes("No deno.lock yet"), "the dead-end wording is gone");
     assert(!empty.includes("Run deno install"), "and so is the button that cannot help");
 
-    const todo = await wizardPage(pending);
+    const todo = await setupPage(pending);
     assertStringIncludes(todo, "No deno.lock yet");
     assertStringIncludes(todo, "Run deno install");
   } finally {

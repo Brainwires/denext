@@ -209,7 +209,7 @@ Deno.test('every panel GET answers a fragment request with the bare <section id=
         "/generate",
         "/docker",
         "/desktop",
-        "/wizard",
+        "/setup",
         "/dev",
         "/tasks",
         "/commands",
@@ -285,7 +285,7 @@ Deno.test("the overview names the project, its pinned denext and the dev server 
     assertStringIncludes(body, '<dl class="status">');
     assertStringIncludes(body, "<dt>Project</dt><dd>@acme/shop</dd>");
     assertStringIncludes(body, '<dt>denext</dt><dd><code class="mono">^2.5.0</code></dd>');
-    // Nothing here probes the address: the page says what the file says, and offers the Wizard
+    // Nothing here probes the address: the page says what the file says, and offers the Dev
     // — whose Stop is what finds out whether the server is really there.
     assertStringIncludes(body, "says running at ");
     assertStringIncludes(body, '<a href="http://127.0.0.1:3456">http://127.0.0.1:3456</a>');
@@ -378,7 +378,7 @@ Deno.test("cliInvocation's dir only decides the CLI version for a compiled binar
   // `dir` exists so a binary hands each child the denext THAT PROJECT pins rather than its own
   // (cliModule in src/ui/proc.ts). Running from a checkout there is nothing to choose — the CLI
   // and the framework are the same package — so the directory must not perturb the argv at all.
-  // The four call sites in features/commands.ts and features/wizard.ts pass it unconditionally.
+  // The four call sites in features/commands.ts and features/setup.ts pass it unconditionally.
   const online = cliInvocation();
   assertEquals(cliInvocation({ dir: Deno.cwd() }), online);
   assertEquals(cliInvocation({ dir: "/nonexistent/project" }), online);
@@ -525,13 +525,13 @@ Deno.test("a view escapes text and attributes, and Raw passes trusted markup thr
 Deno.test("OpForm renders the CSRF token, the hidden fields and the button", () => {
   const markup = toHtml(renderView(h(OpForm, {
     csrf: "tok",
-    action: "/wizard",
+    action: "/setup",
     label: "Apply",
     fields: { op: "denojson", confirm: "1" },
     className: "op",
     disabled: true,
   })));
-  assertStringIncludes(markup, 'action="/wizard"');
+  assertStringIncludes(markup, 'action="/setup"');
   assertStringIncludes(markup, 'class="op"');
   assertStringIncludes(markup, 'name="_csrf" value="tok"');
   assertStringIncludes(markup, 'name="op" value="denojson"');

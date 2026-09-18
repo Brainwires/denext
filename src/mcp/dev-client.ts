@@ -16,7 +16,8 @@ import type { InspectSnapshot } from "../client/devtools-inspect-sink.ts";
 /**
  * The DevTools bridge endpoint (`src/build/dev-server/state.ts`'s `DEV_INSPECT_PATH`).
  *
- * A copy of the VALUE, not an import: this module is reached by the `denext ui` wizard,
+ * A copy of the VALUE, not an import: this module is reached by `denext ui`'s Setup and Dev
+ * pages,
  * whose module graph is asserted never to touch `src/build/dev-server/` (and through it
  * the bundler). A test asserts the two spellings stay equal.
  */

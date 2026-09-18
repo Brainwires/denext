@@ -56,7 +56,7 @@ export interface UiContext {
   readonly events: SseClients;
   /**
    * The UI server's shutdown signal. Every child process a feature spawns is handed this (alone
-   * or combined with a per-request deadline), so Ctrl+C takes the `deno task` and the wizard's
+   * or combined with a per-request deadline), so Ctrl+C takes the `deno task` and Setup's
    * `denext dev` with it instead of leaving them running. Absent when a caller (a unit test)
    * built the context by hand.
    */
@@ -98,7 +98,7 @@ export const UI_CRON_PREVIEW_PATH = "/_ui/cron-preview";
  * stays a link on the config pages themselves.
  */
 export const UI_NAV_SECTIONS: readonly NavSection[] = [
-  { items: [{ href: "/", label: "Overview" }] },
+  { items: [{ href: "/", label: "Overview" }, { href: "/setup", label: "Setup" }] },
   {
     label: "Configuration",
     items: [
@@ -115,7 +115,6 @@ export const UI_NAV_SECTIONS: readonly NavSection[] = [
       { href: "/generate", label: "Generate" },
       { href: "/docker", label: "Docker" },
       { href: "/desktop", label: "Desktop" },
-      { href: "/wizard", label: "Wizard" },
       { href: "/dev", label: "Dev" },
       { href: "/tasks", label: "Tasks" },
       { href: "/commands", label: "Commands" },

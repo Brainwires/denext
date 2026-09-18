@@ -17,13 +17,13 @@ export interface ScaffoldFeature {
   readonly key: string;
   /** The `denext create` flag that pre-selects it. */
   readonly flag: string;
-  /** The human-readable label shown in the picker (and in `denext ui`'s wizard). */
+  /** The human-readable label shown in the picker (and on `denext ui`'s Setup page). */
   readonly label: string;
 }
 
 /**
  * Feature toggles offered at scaffold time (flag pre-selects; TTY multi-select otherwise).
- * Exported so `denext ui`'s setup wizard offers exactly the same list as the CLI.
+ * Exported so `denext ui`'s Setup page offers exactly the same list as the CLI.
  */
 export const FEATURES: readonly ScaffoldFeature[] = [
   { key: "tailwind", flag: "tailwind", label: "Tailwind CSS" },
