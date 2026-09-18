@@ -30,6 +30,10 @@ type ProviderScope = Map<symbol, unknown>;
  * `{ id, html, ok: true }`; on a render error `{ id, html: "", ok: false }` (the
  * error is logged and the hole's shell fallback is left in place). Consumed by the
  * document stream assemblers, so one failing hole never tears down the response.
+ * A control signal thrown in the hole resolves `ok: true` with the hole's replacement:
+ * a client-side redirect for `redirect()`, the nearest signal boundary's UI for
+ * `notFound()`/`forbidden()`/`unauthorized()` (the shell that would have unwound has
+ * already flushed, so the response's status and headers stay as sent — as in Next).
  */
 export type PendingHole = Promise<
   { id: string; html: string; ok: boolean; ms?: number }
@@ -93,14 +97,13 @@ class StreamRenderer extends VNodeRenderer<string> {
     // The hole's own render (and the fallback) do NOT hoist into `head`: they resolve after
     // the head has already flushed, so their head tags stay inline. The id is captured here,
     // so even a rejected render still reports it (ok:false) — the hole's fallback stays and
-    // the rest of the document streams unaffected.
+    // the rest of the document streams unaffected. A control signal (`redirect()`,
+    // `notFound()`, …) thrown in the hole is not a failure: it resolves to the hole's
+    // replacement (see `resolveHoleSignal`), since the shell it would have unwound has flushed.
+    const holeScope = rootScope(scopePrefix(boundaryScope));
     this.active.add(
-      this.resolve(
-        props.children as VNodeChildren,
-        scopes,
-        rootScope(scopePrefix(boundaryScope)),
-        null,
-      )
+      this.resolve(props.children as VNodeChildren, scopes, holeScope, null)
+        .catch((err) => this.resolveHoleSignal(err, scopes, holeScope, (html) => html))
         .then((html) => ({ id, html, ok: true, ms: elapsed() }))
         .catch((err) => {
           console.error("denext: streamed Suspense boundary failed to resolve:", id, err);

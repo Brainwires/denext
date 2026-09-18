@@ -56,6 +56,22 @@ internal design choice with no observable difference lives in
 - **A `redirect()` thrown during a CLIENT render is a full document load**
   (`location.assign`), not a soft navigation — the render is abandoned, the browser
   loads the target. On the server it is the usual 307.
+- **Inside a streamed `<Suspense>` hole (the shell has flushed), a control signal can't
+  touch the headers — the hole's streamed replacement carries it instead**, matching
+  Next's semantics with one deliberate difference in mechanism. `redirect()` /
+  `permanentRedirect()` stream a client-side redirect into the hole: a
+  `<meta http-equiv="refresh" content="0;url=…">` (destination through the same
+  sanitiser as an HTTP `Location`) and **nothing else** — Next also emits an inline
+  `<script>` setting `location.href`, which denext omits because a streamed hole is not
+  covered by the hashed streaming CSP, so the script would be blocked. The response
+  stays a 200 (a soft navigation is never streamed, so there it is a real HTTP redirect).
+  `notFound()` / `forbidden()` / `unauthorized()` reveal the nearest enclosing boundary's
+  UI (`not-found.tsx` … or the built-in) in place of the hole, status left at 200, as in
+  Next. `after()` runs when the **stream ends**, not when the Response object exists
+  (Next: the same). `cookies().set()` / `.delete()` after the first flush throw in dev
+  ("cookies can only be modified before the response starts …") and are logged once and
+  ignored in production; Next throws in both. Same rules on a PPR hole and a Flight-route
+  hole.
 - **`notFound()` / `forbidden()` / `unauthorized()` are Server-side signals.** Next
   documents them for Server Components, Server Functions, and Route Handlers, and denext
   supports exactly those (plus Server Actions) — the matching `not-found.tsx` /

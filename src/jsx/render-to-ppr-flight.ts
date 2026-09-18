@@ -55,7 +55,7 @@ import {
 import { type PprMode, PprVNodeRenderer } from "./renderer-base.ts";
 import type { FlightNode, FlightValue } from "./render-to-flight.ts";
 import { fillFlightHoles, type ResumedFlightHole } from "./flight-holes.ts";
-import { type IdScope, scopePrefix } from "./tree-id.ts";
+import { type IdScope, rootScope, scopePrefix } from "./tree-id.ts";
 
 export { fillFlightHoles, type ResumedFlightHole };
 
@@ -168,7 +168,17 @@ class PPRFlightRenderer extends PprVNodeRenderer<Dual> implements IslandRenderer
     scopes: ProviderScope[],
     boundaryScope: IdScope,
   ): Dual {
-    const built = this.renderBuffered(children, scopes, scopePrefix(boundaryScope));
+    // A control signal thrown in the hole (`redirect()`, `notFound()`, …) can't unwind the
+    // cached shell that already flushed: the sub-renderer resolves it to the hole's
+    // replacement instead (see `resolveHoleSignal`) — a client-side redirect carries no
+    // Flight, a signal boundary's UI carries its own.
+    const prefix = scopePrefix(boundaryScope);
+    const sub = new PPRFlightRenderer("buffered", null, new Set(), this.resumable, prefix);
+    const built = sub.resolveChildren(children, scopes)
+      .catch((err) =>
+        sub.resolveHoleSignal(err, scopes, rootScope(prefix), (html) => ({ html, flight: null }))
+      )
+      .then((dual) => ({ dual, islands: sub.islands }));
     built.catch(() => {}); // consumed later by the streamer — never an unhandled rejection
     this.holes.push({
       id,

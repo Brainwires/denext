@@ -211,6 +211,25 @@ and this project adheres to
 
 ### Fixed
 
+- **Control signals and request APIs inside a streamed Suspense hole.** With streaming on
+  (the default), a component that resolved _after_ the shell flushed was cut off from the
+  response: `after(cb)` in a hole never ran (the pipeline drained the callbacks when the
+  Response object was created, before the body finished); `redirect("/login")` and
+  `notFound()` were treated as a failed hole (a 200 with the loading fallback forever and a
+  `console.error`), so `(await auth()) ?? redirect("/login")` behind `<Suspense>` hung the
+  visitor on the fallback; `cookies().set()` in a hole silently set nothing. Now, matching
+  Next: `after()` drains when the **stream ends** (last hole settled, or aborted) on every
+  streaming path — HTML, Flight, PPR and PPR+Flight; `redirect()`/`permanentRedirect()`
+  stream a client-side redirect into the hole (`<meta http-equiv="refresh">`, destination
+  through the redirect sanitiser, nothing else); `notFound()`/`forbidden()`/`unauthorized()`
+  reveal the nearest boundary's UI (`not-found.tsx` … or the built-in) in place of the hole
+  with the status left at 200; and a `cookies().set()`/`.delete()` after the first flush
+  throws in dev ("cookies can only be modified before the response starts — in a Server
+  Action, a Route Handler, middleware, or a component that renders before the first flush;
+  this component rendered inside a streamed Suspense boundary …") and is logged once per
+  request and ignored in production. A soft navigation is never streamed, so its redirect
+  stays a real HTTP redirect. `RequestContext` gains `headersCommitted` (set at the first
+  flush) and `bodyStreaming`. Documented in KNOWN-DIFFERENCES and the Rendering guide.
 - **`denext ui`'s config editor wrote values you never set.** Saving _any_ change on a view
   (toggling `images.formats`, say) materialised every unset child of the key's object — `[]` for
   each list, `false` for each boolean — so a save of Rendering wrote `images.deviceSizes: []`,

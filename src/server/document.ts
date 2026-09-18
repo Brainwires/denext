@@ -25,7 +25,7 @@ import type { FlightShellRender } from "../jsx/render-to-flight-stream.ts";
 import { SWAP_RUNTIME } from "./swap-runtime.ts";
 import type { ResumedHole } from "../jsx/render-to-ppr.ts";
 import { fillFlightHoles, type ResumedFlightHole } from "../jsx/flight-holes.ts";
-import { currentContext } from "./request-context.ts";
+import { beginStreamedBody, currentContext } from "./request-context.ts";
 
 import { ROOT_ID } from "./root-id.ts";
 
@@ -381,7 +381,10 @@ function isDev(): boolean {
  *
  * A hole resolves (never rejects) to `{ id, html, ok }`: on `ok:false` its shell
  * fallback is left in place and the hole is skipped, so ONE failing hole can never
- * reject the race and truncate the document. Aborts when `signal` fires.
+ * reject the race and truncate the document. Aborts when `signal` fires. A control
+ * signal thrown inside a hole is NOT a failure: the renderer already turned it into
+ * the hole's replacement (`redirect()` → a client-side redirect; `notFound()` and
+ * friends → the nearest signal boundary's UI), which streams here as `ok:true`.
  *
  * A streamed hole must not introduce an inline `<style>`/`<script>`: the streaming
  * CSP is computed over the buffered shell prefix only, so an in-hole inline `<style>`
@@ -448,9 +451,45 @@ async function streamHoles<H extends Awaited<PendingHole>>(
 }
 
 /**
+ * The streamed document body shared by every streaming assembler: `produce` enqueues the
+ * prefix, the holes and the tail, then the stream closes (or errors on a throw). The
+ * request context — present when the assembler runs inside a request — is told the
+ * headers are committed and the body is streaming ({@link beginStreamedBody}), so
+ * `cookies()` writes from a hole are refused and `after()` callbacks drain when the body
+ * ENDS (close, error or consumer cancel), not when the Response object was created.
+ * `onEnd` runs first on every exit (a Flight assembler resets its signal collector there).
+ */
+function streamedBody(
+  produce: (controller: ReadableStreamDefaultController<Uint8Array>) => Promise<void>,
+  onEnd?: () => void,
+): ReadableStream<Uint8Array> {
+  const ctx = currentContext();
+  const endStreaming = ctx ? beginStreamedBody(ctx) : () => {};
+  const end = () => {
+    onEnd?.();
+    endStreaming();
+  };
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        await produce(controller);
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      } finally {
+        end();
+      }
+    },
+    cancel: end,
+  });
+}
+
+/**
  * Build the non-rejecting {@link PendingHole} set for a PPR document's per-request
  * holes: each resolves to `{ id, html, ok:true }`, or logs and resolves `ok:false`
- * on failure so a resume error leaves the hole's shell fallback in place.
+ * on failure so a resume error leaves the hole's shell fallback in place. A control
+ * signal thrown in a hole never reaches here: the resume renderer turns it into the
+ * hole's replacement (a client-side redirect, or the nearest signal boundary's UI).
  */
 function pprHoles(holes: ResumedHole[]): Set<PendingHole> {
   return new Set(
@@ -492,17 +531,10 @@ ${bodyOpenTag(opts.bodyAttrs)}<div id="${ROOT_ID}"${
   const tail = `${renderBodyScripts(opts)}</body>
 </html>`;
   const active = pprHoles(opts.holes);
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        controller.enqueue(encoder.encode(prefix));
-        await streamHoles(controller, encoder, active, opts.signal);
-        controller.enqueue(encoder.encode(tail));
-        controller.close();
-      } catch (err) {
-        controller.error(err);
-      }
-    },
+  return streamedBody(async (controller) => {
+    controller.enqueue(encoder.encode(prefix));
+    await streamHoles(controller, encoder, active, opts.signal);
+    controller.enqueue(encoder.encode(tail));
   });
 }
 
@@ -533,17 +565,10 @@ export function streamPageDocument(
   const { encoder, docOpts, prefix } = streamedDocumentStart(opts, opts.shell.shell);
   const tail = `${renderBodyScripts(docOpts)}</body>
 </html>`;
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        controller.enqueue(encoder.encode(prefix));
-        await streamHoles(controller, encoder, opts.shell.holes, opts.signal);
-        controller.enqueue(encoder.encode(tail));
-        controller.close();
-      } catch (err) {
-        controller.error(err);
-      }
-    },
+  return streamedBody(async (controller) => {
+    controller.enqueue(encoder.encode(prefix));
+    await streamHoles(controller, encoder, opts.shell.holes, opts.signal);
+    controller.enqueue(encoder.encode(tail));
   });
 }
 
@@ -570,28 +595,21 @@ export function streamFlightDocument(
     opts,
     opts.flightShell.shellHtml,
   );
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        controller.enqueue(encoder.encode(prefix));
-        // Drain the holes (each streamed as a <template>) and collect the tail: the
-        // complete Flight tree + islands + signal state.
-        const flightTail = await opts.flightShell.streamHoles(controller, encoder, opts.signal);
-        // Merge the tail into the body scripts so renderBodyScripts emits the Flight/
-        // islands/state islands BEFORE the client entry (its documented order).
-        const tailOpts: DocumentOptions = {
-          ...docOpts,
-          flight: flightTail.flight,
-          islands: flightTail.islands,
-          signalState: flightTail.signalState,
-          renderModeScript,
-        };
-        controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
-        controller.close();
-      } catch (err) {
-        controller.error(err);
-      }
-    },
+  return streamedBody(async (controller) => {
+    controller.enqueue(encoder.encode(prefix));
+    // Drain the holes (each streamed as a <template>) and collect the tail: the
+    // complete Flight tree + islands + signal state.
+    const flightTail = await opts.flightShell.streamHoles(controller, encoder, opts.signal);
+    // Merge the tail into the body scripts so renderBodyScripts emits the Flight/
+    // islands/state islands BEFORE the client entry (its documented order).
+    const tailOpts: DocumentOptions = {
+      ...docOpts,
+      flight: flightTail.flight,
+      islands: flightTail.islands,
+      signalState: flightTail.signalState,
+      renderModeScript,
+    };
+    controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
   });
 }
 
@@ -633,34 +651,26 @@ export function streamPprFlightDocument(
     opts.shellBody,
   );
   const active = settlingHoles(opts.resume.holes);
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      // Close signal collection exactly once (success or failure) so the module-global
-      // collector never leaks into a later render. The success path uses its result.
-      let signalMap: Record<string, unknown> | null = null;
-      const finish = () => (signalMap ??= opts.resume.finishSignals());
-      try {
-        controller.enqueue(encoder.encode(prefix));
-        const holeFlights = await streamResumedHoles(active, controller, opts.signal);
-        // All holes drained: fill the cached shell Flight, merge islands + signal state.
-        const flight = fillFlightHoles(opts.shellFlight, holeFlights);
-        const islands = [...opts.shellIslands, ...opts.resume.islands];
-        const signalState = { ...opts.shellSignalState, ...finish() };
-        const tailOpts: DocumentOptions = {
-          ...docOpts,
-          flight,
-          islands: islands.length > 0 ? islands : undefined,
-          signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
-          renderModeScript,
-        };
-        controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
-        controller.close();
-      } catch (err) {
-        finish(); // reset the collector even on failure
-        controller.error(err);
-      }
-    },
-  });
+  // Close signal collection exactly once (success, failure or cancel) so the module-global
+  // collector never leaks into a later render. The success path uses its result.
+  let signalMap: Record<string, unknown> | null = null;
+  const finish = () => (signalMap ??= opts.resume.finishSignals());
+  return streamedBody(async (controller) => {
+    controller.enqueue(encoder.encode(prefix));
+    const holeFlights = await streamResumedHoles(active, controller, opts.signal);
+    // All holes drained: fill the cached shell Flight, merge islands + signal state.
+    const flight = fillFlightHoles(opts.shellFlight, holeFlights);
+    const islands = [...opts.shellIslands, ...opts.resume.islands];
+    const signalState = { ...opts.shellSignalState, ...finish() };
+    const tailOpts: DocumentOptions = {
+      ...docOpts,
+      flight,
+      islands: islands.length > 0 ? islands : undefined,
+      signalState: Object.keys(signalState).length > 0 ? signalState : undefined,
+      renderModeScript,
+    };
+    controller.enqueue(encoder.encode(`${renderBodyScripts(tailOpts)}</body>\n</html>`));
+  }, finish);
 }
 
 /** One resumed hole once both its HTML and Flight subtree have settled. */
