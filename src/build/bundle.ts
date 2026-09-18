@@ -7,10 +7,15 @@
 
 import { actionIdFor } from "../runtime/server-action.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
-import { basename, dirname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
+import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { walk } from "@std/fs";
 import type { PageRoute } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
+import {
+  findServerOnlyLeaks,
+  formatServerOnlyLeaks,
+  type ServerOnlyLeak,
+} from "./server-only-scan.ts";
 
 /**
  * The framework root as a URL, in whatever scheme the framework itself runs under:
@@ -1147,13 +1152,25 @@ export function bundleFailureMessage(code: number, stderr: string): string {
     `error rather than a code error, check your Deno version or set DENO_BIN.)`;
 }
 
+/** What one `deno bundle` run emitted. */
+interface DenoBundleRun {
+  /** Every emitted JS file keyed by basename. */
+  files: Map<string, string>;
+  /**
+   * Per emitted file, the modules it was built from (its source map's `sources`, as
+   * realpath'd absolute paths) — what actually shipped, after tree-shaking. Feeds the
+   * server-only leak check.
+   */
+  sources: Map<string, Set<string>>;
+}
+
 async function runDenoBundle(
   entryPaths: string[],
   configPath: string,
   outDir: string,
   minify: boolean | undefined,
   sourcemap: boolean | undefined,
-): Promise<Map<string, string>> {
+): Promise<DenoBundleRun> {
   const args = [
     "bundle",
     // Next.js app code uses extensionless imports (`./button`, `@/lib/x`)
@@ -1172,8 +1189,11 @@ async function runDenoBundle(
   if (minify) args.push("--minify");
   // Dev builds (unminified) get inline source maps so browser stack traces and
   // breakpoints map back to the original `.tsx` sources. Inline keeps the map
-  // inside the emitted `.js` (no sidecar to collect/serve). Production omits it.
-  if (sourcemap) args.push("--sourcemap=inline");
+  // inside the emitted `.js` (no sidecar to collect/serve). Production ships none —
+  // but an EXTERNAL map (a sidecar in the temp dir, no `sourceMappingURL` comment in
+  // the JS) is still produced and read for its `sources`: the exact module list that
+  // survived tree-shaking, which the server-only leak check needs.
+  args.push(sourcemap ? "--sourcemap=inline" : "--sourcemap=external");
   args.push(...entryPaths);
 
   const { code, stderr } = await new Deno.Command(denoExecutable(), {
@@ -1190,7 +1210,174 @@ async function runDenoBundle(
       files.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
     }
   }
-  return files;
+  return { files, sources: await bundledSources(outDir, files) };
+}
+
+/**
+ * What each emitted file was built from: its source map's `sources`, resolved against
+ * `outDir` and realpath'd (so they compare equal to the paths the project's own files are
+ * read by). An external map is the `<name>.map` sidecar; an inline one (dev) is decoded from
+ * the file's trailing `sourceMappingURL` data URL. A file with no readable map contributes
+ * nothing — the leak check then simply has less to attribute.
+ */
+async function bundledSources(
+  outDir: string,
+  files: Map<string, string>,
+): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>();
+  for (const [name, code] of files) {
+    const json = await sourceMapJson(outDir, name, code);
+    out.set(name, json ? await mapSources(outDir, json) : new Set());
+  }
+  return out;
+}
+
+/** The source-map JSON of one emitted file: its `.map` sidecar, else its inline map, else null. */
+async function sourceMapJson(outDir: string, name: string, code: string): Promise<string | null> {
+  try {
+    return await Deno.readTextFile(join(outDir, `${name}.map`));
+  } catch {
+    return inlineSourceMap(code);
+  }
+}
+
+/** The JSON of an inline (`data:` base64) source map at the end of a bundled file, or null. */
+function inlineSourceMap(code: string): string | null {
+  const marker = "//# sourceMappingURL=data:application/json";
+  const at = code.lastIndexOf(marker);
+  if (at === -1) return null;
+  const comma = code.indexOf(",", at);
+  if (comma === -1) return null;
+  try {
+    const bytes = Uint8Array.from(atob(code.slice(comma + 1).trim()), (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/** A source map's `sources`, resolved against `outDir` and realpath'd where they exist on disk. */
+async function mapSources(outDir: string, json: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  let sources: unknown;
+  try {
+    sources = (JSON.parse(json) as { sources?: unknown }).sources;
+  } catch {
+    return out;
+  }
+  if (!Array.isArray(sources)) return out;
+  for (const s of sources) {
+    if (typeof s !== "string") continue;
+    const abs = resolve(outDir, s);
+    try {
+      out.add(await Deno.realPath(abs));
+    } catch {
+      out.add(abs); // not on disk (a virtual/data: module) — keep as resolved
+    }
+  }
+  return out;
+}
+
+/**
+ * What a generated browser entry is, for a leak report: the route of its page file (the
+ * file IS the route in the App Router), the islands bundle, or the global-error entry.
+ * Null for an entry denext did not generate (a SPA or plugin entry, bundled as given and
+ * never leak-checked here). Paths are shown relative to `projectDir`.
+ */
+async function generatedEntryLabel(source: string, projectDir: string): Promise<string | null> {
+  if (source.startsWith("// denext generated route entry")) {
+    const page = /^import Page from "(file:\/\/[^"]+)";$/m.exec(source);
+    if (!page) return "a route entry";
+    return `the route of ${await projectRelative(fromFileUrl(page[1]), projectDir)}`;
+  }
+  if (source.startsWith("// denext generated Flight entry")) {
+    return `the "use client" islands bundle`;
+  }
+  if (source.startsWith("// denext generated global-error entry")) return "the global-error entry";
+  return null;
+}
+
+/** `path` relative to the (realpath'd) project dir — by its realpath when the logical path is outside it. */
+async function projectRelative(path: string, projectDir: string): Promise<string> {
+  const rel = relative(projectDir, path);
+  if (!rel.startsWith("..")) return rel;
+  try {
+    return relative(projectDir, await Deno.realPath(path));
+  } catch {
+    return rel;
+  }
+}
+
+/**
+ * The emitted files an entry loads: itself plus, transitively, every sibling chunk it
+ * imports (`"./chunk-….js"`, static or dynamic). A leak in a shared chunk is attributed to
+ * every entry that reaches the chunk.
+ */
+function entryChunkClosure(entryFile: string, files: Map<string, string>): string[] {
+  const seen = new Set<string>([entryFile]);
+  const queue = [entryFile];
+  while (queue.length > 0) {
+    const code = files.get(queue.shift()!) ?? "";
+    for (const m of code.matchAll(/["']\.\/([^"']+\.js)["']/g)) {
+      if (files.has(m[1]) && !seen.has(m[1])) {
+        seen.add(m[1]);
+        queue.push(m[1]);
+      }
+    }
+  }
+  return [...seen];
+}
+
+/**
+ * The project directory (the config's), realpath'd so it compares and displays against the
+ * realpath'd source-map paths (macOS `/var` vs `/private/var`, a symlinked checkout).
+ */
+async function realProjectDir(configPath: string): Promise<string> {
+  const dir = dirname(configPath);
+  try {
+    return await Deno.realPath(dir);
+  } catch {
+    return dir;
+  }
+}
+
+/** A generated entry as {@link assertNoServerOnlyLeaks} sees it: its source and emitted basename. */
+interface BundledEntry {
+  source: string;
+  file: string;
+}
+
+/**
+ * Fail a browser bundle that shipped server-only code — a `node:` import, a
+ * `server-only` marker, or a `Deno.` access reached from a route's isomorphic tree or a
+ * `"use client"` island (see {@linkcode findServerOnlyLeaks}). `deno bundle
+ * --platform=browser` emits those verbatim, so without this the page would fail only in
+ * the browser. Only denext-generated entries are checked (each is named by its header),
+ * and only what the bundle actually emitted counts (the source maps' `sources`), so a
+ * `"use server"` module the import map redirected to a stub never appears. A dev caller
+ * surfaces the thrown error in the overlay + console; `denext build` exits non-zero with it.
+ */
+async function assertNoServerOnlyLeaks(
+  entries: BundledEntry[],
+  run: DenoBundleRun,
+  opts: BundleOptions,
+): Promise<void> {
+  const projectDir = await realProjectDir(opts.configPath);
+  const found = new Map<string, { leak: ServerOnlyLeak; entries: string[] }>();
+  for (const { source, file } of entries) {
+    const label = await generatedEntryLabel(source, projectDir);
+    if (!label) continue;
+    const shipped = new Set<string>();
+    for (const chunk of entryChunkClosure(file, run.files)) {
+      for (const s of run.sources.get(chunk) ?? []) shipped.add(s);
+    }
+    for (const leak of await findServerOnlyLeaks(shipped, projectDir)) {
+      const entry = found.get(leak.module) ?? { leak, entries: [] };
+      entry.entries.push(label);
+      found.set(leak.module, entry);
+    }
+  }
+  if (found.size > 0) throw new Error(formatServerOnlyLeaks(found, projectDir));
 }
 
 /**
@@ -1211,13 +1398,15 @@ export async function bundleSourceFiles(
   try {
     await Deno.writeTextFile(entryPath, entrySource);
     const configPath = await prepareConfig(tmpDir, opts);
-    const files = await runDenoBundle([entryPath], configPath, outDir, opts.minify, opts.dev);
+    const run = await runDenoBundle([entryPath], configPath, outDir, opts.minify, opts.dev);
+    const { files } = run;
     const entry = "entry.js";
     if (!files.has(entry)) {
       throw new Error(
         `deno bundle produced no entry file (got: ${[...files.keys()].join(", ") || "nothing"})`,
       );
     }
+    await assertNoServerOnlyLeaks([{ source: entrySource, file: entry }], run, opts);
     return { entry, files };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
@@ -1265,7 +1454,8 @@ export async function bundleRoutes(
       routeEntries.map((re, i) => Deno.writeTextFile(entryPaths[i], re.source)),
     );
     const configPath = await prepareConfig(tmpDir, opts);
-    const files = await runDenoBundle(entryPaths, configPath, outDir, opts.minify, opts.dev);
+    const run = await runDenoBundle(entryPaths, configPath, outDir, opts.minify, opts.dev);
+    const { files } = run;
 
     const entries = new Map<string, string>();
     routeEntries.forEach((re, i) => {
@@ -1278,6 +1468,11 @@ export async function bundleRoutes(
       }
       entries.set(re.key, out);
     });
+    await assertNoServerOnlyLeaks(
+      routeEntries.map((re) => ({ source: re.source, file: entries.get(re.key)! })),
+      run,
+      opts,
+    );
     return { entries, files };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });

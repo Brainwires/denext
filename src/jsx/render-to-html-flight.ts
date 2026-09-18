@@ -213,6 +213,7 @@ function renderVNodeDual(node: VNode, ctx: Ctx): Promise<Dual> {
 /** The dual-render operations {@link renderHostDual} composes (a null `head` renders a hoisted `<title>`'s text). */
 function hostOf(ctx: Ctx): DualHost {
   return {
+    insideIsland: ctx.insideIsland ?? false,
     serializeValue: (value) => serializeValue(value, ctx),
     renderChildren: (children, _scopes, head) =>
       renderChildrenDual(children, head === ctx.head ? ctx : { ...ctx, head }),

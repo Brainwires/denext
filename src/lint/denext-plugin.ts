@@ -15,6 +15,9 @@
  *   component or a `useX` custom hook.
  * - `denext/no-hooks-in-async` — async (server) components can't hydrate, so
  *   hooks in them have no client effect.
+ * - `denext/no-handlers-in-async` — a JSX `on*` handler in an async (server)
+ *   component is a function that never reaches the browser: it is dropped at the
+ *   server→client boundary and the element does nothing.
  * - `denext/directive-placement` — a `"use client"` / `"use server"` directive
  *   must be the module's leading statement, and a module may not declare both.
  *
@@ -226,6 +229,100 @@ function hookCallFindings(
   return out;
 }
 
+/** Does a function body open with a `"use server"` directive (an inline server action)? */
+function isInlineServerAction(fn: any): boolean {
+  const first = fn?.body?.type === "BlockStatement" ? fn.body.body?.[0] : undefined;
+  return first?.type === "ExpressionStatement" && isStringLiteral(first.expression) &&
+    first.expression.value === "use server";
+}
+
+/** The nearest enclosing component frame (a Capitalized function), or undefined. */
+function nearestComponent(
+  stack: Array<{ name: string | null; isAsync: boolean }>,
+): { name: string; isAsync: boolean } | undefined {
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const f = stack[i];
+    if (f.name && /^[A-Z]/.test(f.name)) return { name: f.name, isAsync: f.isAsync };
+  }
+  return undefined;
+}
+
+/** A JSX `on*` attribute whose value is a function expression or an identifier, else null. */
+function handlerAttribute(node: any): { attr: string; expr: any } | null {
+  const attr = node.name?.type === "JSXIdentifier" ? node.name.name : null;
+  if (!attr || !/^on[A-Z]/.test(attr)) return null;
+  const expr = node.value?.type === "JSXExpressionContainer" ? node.value.expression : null;
+  return expr && FUNCTION_VALUE_NODES.has(expr.type) ? { attr, expr } : null;
+}
+
+/** JSX attribute values the handler rule reads as "a function". */
+const FUNCTION_VALUE_NODES = new Set([
+  "ArrowFunctionExpression",
+  "FunctionExpression",
+  "Identifier",
+]);
+
+function handlerMessage(attr: string, component: string): string {
+  return `\`${attr}\` receives a function in async component \`${component}\`. An async ` +
+    `component is a Server Component: its functions never reach the browser, so the handler ` +
+    `is dropped and the element does nothing. Pass a Server Action ("use server") or move ` +
+    `the handler into a "use client" component. [denext/no-handlers-in-async]`;
+}
+
+/**
+ * Build the handler-lint visitor: a JSX `on*` attribute given a function inside an `async`
+ * component — the server→client boundary Next reports as "Event handlers cannot be passed
+ * to Client Component props", which denext turns into an element that does nothing. An
+ * inline arrow/function reports at once (unless its body opens with `"use server"` — an
+ * inline server action, which crosses as a reference). An identifier is resolved at
+ * `Program:exit` (a function declaration hoists): one bound to a module-local function or
+ * arrow without that directive reports; an imported name or an unresolved binding is left
+ * alone, since it may be a server action from a `"use server"` module.
+ */
+function createHandlerVisitor(context: any): Record<string, (node: any) => void> {
+  const funcStack: Array<{ name: string | null; isAsync: boolean }> = [];
+  /** Module-local function bindings → whether the body is an inline server action. */
+  const localFns = new Map<string, boolean>();
+  const imported = new Set<string>();
+  const pending: Array<{ node: any; attr: string; component: string; ident: string }> = [];
+
+  const visitor: Record<string, (node: any) => void> = {
+    ImportDeclaration(node) {
+      for (const spec of node.specifiers ?? []) if (spec.local?.name) imported.add(spec.local.name);
+    },
+    JSXAttribute(node) {
+      const handler = handlerAttribute(node);
+      const component = nearestComponent(funcStack);
+      if (!handler || !component?.isAsync) return;
+      if (handler.expr.type === "Identifier") {
+        pending.push({
+          node,
+          attr: handler.attr,
+          component: component.name,
+          ident: handler.expr.name,
+        });
+      } else if (!isInlineServerAction(handler.expr)) {
+        context.report({ node, message: handlerMessage(handler.attr, component.name) });
+      }
+    },
+    "Program:exit"() {
+      for (const p of pending) {
+        if (imported.has(p.ident) || localFns.get(p.ident) !== false) continue;
+        context.report({ node: p.node, message: handlerMessage(p.attr, p.component) });
+      }
+    },
+  };
+  for (const fn of FUNCTION_NODES) {
+    visitor[fn] = (node) => {
+      const name = functionName(node);
+      if (name) localFns.set(name, isInlineServerAction(node));
+      funcStack.push({ name, isAsync: !!node.async });
+    };
+    visitor[`${fn}:exit`] = () => void funcStack.pop();
+  }
+  return visitor;
+}
+
 /** A hook rule that reports only findings of its own `rule` kind (shared traversal). */
 function hookRule(rule: HookRule): { create(context: any): Record<string, unknown> } {
   return {
@@ -332,6 +429,9 @@ const plugin: LintPlugin = {
     "rules-of-hooks": hookRule("rules-of-hooks"),
     "hooks-in-component": hookRule("hooks-in-component"),
     "no-hooks-in-async": hookRule("no-hooks-in-async"),
+    // The handler twin of no-hooks-in-async: a function given to a JSX `on*` prop never
+    // leaves an async (server) component.
+    "no-handlers-in-async": { create: createHandlerVisitor },
   },
 };
 

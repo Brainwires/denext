@@ -389,3 +389,50 @@ Deno.test("renderToFlightStream: a deferred value inside a Map/Set prop fills it
   assertStringIncludes(json, `{"$":"S","v":["now","late"]}`);
   assertStringIncludes(json, `{"$":"M","v":[["a","late"]]}`);
 });
+
+// ---- Dropped function props: the dev warning on the streaming path -------------------
+
+/** Run `fn` with `__denextDev` set and `console.warn` captured. */
+async function withDevWarnings(fn: () => Promise<void>): Promise<string[]> {
+  const g = globalThis as { __denextDev?: boolean };
+  const prevDev = g.__denextDev;
+  const origWarn = console.warn;
+  const warnings: string[] = [];
+  g.__denextDev = true;
+  console.warn = (...a: unknown[]) => warnings.push(a.map(String).join(" "));
+  try {
+    await fn();
+  } finally {
+    console.warn = origWarn;
+    if (prevDev === undefined) delete g.__denextDev;
+    else g.__denextDev = prevDev;
+  }
+  return warnings;
+}
+
+Deno.test("streaming: an onClick on a host element inside an async Server Component warns in dev", async () => {
+  async function Page(): Promise<VNode> {
+    await Promise.resolve();
+    return h("main", null, h("button", { onClick: () => {}, id: "inert" }, "go"));
+  }
+  const warnings = await withDevWarnings(async () => {
+    const html = await streamToString(renderToFlightStream(h(Page, {})));
+    const m = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+    assert(m, "flight island present");
+    assert(!m![1].includes("onClick"), "the handler is dropped from the Flight tree");
+  });
+  assertEquals(warnings.length, 1);
+  assertStringIncludes(warnings[0], "<button>");
+  assertStringIncludes(warnings[0], '"onClick"');
+});
+
+Deno.test("streaming: a host handler rendered by a client island's own code does not warn", async () => {
+  function Toggle(): VNode {
+    return h("button", { onClick: () => {}, class: "t" }, "toggle");
+  }
+  tagClientExports({ Toggle } as Record<string, unknown>, "c_toggle");
+  const warnings = await withDevWarnings(async () => {
+    await streamToString(renderToFlightStream(h("main", null, h(Toggle, {}))));
+  });
+  assertEquals(warnings, []);
+});

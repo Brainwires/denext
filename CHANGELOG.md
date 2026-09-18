@@ -67,6 +67,34 @@ and this project adheres to
 
 ### Added
 
+- **A function prop that cannot cross the server→client boundary now says so.** A Server
+  Component passing `onClick={() => …}` (or any plain function) to a `"use client"` component —
+  Next's "Event handlers cannot be passed to Client Component props", the first mistake most
+  people make — used to become a button that does nothing: the Flight serializer dropped the
+  function silently. In dev the renderer now warns once per (component, prop), naming both,
+  with the fix (pass a Server Action, or move the handler into a `"use client"` component); a
+  host element's `onClick` inside an async Server Component warns the same way on the streaming
+  and PPR renderers. A Server Action, qrl or channel prop crosses as a reference and never
+  warns; production stays silent. The warning rides the captured server console, so it reaches
+  the terminal and `denext_dev_logs`. The lint plugin gains its static twin,
+  **`denext/no-handlers-in-async`**: a JSX `on*` attribute given an inline function, or a
+  module-local one, inside an `async` component — an inline `"use server"` body, an imported
+  name and an unresolved binding are left alone.
+- **Server-only code can no longer ship to the browser unnoticed on the native path.** A route
+  that hydrates as a whole (a hook or event handler, no `"use client"` boundary) bundles its
+  page, layouts and everything they import; `deno bundle --platform=browser` emitted a
+  `lib/db.ts` with `node:sqlite` + `Deno.env.get` verbatim, and the page failed only in the
+  browser. `denext build` / `export` and the bundled dev server now fail that bundle — naming
+  the module, why it is server-only (a static `node:` import, the `server-only` marker or
+  `serverOnly()`, an unguarded `Deno.` access) and the entry that shipped it (the route of
+  `app/page.tsx`, or the `"use client"` islands bundle) — with the fix: move the interactive
+  part into a `"use client"` component so the route stays a Server Component, and keep the
+  module marked `import "server-only"`. The verdict reads what the bundle actually emitted (its
+  source maps' `sources`), so a pure helper the entry never used is tree-shaken and not a leak;
+  strings, comments, type-only imports, dynamic `import()` and a `typeof Deno` guard never
+  count; a `"use server"` module stubbed out of the bundle is never seen. The compat (esbuild)
+  path, SPA mode and plugin bundles are unchanged. In dev the failure lands in the error
+  overlay + console; `denext build` exits non-zero.
 - **A compiled `denext` binary** — `curl -fsSL https://denext.dev/install.sh | sh` (or
   `deno install -A -g -n denext jsr:@denext/denext/cli`, or `deno task compile` from a checkout).
   It is a CLI, not a second copy of the framework: inside a project every module-loading verb
