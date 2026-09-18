@@ -14,6 +14,26 @@ export const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
   : ["SIGINT", "SIGTERM"];
 
 /**
+ * The `.env` tier the module gate loads for a verb: the process's own mode when the deployer
+ * set one (`DENEXT_ENV`, else `NODE_ENV`), else the verb's declared tier, else `undefined` so
+ * {@linkcode loadEnv} falls back to its default (`development`).
+ *
+ * @param command The verb about to run.
+ * @param env The process environment (`Deno.env.get`; a read may throw under `--allow-env=X`).
+ * @returns The tier, or `undefined` for the default.
+ */
+export function envTierFor(
+  command: { readonly envTier?: "production" },
+  env: (key: string) => string | undefined = (key) => Deno.env.get(key),
+): string | undefined {
+  try {
+    return env("DENEXT_ENV") ?? env("NODE_ENV") ?? command.envTier;
+  } catch {
+    return command.envTier;
+  }
+}
+
+/**
  * The project directory a command operates on: `--cwd` wins, else the first
  * positional, else the current directory — resolved to an absolute path.
  */

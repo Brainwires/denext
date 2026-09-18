@@ -36,7 +36,7 @@ import { VERSION } from "./mod.ts";
 import type { CommandContext, CommandSpec, ParseOutcome, ProjectVerb } from "./src/cli/command.ts";
 import { type CommandRegistry, GLOBAL_FLAGS } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
-import { projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
+import { envTierFor, projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
 import { readCommandCache } from "./src/cli/command-cache.ts";
 
 /**
@@ -261,7 +261,7 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   if (!command.loadsModules) return false;
   const dir = command.moduleDir ? command.moduleDir(ctx) : projectDir(ctx);
   if (await maybeReexecPinned(dir)) return true;
-  await loadEnv({ dir });
+  await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   if (await maybeReexecForCss(dir, command.name !== "dev")) return true;
   if (await maybeReexecForModules(dir)) return true;

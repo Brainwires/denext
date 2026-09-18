@@ -127,6 +127,13 @@ export interface CommandSpec {
    */
   readonly loadsModules?: boolean;
   /**
+   * The `.env` tier this verb loads when neither `DENEXT_ENV` nor `NODE_ENV` says otherwise.
+   * `build`, `export` and `start` are production verbs: without this, `deno task start` read
+   * `.env.development` and never `.env.production`, because the env files are loaded before
+   * `start` marks the process as production.
+   */
+  readonly envTier?: "production";
+  /**
    * Override how the module gate (and env loading) derive the project directory.
    * Defaults to the first positional; a verb whose first positional is not the dir
    * (e.g. `desktop <action> [dir]`) supplies this. Only consulted when
