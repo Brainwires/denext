@@ -415,9 +415,10 @@ and this project adheres to
   - **Docker** — regenerate `Dockerfile` / `docker-compose.yml` / `.dockerignore` with options
     (`server` | `static`, port, `denoland/deno` tag, optional Postgres service) and a per-file
     diff; a hand-edited file (no generated-file sentinel) is never clobbered.
-  - **Setup wizard** — nine steps for a fresh clone: detect, Deno runtime, a comment-preserving
-    `deno.json` merge, `deno install`, an env-var scan that writes `.env.example` (never `.env`),
-    `denext doctor --json`, the `denext create` feature toggles, tasks, and start dev.
+  - **Setup** (`/setup`; it began as a nine-step wizard and was split into `/setup`, `/dev` and
+    `/tasks` before the release) — readying a fresh clone: detect, Deno runtime, a
+    comment-preserving `deno.json` merge, `deno install`, an env-var scan that writes
+    `.env.example` (never `.env`), `denext doctor --json`, and the `denext create` feature toggles.
   - **Commands** — the project's own verbs with their flags and arguments, runnable with streamed
     output.
     Six layers guard the local write surface: loopback-only bind; a DNS-rebinding / `Sec-Fetch-Site`
@@ -822,7 +823,7 @@ and this project adheres to
   browser sends `Origin: null` on a form POST, so with JavaScript off every panel form failed
   the origin check.
 - `denext ui`: the Plugins panel's config write (after `deno add`, which can take minutes) and
-  the wizard's `deno.json` / `.env.example` writes refuse when the file changed on disk since
+  the Setup page's `deno.json` / `.env.example` writes refuse when the file changed on disk since
   it was read, like the config, plugin-options and compose writers.
 - `denext ui` config edits keep a CRLF file CRLF; inserted lines used a bare LF.
 - `denext ui` streams a child's output that never prints a newline in 64 KiB pieces instead of
