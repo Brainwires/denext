@@ -76,19 +76,19 @@ action since 2.4, whichever rc introduced it.
   `requestPasswordReset()` / `requestEmailVerification()` answer `{ ok: true }` or
   `{ ok: false, error: "throttled", retryAfter }` instead of `{ throttled }`. A
   truthiness check on an old nullable result now always passes — test `.ok`.
-  ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+  ([2.5.0-rc.5](/docs/changelog#250---2026-09-18))
 - **`MfaStatus.enrolled` now means a confirmed factor, and `confirmed` is gone.**
   Read `pendingConfirmation` for an enrollment that was started but not
-  confirmed. ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+  confirmed. ([2.5.0-rc.5](/docs/changelog#250---2026-09-18))
 - **Minting an API token needs a recent sign-in.** `POST /auth/tokens` from an
   older session answers `403 { error: "reauth_required" }`; sign in again first.
-  ([2.5.0-rc.5](/docs/changelog#250-rc5---2026-09-15))
+  ([2.5.0-rc.5](/docs/changelog#250---2026-09-18))
 - **`verifyEmail()` answers `{ ok: true, user }` / `{ ok: false, error }`**
   instead of the user or `null`: `if (await verifyEmail(…))` now always passes —
-  test `result.ok`. ([2.5.0-rc.3](/docs/changelog#250-rc3---2026-09-14))
+  test `result.ok`. ([2.5.0-rc.3](/docs/changelog#250---2026-09-18))
 - **`useSession().status` can be `"mfa-required"`.** An exhaustive `switch` or a
   `Record<status, …>` needs the new member.
-  ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+  ([2.5.0-rc.2](/docs/changelog#250---2026-09-18))
 - **`denextAuth` rate-limits sign-in starts and session reads by default** — 100
   per client IP per 15 minutes and 300 per minute. A load test, or many users
   behind one address, can meet a `429`; `SessionProvider` keeps its session
@@ -98,36 +98,36 @@ action since 2.4, whichever rc introduced it.
 - **A help flag before the verb prints help instead of running the verb.**
   `denext --help build` used to run a build; it now prints `build`'s help. A
   script that relied on it runs `denext build`. An unknown flag before the verb
-  is now an error instead of being silently ignored. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+  is now an error instead of being silently ignored. ([2.5.0-rc.2](/docs/changelog#250---2026-09-18))
 - **`AuthProvider` has a third member, `EmailProvider` (`type: "email"`).** An
   exhaustive `switch` over `provider.type` needs an `"email"` case.
   `credentials()`'s `authorize` became optional and the internal
   `issueAuthSession` gained a trailing options argument — both source-compatible,
-  nothing to change. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+  nothing to change. ([2.5.0-rc.2](/docs/changelog#250---2026-09-18))
 - **The config schema no longer emits `x-denext.widget: "map"`.** Only a tool
   reading `denext.config.schema.json` is affected: detect a map from its
-  `additionalProperties`. ([2.5.0-rc.2](/docs/changelog#250-rc2---2026-09-14))
+  `additionalProperties`. ([2.5.0-rc.2](/docs/changelog#250---2026-09-18))
 - **The `linkAccount` event carries identity only** — provider, provider-side id,
   type and owner. A handler that read provider tokens off it reads the stored
   account back through the adapter.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **`Await<T>` is renamed `MaybePromise<T>`** (`denext/server`). Rename the
-  import. ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  import. ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **`InspectNode.source` (`denext/devtools`) is a `SourceLocation` object.** The
   old string stays as `sourceId` for one minor.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **Raised the scrypt `cost`? Pass the same options to `verifyPassword`**, or an
   unknown account rejects measurably faster than a known one.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **A custom `SessionStore` needs `update` for sliding expiry.** Without it a
   session is never slid forward, and the store warns once.
-  ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14))
+  ([2.5.0-rc.1](/docs/changelog#250---2026-09-18))
 - **`denext --help` lists a project's own verbs only from the cache `denext commands`
   wrote** (`.denext/commands.json`, fingerprinted against `denext.config.*`, `deno.json` and
   `deno.lock`) — it never imports your config. Before the first `denext commands`, or once one
   of those files changes, help points at `denext commands` instead; shell completions still
-  enumerate them live. ([2.5.0-rc.1](/docs/changelog#250-rc1---2026-09-14),
-  [2.5.0-rc.6](/docs/changelog#250-rc6---2026-09-16))
+  enumerate them live. ([2.5.0-rc.1](/docs/changelog#250---2026-09-18),
+  [2.5.0-rc.6](/docs/changelog#250---2026-09-18))
 
 ## Upgrading to 2.4
 

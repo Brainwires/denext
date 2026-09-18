@@ -2517,7 +2517,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.5.0-rc.7 The denext framework version.",
+      "text": "VERSION VERSION: 2.5.0 The denext framework version.",
       "denextOnly": true
     },
     {
