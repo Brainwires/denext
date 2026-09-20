@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `clientIp()`, `requestId()` and `requestSignal()` from `denext/server`: the per-request
+  facts the framework already tracks, reachable from a Server Component or Server Action, not
+  just from middleware. `clientIp()` returns the trusted proxy's last `x-forwarded-for` hop
+  when `trustForwardedHeaders` is set (else the socket peer, `undefined` outside the server
+  loop) and is a dynamic read like `headers()`; `requestSignal()` returns the deadline /
+  disconnect `AbortSignal` to thread into `fetch()`es; `requestId()` returns the correlation
+  id `x-request-id` and `DENEXT_LOG=json` carry. `requestSignal()` and `requestId()` are
+  plumbing and keep a render cacheable.
+
 ## [2.5.0] - 2026-09-18
 
 ### Breaking

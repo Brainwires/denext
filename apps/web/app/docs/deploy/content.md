@@ -165,6 +165,19 @@ JavaScript is single-threaded, so a synchronous hot loop blocks the event loop
 until it returns. Keep render/handler code free of unbounded synchronous work,
 and rely on the edge concurrency ceiling (§1) to contain the blast radius.
 
+Reach the signal from anywhere in the request with `requestSignal()` from
+`denext/server` — a route handler already has `request.signal`, but a Server
+Component or Server Action fetching data does not, and threading
+`requestSignal()` into those `fetch()`es is what lets the timeout (and a client
+disconnect) actually reclaim the work. It returns `undefined` outside denext's
+server loop, so a test that calls a handler directly is unaffected. The client
+IP and the correlation id are reachable the same way: `clientIp()` (the trusted
+proxy's last `x-forwarded-for` hop when `trustForwardedHeaders` is set, else the
+socket peer — never read the header yourself) and `requestId()` (the value
+`x-request-id` and `DENEXT_LOG=json` carry). `clientIp()` is a dynamic read, like
+`headers()`; `requestSignal()` and `requestId()` are plumbing and keep a render
+cacheable.
+
 ## 3. Outbound `fetch()` is not SSRF-pinned by default
 
 denext's image optimizer pins DNS and refuses private/loopback/link-local

@@ -9,6 +9,7 @@ import { loadEnv, parseEnv, publicEnvFrom } from "../src/server/env.ts";
 import {
   addResourceHint,
   after,
+  clientIp,
   connection,
   cookies,
   createRequestContext,
@@ -16,12 +17,15 @@ import {
   draftMode,
   headers,
   type RequestContext,
+  requestId,
+  requestSignal,
   runDeferred,
   runWithContext,
   setDraftTokenStore,
   trackSearchParamReads,
   warnUnkeyedParamReads,
 } from "../src/server/request-context.ts";
+import { setRemoteAddr } from "../src/server/remote-addr.ts";
 
 // ---- abort.ts --------------------------------------------------------------
 
@@ -263,6 +267,57 @@ Deno.test("connection() resolves and marks the render dynamic", async () => {
   const ctx = ctxFor("http://localhost/");
   await runWithContext(ctx, () => connection());
   assert(ctx.usedDynamicApi);
+});
+
+/** A request whose socket peer the server loop would have recorded. */
+function ctxWithPeer(peer: string | null, headersInit?: HeadersInit): RequestContext {
+  const req = new Request("http://localhost/", { headers: headersInit });
+  if (peer !== null) setRemoteAddr(req, { transport: "tcp", hostname: peer, port: 1 });
+  return createRequestContext(req);
+}
+
+Deno.test("clientIp() returns the socket peer and marks the render dynamic", () => {
+  const ctx = ctxWithPeer("203.0.113.7");
+  const ip = runWithContext(ctx, () => clientIp());
+  assertEquals(ip, "203.0.113.7");
+  assert(ctx.usedDynamicApi, "reading the client IP is a dynamic read");
+});
+
+Deno.test("clientIp() ignores x-forwarded-for unless the app trusts the proxy", () => {
+  const untrusted = ctxWithPeer("203.0.113.7", { "x-forwarded-for": "1.2.3.4, 9.9.9.9" });
+  assertEquals(runWithContext(untrusted, () => clientIp()), "203.0.113.7");
+
+  const trusted = ctxWithPeer("10.0.0.1", { "x-forwarded-for": "1.2.3.4, 9.9.9.9" });
+  trusted.trustForwardedHeaders = true;
+  // The last hop is the address the trusted proxy saw; earlier hops are client-supplied.
+  assertEquals(runWithContext(trusted, () => clientIp()), "9.9.9.9");
+});
+
+Deno.test("clientIp() is undefined outside denext's server loop, and requires a request", () => {
+  const noPeer = ctxWithPeer(null); // a handler called directly, no socket peer recorded
+  assertEquals(runWithContext(noPeer, () => clientIp()), undefined);
+  let threw = false;
+  try {
+    clientIp();
+  } catch {
+    threw = true;
+  }
+  assert(threw, "clientIp() outside a request throws");
+});
+
+Deno.test("requestId() returns the id and does NOT mark the render dynamic", () => {
+  const ctx = ctxFor("http://localhost/", { "x-request-id": "trace-123" });
+  const id = runWithContext(ctx, () => requestId());
+  assertEquals(id, "trace-123");
+  assert(!ctx.usedDynamicApi, "the request id is plumbing, not a dynamic read");
+});
+
+Deno.test("requestSignal() returns the context signal, undefined outside a request", () => {
+  const controller = new AbortController();
+  const ctx = ctxFor("http://localhost/", undefined, controller.signal);
+  assertEquals(runWithContext(ctx, () => requestSignal()), controller.signal);
+  assertEquals(requestSignal(), undefined);
+  assert(!ctx.usedDynamicApi, "threading the abort signal does not make the render dynamic");
 });
 
 Deno.test("addResourceHint records + dedupes inside a request, no-op outside", () => {

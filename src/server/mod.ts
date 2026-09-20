@@ -273,12 +273,15 @@ export type {
 // Per-request async context — cookies()/headers()/draftMode()/after() for server code.
 export {
   after,
+  clientIp,
   connection,
   cookies,
   draftMode,
   headers,
   noStore,
   readonlyHeaders,
+  requestId,
+  requestSignal,
 } from "./request-context.ts";
 export type { RequestCookie } from "./request-context.ts";
 export { cappedBody, readCappedBody, STALLED, TOO_LARGE } from "./body.ts";

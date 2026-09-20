@@ -11,6 +11,7 @@ import { deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/co
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
 import { currentCacheScope } from "./cache-scope.ts";
+import { lastForwardedHop, remoteAddrOf } from "./remote-addr.ts";
 
 /**
  * Reading request-specific data (`cookies()`/`headers()`/`connection()`) inside a
@@ -156,6 +157,13 @@ export interface RequestContext {
    * request handler; absent when running outside a request.
    */
   signal?: AbortSignal;
+  /**
+   * Whether the app trusts `x-forwarded-for` for the client address — mirrors
+   * {@linkcode AppConfig.trustForwardedHeaders}. Read by {@linkcode clientIp}; set by
+   * `createApp` from the config. When unset (a direct handler call in a test), only the
+   * socket peer is used.
+   */
+  trustForwardedHeaders?: boolean;
   /** Headers accumulated to attach to the response (e.g. Set-Cookie, loader-set headers). */
   outgoingHeaders: Headers;
   /** Per-request render collectors (signal state, `useServerInsertedHTML`) — see `render-scope.ts`. */
@@ -437,6 +445,65 @@ export function connection(): Promise<void> {
   if (shouldPostpone()) postponeDynamic("connection");
   if (ctx) ctx.usedDynamicApi = true;
   return Promise.resolve();
+}
+
+/**
+ * The client's IP address for the current request, or `undefined` when it cannot be
+ * determined (a handler invoked directly in a test, not through denext's server loop).
+ *
+ * When the app trusts a fronting proxy ({@linkcode AppConfig.trustForwardedHeaders} /
+ * `DENEXT_TRUST_PROXY=1`), the last hop of `x-forwarded-for` is returned; otherwise the
+ * socket peer the server saw. Never read `x-forwarded-for` yourself without that flag — any
+ * client can set it.
+ *
+ * Reading it makes the render **dynamic** (per-request), exactly like {@linkcode headers}:
+ * a page that branches on the client IP cannot be statically cached. Use it in a route
+ * handler, a Server Action, or middleware where that is already the case.
+ *
+ * @returns The client IP, or `undefined` outside denext's server loop.
+ */
+export function clientIp(): string | undefined {
+  const ctx = requireContext("clientIp");
+  assertNotInCacheScope("clientIp");
+  assertNotDynamicError(ctx, "clientIp");
+  if (isForceStatic(ctx)) return undefined;
+  if (shouldPostpone()) postponeDynamic("clientIp");
+  ctx.usedDynamicApi = true; // the client IP is per-request
+  if (ctx.trustForwardedHeaders) {
+    const last = lastForwardedHop(ctx.request);
+    if (last) return last;
+  }
+  return remoteAddrOf(ctx.request);
+}
+
+/**
+ * The correlation id for the current request — the value logged with the request and its
+ * errors, and echoed as the `x-request-id` response header on an error. Honors an inbound
+ * `x-request-id` from a trusted proxy, else a fresh UUID.
+ *
+ * This is plumbing for logging and `after()`, not request data, so reading it does **not**
+ * make the render dynamic. Do not render it into a cacheable page — a cached copy would
+ * carry one request's id for every later reader.
+ *
+ * @returns The request's correlation id.
+ */
+export function requestId(): string {
+  return requireContext("requestId").requestId;
+}
+
+/**
+ * The current request's abort signal — fires on client disconnect or the request timeout.
+ * Thread it into outgoing `fetch()`es (and any cancellable work) for cooperative
+ * cancellation, so a client that navigates away actually reclaims the work.
+ *
+ * Cancellation plumbing, not request data: reading it does **not** make the render dynamic,
+ * so a `use cache` component may still pass it to its fetches. `undefined` when running
+ * outside denext's server loop.
+ *
+ * @returns The abort signal, or `undefined` outside a request.
+ */
+export function requestSignal(): AbortSignal | undefined {
+  return currentContext()?.signal;
 }
 
 /**

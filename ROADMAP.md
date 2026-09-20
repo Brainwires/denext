@@ -179,12 +179,6 @@ what to do by hand):
   crossed versions.
 - **`denext routes`** — the app's pages + API routes as a table / `--json` (the
   MCP server's `denext_list_routes` has the data; the verb is missing).
-- **`clientIp()`, `requestId()`, `requestSignal()` from `denext/server`** — the
-  per-request facts the framework already tracks (the socket peer or trusted
-  forwarded hop, the correlation id, the deadline/disconnect `AbortSignal`)
-  exposed to route handlers and Server Actions instead of being reachable only
-  through middleware internals. Today a hand-built SSE stream cannot observe the
-  request deadline.
 - **CDN cache headers by default** — an ISR page hit emits no `Cache-Control`;
   emit `public, s-maxage=<revalidate>, stale-while-revalidate=…` (and
   `private, no-store` stays on dynamic pages) so a CDN in front caches without a

@@ -33,7 +33,7 @@
  * @module
  */
 
-import { remoteAddrOf } from "../remote-addr.ts";
+import { lastForwardedHop, remoteAddrOf } from "../remote-addr.ts";
 
 /** One key's open failure window. */
 
@@ -279,10 +279,9 @@ export interface RateLimitKeyOptions {
  * whatever the client sent — so a per-request forged header can't dodge the limiter.
  * `"unknown"` only when neither is available (an embedder calling the handler directly).
  */
-export function clientIp(request: Request, options: RateLimitKeyOptions): string {
+export function resolveClientIp(request: Request, options: RateLimitKeyOptions): string {
   if (options.trustForwardedHeaders) {
-    const hops = request.headers.get("x-forwarded-for")?.split(",").map((h) => h.trim());
-    const last = hops?.filter(Boolean).at(-1);
+    const last = lastForwardedHop(request);
     if (last) return last;
   }
   return remoteAddrOf(request) ?? "unknown";
@@ -357,7 +356,7 @@ function parseHextets(part: string): number[] | null {
 export const IP_BUCKET_FACTOR = 10;
 
 /**
- * The client's **limiter bucket**: {@link clientIp}, normalised — an IPv6 address collapses
+ * The client's **limiter bucket**: {@link resolveClientIp}, normalised — an IPv6 address collapses
  * to its /64 prefix, so the many spellings of one address share one budget and a /64
  * allocation can't mint a fresh one per request. Every per-IP limiter key is built on this
  * rather than on the raw address.
@@ -367,7 +366,7 @@ export const IP_BUCKET_FACTOR = 10;
  * @returns The bucket string to key a limiter on.
  */
 export function clientIpBucket(request: Request, options: RateLimitKeyOptions = {}): string {
-  return ipBucket(clientIp(request, options));
+  return ipBucket(resolveClientIp(request, options));
 }
 
 /** The IP-wide lockout bucket for `request` (see {@link IP_BUCKET_FACTOR}). */

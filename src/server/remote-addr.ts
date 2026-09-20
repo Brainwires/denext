@@ -21,6 +21,19 @@ export function remoteAddrOf(request: Request): string | undefined {
   return addrs.get(request);
 }
 
+/**
+ * The last `x-forwarded-for` hop — the address the nearest trusted proxy saw the connection
+ * come from. Earlier hops are client-supplied and must not be trusted. Call this ONLY when the
+ * app trusts the proxy (`trustForwardedHeaders`); otherwise the socket peer is the client.
+ *
+ * @param request The incoming request.
+ * @returns The last non-empty hop, or `undefined` when the header is absent or empty.
+ */
+export function lastForwardedHop(request: Request): string | undefined {
+  const hops = request.headers.get("x-forwarded-for")?.split(",").map((h) => h.trim());
+  return hops?.filter(Boolean).at(-1);
+}
+
 /** Copy the remembered peer of `from` onto `to` (a Request rebuilt from it). */
 export function copyRemoteAddr(from: Request, to: Request): void {
   const addr = addrs.get(from);
