@@ -19,6 +19,23 @@ and this project adheres to
   id `x-request-id` and `DENEXT_LOG=json` carry. `requestSignal()` and `requestId()` are
   plumbing and keep a render cacheable.
 
+### Fixed
+
+- **An app built on an external store (TanStack Router, Zustand, Redux, `@tanstack/store`) could
+  throw from a selector and blank a route or collapse a subtree.** A `useSyncExternalStore`
+  change was scheduled at whatever priority was in effect when the store's `subscribe` callback
+  fired, so one store mutation's subscribers could be split across lanes: a notify landing inside
+  a `startTransition` (or inside the pending window of an async one) was deferred to the
+  transition lane while a notify landing outside it stayed synchronous. The sync half then
+  re-rendered against the new store state while the transition half still showed the old one —
+  tearing. Concretely, a child subscribed to one item's store re-rendered alone, its ancestor's
+  list update parked on the transition lane so the props-equal bailout cloned straight past it,
+  and its selector threw on the item the store no longer held (TanStack Router's `matchStores`
+  "Invariant failed", repeated once per stranded child). Store updates now always schedule at
+  sync priority and are never time-sliced, matching React's `forceStoreRerender`, so every
+  subscriber of one mutation re-renders in the same pass and a removed child is unmounted by its
+  parent before it can render.
+
 ## [2.5.0] - 2026-09-18
 
 ### Breaking

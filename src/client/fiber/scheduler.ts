@@ -77,11 +77,11 @@ export function resetConcurrentState(): void {
 }
 
 /**
- * Mark `fiber` (and both its buffers) as having a pending update, propagate the
- * child-lane hint up to the root (marking both buffers so whichever is current
- * sees it), and schedule the appropriate flush.
+ * Record WHY `fiber` has a pending update, on both buffers (whichever ends up current
+ * must see it): a state setter (eligible for begin-work's no-op state bailout) or a
+ * forced re-render (a Suspense retry, a store change, a boundary reset — never bailed).
  */
-export function scheduleUpdate(fiber: Fiber, fromState = false): void {
+function markUpdateSource(fiber: Fiber, fromState: boolean): void {
   if (fromState) {
     fiber.stateUpdate = true;
     if (fiber.alternate) fiber.alternate.stateUpdate = true;
@@ -89,6 +89,34 @@ export function scheduleUpdate(fiber: Fiber, fromState = false): void {
     fiber.forceRender = true;
     if (fiber.alternate) fiber.alternate.forceRender = true;
   }
+}
+
+/**
+ * Schedule a `useSyncExternalStore` subscriber at SYNC priority, whatever transition is
+ * in flight — React's `forceStoreRerender`, which hard-codes `SyncLane` for exactly this
+ * reason. An external store has ALREADY mutated, so its subscribers cannot be split
+ * across lanes: if one subscriber's notify happens to land inside a `startTransition`
+ * (or inside the pending window of an async one) while another's lands outside it, the
+ * sync half re-renders against the new store while the transition half still shows the
+ * old one — React's definition of tearing. Concretely, a child subscribed to one item's
+ * store re-renders alone (its ancestor's list update parked on TransitionLane, so the
+ * props-equal bailout clones straight past it) and its selector throws on the item the
+ * store no longer has — TanStack Router's `matchStores` invariant, which blanks the
+ * route. Store updates must never be time-sliced; only the lane is forced, the
+ * `forceRender` marking is the same as any other non-state update.
+ */
+export function scheduleStoreUpdate(fiber: Fiber): void {
+  markUpdateSource(fiber, false);
+  scheduleUpdateLane(fiber, SyncLane);
+}
+
+/**
+ * Mark `fiber` (and both its buffers) as having a pending update, propagate the
+ * child-lane hint up to the root (marking both buffers so whichever is current
+ * sees it), and schedule the appropriate flush.
+ */
+export function scheduleUpdate(fiber: Fiber, fromState = false): void {
+  markUpdateSource(fiber, fromState);
   // With AsyncContext scoping enabled (`asyncContext` + the build
   // transform), priority is decided by transition IDENTITY: an update belongs to a
   // transition iff it is enqueued inside that transition's context — which the

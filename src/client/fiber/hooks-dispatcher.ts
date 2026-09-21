@@ -3,7 +3,13 @@
 // of one component render.
 
 import { devHydrationActive } from "./fiber-utils.ts";
-import { duringRender, renderLanes, scheduleUpdate, scheduleUpdateLane } from "./scheduler.ts";
+import {
+  duringRender,
+  renderLanes,
+  scheduleStoreUpdate,
+  scheduleUpdate,
+  scheduleUpdateLane,
+} from "./scheduler.ts";
 
 import { nextId } from "../../jsx/tree-id.ts";
 import type { DependencyList } from "../../compat/react-types.ts";
@@ -206,8 +212,11 @@ function storeSubscriptionEffect(
   subscribe: (onChange: () => void) => () => void,
   changed: () => boolean,
 ): CommitEffect {
+  // Always SYNC, never the transition lane, even when the store's notify fires inside a
+  // startTransition — React's `forceStoreRerender` does the same (see scheduleStoreUpdate).
+  // Splitting one store mutation's subscribers across lanes tears the tree.
   const notify = () => {
-    if (changed()) scheduleUpdate(cell.owner!);
+    if (changed()) scheduleStoreUpdate(cell.owner!);
   };
   const mount = () => {
     cell.cleanup = subscribe(notify);
