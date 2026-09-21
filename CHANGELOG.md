@@ -8,6 +8,36 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-21
+
+### Added
+
+- `clientIp()`, `requestId()` and `requestSignal()` from `denext/server`: the per-request
+  facts the framework already tracks, reachable from a Server Component or Server Action, not
+  just from middleware. `clientIp()` returns the trusted proxy's last `x-forwarded-for` hop
+  when `trustForwardedHeaders` is set (else the socket peer, `undefined` outside the server
+  loop) and is a dynamic read like `headers()`; `requestSignal()` returns the deadline /
+  disconnect `AbortSignal` to thread into `fetch()`es; `requestId()` returns the correlation
+  id `x-request-id` and `DENEXT_LOG=json` carry. `requestSignal()` and `requestId()` are
+  plumbing and keep a render cacheable.
+
+### Fixed
+
+- **An app built on an external store (TanStack Router, Zustand, Redux, `@tanstack/store`) could
+  throw from a selector and blank a route or collapse a subtree.** A `useSyncExternalStore`
+  change was scheduled at whatever priority was in effect when the store's `subscribe` callback
+  fired, so one store mutation's subscribers could be split across lanes: a notify landing inside
+  a `startTransition` (or inside the pending window of an async one) was deferred to the
+  transition lane while a notify landing outside it stayed synchronous. The sync half then
+  re-rendered against the new store state while the transition half still showed the old one —
+  tearing. Concretely, a child subscribed to one item's store re-rendered alone, its ancestor's
+  list update parked on the transition lane so the props-equal bailout cloned straight past it,
+  and its selector threw on the item the store no longer held (TanStack Router's `matchStores`
+  "Invariant failed", repeated once per stranded child). Store updates now always schedule at
+  sync priority and are never time-sliced, matching React's `forceStoreRerender`, so every
+  subscriber of one mutation re-renders in the same pass and a removed child is unmounted by its
+  parent before it can render.
+
 ## [2.5.0] - 2026-09-18
 
 ### Breaking
@@ -7738,6 +7768,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.6.0]: https://jsr.io/@denext/denext@2.6.0
 [2.5.0]: https://jsr.io/@denext/denext@2.5.0
 [2.5.0-rc.7]: https://jsr.io/@denext/denext@2.5.0-rc.7
 [2.5.0-rc.6]: https://jsr.io/@denext/denext@2.5.0-rc.6

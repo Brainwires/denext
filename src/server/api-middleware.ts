@@ -9,7 +9,7 @@ import type { ApiMiddleware, ApiMiddlewareInput } from "./define-api.ts";
 import { ApiError } from "./api-error.ts";
 import { hasRole, updateAuthSession } from "./auth/mod.ts";
 import type { AuthSession } from "./auth/types.ts";
-import { clientIp, inMemoryRateLimitStore, type RateLimitStore } from "./auth/rate-limit.ts";
+import { inMemoryRateLimitStore, type RateLimitStore, resolveClientIp } from "./auth/rate-limit.ts";
 
 /** Options for {@link requireSession}. */
 export interface RequireSessionOptions {
@@ -102,6 +102,6 @@ function defaultKey(
   input: ApiMiddlewareInput<object>,
   keyOptions: { trustForwardedHeaders?: boolean },
 ): string {
-  const ip = clientIp(input.request, keyOptions);
+  const ip = resolveClientIp(input.request, keyOptions);
   return `${ip}|${input.method} ${new URL(input.request.url).pathname}`;
 }

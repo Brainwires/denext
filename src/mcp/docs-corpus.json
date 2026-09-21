@@ -2517,7 +2517,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.5.0 The denext framework version.",
+      "text": "VERSION VERSION: 2.6.0 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -3382,6 +3382,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/ChannelTransport",
       "text": "ChannelTransport interface ChannelTransport Carries ChannelEvents to every hub that should deliver them (across instances).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/clientIp",
+      "kind": "function",
+      "title": "clientIp",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/clientIp",
+      "text": "clientIp clientIp(): string | undefined The client's IP address for the current request, or undefined when it cannot be determined (a handler invoked directly in a test, not through denext's server loop). When the app trusts a fronting proxy (AppConfig.trustForwardedHeaders / DENEXT_TRUST_PROXY=1), the last hop of x-forwarded-for is returned; otherwise the socket peer the server saw. Never read x-forwarded-for yourself without that flag — any client can set it. Reading it makes the render **dynamic** (per-request), exactly like headers: a page that branches on the client IP cannot be statically cached. Use it in a route handler, a Server Action, or middleware where that is already the case. The client IP, or undefined outside denext's server loop.",
       "denextOnly": true
     },
     {
@@ -5599,6 +5608,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-server/requestId",
+      "kind": "function",
+      "title": "requestId",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/requestId",
+      "text": "requestId requestId(): string The correlation id for the current request — the value logged with the request and its errors, and echoed as the x-request-id response header on an error. Honors an inbound x-request-id from a trusted proxy, else a fresh UUID. This is plumbing for logging and after(), not request data, so reading it does **not** make the render dynamic. Do not render it into a cacheable page — a cached copy would carry one request's id for every later reader. The request's correlation id.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-server/RequestLogInfo",
       "kind": "interface",
       "title": "RequestLogInfo",
@@ -5623,6 +5641,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/requestPasswordReset",
       "text": "requestPasswordReset requestPasswordReset(config: AuthConfig, email: string): Promise<EmailRequestResult> Email a password-reset link. The link opens email.resetPath (default {basePath}/reset) — a page your app renders, posting email, token and password to {basePath}/reset/confirm (or calling resetPassword). Resolves normally for an address with no account — with no mail, and comparable work — so a caller can't learn which addresses have accounts. Throws only for a misconfiguration: no sendVerificationRequest, or an adapter without the verification-token group and setCredential. The app's auth config. The submitted address (exactly one; a list sends nothing). Whether the request was throttled — the same for known and unknown addresses.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/requestSignal",
+      "kind": "function",
+      "title": "requestSignal",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/requestSignal",
+      "text": "requestSignal requestSignal(): AbortSignal | undefined The current request's abort signal — fires on client disconnect or the request timeout. Thread it into outgoing fetch()es (and any cancellable work) for cooperative cancellation, so a client that navigates away actually reclaims the work. Cancellation plumbing, not request data: reading it does **not** make the render dynamic, so a use cache component may still pass it to its fetches. undefined when running outside denext's server loop. The abort signal, or undefined outside a request.",
       "denextOnly": true
     },
     {
