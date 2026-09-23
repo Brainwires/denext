@@ -68,23 +68,32 @@ import Foundation
 /// \`otaReset\` from \`denext/mobile\`). \`DenextBridgeViewController\` registers it before the
 /// first page loads.
 ///
-/// - \`status() → { current, bundled, pending, rejected }\`
-/// - \`apply({ baseUrl, headers, manifest }) → { version, downloaded, copied }\`, rejecting with
-///   code \`invalid\`, \`busy\`, \`rejected\`, \`download\` or \`integrity\`
+/// - \`status() → { current, bundled, pending, rejected, staged }\`
+/// - \`download({ baseUrl, headers, manifest }) → { version, downloaded, copied }\`: downloads and
+///   verifies the version and records it as staged, WITHOUT switching to it; rejects with code
+///   \`invalid\`, \`busy\`, \`rejected\`, \`download\` or \`integrity\`
+/// - \`activate({ version }) → { version }\`: switches to the staged version (its trial launch);
+///   rejects with code \`invalid\`, \`busy\`, \`not_staged\` or \`rejected\`
+/// - \`apply({ baseUrl, headers, manifest }) → { version, downloaded, copied }\`: \`download\` then
+///   \`activate\` in one call, with \`download\`'s rejections
 /// - \`booted()\`: confirms the UI on its trial launch, which cancels the rollback watchdog
 /// - \`reset()\`: back to the bundled UI (rejects with \`busy\` during a download)
+///
+/// Only \`activate\` and \`apply\` switch versions: a staged version is never started on its own.
 @objc(DenextOtaPlugin)
 public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "DenextOtaPlugin"
     public let jsName = "DenextOta"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "download", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "activate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "apply", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "booted", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "reset", returnType: CAPPluginReturnPromise)
     ]
 
-    /// Main-thread only. Set while \`apply\` downloads, so a second apply cannot race it.
+    /// Main-thread only. Set while \`download\` or \`apply\` downloads, so a second one cannot race it.
     private var applying = false
     /// Main-thread only. Rolls a UI on its trial launch back unless \`booted\` cancels it.
     private var watchdog: DispatchWorkItem?
@@ -96,8 +105,54 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin {
                 "current": store.current ?? NSNull(),
                 "bundled": store.bundledVersion ?? NSNull(),
                 "pending": store.pending ?? NSNull(),
-                "rejected": store.rejected ?? NSNull()
+                "rejected": store.rejected ?? NSNull(),
+                "staged": store.staged ?? NSNull()
             ])
+        }
+    }
+
+    /// Fetches every manifest file into \`<version>.partial/\` (copying the ones already on
+    /// the device), verifies each SHA-256 and size, renames the directory to \`<version>/\` and
+    /// records it as staged. The running UI is untouched: only \`activate\` switches to it.
+    @objc func download(_ call: CAPPluginCall) {
+        guard let request = parseRequest(call) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let store = DenextOtaStore.shared
+            guard !self.rejectIfBusy(call) else { return }
+            if request.version == store.current {
+                // Already running: nothing to download, and nothing to stage.
+                call.resolve(["version": request.version, "downloaded": 0, "copied": 0])
+                return
+            }
+            guard !self.rejectIfRejected(call, request.version) else { return }
+            self.stage(request, call: call) { stats in
+                call.resolve([
+                    "version": request.version,
+                    "downloaded": stats.downloaded,
+                    "copied": stats.copied
+                ])
+            }
+        }
+    }
+
+    /// Switches to the staged version: records it as pending (its trial launch), switches the
+    /// webview to it (which reloads the page) and arms the watchdog, exactly as \`apply\` does
+    /// after its download.
+    @objc func activate(_ call: CAPPluginCall) {
+        guard let version = call.getString("version"), DenextOtaStore.isSha256(version) else {
+            call.reject("version must be a UI version.", "invalid")
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard !self.rejectIfBusy(call) else { return }
+            guard DenextOtaStore.shared.staged == version else {
+                call.reject("UI \\(version) is not staged; download it first.", "not_staged")
+                return
+            }
+            guard !self.rejectIfRejected(call, version) else { return }
+            self.startTrial(version, resolving: call, with: ["version": version])
         }
     }
 
@@ -107,56 +162,96 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin {
     /// reload is the version's trial launch: \`booted\` from the new page confirms it,
     /// otherwise the watchdog rolls it back.
     @objc func apply(_ call: CAPPluginCall) {
-        let request: DenextOtaStore.ApplyRequest
+        guard let request = parseRequest(call) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let store = DenextOtaStore.shared
+            guard !self.rejectIfBusy(call) else { return }
+            if request.version == store.current {
+                call.resolve(["version": request.version, "downloaded": 0, "copied": 0])
+                return
+            }
+            guard !self.rejectIfRejected(call, request.version) else { return }
+            self.stage(request, call: call) { stats in
+                self.startTrial(request.version, resolving: call, with: [
+                    "version": request.version,
+                    "downloaded": stats.downloaded,
+                    "copied": stats.copied
+                ])
+            }
+        }
+    }
+
+    /// The request \`download\` and \`apply\` take, or nil after rejecting \`call\` with \`invalid\`.
+    private func parseRequest(_ call: CAPPluginCall) -> DenextOtaStore.ApplyRequest? {
         do {
-            request = try DenextOtaStore.ApplyRequest(
+            return try DenextOtaStore.ApplyRequest(
                 baseUrl: call.getString("baseUrl"),
                 headers: call.getObject("headers"),
                 manifest: call.getObject("manifest")
             )
         } catch {
             call.reject(error.localizedDescription, (error as? DenextOtaStore.OtaError)?.code ?? "invalid")
+            return nil
+        }
+    }
+
+    /// Main thread. Rejects \`call\` with \`busy\` while a download or a trial launch is in
+    /// progress; returns whether it did.
+    private func rejectIfBusy(_ call: CAPPluginCall) -> Bool {
+        guard applying || DenextOtaStore.shared.pending != nil else { return false }
+        call.reject("A UI update is already in progress.", "busy")
+        return true
+    }
+
+    /// Main thread. Rejects \`call\` with \`rejected\` when \`version\` was rolled back on this
+    /// device; returns whether it did.
+    private func rejectIfRejected(_ call: CAPPluginCall, _ version: String) -> Bool {
+        guard version == DenextOtaStore.shared.rejected else { return false }
+        call.reject("UI \\(version) was rolled back on this device.", "rejected")
+        return true
+    }
+
+    /// Main thread. Downloads and verifies \`request\` into its version directory and records it
+    /// as staged, then calls \`completion\` on the main thread (with zero stats when that version
+    /// is already staged). A failure rejects \`call\` instead.
+    private func stage(
+        _ request: DenextOtaStore.ApplyRequest,
+        call: CAPPluginCall,
+        completion: @escaping (DenextOtaStore.DownloadStats) -> Void
+    ) {
+        let store = DenextOtaStore.shared
+        if store.staged == request.version {
+            completion(DenextOtaStore.DownloadStats())
             return
         }
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            let store = DenextOtaStore.shared
-            guard !self.applying, store.pending == nil else {
-                call.reject("A UI update is already in progress.", "busy")
-                return
-            }
-            if request.version == store.current {
-                call.resolve(["version": request.version, "downloaded": 0, "copied": 0])
-                return
-            }
-            if request.version == store.rejected {
-                call.reject("UI \\(request.version) was rolled back on this device.", "rejected")
-                return
-            }
-            self.applying = true
-            Task {
-                do {
-                    let stats = try await store.download(request)
-                    await MainActor.run {
-                        self.applying = false
-                        store.beginTrial(request.version)
-                        call.resolve([
-                            "version": request.version,
-                            "downloaded": stats.downloaded,
-                            "copied": stats.copied
-                        ])
-                        self.switchWebView(to: store.versionDirectory(request.version))
-                        self.armWatchdog()
-                    }
-                } catch {
-                    await MainActor.run {
-                        self.applying = false
-                        let code = (error as? DenextOtaStore.OtaError)?.code ?? "download"
-                        call.reject(error.localizedDescription, code)
-                    }
+        applying = true
+        Task {
+            do {
+                let stats = try await store.download(request)
+                await MainActor.run {
+                    self.applying = false
+                    store.stage(request.version)
+                    completion(stats)
+                }
+            } catch {
+                await MainActor.run {
+                    self.applying = false
+                    let code = (error as? DenextOtaStore.OtaError)?.code ?? "download"
+                    call.reject(error.localizedDescription, code)
                 }
             }
         }
+    }
+
+    /// Main thread. Starts the staged \`version\`'s trial: records it as pending (clearing
+    /// staged), resolves \`call\`, switches the webview to it and arms the watchdog.
+    private func startTrial(_ version: String, resolving call: CAPPluginCall, with result: [String: Any]) {
+        let store = DenextOtaStore.shared
+        store.beginTrial(version)
+        call.resolve(result)
+        switchWebView(to: store.versionDirectory(version))
+        armWatchdog()
     }
 
     @objc func booted(_ call: CAPPluginCall) {
@@ -183,7 +278,8 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// Main thread. Called for a trial launch (\`DenextBridgeViewController\`) and after \`apply\`.
+    /// Main thread. Called for a trial launch (\`DenextBridgeViewController\`) and after
+    /// \`activate\` / \`apply\`.
     func armWatchdog() {
         watchdog?.cancel()
         let item = DispatchWorkItem { [weak self] in
@@ -228,6 +324,8 @@ import Foundation
 ///   the app died before the UI confirmed its boot, so the version is rolled back unseen.
 /// - \`rejected\`: the last version rolled back; \`apply\` refuses it (code \`rejected\`) until
 ///   \`reset\`, so a broken server UI cannot put the app in an apply → rollback loop.
+/// - \`staged\`: a version \`download\` verified into its directory, waiting for \`activate\`. It is
+///   never started on its own: launch only ever serves \`pending\` or \`current\`.
 /// - \`binaryVersion\`: the app binary the downloads belong to. A new binary brings its own
 ///   bundled UI (and maybe new native code), so every download is dropped.
 ///
@@ -250,6 +348,7 @@ final class DenextOtaStore {
         static let previous = "denext.ota.previous"
         static let trialStarted = "denext.ota.trialStarted"
         static let rejected = "denext.ota.rejected"
+        static let staged = "denext.ota.staged"
         static let binaryVersion = "denext.ota.binaryVersion"
     }
 
@@ -345,6 +444,14 @@ final class DenextOtaStore {
         get { defaults.string(forKey: Key.rejected) }
         set { defaults.set(newValue, forKey: Key.rejected) }
     }
+    private var stagedVersion: String? {
+        get { defaults.string(forKey: Key.staged) }
+        set { defaults.set(newValue, forKey: Key.staged) }
+    }
+    /// The staged version, while its verified directory is still there.
+    var staged: String? {
+        return stagedVersion.flatMap { hasVersion($0) ? $0 : nil }
+    }
 
     /// The version stamped into the bundled UI (\`public/_denext/ota.json\`), if any.
     lazy var bundledVersion: String? = {
@@ -410,10 +517,13 @@ final class DenextOtaStore {
         }
         launchPrepared = true
         // A new app binary brings its own bundled UI (and maybe new native code), so a UI
-        // downloaded for the old binary is dropped, as Capacitor drops its own deploy path.
+        // downloaded for the old binary is dropped, as Capacitor drops its own deploy path. The
+        // bundled UI's version is part of the key, so a rebuild that ships a different UI
+        // counts as a new binary even when its version and build numbers were not bumped.
         let binaryVersion = [
             Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
-            Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
+            Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "",
+            bundledVersion ?? ""
         ].joined(separator: "+")
         if defaults.string(forKey: Key.binaryVersion) != binaryVersion {
             reset()
@@ -440,20 +550,32 @@ final class DenextOtaStore {
 
     // MARK: Transitions
 
+    /// Records a verified \`version\` as staged, deleting the directory of the version it
+    /// replaces unless that one is current, pending or bundled.
+    func stage(_ version: String) {
+        if let old = stagedVersion, old != version, old != current, old != pending, old != bundledVersion {
+            try? fileManager.removeItem(at: versionDirectory(old))
+        }
+        stagedVersion = version
+    }
+
+    /// \`activate\` / \`apply\`: \`version\` (the staged one) starts its trial; nothing stays staged.
     func beginTrial(_ version: String) {
         previous = current
         pending = version
         trialStarted = true
+        stagedVersion = nil
     }
 
-    /// \`booted\`: the pending version becomes current, and every other version is deleted.
+    /// \`booted\`: the pending version becomes current, and every other version is deleted
+    /// (bar a staged one).
     func confirmPending() {
         guard let pending = pending else { return }
         current = pending
         self.pending = nil
         previous = nil
         trialStarted = false
-        prune(keeping: pending)
+        prune(keeping: [pending, stagedVersion].compactMap { $0 })
     }
 
     /// Drops the pending version (remembered as rejected) and returns the directory to serve:
@@ -471,19 +593,19 @@ final class DenextOtaStore {
         return target.map(versionDirectory)
     }
 
-    /// Back to the bundled UI with no downloaded versions and nothing rejected.
+    /// Back to the bundled UI with no downloaded or staged versions and nothing rejected.
     func reset() {
-        for key in [Key.current, Key.pending, Key.previous, Key.trialStarted, Key.rejected] {
+        for key in [Key.current, Key.pending, Key.previous, Key.trialStarted, Key.rejected, Key.staged] {
             defaults.removeObject(forKey: key)
         }
         try? fileManager.removeItem(at: root)
     }
 
-    private func prune(keeping version: String) {
+    private func prune(keeping versions: [String]) {
         guard let entries = try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) else {
             return
         }
-        for entry in entries where entry.lastPathComponent != version {
+        for entry in entries where !versions.contains(entry.lastPathComponent) {
             try? fileManager.removeItem(at: entry)
         }
     }
@@ -724,20 +846,29 @@ import org.json.JSONObject;
  * registers it. See {@link DenextOtaStore} for the files and state.
  *
  * <ul>
- *   <li>{@code status() → { current, bundled, pending, rejected }}
- *   <li>{@code apply({ baseUrl, headers, manifest }) → { version, downloaded, copied }},
- *       rejecting with code {@code invalid}, {@code busy}, {@code rejected}, {@code download}
- *       or {@code integrity}
+ *   <li>{@code status() → { current, bundled, pending, rejected, staged }}
+ *   <li>{@code download({ baseUrl, headers, manifest }) → { version, downloaded, copied }}:
+ *       downloads and verifies the version and records it as staged, WITHOUT switching to it;
+ *       rejects with code {@code invalid}, {@code busy}, {@code rejected}, {@code download} or
+ *       {@code integrity}
+ *   <li>{@code activate({ version }) → { version }}: switches to the staged version (its trial
+ *       launch); rejects with code {@code invalid}, {@code busy}, {@code not_staged} or
+ *       {@code rejected}
+ *   <li>{@code apply({ baseUrl, headers, manifest }) → { version, downloaded, copied }}:
+ *       {@code download} then {@code activate} in one call, with {@code download}'s rejections
  *   <li>{@code booted()}: confirms the UI on its trial launch, cancelling the watchdog
  *   <li>{@code reset()}: back to the bundled UI (rejects with {@code busy} during a download)
  * </ul>
+ *
+ * <p>Only {@code activate} and {@code apply} switch versions: a staged version is never started
+ * on its own.
  */
 @CapacitorPlugin(name = "DenextOta")
 public class DenextOtaPlugin extends Plugin {
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService downloads = Executors.newSingleThreadExecutor();
-    /** Main-thread only. Set while apply downloads, so a second apply cannot race it. */
+    /** Main-thread only. Set while download or apply downloads, so a second one cannot race it. */
     private boolean applying = false;
     /** Main-thread only. Rolls a UI on its trial launch back unless booted cancels it. */
     @Nullable
@@ -767,7 +898,69 @@ public class DenextOtaPlugin extends Plugin {
         result.put("bundled", orNull(store.bundledVersion()));
         result.put("pending", orNull(store.pending()));
         result.put("rejected", orNull(store.rejected()));
+        result.put("staged", orNull(store.staged()));
         call.resolve(result);
+    }
+
+    /**
+     * Fetches every manifest file into {@code <version>.partial/} (copying the ones already on
+     * the device), verifies each SHA-256 and size, renames the directory to {@code <version>/}
+     * and records it as staged. The running UI is untouched: only activate switches to it.
+     */
+    @PluginMethod
+    public void download(PluginCall call) {
+        final DenextOtaStore.ApplyRequest request;
+        try {
+            request = parseApplyRequest(call);
+        } catch (DenextOtaStore.OtaException ex) {
+            call.reject(ex.getMessage(), ex.code);
+            return;
+        }
+        mainHandler.post(() -> {
+            DenextOtaStore store = store();
+            if (rejectIfBusy(call, store)) {
+                return;
+            }
+            if (request.version.equals(store.current())) {
+                // Already running: nothing to download, and nothing to stage.
+                call.resolve(result(request.version, new DenextOtaStore.DownloadStats()));
+                return;
+            }
+            if (rejectIfRejected(call, store, request.version)) {
+                return;
+            }
+            stage(store, request, call, (stats) -> call.resolve(result(request.version, stats)));
+        });
+    }
+
+    /**
+     * Switches to the staged version: records it as pending (its trial launch), switches the
+     * webview to it (which reloads the page) and arms the watchdog, exactly as apply does after
+     * its download.
+     */
+    @PluginMethod
+    public void activate(PluginCall call) {
+        final String version = call.getString("version");
+        if (!DenextOtaStore.isSha256(version)) {
+            call.reject("version must be a UI version.", "invalid");
+            return;
+        }
+        mainHandler.post(() -> {
+            DenextOtaStore store = store();
+            if (rejectIfBusy(call, store)) {
+                return;
+            }
+            if (!version.equals(store.staged())) {
+                call.reject("UI " + version + " is not staged; download it first.", "not_staged");
+                return;
+            }
+            if (rejectIfRejected(call, store, version)) {
+                return;
+            }
+            JSObject result = new JSObject();
+            result.put("version", version);
+            startTrial(store, version, call, result);
+        });
     }
 
     /**
@@ -788,42 +981,85 @@ public class DenextOtaPlugin extends Plugin {
         }
         mainHandler.post(() -> {
             DenextOtaStore store = store();
-            if (applying || store.pending() != null) {
-                call.reject("A UI update is already in progress.", "busy");
+            if (rejectIfBusy(call, store)) {
                 return;
             }
             if (request.version.equals(store.current())) {
                 call.resolve(result(request.version, new DenextOtaStore.DownloadStats()));
                 return;
             }
-            if (request.version.equals(store.rejected())) {
-                call.reject("UI " + request.version + " was rolled back on this device.", "rejected");
+            if (rejectIfRejected(call, store, request.version)) {
                 return;
             }
-            applying = true;
-            downloads.execute(() -> {
-                try {
-                    DenextOtaStore.DownloadStats stats = store.download(request);
-                    mainHandler.post(() -> {
-                        applying = false;
-                        store.beginTrial(request.version);
-                        call.resolve(result(request.version, stats));
-                        switchWebView(store.versionDirectory(request.version));
-                        armWatchdog();
-                    });
-                } catch (DenextOtaStore.OtaException ex) {
-                    mainHandler.post(() -> {
-                        applying = false;
-                        call.reject(ex.getMessage(), ex.code);
-                    });
-                } catch (RuntimeException ex) {
-                    mainHandler.post(() -> {
-                        applying = false;
-                        call.reject(String.valueOf(ex), "download");
-                    });
-                }
-            });
+            stage(store, request, call, (stats) -> startTrial(store, request.version, call, result(request.version, stats)));
         });
+    }
+
+    /** What to do on the main thread once a version is staged. */
+    private interface OnStaged {
+        void run(DenextOtaStore.DownloadStats stats);
+    }
+
+    /** Main thread. Rejects call with busy while a download or a trial launch is in progress; returns whether it did. */
+    private boolean rejectIfBusy(PluginCall call, DenextOtaStore store) {
+        if (!applying && store.pending() == null) {
+            return false;
+        }
+        call.reject("A UI update is already in progress.", "busy");
+        return true;
+    }
+
+    /** Rejects call with rejected when version was rolled back on this device; returns whether it did. */
+    private static boolean rejectIfRejected(PluginCall call, DenextOtaStore store, String version) {
+        if (!version.equals(store.rejected())) {
+            return false;
+        }
+        call.reject("UI " + version + " was rolled back on this device.", "rejected");
+        return true;
+    }
+
+    /**
+     * Main thread. Downloads and verifies request into its version directory and records it as
+     * staged, then runs then on the main thread (with zero stats when that version is already
+     * staged). A failure rejects call instead.
+     */
+    private void stage(DenextOtaStore store, DenextOtaStore.ApplyRequest request, PluginCall call, OnStaged then) {
+        if (request.version.equals(store.staged())) {
+            then.run(new DenextOtaStore.DownloadStats());
+            return;
+        }
+        applying = true;
+        downloads.execute(() -> {
+            try {
+                DenextOtaStore.DownloadStats stats = store.download(request);
+                mainHandler.post(() -> {
+                    applying = false;
+                    store.stage(request.version);
+                    then.run(stats);
+                });
+            } catch (DenextOtaStore.OtaException ex) {
+                mainHandler.post(() -> {
+                    applying = false;
+                    call.reject(ex.getMessage(), ex.code);
+                });
+            } catch (RuntimeException ex) {
+                mainHandler.post(() -> {
+                    applying = false;
+                    call.reject(String.valueOf(ex), "download");
+                });
+            }
+        });
+    }
+
+    /**
+     * Main thread. Starts the staged version's trial: records it as pending (clearing staged),
+     * resolves call, switches the webview to it and arms the watchdog.
+     */
+    private void startTrial(DenextOtaStore store, String version, PluginCall call, JSObject result) {
+        store.beginTrial(version);
+        call.resolve(result);
+        switchWebView(store.versionDirectory(version));
+        armWatchdog();
     }
 
     @PluginMethod
@@ -849,7 +1085,7 @@ public class DenextOtaPlugin extends Plugin {
         });
     }
 
-    /** Main thread. Called for a trial launch (see load) and after apply. */
+    /** Main thread. Called for a trial launch (see load) and after activate / apply. */
     private void armWatchdog() {
         cancelWatchdog();
         watchdog = () -> {
@@ -1003,6 +1239,9 @@ import org.json.JSONObject;
  *   <li>{@code rejected}: the last version rolled back; {@code apply} refuses it (code
  *       {@code rejected}) until {@code reset}, so a broken server UI cannot put the app in an
  *       apply → rollback loop.
+ *   <li>{@code staged}: a version {@code download} verified into its directory, waiting for
+ *       {@code activate}. It is never started on its own: launch only ever serves {@code pending}
+ *       or {@code current}.
  *   <li>{@code binaryVersion}: the app binary the downloads belong to. A new binary brings its
  *       own bundled UI (and maybe new native code), so every download is dropped.
  * </ul>
@@ -1023,6 +1262,7 @@ final class DenextOtaStore {
     private static final String KEY_PREVIOUS = "previous";
     private static final String KEY_TRIAL_STARTED = "trialStarted";
     private static final String KEY_REJECTED = "rejected";
+    private static final String KEY_STAGED = "staged";
     private static final String KEY_BINARY_VERSION = "binaryVersion";
     private static final int MAX_CONCURRENT_DOWNLOADS = 6;
     private static final int PER_FILE_TIMEOUT_MS = 30_000;
@@ -1140,6 +1380,31 @@ final class DenextOtaStore {
         return prefs.getString(KEY_REJECTED, null);
     }
 
+    /** The staged version, while its verified directory is still there. */
+    @Nullable
+    synchronized String staged() {
+        String staged = prefs.getString(KEY_STAGED, null);
+        return hasVersion(staged) ? staged : null;
+    }
+
+    /**
+     * Records a verified version as staged, deleting the directory of the version it replaces
+     * unless that one is current, pending or bundled.
+     */
+    synchronized void stage(String version) {
+        String old = prefs.getString(KEY_STAGED, null);
+        if (
+            old != null &&
+            !old.equals(version) &&
+            !old.equals(prefs.getString(KEY_CURRENT, null)) &&
+            !old.equals(prefs.getString(KEY_PENDING, null)) &&
+            !old.equals(bundledVersion())
+        ) {
+            deleteRecursively(versionDirectory(old));
+        }
+        prefs.edit().putString(KEY_STAGED, version).commit();
+    }
+
     /** The version stamped into the bundled UI ({@code public/_denext/ota.json}), if any. */
     @Nullable
     synchronized String bundledVersion() {
@@ -1218,21 +1483,24 @@ final class DenextOtaStore {
         return null;
     }
 
+    /** {@code activate} / {@code apply}: the (staged) version starts its trial; nothing stays staged. */
     synchronized void beginTrial(String version) {
         prefs
             .edit()
             .putString(KEY_PREVIOUS, prefs.getString(KEY_CURRENT, null))
             .putString(KEY_PENDING, version)
             .putBoolean(KEY_TRIAL_STARTED, true)
+            .remove(KEY_STAGED)
             .commit();
     }
 
-    /** {@code booted}: the pending version becomes current, and every other version is deleted. */
+    /** {@code booted}: the pending version becomes current, and every other version is deleted (bar a staged one). */
     synchronized void confirmPending() {
         String pending = prefs.getString(KEY_PENDING, null);
         if (pending == null) {
             return;
         }
+        String staged = prefs.getString(KEY_STAGED, null);
         prefs
             .edit()
             .putString(KEY_CURRENT, pending)
@@ -1243,7 +1511,7 @@ final class DenextOtaStore {
         File[] entries = root.listFiles();
         if (entries != null) {
             for (File entry : entries) {
-                if (!entry.getName().equals(pending)) {
+                if (!entry.getName().equals(pending) && !entry.getName().equals(staged)) {
                     deleteRecursively(entry);
                 }
             }
@@ -1274,7 +1542,7 @@ final class DenextOtaStore {
         return target == null ? null : versionDirectory(target);
     }
 
-    /** Back to the bundled UI with no downloaded versions and nothing rejected. */
+    /** Back to the bundled UI with no downloaded or staged versions and nothing rejected. */
     synchronized void reset() {
         prefs
             .edit()
@@ -1283,6 +1551,7 @@ final class DenextOtaStore {
             .remove(KEY_PREVIOUS)
             .remove(KEY_TRIAL_STARTED)
             .remove(KEY_REJECTED)
+            .remove(KEY_STAGED)
             .commit();
         deleteRecursively(root);
     }
@@ -1464,7 +1733,11 @@ final class DenextOtaStore {
     private String binaryVersion() {
         try {
             PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
-            return info.versionName + "+" + PackageInfoCompat.getLongVersionCode(info);
+            // The bundled UI's version is part of the key, so a rebuild that ships a different
+            // UI counts as a new binary even when versionName/versionCode were not bumped.
+            String bundled = bundledVersion();
+            return info.versionName + "+" + PackageInfoCompat.getLongVersionCode(info) + "+"
+                + (bundled == null ? "" : bundled);
         } catch (PackageManager.NameNotFoundException ex) {
             return "";
         }

@@ -11,6 +11,7 @@ import {
   OTA_MANIFEST_PATH,
   type OtaManifest,
   type OtaManifestFile,
+  type OtaManifestMeta,
   sha256Hex,
 } from "../mobile/ota-manifest.ts";
 
@@ -32,32 +33,41 @@ async function listFiles(dir: string, prefix: string): Promise<string[]> {
  * {@linkcode OtaManifest}.
  *
  * @param dir The web root (e.g. `out/`).
+ * @param meta Optional `required` / `notes` to carry (never part of the version).
  * @returns The manifest, files sorted by path.
  */
-export async function collectOtaManifest(dir: string): Promise<OtaManifest> {
+export async function collectOtaManifest(
+  dir: string,
+  meta: OtaManifestMeta = {},
+): Promise<OtaManifest> {
   const paths = (await listFiles(dir, "")).filter((p) => !isExcludedFromOtaManifest(p));
   const files: OtaManifestFile[] = [];
   for (const path of paths) {
     const bytes = await Deno.readFile(join(dir, ...path.split("/")));
     files.push({ path, sha256: await sha256Hex(bytes), size: bytes.byteLength });
   }
-  return await makeOtaManifest(files);
+  return await makeOtaManifest(files, meta);
 }
 
 /**
  * (Re)write `<dir>/_denext/ota.json` for the web root `dir`.
  *
  * @param dir The web root (e.g. `out/`); it must contain an `index.html`.
+ * @param meta Optional `required` / `notes`; a key left out is left out of the manifest.
  * @returns The manifest written.
- * @throws When `dir` has no `index.html` (the native side refuses such a UI).
+ * @throws When `dir` has no `index.html` (the native side refuses such a UI), or when
+ *   `meta.notes` is too long.
  */
-export async function writeOtaManifest(dir: string): Promise<OtaManifest> {
+export async function writeOtaManifest(
+  dir: string,
+  meta: OtaManifestMeta = {},
+): Promise<OtaManifest> {
   try {
     if (!(await Deno.stat(join(dir, "index.html"))).isFile) throw new Error("not a file");
   } catch {
     throw new Error(`${dir} has no index.html, so it is not a web root an app can boot`);
   }
-  const manifest = await collectOtaManifest(dir);
+  const manifest = await collectOtaManifest(dir, meta);
   const target = join(dir, ...OTA_MANIFEST_PATH.split("/"));
   await Deno.mkdir(dirname(target), { recursive: true });
   await Deno.writeTextFile(target, JSON.stringify(manifest) + "\n");

@@ -9,6 +9,7 @@ import {
   isOtaManifest,
   makeOtaManifest,
   OTA_MANIFEST_PATH,
+  OTA_NOTES_MAX_LENGTH,
   otaManifestVersion,
   sha256Hex,
 } from "../src/mobile/ota-manifest.ts";
@@ -82,6 +83,43 @@ Deno.test("ota manifest: isOtaManifest checks the shape", () => {
   assert(!isOtaManifest({ version: FIXTURE_VERSION, files: [{ ...file, sha256: "x" }] }));
 });
 
+Deno.test("ota manifest: required/notes are carried but never change the version", async () => {
+  const files = [
+    { path: "index.html", sha256: INDEX_HTML_SHA, size: 13 },
+    { path: "_denext/client/app.js", sha256: APP_JS_SHA, size: 14 },
+  ];
+  const plain = await makeOtaManifest(files);
+  assert(!("required" in plain) && !("notes" in plain), "no metadata keys unless given");
+  const tagged = await makeOtaManifest(files, { required: true, notes: "Fixes sign-in" });
+  assertEquals(tagged.version, FIXTURE_VERSION);
+  assertEquals(tagged.required, true);
+  assertEquals(tagged.notes, "Fixes sign-in");
+  assertEquals((await makeOtaManifest(files, { required: false })).required, false);
+  assertEquals(OTA_NOTES_MAX_LENGTH, 2000);
+  await makeOtaManifest(files, { notes: "x".repeat(OTA_NOTES_MAX_LENGTH) });
+  await assertRejects(
+    () => makeOtaManifest(files, { notes: "x".repeat(OTA_NOTES_MAX_LENGTH + 1) }),
+    RangeError,
+    "limit is 2000",
+  );
+});
+
+Deno.test("ota manifest: isOtaManifest checks required/notes and tolerates unknown keys", () => {
+  const base = {
+    version: FIXTURE_VERSION,
+    files: [{ path: "index.html", sha256: INDEX_HTML_SHA, size: 13 }],
+  };
+  assert(isOtaManifest({ ...base, required: true, notes: "hi" }));
+  assert(isOtaManifest({ ...base, required: false, notes: "" }));
+  assert(isOtaManifest({ ...base, notes: "x".repeat(OTA_NOTES_MAX_LENGTH) }));
+  assert(isOtaManifest({ ...base, somethingNew: 1 }));
+  assert(!isOtaManifest({ ...base, required: "true" }));
+  assert(!isOtaManifest({ ...base, required: null }));
+  assert(!isOtaManifest({ ...base, notes: 1 }));
+  assert(!isOtaManifest({ ...base, notes: null }));
+  assert(!isOtaManifest({ ...base, notes: "x".repeat(OTA_NOTES_MAX_LENGTH + 1) }));
+});
+
 /** A web root with the two fixture files, a .gz sibling and a stale manifest. */
 async function webRoot(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ota_" });
@@ -141,6 +179,53 @@ Deno.test("denext ota manifest <dir> (re)writes the manifest", async () => {
     console.log = log;
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("denext ota manifest --required --notes writes the metadata; omitted flags omit the keys", async () => {
+  const dir = await webRoot();
+  const log = console.log;
+  console.log = () => {};
+  const run = (flags: Record<string, string | boolean>) =>
+    buildRegistry().get("ota")!.run({
+      positionals: ["manifest", dir],
+      flags,
+      global: { json: false, verbose: false, quiet: false },
+      rest: [],
+    });
+  const written = async () =>
+    JSON.parse(await Deno.readTextFile(join(dir, "_denext", "ota.json"))) as Record<
+      string,
+      unknown
+    >;
+  try {
+    await run({ required: true, notes: "Fixes sign-in" });
+    const tagged = await written();
+    assertEquals(tagged.version, FIXTURE_VERSION);
+    assertEquals(tagged.required, true);
+    assertEquals(tagged.notes, "Fixes sign-in");
+    assert(isOtaManifest(tagged));
+
+    await run({ notes: "Just notes" });
+    const notesOnly = await written();
+    assert(!("required" in notesOnly), JSON.stringify(notesOnly));
+    assertEquals(notesOnly.notes, "Just notes");
+
+    await run({});
+    const plain = await written();
+    assert(!("required" in plain) && !("notes" in plain), JSON.stringify(plain));
+    assertEquals(plain.version, FIXTURE_VERSION);
+  } finally {
+    console.log = log;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext ota: --required and --notes are declared flags", () => {
+  const flags = buildRegistry().get("ota")!.flags ?? [];
+  assertEquals(
+    flags.map((f) => [f.name, f.type]),
+    [["required", "boolean"], ["notes", "string"]],
+  );
 });
 
 Deno.test("createOtaHandler: serves the manifest and only the files it lists, no-store", async () => {

@@ -11,6 +11,10 @@
  * `version` = lowercase hex SHA-256 over the lines `"<path>\t<sha256>\n"`, sorted by
  * path (plain UTF-16 code-unit order, as `<` compares strings).
  *
+ * The optional `required` and `notes` fields describe the release for the app's own update
+ * prompt (`prepareUiUpdate`). They are not part of what the version covers: two manifests
+ * over the same files have the same version whatever their metadata says.
+ *
  * Web-standard only (`crypto.subtle`), with no Deno APIs and nothing run at import, so the
  * client can use it without pulling in anything else.
  *
@@ -34,9 +38,30 @@ export interface OtaManifestFile {
 export interface OtaManifest {
   /** Lowercase hex SHA-256 over the sorted `"<path>\t<sha256>\n"` lines. */
   readonly version: string;
+  /**
+   * Whether the app should not let the user decline this UI (`denext ota manifest --required`).
+   * A hint for the app's own update prompt; absent means `false`. Not part of the version.
+   */
+  readonly required?: boolean;
+  /**
+   * Release notes for the app's update prompt (`denext ota manifest --notes <text>`), at most
+   * {@linkcode OTA_NOTES_MAX_LENGTH} characters. Not part of the version.
+   */
+  readonly notes?: string;
   /** Every file of the UI, sorted by path. */
   readonly files: ReadonlyArray<OtaManifestFile>;
 }
+
+/** Release metadata a manifest may carry besides its files (see {@linkcode OtaManifest}). */
+export interface OtaManifestMeta {
+  /** See {@linkcode OtaManifest.required}. Omitted from the manifest unless `true`/`false`. */
+  readonly required?: boolean;
+  /** See {@linkcode OtaManifest.notes}. Omitted from the manifest unless a string. */
+  readonly notes?: string;
+}
+
+/** The longest `notes` a manifest may carry, in UTF-16 code units. */
+export const OTA_NOTES_MAX_LENGTH = 2000;
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
@@ -75,12 +100,28 @@ export async function otaManifestVersion(
   return await sha256Hex(new TextEncoder().encode(lines));
 }
 
-/** Sort `files` by path and stamp the version over them. */
+/**
+ * Sort `files` by path and stamp the version over them, adding `meta`'s `required` and
+ * `notes` when given (they never change the version).
+ *
+ * @throws RangeError when `meta.notes` is longer than {@linkcode OTA_NOTES_MAX_LENGTH}.
+ */
 export async function makeOtaManifest(
   files: ReadonlyArray<OtaManifestFile>,
+  meta: OtaManifestMeta = {},
 ): Promise<OtaManifest> {
+  if (typeof meta.notes === "string" && meta.notes.length > OTA_NOTES_MAX_LENGTH) {
+    throw new RangeError(
+      `the release notes are ${meta.notes.length} characters; the limit is ${OTA_NOTES_MAX_LENGTH}`,
+    );
+  }
   const sorted = [...files].sort(byPath);
-  return { version: await otaManifestVersion(sorted), files: sorted };
+  return {
+    version: await otaManifestVersion(sorted),
+    ...(typeof meta.required === "boolean" ? { required: meta.required } : {}),
+    ...(typeof meta.notes === "string" ? { notes: meta.notes } : {}),
+    files: sorted,
+  };
 }
 
 /** Whether `file` is a well-formed manifest entry (a non-empty path, a SHA-256, a size). */
@@ -92,13 +133,16 @@ function isManifestFile(file: unknown): file is OtaManifestFile {
 }
 
 /**
- * Whether `value` has the manifest's shape: a 64-hex `version` and a non-empty `files`
- * array of `{ path, sha256, size }`. It checks the shape only; the native side re-checks
- * every path before it writes anything.
+ * Whether `value` has the manifest's shape: a 64-hex `version`, a non-empty `files` array of
+ * `{ path, sha256, size }`, and, when present, a boolean `required` and a string `notes` of at
+ * most {@linkcode OTA_NOTES_MAX_LENGTH} characters. Other keys are ignored. It checks the
+ * shape only; the native side re-checks every path before it writes anything.
  */
 export function isOtaManifest(value: unknown): value is OtaManifest {
   if (typeof value !== "object" || value === null) return false;
-  const { version, files } = value as Record<string, unknown>;
+  const { version, files, required, notes } = value as Record<string, unknown>;
   return isSha256Hex(version) && Array.isArray(files) && files.length > 0 &&
-    files.every(isManifestFile);
+    files.every(isManifestFile) &&
+    (required === undefined || typeof required === "boolean") &&
+    (notes === undefined || (typeof notes === "string" && notes.length <= OTA_NOTES_MAX_LENGTH));
 }

@@ -14113,6 +14113,25 @@
       "module": "denext/mobile",
       "symbols": [
         {
+          "name": "applyUiUpdate",
+          "slug": "applyUiUpdate",
+          "kind": "function",
+          "signature": "applyUiUpdate(version: string): Promise<OtaApplyResult>",
+          "doc": "Switch to the UI prepareUiUpdate staged: the native side starts its trial, arms the 15 s rollback watchdog, points the webview at it and reloads. The new page must call otaBooted, exactly as after checkForUiUpdate.",
+          "docFull": "Switch to the UI {@linkcode prepareUiUpdate} staged: the native side starts its trial,\narms the 15 s rollback watchdog, points the webview at it and reloads. The new page must\ncall {@linkcode otaBooted}, exactly as after {@linkcode checkForUiUpdate}.\n\nOn success the page reloads, so the returned promise does not settle; it resolves only\nwith a failure: `unsupported` off native (or with a plugin that predates staged updates),\nor `error` when the native side refuses (`version` is not the staged one, a download or\ntrial is in progress, or the version was rolled back). It never throws.",
+          "params": [
+            {
+              "name": "version",
+              "doc": "The version from a ready OtaPrepareResult."
+            }
+          ],
+          "returns": "A promise that settles only on failure, as an OtaApplyResult.",
+          "examples": [
+            "```ts\nimport { applyUiUpdate } from \"denext/mobile\";\nconst failed = await applyUiUpdate(update.version); // only returns if it could not switch\nconsole.warn(\"UI update failed\", failed);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "BackSwipeOptions",
           "slug": "BackSwipeOptions",
           "kind": "interface",
@@ -14280,6 +14299,18 @@
           "denextOnly": true
         },
         {
+          "name": "OtaApplyResult",
+          "slug": "OtaApplyResult",
+          "kind": "typeAlias",
+          "signature": "type OtaApplyResult = object | object",
+          "doc": "The outcome of applyUiUpdate when it settles. On success the webview reloads into the new UI, so the promise does not settle at all.",
+          "docFull": "The outcome of {@linkcode applyUiUpdate} when it settles. On success the webview reloads\ninto the new UI, so the promise does not settle at all.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "otaBooted",
           "slug": "otaBooted",
           "kind": "function",
@@ -14298,8 +14329,8 @@
           "slug": "OtaCheckOptions",
           "kind": "interface",
           "signature": "interface OtaCheckOptions",
-          "doc": "Options for checkForUiUpdate.",
-          "docFull": "Options for {@linkcode checkForUiUpdate}.",
+          "doc": "Options for checkForUiUpdate and prepareUiUpdate.",
+          "docFull": "Options for {@linkcode checkForUiUpdate} and {@linkcode prepareUiUpdate}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14342,12 +14373,24 @@
           "denextOnly": true
         },
         {
+          "name": "OtaPrepareResult",
+          "slug": "OtaPrepareResult",
+          "kind": "typeAlias",
+          "signature": "type OtaPrepareResult = object | object | object | object | object",
+          "doc": "The outcome of prepareUiUpdate. It never throws; every failure is a value.",
+          "docFull": "The outcome of {@linkcode prepareUiUpdate}. It never throws; every failure is a value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "otaReset",
           "slug": "otaReset",
           "kind": "function",
           "signature": "otaReset(): Promise<void>",
-          "doc": "Return to the UI bundled with the app: delete every downloaded version, forget the rejected one, and reload the webview. A no-op on the web.",
-          "docFull": "Return to the UI bundled with the app: delete every downloaded version, forget the\nrejected one, and reload the webview. A no-op on the web.",
+          "doc": "Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web.",
+          "docFull": "Return to the UI bundled with the app: delete every downloaded version (a staged one\nincluded), forget the rejected one, and reload the webview. A no-op on the web.",
           "params": [],
           "returns": "A promise that settles once the native side has reset (the page then reloads).",
           "examples": [
@@ -14379,6 +14422,25 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "prepareUiUpdate",
+          "slug": "prepareUiUpdate",
+          "kind": "function",
+          "signature": "prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult>",
+          "doc": "Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first.",
+          "docFull": "Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first.\n\n1. Fetches and validates `${baseUrl}/_denext/ota.json`, exactly as\n   {@linkcode checkForUiUpdate} does; the running version resolves `current`.\n2. Otherwise the native plugin downloads (or copies, by SHA-256) and verifies every file\n   into the version's own directory and records it as **staged**. The running UI keeps\n   running; a version already staged resolves at once.\n3. Resolves `ready` with the manifest's `required` (default `false`) and `notes` (default\n   `null`) for the app's prompt. Switch with {@linkcode applyUiUpdate}.\n\nA staged UI is never switched to on its own, not even at the next launch; a newer prepare\nreplaces it, and {@linkcode otaReset} (or a new app binary) drops it. It never throws.\nOutside the native shell, or with a `DenextOta` plugin that predates staged updates, it\nresolves `{ kind: \"unsupported\" }` without touching the network. One prepare runs at a\ntime: a call made while another is in flight gets that call's promise (and its options).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Where the UI is served, plus headers, timeout and fetch."
+            }
+          ],
+          "returns": "What happened, as an OtaPrepareResult.",
+          "examples": [
+            "```ts\n\"use client\";\nimport { applyUiUpdate, otaBooted, prepareUiUpdate } from \"denext/mobile\";\n\nawait otaBooted();\nconst update = await prepareUiUpdate({ baseUrl: \"https://api.example.com/mobile-ui\" });\nif (update.kind === \"ready\") {\n  // Your own modal; a required update offers no \"Later\".\n  const ok = update.required || confirm(update.notes ?? \"A new version is ready. Restart?\");\n  if (ok) await applyUiUpdate(update.version);\n}\n```"
+          ],
           "denextOnly": true
         },
         {

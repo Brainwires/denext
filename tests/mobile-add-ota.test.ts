@@ -174,6 +174,27 @@ Deno.test("add-ota: a custom bridge subclass and MainActivity become manual step
   }
 });
 
+Deno.test("add-ota: a custom controller already on the bridge needs no manual step", async () => {
+  const dir = await project({
+    "ios/App/App/Base.lproj/Main.storyboard": STOCK_STORYBOARD.replace(
+      'customClass="CAPBridgeViewController" customModule="Capacitor"',
+      'customClass="MainViewController" customModule="App" customModuleProvider="target"',
+    ),
+    "ios/App/App/MainViewController.swift":
+      "import Capacitor\n\nclass MainViewController: DenextBridgeViewController {}\n",
+  });
+  try {
+    const report = await addOtaToProject({ dir });
+    assertEquals(
+      report.manual.filter((m) => m.includes("MainViewController")),
+      [],
+      report.manual.join("\n"),
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("add-ota: an edited template is kept unless --force", async () => {
   const dir = await project({ "ios/App/App/DenextOtaStore.swift": "// my edits\n" });
   try {
@@ -226,4 +247,64 @@ Deno.test("denext mobile add-ota [dir] runs the installer", async () => {
     console.log = log;
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+/** The body of the Swift/Java function starting at `signature`, up to the next blank-line-separated member. */
+function body(source: string, signature: string): string {
+  const start = source.indexOf(signature);
+  assert(start >= 0, `missing ${signature}`);
+  const end = source.indexOf("\n\n", start);
+  return source.slice(start, end === -1 ? undefined : end);
+}
+
+Deno.test("native templates: iOS registers and implements download/activate symmetric with apply", () => {
+  const plugin = OTA_IOS_FILES["DenextOtaPlugin.swift"];
+  const store = OTA_IOS_FILES["DenextOtaStore.swift"];
+  for (const method of ["status", "download", "activate", "apply", "booted", "reset"]) {
+    assertStringIncludes(
+      plugin,
+      `CAPPluginMethod(name: "${method}", returnType: CAPPluginReturnPromise)`,
+    );
+    assertStringIncludes(plugin, `@objc func ${method}(_ call: CAPPluginCall)`);
+  }
+  assertStringIncludes(plugin, `"staged": store.staged ?? NSNull()`);
+  // download stages without switching; activate requires the staged version.
+  const download = body(plugin, "@objc func download(");
+  assertStringIncludes(download, "self.stage(request, call: call)");
+  assert(!download.includes("switchWebView") && !download.includes("startTrial"), download);
+  const activate = body(plugin, "@objc func activate(");
+  assertStringIncludes(activate, `"not_staged"`);
+  assertStringIncludes(activate, "self.startTrial(version");
+  // apply = the same staging, then the same trial start.
+  const apply = body(plugin, "@objc func apply(");
+  assertStringIncludes(apply, "self.stage(request, call: call)");
+  assertStringIncludes(apply, "self.startTrial(request.version");
+  // The store: staged is cleared by a trial start and by reset, and launch never serves it.
+  assertStringIncludes(store, `static let staged = "denext.ota.staged"`);
+  assertStringIncludes(body(store, "func beginTrial("), "stagedVersion = nil");
+  assertStringIncludes(body(store, "func reset()"), "Key.staged");
+  assert(!body(store, "func prepareLaunch()").includes("staged"));
+});
+
+Deno.test("native templates: Android registers and implements download/activate symmetric with apply", () => {
+  const plugin = OTA_ANDROID_FILES["DenextOtaPlugin.java"];
+  const store = OTA_ANDROID_FILES["DenextOtaStore.java"];
+  for (const method of ["status", "download", "activate", "apply", "booted", "reset"]) {
+    assertStringIncludes(plugin, `@PluginMethod\n    public void ${method}(PluginCall call)`);
+  }
+  assertStringIncludes(plugin, `result.put("staged", orNull(store.staged()));`);
+  const download = body(plugin, "public void download(");
+  assertStringIncludes(download, "stage(store, request, call,");
+  assert(!download.includes("switchWebView") && !download.includes("startTrial"), download);
+  const activate = body(plugin, "public void activate(");
+  assertStringIncludes(activate, `"not_staged"`);
+  assertStringIncludes(activate, "startTrial(store, version");
+  const apply = body(plugin, "public void apply(");
+  assertStringIncludes(apply, "stage(store, request, call,");
+  assertStringIncludes(apply, "startTrial(store, request.version");
+  assertStringIncludes(store, `KEY_STAGED = "staged"`);
+  assertStringIncludes(body(store, "synchronized void beginTrial("), ".remove(KEY_STAGED)");
+  assertStringIncludes(body(store, "synchronized void reset()"), ".remove(KEY_STAGED)");
+  assert(!body(store, "private File prepareLaunch()").includes("STAGED"));
+  assert(!body(store, "synchronized File startDirectory()").includes("STAGED"));
 });

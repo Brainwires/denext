@@ -111,13 +111,25 @@ async function wireStoryboard(inst: Installer, root: string): Promise<void> {
     return;
   }
   const custom = /customClass="([^"]+)"/.exec(text)?.[1];
-  // A custom bridge subclass in the app folder was already reported with its fix.
+  // A custom bridge subclass in the app folder was already reported with its fix, and one
+  // that already subclasses the bridge needs nothing.
   const reported = inst.report.manual.some((m) => m.includes(`class ${custom}:`));
-  if (custom && !reported) {
+  if (custom && !reported && !(await subclassesBridge(root, custom))) {
     inst.report.manual.push(
       `Main.storyboard uses ${custom}: make ${custom} a subclass of ${BRIDGE_VC}.`,
     );
   }
+}
+
+/** Whether a Swift file in the app folder declares `class <name>: DenextBridgeViewController`. */
+async function subclassesBridge(root: string, name: string): Promise<boolean> {
+  const dir = join(root, IOS_APP);
+  const declaration = new RegExp(`\\bclass\\s+${name}\\s*:\\s*${BRIDGE_VC}\\b`);
+  for await (const entry of Deno.readDir(dir)) {
+    if (!entry.isFile || !entry.name.endsWith(".swift")) continue;
+    if (declaration.test(await Deno.readTextFile(join(dir, entry.name)))) return true;
+  }
+  return false;
 }
 
 /** Point SceneDelegate's root view controller at the bridge subclass while it is stock. */

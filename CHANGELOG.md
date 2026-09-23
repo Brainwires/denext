@@ -23,7 +23,12 @@ and this project adheres to
   lists, behind the app's auth, `Cache-Control: no-store`). Downloads reuse files the device
   already has by SHA-256, a rolled-back version is refused until `otaReset()`, and a new app
   binary starts from its bundled UI. `denext create --capacitor` stamps the export in
-  `mobile:sync` and adds a `mobile:add-ota` task. The SHA-256 checks catch corruption, not an
+  `mobile:sync` and adds a `mobile:add-ota` task. An app that asks the user first uses
+  `prepareUiUpdate` (download and verify, then stage without switching; resolves `ready` with the
+  manifest's `required` and `notes`) and `applyUiUpdate(version)` (switch to the staged UI), backed
+  by the native `download` / `activate` methods; a staged UI is never started on its own.
+  `denext ota manifest --required --notes <text>` writes that metadata, which is not part of the
+  version, and `otaStatus()` reports `staged`. The SHA-256 checks catch corruption, not an
   attacker: production needs TLS end to end or a signed manifest, and there is no downgrade
   protection yet.
 

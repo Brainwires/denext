@@ -567,9 +567,21 @@
     {
       "name": "ota",
       "summary": "Over-the-air UI manifest for Capacitor apps",
-      "usage": "denext ota <action> [dir]",
-      "description": "  denext ota manifest out     Write out/_denext/ota.json (paths, SHA-256s, sizes, version)\n\n  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n  makes `denext export` write it for you. `*.gz` files are never listed.",
-      "flags": [],
+      "usage": "denext ota <action> [dir] [options]",
+      "description": "  denext ota manifest out     Write out/_denext/ota.json (paths, SHA-256s, sizes, version)\n  denext ota manifest out --required --notes \"Fixes sign-in\"\n                              Also mark the UI required and attach release notes\n\n  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n  makes `denext export` write it for you. `*.gz` files are never listed. `--required` and\n  `--notes` feed the app's own update prompt (prepareUiUpdate in denext/mobile); they are\n  not part of the version.",
+      "flags": [
+        {
+          "name": "required",
+          "type": "boolean",
+          "description": "Mark this UI as a required update (the app should not let users decline it)"
+        },
+        {
+          "name": "notes",
+          "type": "string",
+          "valueName": "<text>",
+          "description": "Release notes for the app's update prompt (at most 2000 characters)"
+        }
+      ],
       "positionals": [
         {
           "name": "action",

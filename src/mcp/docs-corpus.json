@@ -9397,6 +9397,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/applyUiUpdate",
+      "kind": "function",
+      "title": "applyUiUpdate",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/applyUiUpdate",
+      "text": "applyUiUpdate applyUiUpdate(version: string): Promise<OtaApplyResult> Switch to the UI prepareUiUpdate staged: the native side starts its trial, arms the 15 s rollback watchdog, points the webview at it and reloads. The new page must call otaBooted, exactly as after checkForUiUpdate. On success the page reloads, so the returned promise does not settle; it resolves only with a failure: unsupported off native (or with a plugin that predates staged updates), or error when the native side refuses (version is not the staged one, a download or trial is in progress, or the version was rolled back). It never throws. The version from a ready OtaPrepareResult. A promise that settles only on failure, as an OtaApplyResult.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/BackSwipeOptions",
       "kind": "interface",
       "title": "BackSwipeOptions",
@@ -9487,6 +9496,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/OtaApplyResult",
+      "kind": "typeAlias",
+      "title": "OtaApplyResult",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/OtaApplyResult",
+      "text": "OtaApplyResult type OtaApplyResult = object | object The outcome of applyUiUpdate when it settles. On success the webview reloads into the new UI, so the promise does not settle at all.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/otaBooted",
       "kind": "function",
       "title": "otaBooted",
@@ -9501,7 +9519,7 @@
       "title": "OtaCheckOptions",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/OtaCheckOptions",
-      "text": "OtaCheckOptions interface OtaCheckOptions Options for checkForUiUpdate.",
+      "text": "OtaCheckOptions interface OtaCheckOptions Options for checkForUiUpdate and prepareUiUpdate.",
       "denextOnly": true
     },
     {
@@ -9532,12 +9550,21 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/OtaPrepareResult",
+      "kind": "typeAlias",
+      "title": "OtaPrepareResult",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/OtaPrepareResult",
+      "text": "OtaPrepareResult type OtaPrepareResult = object | object | object | object | object The outcome of prepareUiUpdate. It never throws; every failure is a value.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/otaReset",
       "kind": "function",
       "title": "otaReset",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/otaReset",
-      "text": "otaReset otaReset(): Promise<void> Return to the UI bundled with the app: delete every downloaded version, forget the rejected one, and reload the webview. A no-op on the web. A promise that settles once the native side has reset (the page then reloads).",
+      "text": "otaReset otaReset(): Promise<void> Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web. A promise that settles once the native side has reset (the page then reloads).",
       "denextOnly": true
     },
     {
@@ -9556,6 +9583,15 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/OtaStatus-iface",
       "text": "OtaStatus interface OtaStatus What the native side reports about the UI versions on this device.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/prepareUiUpdate",
+      "kind": "function",
+      "title": "prepareUiUpdate",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/prepareUiUpdate",
+      "text": "prepareUiUpdate prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult> Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first. 1. Fetches and validates ${baseUrl}/_denext/ota.json, exactly as checkForUiUpdate does; the running version resolves current. 2. Otherwise the native plugin downloads (or copies, by SHA-256) and verifies every file into the version's own directory and records it as **staged**. The running UI keeps running; a version already staged resolves at once. 3. Resolves ready with the manifest's required (default false) and notes (default null) for the app's prompt. Switch with applyUiUpdate. A staged UI is never switched to on its own, not even at the next launch; a newer prepare replaces it, and otaReset (or a new app binary) drops it. It never throws. Outside the native shell, or with a DenextOta plugin that predates staged updates, it resolves { kind: \"unsupported\" } without touching the network. One prepare runs at a time: a call made while another is in flight gets that call's promise (and its options). Where the UI is served, plus headers, timeout and fetch. What happened, as an OtaPrepareResult.",
       "denextOnly": true
     },
     {

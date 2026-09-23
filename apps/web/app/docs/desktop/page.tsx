@@ -448,6 +448,58 @@ export function OtaUpdates() {
         report and undo it.
       </p>
       <p>
+        <strong>Build your own update prompt.</strong> <code>checkForUiUpdate</code>{" "}
+        switches as soon as the download verifies. To ask first, split it in two:{" "}
+        <code>prepareUiUpdate</code> downloads and verifies the new UI and leaves it <em>staged</em>
+        {" "}
+        (the running UI is untouched), and <code>applyUiUpdate(version)</code>{" "}
+        switches to it when the user agrees. A staged UI is never switched to on its own, not even
+        at the next launch.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useEffect, useState } from "denext";
+import { applyUiUpdate, otaBooted, type OtaPrepareResult, prepareUiUpdate } from "denext/mobile";
+
+type Ready = Extract<OtaPrepareResult, { kind: "ready" }>;
+
+export function UpdatePrompt() {
+  const [update, setUpdate] = useState<Ready | null>(null);
+  useEffect(() => {
+    void otaBooted()
+      .then(() => prepareUiUpdate({ baseUrl: "https://api.example.com/mobile-ui" }))
+      .then((r) => r.kind === "ready" && setUpdate(r));
+  }, []);
+  if (!update) return null;
+  return (
+    <dialog open>
+      <p>Update available{update.notes ? \`: \${update.notes}\` : ""}</p>
+      <button type="button" onClick={() => void applyUiUpdate(update.version)}>Restart</button>
+      {!update.required && <button type="button" onClick={() => setUpdate(null)}>Later</button>}
+    </dialog>
+  );
+}`}
+      </Code>
+      <p>
+        <code>prepareUiUpdate</code> resolves <code>ready</code> (with <code>version</code>,{" "}
+        <code>required</code> and <code>notes</code>), <code>current</code>, <code>skipped</code>,
+        {" "}
+        <code>error</code> or <code>unsupported</code>, and never throws. <code>applyUiUpdate</code>
+        {" "}
+        starts the same trial launch as an automatic update (the new page still calls{" "}
+        <code>otaBooted()</code>); on success the page reloads, so its promise only settles with a
+        failure. Mark a release required, and give it notes, when you stamp it:
+      </p>
+      <Code lang="bash">
+        {`denext ota manifest out --required --notes "Fixes sign-in on iOS 26"`}
+      </Code>
+      <p>
+        Both are hints for your prompt, not enforced by the shell, and neither is part of the{" "}
+        <code>version</code>, so re-stamping with different notes does not make phones download the
+        same files again. A newer prepare replaces a staged UI; <code>otaReset()</code>{" "}
+        and a new app binary drop it. <code>otaStatus()</code> reports it as <code>staged</code>.
+      </p>
+      <p>
         <strong>Serving rules.</strong> Serving the UI is the app's job, and any server must:
       </p>
       <ul>

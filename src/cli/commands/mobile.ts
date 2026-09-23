@@ -1,6 +1,7 @@
 // Over-the-air UI updates for Capacitor apps:
 //
 //   denext ota manifest <dir>     (re)write <dir>/_denext/ota.json for a static export
+//                                 (--required / --notes <text> add release metadata)
 //   denext mobile add-ota [dir]   install the native DenextOta plugin into ios/ + android/
 //
 // Both are flat verbs whose first positional selects the action (as `desktop` does). Neither
@@ -25,15 +26,27 @@ async function otaManifest(ctx: CommandContext): Promise<void> {
     fail("denext ota manifest: pass the export directory, e.g. `denext ota manifest out`.");
   }
   const dir = resolve(ctx.global.cwd ?? ".", dirArg);
+  // Each key is written only when its flag is given, so a plain run stamps what it always did.
+  const meta = {
+    ...(ctx.flags.required === true ? { required: true } : {}),
+    ...(typeof ctx.flags.notes === "string" ? { notes: ctx.flags.notes } : {}),
+  };
   try {
-    const { version, files } = await writeOtaManifest(dir);
+    const { version, files, required, notes } = await writeOtaManifest(dir, meta);
     if (ctx.global.json) {
       console.log(
-        JSON.stringify({ path: `${dir}/_denext/ota.json`, version, files: files.length }),
+        JSON.stringify({
+          path: `${dir}/_denext/ota.json`,
+          version,
+          files: files.length,
+          required: required ?? false,
+          notes: notes ?? null,
+        }),
       );
     } else {
+      const extra = required ? ", required" : "";
       console.log(
-        `  wrote ${dirArg}/_denext/ota.json — version ${version} (${files.length} files)`,
+        `  wrote ${dirArg}/_denext/ota.json — version ${version} (${files.length} files${extra})`,
       );
     }
   } catch (err) {
@@ -46,13 +59,30 @@ export const otaCommand: CommandSpec = {
   summary: "Over-the-air UI manifest for Capacitor apps",
   usage:
     "  denext ota manifest out     Write out/_denext/ota.json (paths, SHA-256s, sizes, version)\n" +
+    '  denext ota manifest out --required --notes "Fixes sign-in"\n' +
+    "                              Also mark the UI required and attach release notes\n" +
     "\n" +
     "  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n" +
     "  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n" +
-    "  makes `denext export` write it for you. `*.gz` files are never listed.",
+    "  makes `denext export` write it for you. `*.gz` files are never listed. `--required` and\n" +
+    "  `--notes` feed the app's own update prompt (prepareUiUpdate in denext/mobile); they are\n" +
+    "  not part of the version.",
   positionals: [
     { name: "action", help: "manifest", required: true },
     { name: "dir", help: "The static export directory (e.g. out)" },
+  ],
+  flags: [
+    {
+      name: "required",
+      type: "boolean",
+      help: "Mark this UI as a required update (the app should not let users decline it)",
+    },
+    {
+      name: "notes",
+      type: "string",
+      valueName: "<text>",
+      help: "Release notes for the app's update prompt (at most 2000 characters)",
+    },
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0];
