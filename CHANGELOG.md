@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-09-23
+
 ### Added
 
 - **`optimizePackageImports`** (Next.js's key, top-level in `denext.config.ts`; Next's
@@ -7818,6 +7820,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.7.1]: https://jsr.io/@denext/denext@2.7.1
 [2.7.0]: https://jsr.io/@denext/denext@2.7.0
 [2.6.0]: https://jsr.io/@denext/denext@2.6.0
 [2.5.0]: https://jsr.io/@denext/denext@2.5.0
