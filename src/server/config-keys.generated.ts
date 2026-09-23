@@ -46,6 +46,7 @@ export const CONFIG_KEYS = [
   "reactCompiler",
   "asyncContext",
   "features",
+  "optimizePackageImports",
   "experimental",
   "classComponents",
   "compatibilityMode",
@@ -63,4 +64,5 @@ export const EXPERIMENTAL_KEYS = [
   "asyncContext",
   "features",
   "nodeResolve",
+  "optimizePackageImports",
 ] as const;

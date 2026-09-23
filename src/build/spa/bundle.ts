@@ -17,6 +17,7 @@ import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
+import { optimizePackageImportsList } from "../optimize-package-imports.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { CLIENT_PREFIX, ENTRY_FILE, generateSpaEntry, STYLE_FILE } from "./shared.ts";
 
@@ -137,6 +138,9 @@ async function bundleCompatSpa(
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
     // App-configured MDX plugins (denext.config `mdx`) for `.mdx`/`.md` sources.
     mdxOptions: config.mdx,
+    // Barrel imports of `optimizePackageImports` packages → their defining modules (lucide's
+    // barrel + `dynamicIconImports` otherwise put every icon chunk on the startup path).
+    optimizePackageImports: optimizePackageImportsList(config),
     // Redirect stylesheet imports to their shims — covers `.scss` in sibling workspace
     // packages the esbuild default resolver would otherwise choke on.
     cssImportMap: css?.importMap,

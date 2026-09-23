@@ -1,0 +1,12 @@
+export { default as Icon1 } from "./icon-1.js";
+export { default as Icon2 } from "./icon-2.js";
+export { default as Icon3 } from "./icon-3.js";
+export { default as Icon4 } from "./icon-4.js";
+export { default as Icon5 } from "./icon-5.js";
+export { default as Icon6 } from "./icon-6.js";
+export { default as Icon7 } from "./icon-7.js";
+export { default as Icon8 } from "./icon-8.js";
+export { default as Icon9 } from "./icon-9.js";
+export { default as Icon10 } from "./icon-10.js";
+export { default as Icon11 } from "./icon-11.js";
+export { default as Icon12 } from "./icon-12.js";

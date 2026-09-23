@@ -46,6 +46,7 @@ import {
   readFrameworkJson,
 } from "./bundle.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
+import { withOptimizedPackageImports } from "./optimize-package-imports.ts";
 import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
 import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 
@@ -363,9 +364,10 @@ function appImportBase(
  * Next.js apps use everywhere. This is handled here rather than by the deno-loader
  * because its "portable" mode doesn't apply sloppy-imports and its "native" mode
  * hits a graph-reachability mismatch on them. npm/jsr/`.css` (which needs the
- * import-map shim redirect) are left to the deno-loader by returning null.
+ * import-map shim redirect) are left to the deno-loader by returning null. Exported for
+ * testing.
  */
-function appResolverPlugin(configPath: string): esbuild.Plugin {
+export function appResolverPlugin(configPath: string): esbuild.Plugin {
   // Path-alias prefixes (e.g. "~/" → "./src/"), loaded once from the app's deno.json — the
   // form `denext migrate` emits.
   let prefixes: Array<[string, string]> | null = null;
@@ -383,7 +385,7 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
         const base = appImportBase(p, args.importer, await ensure());
         if (base) {
           const found = probeSourceFile(base);
-          return found ? { path: found } : null;
+          return found ? await withPackageSideEffects(found) : null;
         }
         // tsconfig `baseUrl: "."` — Next resolves a bare, path-shaped specifier
         // (`app/foo/bar`, `components/x`) against the project root. Try that as a LAST
@@ -391,8 +393,10 @@ function appResolverPlugin(configPath: string): esbuild.Plugin {
         // probe only claims an actual file), so `import x from "app/context/y"` works.
         const isRelative = p === "." || p === ".." || p.startsWith("./") || p.startsWith("../");
         if (!isRelative && /\//.test(p) && !p.startsWith("@")) {
+          // An absolute path lands here too (`resolve` keeps it) — e.g. the defining-module
+          // imports `optimizePackageImports` writes — so mark a package file like any other.
           const rootProbe = probeSourceFile(resolve(dirname(configPath), p));
-          if (rootProbe) return { path: rootProbe };
+          if (rootProbe) return await withPackageSideEffects(rootProbe);
         }
         return null; // npm/jsr/bare → deno-loader
       });
@@ -966,6 +970,13 @@ export interface BundleNextCompatModulesOptions {
    * resolve, which esbuild's default resolver can't do. Omit when the app has no CSS.
    */
   cssImportMap?: Record<string, string>;
+  /**
+   * `optimizePackageImports`: the effective package list (see `optimizePackageImportsList`)
+   * whose named barrel imports are rewritten to their defining modules — in app source and in
+   * node_modules. Applied only with {@link resolveAllNodeModules} (the rewrite names files the
+   * way denext's resolver does); omit or pass `[]` to leave every import as written.
+   */
+  optimizePackageImports?: readonly string[];
 }
 
 /**
@@ -1443,6 +1454,22 @@ async function resolvedIsSideEffectFree(file: string): Promise<boolean> {
   return free;
 }
 
+/**
+ * An esbuild resolve result for `path`, marked `sideEffects: false` when it is a file of a
+ * `node_modules` package that declares so. Every plugin that claims a package's files must
+ * go through this: esbuild only reads `package.json` itself for paths IT resolves, so a plugin
+ * that returns a bare `{ path }` for, say, lucide-react's barrel importing `./icons/x.js` makes
+ * each icon "side-effectful" — kept (as an empty-import chunk under code splitting) even when
+ * nothing uses it.
+ */
+async function withPackageSideEffects(
+  path: string,
+): Promise<{ path: string; sideEffects?: false }> {
+  return path.includes("/node_modules/") && await resolvedIsSideEffectFree(path)
+    ? { path, sideEffects: false }
+    : { path };
+}
+
 export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
@@ -1475,9 +1502,7 @@ export function catalogResolverPlugin(
         // Mark modules of a `"sideEffects": false` package so esbuild can tree-shake unused
         // barrel re-exports (denext's own resolver otherwise hands esbuild a bare path, which
         // it must treat as side-effectful).
-        return (await resolvedIsSideEffectFree(resolved))
-          ? { path: resolved, sideEffects: false }
-          : { path: resolved };
+        return await withPackageSideEffects(resolved);
       });
     },
   };
@@ -1719,7 +1744,7 @@ async function compatPlugins(
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
-  const plugins: esbuild.Plugin[] = [
+  let plugins: esbuild.Plugin[] = [
     ...(options.extraPlugins ?? []),
     envPoisonPlugin(deno),
     ...(deno ? [frameworkUrlExternalPlugin()] : []),
@@ -1734,6 +1759,7 @@ async function compatPlugins(
     ...nodeModulesPlugins(options),
   ];
   if (!deno) plugins.push(nodeBuiltinStubPlugin());
+  plugins = optimizeImports(plugins, options);
   if (options.denoLoader ?? true) {
     plugins.push(...denoPlugins({
       configPath: await loaderConfigPath(options.configPath, options.outdir),
@@ -1741,6 +1767,31 @@ async function compatPlugins(
     }));
   }
   return plugins;
+}
+
+/**
+ * Wrap the chain (everything ahead of the deno-loader) with the `optimizePackageImports`
+ * rewrite. Only under `nodeResolve`: the rewrite resolves barrels with the same
+ * `resolveNodeFrom` + conditions the node_modules resolver uses, and names each defining file
+ * by the path the app resolver gives the barrel's own relative imports — so a rewritten import
+ * and any other route to that file (lucide's `dynamicIconImports`) are one module.
+ */
+function optimizeImports(
+  plugins: esbuild.Plugin[],
+  options: BundleNextCompatModulesOptions,
+): esbuild.Plugin[] {
+  const packages = options.optimizePackageImports ?? [];
+  if (packages.length === 0 || !options.resolveAllNodeModules || !options.absWorkingDir) {
+    return plugins;
+  }
+  const conditions = options.platform === "deno" ? SSR_CONDITIONS : BROWSER_CONDITIONS;
+  return withOptimizedPackageImports(plugins, {
+    packages,
+    resolvers: {
+      resolveBare: (fromDir, spec) => resolveNodeFrom(fromDir, spec, conditions),
+      probe: probeSourceFile,
+    },
+  });
 }
 
 /**

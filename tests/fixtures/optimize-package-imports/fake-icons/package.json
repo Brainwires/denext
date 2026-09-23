@@ -1,0 +1,7 @@
+{
+  "name": "fake-icons",
+  "version": "1.0.0",
+  "main": "dist/cjs/fake-icons.js",
+  "module": "dist/esm/fake-icons.js",
+  "sideEffects": false
+}

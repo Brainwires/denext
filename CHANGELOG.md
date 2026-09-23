@@ -8,6 +8,32 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-09-23
+
+### Added
+
+- **`optimizePackageImports`** (Next.js's key, top-level in `denext.config.ts`; Next's
+  `experimental.optimizePackageImports` spelling is honored with a dev warning). The compat
+  (esbuild) client and server bundles, SPA mode included, rewrite `import { Check } from
+  "lucide-react"` to an import of the module that defines `Check`, so the package's barrel is
+  never loaded. This fixes a startup regression in apps that import icons through the
+  `lucide-react` barrel and also import `lucide-react/dynamic`: every icon was a code-splitting
+  entry, and esbuild kept a bare `import "./chunk-<icon>.js"` for all ~1,670 of them in the
+  startup chunk (T3 Code: 1,723 startup chunks, 1,672 of them icons). The configured list is
+  added to a built-in default (`lucide-react`, `date-fns`, `lodash-es`, `ramda`, `rxjs`,
+  `@tabler/icons-react`, `@heroicons/react/{20,24}/solid`, `@heroicons/react/24/outline`,
+  `react-icons/*`, `@mui/icons-material`, `recharts`, `react-use`, `@headlessui/react`, `effect`).
+  Barrels are analysed with the first-party swc parser (`export { a as b } from`, `export *`,
+  `export * as ns`, import-then-export); only named value imports of names the barrel re-exports
+  from another module are moved, and a barrel that runs code of its own, carries a directive or
+  cannot be analysed is left untouched.
+
+### Fixed
+
+- **The compat app resolver marks the relative imports inside a `"sideEffects": false` package
+  as side-effect-free**, as the node_modules resolver already did for the package entry (a
+  barrel's `./icons/x.js` imports were handed to esbuild as plain paths).
+
 ## [2.7.0] - 2026-09-23
 
 ### Added
@@ -7794,6 +7820,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.7.1]: https://jsr.io/@denext/denext@2.7.1
 [2.7.0]: https://jsr.io/@denext/denext@2.7.0
 [2.6.0]: https://jsr.io/@denext/denext@2.6.0
 [2.5.0]: https://jsr.io/@denext/denext@2.5.0
