@@ -176,8 +176,13 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     // `mobile:sync` exports, then `cap sync` copies `out/` into the native projects. The
     // export writes no `.gz` siblings the webview would never load: the App Router export
     // doesn't precompress, and a SPA-mode app turns it off with `spa.precompress: false`.
+    // Between the two, `ota manifest` stamps `out/_denext/ota.json`, so the bundled UI knows
+    // its over-the-air version (inert until `mobile:add-ota` installs the native plugin).
     const cap = `deno run -A --node-modules-dir npm:@capacitor/cli@${CAPACITOR}`;
-    tasks["mobile:sync"] = `deno task export && ${cap} sync`;
+    tasks["mobile:sync"] = `deno task export && deno run -A ${cli} ota manifest out && ${cap} sync`;
+    // Over-the-air UI updates: installs the DenextOta plugin into the committed ios/ and
+    // android/ projects (run after `cap add`; safe to re-run).
+    tasks["mobile:add-ota"] = `deno run -A ${cli} mobile add-ota .`;
     tasks["mobile:ios"] = `${cap} open ios`;
     tasks["mobile:android"] = `${cap} open android`;
   }

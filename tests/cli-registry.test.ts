@@ -28,6 +28,8 @@ Deno.test("registry exposes every first-party verb", () => {
     "lint",
     "mcp",
     "migrate",
+    "mobile",
+    "ota",
     "patch",
     "plugin",
     "profile",

@@ -313,7 +313,10 @@ async function verifyEmail({ client }: Ctx) {
   assertStringIncludes(page.text, "is not verified yet");
   const since = (await sentMail()).length;
   const sent = await client.submit(client.form(page.text));
-  assertEquals(sent.status, 303);
+  // Carry the body: this action answered 500 once under full-suite parallel load and the
+  // bare status told us nothing. Six repeats under load did not reproduce it, so keep the
+  // next occurrence self-diagnosing rather than guessing at a cause.
+  assertEquals(sent.status, 303, `the action failed: ${sent.status} ${sent.text.slice(0, 400)}`);
   assertStringIncludes(sent.location ?? "", "/verify-email?sent=1");
 
   const mail = await mailTo("ada@denext.dev", "email", since);

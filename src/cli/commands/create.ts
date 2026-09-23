@@ -143,7 +143,8 @@ function featureNotes(on: (key: string) => boolean): string[] {
     on("tailwind") ? "  Tailwind is compiled automatically by denext dev/build." : "",
     on("desktop") ? "  Desktop: `deno task desktop` (needs Deno 2.9+ `deno desktop`)." : "",
     on("capacitor")
-      ? "  Mobile: `deno install`, then `deno task mobile:sync` (needs Xcode/Android Studio)."
+      ? "  Mobile: `deno install`, then `deno task mobile:sync` (needs Xcode/Android Studio).\n" +
+        "  Over-the-air UI updates: after `cap add ios|android`, `deno task mobile:add-ota`."
       : "",
     on("compatibility")
       ? '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.'

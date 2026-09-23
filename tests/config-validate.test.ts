@@ -246,3 +246,14 @@ Deno.test("production-server keys: a bare origin, a boolean, whole numbers in ra
     assert(KNOWN_CONFIG_KEYS.includes(key), `expected top-level key \`${key}\``);
   }
 });
+
+Deno.test("validateDenextConfig: spa.ota must be a boolean", () => {
+  const spa = (ota: unknown) =>
+    ({ mode: "spa", spa: { entry: "./src/main.tsx", ota } }) as Parameters<
+      typeof validateDenextConfig
+    >[0];
+  validateDenextConfig(spa(true));
+  validateDenextConfig(spa(false));
+  validateDenextConfig(spa(undefined));
+  assertThrows(() => validateDenextConfig(spa("yes")), Error, "`spa.ota` must be a boolean");
+});

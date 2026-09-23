@@ -16,6 +16,7 @@ import { auditCommand } from "./commands/audit.ts";
 import { analyzeCommand } from "./commands/analyze.ts";
 import { profileCommand } from "./commands/profile.ts";
 import { desktopCommand } from "./commands/desktop.ts";
+import { mobileCommand, otaCommand } from "./commands/mobile.ts";
 import { pluginCommand } from "./commands/plugin.ts";
 import { patchCommand } from "./commands/patch.ts";
 import { mcpCommand } from "./commands/mcp.ts";
@@ -55,6 +56,9 @@ export function buildRegistry(): CommandRegistry {
   reg.register(generateCommand);
   // Desktop packaging.
   reg.register(desktopCommand);
+  // Capacitor mobile: over-the-air UI manifest + native plugin install.
+  reg.register(mobileCommand);
+  reg.register(otaCommand);
   reg.register(pluginCommand);
   reg.register(patchCommand);
   // Project management UI (loopback GUI).

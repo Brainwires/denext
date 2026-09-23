@@ -371,6 +371,181 @@ export default function RootLayout({ children }: { children: unknown }) {
         plain-browser path.
       </Callout>
 
+      <h3>Over-the-air UI updates</h3>
+      <p>
+        A Capacitor app can pull a newer web UI from a server without a new app build: the shell
+        downloads the files, verifies each SHA-256, switches its web root to them and reloads. It is
+        off until you install the native <code>DenextOta</code>{" "}
+        plugin, and a UI that fails to boot rolls itself back.
+      </p>
+      <p>
+        <strong>1. Stamp the export.</strong> The manifest <code>_denext/ota.json</code>{" "}
+        lists every file of the export with its SHA-256 and size, plus a <code>version</code>{" "}
+        (the SHA-256 over the sorted <code>path&lt;TAB&gt;sha256</code> lines; <code>*.gz</code>
+        {" "}
+        siblings and the manifest itself are left out). A SPA-mode app sets{" "}
+        <code>{"spa: { ota: true }"}</code> and <code>denext export</code>{" "}
+        writes it as its last step. Any export can run <code>denext ota manifest out</code>{" "}
+        instead, and must re-run it after anything that changes the export afterwards (swapping
+        brand icons in, say). The scaffolded <code>mobile:sync</code> task stamps <code>out/</code>
+        {" "}
+        before <code>cap sync</code>, so the bundled UI knows its version.
+      </p>
+      <p>
+        <strong>2. Install the native plugin.</strong> After <code>cap add ios</code> /{" "}
+        <code>cap add android</code>, run once (it is safe to re-run):
+      </p>
+      <Code lang="bash">
+        {`deno task mobile:add-ota     # = denext mobile add-ota .`}
+      </Code>
+      <p>
+        On iOS it writes <code>DenextOtaPlugin.swift</code>, <code>DenextOtaStore.swift</code> and
+        {" "}
+        <code>DenextBridgeViewController.swift</code> into{" "}
+        <code>ios/App/App/</code>, adds them to the App target in{" "}
+        <code>project.pbxproj</code>, and switches <code>Main.storyboard</code> and{" "}
+        <code>SceneDelegate</code> to <code>DenextBridgeViewController</code>{" "}
+        while they still name the stock{" "}
+        <code>CAPBridgeViewController</code>. An app with its own bridge subclass changes that
+        subclass's superclass to <code>DenextBridgeViewController</code>. On Android it writes{" "}
+        <code>dev/denext/ota/*.java</code> and makes a stock <code>MainActivity</code> call{" "}
+        <code>DenextOta.prepare(this, bridgeBuilder)</code> before <code>super.onCreate</code>
+        . Anything customised is left alone and printed as a one-line manual step.
+      </p>
+      <p>
+        <strong>3. Call it from the app.</strong>{" "}
+        After the first render, confirm the boot, then check a server:
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useEffect } from "denext";
+import { checkForUiUpdate, onAppResume, otaBooted } from "denext/mobile";
+
+const check = () =>
+  checkForUiUpdate({
+    baseUrl: "https://api.example.com/mobile-ui", // serves out/ (see below)
+    headers: { authorization: \`Bearer \${token}\` },
+  });
+
+export function OtaUpdates() {
+  useEffect(() => {
+    void otaBooted().then(check); // confirm first: a trial UI has 15 s to do so
+    return onAppResume((awayMs) => awayMs >= 10_000 && void check());
+  }, []);
+  return null;
+}`}
+      </Code>
+      <p>
+        <code>checkForUiUpdate</code> fetches <code>{"${baseUrl}/_denext/ota.json"}</code>{" "}
+        and, when its version differs from the running UI, has the plugin fetch{" "}
+        <code>{"${baseUrl}/<path>"}</code>{" "}
+        for every file (with the same headers), copying the files it already has from the running or
+        bundled UI. It never throws: it resolves <code>current</code>, <code>applied</code>,{" "}
+        <code>skipped</code> (<code>rejected</code> / <code>busy</code>), <code>error</code>, or
+        {" "}
+        <code>unsupported</code> on the web. <code>otaStatus()</code> and <code>otaReset()</code>
+        {" "}
+        report and undo it.
+      </p>
+      <p>
+        <strong>Build your own update prompt.</strong> <code>checkForUiUpdate</code>{" "}
+        switches as soon as the download verifies. To ask first, split it in two:{" "}
+        <code>prepareUiUpdate</code> downloads and verifies the new UI and leaves it <em>staged</em>
+        {" "}
+        (the running UI is untouched), and <code>applyUiUpdate(version)</code>{" "}
+        switches to it when the user agrees. A staged UI is never switched to on its own, not even
+        at the next launch.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useEffect, useState } from "denext";
+import { applyUiUpdate, otaBooted, type OtaPrepareResult, prepareUiUpdate } from "denext/mobile";
+
+type Ready = Extract<OtaPrepareResult, { kind: "ready" }>;
+
+export function UpdatePrompt() {
+  const [update, setUpdate] = useState<Ready | null>(null);
+  useEffect(() => {
+    void otaBooted()
+      .then(() => prepareUiUpdate({ baseUrl: "https://api.example.com/mobile-ui" }))
+      .then((r) => r.kind === "ready" && setUpdate(r));
+  }, []);
+  if (!update) return null;
+  return (
+    <dialog open>
+      <p>Update available{update.notes ? \`: \${update.notes}\` : ""}</p>
+      <button type="button" onClick={() => void applyUiUpdate(update.version)}>Restart</button>
+      {!update.required && <button type="button" onClick={() => setUpdate(null)}>Later</button>}
+    </dialog>
+  );
+}`}
+      </Code>
+      <p>
+        <code>prepareUiUpdate</code> resolves <code>ready</code> (with <code>version</code>,{" "}
+        <code>required</code> and <code>notes</code>), <code>current</code>, <code>skipped</code>,
+        {" "}
+        <code>error</code> or <code>unsupported</code>, and never throws. <code>applyUiUpdate</code>
+        {" "}
+        starts the same trial launch as an automatic update (the new page still calls{" "}
+        <code>otaBooted()</code>); on success the page reloads, so its promise only settles with a
+        failure. Mark a release required, and give it notes, when you stamp it:
+      </p>
+      <Code lang="bash">
+        {`denext ota manifest out --required --notes "Fixes sign-in on iOS 26"`}
+      </Code>
+      <p>
+        Both are hints for your prompt, not enforced by the shell, and neither is part of the{" "}
+        <code>version</code>, so re-stamping with different notes does not make phones download the
+        same files again. A newer prepare replaces a staged UI; <code>otaReset()</code>{" "}
+        and a new app binary drop it. <code>otaStatus()</code> reports it as <code>staged</code>.
+      </p>
+      <p>
+        <strong>Serving rules.</strong> Serving the UI is the app's job, and any server must:
+      </p>
+      <ul>
+        <li>
+          serve <code>_denext/ota.json</code> and <em>only</em> the files it lists;
+        </li>
+        <li>put it behind the same auth as the app's API;</li>
+        <li>
+          send <code>Cache-Control: no-store</code>.
+        </li>
+      </ul>
+      <p>
+        A Deno server can use <code>createOtaHandler({"{ dir, basePath }"})</code> from{" "}
+        <code>denext/server</code>, which does exactly that (wrap it in your auth check). A Node
+        server writes the same three rules as its own route.
+      </p>
+      <p>
+        <strong>Rollback rules.</strong>
+      </p>
+      <ul>
+        <li>
+          A new UI starts as a <em>trial</em>. <code>otaBooted()</code>{" "}
+          makes it current and deletes every other download. Without it, a 15 s watchdog rolls back
+          to the previous download or the bundled UI, and deletes the bad version.
+        </li>
+        <li>If the app dies during the trial, the next launch rolls back before the first page.</li>
+        <li>
+          A rolled-back version is refused (<code>skipped: rejected</code>) until{" "}
+          <code>otaReset()</code>, so a broken server UI cannot loop.
+        </li>
+        <li>
+          While a download or trial is in progress, another apply is <code>busy</code>.
+        </li>
+        <li>
+          A new app binary drops every download and starts from its bundled UI, as does a missing
+          version directory.
+        </li>
+      </ul>
+      <Callout kind="warn">
+        <strong>Limits.</strong> The SHA-256 checks catch corruption, not an attacker: over LAN{" "}
+        <code>http</code>, a man-in-the-middle can serve a matching manifest and files alike.
+        Production needs TLS end to end or a manifest signed by the server and verified on the
+        device, which denext does not ship yet. There is no downgrade protection either: the device
+        installs whatever version its server offers, older ones included.
+      </Callout>
+
       <h2>Environment variables</h2>
       <ul>
         <li>

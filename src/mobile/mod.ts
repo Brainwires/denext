@@ -16,6 +16,10 @@
  *   `--denext-keyboard-inset`, for shells with Keyboard `resize: "none"`.
  * - {@linkcode useBackSwipe} / {@linkcode isBackSwipe}: swipe right to go back.
  * - {@linkcode SAFE_AREA_CSS}: `--denext-safe-*` custom properties (needs `viewport-fit=cover`).
+ * - {@linkcode checkForUiUpdate} / {@linkcode otaBooted} / {@linkcode otaStatus} /
+ *   {@linkcode otaReset}: over-the-air UI updates through the native `DenextOta` plugin
+ *   that `denext mobile add-ota` installs; {@linkcode prepareUiUpdate} /
+ *   {@linkcode applyUiUpdate} split the download from the switch for an app's own prompt.
  *
  * @example
  * ```tsx
@@ -44,3 +48,17 @@ export { onAppResume, useAppResume } from "./resume.ts";
 export { installKeyboardInset, type KeyboardInsetOptions, useKeyboardInset } from "./keyboard.ts";
 export { type BackSwipeOptions, isBackSwipe, useBackSwipe } from "./back-swipe.ts";
 export { SAFE_AREA_CSS } from "./safe-area.ts";
+export {
+  applyUiUpdate,
+  checkForUiUpdate,
+  type OtaApplyResult,
+  otaBooted,
+  type OtaCheckOptions,
+  type OtaCheckResult,
+  type OtaPrepareResult,
+  otaReset,
+  type OtaStatus,
+  otaStatus,
+  prepareUiUpdate,
+} from "./ota.ts";
+export type { OtaManifest, OtaManifestFile } from "./ota-manifest.ts";

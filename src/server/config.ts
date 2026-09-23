@@ -296,6 +296,15 @@ export interface SpaConfig {
    * the `.gz` variants, to keep them out of the bundle.
    */
   precompress?: boolean;
+  /**
+   * Stamp the static export for over-the-air UI updates: `denext export` writes
+   * `_denext/ota.json` (every file's path, SHA-256 and size, plus a `version` hashed over
+   * them) into the export directory as its last step. A Capacitor shell with the
+   * `DenextOta` plugin (`denext mobile add-ota`) reads the bundled copy to know which UI it
+   * ships, and `checkForUiUpdate` from `denext/mobile` compares a server's copy against it.
+   * Default `false`. `*.gz` siblings are never listed.
+   */
+  ota?: boolean;
   /** `deno desktop` packaging settings (used when building the desktop app). */
   desktop?: SpaDesktopConfig;
 }

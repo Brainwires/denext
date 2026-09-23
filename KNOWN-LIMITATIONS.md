@@ -363,6 +363,14 @@ four documented bounds of the opt-in:
   renders a dead page: **LAN / mobile dev attach is not supported yet** (tracked in
   [ROADMAP.md](./ROADMAP.md)). `denext desktop run` serves a static export over loopback, which
   is unaffected.
+- **Over-the-air UI updates verify integrity, not authenticity.** The `DenextOta` plugin checks
+  every file's SHA-256 and size against `_denext/ota.json`, which catches corruption but not an
+  attacker: over plain `http` (a LAN server, say) a man-in-the-middle can serve a matching
+  manifest and files alike. Production needs TLS end to end or a manifest signed by the server
+  and verified on the device, and denext ships no signing yet. There is no downgrade protection
+  either: a device installs whatever version its server offers, older ones included. The Android
+  template is written against Capacitor 8's `BridgeActivity` API but has not been built in CI;
+  the iOS one is build-checked with `xcodebuild`.
 
 ### Testing helpers (`denext doctor`, `probeApp`)
 
