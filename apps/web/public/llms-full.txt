@@ -763,7 +763,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.6.0` — The denext framework version.
+- `VERSION: 2.7.0` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -879,6 +879,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createApp(config: AppConfig): RequestHandler` — Build the core request handler from an AppConfig: routing, SSR/streaming, API routes, the image endpoint, static files, caching, and the optional request-logging/timeout wrappers. Most apps use serve instead; use createApp directly to embed denext in a custom server.
 - `createChannel<T>(config: ChannelConfig<T>): Channel<T>` — Create a channel. Export it from a "use server" module (or give it an id).
 - `createMiddlewareRunner(mod: MiddlewareModule): MiddlewareRunner` — Build a runner from a loaded middleware module. The module may export a single handler or an ordered array of handlers/entries (composed into one chain). Returns null if the module exports no handler.
+- `createOtaHandler(options: OtaHandlerOptions): (request: Request) => Promise<Response | null>` — Build a handler that serves an OTA UI export to checkForUiUpdate / the native DenextOta plugin, following the serving rules every OTA server must keep:
 - `credentials(options?: CredentialsOptions): CredentialsProvider` — An email/password (or any custom) credentials provider.
 - `interface CredentialsOptions` — Options for the credentials provider.
 - `interface CredentialsProvider` — A Credentials (e.g. email/password) provider.
@@ -1057,6 +1058,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface OpenGraphMetadata` — Open Graph metadata (og:* tags), Next.js-shaped (images, not image).
 - `optimizeImage(request: Request, opts: ImageOptimizeOptions, gate?: () => Promise<() => void>): Promise<Response>` — Handle a /_denext/image optimization request: validate the url/w/q params against the configured allowlists (SSRF-safe fetch, local/remote patterns), decode the source, and re-encode to a negotiated raster format (webp/avif) at the requested width — returning the optimized Response (or an error response).
 - `interface OriginOptions` — Options controlling how requestOrigin resolves the public origin.
+- `interface OtaHandlerOptions` — Options for createOtaHandler.
 - `class PageCache` — The rendered-page store for Incremental Static Regeneration. A thin façade over the active CacheStore: the prod server consults it before rendering and populates it afterward for cacheable routes. Injecting a shared store via setCacheStore makes ISR work across replicas transparently — this class needs no per-instance state.
 - `interface PageContext` — The composed page tree plus its resolved metadata/config, before rendering.
 - `interface PageMatch` — A page route matched against a pathname, with its extracted params.
@@ -1550,7 +1552,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/mobile`
 
+- `applyUiUpdate(version: string): Promise<OtaApplyResult>` — Switch to the UI prepareUiUpdate staged: the native side starts its trial, arms the 15 s rollback watchdog, points the webview at it and reloads. The new page must call otaBooted, exactly as after checkForUiUpdate.
 - `interface BackSwipeOptions` — Options for useBackSwipe and isBackSwipe.
+- `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
 - `isBackSwipe(dx: number, dy: number, opts?: BackSwipeOptions): boolean` — The pure gesture test behind useBackSwipe: whether a movement of dx/dy CSS px from the touch start is a back swipe, i.e. rightward by at least minDistance and horizontal by at least ratio × the absolute vertical movement.
 - `isNativeShell(): boolean` — Whether the page runs inside a Capacitor iOS/Android native shell (webview origin capacitor://localhost on iOS, https://localhost on Android). false on the web, when @capacitor/core is merely bundled into a web build, and during SSR.
@@ -1559,6 +1563,17 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type NativePlatform = ios | android | web` — The platform a page runs on, as denext/mobile distinguishes them.
 - `onAppResume(cb: (awayMs: number) => void): () => void` — Call cb each time the page returns to the foreground, with how long it was away in milliseconds.
 - `openExternal(url: string): Promise<void>` — Open a URL outside the app.
+- `type OtaApplyResult = object | object` — The outcome of applyUiUpdate when it settles. On success the webview reloads into the new UI, so the promise does not settle at all.
+- `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog after 15 s (and on the next launch, if the app died first). Harmless on the bundled UI or a confirmed one.
+- `interface OtaCheckOptions` — Options for checkForUiUpdate and prepareUiUpdate.
+- `type OtaCheckResult = object | object | object | object | object` — The outcome of checkForUiUpdate. It never throws; every failure is a value.
+- `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
+- `interface OtaManifestFile` — One file of an OTA UI.
+- `type OtaPrepareResult = object | object | object | object | object` — The outcome of prepareUiUpdate. It never throws; every failure is a value.
+- `otaReset(): Promise<void>` — Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web.
+- `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.
+- `interface OtaStatus` — What the native side reports about the UI versions on this device.
+- `prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult>` — Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first.
 - `SAFE_AREA_CSS: string` — A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables.
 - `useAppResume(cb: (awayMs: number) => void): void` — Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes.
 - `useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void` — Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies.
