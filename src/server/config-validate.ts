@@ -169,6 +169,11 @@ function validateMode(config: DenextConfig, fail: Fail): void {
   }
 }
 
+/** `spa.ota`: a boolean when present. */
+function validateSpaOta(ota: unknown, fail: Fail): void {
+  if (ota !== undefined && typeof ota !== "boolean") fail("spa.ota", "must be a boolean");
+}
+
 /** Match the whole 127.0.0.0/8 block, localhost, or ::1 — NOT a `127.` prefix (which
  * would also accept `127.0.0.1.evil.com`, DNS-resolvable to an attacker IP). */
 function isLoopback(h: string): boolean {
@@ -501,6 +506,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   };
   validateMode(config, fail);
   validateProxy(config.spa?.proxy, fail);
+  validateSpaOta(config.spa?.ota, fail);
   validateRouting(config, fail);
   validateImageAllowlists(config.images, fail);
   validateImageNumerics(config.images, fail);

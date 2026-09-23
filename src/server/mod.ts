@@ -52,6 +52,7 @@ export type { HeadCollector, HeadTag } from "../jsx/render-to-string.ts";
 export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
 export { serveStatic } from "./static.ts";
+export { createOtaHandler, type OtaHandlerOptions } from "./ota-handler.ts";
 export { serveWithPortFallback } from "./serve-utils.ts";
 export type { ServeUtilOptions } from "./serve-utils.ts";
 // Typed route handlers: phantom-typed Request/Response so the typed-API-client generator

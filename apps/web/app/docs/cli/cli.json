@@ -538,6 +538,54 @@
       ]
     },
     {
+      "name": "mobile",
+      "summary": "Capacitor helpers (add-ota: install over-the-air UI updates)",
+      "usage": "denext mobile <action> [dir] [options]",
+      "description": "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n\n  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n  left alone and listed as one-line manual steps. Safe to run again.",
+      "flags": [
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "Replace native template files that differ from denext's (loses local edits)"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "add-ota"
+        },
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "The Capacitor project (default: .)"
+        }
+      ]
+    },
+    {
+      "name": "ota",
+      "summary": "Over-the-air UI manifest for Capacitor apps",
+      "usage": "denext ota <action> [dir]",
+      "description": "  denext ota manifest out     Write out/_denext/ota.json (paths, SHA-256s, sizes, version)\n\n  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n  makes `denext export` write it for you. `*.gz` files are never listed.",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "manifest"
+        },
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "The static export directory (e.g. out)"
+        }
+      ]
+    },
+    {
       "name": "patch",
       "summary": "Patch npm packages — or denext itself (patches/*.patch)",
       "usage": "denext patch <action> [name] [file] [dir]",

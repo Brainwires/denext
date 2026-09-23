@@ -3,8 +3,8 @@
 // (no stale content-hashed chunk from an earlier one), a failed export leaves the previous
 // `out/` intact, an output dir whose replacement would destroy project files is refused
 // (on the App Router and Pages Router paths too, by real location: case variants on a
-// case-insensitive filesystem and symlinks are resolved), and `spa.precompress: false` ships
-// no `.gz` siblings.
+// case-insensitive filesystem and symlinks are resolved), `spa.precompress: false` ships
+// no `.gz` siblings, and `spa.ota: true` stamps `_denext/ota.json` over the final tree.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { walk } from "@std/fs";
@@ -12,6 +12,7 @@ import { basename, join, relative } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
 import { resolveExportOutDir, swapStagingDir } from "../src/build/export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../src/build/paths.ts";
+import { collectOtaManifest } from "../src/build/ota-manifest.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -142,6 +143,44 @@ Deno.test({
     const files = await filesUnder(join(dir, "out"));
     assert(chunks(files).length > 0, "the export still emits its chunks");
     assertEquals(files.filter((f) => f.endsWith(".gz")), []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "exportSpa: spa.ota writes _denext/ota.json last, over every file but .gz siblings",
+  ...bundling,
+}, async () => {
+  const dir = await spaFixture(", ota: true");
+  try {
+    await Deno.writeTextFile(join(dir, "public", "robots.txt"), "User-agent: *\n");
+    await staticExport(dir);
+    const out = join(dir, "out");
+    const manifest = JSON.parse(await Deno.readTextFile(join(out, "_denext", "ota.json")));
+    const files = await filesUnder(out);
+    assert(files.some((f) => f.endsWith(".gz")), "precompression still ran");
+    // Exactly the export's files (public/ included), minus the .gz siblings and itself.
+    assertEquals(
+      manifest.files.map((f: { path: string }) => f.path),
+      files.filter((f) => !f.endsWith(".gz") && f !== "_denext/ota.json"),
+    );
+    assert(manifest.files.some((f: { path: string }) => f.path === "robots.txt"));
+    // And it is the manifest `denext ota manifest` derives from the same tree.
+    assertEquals(manifest, await collectOtaManifest(out));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "exportSpa: no _denext/ota.json unless spa.ota is on",
+  ...bundling,
+}, async () => {
+  const dir = await spaFixture();
+  try {
+    await staticExport(dir);
+    assert(!(await filesUnder(join(dir, "out"))).includes("_denext/ota.json"));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

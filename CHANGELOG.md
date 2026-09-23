@@ -8,6 +8,25 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Over-the-air UI updates for Capacitor apps.** A shell can pull a newer web UI from a server
+  without a new app build, verify every file's SHA-256 and size, switch to it, and roll back a UI
+  that does not confirm its boot within 15 s (or whose trial the app died in). The pieces:
+  `spa.ota: true` (or `denext ota manifest <dir>` for any export) stamps `_denext/ota.json`
+  (paths, SHA-256s, sizes and a `version` hashed over them); `denext mobile add-ota` installs the
+  native `DenextOta` plugin into `ios/` (three Swift files added to the Xcode target, with the
+  storyboard and `SceneDelegate` switched to `DenextBridgeViewController`) and `android/`
+  (`dev.denext.ota`, called from `MainActivity`); `checkForUiUpdate`, `otaBooted`, `otaStatus` and
+  `otaReset` from `denext/mobile` drive it and never throw; `createOtaHandler` from
+  `denext/server` serves an export by the three serving rules (the manifest and only the files it
+  lists, behind the app's auth, `Cache-Control: no-store`). Downloads reuse files the device
+  already has by SHA-256, a rolled-back version is refused until `otaReset()`, and a new app
+  binary starts from its bundled UI. `denext create --capacitor` stamps the export in
+  `mobile:sync` and adds a `mobile:add-ota` task. The SHA-256 checks catch corruption, not an
+  attacker: production needs TLS end to end or a signed manifest, and there is no downgrade
+  protection yet.
+
 ## [2.6.0] - 2026-09-21
 
 ### Added

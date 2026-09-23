@@ -8,6 +8,7 @@ import type { ProjectPaths } from "../paths.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
+import { writeOtaManifest } from "../ota-manifest.ts";
 import {
   assertEntryExists,
   CLIENT_PREFIX,
@@ -118,6 +119,16 @@ export async function exportSpa(
     console.log(`  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}`);
     await bundleAndShell(paths, entryPath, clientOut, staging);
     await copyPublic(paths.publicDir, staging);
+    // Last, once every file of the export is in place: the OTA manifest hashes the final
+    // tree (`*.gz` siblings excluded), so nothing may be written after it.
+    if (spa.ota === true) {
+      const { version, files } = await writeOtaManifest(staging);
+      console.log(
+        `  OTA manifest: _denext/ota.json (version ${
+          version.slice(0, 12)
+        }…, ${files.length} files)`,
+      );
+    }
   });
   // Prepare the desktop app icon when this is a desktop app (a `desktop.ts` entry, or an
   // explicit `spa.desktop.icon`). Config-driven and done here — in `export`, which the

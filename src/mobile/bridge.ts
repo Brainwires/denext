@@ -108,8 +108,11 @@ function externalUrl(url: string): URL {
   return parsed;
 }
 
-/** `Capacitor.Plugins[name]` inside the iOS/Android shell, else `undefined`. */
-function shellPlugin(name: string): unknown {
+/**
+ * `Capacitor.Plugins[name]` inside the iOS/Android shell, else `undefined`. Internal to
+ * `denext/mobile` (the OTA client reaches its native plugin through it); not re-exported.
+ */
+export function shellPlugin(name: string): unknown {
   return isNativeShell() ? capacitorGlobal()?.Plugins?.[name] : undefined;
 }
 
