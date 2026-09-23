@@ -20,6 +20,7 @@ import {
 } from "./module-graph.ts";
 import type { ProjectPaths } from "./paths.ts";
 import { compileCssAsset } from "./css-url.ts";
+import { optimizePackageImportsList } from "./optimize-package-imports.ts";
 import { CLIENT_PREFIX } from "./prod-server/assets.ts";
 import type { AssetOptions } from "./next-compat.ts";
 
@@ -97,6 +98,7 @@ export function compatBuildOptions(
     define: { __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)) },
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
     mdxOptions: paths.config?.mdx,
+    optimizePackageImports: optimizePackageImportsList(paths.config),
     useCache: resolveCacheComponents(paths.config),
     cssImportMap,
     // Assets emit into the dir the CLIENT bundles are written to — the build pipeline's

@@ -49,7 +49,9 @@ const DROP_NOTES: Record<string, string> = {
   output: "pick the task instead: `deno task export` or `deno task build`.",
   reactStrictMode: "wrap a subtree in `<StrictMode>` where you want the dev double-invoke.",
   pageExtensions: "page extensions are conventional in denext, not configurable.",
-  experimental: "no denext equivalent, except ppr/useCache/dynamicIO → `cacheComponents: true`.",
+  experimental:
+    "no denext equivalent, except ppr/useCache/dynamicIO → `cacheComponents: true` and " +
+    "optimizePackageImports → top-level `optimizePackageImports`.",
   webpack: "",
   compiler: "",
   swcMinify: "",

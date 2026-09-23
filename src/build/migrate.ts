@@ -740,7 +740,7 @@ const NEXT_DROP_GUIDANCE: Record<string, string> = {
   compiler: "", // SWC/Babel compiler options don't apply to Deno's toolchain.
   swcMinify: "", // minification is handled by the denext build, always on for prod.
   experimental:
-    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`.",
+    "Next experimental flags have no denext equivalent — except `ppr`/`useCache`/`dynamicIO`, which map to top-level `cacheComponents: true`, and `optimizePackageImports`, which is top-level `optimizePackageImports` (lucide-react, date-fns, … are optimized by default).",
   poweredByHeader: "", // denext never emits an X-Powered-By header.
   productionBrowserSourceMaps: "", // source-map emission is governed by the denext build.
 };

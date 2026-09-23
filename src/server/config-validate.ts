@@ -68,6 +68,8 @@ const MOVED_EXPERIMENTAL_KEYS: ReadonlyMap<string, { to: string; honored: boolea
   ["compiler", { to: "reactCompiler", honored: true }], // the pre-2.0 name of the same switch
   ["asyncContext", { to: "asyncContext", honored: true }], // graduated in 2.5; alias kept
   ["features", { to: "features", honored: true }], // graduated in 2.5; alias kept
+  // Next.js's own spelling: a migrated next.config carries it; honored as an alias.
+  ["optimizePackageImports", { to: "optimizePackageImports", honored: true }],
 ]);
 
 /** The warning for a graduated `experimental.<key>`, pointing at its top-level home. */
@@ -492,9 +494,26 @@ function validateCommands(commands: unknown, fail: Fail): void {
   commands.forEach((command, i) => validateCommand(command, i, seen, fail));
 }
 
+/**
+ * `optimizePackageImports` (and Next's `experimental.optimizePackageImports`) is a list of
+ * package names — a non-string entry would otherwise never match an import, silently.
+ */
+function validatePackageList(list: unknown, at: string, fail: Fail): void {
+  if (list === undefined) return;
+  if (!Array.isArray(list) || list.some((p) => typeof p !== "string" || p === "")) {
+    fail(at, 'must be an array of package names (e.g. ["lucide-react", "react-icons/*"])');
+  }
+}
+
 function validateNestedRequired(config: DenextConfig, fail: Fail): void {
   validateFeatures(config.features, "features", fail);
   validateFeatures(config.experimental?.features, "experimental.features", fail);
+  validatePackageList(config.optimizePackageImports, "optimizePackageImports", fail);
+  validatePackageList(
+    config.experimental?.optimizePackageImports,
+    "experimental.optimizePackageImports",
+    fail,
+  );
   validateTailwind(config.tailwind, fail);
   validateI18n(config.i18n, fail);
 }

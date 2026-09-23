@@ -748,6 +748,26 @@ export interface DenextConfig {
    */
   features?: Record<string, boolean>;
   /**
+   * npm packages whose barrel (`index`) imports are rewritten to the files that define each
+   * name, as Next.js's `optimizePackageImports` does: `import { Check } from "lucide-react"`
+   * becomes an import of `lucide-react`'s `icons/check.js`, so the bundler never loads the
+   * barrel. That keeps an icon library's thousand re-exports out of the module graph — and,
+   * when the package also code-splits every icon (`lucide-react/dynamic`), out of the startup
+   * chunk list. Applied to the compat (esbuild) client and server bundles, SPA included, for
+   * app source and for npm modules that import a listed package.
+   *
+   * The list is ADDED to a built-in default (`lucide-react`, `date-fns`, `lodash-es`, `ramda`,
+   * `rxjs`, `@tabler/icons-react`, `@heroicons/react/{20,24}/solid`,
+   * `@heroicons/react/24/outline`, `react-icons/*`, `@mui/icons-material`, `recharts`,
+   * `react-use`, `@headlessui/react`, `effect`); an entry ending in `/*` matches every subpath
+   * of the package. Only named value imports are rewritten, and only names the barrel
+   * re-exports from another module (a name the barrel defines itself stays on the barrel); a
+   * barrel that runs code of its own, carries a directive, or cannot be analysed is left
+   * untouched. Next's `experimental.optimizePackageImports` spelling is honored, with a dev
+   * warning, when this field is absent.
+   */
+  optimizePackageImports?: string[];
+  /**
    * @deprecated Every `experimental.*` key graduated to a top-level field by 2.5
    * (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The
    * old spellings are still honored, with a dev warning, when the top-level field is absent;
@@ -980,6 +1000,11 @@ export interface ExperimentalConfig {
    * compat migration, not an incomplete feature. Honored as an alias through 2.x.
    */
   nodeResolve?: boolean;
+  /**
+   * @deprecated Next.js's spelling of the top-level `optimizePackageImports`. Honored as an
+   * alias (with a dev warning) when the top-level field is absent.
+   */
+  optimizePackageImports?: string[];
 }
 
 /**

@@ -121,6 +121,11 @@ export interface BuildNextCompatModulesOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /**
+   * `optimizePackageImports` package list, forwarded to
+   * {@link BundleNextCompatModulesOptions.optimizePackageImports}.
+   */
+  optimizePackageImports?: readonly string[];
   /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
   useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
@@ -198,6 +203,7 @@ export async function buildNextCompatModules(
     absWorkingDir: options.projectDir,
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
+    optimizePackageImports: options.optimizePackageImports,
     useCache: options.useCache,
     cssImportMap: options.cssImportMap,
     assets: options.assets,
@@ -274,6 +280,11 @@ export interface BuildNextCompatClientOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /**
+   * `optimizePackageImports` package list, forwarded to
+   * {@link BundleNextCompatModulesOptions.optimizePackageImports}.
+   */
+  optimizePackageImports?: readonly string[];
   /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
   useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
@@ -321,6 +332,7 @@ export async function buildNextCompatClientEntries(
     catalogPackages: options.catalogPackages,
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
+    optimizePackageImports: options.optimizePackageImports,
     cssImportMap: options.cssImportMap,
     // Public type is `unknown[]` (to not expose esbuild's types); the bundler expects
     // real esbuild plugins, which is what callers pass.
@@ -362,6 +374,11 @@ export interface BuildNextCompatFlightOptions {
   resolveAllNodeModules?: boolean;
   /** App MDX plugin config, forwarded to {@link BundleNextCompatModulesOptions.mdxOptions}. */
   mdxOptions?: MdxBuildOptions;
+  /**
+   * `optimizePackageImports` package list, forwarded to
+   * {@link BundleNextCompatModulesOptions.optimizePackageImports}.
+   */
+  optimizePackageImports?: readonly string[];
   /** `cacheComponents` on: apply the `"use cache"` transform inside the server bundle. */
   useCache?: boolean;
   /** CSS shim map, forwarded to {@link BundleNextCompatModulesOptions.cssImportMap}. */
@@ -456,6 +473,7 @@ export async function buildNextCompatFlightEntry(
     absWorkingDir: options.projectDir,
     resolveAllNodeModules: options.resolveAllNodeModules,
     mdxOptions: options.mdxOptions,
+    optimizePackageImports: options.optimizePackageImports,
     cssImportMap: options.cssImportMap,
     assets: options.assets,
     // Strip `"use server"` modules (reached transitively via islands) → stubs.

@@ -302,7 +302,8 @@ export default {
 
 ## Build & optimization
 
-Opt-in build-time switches. All off by default except `nodeResolve`.
+Build-time switches. All off by default except `nodeResolve` and the
+`optimizePackageImports` defaults.
 
 - **`reactCompiler`** — `boolean`. The build-time auto-memoization compiler (a
   React-Compiler-style pass; Next.js's key). Conservative by construction —
@@ -324,6 +325,32 @@ Opt-in build-time switches. All off by default except `nodeResolve`.
   branch is dead-code eliminated. A key not listed reads `false`; flag names and
   states are embedded in the client bundle. See
   [Feature flags](/docs/bundling#feature-flags-compile-time).
+- **`optimizePackageImports`** — `string[]` (a built-in default list is always
+  on). Next.js's barrel-import optimization: `import { Check } from
+  "lucide-react"` is rewritten to an import of the module that defines `Check`,
+  so the bundler never loads the package's barrel. That saves build time, and it keeps
+  an icon library's thousand re-exports out of the module graph — and when the
+  package also code-splits every icon (`lucide-react/dynamic`), it keeps one
+  bare `import "./chunk-<icon>.js"` per icon out of your startup chunk. Your
+  list is **added to** the defaults: `lucide-react`, `date-fns`, `lodash-es`,
+  `ramda`, `rxjs`, `@tabler/icons-react`, `@heroicons/react/20/solid`,
+  `@heroicons/react/24/solid`, `@heroicons/react/24/outline`, `react-icons/*`
+  (a trailing `/*` matches every subpath), `@mui/icons-material`, `recharts`,
+  `react-use`, `@headlessui/react` and `effect`. It applies to the compat
+  (esbuild) client and server bundles, SPA mode included, under `nodeResolve`,
+  and rewrites app source and npm modules alike. Only named value imports move
+  (`import type`, default, `* as` and dynamic `import()` are left alone), and
+  only names the barrel re-exports from another module: a name the barrel
+  defines itself stays on the barrel, and a barrel that runs code of its own,
+  carries a directive (`"use client"`) or cannot be analysed is left untouched —
+  it never fails a build. Next's `experimental.optimizePackageImports` spelling
+  is honored with a dev warning.
+
+  ```ts
+  export default {
+    optimizePackageImports: ["@acme/icons", "@acme/ui/*"],
+  } satisfies DenextConfig;
+  ```
 - **`nodeResolve`** — `boolean` (**default on** for the compat build). denext's
   tolerant `node_modules` resolver: a strict superset of Deno's `npm:` loader
   that resolves bare npm specifiers straight from the app's installed
@@ -338,7 +365,8 @@ Opt-in build-time switches. All off by default except `nodeResolve`.
 > `experimental.reactCompiler` (and the older `experimental.compiler`) →
 > `reactCompiler`, `experimental.asyncContext` → `asyncContext`,
 > `experimental.features` → `features`, `experimental.nodeResolve` →
-> `nodeResolve`, `experimental.cacheComponents` → `cacheComponents`. The legacy
+> `nodeResolve`, `experimental.cacheComponents` → `cacheComponents` — and
+> Next's own `experimental.optimizePackageImports` → `optimizePackageImports`. The legacy
 > spellings are still honored when the top-level field is absent (the top-level
 > one wins when both are set), and each emits a dev warning naming the new
 > field, so nothing breaks while you migrate; the block is removed in 3.0.
