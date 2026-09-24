@@ -35,8 +35,20 @@ function applies(force: boolean | undefined): boolean {
  * have shown, and the getters return the real offset plus the delta, so a library reading back
  * the offset sees what it wrote. When the fling settles (`scrollend`, or `settleMs` without a
  * `scroll` event) or a new touch starts, the translate is removed and the real offset moves by
- * the delta in one synchronous step. Outside a gesture every call goes straight through;
- * `behavior: "smooth"` calls (after applying any pending delta) and `scrollIntoView` always do.
+ * the delta in one synchronous step. Deferred targets are clamped to the scroll range, so
+ * `el.scrollTop = el.scrollHeight` shows the bottom rather than blank space (`scrollHeight` /
+ * `scrollWidth` read as if the children were not shifted). Outside a gesture every call goes
+ * straight through; so do `behavior: "smooth"` calls (a smooth `scrollBy` applies the pending
+ * delta first; a smooth `scrollTo` drops it, as its target is absolute) and `scrollIntoView`
+ * (which first drops the pending delta of every scroller it moves).
+ *
+ * Only element scrollers are deferred. The document scroller (`document.scrollingElement`,
+ * `<html>`, `<body>`) is never shifted, and its writes, including `window.scrollTo`, always go
+ * straight through. While a list is shifted, its children carry the `translate` composed with
+ * their own computed `translate` (so Tailwind's `translate-*` classes keep their offset), and a
+ * transformed child becomes the containing block of its `position: fixed` descendants and moves
+ * its `position: sticky` headers with it until the fling settles. Documents inside iframes are
+ * not covered: each has its own `Element.prototype`.
  *
  * **denext's client runtime already installs it on iOS WebKit** (opt out with
  * `momentumSafeScroll: false` in `denext.config.ts`), so call this only from a page that does
@@ -46,7 +58,8 @@ function applies(force: boolean | undefined): boolean {
  * pending delta and restores every patched `Element.prototype` member exactly.
  *
  * @param options `{ force, settleMs }`: install on every platform; the quiet period, in ms,
- * that ends a fling where `scrollend` is unsupported (default 120).
+ * that ends a fling where `scrollend` is unsupported (default 250; where `scrollend` is
+ * supported it ends the fling, with a 1 s idle fallback).
  * @returns The uninstaller.
  * @example
  * ```ts
@@ -61,7 +74,9 @@ export function installMomentumSafeScroll(options: MomentumSafeScrollOptions = {
 /**
  * Hook form of {@linkcode installMomentumSafeScroll}: installs on mount and uninstalls when the
  * last mounted hook unmounts. An install made by denext's runtime or directly with
- * {@linkcode installMomentumSafeScroll} is left in place. Options are read on the first mount.
+ * {@linkcode installMomentumSafeScroll} is left in place. A change to `force` or `settleMs` re-runs
+ * the hook (it releases its share, then takes a new one); `settleMs` applies only when that
+ * share is the one that installs the shim, since a live install keeps its own options.
  *
  * @param options `{ force, settleMs }`, as for {@linkcode installMomentumSafeScroll}.
  * @example

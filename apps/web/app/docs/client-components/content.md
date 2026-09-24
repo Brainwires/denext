@@ -257,6 +257,37 @@ Only Client Components can call `useTheme()`; a Server Component that needs the
 same value reads it from where it really lives (a cookie via `cookies()`, the
 session via `auth()`) and passes it down as a prop.
 
+## Branching in JSX: `choose`
+
+`choose(value, cases, defaultCase?)` from `denext` (after Lit's) is a lazy
+`switch` you can drop straight into JSX: it runs only the branch for `value`
+and returns its result, `defaultCase()` when nothing matches, or `undefined`
+when there is no default. It is a plain function, so it works in Server and
+Client Components alike.
+
+```tsx
+import { choose } from "denext";
+
+type Status = "loading" | "error" | "empty" | "ready";
+
+export function Orders({ status, rows }: { status: Status; rows: Order[] }) {
+  return (
+    <section>
+      {choose(status, {
+        loading: () => <Spinner />,
+        error: () => <p role="alert">Could not load orders.</p>,
+        ready: () => <OrderTable rows={rows} />,
+      }, () => <p>No orders yet.</p>)}
+    </section>
+  );
+}
+```
+
+Only `cases`' own keys match: a `value` of `"toString"` or `"__proto__"` falls
+through to `defaultCase` instead of finding an `Object.prototype` member. The
+fallback is a separate argument, so a `value` of `"default"` matches a
+`default` case, not the fallback.
+
 ## SSR-safe utility hooks
 
 Browser state — storage, viewport, network, observers — does not exist on the

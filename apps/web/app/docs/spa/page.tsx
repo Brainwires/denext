@@ -268,6 +268,15 @@ await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`
         requests them — for a Capacitor (iOS/Android) build, set{" "}
         <code>{"spa: { precompress: false }"}</code> to keep them out of the bundle.
       </Callout>
+      <Callout kind="note">
+        <code>{"spa: { ota: true }"}</code>{" "}
+        stamps an over-the-air manifest (<code>_denext/ota.json</code>: every file's SHA-256 and
+        size, plus a version hashed over them) into the export, so a Capacitor shell with the native
+        plugin (<code>denext mobile add-ota</code>) can pull a newer UI without a new app build. Set
+        {" "}
+        <code>DENEXT_OTA_SIGNING_KEY</code> to sign it. See{" "}
+        <a href="/docs/desktop">Desktop &amp; mobile</a>.
+      </Callout>
       <h3>App icon</h3>
       <p>
         Set <code>spa.desktop.icon</code> in <code>denext.config.ts</code>{" "}

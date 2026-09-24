@@ -8,6 +8,7 @@ import { join } from "@std/path";
 import {
   isExcludedFromOtaManifest,
   isOtaManifest,
+  isOtaManifestPath,
   makeOtaManifest,
   OTA_MANIFEST_PATH,
   OTA_NOTES_MAX_LENGTH,
@@ -16,7 +17,11 @@ import {
   otaSignaturePayload,
   sha256Hex,
 } from "../src/mobile/ota-manifest.ts";
-import { collectOtaManifest, writeOtaManifest } from "../src/build/ota-manifest.ts";
+import {
+  collectOtaManifest,
+  defaultOtaSequence,
+  writeOtaManifest,
+} from "../src/build/ota-manifest.ts";
 import {
   generateOtaKeyPair,
   importOtaSigningKey,
@@ -236,7 +241,14 @@ Deno.test("denext ota: --required and --notes are declared flags", () => {
   const flags = buildRegistry().get("ota")!.flags ?? [];
   assertEquals(
     flags.map((f) => [f.name, f.type]),
-    [["required", "boolean"], ["notes", "string"], ["sign", "string"], ["force", "boolean"]],
+    [
+      ["required", "boolean"],
+      ["notes", "string"],
+      ["sign", "string"],
+      ["sequence", "number"],
+      ["min-native", "number"],
+      ["force", "boolean"],
+    ],
   );
 });
 
@@ -402,7 +414,7 @@ Deno.test("ota signature: public keys parse from base64 SPKI or PEM, and only P-
 /** Run `denext ota <positionals>` with `flags`, returning what it logged. */
 async function ota(
   positionals: string[],
-  flags: Record<string, string | boolean> = {},
+  flags: Record<string, string | boolean | number> = {},
   json = false,
 ): Promise<string[]> {
   const log = console.log;
@@ -477,6 +489,12 @@ Deno.test("denext ota keygen: refuses to overwrite without --force; --force repl
     await ota(["keygen", out], { force: true });
     assert((await Deno.readTextFile(out)).startsWith("-----BEGIN PRIVATE KEY-----"));
     if (Deno.build.os !== "windows") assertEquals((await Deno.stat(out)).mode! & 0o777, 0o600);
+    // Rotation is loud: every binary embedding the old public key stops accepting updates.
+    assert(errors.some((e) => e.includes("embeds the old")), errors.join("\n"));
+    // Replaced through a temporary file: nothing is left behind.
+    const names = [];
+    for await (const entry of Deno.readDir(dir)) names.push(entry.name);
+    assertEquals(names.sort(), ["ota.key", "ota.key.pub"]);
   } finally {
     Deno.exit = exit;
     console.error = error;
@@ -545,4 +563,269 @@ Deno.test("ota manifest: isOtaManifest accepts a string signature only", () => {
   assert(isOtaManifest({ ...base, signature: "c2ln" }));
   assert(!isOtaManifest({ ...base, signature: 1 }));
   assert(!isOtaManifest({ ...base, signature: null }));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Control characters in paths: a tab or newline could forge the "<path>\t<sha256>\n" lines.
+
+Deno.test("ota manifest: a path with a control character is refused everywhere (the \\t/\\n collision)", async () => {
+  const H1 = INDEX_HTML_SHA;
+  const H2 = APP_JS_SHA;
+  // The repro: one entry whose path smuggles a second line hashes like two honest entries.
+  const honest = [
+    { path: "a.js", sha256: H1, size: 1 },
+    { path: "b.js", sha256: H2, size: 1 },
+  ];
+  const forged = [{ path: `a.js\t${H1}\nb.js`, sha256: H2, size: 1 }];
+  assertEquals(await otaManifestVersion(forged), await otaManifestVersion(honest));
+  // ...so no side accepts such a path.
+  const version = await otaManifestVersion(forged);
+  assert(!isOtaManifest({ version, files: forged }));
+  await assertRejects(() => makeOtaManifest(forged), RangeError, "control character");
+  for (const bad of ["a\tb", "a\nb", "a\rb", "a\u0000b", "a\u001fb", "a\u007fb"]) {
+    assert(!isOtaManifestPath(bad), JSON.stringify(bad));
+    assert(!isOtaManifest({ version, files: [{ path: bad, sha256: H1, size: 1 }] }));
+  }
+  for (const good of ["index.html", "_denext/client/app.js", "héllo wörld.js", "a\u0080b"]) {
+    assert(isOtaManifestPath(good), good);
+  }
+  assert(!isOtaManifestPath(""));
+  assert(!isOtaManifestPath(1));
+});
+
+Deno.test("collectOtaManifest / createOtaHandler: a file named with a control character", async () => {
+  const dir = await webRoot();
+  try {
+    // A POSIX file name may hold a tab; Windows refuses it, so there is nothing to test there.
+    if (Deno.build.os === "windows") return;
+    await Deno.writeTextFile(join(dir, "evil\tname.js"), "x");
+    await assertRejects(() => collectOtaManifest(dir), RangeError, "control character");
+    await Deno.remove(join(dir, "evil\tname.js"));
+    await writeOtaManifest(dir);
+    const ota = createOtaHandler({ dir });
+    assertEquals(await ota(new Request("http://host/evil%09name.js")), null);
+    assertEquals(await ota(new Request("http://host/index%00.html")), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Signature payload v2: sequence (downgrade protection) and minNative (the native gate).
+
+Deno.test("ota signature v2: the exact bytes, with and without minNative", async () => {
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  const notesSha = await sha256Hex(encoder.encode("Fixes sign-in"));
+  assertEquals(
+    text(
+      await otaSignaturePayload({
+        version: FIXTURE_VERSION,
+        required: true,
+        notes: "Fixes sign-in",
+        sequence: 1758700000,
+        minNative: 42,
+      }),
+    ),
+    `denext-ota-v2\n${FIXTURE_VERSION}\n1\n${notesSha}\n1758700000\n42`,
+  );
+  // No minNative: an empty last line (the payload still has six lines, no trailing newline).
+  const bare = text(await otaSignaturePayload({ version: FIXTURE_VERSION, sequence: 0 }));
+  assertEquals(bare, `denext-ota-v2\n${FIXTURE_VERSION}\n0\n${EMPTY_SHA}\n0\n`);
+  assertEquals(bare.split("\n").length, 6);
+  // No sequence: v1, byte-for-byte what 2.8 signed.
+  assertEquals(
+    text(await otaSignaturePayload({ version: FIXTURE_VERSION })),
+    `denext-ota-v1\n${FIXTURE_VERSION}\n0\n${EMPTY_SHA}`,
+  );
+  // minNative alone cannot be signed (v1 has no room for it); malformed integers are refused.
+  await assertRejects(
+    () => otaSignaturePayload({ version: FIXTURE_VERSION, minNative: 3 }),
+    RangeError,
+    "sequence",
+  );
+  for (const sequence of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN]) {
+    await assertRejects(
+      () => otaSignaturePayload({ version: FIXTURE_VERSION, sequence }),
+      RangeError,
+    );
+  }
+  await assertRejects(
+    () => otaSignaturePayload({ version: FIXTURE_VERSION, sequence: 1, minNative: -2 }),
+    RangeError,
+  );
+  // The public entry point exports the same function (the CHANGELOG promised it).
+  const mobile = await import("../src/mobile/mod.ts");
+  assertEquals(mobile.otaSignaturePayload, otaSignaturePayload);
+});
+
+Deno.test("ota signature v2: sign/verify binds sequence and minNative; v1 still verifies", async () => {
+  const { publicKey, signingKey } = await keys();
+  const v2 = await signOtaManifest(
+    await makeOtaManifest(FILES, { sequence: 1758700000, minNative: 42, notes: "n" }),
+    signingKey,
+  );
+  assert(isOtaManifest(v2));
+  assert(await verifyOtaManifest(v2, publicKey));
+  const tampered: Array<[string, OtaManifest]> = [
+    ["sequence lowered", { ...v2, sequence: 1 }],
+    ["sequence dropped (a v2 signature does not verify as v1)", { ...v2, sequence: undefined }],
+    ["minNative changed", { ...v2, minNative: 41 }],
+    ["minNative dropped", { ...v2, minNative: undefined }],
+  ];
+  for (const [label, bad] of tampered) assert(!(await verifyOtaManifest(bad, publicKey)), label);
+  // A v1 manifest (no sequence) signs and verifies as before, and cannot gain a sequence.
+  const v1 = await signOtaManifest(await makeOtaManifest(FILES), signingKey);
+  assert(await verifyOtaManifest(v1, publicKey));
+  assert(!(await verifyOtaManifest({ ...v1, sequence: 5 }, publicKey)));
+  // minNative without a sequence cannot be signed.
+  await assertRejects(
+    async () => signOtaManifest(await makeOtaManifest(FILES, { minNative: 1 }), signingKey),
+    RangeError,
+  );
+  await assertRejects(() => makeOtaManifest(FILES, { sequence: -1 }), RangeError, "sequence");
+});
+
+Deno.test("isOtaManifest: sequence and minNative are non-negative safe integers", () => {
+  const base = {
+    version: FIXTURE_VERSION,
+    files: [{ path: "index.html", sha256: INDEX_HTML_SHA, size: 13 }],
+  };
+  assert(isOtaManifest({ ...base, sequence: 0, minNative: 7 }));
+  for (const bad of [-1, 1.5, "1", null, true, Number.MAX_SAFE_INTEGER + 1]) {
+    assert(!isOtaManifest({ ...base, sequence: bad }), `sequence ${bad}`);
+    assert(!isOtaManifest({ ...base, minNative: bad }), `minNative ${bad}`);
+  }
+});
+
+Deno.test("writeOtaManifest: signing stamps a sequence (the Unix time) unless one is given", async () => {
+  const dir = await webRoot();
+  try {
+    const { publicKey, signingKey } = await keys();
+    const before = defaultOtaSequence();
+    const signed = await writeOtaManifest(dir, {}, signingKey);
+    assert(
+      signed.sequence! >= before && signed.sequence! <= defaultOtaSequence(),
+      `${signed.sequence}`,
+    );
+    assert(await verifyOtaManifest(signed, publicKey));
+    assertEquals((await writeOtaManifest(dir, { sequence: 7 }, signingKey)).sequence, 7);
+    // Unsigned: no sequence unless asked for.
+    assert(!("sequence" in await writeOtaManifest(dir)));
+    assertEquals((await writeOtaManifest(dir, { sequence: 3, minNative: 2 })).minNative, 2);
+    assertEquals(defaultOtaSequence(1_758_700_000_999), 1_758_700_000);
+    // Written atomically: no temporary file is left next to the manifest.
+    const names = [];
+    for await (const entry of Deno.readDir(join(dir, "_denext"))) names.push(entry.name);
+    assertEquals(names.sort(), ["client", "ota.json"]);
+    if (Deno.build.os !== "windows") {
+      assertEquals((await Deno.stat(join(dir, "_denext", "ota.json"))).mode! & 0o777, 0o644);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext ota manifest --sequence / --min-native; --sign stamps a sequence by default", async () => {
+  const dir = await webRoot();
+  const { publicKey, privateKeyPem } = await keys();
+  const keyFile = `${dir}.key`;
+  const written = async () =>
+    JSON.parse(await Deno.readTextFile(join(dir, "_denext", "ota.json"))) as OtaManifest;
+  try {
+    await Deno.writeTextFile(keyFile, privateKeyPem);
+    await withSigningEnv(undefined, async () => {
+      const lines = await ota(["manifest", dir], { sequence: 12, "min-native": 34 });
+      assertEquals((await written()).sequence, 12);
+      assertEquals((await written()).minNative, 34);
+      assert(
+        lines.some((l) => l.includes("sequence 12") && l.includes("min native 34")),
+        lines.join("\n"),
+      );
+      const [json] = await ota(["manifest", dir], { sign: keyFile }, true);
+      const report = JSON.parse(json);
+      assert(report.sequence >= defaultOtaSequence() - 5, json);
+      assertEquals(report.minNative, null);
+      assert(await verifyOtaManifest(await written(), publicKey));
+      await ota(["manifest", dir], { sign: keyFile, sequence: 99, "min-native": 3 });
+      const manifest = await written();
+      assertEquals([manifest.sequence, manifest.minNative], [99, 3]);
+      assert(await verifyOtaManifest(manifest, publicKey));
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(keyFile).catch(() => {});
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// createOtaHandler CORS: the web app fetches the manifest with an Authorization header.
+
+Deno.test("createOtaHandler: cors answers the preflight and tags responses for allowed origins", async () => {
+  const dir = await webRoot();
+  try {
+    await writeOtaManifest(dir);
+    const preflight = (ota: (r: Request) => Promise<Response | null>, origin: string) =>
+      ota(
+        new Request("http://host/ui/_denext/ota.json", {
+          method: "OPTIONS",
+          headers: {
+            origin,
+            "access-control-request-method": "GET",
+            "access-control-request-headers": "authorization",
+          },
+        }),
+      );
+    const withCors = createOtaHandler({ dir, basePath: "/ui", cors: true });
+    for (const origin of ["capacitor://localhost", "https://localhost", "http://localhost"]) {
+      const res = await preflight(withCors, origin);
+      assertEquals(res?.status, 204, origin);
+      assertEquals(res?.headers.get("access-control-allow-origin"), origin);
+      assertEquals(res?.headers.get("access-control-allow-headers"), "authorization");
+      assertEquals(res?.headers.get("access-control-allow-methods"), "GET, HEAD, OPTIONS");
+      assertEquals(res?.headers.get("vary"), "Origin");
+    }
+    // Not an allowed origin, or no origin: not the handler's (the app answers it).
+    assertEquals(await preflight(withCors, "https://evil.example"), null);
+    const get = await withCors(
+      new Request("http://host/ui/_denext/ota.json", {
+        headers: { origin: "capacitor://localhost" },
+      }),
+    );
+    assertEquals(get?.headers.get("access-control-allow-origin"), "capacitor://localhost");
+    assertEquals(get?.headers.get("cache-control"), "no-store");
+    const foreign = await withCors(
+      new Request("http://host/ui/index.html", { headers: { origin: "https://evil.example" } }),
+    );
+    assertEquals(foreign?.status, 200);
+    assertEquals(foreign?.headers.get("access-control-allow-origin"), null);
+    assertEquals(foreign?.headers.get("vary"), "Origin");
+
+    // An explicit origin (or list) allows exactly those.
+    const one = createOtaHandler({ dir, basePath: "/ui", cors: "https://app.example" });
+    assertEquals((await preflight(one, "https://app.example"))?.status, 204);
+    assertEquals(await preflight(one, "capacitor://localhost"), null);
+    const list = createOtaHandler({ dir, basePath: "/ui", cors: ["a://x", "b://y"] });
+    assertEquals((await preflight(list, "b://y"))?.status, 204);
+
+    // No cors option: no CORS headers, OPTIONS is not answered.
+    const plain = createOtaHandler({ dir, basePath: "/ui" });
+    assertEquals(await preflight(plain, "capacitor://localhost"), null);
+    const res = await plain(
+      new Request("http://host/ui/index.html", { headers: { origin: "capacitor://localhost" } }),
+    );
+    assertEquals(res?.headers.get("access-control-allow-origin"), null);
+    assertEquals(res?.headers.get("vary"), null);
+    // Outside the base path, even OPTIONS is not the handler's.
+    assertEquals(
+      await withCors(
+        new Request("http://host/other", {
+          method: "OPTIONS",
+          headers: { origin: "capacitor://localhost" },
+        }),
+      ),
+      null,
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

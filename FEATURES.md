@@ -215,7 +215,10 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   without proof of the mailbox (pre-account hijacking). denext ships no mailer:
   every message goes through `sendVerificationRequest`.
 - **`cookies()` / `headers()`** with **secure cookie defaults** (httpOnly,
-  SameSite=Lax, Secure over HTTPS).
+  SameSite=Lax, Secure over HTTPS), plus the per-request facts from anywhere on
+  the server: **`clientIp()`** (the trusted proxy's hop or the socket peer),
+  **`requestId()`** (the log / `x-request-id` correlation id) and
+  **`requestSignal()`** (the disconnect / timeout `AbortSignal`).
 - **Signed-cookie sessions**: `getSession()` (HMAC-SHA256, secret rotation) —
   the low-level session primitive `denextAuth` is built on, usable directly.
 - **Middleware** (`middleware.ts`), **`draftMode()`**, **`connection()`**
@@ -310,7 +313,15 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   iOS/Android shell: `isNativeShell` / `nativePlatform`, `useAppResume`,
   `openExternal`, `useKeyboardInset`, `useBackSwipe` and `SAFE_AREA_CSS`, talking
   to Capacitor only through the `window.Capacitor` global (no `@capacitor/*`
-  dependency).
+  dependency). **Over-the-air UI updates**: `spa.ota` / `denext ota manifest`
+  stamp a SHA-256 manifest, `denext ota keygen` + `--sign` sign it (ECDSA P-256,
+  public key embedded by `denext mobile add-ota --public-key`), and
+  `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` drive
+  the native plugin, which verifies every file and rolls back a UI that never
+  boots (`createOtaHandler` in `denext/server` serves the export). **Momentum-safe
+  scrolling** on iOS WebKit (Capacitor and Safari): programmatic scroll writes
+  from virtualized lists are deferred during a fling instead of killing it — on
+  by default, `momentumSafeScroll: false` opts out.
 - **First-party DevTools** (`denext/devtools`, dev-only): a native in-page
   glass-box panel (auto-mounted in dev — App Router **and** SPA; toggle
   Ctrl+Shift+D) at React-DevTools-quality, in **six tabs** (`Alt+1`…`6`,
@@ -542,6 +553,11 @@ cache uses Deno's built-in `node:sqlite`.)
 - Build via **`deno bundle`** on the native path (`esbuild` on the next-compat /
   SPA-compat path) with **code splitting** (shared runtime chunk), the CSS
   pipeline, and per-route client entries.
+- **`optimizePackageImports`** (Next.js's key) on the esbuild bundles: barrel
+  imports of listed packages (a built-in default — lucide-react, date-fns,
+  lodash-es, … — plus yours; `"!pkg"` excludes, `false` disables) are rewritten
+  to the modules that define each name, so an icon library's barrel never enters
+  the module graph or the startup chunk list.
 - **Plugin contract** (`DenextPlugin`: the six seams — route-synthesizer,
   request-handler, build-step, prepare-step, teardown, CLI command) with the public
   `@denext/denext/plugin-kit` primitives (bundling, CSS, matchers, `PageCache`,
@@ -1078,6 +1094,9 @@ Genuine value-adds React/Next lack, or do less cleanly — not parity.
 - **`tryCatch`** — a tuple/result-returning `try`/`catch` (`{ data, error }`)
   that keeps the success value in scope without a widened `let`; works over sync
   values and promises. — `src/utils/try-catch.ts`.
+- **`choose`** — Lit-style control flow for JSX: `choose(value, cases,
+  defaultCase?)` runs only the matching branch (own keys only), a lazy `switch`
+  you can inline. — `src/utils/choose.ts`.
 - **Everyday browser-API hooks React/Next don't ship** — SSR-inert and
   feature-detected: `useMediaQuery` (`src/utils/use-media-query.ts`),
   `useLocalStorage` / `useSessionStorage` (`useState`-style Web Storage with JSON

@@ -122,16 +122,17 @@ export async function exportSpa(
     await copyPublic(paths.publicDir, staging);
     // Last, once every file of the export is in place: the OTA manifest hashes the final
     // tree (`*.gz` siblings excluded), so nothing may be written after it.
-    // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the manifest is signed too.
+    // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the manifest is signed too, and stamped
+    // with a `sequence` (the Unix time) so installed apps refuse an older signed release.
     if (spa.ota === true) {
-      const { version, files, signature } = await writeOtaManifest(
+      const { version, files, signature, sequence } = await writeOtaManifest(
         staging,
         {},
         await loadOtaSigningKey(),
       );
       console.log(
         `  OTA manifest: _denext/ota.json (version ${version.slice(0, 12)}…, ${files.length} files${
-          signature ? ", signed" : ""
+          signature ? `, signed, sequence ${sequence}` : ""
         })`,
       );
     }

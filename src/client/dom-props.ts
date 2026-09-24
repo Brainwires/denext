@@ -6,7 +6,12 @@
 // `onError` callback, keeping error-boundary routing renderer-specific.
 
 import { isValidAttrName, sanitizeUrlAttr, warnDangerousHtml } from "../jsx/render-to-string.ts";
-import { cssPropertyName, cssPropertyValue, serializeStyle } from "../jsx/dom-attributes.ts";
+import {
+  cssPropertyName,
+  cssPropertyValue,
+  dropsEmptyUrl,
+  serializeStyle,
+} from "../jsx/dom-attributes.ts";
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
 import { beginEventDispatch, endEventDispatch } from "./event-priority.ts";
 
@@ -404,7 +409,13 @@ function setAttribute(el: Element, name: string, value: unknown): void {
   const attr = domAttrName(el, name);
   // Skip unsafe names: the DOM throws on them, and they must not reach markup.
   if (!isValidAttrName(attr)) return;
-  if (value == null || value === false) {
+  const tag = el.tagName.toLowerCase();
+  // React removes a boolean or an empty `src`/`href` (except `<a href="">`, a reload link).
+  const urlAttr = name === "src" || name === "href";
+  if (
+    value == null || value === false || (urlAttr && typeof value === "boolean") ||
+    dropsEmptyUrl(name, value, tag)
+  ) {
     el.removeAttribute(attr);
     return;
   }
@@ -426,7 +437,7 @@ function setAttribute(el: Element, name: string, value: unknown): void {
   // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) before
   // it reaches a URL-bearing attribute — the same guard the SSR serializer applies.
   const str = String(value);
-  const safe = sanitizeUrlAttr(el.tagName.toLowerCase(), attr, str);
+  const safe = sanitizeUrlAttr(tag, attr, str);
   if (safe === null) {
     el.removeAttribute(attr);
     return;

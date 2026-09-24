@@ -39,6 +39,32 @@ function documentFor(container: Node): Document {
   return container.ownerDocument ?? currentDocument();
 }
 
+/**
+ * Set once a portal has targeted a container in a document other than its root's (an iframe's,
+ * a popup window's). Until then every node is created in {@link doc} and
+ * {@link documentForFiber} costs nothing; afterwards it walks up to the nearest portal.
+ */
+let crossDocumentPortals = false;
+
+/** Record a portal's target as its fiber begins, so a cross-document one is noticed. */
+export function notePortalTarget(target: Node | null | undefined): void {
+  if (!crossDocumentPortals && target && documentFor(target) !== doc) crossDocumentPortals = true;
+}
+
+/**
+ * The document a fresh node for `fiber` is created in, as React does: the nearest enclosing
+ * portal's container's document, else the root's ({@link doc}). A node built in the wrong
+ * document still works after `appendChild` adopts it, but custom-element upgrades, `instanceof`
+ * checks against the target window's constructors, and styles read at creation would not.
+ */
+export function documentForFiber(fiber: Fiber): Document {
+  if (!crossDocumentPortals) return doc;
+  for (let f = fiber.return; f !== null; f = f.return) {
+    if (f.tag === "portal" && f.stateNode) return documentFor(f.stateNode);
+  }
+  return doc;
+}
+
 /** Point node creation at `handle`'s document — called as each render (or slice) of it starts. */
 export function enterRootDocument(handle: RootHandle): void {
   doc = documentFor(handle.container);

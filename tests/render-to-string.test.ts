@@ -171,6 +171,11 @@ Deno.test("SSR attributes follow ReactDOMServer: form defaults (value/checked/te
     renderToStringSync(h("input", { defaultValue: "d", defaultChecked: true })),
     '<input value="d" checked="">',
   );
+  // On any other element React drops them (pushAttribute ignores both props).
+  assertEquals(
+    renderToStringSync(h("div", { defaultValue: "d", defaultChecked: true })),
+    "<div></div>",
+  );
   // A textarea's value is its text; a select's value marks the matching option(s) selected.
   assertEquals(
     renderToStringSync(h("textarea", { defaultValue: "dv" })),
@@ -350,7 +355,10 @@ Deno.test("SSR attributes follow ReactDOMServer: renames, string-only props and 
   );
   assertEquals(renderToStringSync(h("ol", { start: 0 })), '<ol start="0"></ol>');
   assertEquals(renderToStringSync(h("img", { src: "", alt: "" })), '<img alt="">');
-  assertEquals(renderToStringSync(h("a", { href: "" }, "x")), "<a>x</a>");
+  // …except `<a href="">`, which React keeps as a "reload" link (Fizz `pushStartAnchor`).
+  assertEquals(renderToStringSync(h("a", { href: "" }, "x")), '<a href="">x</a>');
+  assertEquals(renderToStringSync(h("link", { href: "" })), "<link>");
+  assertEquals(renderToStringSync(h("area", { href: "" })), "<area>");
   // React-owned props never reach the markup.
   assertEquals(
     renderToStringSync(

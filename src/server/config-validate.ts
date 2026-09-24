@@ -503,19 +503,25 @@ function validateCommands(commands: unknown, fail: Fail): void {
 
 /**
  * `optimizePackageImports` (and Next's `experimental.optimizePackageImports`) is a list of
- * package names — a non-string entry would otherwise never match an import, silently.
+ * package names, `"!pkg"` exclusions, or (top-level only) `false` — a non-string entry would
+ * otherwise never match an import, silently.
  */
-function validatePackageList(list: unknown, at: string, fail: Fail): void {
-  if (list === undefined) return;
-  if (!Array.isArray(list) || list.some((p) => typeof p !== "string" || p === "")) {
-    fail(at, 'must be an array of package names (e.g. ["lucide-react", "react-icons/*"])');
+function validatePackageList(list: unknown, at: string, fail: Fail, allowFalse = false): void {
+  if (list === undefined || (allowFalse && list === false)) return;
+  const bad = (p: unknown) => typeof p !== "string" || p === "" || p === "!";
+  if (!Array.isArray(list) || list.some(bad)) {
+    fail(
+      at,
+      "must be an array of package names (e.g. " +
+        '["lucide-react", "react-icons/*", "!recharts"])' + (allowFalse ? " or false" : ""),
+    );
   }
 }
 
 function validateNestedRequired(config: DenextConfig, fail: Fail): void {
   validateFeatures(config.features, "features", fail);
   validateFeatures(config.experimental?.features, "experimental.features", fail);
-  validatePackageList(config.optimizePackageImports, "optimizePackageImports", fail);
+  validatePackageList(config.optimizePackageImports, "optimizePackageImports", fail, true);
   validatePackageList(
     config.experimental?.optimizePackageImports,
     "experimental.optimizePackageImports",

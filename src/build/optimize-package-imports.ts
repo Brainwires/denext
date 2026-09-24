@@ -23,6 +23,11 @@
 // chain's resolvers compute the barrel's own relative imports (the barrel via `resolveNodeFrom`,
 // its relatives via `resolve(dirname(barrel), rel)` + the same probe), so a rewritten import and
 // e.g. lucide's `dynamicIconImports` `import()` land on ONE module, never two copies.
+//
+// The contract: listing a package asserts its modules are side-effect free, as Next.js's option
+// does. Looking through the barrel skips every sibling module the app doesn't import, so a
+// top-level side effect in one of those siblings (a polyfill, a registry `register()` call) no
+// longer runs. A barrel that runs code of its OWN is still detected and left alone.
 
 import type * as esbuild from "esbuild";
 import { dirname, extname, resolve } from "@std/path";
@@ -55,7 +60,9 @@ export const DEFAULT_OPTIMIZE_PACKAGE_IMPORTS: readonly string[] = [
 /**
  * The effective package list: the built-in {@link DEFAULT_OPTIMIZE_PACKAGE_IMPORTS} plus the
  * configured `optimizePackageImports` (else Next's legacy `experimental.optimizePackageImports`),
- * de-duplicated.
+ * de-duplicated. `optimizePackageImports: false` disables the optimization entirely (defaults
+ * included); a `"!pkg"` entry removes `pkg` from the list (e.g. `"!recharts"` drops a default,
+ * `"!react-icons/*"` the wildcard entry).
  *
  * @param config The resolved denext config (may be absent).
  * @returns Every package specifier whose barrel imports are rewritten.
@@ -63,7 +70,11 @@ export const DEFAULT_OPTIMIZE_PACKAGE_IMPORTS: readonly string[] = [
 export function optimizePackageImportsList(config: DenextConfig | null | undefined): string[] {
   const configured = config?.optimizePackageImports ??
     config?.experimental?.optimizePackageImports ?? [];
-  return [...new Set([...DEFAULT_OPTIMIZE_PACKAGE_IMPORTS, ...configured])];
+  if (configured === false) return [];
+  const excluded = new Set(configured.filter((p) => p.startsWith("!")).map((p) => p.slice(1)));
+  const included = configured.filter((p) => !p.startsWith("!"));
+  return [...new Set([...DEFAULT_OPTIMIZE_PACKAGE_IMPORTS, ...included])]
+    .filter((p) => !excluded.has(p));
 }
 
 /** Where one exported name of a barrel really lives. */
@@ -167,6 +178,25 @@ function declaredNames(decl: Node): string[] {
   }
 }
 
+/** Whether a node carries decorators (each one is a call that runs at class definition). */
+const isDecorated = (n: Node | undefined): boolean => (n?.decorators?.length ?? 0) > 0;
+
+/** Whether a class member runs code when the class is defined. */
+function memberRunsCode(m: Node): boolean {
+  if (m.type === "StaticBlock" || m.key?.type === "Computed" || isDecorated(m)) return true;
+  if (m.type === "Constructor") return (m.params ?? []).some(isDecorated); // parameter decorators
+  if ((m.function?.params ?? []).some(isDecorated)) return true;
+  return m.isStatic && m.type === "ClassProperty" && !isPureExpr(m.value);
+}
+
+/**
+ * Whether defining a class runs code: a decorator (on the class, a member or a parameter), a
+ * static block, a static initializer, a computed key, or a non-trivial `extends` expression.
+ */
+function classRunsCode(cls: Node): boolean {
+  return isDecorated(cls) || !isPureExpr(cls.superClass) || (cls.body ?? []).some(memberRunsCode);
+}
+
 /** Whether a (possibly exported) declaration runs code when the module evaluates. */
 function declarationRunsCode(decl: Node): boolean {
   if (decl.type === "VariableDeclaration") {
@@ -174,14 +204,9 @@ function declarationRunsCode(decl: Node): boolean {
       d.id?.type !== "Identifier" || !isPureExpr(d.init)
     );
   }
-  // A class body runs code at definition through a static block, a static initializer, a
-  // computed key, or a non-trivial `extends` expression; an enum only assigns constants.
-  if (decl.type === "ClassDeclaration") {
-    return !isPureExpr(decl.superClass) ||
-      (decl.body ?? []).some((m: Node) =>
-        m.type === "StaticBlock" || m.key?.type === "Computed" ||
-        (m.isStatic && m.type === "ClassProperty" && !isPureExpr(m.value))
-      );
+  // An enum only assigns constants.
+  if (decl.type === "ClassDeclaration" || decl.type === "ClassExpression") {
+    return classRunsCode(decl);
   }
   return false;
 }
@@ -293,6 +318,7 @@ function noteOwnExport(item: Node, file: string, facts: ModuleFacts): boolean {
     return declarationRunsCode(item.declaration);
   }
   self("default");
+  if (item.type === "ExportDefaultDeclaration") return declarationRunsCode(item.decl ?? {});
   return item.type === "ExportDefaultExpression" && !isPureExpr(item.expression);
 }
 
@@ -322,22 +348,69 @@ async function noteStatement(
   return localStatementRunsCode(item);
 }
 
-/** Parse one module's top level into {@link ModuleFacts}; null when unreadable/unparseable. */
-async function moduleFacts(file: string, r: BarrelResolvers): Promise<ModuleFacts | null> {
-  let source: string;
+/** A parsed module's top-level statements, cached by path and validated by mtime + size. */
+interface ParsedEntry {
+  /** The file's modification time when it was parsed. */
+  mtime: number;
+  /** The file's size when it was parsed. */
+  size: number;
+  /** The top-level statements, or null when the file couldn't be parsed. */
+  body: Promise<Node[] | null>;
+}
+
+/**
+ * Parses that outlive one build: a dev server rebuilds on every edit, and re-parsing an
+ * unchanged barrel (lucide's is ~1,700 statements) each time is the analysis' whole cost. The
+ * entry is reused while the file's mtime and size are unchanged. Only the parse is cached —
+ * specifier resolution depends on the build's conditions and is redone per build.
+ */
+const parseCache = new Map<string, ParsedEntry>();
+
+/** The top-level statements of `file` (null when unreadable/unparseable), via {@link parseCache}. */
+async function parsedBody(file: string): Promise<Node[] | null> {
+  let stat: Deno.FileInfo;
   try {
-    source = await Deno.readTextFile(file);
+    stat = await Deno.stat(file);
   } catch {
+    parseCache.delete(file);
     return null;
   }
-  const parsed = await parseModule(source);
-  if (!parsed) return null;
+  const mtime = stat.mtime?.getTime() ?? 0;
+  const hit = parseCache.get(file);
+  if (hit && hit.mtime === mtime && hit.size === stat.size) return await hit.body;
+  // Decorators parse (and then count as code that runs), rather than failing the parse.
+  const body = Deno.readTextFile(file)
+    .then((source) => parseModule(source, { decorators: true }))
+    .then((parsed) => parsed?.body ?? null, () => null);
+  parseCache.set(file, { mtime, size: stat.size, body });
+  return await body;
+}
+
+/**
+ * Per-analysis memo of {@link ModuleFacts}, keyed by the resolvers (one per build) — so a module
+ * reached through several `export *` chains is resolved once, not once per path to it.
+ */
+const factsMemo = new WeakMap<BarrelResolvers, Map<string, Promise<ModuleFacts | null>>>();
+
+/** Parse one module's top level into {@link ModuleFacts}; null when unreadable/unparseable. */
+function moduleFacts(file: string, r: BarrelResolvers): Promise<ModuleFacts | null> {
+  let memo = factsMemo.get(r);
+  if (!memo) factsMemo.set(r, memo = new Map());
+  let facts = memo.get(file);
+  if (!facts) memo.set(file, facts = computeFacts(file, r));
+  return facts;
+}
+
+/** {@link moduleFacts}, uncached. */
+async function computeFacts(file: string, r: BarrelResolvers): Promise<ModuleFacts | null> {
+  const body = await parsedBody(file);
+  if (!body) return null;
   const facts: ModuleFacts = { explicit: new Map(), stars: [], effectful: false };
   const imports: Bindings = new Map();
   // A directive (`"use client"`) makes the barrel itself the boundary: looking through it
   // would hand a server component the undirected modules behind it.
-  if (parsed.body.some(isDirective)) facts.effectful = true;
-  for (const item of parsed.body) {
+  if (body.some(isDirective)) facts.effectful = true;
+  for (const item of body) {
     if (await noteStatement(item, file, r, imports, facts)) facts.effectful = true;
   }
   return facts;
@@ -528,7 +601,7 @@ function typeImport(specifiers: Node[], quoted: string): string | null {
     : `import type { ${namedClause(types.map(bindingPair))} } from ${quoted};`;
 }
 
-/** Render a plan as import statements on one line (the module keeps its line count). */
+/** Render a plan as import statements on one line (the caller pads it to the original's lines). */
 function renderPlan(spec: string, specifiers: Node[], plan: ImportPlan): string {
   const quoted = JSON.stringify(spec);
   const def = specifiers.find((s) => s.type === "ImportDefaultSpecifier");
@@ -585,7 +658,8 @@ function isRewritableImport(item: Node, matcher: PackageMatcher): boolean {
  * Rewrite a module's named value imports of optimized packages to the modules that define each
  * name. Type-only specifiers, default and namespace imports, re-exports (`export … from`) and
  * dynamic `import()` are left alone; a name the barrel defines itself (or doesn't export) stays
- * on an import of the original specifier. The rewrite keeps the module's line count.
+ * on an import of the original specifier. The rewrite keeps every line of the module where it
+ * was: a multi-line import becomes one line followed by the newlines it spanned.
  *
  * @param source The module source.
  * @param path Absolute path of the module (barrels resolve from its directory).
@@ -598,17 +672,27 @@ export async function rewriteOptimizedImports(
   ctx: RewriteContext,
 ): Promise<string | null> {
   if (!ctx.matcher.mentions(source)) return null;
-  const parsed = await parseModule(source);
+  const parsed = await parseModule(source, { decorators: true }); // only imports are edited
   if (!parsed) return null;
   const edits: Edit[] = [];
   for (const item of parsed.body) {
     if (!isRewritableImport(item, ctx.matcher)) continue;
     const text = await rewriteDeclaration(item, dirname(path), ctx);
-    if (text !== null) {
-      edits.push({ start: startOf(parsed.ctx, item), end: endOf(parsed.ctx, item), text });
-    }
+    if (text === null) continue;
+    const start = startOf(parsed.ctx, item);
+    const end = endOf(parsed.ctx, item);
+    // The replacement is one line; pad it with the newlines the original import spanned so
+    // every line below keeps its number (sourcemaps, stack traces, the dev overlay).
+    edits.push({ start, end, text: text + "\n".repeat(newlinesIn(parsed.ctx.bytes, start, end)) });
   }
   return edits.length === 0 ? null : applyEdits(parsed.ctx.bytes, edits);
+}
+
+/** How many `\n` bytes lie in `bytes[start, end)`. */
+function newlinesIn(bytes: Uint8Array, start: number, end: number): number {
+  let n = 0;
+  for (let i = start; i < end; i++) if (bytes[i] === 10) n++;
+  return n;
 }
 
 // --- The esbuild wiring -------------------------------------------------------------------
@@ -632,6 +716,7 @@ function loaderForPath(path: string): esbuild.Loader | null {
   return JS_LOADERS.has(ext) ? ext as esbuild.Loader : null;
 }
 
+/** A `.js`/`.mjs`/`.cjs` file inside `node_modules` — no JSX/TS, no import-map semantics. */
 /** Build the per-bundle rewrite context: barrel resolution + analysis, cached per path. */
 function rewriteContext(options: OptimizePackageImportsOptions): RewriteContext {
   const analyses = new Map<string, Promise<Map<string, BarrelExport>>>();
@@ -716,9 +801,13 @@ export function withOptimizedPackageImports(
         } catch {
           return undefined;
         }
-        if (!ctx.matcher.mentions(source)) return undefined;
-        const out = await rewriteResult({ contents: source, loader }, args, ctx);
-        return out?.contents === source ? undefined : { ...out, resolveDir: dirname(args.path) };
+        const out = ctx.matcher.mentions(source)
+          ? await rewriteResult({ contents: source, loader }, args, ctx)
+          : undefined;
+        if (out && out.contents !== source) return { ...out, resolveDir: dirname(args.path) };
+        // Unchanged: fall through so every later onLoad plugin (denext patch, the deno loader)
+        // still sees the file. Serving it from here would skip them.
+        return undefined;
       });
     },
   };

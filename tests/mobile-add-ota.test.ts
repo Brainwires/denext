@@ -6,7 +6,14 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { addOtaToProject } from "../src/build/mobile-ota-install.ts";
-import { OTA_ANDROID_FILES, OTA_IOS_FILES } from "../src/build/ota-native-templates.ts";
+import {
+  isPristineOtaTemplate,
+  OTA_ANDROID_FILES,
+  OTA_IOS_FILES,
+  OTA_TEMPLATE_VERSION,
+  renderOtaTemplate,
+  SHIPPED_OTA_TEMPLATE_SHA256,
+} from "../src/build/ota-native-templates.ts";
 import { generateOtaKeyPair } from "../src/build/ota-signing.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 
@@ -77,10 +84,13 @@ Deno.test("add-ota: a stock project gets every file and all the wiring", async (
     assertEquals(report.manual, []);
     assertEquals(report.skipped, []);
     for (const [name, content] of Object.entries(OTA_IOS_FILES)) {
-      assertEquals(await read(dir, `ios/App/App/${name}`), content);
+      assertEquals(await read(dir, `ios/App/App/${name}`), await renderOtaTemplate(content));
     }
     for (const [name, content] of Object.entries(OTA_ANDROID_FILES)) {
-      assertEquals(await read(dir, `android/app/src/main/java/dev/denext/ota/${name}`), content);
+      assertEquals(
+        await read(dir, `android/app/src/main/java/dev/denext/ota/${name}`),
+        await renderOtaTemplate(content),
+      );
     }
     const pbxproj = await read(dir, "ios/App/App.xcodeproj/project.pbxproj");
     for (const name of Object.keys(OTA_IOS_FILES)) {
@@ -204,11 +214,13 @@ Deno.test("add-ota: an edited template is kept unless --force", async () => {
     assertEquals(await read(dir, "ios/App/App/DenextOtaStore.swift"), "// my edits\n");
     assertEquals(kept.manual.length, 1);
     assertStringIncludes(kept.manual[0], "--force");
+    assertEquals(kept.kept, ["ios/App/App/DenextOtaStore.swift"]);
     const forced = await addOtaToProject({ dir, force: true });
     assert(forced.written.includes("ios/App/App/DenextOtaStore.swift"));
+    assertEquals(forced.upgraded, []);
     assertEquals(
       await read(dir, "ios/App/App/DenextOtaStore.swift"),
-      OTA_IOS_FILES["DenextOtaStore.swift"],
+      await renderOtaTemplate(OTA_IOS_FILES["DenextOtaStore.swift"]),
     );
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -496,9 +508,15 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
   assertStringIncludes(init, `signature: manifest["signature"] as? String`);
   assertStringIncludes(store, "$0.path.utf16.lexicographicallyPrecedes($1.path.utf16)");
   assertStringIncludes(store, '.map { "\\($0.path)\\t\\($0.sha256)\\n" }');
+  // The signed bytes: v1 without a sequence, v2 with one (the same format as otaSignaturePayload).
   assertStringIncludes(
     store,
-    '"denext-ota-v1\\n\\(version)\\n\\(required ? "1" : "0")\\n\\(sha256Hex(Data(notes.utf8)))"',
+    'let head = "\\(version)\\n\\(required ? "1" : "0")\\n\\(sha256Hex(Data(notes.utf8)))"',
+  );
+  assertStringIncludes(store, 'return Data("denext-ota-v1\\n\\(head)".utf8)');
+  assertStringIncludes(
+    store,
+    'return Data("denext-ota-v2\\n\\(head)\\n\\(sequence)\\n\\(minNative.map { String($0) } ?? "")".utf8)',
   );
   // The key comes from Info.plist only, through CryptoKit.
   assertStringIncludes(store, `static let publicKeyInfoKey = "DenextOtaPublicKey"`);
@@ -514,10 +532,12 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
     policy,
     `baseUrl.scheme?.lowercased() == "https" || loopbackHosts.contains(host)`,
   );
+  // The Android emulator's host alias is not loopback on iOS.
   assertStringIncludes(
     store,
-    `static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1", "[::1]", "10.0.2.2"]`,
+    `static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1", "[::1]"]`,
   );
+  assert(!store.includes("10.0.2.2"));
   // The plugin parses (and so verifies) the request before touching any state.
   const plugin = OTA_IOS_FILES["DenextOtaPlugin.swift"];
   for (const method of ["download", "apply"]) {
@@ -546,7 +566,12 @@ Deno.test("native templates: Android recomputes the version and enforces the sig
   assertStringIncludes(store, ".append('\\t').append(file.sha256).append('\\n');");
   assertStringIncludes(
     store,
-    `"denext-ota-v1\\n" + version + "\\n" + (required ? "1" : "0") + "\\n"`,
+    `String head = version + "\\n" + (required ? "1" : "0") + "\\n" + sha256Hex(notes.getBytes(StandardCharsets.UTF_8));`,
+  );
+  assertStringIncludes(store, `? "denext-ota-v1\\n" + head`);
+  assertStringIncludes(
+    store,
+    `: "denext-ota-v2\\n" + head + "\\n" + sequence + "\\n" + (minNative == null ? "" : String.valueOf(minNative));`,
   );
   // The key comes from the manifest meta-data only; raw r‖s becomes DER for SHA256withECDSA.
   assertStringIncludes(store, `PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY"`);
@@ -561,16 +586,401 @@ Deno.test("native templates: Android recomputes the version and enforces the sig
   assertStringIncludes(store, "static byte[] rawSignatureToDer(byte[] raw)");
   const policy = body(store, "void checkTrust(");
   assertStringIncludes(policy, `new OtaException(\n                    "insecure"`);
+  assertStringIncludes(policy, `!"https".equalsIgnoreCase(base.getScheme()) && !loopback`);
+  // 10.0.2.2 (the emulator's host) counts as loopback only in a debuggable build.
   assertStringIncludes(
     policy,
-    `"https".equalsIgnoreCase(base.getScheme()) && !LOOPBACK_HOSTS.contains(host)`,
+    "LOOPBACK_HOSTS.contains(host) || (EMULATOR_HOST.equals(host) && isDebuggable())",
+  );
+  assertStringIncludes(
+    store,
+    "(context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0",
   );
   assertStringIncludes(
     store,
     `throw new OtaException("signature", "The manifest signature is missing or does not verify.")`,
   );
+  assertStringIncludes(store, `Arrays.asList("localhost", "127.0.0.1", "::1", "[::1]")`);
+  assertStringIncludes(store, `EMULATOR_HOST = "10.0.2.2"`);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Upgrades: an unedited denext template of any earlier release is replaced without --force.
+
+const IOS_STORE = "ios/App/App/DenextOtaStore.swift";
+
+Deno.test("add-ota: a marked template from an earlier generation is upgraded in place", async () => {
+  const dir = await project();
+  try {
+    // An earlier generation's file: a marker whose hash matches its (different) body.
+    const older = "// denext-ota-template: 2 sha256=" +
+      (await renderOtaTemplate("// an older template\n")).split("sha256=")[1];
+    assert(await isPristineOtaTemplate("DenextOtaStore.swift", older));
+    await Deno.writeTextFile(join(dir, IOS_STORE), older);
+    const report = await addOtaToProject({ dir });
+    assertEquals(report.upgraded, [IOS_STORE]);
+    assertEquals(report.kept, []);
+    assert(report.written.includes(IOS_STORE));
+    const written = await read(dir, IOS_STORE);
+    assertEquals(written, await renderOtaTemplate(OTA_IOS_FILES["DenextOtaStore.swift"]));
+    assert(written.startsWith(`// denext-ota-template: ${OTA_TEMPLATE_VERSION} sha256=`));
+    assert(await isPristineOtaTemplate("DenextOtaStore.swift", written));
+    // Edit the body under an intact marker: now it is the user's file.
+    await Deno.writeTextFile(
+      join(dir, IOS_STORE),
+      written.replace("maxFiles = 20_000", "maxFiles = 5"),
+    );
+    const again = await addOtaToProject({ dir });
+    assertEquals(again.kept, [IOS_STORE]);
+    assertEquals(again.upgraded, []);
+    assertStringIncludes(await read(dir, IOS_STORE), "maxFiles = 5");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Whether this checkout has the release tags (a shallow CI clone may not). */
+async function hasTag(tag: string): Promise<boolean> {
+  try {
+    const out = await new Deno.Command("git", {
+      args: ["rev-parse", "-q", "--verify", `refs/tags/${tag}`],
+    })
+      .output();
+    return out.success;
+  } catch {
+    return false;
+  }
+}
+
+/** The OTA templates as released at `tag` (`git show <tag>:src/build/ota-native-templates.ts`). */
+async function templatesAt(tag: string): Promise<Record<string, string>> {
+  const out = await new Deno.Command("git", {
+    args: ["show", `${tag}:src/build/ota-native-templates.ts`],
+  }).output();
+  const file = await Deno.makeTempFile({ suffix: ".ts" });
+  try {
+    await Deno.writeFile(file, out.stdout);
+    const mod = await import(`file://${file}`);
+    return { ...mod.OTA_IOS_FILES, ...mod.OTA_ANDROID_FILES };
+  } finally {
+    await Deno.remove(file);
+  }
+}
+
+const RELEASE_TAGS = ["v2.7.0", "v2.7.1", "v2.8.0", "v2.8.1", "v2.8.2", "v2.8.3"];
+
+Deno.test({
+  name: "add-ota: templates shipped by 2.7.0 … 2.8.3 are recognised and upgraded without --force",
+  ignore: !(await hasTag("v2.8.3")),
+  async fn() {
+    const sha = async (text: string) =>
+      Array.from(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))),
+        (b) => b.toString(16).padStart(2, "0"),
+      ).join("");
+    const seen: Record<string, Set<string>> = {};
+    for (const tag of RELEASE_TAGS) {
+      for (const [name, text] of Object.entries(await templatesAt(tag))) {
+        (seen[name] ??= new Set()).add(await sha(text));
+        assert(await isPristineOtaTemplate(name, text), `${tag} ${name}`);
+      }
+    }
+    // The embedded table is exactly the shipped history.
+    assertEquals(
+      Object.fromEntries(Object.entries(seen).map(([k, v]) => [k, [...v].sort()])),
+      Object.fromEntries(
+        Object.entries(SHIPPED_OTA_TEMPLATE_SHA256).map(([k, v]) => [k, [...v].sort()]),
+      ),
+    );
+    // A project installed by 2.8.3 upgrades every template without --force.
+    const old = await templatesAt("v2.8.3");
+    const dir = await project();
+    try {
+      for (const name of Object.keys(OTA_IOS_FILES)) {
+        await Deno.writeTextFile(join(dir, "ios/App/App", name), old[name]);
+      }
+      for (const name of Object.keys(OTA_ANDROID_FILES)) {
+        await Deno.mkdir(join(dir, "android/app/src/main/java/dev/denext/ota"), {
+          recursive: true,
+        });
+        await Deno.writeTextFile(
+          join(dir, "android/app/src/main/java/dev/denext/ota", name),
+          old[name],
+        );
+      }
+      const report = await addOtaToProject({ dir });
+      assertEquals(report.upgraded.length, 6, report.manual.join("\n"));
+      assertEquals(report.kept, []);
+      // One changed character and it is the user's file again.
+      assert(!(await isPristineOtaTemplate("DenextOta.java", old["DenextOta.java"] + " ")));
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+/** Run `denext mobile add-ota <dir>` expecting it to exit non-zero; returns stderr + stdout. */
+async function addOtaVerbFails(
+  dir: string,
+  flags: Record<string, string | boolean>,
+): Promise<{ errors: string[]; lines: string[] }> {
+  const exit = Deno.exit;
+  const error = console.error;
+  const errors: string[] = [];
+  let thrown = "";
+  let lines: string[] = [];
+  Deno.exit = ((code?: number) => {
+    throw new Error(`exit ${code}`);
+  }) as typeof Deno.exit;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  const log = console.log;
+  console.log = (...a: unknown[]) => void lines.push(a.join(" "));
+  try {
+    await buildRegistry().get("mobile")!.run({
+      positionals: ["add-ota", dir],
+      flags,
+      global: { json: false, verbose: false, quiet: false },
+      rest: [],
+    });
+  } catch (err) {
+    thrown = String(err);
+  } finally {
+    Deno.exit = exit;
+    console.error = error;
+    console.log = log;
+  }
+  assertStringIncludes(thrown, "exit 1");
+  lines = [...lines];
+  return { errors, lines };
+}
+
+Deno.test("denext mobile add-ota --public-key exits non-zero when a template was kept or a key not embedded", async () => {
+  const { publicKey } = await generateOtaKeyPair();
+  // An edited template kept: the key is embedded, but that platform may not verify it.
+  const edited = await keyedProject();
+  try {
+    await Deno.writeTextFile(join(edited, "ota.pub"), publicKey);
+    await Deno.writeTextFile(join(edited, IOS_STORE), "// my store\n");
+    const { errors } = await addOtaVerbFails(edited, { "public-key": join(edited, "ota.pub") });
+    assert(errors.some((e) => e.includes(IOS_STORE) && e.includes("edited")), errors.join("\n"));
+    assertStringIncludes(await read(edited, INFO_PLIST), publicKey);
+  } finally {
+    await Deno.remove(edited, { recursive: true });
+  }
+  // No Info.plist / AndroidManifest to embed into.
+  const bare = await project();
+  try {
+    await Deno.writeTextFile(join(bare, "ota.pub"), publicKey);
+    const { errors } = await addOtaVerbFails(bare, { "public-key": join(bare, "ota.pub") });
+    assert(
+      errors.some((e) => e.includes("could not be embedded in ios/App/App/Info.plist")),
+      errors.join("\n"),
+    );
+    assert(errors.some((e) => e.includes("AndroidManifest.xml")), errors.join("\n"));
+  } finally {
+    await Deno.remove(bare, { recursive: true });
+  }
+  // Without --public-key, a kept template is only a manual step (exit 0).
+  const plain = await project({ [IOS_STORE]: "// mine\n" });
+  try {
+    const lines = await addOtaVerb(plain, {});
+    assert(lines.some((l) => l.includes("kept yours")), lines.join("\n"));
+  } finally {
+    await Deno.remove(plain, { recursive: true });
+  }
+});
+
+Deno.test("add-ota: the unsigned note follows the files, not the flag", async () => {
+  const dir = await keyedProject();
+  try {
+    await addOtaToProject({ dir, publicKey: (await generateOtaKeyPair()).publicKey });
+    // Re-run without --public-key: the key embedded earlier is still there, so no note.
+    const again = await addOtaVerb(dir, {});
+    assert(!again.some((l) => l.includes("unsigned OTA")), again.join("\n"));
+    assertEquals((await addOtaToProject({ dir })).unsignedPlatforms, []);
+    // Drop the Android key by hand: the note names that platform only.
+    const manifest = await read(dir, ANDROID_MANIFEST);
+    await Deno.writeTextFile(
+      join(dir, ANDROID_MANIFEST),
+      manifest.replace(/\s*<meta-data android:name="dev\.denext\.ota\.PUBLIC_KEY"[^>]*\/>/, ""),
+    );
+    const lines = await addOtaVerb(dir, {});
+    assert(
+      lines.some((l) =>
+        l.includes("(Android)") && l.includes("unsigned OTA only works over https or loopback")
+      ),
+      lines.join("\n"),
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("add-ota: the Info.plist key is matched and added in the top-level dict only", async () => {
+  // A nested dict that happens to hold the same key name is not the app's key.
+  const nested = STOCK_INFO_PLIST.replace(
+    "\t\t<key>NSAllowsArbitraryLoads</key>",
+    "\t\t<key>DenextOtaPublicKey</key>\n\t\t<string>NOT-OURS</string>\n\t\t<key>NSAllowsArbitraryLoads</key>",
+  );
+  const dir = await project({ [INFO_PLIST]: nested, [ANDROID_MANIFEST]: STOCK_ANDROID_MANIFEST });
+  try {
+    assert((await addOtaToProject({ dir })).unsignedPlatforms.includes("iOS"));
+    const key = (await generateOtaKeyPair()).publicKey;
+    const report = await addOtaToProject({ dir, publicKey: key });
+    assertEquals(report.keyNotEmbedded, []);
+    const plist = await read(dir, INFO_PLIST);
+    assertStringIncludes(plist, "<string>NOT-OURS</string>");
+    assertStringIncludes(
+      plist,
+      `\t<key>DenextOtaPublicKey</key>\n\t<string>${key}</string>\n</dict>\n</plist>`,
+    );
+    assertEquals(plist.split("DenextOtaPublicKey").length, 3);
+    // Replacing touches the top-level entry, never the nested one.
+    const next = (await generateOtaKeyPair()).publicKey;
+    await addOtaToProject({ dir, publicKey: next });
+    const replaced = await read(dir, INFO_PLIST);
+    assertEquals(replaced, plist.replace(key, next));
+    // A top-level key that holds something other than a string cannot be replaced safely.
+    await Deno.writeTextFile(
+      join(dir, INFO_PLIST),
+      STOCK_INFO_PLIST.replace("<dict>\n", "<dict>\n\t<key>DenextOtaPublicKey</key>\n\t<true/>\n"),
+    );
+    const odd = await addOtaToProject({ dir, publicKey: key });
+    assertEquals(odd.keyNotEmbedded, [INFO_PLIST]);
+    // No top-level dict at all.
+    await Deno.writeTextFile(join(dir, INFO_PLIST), "<plist><array></array></plist>");
+    assertEquals((await addOtaToProject({ dir, publicKey: key })).keyNotEmbedded, [INFO_PLIST]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("native templates: path, cap, release and trial rules (iOS)", () => {
+  const store = OTA_IOS_FILES["DenextOtaStore.swift"];
+  const plugin = OTA_IOS_FILES["DenextOtaPlugin.swift"];
+  // Control characters and backslashes refused on Unicode scalars; segments split on UTF-8 bytes.
+  const safe = body(store, "static func isSafeRelativePath(");
+  assertStringIncludes(
+    safe,
+    "path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F",
+  );
+  assertStringIncludes(safe, `path.utf8.split(separator: UInt8(ascii: "/")`);
+  assertStringIncludes(
+    body(store, "static func isSha256("),
+    "(48...57).contains($0) || (97...102).contains($0)",
+  );
+  // Caps, refused as invalid before any download.
+  assertStringIncludes(store, "static let maxFiles = 20_000");
+  assertStringIncludes(store, "static let maxTotalBytes: Int64 = 512 * 1024 * 1024");
+  assertStringIncludes(store, "return 30 + Double(size) / 32_768");
+  // Release policy: downgrade and native gate, after the trust check, before the download.
+  const init = body(store, "init(baseUrl: String?, headers: JSObject?, manifest: JSObject?)");
+  assert(
+    init.indexOf("checkTrust(") <
+      init.indexOf("checkRelease(sequence: sequence, minNative: minNative)"),
+    init,
+  );
+  const release = body(store, "static func checkRelease(");
+  assertStringIncludes(release, `code: "downgrade"`);
+  assertStringIncludes(release, "guard sequence >= highest");
+  assertStringIncludes(release, `code: "native_too_old"`);
+  assertStringIncludes(store, `Bundle.main.infoDictionary?["CFBundleVersion"]`);
+  // The accepted sequence is recorded when a version is staged and survives reset.
+  assertStringIncludes(body(store, "func stage("), "forKey: Key.sequence");
+  assert(!body(store, "func reset()").includes("Key.sequence"));
+  // Bounded streaming downloads, same-origin redirects only, headers re-applied only there.
+  assertStringIncludes(store, "guard transfer.received <= transfer.file.size else");
+  assertStringIncludes(store, "response.expectedContentLength > transfer.file.size");
+  const redirect = body(store, "        willPerformHTTPRedirection response: HTTPURLResponse,");
+  assert(redirect.length > 0);
+  assertStringIncludes(store, "guard isSameOrigin(request.url) else");
+  assertStringIncludes(store, "return completionHandler(nil)");
+  // Resume: verified files are kept, other versions' attempts are swept.
+  assertStringIncludes(store, "A failure keeps the verified files for the next attempt.");
+  assert(
+    !body(store, "func download(_ request: ApplyRequest)").includes("removeItem(at: partial)"),
+  );
+  assertStringIncludes(store, "values.isExcludedFromBackup = true");
+  // Trials: two attempts, a configurable boot timeout.
+  assertStringIncludes(store, "static let maxTrialAttempts = 2");
+  assertStringIncludes(
+    body(store, "func prepareLaunch()"),
+    "trialAttempts < DenextOtaStore.maxTrialAttempts",
+  );
+  assertStringIncludes(body(store, "func beginTrial("), "trialAttempts = 1");
+  assertStringIncludes(store, `static let bootTimeoutInfoKey = "DenextOtaBootTimeout"`);
+  // The plugin: foreground-only watchdog, page-bound boot, cancellable download.
+  assertStringIncludes(plugin, "UIApplication.willResignActiveNotification");
+  assertStringIncludes(plugin, "UIApplication.didBecomeActiveNotification");
+  assertStringIncludes(body(plugin, "@objc func booted("), "version == nil || version == pending");
+  assertStringIncludes(body(plugin, "@objc func reset("), "self.downloadTask?.cancel()");
+  assertStringIncludes(plugin, `"switched": false`);
+  assertStringIncludes(plugin, `"staged": false`);
+  assertStringIncludes(plugin, "DenextOtaStore.applyDeadline");
+});
+
+Deno.test("native templates: path, cap, release and trial rules (Android)", () => {
+  const store = OTA_ANDROID_FILES["DenextOtaStore.java"];
+  const plugin = OTA_ANDROID_FILES["DenextOtaPlugin.java"];
+  assertStringIncludes(
+    body(store, "static boolean isSafeRelativePath("),
+    "c < 0x20 || c == 0x7f || c == '\\\\'",
+  );
+  assertStringIncludes(store, "static final int MAX_FILES = 20_000;");
+  assertStringIncludes(store, "static final long MAX_TOTAL_BYTES = 512L * 1024 * 1024;");
+  assertStringIncludes(store, "return 30_000 + size * 1000 / 32_768;");
+  const parse = plugin.slice(
+    plugin.indexOf("private static DenextOtaStore.ApplyRequest parseApplyRequest("),
+  );
+  assert(
+    parse.indexOf("store.checkTrust(") < parse.indexOf("store.checkRelease(sequence, minNative);"),
+    parse,
+  );
+  const release = body(store, "void checkRelease(");
+  assertStringIncludes(release, `new OtaException("downgrade"`);
+  assertStringIncludes(release, "if (sequence < highest)");
+  assertStringIncludes(release, `new OtaException("native_too_old"`);
   assertStringIncludes(
     store,
-    `Arrays.asList("localhost", "127.0.0.1", "::1", "[::1]", "10.0.2.2")`,
+    "PackageInfoCompat.getLongVersionCode(context.getPackageManager().getPackageInfo(",
   );
+  assertStringIncludes(
+    body(store, "synchronized void stage("),
+    "editor.putLong(KEY_SEQUENCE, sequence);",
+  );
+  assert(!body(store, "synchronized void reset()").includes("KEY_SEQUENCE"));
+  // Streaming with a cap, manual redirects within the origin only.
+  assertStringIncludes(store, "connection.setInstanceFollowRedirects(false);");
+  assertStringIncludes(store, "if (!isSameOrigin(next, base))");
+  assertStringIncludes(store, "if (received > file.size)");
+  // No-backup storage with a migration from files/, deletes off the main thread.
+  assertStringIncludes(store, `new File(context.getNoBackupFilesDir(), "denext-ota")`);
+  assertStringIncludes(store, "private void migrateLegacyRoot()");
+  assertStringIncludes(body(store, "private static void discard("), "JANITOR.execute(");
+  assertStringIncludes(body(store, "synchronized void reset()"), "discard(root);");
+  // The pool is stopped before anything is renamed or deleted, on every path.
+  assertStringIncludes(
+    store,
+    "// Always first: no worker may still be writing when anything is renamed or deleted.",
+  );
+  assertStringIncludes(
+    body(store, "private void stop(ExecutorService pool)"),
+    "pool.shutdownNow();",
+  );
+  // Trials and the plugin lifecycle.
+  assertStringIncludes(
+    body(store, "private File prepareLaunch()"),
+    "attempts < MAX_TRIAL_ATTEMPTS",
+  );
+  assertStringIncludes(store, `BOOT_TIMEOUT_META = "dev.denext.ota.BOOT_TIMEOUT"`);
+  assertStringIncludes(body(plugin, "protected void handleOnDestroy()"), "cancelWatchdog();");
+  assertStringIncludes(body(plugin, "protected void handleOnPause()"), "pauseWatchdog();");
+  assertStringIncludes(body(plugin, "protected void handleOnResume()"), "resumeWatchdog();");
+  assertStringIncludes(
+    body(plugin, "public void booted("),
+    "version != null && !version.equals(pending)",
+  );
+  assertStringIncludes(body(plugin, "public void reset("), "store().cancelDownload();");
+  assertStringIncludes(plugin, `result.put("switched", false);`);
+  assertStringIncludes(plugin, `result.put("staged", false);`);
 });

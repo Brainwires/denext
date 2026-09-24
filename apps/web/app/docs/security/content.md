@@ -387,7 +387,8 @@ attack surface, so each ships with its own invariant:
   `x-forwarded-for` present) the two per-IP budgets are skipped with one warning
   rather than collapsing every visitor into one bucket — which would have been
   an app-wide outage on the 21st sign-in. Setting `canonicalOrigin` without
-  `trustForwardedHeaders` now warns once at boot for the same reason.
+  `trustForwardedHeaders` (on `denextAuth` or, inherited, on the app) warns once
+  for the same reason.
 - **A revoked session cannot be resurrected by a refresh in flight.** Sliding
   expiry rewrites a store-backed session through `SessionStore.update` —
   write-only-if-present — rather than `create`, which is an upsert: a session

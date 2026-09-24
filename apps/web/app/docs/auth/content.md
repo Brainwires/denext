@@ -971,7 +971,8 @@ It is where those failures resurface — a provider round-trip that failed behin
 refused, an unparseable request body.
 
 Config-time and boot-time problems are **not** routed through it and still print: a
-`canonicalOrigin` with no `trustForwardedHeaders` decision, requests arriving from a local
+`canonicalOrigin` with no `trustForwardedHeaders` decision (on `denextAuth` or the app),
+requests arriving from a local
 peer with `x-forwarded-for` while that flag is off, a `sqliteAuthAdapter` index that could
 not be created, a `strictAudience` refusal. Those are operator warnings about the
 deployment, not per-request noise, and each is printed once per process.
@@ -1081,7 +1082,10 @@ token can't be guessed, and a per-address count would let a stranger lock the ow
 The identifier is taken from `email`, `username`, `login` or `identifier`. The client IP
 is the socket peer; behind a proxy set `trustForwardedHeaders: true` so the proxy's
 `x-forwarded-for` (last hop, never the first) is used instead — the header is never
-trusted by default, since without a proxy anyone can set it. An IPv6 client is normalised
+trusted by default, since without a proxy anyone can set it. Left unset on `denextAuth`,
+the flag is **inherited from the app** (`trustForwardedHeaders` in `denext.config.ts` or
+`DENEXT_TRUST_PROXY=1`), so the limiters and `clientIp()` agree on who the client is; set
+it on `denextAuth` only to override the app for auth. An IPv6 client is normalised
 and bucketed by **/64**, so a client cannot walk its own prefix for a fresh budget.
 
 Two behaviours worth knowing:
@@ -1094,8 +1098,8 @@ Two behaviours worth knowing:
   fifteen-minute outage. The per-subject keys keep working: the credentials limiter's (it
   carries the submitted identifier), the send budget's address and the second-factor
   budget's user.
-  Setting `canonicalOrigin` without deciding `trustForwardedHeaders` warns once at boot for
-  the same reason.
+  Setting `canonicalOrigin` while neither `denextAuth` nor the app decided
+  `trustForwardedHeaders` warns once, on the first auth request, for the same reason.
 - **The default store never evicts a key mid-lockout.** Past `maxKeys` it drops expired
   windows and quiet keys (in one pass, down to 90% of the cap), never one that is actually
   locked out — otherwise flooding fresh keys would clear a lockout. When every tracked key

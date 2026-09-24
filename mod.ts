@@ -323,6 +323,8 @@ export { type Signal, useSignal, useStore } from "./src/runtime/signals.ts";
 export { useAsyncEffect } from "./src/utils/use-async-effect.ts";
 export { tryCatch } from "./src/utils/try-catch.ts";
 export type { ErrorResult, SuccessResult, TryCatchResult } from "./src/utils/try-catch.ts";
+export { choose } from "./src/utils/choose.ts";
+export type { ChooseCases } from "./src/utils/choose.ts";
 
 // OPFS + File System Observer hooks (denext-specific): live directory/file reads
 // over the Origin Private File System, plus the generic change-observer primitive.
@@ -418,4 +420,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "2.8.3";
+export const VERSION = "2.9.0";

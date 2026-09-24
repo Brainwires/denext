@@ -29,6 +29,7 @@ import { bufferedRequest, readCappedBody, STALLED, TOO_LARGE } from "../body.ts"
 import { emailKey } from "./email-key.ts";
 import { emitAuthEvent } from "./events.ts";
 import {
+  authTrustsProxy,
   clientIpBucket,
   consumeHitBudget,
   credentialsLimiter,
@@ -76,7 +77,7 @@ function emitFailure(
     provider,
     reason,
     ip: clientIpBucket(ctx.request, {
-      trustForwardedHeaders: ctx.config.trustForwardedHeaders,
+      trustForwardedHeaders: authTrustsProxy(ctx.config),
     }),
   });
 }
@@ -194,12 +195,12 @@ function limiterKeys(
   const config = ctx.config;
   const keyGenerator = (config.rateLimit || undefined)?.keyGenerator ??
     ((req: Request, c: Record<string, string>) =>
-      defaultRateLimitKey(req, c, { trustForwardedHeaders: config.trustForwardedHeaders }));
+      defaultRateLimitKey(req, c, { trustForwardedHeaders: authTrustsProxy(config) }));
   return {
     key: limiter ? keyGenerator(ctx.request, creds) : "",
     ipKey: proxiedWithoutTrust(ctx.request, config)
       ? null
-      : ipBucketKey(ctx.request, { trustForwardedHeaders: config.trustForwardedHeaders }),
+      : ipBucketKey(ctx.request, { trustForwardedHeaders: authTrustsProxy(config) }),
   };
 }
 

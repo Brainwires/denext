@@ -307,13 +307,14 @@ function signinStart(
   peer?: string,
   forwardedFor?: string,
   provider = "github",
+  appTrustsProxy?: boolean,
 ): Promise<Response | null> {
   const headers: Record<string, string> = { origin: ORIGIN };
   if (forwardedFor) headers["x-forwarded-for"] = forwardedFor;
   const request = new Request(`${ORIGIN}/auth/signin/${provider}`, { headers });
   if (peer) setRemoteAddr(request, { transport: "tcp", hostname: peer, port: 443 });
   return runWithContext(
-    createRequestContext(request),
+    createRequestContext(request, undefined, { trustForwardedHeaders: appTrustsProxy }),
     () => handleAuthRequest(request, config),
   );
 }
@@ -368,6 +369,24 @@ Deno.test("signin-start: behind a declared proxy the forwarded hop IS the bucket
   assertEquals((await signinStart(config, "10.0.0.1", "203.0.113.30"))!.status, 303);
   assertEquals((await signinStart(config, "10.0.0.1", "203.0.113.30"))!.status, 429, "same client");
   assertEquals((await signinStart(config, "10.0.0.1", "203.0.113.31"))!.status, 303, "another one");
+});
+
+Deno.test("signin-start: unset on denextAuth, the APP-level trustForwardedHeaders is inherited", async () => {
+  const config = signinConfig({ rateLimit: { signin: { max: 1, windowMs: 60_000 } } });
+  const start = (xff: string) => signinStart(config, "10.0.0.2", xff, "github", true);
+  assertEquals((await start("203.0.113.40"))!.status, 303);
+  assertEquals((await start("203.0.113.40"))!.status, 429, "same forwarded client");
+  assertEquals((await start("203.0.113.41"))!.status, 303, "the forwarded hop is the bucket");
+});
+
+Deno.test("signin-start: an explicit denextAuth trustForwardedHeaders:false overrides the app", async () => {
+  const config = signinConfig({
+    trustForwardedHeaders: false,
+    rateLimit: { signin: { max: 1, windowMs: 60_000 } },
+  });
+  const start = (xff: string) => signinStart(config, "203.0.113.50", xff, "github", true);
+  assertEquals((await start("1.1.1.1"))!.status, 303);
+  assertEquals((await start("2.2.2.2"))!.status, 429, "the socket peer is the bucket");
 });
 
 Deno.test("signin-start: rateLimit:false disables it (and the credentials limiter with it)", async () => {

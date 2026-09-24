@@ -4,18 +4,28 @@
 // and SceneDelegate at `DenextBridgeViewController` while they still name the stock
 // `CAPBridgeViewController`, and rewrites a stock `MainActivity`. With a public key it also
 // embeds the OTA signature key (Info.plist `DenextOtaPublicKey`, AndroidManifest meta-data
-// `dev.denext.ota.PUBLIC_KEY`), replacing an earlier one. Anything customised is left alone
-// and reported as a one-line manual step. Running it twice changes nothing.
+// `dev.denext.ota.PUBLIC_KEY`), replacing an earlier one. A template file that is an unedited
+// denext template of any earlier release (its marker line, or a known shipped hash) is upgraded
+// in place; anything customised is left alone and reported as a one-line manual step. Running
+// it twice changes nothing.
 
 import { join, relative } from "@std/path";
 import { addSourceFiles } from "./pbxproj.ts";
-import { OTA_ANDROID_FILES, OTA_IOS_FILES } from "./ota-native-templates.ts";
+import {
+  isPristineOtaTemplate,
+  OTA_ANDROID_FILES,
+  OTA_IOS_FILES,
+  renderOtaTemplate,
+} from "./ota-native-templates.ts";
 
 /** Options for {@linkcode addOtaToProject}. */
 export interface AddOtaOptions {
   /** The Capacitor project root (holding `ios/` and/or `android/`). */
   dir: string;
-  /** Overwrite template files that differ from the current templates (local edits are lost). */
+  /**
+   * Overwrite template files that differ from the current templates, local edits included.
+   * Without it, only unedited denext templates of an earlier release are upgraded.
+   */
   force?: boolean;
   /** Id generator for new pbxproj objects (tests). */
   randomId?: () => string;
@@ -31,6 +41,17 @@ export interface AddOtaOptions {
 export interface AddOtaReport {
   /** Files created or rewritten. */
   written: string[];
+  /** Template files (also in `written`) upgraded from an unedited earlier denext template. */
+  upgraded: string[];
+  /** Template files kept because they were edited (a `manual` step says how to replace them). */
+  kept: string[];
+  /** Files `publicKey` could not be embedded in (a `manual` step says how). */
+  keyNotEmbedded: string[];
+  /**
+   * Platforms installed (`"iOS"`, `"Android"`) whose Info.plist / AndroidManifest.xml carries no
+   * OTA public key after the run: they accept unsigned updates over https or loopback only.
+   */
+  unsignedPlatforms: string[];
   /** Files already exactly as they would be written. */
   unchanged: string[];
   /** Steps it did not automate: each a one-line instruction. */
@@ -66,28 +87,45 @@ async function isFile(path: string): Promise<boolean> {
 
 /** Accumulates the report while the installer runs. */
 class Installer {
-  readonly report: AddOtaReport = { written: [], unchanged: [], manual: [], skipped: [] };
+  readonly report: AddOtaReport = {
+    written: [],
+    upgraded: [],
+    kept: [],
+    keyNotEmbedded: [],
+    unsignedPlatforms: [],
+    unchanged: [],
+    manual: [],
+    skipped: [],
+  };
   constructor(readonly opts: AddOtaOptions) {}
 
   rel(path: string): string {
     return relative(this.opts.dir, path);
   }
 
-  /** Write a template file unless it is already current (or differs and `force` is off). */
-  async template(path: string, content: string): Promise<void> {
+  /**
+   * Write the template `name` (rendered with its marker line) unless it is already current. An
+   * existing file is replaced when `force` is on or it is an unedited denext template of an
+   * earlier release; an edited one is kept and reported.
+   */
+  async template(path: string, name: string, template: string): Promise<void> {
+    const content = await renderOtaTemplate(template);
     const existing = await readText(path);
-    if (existing === content) return void this.report.unchanged.push(this.rel(path));
+    const rel = this.rel(path);
+    if (existing === content) return void this.report.unchanged.push(rel);
     if (existing !== undefined && !this.opts.force) {
-      this.report.manual.push(
-        `${
-          this.rel(path)
-        } differs from denext's template; kept yours (re-run with --force to replace it).`,
-      );
-      return;
+      if (!(await isPristineOtaTemplate(name, existing))) {
+        this.report.kept.push(rel);
+        this.report.manual.push(
+          `${rel} differs from denext's template (edited); kept yours (re-run with --force to replace it).`,
+        );
+        return;
+      }
+      this.report.upgraded.push(rel);
     }
     await Deno.mkdir(join(path, ".."), { recursive: true });
     await Deno.writeTextFile(path, content);
-    this.report.written.push(this.rel(path));
+    this.report.written.push(rel);
   }
 
   /** Rewrite `path` with `edit(text)`, recording it when the text changed. */
@@ -170,16 +208,93 @@ const IOS_PUBLIC_KEY_KEY = "DenextOtaPublicKey";
 /** The `<meta-data>` name the Android plugin reads its OTA public key from. */
 const ANDROID_PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY";
 
-const PLIST_PUBLIC_KEY = new RegExp(
-  `<key>${IOS_PUBLIC_KEY_KEY}</key>\\s*<string>[^<]*</string>`,
-);
+/** The top-level dict of a plist: where its `</dict>` is, and its keys with their offsets. */
+interface PlistTopDict {
+  /** Offset of the top-level `</dict>`. */
+  close: number;
+  /** Each top-level `<key>`: its name and the offset just past `</key>`. */
+  keys: Array<{ name: string; end: number }>;
+}
 
-/** `plist` with `DenextOtaPublicKey` set to `key`, or null when it has no top-level dict. */
+/** A `<key>…</key>` (group 1: its text) or a `<dict>` / `<array>` tag (2: `/`, 3: name, 4: `/`). */
+const PLIST_TAG = /<key>([^<]*)<\/key>|<(\/?)(dict|array)\b[^>]*?(\/?)>/g;
+
+/**
+ * What a `<dict>` / `<array>` tag at `depth` means for the top-level dict: `"ok"` to go on,
+ * `"end"` for its closing tag, `"bad"` when the plist has no top-level dict to speak of.
+ */
+function topLevelStep(tag: RegExpMatchArray, depth: number): "ok" | "end" | "bad" {
+  const [, key, closing, name, selfClosing] = tag;
+  if (key !== undefined) return "ok";
+  if (depth === 0) return !closing && !selfClosing && name === "dict" ? "ok" : "bad";
+  if (depth === 1 && closing) return name === "dict" ? "end" : "bad";
+  return "ok";
+}
+
+/** How a tag changes the nesting depth: a `<key>` or a self-closing tag does not. */
+function depthDelta(tag: RegExpMatchArray): number {
+  if (tag[1] !== undefined || tag[4]) return 0;
+  return tag[2] ? -1 : 1;
+}
+
+/**
+ * The top-level `<dict>` of `plist`, scanning `<dict>` / `<array>` nesting so a key of a nested
+ * dict (an ATS exception, say) never counts; null without a top-level dict.
+ */
+function plistTopDict(plist: string): PlistTopDict | null {
+  const start = plist.indexOf("<plist");
+  if (start < 0) return null;
+  const keys: PlistTopDict["keys"] = [];
+  let depth = 0;
+  for (const tag of plist.slice(start).matchAll(PLIST_TAG)) {
+    const index = start + tag.index;
+    if (tag[1] !== undefined && depth === 1) {
+      keys.push({ name: tag[1], end: index + tag[0].length });
+    }
+    const step = topLevelStep(tag, depth);
+    if (step !== "ok") return step === "end" ? { close: index, keys } : null;
+    depth += depthDelta(tag);
+  }
+  return null;
+}
+
+/** The `<string>` right after a top-level key ending at `end`, as its span and value. */
+function plistStringAfter(plist: string, end: number): { end: number; value: string } | null {
+  const m = /^\s*<string>([^<]*)<\/string>/.exec(plist.slice(end));
+  return m ? { end: end + m[0].length, value: m[1] } : null;
+}
+
+/** The top-level `DenextOtaPublicKey` entry of `plist`, if any. */
+function plistPublicKeyEntry(
+  plist: string,
+  top: PlistTopDict,
+): { keyEnd: number; value: { end: number; value: string } | null } | undefined {
+  const key = top.keys.find((k) => k.name === IOS_PUBLIC_KEY_KEY);
+  return key && { keyEnd: key.end, value: plistStringAfter(plist, key.end) };
+}
+
+/** Whether `plist`'s top-level dict carries a non-empty `DenextOtaPublicKey` string. */
+function plistHasPublicKey(plist: string): boolean {
+  const top = plistTopDict(plist);
+  const entry = top && plistPublicKeyEntry(plist, top);
+  return (entry?.value?.value.trim() ?? "") !== "";
+}
+
+/**
+ * `plist` with the top-level `DenextOtaPublicKey` set to `key`, or null when it has no top-level
+ * dict (or the key holds something other than a string).
+ */
 function withPlistPublicKey(plist: string, key: string): string | null {
+  const top = plistTopDict(plist);
+  if (!top) return null;
   const entry = `<key>${IOS_PUBLIC_KEY_KEY}</key>\n\t<string>${key}</string>`;
-  if (PLIST_PUBLIC_KEY.test(plist)) return plist.replace(PLIST_PUBLIC_KEY, entry);
-  const end = plist.lastIndexOf("</dict>");
-  if (end < 0 || !plist.slice(end).includes("</plist>")) return null;
+  const existing = plistPublicKeyEntry(plist, top);
+  if (existing) {
+    if (!existing.value) return null;
+    const keyStart = plist.lastIndexOf("<key>", existing.keyEnd);
+    return plist.slice(0, keyStart) + entry + plist.slice(existing.value.end);
+  }
+  const end = top.close;
   const lineStart = plist.lastIndexOf("\n", end - 1) + 1;
   // A `</dict>` on a line of its own gets the entry on the lines above it.
   if (plist.slice(lineStart, end).trim() === "") {
@@ -191,6 +306,12 @@ function withPlistPublicKey(plist: string, key: string): string | null {
 const MANIFEST_PUBLIC_KEY = new RegExp(
   `<meta-data\\b[^>]*android:name="${ANDROID_PUBLIC_KEY_META.replaceAll(".", "\\.")}"[^>]*/>`,
 );
+
+/** Whether `manifest` carries the public-key `<meta-data>` with a non-empty value. */
+function manifestHasPublicKey(manifest: string): boolean {
+  const element = MANIFEST_PUBLIC_KEY.exec(manifest)?.[0];
+  return /android:value="[^"\s]+"/.test(element ?? "");
+}
 
 /** `manifest` with the public-key `<meta-data>` set to `key`, or null without `</application>`. */
 function withManifestPublicKey(manifest: string, key: string): string | null {
@@ -204,19 +325,30 @@ function withManifestPublicKey(manifest: string, key: string): string | null {
   return `${manifest.slice(0, lineStart)}${indent}    ${element}\n${manifest.slice(lineStart)}`;
 }
 
-/** Embed `key` with `inject`, or report `step` as manual when the file has no place for it. */
+/**
+ * Embed `key` with `inject`, or report `step` as manual when the file has no place for it; then
+ * record `platform` as unsigned when the file ends up without a key (`has`).
+ */
 async function embedPublicKey(
   inst: Installer,
   path: string,
-  inject: (text: string, key: string) => string | null,
+  platform: string,
+  keyFile: { inject: (text: string, key: string) => string | null; has: (text: string) => boolean },
   step: string,
 ): Promise<void> {
   const key = inst.opts.publicKey;
-  if (key === undefined) return;
-  const text = await readText(path);
-  const next = text === undefined ? null : inject(text, key);
-  if (next === null) return void inst.report.manual.push(`${inst.rel(path)}: ${step}`);
-  await inst.edit(path, () => next);
+  if (key !== undefined) {
+    const text = await readText(path);
+    const next = text === undefined ? null : keyFile.inject(text, key);
+    if (next === null) {
+      inst.report.keyNotEmbedded.push(inst.rel(path));
+      inst.report.manual.push(`${inst.rel(path)}: ${step}`);
+    } else {
+      await inst.edit(path, () => next);
+    }
+  }
+  const final = await readText(path);
+  if (final === undefined || !keyFile.has(final)) inst.report.unsignedPlatforms.push(platform);
 }
 
 async function installIos(inst: Installer): Promise<void> {
@@ -227,7 +359,7 @@ async function installIos(inst: Installer): Promise<void> {
     return;
   }
   for (const [name, content] of Object.entries(OTA_IOS_FILES)) {
-    await inst.template(join(root, IOS_APP, name), content);
+    await inst.template(join(root, IOS_APP, name), name, content);
   }
   await inst.edit(
     pbxprojPath,
@@ -239,7 +371,8 @@ async function installIos(inst: Installer): Promise<void> {
   await embedPublicKey(
     inst,
     join(root, IOS_APP, "Info.plist"),
-    withPlistPublicKey,
+    "iOS",
+    { inject: withPlistPublicKey, has: plistHasPublicKey },
     `add the string key ${IOS_PUBLIC_KEY_KEY} (the base64 public key) to the top-level dict.`,
   );
 }
@@ -314,13 +447,14 @@ async function installAndroid(inst: Installer): Promise<void> {
     return;
   }
   for (const [name, content] of Object.entries(OTA_ANDROID_FILES)) {
-    await inst.template(join(root, ANDROID_OTA_DIR, name), content);
+    await inst.template(join(root, ANDROID_OTA_DIR, name), name, content);
   }
   await wireMainActivity(inst, root);
   await embedPublicKey(
     inst,
     join(root, "android", "app", "src", "main", "AndroidManifest.xml"),
-    withManifestPublicKey,
+    "Android",
+    { inject: withManifestPublicKey, has: manifestHasPublicKey },
     `add <meta-data android:name="${ANDROID_PUBLIC_KEY_META}" android:value="<base64 public key>" /> inside <application>.`,
   );
 }
@@ -329,8 +463,9 @@ async function installAndroid(inst: Installer): Promise<void> {
  * Install denext's over-the-air UI updates into the Capacitor project at `opts.dir`: the
  * `DenextOta` plugin for iOS (three Swift files, added to the Xcode app target, with the
  * storyboard and SceneDelegate switched to `DenextBridgeViewController`) and for Android
- * (three Java files in `dev.denext.ota`, called from `MainActivity`). Idempotent; customised
- * files are never rewritten, only reported under `manual`.
+ * (three Java files in `dev.denext.ota`, called from `MainActivity`). Idempotent; an unedited
+ * template from an earlier denext is upgraded (`upgraded`), and customised files are never
+ * rewritten without `force`, only reported under `kept` and `manual`.
  *
  * @param opts The project directory and flags.
  * @returns What was written, what was already current, and what is left to do by hand.

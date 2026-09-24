@@ -24,7 +24,10 @@ function withRequest<T>(
   fn: () => T,
 ): T {
   const { url = "https://example.test/", signal, ...requestInit } = init;
-  const ctx = createRequestContext(new Request(url, requestInit), signal);
+  // Trusted proxy: the isolation test below keys runs by an inbound x-request-id.
+  const ctx = createRequestContext(new Request(url, requestInit), signal, {
+    trustForwardedHeaders: true,
+  });
   return runWithContext(ctx, fn);
 }
 

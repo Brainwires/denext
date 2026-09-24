@@ -63,6 +63,11 @@ export interface ClientBundlerOptions {
   tailwind?: { input: string; output: string };
   /** Prod: directory holding pre-built bundles (from the build step), if any. */
   readDir?: string;
+  /**
+   * The app's `momentumSafeScroll` setting: `false` seeds the opt-out into every page entry, so
+   * the runtime never installs the iOS momentum-safe scroll shim. Default on.
+   */
+  momentumSafeScroll?: boolean;
 }
 
 /** The bundler handed to the request handler and (optionally) the build step. */
@@ -166,6 +171,7 @@ async function bundle(
     minify: !opts.dev,
     dev: opts.dev,
     importMap: appCss?.importMap,
+    momentumSafeScroll: opts.momentumSafeScroll,
   });
 
   const { cssFiles, cssByRoute } = appCss

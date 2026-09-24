@@ -45,6 +45,7 @@ import {
 } from "./email.ts";
 import { emitAuthEvent } from "./events.ts";
 import {
+  authTrustsProxy,
   clientIpBucket,
   consumeHitBudget,
   mfaLimiter,
@@ -192,7 +193,7 @@ function emitFailure(
   provider: EmailProvider,
   reason: string,
 ): Promise<void> {
-  const trust = { trustForwardedHeaders: ctx.config.trustForwardedHeaders };
+  const trust = { trustForwardedHeaders: authTrustsProxy(ctx.config) };
   const ip = clientIpBucket(ctx.request, trust);
   return emitAuthEvent(ctx.options, "signInFailed", { provider: provider.id, reason, ip });
 }

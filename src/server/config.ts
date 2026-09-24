@@ -630,10 +630,12 @@ export interface DenextConfig {
   canonicalOrigin?: string;
   /**
    * Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy when deriving the
-   * request origin (absolute URLs, the Server Action origin check, HSTS, rate-limit keys).
-   * Enable ONLY when clients cannot reach denext directly — a client that can spoofs the
-   * origin. Ignored when {@link DenextConfig.canonicalOrigin} is set. Unset, `DENEXT_TRUST_PROXY=1`
-   * turns it on (config > env > `false`).
+   * request origin (absolute URLs, the Server Action origin check, HSTS), and
+   * `X-Forwarded-For` / an inbound `X-Request-Id` for `clientIp()`, `requestId()` and the
+   * rate limiters (`denextAuth` inherits it unless it sets its own). Enable ONLY when clients
+   * cannot reach denext directly — a client that can spoofs them. The origin part is ignored
+   * when {@link DenextConfig.canonicalOrigin} is set. Unset, `DENEXT_TRUST_PROXY=1` turns it on
+   * (config > env > `false`).
    */
   trustForwardedHeaders?: boolean;
   /**
@@ -752,22 +754,31 @@ export interface DenextConfig {
    * npm packages whose barrel (`index`) imports are rewritten to the files that define each
    * name, as Next.js's `optimizePackageImports` does: `import { Check } from "lucide-react"`
    * becomes an import of `lucide-react`'s `icons/check.js`, so the bundler never loads the
-   * barrel. That keeps an icon library's thousand re-exports out of the module graph — and,
-   * when the package also code-splits every icon (`lucide-react/dynamic`), out of the startup
-   * chunk list. Applied to the compat (esbuild) client and server bundles, SPA included, for
-   * app source and for npm modules that import a listed package.
+   * barrel. Your list is ADDED to a built-in default (lucide-react, date-fns, lodash-es, …);
+   * a `"!pkg"` entry removes a package from it, and `false` turns the optimization off.
    *
-   * The list is ADDED to a built-in default (`lucide-react`, `date-fns`, `lodash-es`, `ramda`,
-   * `rxjs`, `@tabler/icons-react`, `@heroicons/react/{20,24}/solid`,
-   * `@heroicons/react/24/outline`, `react-icons/*`, `@mui/icons-material`, `recharts`,
-   * `react-use`, `@headlessui/react`, `effect`); an entry ending in `/*` matches every subpath
-   * of the package. Only named value imports are rewritten, and only names the barrel
-   * re-exports from another module (a name the barrel defines itself stays on the barrel); a
-   * barrel that runs code of its own, carries a directive, or cannot be analysed is left
-   * untouched. Next's `experimental.optimizePackageImports` spelling is honored, with a dev
-   * warning, when this field is absent.
+   * That keeps an icon library's thousand re-exports out of the module graph — and, when the
+   * package also code-splits every icon (`lucide-react/dynamic`), out of the startup chunk
+   * list. Applied to the esbuild bundles (the compat client and server bundles and SPA mode,
+   * in production builds and compat dev rebuilds), for app source and for npm modules that
+   * import a listed package. The unbundled per-module dev server and the native `deno bundle`
+   * path do not apply it.
+   *
+   * The built-in default is `lucide-react`, `date-fns`, `lodash-es`, `ramda`, `rxjs`,
+   * `@tabler/icons-react`, `@heroicons/react/{20,24}/solid`, `@heroicons/react/24/outline`,
+   * `react-icons/*`, `@mui/icons-material`, `recharts`, `react-use`, `@headlessui/react`,
+   * `effect`; an entry ending in `/*` matches every subpath of the package, and `"!pkg"`
+   * removes exactly the entry `pkg` (`"!react-icons/*"` drops the wildcard). Only named value
+   * imports are rewritten, and only names the barrel re-exports from another module (a name
+   * the barrel defines itself stays on the barrel); a barrel that runs code of its own
+   * (including a decorator), carries a directive, or cannot be analysed is left untouched.
+   *
+   * **Listing a package asserts its modules are side-effect free** (Next.js's contract too):
+   * the modules beside the one a name comes from are never loaded, so a top-level side effect
+   * in one of them no longer runs. Next's `experimental.optimizePackageImports` spelling is
+   * honored, with a dev warning, when this field is absent.
    */
-  optimizePackageImports?: string[];
+  optimizePackageImports?: string[] | false;
   /**
    * Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset —
    * default ON. In iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write

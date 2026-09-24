@@ -467,10 +467,10 @@ Deno.test("signed OTA: the manifest's signature crosses the bridge on apply and 
   });
 });
 
-Deno.test("signed OTA: native signature/insecure refusals are errors carrying their code", async () => {
+Deno.test("signed OTA: native signature/insecure/downgrade/native_too_old refusals carry their code", async () => {
   const reject = (code: string) => () =>
     Promise.reject(Object.assign(new Error(`refused (${code})`), { code }));
-  for (const code of ["signature", "insecure"] as const) {
+  for (const code of ["signature", "insecure", "downgrade", "native_too_old"] as const) {
     const { plugin: p } = plugin({ bundled: BUNDLED }, reject(code));
     await withShell({ DenextOta: p }, async () => {
       const expected = { kind: "error" as const, reason: `refused (${code})`, code };
@@ -484,4 +484,94 @@ Deno.test("signed OTA: native signature/insecure refusals are errors carrying th
     const r = await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch });
     assertEquals(r, { kind: "error", reason: "refused (mystery)" });
   });
+});
+
+// ---- the running version: pending first; native no-ops; the page-bound boot confirm ----
+
+Deno.test("checkForUiUpdate / prepareUiUpdate: a version on its trial launch counts as running", async () => {
+  // `current` still names the previous download while SERVER is on trial: not an update.
+  const { plugin: p, calls } = plugin({ current: BUNDLED, bundled: BUNDLED, pending: SERVER });
+  await withShell({ DenextOta: p }, async () => {
+    assertEquals(await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch }), {
+      kind: "current",
+    });
+    assertEquals(await prepareUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch }), {
+      kind: "current",
+    });
+    assertEquals(calls.apply.length + calls.download.length, 0);
+  });
+  // A pending version that is NOT the server's still leads to an attempt (the native side
+  // answers busy).
+  const other = plugin({ current: null, bundled: BUNDLED, pending: "d".repeat(64) });
+  await withShell({ DenextOta: other.plugin }, async () => {
+    await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch });
+    assertEquals(other.calls.apply.length, 1);
+  });
+});
+
+Deno.test("checkForUiUpdate / prepareUiUpdate: a native no-op (switched/staged false) is current", async () => {
+  const noop = plugin(
+    { bundled: BUNDLED },
+    () => Promise.resolve({ switched: false, staged: false }),
+  );
+  await withShell({ DenextOta: noop.plugin }, async () => {
+    assertEquals(await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch }), {
+      kind: "current",
+    });
+    assertEquals(await prepareUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch }), {
+      kind: "current",
+    });
+  });
+  // `switched: true` / `staged: true`, or an older shell that says neither, is a real switch.
+  for (const result of [{ switched: true, staged: true }, { version: SERVER }, undefined]) {
+    const done = plugin({ bundled: BUNDLED }, () => Promise.resolve(result));
+    await withShell({ DenextOta: done.plugin }, async () => {
+      const r = await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch });
+      assertEquals(r, { kind: "applied", version: SERVER });
+      assertEquals(
+        (await prepareUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch })).kind,
+        "ready",
+      );
+    });
+  }
+});
+
+Deno.test("otaBooted: sends the page's own UI version, read once from its _denext/ota.json", async () => {
+  const booted: Any[] = [];
+  const { plugin: p } = plugin({ pending: SERVER });
+  p.booted = (options: Any) => (booted.push(options), Promise.resolve({ confirmed: true }));
+  const savedFetch = globalThis.fetch;
+  const savedLocation = Object.getOwnPropertyDescriptor(g, "location");
+  const requested: string[] = [];
+  let served: unknown = { version: "e".repeat(64), files: MANIFEST.files };
+  globalThis.fetch = ((input: string | URL | Request) => {
+    requested.push(String(input));
+    return Promise.resolve(
+      served === null ? new Response("missing", { status: 404 }) : Response.json(served),
+    );
+  }) as typeof fetch;
+  try {
+    // An unreadable manifest: confirm without a version (the native side takes it at its word).
+    Object.defineProperty(g, "location", {
+      value: { href: "capacitor://localhost/chat/42?x=1" },
+      configurable: true,
+    });
+    served = null;
+    await withShell({ DenextOta: p }, () => otaBooted());
+    assertEquals(booted.pop(), {});
+    served = { version: "e".repeat(64), files: MANIFEST.files };
+    await withShell({ DenextOta: p }, () => otaBooted());
+    assertEquals(requested.at(-1), "capacitor://localhost/_denext/ota.json");
+    assertEquals(booted.pop(), { version: "e".repeat(64) });
+    // Read once: a later call (e.g. after the web root was switched) sends the same version.
+    served = { version: "f".repeat(64), files: MANIFEST.files };
+    const before = requested.length;
+    await withShell({ DenextOta: p }, () => otaBooted());
+    assertEquals(booted.pop(), { version: "e".repeat(64) });
+    assertEquals(requested.length, before);
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (savedLocation) Object.defineProperty(g, "location", savedLocation);
+    else delete g.location;
+  }
 });

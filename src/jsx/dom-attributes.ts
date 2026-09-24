@@ -209,16 +209,25 @@ export function isBooleanishAttr(name: string): boolean {
 }
 
 /**
- * Whether React omits a non-boolean `value` for `prop`: `cols`/`rows`/`size`/`span` must be
- * a number ≥ 1 and `rowSpan`/`start` a number, and an empty `src`/`href` is dropped (it
- * would re-request the page).
+ * Whether React drops an empty `src`/`href` on `tag` (it would re-request the page) — every
+ * element except `<a href="">`, which React keeps as a "reload" link (React 19's `setProp` and
+ * Fizz's `pushStartAnchor`).
  */
-export function omitsAttrValue(prop: string, value: unknown): boolean {
+export function dropsEmptyUrl(prop: string, value: unknown, tag: string | undefined): boolean {
+  return value === "" && (prop === "src" || (prop === "href" && tag !== "a"));
+}
+
+/**
+ * Whether React omits a non-boolean `value` for `prop`: `cols`/`rows`/`size`/`span` must be
+ * a number ≥ 1 and `rowSpan`/`start` a number, and an empty `src`/`href` is dropped except
+ * `<a href="">` (see {@link dropsEmptyUrl}).
+ */
+export function omitsAttrValue(prop: string, value: unknown, tag?: string): boolean {
   if (prop === "cols" || prop === "rows" || prop === "size" || prop === "span") {
     return isNaN(value as number) || !((value as number) >= 1);
   }
   if (prop === "rowSpan" || prop === "start") return isNaN(value as number);
-  return value === "" && (prop === "src" || prop === "href");
+  return dropsEmptyUrl(prop, value, tag);
 }
 
 /**

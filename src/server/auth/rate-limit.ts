@@ -34,6 +34,7 @@
  */
 
 import { lastForwardedHop, remoteAddrOf } from "../remote-addr.ts";
+import { currentContext } from "../request-context.ts";
 
 /** One key's open failure window. */
 
@@ -461,6 +462,19 @@ export interface RateLimitConfig {
   trustForwardedHeaders?: boolean;
 }
 
+/**
+ * Whether auth may believe `x-forwarded-for` for this request: the auth config's own
+ * `trustForwardedHeaders` when it sets one, else the app-level `trustForwardedHeaders` /
+ * `DENEXT_TRUST_PROXY=1` the request context carries — so the auth limiters and
+ * {@linkcode clientIp} agree on who the client is unless auth deliberately overrides it.
+ *
+ * @param config The auth config slice (its `trustForwardedHeaders`).
+ * @returns The effective trust decision.
+ */
+export function authTrustsProxy(config: { trustForwardedHeaders?: boolean }): boolean {
+  return config.trustForwardedHeaders ?? currentContext()?.trustForwardedHeaders ?? false;
+}
+
 /** The limiters one auth config drives; `null` where `rateLimit: false` disabled them. */
 interface ConfigLimiters {
   /** Failed credentials attempts. */
@@ -621,9 +635,7 @@ export function subjectBucketKeys(
   config: RateLimitConfig,
 ): SubjectBucketKeys {
   const ipKey = request && !proxiedWithoutTrust(request, config)
-    ? `${budget}-ip|${
-      clientIpBucket(request, { trustForwardedHeaders: config.trustForwardedHeaders })
-    }`
+    ? `${budget}-ip|${clientIpBucket(request, { trustForwardedHeaders: authTrustsProxy(config) })}`
     : null;
   return { key: `${budget}|${subject}`, ipKey };
 }
@@ -718,7 +730,7 @@ function isLocalPeer(addr: string): boolean {
  * @returns `true` when the per-IP budgets must be skipped for this request.
  */
 export function proxiedWithoutTrust(request: Request, config: RateLimitConfig): boolean {
-  if (config.trustForwardedHeaders) return false;
+  if (authTrustsProxy(config)) return false;
   if (!request.headers.get("x-forwarded-for")) return false;
   const peer = remoteAddrOf(request);
   if (!peer || !isLocalPeer(peer)) return false;

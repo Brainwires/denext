@@ -8,6 +8,162 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-09-24
+
+### Added
+
+- **`choose(value, cases, defaultCase?)`** — a Lit-style control-flow helper, exported
+  from `@denext/denext`. Picks a branch by value and runs only the selected one — a lazy
+  `switch` for JSX. Returns the matched branch's result, `defaultCase()` when nothing
+  matches, or `undefined` when there is no default. The companion type `ChooseCases` is
+  exported too.
+
+### Changed (audit follow-ups)
+
+- **`optimizePackageImports: false` and `"!pkg"` entries.** `false` turns the barrel-import
+  rewrite off entirely, built-in defaults included; `"!recharts"` removes one package from the
+  list (`"!react-icons/*"` the wildcard entry). Previously the default list could not be
+  disabled. The config schema, validation and the `denext ui` config form (now a
+  list-or-`false` choice) follow.
+- **An inbound `x-request-id` is honored only behind a trusted proxy.** `requestId()`, the
+  request log and the error-response `x-request-id` now reuse the header only when
+  `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1` is on (still sanitized and length-bounded);
+  otherwise every request gets a fresh UUID, so a client can't choose the correlation id your
+  logs carry. Internal sub-requests keep deriving their id from the parent's.
+- **`requestSignal()` is `undefined` inside a `use cache` scope.** A cached fill is shared by
+  single-flight followers and background refreshes, so one client's disconnect must not abort
+  work other readers wait on.
+- **`denextAuth` inherits the app-level `trustForwardedHeaders`.** When `AuthConfig
+  .trustForwardedHeaders` is unset, the auth rate limiters, `signInFailed.ip` and the emailed
+  link origin use the app's `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, so they agree
+  with `clientIp()`; an explicit value on `denextAuth` still overrides it. The "set
+  `trustForwardedHeaders`" hint now fires on the first auth request, and only when neither
+  level decided.
+- **`check:fix` refreshes the test-count badge**, and the pre-commit hook stages
+  `.github/badges/tests.json` when the count moved.
+- **Behaviour note (since 2.6.0):** `useSyncExternalStore` notifications schedule at sync
+  priority, so a store change that lands while a `startTransition` render is in flight
+  abandons that render and restarts the transition after the sync commit (React does the
+  same). Notifications within one microtask share one restart — the sync flush is coalesced —
+  so a burst of store writes costs one restart, not one per write.
+
+### Fixed (audit follow-ups)
+
+- **`choose()` matches own keys only.** A `value` such as `"toString"`, `"constructor"` or
+  `"__proto__"` used to find the inherited `Object.prototype` member and call it; it now falls
+  through to `defaultCase` unless `cases` declares that key itself.
+- **`optimizePackageImports` keeps line numbers.** A multi-line import rewritten onto one line
+  shifted every line below it (stack traces, sourcemaps); the replacement is now padded with
+  the newlines the original spanned.
+- **`optimizePackageImports` treats decorators as code that runs.** A barrel with a decorated
+  class (or member, or parameter) is never looked through; decorated modules also parse now
+  instead of being skipped as unparseable.
+- **`optimizePackageImports` is cheaper on rebuilds.** Barrel parses are cached across dev
+  rebuilds (keyed by path, mtime and size), a module reached through several `export *` chains
+  is analysed once per build, and an npm JS file the rewrite leaves alone is served from the
+  text already read instead of being read again.
+- **`<a href="">` keeps its `href`**, on the server and the client, as React does (an empty
+  `href` is a "reload" link); an empty `src`/`href` on any other element is still dropped, and
+  the client now also removes a boolean `src`/`href`.
+- **`defaultValue` / `defaultChecked` render only on `<input>`** during SSR (a textarea / select
+  takes its default as content); React drops them on any other element.
+- **Nodes under a portal are created in the portal container's document** (an iframe's or a
+  popup's), as React does, instead of the root's.
+- **`clientIp()` docs**: it throws outside a request context (like `headers()`) and is
+  `undefined` when the request has no recorded peer.
+
+### Fixed (momentum-safe scrolling)
+
+- **`momentumSafeScroll: false` holds in production SPA builds.** The opt-out was an entry
+  statement, and ES imports hoist, so a `main.tsx` calling `createRoot` at top level booted
+  the iOS shim before it ran (native and compat SPA). The SPA entry now seeds it through a
+  first `import`. The Pages Router plugin now passes the setting through too, and
+  `hydrateDocument` (`global-error.tsx`) boots the shim like the other roots.
+- **Deferred writes are clamped to the scroll range**, per axis, for absolute targets and
+  relative deltas alike: `el.scrollTop = el.scrollHeight` during a touch no longer translates
+  the list off screen. `scrollHeight` / `scrollWidth` read as unshifted while a list is shifted.
+- **A touch whose node is removed mid-touch no longer sticks.** The touched node gets one-shot
+  `touchend` / `touchcancel` listeners, the last touch `pointerup` ends the touch, and a touch
+  with no activity for 1 s is reset and flushed.
+- **The document scroller is never shifted.** Its writes (and `window.scrollTo`) go straight
+  through, so `position: fixed` UI is never re-parented by a transform. On element scrollers
+  the `translate` is composed with each child's computed `translate` (Tailwind v4
+  `translate-*` keeps its offset) and is only rewritten when its value changes.
+- **A real scroll write drops the stale delta.** `scrollIntoView` and a smooth `scrollTo`
+  first drop the pending delta of the scrollers they move and restore their children, so a
+  later flush cannot land at a stale offset. A smooth `scrollBy` still applies it first.
+- **A main-thread stall no longer flushes mid-fling.** Where `scrollend` is supported (detected,
+  or seen once) it alone ends the fling, with a 1 s idle fallback; elsewhere the quiet period
+  now defaults to 250 ms (was 120 ms).
+
+### Security (over-the-air UI updates)
+
+Re-run `denext mobile add-ota` and ship a new app binary to get these: the native plugin is
+compiled into the app. Unedited templates from 2.7.0 … 2.8.3 are upgraded in place.
+
+- **Control characters are refused in OTA manifest paths**, on every side (`isOtaManifest`,
+  `denext ota manifest` / `spa.ota`, `createOtaHandler` and both native plugins). A path holding
+  `\t` and `\n` could forge the `"<path>\t<sha256>\n"` lines the version hashes, so a manifest
+  with one entry `a.js\t<sha>\nb.js` had the same version as two honest entries. The version
+  algorithm itself is unchanged, so existing apps and manifests still agree. iOS now splits and
+  checks paths on UTF-8 bytes and Unicode scalars (not grapheme clusters), and its SHA-256 check
+  accepts ASCII hex only.
+- **Downgrade protection and a native gate (signed payload v2).** Signing now stamps a
+  `sequence` (the Unix time in seconds by default, `--sequence N` to set it) and optionally
+  `--min-native N`, signed over `denext-ota-v2\n<version>\n<1|0>\n<sha256hex(notes)>\n<sequence>\n<minNative or empty>`.
+  The native plugin remembers the highest sequence it accepted and refuses a lower one, or none
+  after one (code `downgrade`), and refuses a UI whose `minNative` is above the app's build number
+  (iOS `CFBundleVersion`, Android `versionCode`) before downloading (code `native_too_old`). v1
+  signatures (no sequence) still verify.
+- **Bounded native downloads.** Each file streams to disk while it is hashed and is refused as
+  soon as it outgrows its manifest `size`; a manifest may list at most 20,000 files and 512 MiB
+  (code `invalid`); each file gets 30 s plus the time a 32 KiB/s link needs, and a whole update 30
+  minutes.
+- **Redirects stay within the `baseUrl` origin**, so the request headers (bearer tokens) never
+  reach another host (iOS: a `URLSession` redirect delegate; Android: manual redirects).
+- **`10.0.2.2` is no longer loopback on iOS**, and on Android only in a debuggable build.
+- **`otaBooted()` is bound to its page.** It sends the page's own UI version (from the
+  `_denext/ota.json` it was served with), and the native side confirms only the version on
+  trial, so a late call from the page being replaced cannot confirm the new UI.
+- **`denext ota keygen --force` writes the new key before the old one goes** (temporary file +
+  rename) and warns that every installed binary embedding the old public key stops accepting
+  updates.
+- **`denext mobile add-ota --public-key` exits non-zero** when it could not embed the key on an
+  installed platform or kept an edited template there, only matches `DenextOtaPublicKey` in the
+  Info.plist's top-level dict, and prints the "unsigned: https or loopback only" note whenever a
+  platform ends up without a key.
+
+### Added (over-the-air UI updates)
+
+- **`otaSignaturePayload`** is exported from `denext/mobile` (the 2.8.0 notes promised it): the
+  exact bytes a manifest signature covers, v1 or v2.
+- **`createOtaHandler({ cors })`**: `true` (the Capacitor webview origins) or exact origins; it
+  answers the `OPTIONS` preflight that an `Authorization` header triggers and tags responses with
+  `Access-Control-Allow-Origin`.
+- **`OtaErrorCode` gains `downgrade` and `native_too_old`**; `OtaManifest` gains `sequence` and
+  `minNative`.
+- **A configurable boot timeout**: Info.plist `DenextOtaBootTimeout` / meta-data
+  `dev.denext.ota.BOOT_TIMEOUT` (seconds, default 15).
+- **`add-ota` upgrades its own templates.** Each generated file starts with a
+  `// denext-ota-template: N sha256=…` marker; a file whose marker still matches its body, or
+  that is byte for byte a template denext 2.7.0 … 2.8.3 wrote, is upgraded without `--force`.
+
+### Fixed (over-the-air UI updates)
+
+- **A process death during a trial no longer rejects a good UI.** A trial gets two launches
+  before it is rolled back (the old "trial started" flag was always set, so the first relaunch
+  rolled back), and the watchdog counts foreground time only (it pauses while the app is
+  inactive).
+- **`checkForUiUpdate` / `prepareUiUpdate` compare with `pending ?? current ?? bundled`**, and a
+  native no-op (`switched: false` / `staged: false`) resolves `current`, not `applied` / `ready`.
+- **Interrupted downloads resume**: files verified by an earlier attempt are kept, and
+  `otaReset()` during a download cancels it instead of failing `busy`.
+- **Android**: the watchdog is cancelled in `handleOnDestroy`, the download pool is stopped before
+  anything is renamed or deleted, recursive deletes run off the main thread, and the versions
+  moved to `noBackupFilesDir` (out of device backups; an old `files/denext-ota` is migrated, or
+  dropped and re-downloaded). **iOS**: the versions directory is excluded from backup.
+- **`denext ota manifest` writes the manifest atomically** (temporary file + rename), last.
+
 ## [2.8.3] - 2026-09-24
 
 ### Added
@@ -148,8 +304,9 @@ and this project adheres to
 - `clientIp()`, `requestId()` and `requestSignal()` from `denext/server`: the per-request
   facts the framework already tracks, reachable from a Server Component or Server Action, not
   just from middleware. `clientIp()` returns the trusted proxy's last `x-forwarded-for` hop
-  when `trustForwardedHeaders` is set (else the socket peer, `undefined` outside the server
-  loop) and is a dynamic read like `headers()`; `requestSignal()` returns the deadline /
+  when `trustForwardedHeaders` is set (else the socket peer; it throws outside a request
+  context and is `undefined` when the request has no recorded peer) and is a dynamic read
+  like `headers()`; `requestSignal()` returns the deadline /
   disconnect `AbortSignal` to thread into `fetch()`es; `requestId()` returns the correlation
   id `x-request-id` and `DENEXT_LOG=json` carry. `requestSignal()` and `requestId()` are
   plumbing and keep a render cacheable.
@@ -7901,6 +8058,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.9.0]: https://jsr.io/@denext/denext@2.9.0
 [2.8.3]: https://jsr.io/@denext/denext@2.8.3
 [2.8.2]: https://jsr.io/@denext/denext@2.8.2
 [2.8.1]: https://jsr.io/@denext/denext@2.8.1

@@ -14,7 +14,7 @@ with a fast `503 + Retry-After` once the optional in-process concurrency ceiling
 is reached, **caps request bodies** at 1 MiB for route handlers and Server
 Actions (an over-cap body is a `413` before your code runs), bounds a slow body
 read separately, keeps a **request id** on every request (an inbound
-`x-request-id` from your proxy, else a fresh UUID) and echoes it on every error
+`x-request-id` from a trusted proxy, else a fresh UUID) and echoes it on every error
 response, sets **`httpOnly` + `SameSite=Lax` + `Secure`** on every cookie,
 refuses a session secret shorter than 32 characters in production, ships the
 **hardening headers** (`X-Content-Type-Options`, `X-Frame-Options`,
@@ -141,8 +141,9 @@ Each line: what to set → where it is documented. Config keys go in
   fields to alert on. Point the load balancer here, or build a readiness route
   on `cacheStoreHealthy()`. →
   [Health & readiness](/docs/deploy#13-health--readiness)
-- Propagate your edge's trace id as `x-request-id`; denext keeps it (sanitized)
-  and echoes it on every error response. →
+- Propagate your edge's trace id as `x-request-id`; with `trustForwardedHeaders`
+  (or `DENEXT_TRUST_PROXY=1`) denext keeps it (sanitized) and echoes it on every
+  error response. →
   [Correlation ids](/docs/deploy#8-correlation-ids)
 
 **Supply chain and pre-flight**

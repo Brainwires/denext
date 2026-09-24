@@ -148,7 +148,9 @@ export interface RequestContext {
    * Correlation id for this request. Surfaced in the request log and the
    * server-side error log, and echoed as the `x-request-id` response header on an
    * error, so a client-visible 500 can be traced back to its logged detail. Honors
-   * an inbound `x-request-id` (from an upstream proxy) or mints a fresh UUID.
+   * an inbound `x-request-id` only when the app trusts its fronting proxy
+   * (`trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, sanitized to safe token
+   * characters); otherwise mints a fresh UUID.
    */
   requestId: string;
   /**
@@ -387,17 +389,36 @@ const storage: AsyncLocalStorage<RequestContext> = ((globalThis as StorageHolder
   REQUEST_STORAGE_KEY
 ] ??= new AsyncLocalStorage<RequestContext>());
 
+/** Trust settings for {@linkcode createRequestContext}. */
+export interface RequestContextTrust {
+  /**
+   * The app trusts its fronting proxy (`trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`):
+   * recorded on the context for {@linkcode clientIp}, and — unless
+   * {@linkcode RequestContextTrust.trustRequestId} says otherwise — lets an inbound
+   * `x-request-id` become the correlation id.
+   */
+  trustForwardedHeaders?: boolean;
+  /**
+   * Honor an inbound `x-request-id`. Defaults to `trustForwardedHeaders`: a header any
+   * client can set is only a correlation id when a trusted proxy stamped it. Internal
+   * sub-requests (which derive their id from the parent's) pass `true`.
+   */
+  trustRequestId?: boolean;
+}
+
 /** Create a fresh context for a request. */
 export function createRequestContext(
   request: Request,
   signal?: AbortSignal,
+  trust: RequestContextTrust = {},
 ): RequestContext {
-  // Reuse an upstream correlation id when the proxy set one; otherwise mint a
-  // fresh UUID. The inbound value is untrusted — it is echoed into logs and the
-  // `x-request-id` response header, so strip anything but safe token characters
-  // (blocks log-forging CRLF/control chars and header-injection) and bound the
-  // length so a hostile header can't bloat every log line.
-  const inbound = request.headers.get("x-request-id");
+  // Reuse an upstream correlation id only when a trusted proxy set it; otherwise mint
+  // a fresh UUID. Even a trusted value is echoed into logs and the `x-request-id`
+  // response header, so strip anything but safe token characters (blocks log-forging
+  // CRLF/control chars and header-injection) and bound the length so a hostile header
+  // can't bloat every log line.
+  const honorInbound = trust.trustRequestId ?? trust.trustForwardedHeaders ?? false;
+  const inbound = honorInbound ? request.headers.get("x-request-id") : null;
   const sanitized = inbound?.replace(/[^\x21-\x7E]/g, "").slice(0, 200);
   const requestId = sanitized && sanitized.length > 0 ? sanitized : crypto.randomUUID();
   return {
@@ -407,6 +428,9 @@ export function createRequestContext(
     memo: new Map(),
     deferred: [],
     signal,
+    ...(trust.trustForwardedHeaders !== undefined
+      ? { trustForwardedHeaders: trust.trustForwardedHeaders }
+      : {}),
   };
 }
 
@@ -448,8 +472,9 @@ export function connection(): Promise<void> {
 }
 
 /**
- * The client's IP address for the current request, or `undefined` when it cannot be
- * determined (a handler invoked directly in a test, not through denext's server loop).
+ * The client's IP address for the current request. Throws outside a request context
+ * (like {@linkcode headers}); `undefined` when the request has no recorded peer (a handler
+ * invoked directly in a test, not through denext's server loop).
  *
  * When the app trusts a fronting proxy ({@linkcode AppConfig.trustForwardedHeaders} /
  * `DENEXT_TRUST_PROXY=1`), the last hop of `x-forwarded-for` is returned; otherwise the
@@ -460,7 +485,8 @@ export function connection(): Promise<void> {
  * a page that branches on the client IP cannot be statically cached. Use it in a route
  * handler, a Server Action, or middleware where that is already the case.
  *
- * @returns The client IP, or `undefined` outside denext's server loop.
+ * @returns The client IP, or `undefined` when the request has no recorded peer.
+ * @throws Outside a request context.
  */
 export function clientIp(): string | undefined {
   const ctx = requireContext("clientIp");
@@ -479,7 +505,8 @@ export function clientIp(): string | undefined {
 /**
  * The correlation id for the current request — the value logged with the request and its
  * errors, and echoed as the `x-request-id` response header on an error. Honors an inbound
- * `x-request-id` from a trusted proxy, else a fresh UUID.
+ * `x-request-id` only when the app trusts its proxy (`trustForwardedHeaders` /
+ * `DENEXT_TRUST_PROXY=1`); otherwise it is a fresh UUID, so a client can't pick its own id.
  *
  * This is plumbing for logging and `after()`, not request data, so reading it does **not**
  * make the render dynamic. Do not render it into a cacheable page — a cached copy would
@@ -496,13 +523,15 @@ export function requestId(): string {
  * Thread it into outgoing `fetch()`es (and any cancellable work) for cooperative
  * cancellation, so a client that navigates away actually reclaims the work.
  *
- * Cancellation plumbing, not request data: reading it does **not** make the render dynamic,
- * so a `use cache` component may still pass it to its fetches. `undefined` when running
- * outside denext's server loop.
+ * Cancellation plumbing, not request data: reading it does **not** make the render dynamic.
+ * Inside a `use cache` scope it is `undefined`: a cached fill is shared by single-flight
+ * followers and background refreshes, so one client's disconnect must not abort work other
+ * readers are waiting on. Also `undefined` outside denext's server loop.
  *
- * @returns The abort signal, or `undefined` outside a request.
+ * @returns The abort signal, or `undefined` outside a request or inside a `use cache` scope.
  */
 export function requestSignal(): AbortSignal | undefined {
+  if (currentCacheScope()) return undefined;
   return currentContext()?.signal;
 }
 

@@ -160,8 +160,9 @@ iOS/Android (via [Capacitor](https://capacitorjs.com)); both native targets serv
 export. Scaffold with `denext create --desktop --capacitor`, then `deno task desktop` /
 `deno task mobile:ios` — see [Desktop & mobile](https://denext.dev/docs/desktop) and
 [`examples/native`](./examples/native). Inside the shell, `denext/mobile` covers what a native
-app needs from the page — safe areas, the keyboard inset, the back swipe, app resume and
-opening links in the system browser — with no `@capacitor/*` dependency.
+app needs from the page — safe areas, the keyboard inset, the back swipe, app resume,
+opening links in the system browser and over-the-air UI updates — with no `@capacitor/*`
+dependency.
 
 ## React & Next.js compatibility
 

@@ -88,6 +88,32 @@ Deno.test("analyzeBarrel: a barrel that runs code maps every name to itself", as
   assertEquals(init.registry, "index.js:registry");
 });
 
+Deno.test("analyzeBarrel: a decorator is code that runs (class or member) — never looked through", async () => {
+  assertEquals(await analyze("decorated"), { a: "index.js:a" });
+  const member = await analyze("decorated-member");
+  assertEquals(member.a, "index.js:a");
+  assertEquals(member.Store, "index.js:Store");
+});
+
+Deno.test("analyzeBarrel: the parse is reused across builds until the file changes", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_opi_cache_" });
+  try {
+    await Deno.writeTextFile(join(dir, "lib.js"), "export const a = 1;\n");
+    await Deno.writeTextFile(join(dir, "index.js"), 'export { a } from "./lib.js";\n');
+    const barrel = join(dir, "index.js");
+    // A fresh resolvers object per call = a fresh build (dev rebuild).
+    const build = () => analyzeBarrel(barrel, { ...resolvers });
+    assertEquals((await build()).get("a")?.file, join(dir, "lib.js"));
+    assertEquals((await build()).get("a")?.file, join(dir, "lib.js"), "unchanged: same answer");
+    // An edit (new size + mtime) invalidates the cached parse.
+    await Deno.writeTextFile(join(dir, "index.js"), 'export { a } from "./lib.js";\nrun();\n');
+    await Deno.utime(barrel, new Date(), new Date(Date.now() + 5_000));
+    assertEquals((await build()).get("a")?.file, barrel, "now effectful: the name stays");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test('analyzeBarrel: a directive (`"use client"`) barrel is never looked through', async () => {
   assertEquals(await analyze("directive"), { a: "index.js:a" });
 });
@@ -220,9 +246,26 @@ Deno.test("rewrite: the module keeps its line count and the rest of its text", a
   const out = (await rewrite(src))!;
   assertStringIncludes(out, `"use client";\n// ✓ multi-byte\n`);
   assertStringIncludes(out, `export const n = 1;\n`);
-  // One line replaced a four-line import; the lines after it shift up, never down, and the
-  // statement count is unchanged — the rewrite never ADDS a line.
-  assert(out.split("\n").length <= src.split("\n").length);
+  // One line replaced a four-line import, padded with the three newlines it spanned: every
+  // line after it keeps its number (sourcemaps, stack traces).
+  assertEquals(out.split("\n").length, src.split("\n").length);
+  const lineOf = (text: string, needle: string) =>
+    text.split("\n").findIndex((l) => l.includes(needle));
+  assertEquals(lineOf(out, "export const n"), lineOf(src, "export const n"));
+});
+
+Deno.test("rewrite: a multi-line import does not shift a later stack-trace line", async () => {
+  const src = `import {\n  Check,\n  X,\n} from "pkg";\nthrow new Error("line5");\n`;
+  const out = (await rewrite(src))!;
+  assertEquals(out.split("\n")[4], `throw new Error("line5");`);
+  assertEquals(out.split("\n").length, src.split("\n").length);
+});
+
+Deno.test("rewrite: a decorated app module still has its imports rewritten", async () => {
+  const src = `import { Check } from "pkg";\n@sealed\nclass A {}\nuse(Check, A);\n`;
+  const out = (await rewrite(src))!;
+  assertStringIncludes(out, `from "/nm/pkg/icons/check.js"`);
+  assertStringIncludes(out, "@sealed\nclass A {}");
 });
 
 Deno.test("rewrite: an unparseable module is left exactly as written", async () => {
@@ -259,8 +302,54 @@ Deno.test("optimizePackageImportsList: defaults ∪ configured, the legacy spell
   assert(both.includes("new") && !both.includes("old"), "the top-level field wins");
 });
 
+Deno.test("optimizePackageImportsList: `false` disables everything; `!pkg` removes an entry", () => {
+  assertEquals(optimizePackageImportsList({ optimizePackageImports: false }), []);
+  assertEquals(
+    optimizePackageImportsList({
+      optimizePackageImports: false,
+      experimental: { optimizePackageImports: ["old"] },
+    }),
+    [],
+    "top-level false wins over the legacy spelling",
+  );
+  const list = optimizePackageImportsList({
+    optimizePackageImports: ["!recharts", "!react-icons/*", "my-icons", "!not-listed"],
+  });
+  assert(!list.includes("recharts") && !list.includes("react-icons/*"));
+  assert(list.includes("lucide-react") && list.includes("my-icons"));
+  assert(!list.some((p) => p.startsWith("!")), "exclusions never reach the matcher");
+  // An exclusion also removes a package the list itself added.
+  assertEquals(
+    optimizePackageImportsList({ optimizePackageImports: ["x", "!x"] }).includes("x"),
+    false,
+  );
+});
+
 Deno.test("config: optimizePackageImports is validated and the Next spelling dev-warns", () => {
-  validateDenextConfig({ optimizePackageImports: ["a", "b/*"] });
+  validateDenextConfig({ optimizePackageImports: ["a", "b/*", "!lucide-react"] });
+  validateDenextConfig({ optimizePackageImports: false });
+  for (const bad of [true, ["!"], [""]]) {
+    let msg = "";
+    try {
+      validateDenextConfig({ optimizePackageImports: bad } as unknown as DenextConfig);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    assertStringIncludes(msg, "`optimizePackageImports` must be", JSON.stringify(bad));
+  }
+  let legacyFalse = "";
+  try {
+    validateDenextConfig({
+      experimental: { optimizePackageImports: false },
+    } as unknown as DenextConfig);
+  } catch (e) {
+    legacyFalse = (e as Error).message;
+  }
+  assertStringIncludes(
+    legacyFalse,
+    "`experimental.optimizePackageImports`",
+    "only top-level takes false",
+  );
   let threw = "";
   try {
     validateDenextConfig({ optimizePackageImports: [1] } as unknown as DenextConfig);

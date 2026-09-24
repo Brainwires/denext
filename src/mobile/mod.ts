@@ -21,7 +21,8 @@
  * - {@linkcode checkForUiUpdate} / {@linkcode otaBooted} / {@linkcode otaStatus} /
  *   {@linkcode otaReset}: over-the-air UI updates through the native `DenextOta` plugin
  *   that `denext mobile add-ota` installs; {@linkcode prepareUiUpdate} /
- *   {@linkcode applyUiUpdate} split the download from the switch for an app's own prompt.
+ *   {@linkcode applyUiUpdate} split the download from the switch for an app's own prompt;
+ *   {@linkcode otaSignaturePayload} builds the exact bytes a manifest signature covers.
  *
  * @example
  * ```tsx
@@ -69,4 +70,4 @@ export {
   otaStatus,
   prepareUiUpdate,
 } from "./ota.ts";
-export type { OtaManifest, OtaManifestFile } from "./ota-manifest.ts";
+export { type OtaManifest, type OtaManifestFile, otaSignaturePayload } from "./ota-manifest.ts";

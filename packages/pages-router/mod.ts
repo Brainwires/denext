@@ -261,6 +261,7 @@ function bundlerFor(
     dev: ctx.mode === "dev",
     tailwind,
     readDir: ctx.mode === "prod" ? join(ctx.projectRoot, ".denext", "pages-client") : undefined,
+    momentumSafeScroll: ctx.config.momentumSafeScroll !== false,
   });
 }
 

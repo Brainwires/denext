@@ -8,7 +8,7 @@ import { onErrorFor } from "./boundaries.ts";
 import { applyProps } from "../dom-props.ts";
 import { stampFiber } from "../dom-fiber-map.ts";
 import { FOREIGN_PROP } from "../../runtime/lazy-directive.ts";
-import { doc } from "./state.ts";
+import { documentForFiber } from "./state.ts";
 import {
   bubbleFlags,
   childrenDom,
@@ -30,6 +30,7 @@ import {
 function createHostInstance(wip: Fiber): Element {
   const hType = wip.vnode.type as string;
   const ns = hostNamespace(wip, hType);
+  const doc = documentForFiber(wip);
   return ns !== null ? doc.createElementNS(ns, hType) : doc.createElement(hType);
 }
 
@@ -65,7 +66,7 @@ function completeText(wip: Fiber): void {
   } else if (isHydrating) {
     claimText(wip);
   } else {
-    wip.stateNode = doc.createTextNode(String(wip.vnode.props.nodeValue ?? ""));
+    wip.stateNode = documentForFiber(wip).createTextNode(String(wip.vnode.props.nodeValue ?? ""));
     wip.flags |= Placement;
   }
 }

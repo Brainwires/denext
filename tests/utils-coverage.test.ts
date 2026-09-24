@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { tryCatch } from "../src/utils/try-catch.ts";
 import { useAsyncEffect } from "../src/utils/use-async-effect.ts";
+import { choose } from "../src/utils/choose.ts";
 
 Deno.test("tryCatch: a returned value yields [true, data]", async () => {
   const r = await tryCatch(() => 42);
@@ -59,4 +60,58 @@ Deno.test("useAsyncEffect.wrap: rejects if the task throws", async () => {
     Error,
     "task boom",
   );
+});
+
+Deno.test("choose: runs the matching branch and returns its value", () => {
+  const out = choose<"a" | "b" | "c", number>("b", {
+    a: () => 1,
+    b: () => 2,
+    c: () => 3,
+  });
+  assertEquals(out, 2);
+});
+
+Deno.test("choose: runs defaultCase when no case matches", () => {
+  const out = choose("z" as "a" | "z", { a: () => 1 }, () => 99);
+  assertEquals(out, 99);
+});
+
+Deno.test("choose: returns undefined when nothing matches and no default", () => {
+  const out = choose("z" as "a" | "z", { a: () => 1 });
+  assertEquals(out, undefined);
+});
+
+Deno.test("choose: only the selected branch runs", () => {
+  let aRan = false;
+  let bRan = false;
+  choose<"a" | "b", number>("a", {
+    a: () => {
+      aRan = true;
+      return 1;
+    },
+    b: () => {
+      bRan = true;
+      return 2;
+    },
+  });
+  assert(aRan);
+  assert(!bRan);
+});
+
+Deno.test('choose: a "default" value matches a `default` case, not the fallback', () => {
+  const out = choose<"default", string>("default", { default: () => "case" }, () => "fallback");
+  assertEquals(out, "case");
+});
+
+Deno.test("choose: inherited Object.prototype names fall through to defaultCase (own keys only)", () => {
+  for (const key of ["toString", "constructor", "valueOf", "hasOwnProperty", "__proto__"]) {
+    const out = choose<string, string>(key, { a: () => "a" }, () => "fallback");
+    assertEquals(out, "fallback", key);
+    assertEquals(choose<string, string>(key, { a: () => "a" }), undefined, key);
+  }
+});
+
+Deno.test("choose: an OWN key named like a prototype member still matches", () => {
+  const cases = { toString: () => "own" };
+  assertEquals(choose<"toString", string>("toString", cases, () => "fallback"), "own");
 });

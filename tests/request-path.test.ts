@@ -140,6 +140,8 @@ Deno.test("userAgent: Googlebot is flagged as a bot", () => {
 // --- request-context.ts: correlation id -----------------------------------
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** An inbound x-request-id is honored only behind a trusted proxy. */
+const TRUSTED = { trustForwardedHeaders: true };
 
 Deno.test("createRequestContext mints a UUID when there is no inbound id", () => {
   const ctx = createRequestContext(reqWith("http://x/"));
@@ -147,13 +149,19 @@ Deno.test("createRequestContext mints a UUID when there is no inbound id", () =>
 });
 
 Deno.test("createRequestContext reuses a clean inbound x-request-id", () => {
-  const ctx = createRequestContext(reqWith("http://x/", { "x-request-id": "trace-abc-123" }));
+  const ctx = createRequestContext(
+    reqWith("http://x/", { "x-request-id": "trace-abc-123" }),
+    undefined,
+    TRUSTED,
+  );
   assertEquals(ctx.requestId, "trace-abc-123");
 });
 
 Deno.test("createRequestContext strips control chars/spaces from an inbound id (log-forging)", () => {
   const ctx = createRequestContext(
     reqWith("http://x/", { "x-request-id": "trace 123" }),
+    undefined,
+    TRUSTED,
   );
   // Space (0x20) and any control chars are outside the safe \x21-\x7E range.
   assertEquals(ctx.requestId, "trace123");
@@ -162,13 +170,19 @@ Deno.test("createRequestContext strips control chars/spaces from an inbound id (
 Deno.test("createRequestContext length-bounds an overlong inbound id", () => {
   const ctx = createRequestContext(
     reqWith("http://x/", { "x-request-id": "a".repeat(300) }),
+    undefined,
+    TRUSTED,
   );
   assertEquals(ctx.requestId.length, 200);
 });
 
 Deno.test("createRequestContext mints a UUID when the inbound id sanitizes to empty", () => {
   // A header of only spaces/tabs collapses to "" after sanitization → fresh UUID.
-  const ctx = createRequestContext(reqWith("http://x/", { "x-request-id": "    \t   " }));
+  const ctx = createRequestContext(
+    reqWith("http://x/", { "x-request-id": "    \t   " }),
+    undefined,
+    TRUSTED,
+  );
   assert(UUID_RE.test(ctx.requestId), `expected a UUID, got '${ctx.requestId}'`);
 });
 

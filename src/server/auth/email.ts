@@ -38,7 +38,12 @@ import { sha256Hex } from "./hash.ts";
 import { disableTotp } from "./mfa.ts";
 import { randomToken } from "./oauth.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
-import { consumeHitBudget, subjectBucketKeys, verificationLimiter } from "./rate-limit.ts";
+import {
+  authTrustsProxy,
+  consumeHitBudget,
+  subjectBucketKeys,
+  verificationLimiter,
+} from "./rate-limit.ts";
 import type { AuthConfig, SendVerificationRequest, VerificationRequestParams } from "./types.ts";
 import {
   issueVerificationToken,
@@ -169,7 +174,7 @@ function requireMailer(config: AuthConfig, fn: string): SendVerificationRequest 
 function linkOrigin(config: AuthConfig, request: Request | undefined): string {
   if (config.canonicalOrigin) return config.canonicalOrigin;
   if (request && !isProductionEnv()) {
-    return requestOrigin(request, { trustForwardedHeaders: config.trustForwardedHeaders });
+    return requestOrigin(request, { trustForwardedHeaders: authTrustsProxy(config) });
   }
   throw new Error(
     "denextAuth: emailed links need `canonicalOrigin` — a link derived from the request's " +
