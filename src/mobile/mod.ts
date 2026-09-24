@@ -31,6 +31,10 @@
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
  * - {@linkcode onDeepLink} / {@linkcode useDeepLink}: the custom-scheme and universal / app
  *   links that open the app, filtered and routed (`denext mobile add deep-links`).
+ * - {@linkcode openAuthSession}: OAuth / OIDC sign-in in a system browser sheet
+ *   (ASWebAuthenticationSession on iOS, a Custom Tab on Android, a popup finished by
+ *   {@linkcode completeAuthSession} on the web), resolving with the callback URL
+ *   (`denext mobile add auth-session --scheme myapp`).
  * - {@linkcode requestPushPermission}, {@linkcode registerForPush} (the APNs / FCM token for
  *   your server), {@linkcode onPushReceived} / {@linkcode usePushReceived} and
  *   {@linkcode onPushTapped} / {@linkcode usePushTapped} (`denext mobile add push`; no
@@ -98,6 +102,14 @@ export { hideSplash } from "./splash.ts";
 export { type SecureStore, secureStore } from "./secure-store.ts";
 export { type DeepLinkEvent, type DeepLinkOptions, onDeepLink, useDeepLink } from "./deep-link.ts";
 export type { LinkAccept, LinkAllowList, LinkRoute } from "./link-routing.ts";
+export {
+  type AuthSessionError,
+  type AuthSessionErrorCode,
+  type AuthSessionOptions,
+  type AuthSessionResult,
+  completeAuthSession,
+  openAuthSession,
+} from "./auth-session.ts";
 export {
   onPushReceived,
   onPushTapped,

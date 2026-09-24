@@ -18,6 +18,7 @@ import {
   type RouteOnce,
 } from "./link-routing.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
+import { isAuthSessionCallback } from "./auth-session.ts";
 
 /** One link that opened the app. */
 export interface DeepLinkEvent {
@@ -193,6 +194,8 @@ function deliver(
   callback: (event: DeepLinkEvent) => void,
   options: DeepLinkOptions,
 ): void {
+  // An auth session's OAuth callback (Android delivers it here too) is openAuthSession's.
+  if (isAuthSessionCallback(link.url)) return;
   let url: URL;
   try {
     url = new URL(link.url);
@@ -241,6 +244,9 @@ function subscribe(
  *   can craft one, so treat its path and query as untrusted input.
  * - **Route:** an accepted link's in-app path is navigated (see
  *   {@linkcode DeepLinkOptions.route}), once per link however many subscribers see it.
+ * - **Auth callbacks:** while {@linkcode openAuthSession} waits in the shell, links with its
+ *   callback scheme (and, for a few seconds after, the callback it received) are its own and
+ *   are not delivered here.
  *
  * On the web (and during SSR) there is no native plugin and this does nothing: the browser
  * already loaded the linked URL. Needs `@capacitor/app` in the shell (`denext mobile add

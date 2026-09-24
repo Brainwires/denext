@@ -10,7 +10,8 @@
 //   denext mobile add <cap...>    add the Capacitor plugins behind denext/mobile's capability
 //                                 functions (haptics, share, secure-store, deep-links, push,
 //                                 …), their native config, and `cap sync` (--dry-run plans,
-//                                 --list lists, --scheme / --domain configure deep-links)
+//                                 --list lists, --scheme / --domain configure deep-links);
+//                                 auth-session installs denext's own DenextAuthSession plugin
 //
 // Both are flat verbs whose first positional selects the action (as `desktop` does). Neither
 // loads the project's modules: `ota manifest` only hashes files, and `add-ota` only writes
@@ -347,9 +348,10 @@ function printAddReport(report: AddCapabilitiesReport): void {
   for (const path of report.unchanged) console.log(`  unchanged  ${path}`);
   for (const note of report.skipped) console.log(`  skipped    ${note}`);
   for (const warning of report.plan.warnings) console.log(`\n  WARNING: ${warning}`);
-  if (report.plan.manual.length > 0) {
+  const manual = [...report.plan.manual, ...report.manual];
+  if (manual.length > 0) {
     console.log("\n  Still to do by hand:");
-    for (const step of report.plan.manual) console.log(`    - ${step}`);
+    for (const step of manual) console.log(`    - ${step}`);
   }
   if (report.plan.notes.length > 0) {
     console.log("\n  Now call from denext/mobile:");
@@ -381,6 +383,7 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
       run,
       schemes: listFlag(ctx.flags.scheme),
       domains: listFlag(ctx.flags.domain),
+      force: ctx.flags.force === true,
     });
   } catch (err) {
     fail(`denext mobile add: ${err instanceof Error ? err.message : String(err)}`);
@@ -422,6 +425,8 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  denext mobile add deep-links --scheme myapp --domain app.example.com\n" +
     "                                Register a URL scheme and universal / app link domains\n" +
     "  denext mobile add push        Push notifications (entitlement, AppDelegate, permission)\n" +
+    "  denext mobile add auth-session --scheme myapp\n" +
+    "                                OAuth in a system browser sheet (openAuthSession)\n" +
     "  denext mobile add --list      List the capabilities and the plugins they install\n" +
     "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n" +
     "\n" +
@@ -441,6 +446,13 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  warns when android/app/google-services.json (FCM) is missing. A new entitlements file\n" +
     "  (ios/App/App/App.entitlements) must be selected in Xcode (Code Signing Entitlements);\n" +
     "  the steps left to do by hand are printed.\n" +
+    "\n" +
+    "  auth-session has no npm package: it writes denext's DenextAuthSession plugin\n" +
+    "  (ios/App/App/DenextAuthSessionPlugin.swift, an ASWebAuthenticationSession sheet, added to\n" +
+    "  the App target; android dev/denext/authsession/*.java, a Custom Tab) and registers it\n" +
+    "  through DenextBridgeViewController and MainActivity, which it shares with add-ota (either\n" +
+    "  order works). --scheme registers the OAuth callback scheme as deep-links does; Android\n" +
+    "  needs it to receive the redirect. No install or `cap sync` runs for it alone.\n" +
     "\n" +
     "  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n" +
     "  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n" +
@@ -468,7 +480,8 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     {
       name: "force",
       type: "boolean",
-      help: "Replace native template files that differ from denext's (loses local edits)",
+      help:
+        "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session)",
     },
     {
       name: "public-key",
@@ -497,7 +510,7 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "scheme",
       type: "string",
       valueName: "<scheme[,scheme]>",
-      help: "add deep-links: custom URL schemes to register (comma-separated)",
+      help: "add deep-links / auth-session: custom URL schemes to register (comma-separated)",
     },
     {
       name: "domain",

@@ -512,6 +512,80 @@ export function DeepLinks() {
         to handle it yourself. On the web it does nothing: the browser already loaded the URL.
       </p>
 
+      <h3>Auth sessions</h3>
+      <p>
+        <code>openAuthSession(url, {"{ callbackScheme }"})</code>{" "}
+        signs in with an OAuth 2 / OpenID Connect provider in a system browser sheet and resolves
+        with the full callback URL the provider redirected to. <code>auth-session</code>{" "}
+        has no npm package: it installs denext's own <code>DenextAuthSession</code>{" "}
+        plugin (Swift and Java sources, the Xcode target entry, and its registration in{" "}
+        <code>DenextBridgeViewController</code> and <code>MainActivity</code>, which it shares with
+        {" "}
+        <code>add-ota</code>; either can run first). <code>--scheme</code>{" "}
+        registers the callback scheme the way <code>deep-links</code> does.
+      </p>
+      <Code lang="bash">
+        {`denext mobile add auth-session --scheme myapp`}
+      </Code>
+      <Code lang="tsx">
+        {`"use client";
+import { openAuthSession } from "denext/mobile";
+
+export async function signIn() {
+  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const authorize = new URL("https://auth.example.com/authorize");
+  authorize.searchParams.set("redirect_uri", "myapp://auth/callback");
+  authorize.searchParams.set("state", state);
+  const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
+  const params = new URL(url).searchParams;
+  if (params.get("state") !== state) throw new Error("state mismatch");
+  await fetch("/api/auth/exchange", { method: "POST", body: params.get("code") });
+}`}
+      </Code>
+      <ul>
+        <li>
+          <strong>iOS:</strong> an <code>ASWebAuthenticationSession</code>{" "}
+          sheet. It shares Safari's cookies (an existing provider login is reused) unless{" "}
+          <code>preferEphemeral: true</code>, and it catches the redirect to <code>myapp:</code>
+          {" "}
+          itself, so the scheme needs no Info.plist entry.
+        </li>
+        <li>
+          <strong>Android:</strong>{" "}
+          a Custom Tab. The redirect comes back through the app's intent filter for the scheme (so
+          {" "}
+          <code>--scheme</code>{" "}
+          is required there), and the plugin resolves with it. Coming back without a callback (back
+          button, closing the tab) rejects <code>cancelled</code>{" "}
+          after a short delay, so a redirect racing the return still wins. The tab is requested
+          through the Custom Tabs intent extra, with no <code>androidx.browser</code>{" "}
+          dependency; a browser without Custom Tabs opens a normal page. While a session waits,{" "}
+          <code>onDeepLink</code> leaves its callback alone.
+        </li>
+        <li>
+          <strong>Web:</strong> a popup (call it from a click handler, or it is blocked:{" "}
+          <code>unsupported</code>). Use an https page of your origin as the redirect URI and call
+          {" "}
+          <code>completeAuthSession()</code>{" "}
+          there: it posts the page's URL to the opener, addressed to this origin only, and closes
+          the popup. A popup closed without a callback rejects{" "}
+          <code>cancelled</code>. A provider that sends{" "}
+          <code>Cross-Origin-Opener-Policy: same-origin</code>{" "}
+          cuts the popup off from the page; use a full-page redirect for it.
+        </li>
+      </ul>
+      <p>
+        Only one session is open at a time (<code>busy</code>); <code>timeoutMs</code> gives up with
+        {" "}
+        <code>timeout</code>, and a non-https <code>url</code> or a bad scheme is{" "}
+        <code>invalid</code>.{" "}
+        <strong>
+          PKCE and <code>state</code> stay your job:
+        </strong>{" "}
+        denext only opens the page and hands back the callback URL. Check <code>state</code>{" "}
+        and exchange the <code>code</code> on your server.
+      </p>
+
       <h3>Push notifications</h3>
       <p>
         <code>push</code> installs <code>@capacitor/push-notifications</code>, writes{" "}

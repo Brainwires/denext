@@ -354,12 +354,19 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "secure-store",
     "browser",
     "deep-links",
+    "auth-session",
     "push",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
-    assert(cap.version.startsWith("^8."), name);
+    // auth-session is denext's own native plugin: no npm package to pin.
+    if (cap.npm === undefined) continue;
+    assert(cap.version?.startsWith("^8."), name);
   }
+  assertEquals(
+    Object.keys(MOBILE_CAPABILITIES).filter((n) => MOBILE_CAPABILITIES[n].npm === undefined),
+    ["auth-session"],
+  );
   assertStringIncludes(formatCapabilityTable(), "keep-awake    @capacitor-community/keep-awake@^8");
 });
 

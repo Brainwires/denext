@@ -296,7 +296,10 @@ virtualized-list scroll corrections automatically (the runtime installs the shim
 <capability...> [--dry-run] [--list]` installs their plugins, and `deep-links --scheme/--domain`
 / `push` add `onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
 `requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via
-APNs/FCM). Docs: https://denext.dev/docs/desktop
+APNs/FCM). `auth-session --scheme myapp` adds `openAuthSession(url, { callbackScheme })` (OAuth
+in an iOS ASWebAuthenticationSession / Android Custom Tab / web popup finished by
+`completeAuthSession()`; resolves the callback URL, PKCE + `state` are yours). Docs:
+https://denext.dev/docs/desktop
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
 Safari included, whenever `momentumSafeScroll` is on (the default).

@@ -48,6 +48,18 @@ and this project adheres to
   token callbacks in `AppDelegate.swift`, declares `POST_NOTIFICATIONS`, and warns when
   `android/app/google-services.json` is missing. A new `App.entitlements` still has to be
   selected in Xcode; that and the other manual steps are printed.
+- **OAuth sign-in sheets in `denext/mobile`.** `openAuthSession(url, { callbackScheme,
+  preferEphemeral, timeoutMs })` opens the provider's page in an `ASWebAuthenticationSession`
+  sheet on iOS or a Custom Tab on Android and resolves with the full callback URL; it rejects
+  with a `code` of `cancelled`, `busy` (one session at a time), `invalid`, `unsupported` or
+  `timeout`. On the web it opens a popup, and the callback page calls
+  `completeAuthSession()` to post its URL back (same origin only). PKCE and `state` stay the
+  app's job. While a session waits, `onDeepLink` leaves its callback alone.
+- **`denext mobile add auth-session --scheme <s>`** installs denext's own `DenextAuthSession`
+  native plugin (no npm package): the Swift and Java sources, the Xcode target entry, and its
+  registration in `DenextBridgeViewController` and `MainActivity`. It shares those two files
+  with `denext mobile add-ota`, and either one can run first. `--scheme` registers the
+  callback scheme the way `deep-links` does (Android needs it to receive the redirect).
 
 ### Fixed
 

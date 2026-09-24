@@ -16,6 +16,12 @@
 // templates denext 2.7.0 … 2.8.3 wrote, before the marker existed). Bump OTA_TEMPLATE_VERSION
 // when the templates change.
 
+import {
+  markedTemplateIntact,
+  renderMarkedTemplate,
+  sha256Text,
+} from "./native-template-marker.ts";
+
 /** The generation of the templates below, stamped into every file `add-ota` writes. */
 export const OTA_TEMPLATE_VERSION = 3;
 
@@ -49,23 +55,13 @@ export const SHIPPED_OTA_TEMPLATE_SHA256: Readonly<Record<string, readonly strin
   ],
 };
 
-/** Lowercase hex SHA-256 of `text`'s UTF-8. */
-async function sha256Text(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-const MARKER = /^\/\/ denext-ota-template: (\d+) sha256=([0-9a-f]{64})\n/;
-
 /**
  * A template as `add-ota` writes it: a first line
  * `// denext-ota-template: <OTA_TEMPLATE_VERSION> sha256=<hex>` (the SHA-256 of everything after
  * that line), then the template.
  */
-export async function renderOtaTemplate(template: string): Promise<string> {
-  return `// denext-ota-template: ${OTA_TEMPLATE_VERSION} sha256=${await sha256Text(
-    template,
-  )}\n${template}`;
+export function renderOtaTemplate(template: string): Promise<string> {
+  return renderMarkedTemplate("ota", OTA_TEMPLATE_VERSION, template);
 }
 
 /**
@@ -73,8 +69,8 @@ export async function renderOtaTemplate(template: string): Promise<string> {
  * it is byte-for-byte a template denext shipped before markers ({@linkcode SHIPPED_OTA_TEMPLATE_SHA256}).
  */
 export async function isPristineOtaTemplate(name: string, text: string): Promise<boolean> {
-  const marker = MARKER.exec(text);
-  if (marker) return await sha256Text(text.slice(marker[0].length)) === marker[2];
+  const marked = await markedTemplateIntact("ota", text);
+  if (marked !== undefined) return marked;
   return (SHIPPED_OTA_TEMPLATE_SHA256[name] ?? []).includes(await sha256Text(text));
 }
 

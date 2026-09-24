@@ -1124,6 +1124,10 @@
     "feature:function"
   ],
   "denext/mobile": [
+    "AuthSessionError:interface",
+    "AuthSessionErrorCode:typeAlias",
+    "AuthSessionOptions:interface",
+    "AuthSessionResult:interface",
     "BackSwipeOptions:interface",
     "DeepLinkEvent:interface",
     "DeepLinkOptions:interface",
@@ -1157,6 +1161,7 @@
     "ShareResult:typeAlias",
     "applyUiUpdate:function",
     "checkForUiUpdate:function",
+    "completeAuthSession:function",
     "deviceInfo:function",
     "haptic:function",
     "hideSplash:function",
@@ -1170,6 +1175,7 @@
     "onDeepLink:function",
     "onPushReceived:function",
     "onPushTapped:function",
+    "openAuthSession:function",
     "openExternal:function",
     "otaBooted:function",
     "otaReset:function",

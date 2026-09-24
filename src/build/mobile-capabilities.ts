@@ -5,8 +5,10 @@
 // the project's own package manager, writes any Info.plist keys and Android permissions the
 // capability needs, and runs `npx cap sync`. A capability that takes options (deep-links:
 // --scheme / --domain) or needs more than plist keys and permissions (push: entitlements and
-// AppDelegate forwarding) computes its edits in a `configure` hook. Every subprocess goes
-// through a runner the caller passes in, so tests never spawn a real install.
+// AppDelegate forwarding) computes its edits in a `configure` hook. A capability with no npm
+// package (auth-session) installs denext's own native plugin templates instead, through the
+// hook's `install` step; with no package to add, neither the install nor `cap sync` runs. Every
+// subprocess goes through a runner the caller passes in, so tests never spawn a real install.
 
 import { dirname, join, resolve } from "@std/path";
 import {
@@ -19,6 +21,8 @@ import {
   withPlistStringArray,
   withPlistUrlScheme,
 } from "./mobile-native-config.ts";
+import { addAuthSessionToProject } from "./mobile-auth-session-install.ts";
+import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -36,8 +40,18 @@ export interface NativeEdit {
   readonly apply: (text: string) => string | null;
 }
 
+/** A native install step: denext's own plugin templates written into the project. */
+export interface NativeInstallStep {
+  /** What it installs, for the plan. */
+  readonly label: string;
+  /** Writes the files; `dir` is the project root. */
+  readonly run: (opts: NativeInstallOptions) => Promise<NativeInstallReport>;
+}
+
 /** Native config a capability computes from the command-line options. */
 export interface CapabilityConfig {
+  /** denext's own native plugin, installed from its templates (no npm package). */
+  readonly install?: NativeInstallStep;
   /** Edits to ios/App/App/Info.plist. */
   readonly infoPlist?: readonly NativeEdit[];
   /** Edits to the app's entitlements file (created when absent). */
@@ -52,13 +66,16 @@ export interface CapabilityConfig {
   readonly manual?: readonly string[];
 }
 
-/** One capability: the npm package behind it and the native config it needs. */
+/**
+ * One capability: the npm package behind it and the native config it needs. One without `npm`
+ * installs denext's own native plugin through its `configure` hook's `install` step.
+ */
 export interface MobileCapability {
-  /** The npm package that provides the native plugin. */
-  readonly npm: string;
+  /** The npm package that provides the native plugin (none: denext's own plugin). */
+  readonly npm?: string;
   /** The version range added (`<npm>@<version>`), pinned to the plugin's Capacitor major. */
-  readonly version: string;
-  /** The `@capacitor/core` major the pinned plugin targets. */
+  readonly version?: string;
+  /** The `@capacitor/core` major the pinned plugin (or denext's plugin template) targets. */
   readonly capacitorMajor: number;
   /** Info.plist string keys to add when absent (key → default value; an app's own wins). */
   readonly iosPlist?: Readonly<Record<string, string>>;
@@ -117,6 +134,22 @@ function checkDomain(domain: string): string {
   return host;
 }
 
+/** A custom URL scheme's registration: an Info.plist URL type and a VIEW intent filter. */
+function schemeEdits(
+  schemes: readonly string[],
+): { infoPlist: NativeEdit[]; manifest: NativeEdit[] } {
+  return {
+    infoPlist: schemes.map((scheme) => ({
+      label: `CFBundleURLTypes: ${scheme}`,
+      apply: (text) => withPlistUrlScheme(text, scheme),
+    })),
+    manifest: schemes.map((scheme) => ({
+      label: `intent-filter ${scheme}://`,
+      apply: (text: string) => withManifestIntentFilter(text, { scheme }),
+    })),
+  };
+}
+
 /** `deep-links`: URL types, intent filters and associated domains for the options. */
 function configureDeepLinks(options: CapabilityOptions): CapabilityConfig {
   const schemes = options.schemes.map(checkScheme);
@@ -128,16 +161,11 @@ function configureDeepLinks(options: CapabilityOptions): CapabilityConfig {
     );
   }
   const applinks = domains.map((d) => `applinks:${d}`);
+  const registered = schemeEdits(schemes);
   return {
-    infoPlist: schemes.map((scheme) => ({
-      label: `CFBundleURLTypes: ${scheme}`,
-      apply: (text) => withPlistUrlScheme(text, scheme),
-    })),
+    infoPlist: registered.infoPlist,
     manifest: [
-      ...schemes.map((scheme) => ({
-        label: `intent-filter ${scheme}://`,
-        apply: (text: string) => withManifestIntentFilter(text, { scheme }),
-      })),
+      ...registered.manifest,
       ...domains.map((host) => ({
         label: `intent-filter https://${host} (autoVerify)`,
         apply: (text: string) => withManifestIntentFilter(text, { host }),
@@ -159,6 +187,28 @@ function configureDeepLinks(options: CapabilityOptions): CapabilityConfig {
         }] }`,
       ],
     ),
+  };
+}
+
+/**
+ * `auth-session`: denext's `DenextAuthSession` plugin, plus the callback scheme's registration
+ * (the same URL type and intent filter as deep-links) for each `--scheme`. Android needs that
+ * intent filter to receive the redirect; iOS's ASWebAuthenticationSession needs none.
+ */
+function configureAuthSession(options: CapabilityOptions): CapabilityConfig {
+  const schemes = options.schemes.map(checkScheme);
+  return {
+    ...schemeEdits(schemes),
+    install: {
+      label: "DenextAuthSession plugin (iOS ASWebAuthenticationSession, Android Custom Tab) " +
+        "+ its registration in DenextBridgeViewController / MainActivity",
+      run: addAuthSessionToProject,
+    },
+    manual: schemes.length > 0 ? [] : [
+      "register the OAuth callback scheme unless the app already has it: re-run with " +
+      "--scheme <scheme> (or `denext mobile add deep-links --scheme <scheme>`). Android hands " +
+      "the redirect to the app only through that scheme's intent filter; iOS needs no registration",
+    ],
   };
 }
 
@@ -255,6 +305,13 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     options: ["schemes", "domains"],
     configure: configureDeepLinks,
   },
+  "auth-session": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes:
+      "openAuthSession(url, { callbackScheme }) (and completeAuthSession() on a web callback page)",
+    options: ["schemes"],
+    configure: configureAuthSession,
+  },
   push: {
     npm: "@capacitor/push-notifications",
     version: "^8.1.2",
@@ -290,9 +347,9 @@ export interface CapabilityPlan {
   /** The `@capacitor/core` major found, and where it was read. */
   readonly capacitorMajor: number;
   readonly capacitorSource: "installed" | "package.json";
-  /** The package install, then `cap sync`. */
-  readonly install: PlannedCommand;
-  readonly sync: PlannedCommand;
+  /** The package install, then `cap sync` (neither when no capability has an npm package). */
+  readonly install?: PlannedCommand;
+  readonly sync?: PlannedCommand;
   /** Info.plist keys to add when absent. */
   readonly plist: ReadonlyArray<{ key: string; value: string }>;
   /** Android permissions to declare. */
@@ -315,17 +372,21 @@ export interface NativeEditPlan {
   readonly entitlements: readonly NativeEdit[];
   readonly manifest: readonly NativeEdit[];
   readonly appDelegate: readonly NativeEdit[];
+  /** denext's own native plugins to install from their templates. */
+  readonly installs: readonly NativeInstallStep[];
 }
 
 /** What {@linkcode addMobileCapabilities} did, as project-relative paths and notes. */
 export interface AddCapabilitiesReport {
   readonly plan: CapabilityPlan;
-  /** Native config files changed. */
+  /** Native files changed (config files, and denext plugin templates and their wiring). */
   readonly written: string[];
-  /** Native config files already as they would be written. */
+  /** Native files already as they would be written. */
   readonly unchanged: string[];
   /** Platforms or edits skipped, with the reason. */
   readonly skipped: string[];
+  /** Steps the native plugin installs could not automate (edited files kept, and the like). */
+  readonly manual: string[];
   /** The commands run, each as one line (empty for a dry run). */
   readonly ran: string[];
 }
@@ -348,6 +409,8 @@ export interface AddCapabilitiesOptions {
   readonly schemes?: readonly string[];
   /** `--domain`: universal link / app link domains (deep-links). */
   readonly domains?: readonly string[];
+  /** `--force`: replace denext plugin templates that were edited (auth-session). */
+  readonly force?: boolean;
 }
 
 const CAPACITOR_CONFIGS = [
@@ -518,6 +581,7 @@ function configureAll(
       entitlements: configs.flatMap((c) => c.entitlements ?? []),
       manifest: configs.flatMap((c) => c.manifest ?? []),
       appDelegate: configs.flatMap((c) => c.appDelegate ?? []),
+      installs: configs.flatMap((c) => c.install ? [c.install] : []),
     },
     requiredFiles: Object.assign({}, ...configs.map((c) => c.requiredFiles ?? {})),
     manual: configs.flatMap((c) => c.manual ?? []),
@@ -611,6 +675,7 @@ export async function planMobileCapabilities(
   }
   const { manager, lockfile } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
+  const specs = caps.flatMap((c) => c.npm ? [`${c.npm}@${c.version}`] : []);
   const target = await entitlementsTarget(root);
   return {
     root,
@@ -619,8 +684,8 @@ export async function planMobileCapabilities(
     lockfile,
     capacitorMajor: core.major,
     capacitorSource: core.source,
-    install: addCommand(manager, caps.map((c) => `${c.npm}@${c.version}`), root),
-    sync: { cmd: "npx", args: ["cap", "sync"], cwd: root },
+    install: specs.length > 0 ? addCommand(manager, specs, root) : undefined,
+    sync: specs.length > 0 ? { cmd: "npx", args: ["cap", "sync"], cwd: root } : undefined,
     plist: caps.flatMap((c) =>
       Object.entries(c.iosPlist ?? {}).map(([key, value]) => ({ key, value }))
     ),
@@ -654,7 +719,8 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
     `  package mgr    ${plan.packageManager}${
       plan.lockfile ? ` (${plan.lockfile})` : " (no lockfile)"
     }`,
-    `  install        ${commandLine(plan.install)}`,
+    `  install        ${plan.install ? commandLine(plan.install) : "(no npm package)"}`,
+    ...plan.native.installs.map((i) => `  native         ${i.label}`),
     ...plan.plist.map((p) => `  Info.plist     ${p.key} (when absent)`),
     ...plan.native.infoPlist.map((e) => `  Info.plist     ${e.label}`),
     ...plan.native.entitlements.map((e) =>
@@ -663,7 +729,7 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
     ...plan.native.appDelegate.map((e) => `  AppDelegate    ${e.label}`),
     ...plan.permissions.map((p) => `  manifest       <uses-permission ${p}>`),
     ...plan.native.manifest.map((e) => `  manifest       ${e.label}`),
-    `  sync           ${commandLine(plan.sync)}`,
+    ...(plan.sync ? [`  sync           ${commandLine(plan.sync)}`] : []),
     ...plan.warnings.map((w) => `  WARNING        ${w}`),
   ];
   if (plan.manual.length > 0) {
@@ -685,7 +751,9 @@ export function formatCapabilityTable(
   table: Readonly<Record<string, MobileCapability>> = MOBILE_CAPABILITIES,
 ): string {
   return Object.entries(table).map(([name, c]) =>
-    `  ${name.padEnd(14)}${`${c.npm}@${c.version}`.padEnd(46)}${c.notes ?? ""}`
+    `  ${name.padEnd(14)}${
+      (c.npm ? `${c.npm}@${c.version}` : "(denext native plugin)").padEnd(46)
+    }${c.notes ?? ""}`
   ).join("\n");
 }
 
@@ -739,9 +807,10 @@ async function runChecked(
 
 /**
  * Install capabilities into a Capacitor project: plan (see
- * {@linkcode planMobileCapabilities}), then add the packages, write the Info.plist keys,
- * entitlements, AppDelegate forwarding and Android manifest entries the capabilities need, and
- * run `npx cap sync`. With `dryRun` it only plans.
+ * {@linkcode planMobileCapabilities}), then add the packages, install denext's own native
+ * plugins (auth-session), write the Info.plist keys, entitlements, AppDelegate forwarding and
+ * Android manifest entries the capabilities need, and run `npx cap sync` (only when packages
+ * were added). With `dryRun` it only plans.
  *
  * @param opts The capability names, where to look, and the command runner.
  * @returns The plan, the native files changed, and the commands run.
@@ -755,11 +824,19 @@ export async function addMobileCapabilities(
     written: [],
     unchanged: [],
     skipped: [],
+    manual: [],
     ran: [],
   };
   if (opts.dryRun) return report;
   if (!opts.run) throw new Error("addMobileCapabilities: a command runner is required.");
-  await runChecked(opts.run, plan.install, report.ran);
+  if (plan.install) await runChecked(opts.run, plan.install, report.ran);
+  for (const step of plan.native.installs) {
+    const done = await step.run({ dir: plan.root, force: opts.force });
+    report.written.push(...done.written);
+    report.unchanged.push(...done.unchanged);
+    report.skipped.push(...done.skipped);
+    report.manual.push(...done.manual);
+  }
   const plistDefaults = plan.plist.map((p): NativeEdit => ({
     label: p.key,
     apply: (text) => withPlistDefault(text, p.key, p.value),
@@ -774,6 +851,6 @@ export async function addMobileCapabilities(
     apply: (text) => withManifestPermission(text, p),
   }));
   await editNative(report, ANDROID_MANIFEST, [...permissions, ...plan.native.manifest]);
-  await runChecked(opts.run, plan.sync, report.ran);
+  if (plan.sync) await runChecked(opts.run, plan.sync, report.ran);
   return report;
 }
