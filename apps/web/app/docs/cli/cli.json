@@ -539,9 +539,9 @@
     },
     {
       "name": "mobile",
-      "summary": "Capacitor helpers (add-ota: install over-the-air UI updates)",
-      "usage": "denext mobile <action> [dir] [options]",
-      "description": "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n\n  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n  left alone and listed as one-line manual steps. Safe to run again, and run it after every\n  denext upgrade: unedited templates from an earlier denext are upgraded in place (ship a\n  new app binary afterwards).\n\n  --public-key ota.key.pub (from `denext ota keygen`) embeds the verifying key as Info.plist\n  DenextOtaPublicKey and the dev.denext.ota.PUBLIC_KEY meta-data in AndroidManifest.xml\n  (replacing an earlier one); the app then refuses any manifest not signed with its key.\n  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n  template was kept.",
+      "summary": "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates)",
+      "usage": "denext mobile <action> [args...] [options]",
+      "description": "  denext mobile add <capability...>\n                                Add the Capacitor plugins behind denext/mobile's\n                                capability functions, then `npx cap sync`\n  denext mobile add deep-links --scheme myapp --domain app.example.com\n                                Register a URL scheme and universal / app link domains\n  denext mobile add push        Push notifications (entitlement, AppDelegate, permission)\n  denext mobile add --list      List the capabilities and the plugins they install\n  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n\n  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n  with no fallback, else the current directory), refuses when its @capacitor/core major\n  is not the one the pinned plugins target, adds the packages with the package manager\n  its lockfile names (pnpm, npm, bun or yarn; npm without one), adds any Info.plist keys\n  (never replacing yours) and Android permissions the capability needs, and runs\n  `npx cap sync`. --dry-run prints the plan and changes nothing. Ship a new app binary\n  afterwards.\n\n  deep-links takes --scheme (CFBundleURLTypes + a VIEW intent filter) and --domain\n  (applinks: in the entitlements + an autoVerify https intent filter); give several as\n  a comma-separated list. The domains must also serve apple-app-site-association and\n  assetlinks.json. push writes aps-environment (development) into the entitlements, the\n  token forwarding into AppDelegate.swift and POST_NOTIFICATIONS into the manifest, and\n  warns when android/app/google-services.json (FCM) is missing. A new entitlements file\n  (ios/App/App/App.entitlements) must be selected in Xcode (Code Signing Entitlements);\n  the steps left to do by hand are printed.\n\n  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n  left alone and listed as one-line manual steps. Safe to run again, and run it after every\n  denext upgrade: unedited templates from an earlier denext are upgraded in place (ship a\n  new app binary afterwards).\n\n  --public-key ota.key.pub (from `denext ota keygen`) embeds the verifying key as Info.plist\n  DenextOtaPublicKey and the dev.denext.ota.PUBLIC_KEY meta-data in AndroidManifest.xml\n  (replacing an earlier one); the app then refuses any manifest not signed with its key.\n  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n  template was kept.",
       "flags": [
         {
           "name": "force",
@@ -553,6 +553,34 @@
           "type": "string",
           "valueName": "<file>",
           "description": "Embed this OTA public key (base64 SPKI or PUBLIC KEY PEM) so the app verifies signatures"
+        },
+        {
+          "name": "dir",
+          "type": "string",
+          "valueName": "<dir>",
+          "description": "add: the Capacitor project, with no fallback (default: the current directory)"
+        },
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "add: print the plan (packages, native config, commands) and change nothing"
+        },
+        {
+          "name": "list",
+          "type": "boolean",
+          "description": "add: list the capabilities and the plugins they install"
+        },
+        {
+          "name": "scheme",
+          "type": "string",
+          "valueName": "<scheme[,scheme]>",
+          "description": "add deep-links: custom URL schemes to register (comma-separated)"
+        },
+        {
+          "name": "domain",
+          "type": "string",
+          "valueName": "<host[,host]>",
+          "description": "add deep-links: universal link / app link domains (comma-separated)"
         }
       ],
       "positionals": [
@@ -560,13 +588,13 @@
           "name": "action",
           "required": true,
           "variadic": false,
-          "description": "add-ota"
+          "description": "add | add-ota"
         },
         {
-          "name": "dir",
+          "name": "args",
           "required": false,
-          "variadic": false,
-          "description": "The Capacitor project (default: .)"
+          "variadic": true,
+          "description": "add: capability names (see --list); add-ota: the Capacitor project (default: .)"
         }
       ]
     },
