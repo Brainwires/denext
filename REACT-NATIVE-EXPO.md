@@ -28,11 +28,12 @@ out of scope and Capacitor/WebView stays the mobile story. The actionable items 
 2. **OTA runtime-version gate.** `expo-updates` refuses an update built for a newer native layer
    (`runtimeVersion`). In 2.8.3 denext's OTA did not check this: an OTA UI whose JS calls a
    native plugin the installed binary lacks would boot and then fail, and the 15 s watchdog only
-   catches a UI that never boots. A native-version gate (a version field in `_denext/ota.json`
-   compared natively before download/apply) and downgrade protection are being added in the next
-   release. Still open after that: a fingerprint check of the native layer (Expo's
-   `mobile-fingerprint-check` equivalent) so CI knows whether a change can ship over the air or
-   needs a binary release.
+   catches a UI that never boots. denext 2.9.0 shipped the fix: the manifest carries `minNative`
+   (`denext ota manifest --min-native`), and the native plugin refuses with code `native_too_old`
+   when the installed binary is older; a signed `sequence` makes native refuse a lower one with
+   code `downgrade`. Both live inside the v2 signed payload. Still open: a fingerprint check of
+   the native layer (Expo's `mobile-fingerprint-check` equivalent) so CI knows whether a change
+   can ship over the air or needs a binary release.
 
 3. **Auth sessions + deep links.** T3 signs in with Clerk via `expo-auth-session` /
    `expo-web-browser`: OAuth in a system browser sheet that returns to the app through a URL
@@ -88,7 +89,7 @@ that general.
 
 - **OTA updates** (`expo-updates`): done in denext 2.7–2.8, with an app-driven update prompt
   and signed manifests (ECDSA P-256, public key in the binary). The native-version gate and
-  downgrade protection (gap 2) are added in the next release.
+  downgrade protection (gap 2) shipped in 2.9.0.
 - **Momentum scrolling in virtualized lists** (what `FlashList` / `FlatList` get natively):
   denext 2.8.3 keeps iOS WebKit's momentum fling alive while a virtualized list (LegendList,
   react-virtuoso, TanStack Virtual) corrects its scroll offset — on by default, in Capacitor and
@@ -120,9 +121,60 @@ that general.
 
   Together they cover what T3 actually uses.
 
+## Compatibility layer: running Expo / React Native apps
+
+Everything above is about denext/Capacitor apps consuming Capacitor plugins the way Expo apps
+consume `expo-*` packages. A different, larger question: could an existing Expo / React Native
+app's source run on denext mostly unchanged, the way a Next.js app does? That's a compatibility
+layer, in three parts.
+
+1. **Components** (`<View>`, `<Text>`, `StyleSheet`, `FlatList`, `Pressable`, `Animated`,
+   `Platform`, `Linking` …).
+   - react-native-web already implements the React Native primitives on the DOM, on top of
+     React/ReactDOM, which denext's compat stands in for.
+   - T3's 5,121 vitest tests pass against denext's React compat, which shows the alias approach
+     works.
+   - denext work:
+     - run react-native-web on denext compat and fix what breaks;
+     - a bundler "react-native" resolve mode: `react-native` → `react-native-web`, `.web.tsx`
+       before `.tsx`, the `__DEV__`/`global` defines, and Metro-style `require("./img.png")`
+       with `@2x`/`@3x`;
+     - `denext migrate --from expo`.
+2. **`expo-*` API shims**, aliased the same way `react` → denext is.
+   - Each `expo-*` import maps to a `denext/expo/*` module with the same API: a thin layer over
+     the `denext/mobile` capability functions, each backed by a Capacitor plugin or a web API.
+     Example: `expo-haptics` → `@capacitor/haptics`.
+   - The work is finite: T3 uses about 35 `expo-*` packages, and `scripts/parity` can check
+     signature parity against each package's types.
+   - The limit: some Expo/RN APIs are synchronous because they run over JSI (the sync
+     `expo-sqlite` API, MMKV). The Capacitor bridge is async, so those shims are async-only
+     unless a web API backs them (localStorage, OPFS sync handles in a worker).
+3. **Third-party React Native packages**, in three buckets:
+   - **pure JS on RN primitives:** these work once layer 1 works;
+   - **packages with a web implementation** (reanimated, gesture-handler, react-native-svg,
+     safe-area-context, screens, `@legendapp/list`): these work through `.web.*` resolution with
+     reduced features, e.g. reanimated worklets run on the main thread;
+   - **native-only** (TurboModules, Nitro, JSI: vision-camera frame processors,
+     `react-native-nitro-*`, T3's `t3-terminal`): these can't run in a WebView. Each needs a
+     Capacitor-backed shim or stays unsupported. It's the same boundary Expo web has.
+
+**Caveat:** the risk is performance, not feasibility. UI-thread animations, native navigation
+stacks and native lists become DOM equivalents. That's fine on iOS WKWebView; Android needs a
+real-device measurement.
+
+**First step, a measured spike:** alias `react-native` → `react-native-web` and `expo-*` →
+stubs, build T3's `apps/mobile/src` with denext, and count the failures by bucket (resolver,
+missing shim, native-only, denext compat bug). The results go in a table in this section;
+placeholder: table pending.
+
+**Scope:** rendering stays WebView/DOM. This is API compatibility, not native rendering, so
+it's consistent with POLICIES.md.
+
 ## Suggested order
 
 1. Push notifications, the OTA runtime-version gate, auth sessions + deep links, and the
    `mobile add <capability>` wrapper pattern. These are what T3 would hit on day one.
 2. App extensions (share, widgets, Live Activities) and dev-server attach.
 3. Android native feel: measure on a real device first, then decide what to build.
+4. The compatibility layer: start the measured spike in parallel with item 1, then the
+   `react-native` resolve mode, the `denext/expo/*` shims, and `migrate --from expo`.
