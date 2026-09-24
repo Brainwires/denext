@@ -8,12 +8,40 @@ import type { Fiber } from "./fiber.ts";
 import type { VNode } from "../../jsx/types.ts";
 import "../../runtime/class-flag.ts";
 
-/** The document to create nodes in; overridable for tests via {@link setDocument}. */
-export let doc: Document = (globalThis as { document?: Document }).document!;
+/**
+ * The document the render in progress creates nodes in. Resolved per root as its render
+ * starts ({@link enterRootDocument}) — never captured at module load, so a document
+ * installed after import (jsdom / happy-dom setups, test stubs) is the one used.
+ */
+export let doc: Document = undefined as unknown as Document;
+
+/** An explicit document (a test DOM shim), used when a container has no `ownerDocument`. */
+let docOverride: Document | null = null;
 
 /** Override the document implementation (used by tests with a DOM shim). */
 export function setDocument(d: Document): void {
+  docOverride = d;
   doc = d;
+}
+
+/** The page's document outside a render: the {@link setDocument} override, else the global. */
+export function currentDocument(): Document {
+  return docOverride ?? (globalThis as { document?: Document }).document!;
+}
+
+/**
+ * The document nodes for `container` are created in, as React does: the container itself
+ * when it is a document, else its `ownerDocument`; for a container with neither (a bare
+ * shim), the {@link setDocument} override, then the current global `document`.
+ */
+function documentFor(container: Node): Document {
+  if (container.nodeType === 9) return container as Document;
+  return container.ownerDocument ?? currentDocument();
+}
+
+/** Point node creation at `handle`'s document — called as each render (or slice) of it starts. */
+export function enterRootDocument(handle: RootHandle): void {
+  doc = documentFor(handle.container);
 }
 
 /** One mounted root: its container, committed tree and pending work. */

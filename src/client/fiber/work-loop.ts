@@ -1,7 +1,7 @@
 // The work loop: renderRoot (the synchronous render-and-commit loop) and the
 // time-sliced concurrent render for the transition lane.
 
-import { activeRoots, fiberToRoot } from "./state.ts";
+import { activeRoots, enterRootDocument, fiberToRoot } from "./state.ts";
 import type { RootHandle } from "./state.ts";
 import {
   abandonConcurrent,
@@ -130,6 +130,8 @@ export function resumeConcurrent(): void {
  * on the first check would otherwise spin forever).
  */
 function renderSlice(): void {
+  // A sync render of another root may have run since the last slice: re-point node creation.
+  enterRootDocument(concurrentHandle!);
   setRenderLanes(TransitionLane);
   startSlice();
   setDuringRender(true);
@@ -208,6 +210,7 @@ export function renderRoot(handle: RootHandle, lanes: number): void {
     wipRoot.pendingElement = handle.pendingElement;
     wipRoot.host = wipRoot;
     setDuringRender(true);
+    enterRootDocument(handle);
     const hydrate = handle.hydrate;
     if (hydrate) beginHydration(handle.container, handle.hydrateStart);
     let wip: Fiber | null = wipRoot;

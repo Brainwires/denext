@@ -30,6 +30,15 @@ import { classComponentsDisabledError, isClassComponent } from "../compat/class-
 import { renderClassToVNode } from "../compat/class-base.ts";
 import { markClassRendered } from "../runtime/render-scope.ts";
 import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import {
+  aliasedAttrName,
+  booleanAttrName,
+  dropsBooleanValue,
+  isBooleanishAttr,
+  omitsAttrValue,
+  serializeStyle,
+} from "./dom-attributes.ts";
+export { serializeStyle } from "./dom-attributes.ts";
 import { enterScope, type IdHolder, type IdScope, nextId, rootScope } from "./tree-id.ts";
 export type { IdHolder } from "./tree-id.ts";
 
@@ -49,22 +58,6 @@ export const VOID_ELEMENTS = new Set([
   "source",
   "track",
   "wbr",
-]);
-
-/** Attributes that are booleans in HTML (rendered bare when truthy). */
-const BOOLEAN_ATTRS = new Set([
-  "checked",
-  "selected",
-  "disabled",
-  "readonly",
-  "multiple",
-  "required",
-  "autofocus",
-  "hidden",
-  "async",
-  "defer",
-  "open",
-  "novalidate",
 ]);
 
 const ESCAPE_RE = /[&<>"']/g;
@@ -991,6 +984,7 @@ export function serializeAttributes(
   // Collects `eventType:qrlId` pairs for any qrl handler, emitted as data-dnx-h so
   // the client can dispatch the handler without running the component (stage 4).
   let dnxH = "";
+  const custom = isCustomElement(tag);
   // Object.keys + index avoids the [key, value] tuple array Object.entries
   // allocates per element (a real cost on prop-heavy nodes).
   const keys = Object.keys(props);
@@ -1007,7 +1001,7 @@ export function serializeAttributes(
       if (mark) dnxH += (dnxH ? " " : "") + mark;
       continue;
     }
-    out += attributeFor(rawName, value, tag);
+    out += attributeFor(rawName, value, tag, custom);
   }
   if (dnxH) out += ` ${DNX_H_ATTR}="${escapeHtml(dnxH)}"`;
   return out;
@@ -1022,6 +1016,9 @@ const STRUCTURAL_PROPS = new Set([
   // React's opt-out for a text child that legitimately differs between server and client
   // (a timestamp); the hydrator reads it off the vnode, the DOM never sees it.
   "suppressHydrationWarning",
+  // React-owned props that never reach the markup.
+  "suppressContentEditableWarning",
+  "innerHTML",
   PROVIDER_KEY,
 ]);
 
@@ -1058,33 +1055,99 @@ function formActionUrl(value: unknown): string | null {
   return typeof permalink === "string" ? permalink : null;
 }
 
-/** One prop's attribute text (leading space), or "" when it is dropped. */
-function attributeFor(rawName: string, value: unknown, tag: string | undefined): string {
-  if (rawName === "action" || rawName === "formAction") {
-    const url = formActionUrl(value);
-    if (url !== null) return ` ${rawName.toLowerCase()}="${escapeHtml(url)}"`;
-  }
+/** `defaultValue`/`defaultChecked` render as the attribute they seed (a no-JS form is filled in). */
+const FORM_DEFAULTS: Readonly<Record<string, string>> = {
+  defaultValue: "value",
+  defaultChecked: "checked",
+};
+
+/**
+ * One prop's attribute text (leading space), or "" when it is dropped. Follows React DOM
+ * server's `pushAttribute`: a React boolean prop renders `name=""` when truthy (see
+ * {@link booleanAttrName}), a renamed prop takes its alias, and a custom element keeps its
+ * props as written.
+ */
+function attributeFor(
+  rawName: string,
+  value: unknown,
+  tag: string | undefined,
+  custom: boolean,
+): string {
+  const action = formActionAttribute(rawName, value);
+  if (action !== null) return action;
   // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
-  if (typeof value === "function" || value == null) return "";
-  const name = normalizeAttrName(rawName);
-  if (typeof value === "boolean" && isBooleanish(name)) return ` ${name}="${value}"`;
-  if (value === false) return "";
+  if (typeof value === "function" || typeof value === "symbol" || value == null) return "";
+  if (custom) return customElementAttribute(rawName, value, tag);
+  const prop = FORM_DEFAULTS[rawName] ?? rawName;
+  const booleanName = booleanAttrName(prop);
+  if (booleanName !== undefined) return value ? ` ${booleanName}=""` : "";
+  return namedAttribute(prop, aliasedAttrName(prop) ?? prop, value, tag);
+}
+
+/** A server action's endpoint / a permalink for `action`/`formAction`, else null. */
+function formActionAttribute(rawName: string, value: unknown): string | null {
+  if (rawName !== "action" && rawName !== "formAction") return null;
+  const url = formActionUrl(value);
+  return url === null ? null : ` ${rawName.toLowerCase()}="${escapeHtml(url)}"`;
+}
+
+/** A non-boolean React prop's attribute, under its (aliased) attribute `name`. */
+function namedAttribute(
+  prop: string,
+  name: string,
+  value: unknown,
+  tag: string | undefined,
+): string {
   // A textarea's / select's value is its content / the selected option, not an attribute.
-  if ((tag === "textarea" || tag === "select") && name === "value") return "";
   // Drop attribute names that could break out of the tag (defends against a
   // component spreading untrusted keys, e.g. `<div {...untrusted}>`).
-  if (!isValidAttrName(name)) return "";
+  if (isFormContentValue(tag, name) || !isValidAttrName(name)) return "";
+  if (typeof value === "boolean") return booleanValueAttribute(prop, name, value);
+  if (omitsAttrValue(prop, value)) return "";
   // `<iframe srcdoc>` embeds a full HTML document that runs scripts — an XSS
   // sink attribute-escaping can't neutralize. Nudge in dev (no-op in prod).
   if (name === "srcdoc" && tag === "iframe") warnSrcdoc();
   return valueAttribute(name, value, tag);
 }
 
-/** A kept prop's attribute: boolean presence, a style object, or an (URL-sanitized) value. */
+function isFormContentValue(tag: string | undefined, name: string): boolean {
+  return name === "value" && (tag === "textarea" || tag === "select");
+}
+
+/**
+ * A boolean passed to a prop that is not a React boolean: the string `"true"`/`"false"`
+ * for an enumerated/`aria-*`/`data-*` attribute, omitted when false or for a prop React
+ * writes only as a string. A `true` on any other name renders `name=""` — the value the
+ * client reconciler sets (React drops it with a warning).
+ */
+function booleanValueAttribute(prop: string, name: string, value: boolean): string {
+  if (isBooleanishAttr(name)) return ` ${name}="${value}"`;
+  return value && !dropsBooleanValue(prop) ? ` ${name}=""` : "";
+}
+
+/**
+ * A custom element's attribute (React's `pushStartCustomElement`): the prop name as
+ * written (only `className` becomes `class`), `true` as `""`, and `false` or a non-style
+ * object omitted.
+ */
+function customElementAttribute(rawName: string, value: unknown, tag: string | undefined): string {
+  const name = rawName === "className" ? "class" : rawName;
+  if (value === false || !isValidAttrName(name)) return "";
+  if (value === true) return ` ${name}=""`;
+  if (typeof value === "object" && name !== "style") return "";
+  return valueAttribute(name, value, tag);
+}
+
+/** React DOM server's custom-element test (`pushStartInstance`): a hyphenated tag name. */
+function isCustomElement(tag: string | undefined): boolean {
+  return tag !== undefined && tag.includes("-");
+}
+
+/** A kept prop's attribute: a style object, or an (URL-sanitized) value. */
 function valueAttribute(name: string, value: unknown, tag: string | undefined): string {
-  if (BOOLEAN_ATTRS.has(name) || value === true) return value ? ` ${name}` : "";
   if (name === "style" && typeof value === "object") {
-    return ` style="${escapeHtml(serializeStyle(value as Record<string, unknown>))}"`;
+    const css = serializeStyle(value as Record<string, unknown>);
+    return css === "" ? "" : ` style="${escapeHtml(css)}"`;
   }
   // Drop a dangerous URL scheme (javascript:/vbscript:/executable data:) in a
   // URL-bearing attribute; a no-op for every other attribute.
@@ -1099,161 +1162,3 @@ function domEventType(onProp: string): string {
   const l = n.toLowerCase();
   return l === "change" ? "input" : l === "doubleclick" ? "dblclick" : l;
 }
-
-/**
- * React's camelCase → HTML/SVG attribute names: the two HTML renames, the hyphenated HTML
- * pair, the `xlink:`/`xml:`/`xmlns:` namespaced SVG attributes, and the hyphenated SVG
- * presentation attributes (`strokeWidth` → `stroke-width`). Everything else is emitted as
- * written (HTML attribute names are case-insensitive, so `autoComplete` is fine as-is).
- */
-const ATTR_RENAMES: Record<string, string> = {
-  className: "class",
-  htmlFor: "for",
-  httpEquiv: "http-equiv",
-  acceptCharset: "accept-charset",
-  defaultValue: "value",
-  defaultChecked: "checked",
-  xlinkActuate: "xlink:actuate",
-  xlinkArcrole: "xlink:arcrole",
-  xlinkHref: "xlink:href",
-  xlinkRole: "xlink:role",
-  xlinkShow: "xlink:show",
-  xlinkTitle: "xlink:title",
-  xlinkType: "xlink:type",
-  xmlBase: "xml:base",
-  xmlLang: "xml:lang",
-  xmlSpace: "xml:space",
-  xmlnsXlink: "xmlns:xlink",
-};
-const HYPHENATED_SVG = new Set([
-  "accent-height",
-  "alignment-baseline",
-  "arabic-form",
-  "baseline-shift",
-  "cap-height",
-  "clip-path",
-  "clip-rule",
-  "color-interpolation",
-  "color-interpolation-filters",
-  "color-profile",
-  "color-rendering",
-  "dominant-baseline",
-  "enable-background",
-  "fill-opacity",
-  "fill-rule",
-  "flood-color",
-  "flood-opacity",
-  "font-family",
-  "font-size",
-  "font-size-adjust",
-  "font-stretch",
-  "font-style",
-  "font-variant",
-  "font-weight",
-  "glyph-name",
-  "glyph-orientation-horizontal",
-  "glyph-orientation-vertical",
-  "horiz-adv-x",
-  "horiz-origin-x",
-  "image-rendering",
-  "letter-spacing",
-  "lighting-color",
-  "marker-end",
-  "marker-mid",
-  "marker-start",
-  "overline-position",
-  "overline-thickness",
-  "paint-order",
-  "panose-1",
-  "pointer-events",
-  "rendering-intent",
-  "shape-rendering",
-  "stop-color",
-  "stop-opacity",
-  "strikethrough-position",
-  "strikethrough-thickness",
-  "stroke-dasharray",
-  "stroke-dashoffset",
-  "stroke-linecap",
-  "stroke-linejoin",
-  "stroke-miterlimit",
-  "stroke-opacity",
-  "stroke-width",
-  "text-anchor",
-  "text-decoration",
-  "text-rendering",
-  "underline-position",
-  "underline-thickness",
-  "unicode-bidi",
-  "unicode-range",
-  "units-per-em",
-  "v-alphabetic",
-  "v-hanging",
-  "v-ideographic",
-  "v-mathematical",
-  "vector-effect",
-  "vert-adv-y",
-  "vert-origin-x",
-  "vert-origin-y",
-  "word-spacing",
-  "writing-mode",
-  "x-height",
-]);
-
-/** Map JSX prop names to HTML attribute names (see {@link ATTR_RENAMES}). */
-function normalizeAttrName(name: string): string {
-  const renamed = ATTR_RENAMES[name];
-  if (renamed) return renamed;
-  if (/[A-Z]/.test(name)) {
-    const kebab = name.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
-    if (HYPHENATED_SVG.has(kebab)) return kebab;
-  }
-  return name;
-}
-
-/**
- * Attributes React serializes as the strings `"true"`/`"false"` rather than by presence:
- * the enumerated HTML attributes plus every `aria-*`/`data-*` (`aria-hidden=""` is not
- * "true", and a bare `draggable` is invalid HTML).
- */
-const BOOLEANISH_ATTRS = new Set(["contenteditable", "draggable", "spellcheck", "autocapitalize"]);
-function isBooleanish(name: string): boolean {
-  return BOOLEANISH_ATTRS.has(name.toLowerCase()) || name.startsWith("aria-") ||
-    name.startsWith("data-");
-}
-
-/** Serialize a style object ({ marginTop: 4 }) to CSS text. */
-export function serializeStyle(style: Record<string, unknown>): string {
-  let css = "";
-  const keys = Object.keys(style);
-  for (let i = 0; i < keys.length; i++) {
-    const prop = keys[i];
-    const value = style[prop];
-    if (value == null || value === false) continue;
-    if (value === "") continue;
-    const custom = prop.startsWith("--");
-    // `msTransition` → `-ms-transition` (React's vendor rule); custom properties as written.
-    const kebab = custom ? prop : prop.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)
-      .replace(/^ms-/, "-ms-");
-    const unit = typeof value === "number" && value !== 0 && !custom && !UNITLESS.has(kebab)
-      ? "px"
-      : "";
-    css += `${kebab}:${value}${unit};`;
-  }
-  return css;
-}
-
-/** CSS properties that take unitless numbers. */
-const UNITLESS = new Set([
-  "opacity",
-  "z-index",
-  "font-weight",
-  "line-height",
-  "flex",
-  "flex-grow",
-  "flex-shrink",
-  "order",
-  "grid-row",
-  "grid-column",
-  "columns",
-]);

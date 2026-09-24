@@ -326,7 +326,7 @@ Deno.test("--read-only refuses every Setup write and says so on the page", async
     const page = await fetch(`${h.base}/setup`, { headers: h.headers });
     const body = await page.text();
     assertStringIncludes(body, "Read-only mode");
-    assertStringIncludes(body, '<button type="submit" disabled>');
+    assertStringIncludes(body, '<button type="submit" disabled="">');
   } finally {
     await stop(h);
   }

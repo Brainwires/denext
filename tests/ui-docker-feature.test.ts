@@ -200,7 +200,7 @@ Deno.test("the panel prefills the mode detectDockerMode picks, for a server and 
       const detected = await detectDockerMode(h.dir);
       assertEquals(detected, spa ? "static" : "server");
       const body = await (await get(h, "/docker")).text();
-      assertStringIncludes(body, `<option value="${detected}" selected>`);
+      assertStringIncludes(body, `<option value="${detected}" selected="">`);
       assert(!body.includes("Not implemented yet"), "the stub is gone");
       assert(!body.includes("<script>"), "no inline script");
       assertStringIncludes(body, `name="${UI_CSRF_FIELD}"`);
@@ -546,7 +546,7 @@ Deno.test("compose editor: a generated file lists every service in source order,
       body,
       '<input name="env.0" aria-label="Value of NODE_ENV" type="text" value="production">',
     );
-    assertStringIncludes(body, '<option value="unless-stopped" selected>');
+    assertStringIncludes(body, '<option value="unless-stopped" selected="">');
     assertStringIncludes(body, "commented out · line");
     assertStringIncludes(body, 'value="toggle"');
     assertStringIncludes(body, 'value="remove:0:ports"');
@@ -578,7 +578,7 @@ Deno.test("compose editor: a hand-written file without the sentinel is 'edited' 
     const body = await (await get(h, "/docker?tab=services")).text();
     assertStringIncludes(body, 'id="compose-api"');
     assertStringIncludes(body, 'id="compose-cache"');
-    assertStringIncludes(body, '<option value="always" selected>always</option>');
+    assertStringIncludes(body, '<option value="always" selected="">always</option>');
     assertStringIncludes(body, '<option value="cache">cache</option>', "depends_on offers peers");
     assertStringIncludes(body, "environment (map form)");
     assert(!body.includes("generated-file header"), "no regeneration warning without a sentinel");

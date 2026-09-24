@@ -31,9 +31,9 @@ Deno.test("void elements have no closing tag", async () => {
   assertEquals(html, '<input type="text" value="a">');
 });
 
-Deno.test("boolean attributes render bare or are omitted", async () => {
+Deno.test("boolean attributes render as empty strings or are omitted", async () => {
   const on = await renderToString(h("input", { disabled: true }));
-  assertEquals(on, "<input disabled>");
+  assertEquals(on, '<input disabled="">');
   const off = await renderToString(h("input", { disabled: false }));
   assertEquals(off, "<input>");
 });
@@ -45,7 +45,7 @@ Deno.test("event handlers are stripped during SSR", async () => {
 
 Deno.test("style objects serialize with px defaults", () => {
   const css = serializeStyle({ marginTop: 4, opacity: 0.5, color: "red" });
-  assertEquals(css, "margin-top:4px;opacity:0.5;color:red;");
+  assertEquals(css, "margin-top:4px;opacity:0.5;color:red");
 });
 
 Deno.test("function components render, including async ones", async () => {
@@ -169,7 +169,7 @@ Deno.test("SSR attributes follow ReactDOMServer: form defaults (value/checked/te
   // `defaultValue`/`defaultChecked` render as `value`/`checked` so a form is filled in without JS.
   assertEquals(
     renderToStringSync(h("input", { defaultValue: "d", defaultChecked: true })),
-    '<input value="d" checked>',
+    '<input value="d" checked="">',
   );
   // A textarea's value is its text; a select's value marks the matching option(s) selected.
   assertEquals(
@@ -185,7 +185,7 @@ Deno.test("SSR attributes follow ReactDOMServer: form defaults (value/checked/te
         h("option", { value: "b" }, "B"),
       ),
     ),
-    '<select><option value="a">A</option><option value="b" selected>B</option></select>',
+    '<select><option value="a">A</option><option value="b" selected="">B</option></select>',
   );
   assertEquals(
     renderToStringSync(
@@ -201,12 +201,12 @@ Deno.test("SSR attributes follow ReactDOMServer: form defaults (value/checked/te
         ),
       ),
     ),
-    '<select multiple><optgroup label="g"><option selected>a</option><option selected>b</option><option>c</option></optgroup></select>',
+    '<select multiple=""><optgroup label="g"><option selected="">a</option><option selected="">b</option><option>c</option></optgroup></select>',
   );
 });
 
 Deno.test("SSR attributes follow ReactDOMServer: booleanish values, name map, style", () => {
-  // Enumerated + aria/data attributes serialize "true"/"false"; real booleans stay bare.
+  // Enumerated + aria/data attributes serialize "true"/"false"; real booleans render `=""`.
   assertEquals(
     renderToStringSync(
       h("div", {
@@ -217,7 +217,7 @@ Deno.test("SSR attributes follow ReactDOMServer: booleanish values, name map, st
         hidden: true,
       }),
     ),
-    '<div draggable="true" spellCheck="false" aria-hidden="true" data-x="false" hidden></div>',
+    '<div draggable="true" spellCheck="false" aria-hidden="true" data-x="false" hidden=""></div>',
   );
   // React's camelCase → attribute-name map (HTML pair, SVG hyphenation, xlink namespace).
   assertEquals(
@@ -233,6 +233,174 @@ Deno.test("SSR attributes follow ReactDOMServer: booleanish values, name map, st
   // Style: custom properties never get `px`, `ms` vendor prefix hyphenates, empty values drop.
   assertEquals(
     renderToStringSync(h("i", { style: { "--x": 1, msTransition: "a", height: "", width: 4 } })),
-    '<i style="--x:1;-ms-transition:a;width:4px;"></i>',
+    '<i style="--x:1;-ms-transition:a;width:4px"></i>',
   );
+});
+
+Deno.test("SSR attributes follow ReactDOMServer: the reported tabIndex/autoFocus/disabled cases", () => {
+  // Found running T3 Code's vitest suite against denext: React writes these exact strings.
+  assertEquals(renderToStringSync(h("pre", { tabIndex: 0 })), '<pre tabindex="0"></pre>');
+  assertEquals(
+    renderToStringSync(h("textarea", { autoFocus: true })),
+    '<textarea autofocus=""></textarea>',
+  );
+  assertEquals(
+    renderToStringSync(h("button", { disabled: true })),
+    '<button disabled=""></button>',
+  );
+  // React leaves these camelCased — HTML attribute names are case-insensitive.
+  assertEquals(
+    renderToStringSync(h("input", { readOnly: true, maxLength: 5, contentEditable: true })),
+    '<input readOnly="" maxLength="5" contentEditable="true">',
+  );
+});
+
+Deno.test("SSR attributes follow ReactDOMServer: every boolean prop, true and false", () => {
+  const props = [
+    "allowFullScreen",
+    "async",
+    "autoPlay",
+    "checked",
+    "controls",
+    "default",
+    "defer",
+    "disabled",
+    "disablePictureInPicture",
+    "disableRemotePlayback",
+    "formNoValidate",
+    "hidden",
+    "inert",
+    "itemScope",
+    "loop",
+    "noModule",
+    "noValidate",
+    "open",
+    "playsInline",
+    "readOnly",
+    "required",
+    "reversed",
+    "scoped",
+    "seamless",
+    "selected",
+  ];
+  const on = Object.fromEntries(props.map((p) => [p, true]));
+  const off = Object.fromEntries(props.map((p) => [p, false]));
+  assertEquals(
+    renderToStringSync(h("div", on)),
+    `<div ${props.map((p) => `${p}=""`).join(" ")}></div>`,
+  );
+  assertEquals(renderToStringSync(h("div", off)), "<div></div>");
+  // The three React lowercases; truthiness decides presence, as in React.
+  assertEquals(
+    renderToStringSync(h("video", { autoFocus: 1, multiple: "yes", muted: true })),
+    '<video autofocus="" multiple="" muted=""></video>',
+  );
+  assertEquals(
+    renderToStringSync(h("video", { autoFocus: 0, multiple: "", muted: false, controls: null })),
+    "<video></video>",
+  );
+  // Overloaded booleans: `true` is presence, `false` is absence, a string is a value.
+  assertEquals(
+    renderToStringSync(h("a", { download: true, capture: false })),
+    '<a download=""></a>',
+  );
+  assertEquals(renderToStringSync(h("a", { download: "f.txt" })), '<a download="f.txt"></a>');
+});
+
+Deno.test("SSR attributes follow ReactDOMServer: renames, string-only props and numeric guards", () => {
+  assertEquals(
+    renderToStringSync(
+      h("img", { className: "c", tabIndex: -1, crossOrigin: "anonymous", htmlFor: "x" }),
+    ),
+    '<img class="c" tabindex="-1" crossorigin="anonymous" for="x">',
+  );
+  assertEquals(
+    renderToStringSync(
+      h("svg", {
+        transformOrigin: "center",
+        strokeLinecap: "round",
+        xmlnsXlink: "u",
+        xmlLang: "en",
+      }),
+    ),
+    '<svg transform-origin="center" stroke-linecap="round" xmlns:xlink="u" xml:lang="en"></svg>',
+  );
+  // A boolean on a renamed or string-only prop is dropped (React's pushStringAttribute).
+  assertEquals(
+    renderToStringSync(h("div", { className: true, tabIndex: false, role: true, width: true })),
+    "<div></div>",
+  );
+  // Booleanish: the string React writes, true AND false (value/SVG enumerated included).
+  assertEquals(
+    renderToStringSync(h("input", { value: true, spellCheck: true, draggable: false })),
+    '<input value="true" spellCheck="true" draggable="false">',
+  );
+  assertEquals(
+    renderToStringSync(h("svg", { focusable: false, preserveAlpha: true })),
+    '<svg focusable="false" preserveAlpha="true"></svg>',
+  );
+  // cols/rows/size/span must be ≥ 1, rowSpan/start numeric; an empty src/href is omitted.
+  assertEquals(
+    renderToStringSync(h("textarea", { cols: 0, rows: 3 })),
+    '<textarea rows="3"></textarea>',
+  );
+  assertEquals(
+    renderToStringSync(h("td", { rowSpan: "x", colSpan: 2, span: -1 })),
+    '<td colSpan="2"></td>',
+  );
+  assertEquals(renderToStringSync(h("ol", { start: 0 })), '<ol start="0"></ol>');
+  assertEquals(renderToStringSync(h("img", { src: "", alt: "" })), '<img alt="">');
+  assertEquals(renderToStringSync(h("a", { href: "" }, "x")), "<a>x</a>");
+  // React-owned props never reach the markup.
+  assertEquals(
+    renderToStringSync(
+      h("div", { suppressContentEditableWarning: true, suppressHydrationWarning: true }),
+    ),
+    "<div></div>",
+  );
+});
+
+Deno.test("SSR attributes follow ReactDOMServer: custom elements keep props as written", () => {
+  assertEquals(
+    renderToStringSync(
+      h("my-el", { className: "a", tabIndex: 0, flag: true, off: false, obj: {}, draggable: true }),
+    ),
+    '<my-el class="a" tabIndex="0" flag="" draggable=""></my-el>',
+  );
+  // A built-in tag is never custom, whatever its props.
+  assertEquals(
+    renderToStringSync(h("button", { is: "x-b", autoFocus: true })),
+    '<button is="x-b" autofocus=""></button>',
+  );
+});
+
+Deno.test("serializeStyle matches ReactDOMServer: no trailing `;`, units, skipped values", () => {
+  assertEquals(
+    renderToStringSync(h("div", { style: { color: "red", backgroundColor: "#000" } })),
+    '<div style="color:red;background-color:#000"></div>',
+  );
+  assertEquals(
+    serializeStyle({
+      color: null,
+      display: undefined,
+      visibility: true,
+      opacity: false,
+      height: "",
+      width: 0,
+      zIndex: 2,
+      flexGrow: 1,
+      lineHeight: 1.5,
+      margin: 4,
+      WebkitLineClamp: 3,
+      WebkitTransform: "none",
+      msTransition: " a ",
+      "--gap": 3,
+      "--pad": " 1px ",
+    }),
+    "width:0;z-index:2;flex-grow:1;line-height:1.5;margin:4px;-webkit-line-clamp:3;" +
+      "-webkit-transform:none;-ms-transition:a;--gap:3;--pad:1px",
+  );
+  // An object with nothing to render emits no style attribute at all.
+  assertEquals(renderToStringSync(h("div", { style: { color: null } })), "<div></div>");
+  assertEquals(renderToStringSync(h("div", { style: {} })), "<div></div>");
 });

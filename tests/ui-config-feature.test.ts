@@ -835,7 +835,7 @@ Deno.test("a key that is on by default can finally be turned off", async () => {
     const view = await (await call(dir, "/config/rendering")).text();
     const box = view.match(/<input[^>]*name="streaming"[^>]*type="checkbox"[^>]*>/)?.[0];
     assert(box, "the Rendering view renders the streaming toggle");
-    assertMatch(box, /\schecked(?=[\s>])/);
+    assertMatch(box, /\schecked(?=[\s>=])/);
     assertStringIncludes(box, 'value="off"', "ticking the box is what writes false");
 
     // Left alone, the box posts only its hidden companion: `true`, which is what the key already

@@ -559,7 +559,10 @@ Deno.test("the run form renders one typed control per declared flag and position
       body,
       '<input type="checkbox" name="flag:force" value="true" id="cmd-seed-flag:force">',
     );
-    assertStringIncludes(body, 'name="flag:fresh" value="true" id="cmd-seed-flag:fresh" checked>');
+    assertStringIncludes(
+      body,
+      'name="flag:fresh" value="true" id="cmd-seed-flag:fresh" checked="">',
+    );
     // number → a number input with any step, its default as the placeholder.
     assertStringIncludes(
       body,
@@ -577,13 +580,16 @@ Deno.test("the run form renders one typed control per declared flag and position
     // positionals: a required text input, and a row editor for the variadic one.
     assertStringIncludes(
       body,
-      'name="pos:0" value="" maxlength="4096" id="cmd-seed-pos:0" required>',
+      'name="pos:0" value="" maxlength="4096" id="cmd-seed-pos:0" required="">',
     );
     assertStringIncludes(body, 'name="pos:1" value=""');
     assertStringIncludes(body, 'value="add:1:pos:1"');
     assertStringIncludes(body, "files…");
     // Enter in a field runs the verb, not the first row's remove button.
-    assertStringIncludes(body, '<button type="submit" hidden tabindex="-1" aria-hidden="true">Run');
+    assertStringIncludes(
+      body,
+      '<button type="submit" hidden="" tabindex="-1" aria-hidden="true">Run',
+    );
     assertStringIncludes(body, 'name="verb" value="seed"');
   });
 });
@@ -812,10 +818,10 @@ Deno.test("read-only renders the run form disabled and still refuses the run", a
       ctx(dir, { readOnly: true }),
     );
     const body = await res.text();
-    assertStringIncludes(body, '<button type="submit" disabled>Run</button>');
+    assertStringIncludes(body, '<button type="submit" disabled="">Run</button>');
     assertStringIncludes(
       body,
-      'name="flag:rows" value="" step="any" id="cmd-seed-flag:rows" placeholder="100" disabled>',
+      'name="flag:rows" value="" step="any" id="cmd-seed-flag:rows" placeholder="100" disabled="">',
     );
     assertEquals(body.includes('value="add:1:pos:1"'), false, "no + Add under read-only");
 

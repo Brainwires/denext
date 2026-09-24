@@ -175,7 +175,7 @@ Deno.test("attacker text is escaped in component children and attributes", () =>
   assertEquals(normaliseEntities(/>([^<]*)<\/a>$/.exec(out)?.[1] ?? ""), evil);
 });
 
-Deno.test("boolean attributes render bare or not at all; void elements get no slash", () => {
+Deno.test('boolean attributes render `=""` or not at all; void elements get no slash', () => {
   const out = toHtml(renderView(h(
     "form",
     { method: "post", action: "/x" },
@@ -188,9 +188,9 @@ Deno.test("boolean attributes render bare or not at all; void elements get no sl
   // Void elements: no closing tag, no self-closing slash — as every form's hidden fields are.
   assertStringIncludes(out, '<input type="hidden" name="_csrf" value="tok">');
   assertStringIncludes(out, "<br><button");
-  // A true boolean is bare, a false one is absent — `OpForm`'s `<button … disabled>`.
-  assertStringIncludes(out, '<input type="checkbox" name="c" disabled>');
-  assertStringIncludes(out, '<button type="submit" disabled>Apply</button>');
+  // A true boolean is `=""` (as ReactDOMServer writes it), a false one is absent.
+  assertStringIncludes(out, '<input type="checkbox" name="c" disabled="">');
+  assertStringIncludes(out, '<button type="submit" disabled="">Apply</button>');
   // The documented delta: aria-*/data-* booleans serialise as the strings React writes.
   assertStringIncludes(out, '<div aria-busy="true" aria-hidden="false"></div>');
 });
@@ -224,7 +224,7 @@ Deno.test("OpForm renders its golden markup: token, hidden fields, extras, butto
       '<input type="hidden" name="confirm" value="1">' +
       '<input type="hidden" name="odd" value="&quot;&#39;&lt;&gt;&amp;">' +
       '<input type="hidden" name="task" value="build">' +
-      '<button type="submit" disabled>Apply &lt;this&gt; &amp; that</button></form>',
+      '<button type="submit" disabled="">Apply &lt;this&gt; &amp; that</button></form>',
   );
   // Enabled, with no class and no extra: the attributes it omits, it omits exactly.
   assertEquals(
@@ -310,15 +310,15 @@ Deno.test("the shared panel pieces render one fixed markup each", () => {
   );
   assertEquals(
     render(h(FileDetails, { path: "f", badge: "new", open: true }, "body")),
-    '<details open><summary><code>f</code> <span class="badge">new</span></summary>body</details>',
+    '<details open=""><summary><code>f</code> <span class="badge">new</span></summary>body</details>',
   );
-  // Input: attributes in one fixed order, a true boolean bare, an empty placeholder dropped.
+  // Input: attributes in one fixed order, a true boolean `=""`, an empty placeholder dropped.
   const input = { type: "text", name: "n", value: "v", maxLength: 9, id: "i" } as const;
   assertEquals(
     render(
       h(Input, { ...input, placeholder: "", ariaLabel: "A", required: true, disabled: false }),
     ),
-    '<input type="text" name="n" value="v" maxlength="9" id="i" aria-label="A" required>',
+    '<input type="text" name="n" value="v" maxlength="9" id="i" aria-label="A" required="">',
   );
 });
 
