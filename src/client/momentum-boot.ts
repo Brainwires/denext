@@ -3,7 +3,9 @@
 // calls `bootMomentumSafeScroll()`: off iOS/iPadOS WebKit it costs one user-agent test; on it,
 // the shim is fetched as its own chunk through the dynamic `import()` below (its only
 // importer, as with class-loader.ts) and installed once. A build seeds
-// `globalThis.__DENEXT_MOMENTUM_SCROLL__ = false` for `momentumSafeScroll: false`.
+// `globalThis.__DENEXT_MOMENTUM_SCROLL__ = false` for `momentumSafeScroll: false`, ahead of any
+// app module that can create a root while it evaluates (a SPA entry seeds it through a first
+// `import`, since its statically imported `main.tsx` evaluates before the entry's statements).
 
 import { isIosWebKit } from "../mobile/ios-webkit.ts";
 

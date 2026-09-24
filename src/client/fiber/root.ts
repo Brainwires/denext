@@ -206,6 +206,7 @@ export function hydrateDocument(vnode: VNode, options?: RootOptions): Root {
   const handle = registerRoot(page as unknown as Element, options, true, vnode);
   handle.hydrateStart = page.documentElement;
   handle.documentRoot = true;
+  void bootMomentumSafeScroll();
   renderRoot(handle, SyncLane);
   return {
     render: (next) => renderInto(handle, next),

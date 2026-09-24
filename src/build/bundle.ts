@@ -716,6 +716,23 @@ export function momentumScrollSeed(enabled: boolean | undefined): string {
   return enabled === false ? `globalThis.${MOMENTUM_SCROLL_OPT_OUT} = false;\n` : "";
 }
 
+/**
+ * {@linkcode momentumScrollSeed} as a side-effect `import` of a `data:` module, for an entry
+ * that statically imports app code which may create a root while it evaluates (a SPA's
+ * `main.tsx` calls `createRoot` at top level). ES imports are hoisted and evaluated before the
+ * entry's own statements, so a prepended assignment would run after that root booted the shim;
+ * an import prepended FIRST is evaluated first. `deno bundle` and esbuild inline the `data:`
+ * module, so the output is the same one statement, now ahead of the app. Bundled entries only:
+ * an unbundled dev entry would hand the `data:` URL to the browser (and its CSP).
+ *
+ * @param enabled The resolved `momentumSafeScroll` value (`undefined` means on).
+ * @returns The import to prepend, or `""`.
+ */
+export function momentumScrollSeedImport(enabled: boolean | undefined): string {
+  if (enabled !== false) return "";
+  return `import "data:text/javascript,globalThis.${MOMENTUM_SCROLL_OPT_OUT}=false;";\n`;
+}
+
 /** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
 function flightMain(catchBody: string, classBoot: string): string {
   return `async function main() {

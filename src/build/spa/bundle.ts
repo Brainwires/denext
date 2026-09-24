@@ -13,7 +13,7 @@ import {
   appUsesActivity,
   appUsesViewTransition,
   bundleSourceFiles,
-  momentumScrollSeed,
+  momentumScrollSeedImport,
   writeBundleOutput,
 } from "../bundle.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "../css.ts";
@@ -201,7 +201,9 @@ export async function bundleSpaInto(
     appUsesActivity(paths.projectDir, [entryPath]),
     appUsesViewTransition(paths.projectDir, [entryPath]),
   ]);
-  const entrySource = momentumScrollSeed(momentumSafeScrollEnabled(paths.config)) +
+  // The opt-out seed is an import, not a statement: `main.tsx` is imported statically and may
+  // call `createRoot` while it evaluates, before any statement of this entry has run.
+  const entrySource = momentumScrollSeedImport(momentumSafeScrollEnabled(paths.config)) +
     generateSpaEntry(
       toFileUrl(entryPath).href,
       dev,
