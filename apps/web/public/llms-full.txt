@@ -81,6 +81,9 @@ export function Counter() {
 }
 ```
 
+Branch on a value in JSX with `choose` from `denext` (Lit-style, lazy; own keys only):
+`choose(status, { loading: () => <Spinner />, error: () => <Oops /> }, () => null)`.
+
 **A route handler (API):**
 
 ```ts
@@ -246,6 +249,13 @@ enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `/auth/mfa/enroll` → `/auth/mfa/confirm` (from a complete session it needs a recent sign-in,
 `session.authTime`). Full guide: https://denext.dev/docs/auth
 
+Per-request facts from anywhere on the server (`denext/server`): `clientIp()` (the proxy's last
+`x-forwarded-for` hop only with `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, else the socket
+peer; a dynamic read like `headers()`), `requestId()` (the log / `x-request-id` correlation id —
+an inbound one is reused only behind a trusted proxy) and `requestSignal()` (the disconnect /
+timeout `AbortSignal` to thread into `fetch()`; `undefined` inside `use cache`). `denextAuth`
+inherits the app's `trustForwardedHeaders` unless it sets its own.
+
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
 ```ts
@@ -281,6 +291,16 @@ Docs: https://denext.dev/docs/ui
 through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling survives
 virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit;
 `momentumSafeScroll: false` opts out). Docs: https://denext.dev/docs/desktop
+
+The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
+Safari included, whenever `momentumSafeScroll` is on (the default).
+
+Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
+`_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it;
+`denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
+`checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
+drive it; `createOtaHandler` from `denext/server` serves the export. An unsigned manifest over
+plain `http` is refused beyond loopback.
 
 **A database (zero-npm, server-only module):**
 
@@ -367,7 +387,11 @@ export function Checkout() {
 **Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
 `denext analyze --md` writes a markdown report (per-module on the esbuild path) to pipe into CI.
 Imports of one export from a `"sideEffects": false` dep (lucide-react, Radix) are tree-shaken
-automatically on the esbuild path.
+automatically on the esbuild path. `optimizePackageImports` (Next's key, top-level) goes further:
+barrel imports of listed packages are rewritten to the defining modules, so the barrel is never
+loaded. A built-in list (lucide-react, date-fns, lodash-es, …) is on by default; add packages,
+drop one with `"!pkg"`, or disable it with `false`. Listing a package asserts it is side-effect
+free. Applied by the esbuild bundles only (not unbundled dev or the native `deno bundle` path).
 
 **Testing an app (no browser, JS-disabled path):**
 
@@ -404,7 +428,7 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
 i18n, images, `cacheComponents`, `streaming`, `live`, `reactCompiler`, `features`, `plugins`,
-`tailwind`, `csp`, `compatibilityMode`;
+`tailwind`, `csp`, `compatibilityMode`, `optimizePackageImports`, `momentumSafeScroll`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
@@ -507,6 +531,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ChangeEvent<T>` — A change event (inputs).
 - `Children: ChildrenApi` — React.Children utilities over denext children.
 - `interface ChildrenApi` — The React.Children utility surface.
+- `choose<K, R>(value: K, cases: ChooseCases<K, R>, defaultCase?: () => R): R | undefined` — choose(value, cases, defaultCase?) — pick a branch by value and run it.
+- `type ChooseCases<K, R> = Partial<Record<K, () => R>>` — The branch map choose selects from: an optional zero-argument function per case key.
 - `clientOnly(name?: string): void` — Assert the current module is running in the browser. Call at module top level to guarantee a module that touches browser-only APIs never runs on the server.
 - `interface ClientSession` — The reactive session state from useSession.
 - `cloneElement(element: VNode, config?: Record<string, unknown>, ...children: VNodeChild[]): VNode` — React.cloneElement — shallow-clone element, merging config over its props and replacing children when any are given. key and ref are special-cased the way React does: a key/ref in config overrides, otherwise the original element's is preserved, and neither is left in the merged props as a component-visible prop.
@@ -766,7 +792,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.8.3` — The denext framework version.
+- `VERSION: 2.9.0` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -866,7 +892,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
 - `interface ChannelTapHandlers<T>` — What tapChannel reports.
 - `interface ChannelTransport` — Carries ChannelEvents to every hub that should deliver them (across instances).
-- `clientIp(): string | undefined` — The client's IP address for the current request, or undefined when it cannot be determined (a handler invoked directly in a test, not through denext's server loop).
+- `clientIp(): string | undefined` — The client's IP address for the current request. Throws outside a request context (like headers); undefined when the request has no recorded peer (a handler invoked directly in a test, not through denext's server loop).
 - `collapseHeadTags(tags: HeadTag[]): string` — Join a HeadCollector's tags into head HTML, collapsing entries that share a HeadTag.dedup identity to the LAST occurrence at its own position (the earlier duplicate is dropped — next/head's reverse-filter order). Tags without an identity pass through in tree order. Operates on the already-serialized strings; nothing is re-escaped.
 - `compareSpecificity(a: Segment[], b: Segment[]): number` — Order two patterns by specificity the way Next.js does: compare segment by segment from the left, and at the first position that differs the more specific kind wins (static > dynamic > catch-all > optional catch-all). A pattern that has run out of segments (its catch-all consumed the rest) ranks below one that still has a concrete segment there. Returns negative when a should be tried first.
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
@@ -1115,7 +1141,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requestEmailVerification(config: AuthConfig, userOrEmail: Pick<AdapterUser, email> | string): Promise<EmailRequestResult>` — Email a verification link to a user (or an address). The link opens email.verifyPath (default {basePath}/verify, which verifies and redirects).
 - `interface RequestErrorContext` — Context passed to OnRequestError describing where the error occurred — mirrors Next.js's onRequestError context so instrumentation (Sentry, etc.) written for Next works unchanged.
 - `type RequestHandler = (request: Request) => Promise<Response>` — An HTTP request handler that resolves a Request to a Response.
-- `requestId(): string` — The correlation id for the current request — the value logged with the request and its errors, and echoed as the x-request-id response header on an error. Honors an inbound x-request-id from a trusted proxy, else a fresh UUID.
+- `requestId(): string` — The correlation id for the current request — the value logged with the request and its errors, and echoed as the x-request-id response header on an error. Honors an inbound x-request-id only when the app trusts its proxy (trustForwardedHeaders / DENEXT_TRUST_PROXY=1); otherwise it is a fresh UUID, so a client can't pick its own id.
 - `interface RequestLogInfo` — Per-request telemetry passed to AppConfig.onRequest.
 - `requestOrigin(request: Request, opts?: OriginOptions): string` — The public origin (scheme://host) for request. Resolution order: canonicalOrigin (if set) → forwarded headers (only when trustForwardedHeaders is set) → the Host header → the request URL. Only the first value of a comma-separated forwarded header is used.
 - `requestPasswordReset(config: AuthConfig, email: string): Promise<EmailRequestResult>` — Email a password-reset link. The link opens email.resetPath (default {basePath}/reset) — a page your app renders, posting email, token and password to {basePath}/reset/confirm (or calling resetPassword).
@@ -1555,7 +1581,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/mobile`
 
-- `applyUiUpdate(version: string): Promise<OtaApplyResult>` — Switch to the UI prepareUiUpdate staged: the native side starts its trial, arms the 15 s rollback watchdog, points the webview at it and reloads. The new page must call otaBooted, exactly as after checkForUiUpdate.
+- `applyUiUpdate(version: string): Promise<OtaApplyResult>` — Switch to the UI prepareUiUpdate staged: the native side starts its trial, arms the rollback watchdog (15 s of foreground time by default), points the webview at it and reloads. The new page must call otaBooted, exactly as after checkForUiUpdate.
 - `interface BackSwipeOptions` — Options for useBackSwipe and isBackSwipe.
 - `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
@@ -1569,14 +1595,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onAppResume(cb: (awayMs: number) => void): () => void` — Call cb each time the page returns to the foreground, with how long it was away in milliseconds.
 - `openExternal(url: string): Promise<void>` — Open a URL outside the app.
 - `type OtaApplyResult = object | object` — The outcome of applyUiUpdate when it settles. On success the webview reloads into the new UI, so the promise does not settle at all.
-- `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog after 15 s (and on the next launch, if the app died first). Harmless on the bundled UI or a confirmed one.
+- `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.
 - `interface OtaCheckOptions` — Options for checkForUiUpdate and prepareUiUpdate.
 - `type OtaCheckResult = object | object | object | object | object` — The outcome of checkForUiUpdate. It never throws; every failure is a value.
-- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure` — The code of a native DenextOta refusal, carried on an error result:
+- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old` — The code of a native DenextOta refusal, carried on an error result:
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.
 - `type OtaPrepareResult = object | object | object | object | object` — The outcome of prepareUiUpdate. It never throws; every failure is a value.
 - `otaReset(): Promise<void>` — Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web.
+- `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with a sequence uses the v2 format, one without uses v1:
 - `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.
 - `interface OtaStatus` — What the native side reports about the UI versions on this device.
 - `prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult>` — Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first.
@@ -1584,7 +1611,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useAppResume(cb: (awayMs: number) => void): void` — Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes.
 - `useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void` — Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies.
 - `useKeyboardInset(opts?: KeyboardInsetOptions): number` — Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).
-- `useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void` — Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. Options are read on the first mount.
+- `useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void` — Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. A change to force or settleMs re-runs the hook (it releases its share, then takes a new one); settleMs applies only when that share is the one that installs the shim, since a live install keeps its own options.
 
 ### `denext/cli/command`
 

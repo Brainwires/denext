@@ -283,6 +283,45 @@
           "denextOnly": true
         },
         {
+          "name": "choose",
+          "slug": "choose",
+          "kind": "function",
+          "signature": "choose<K, R>(value: K, cases: ChooseCases<K, R>, defaultCase?: () => R): R | undefined",
+          "doc": "choose(value, cases, defaultCase?) — pick a branch by value and run it.",
+          "docFull": "`choose(value, cases, defaultCase?)` — pick a branch by value and run it.\n\nA pure control-flow helper for rendering, borrowed from Lit's `choose`. It looks\n`value` up in `cases` and calls the matching zero-argument function, returning its\nresult. When no case matches it calls `defaultCase` if one was given, otherwise it\nreturns `undefined`. Only the selected branch runs — the others are never invoked —\nso it reads as a lazy `switch` you can drop straight into JSX.\n\nOnly `cases`' OWN keys match (`Object.hasOwn`): inherited names such as `toString`,\n`constructor`, `valueOf`, `hasOwnProperty` or `__proto__` fall through to\n`defaultCase` unless `cases` declares them itself. An own key whose value is\n`undefined` also falls through to `defaultCase`.\n\nBecause `defaultCase` is a separate argument rather than a `\"default\"` key, a `value`\nof the literal string `\"default\"` matches a `default` entry in `cases`, not the fallback.",
+          "params": [
+            {
+              "name": "value",
+              "doc": "The key to look up in cases (own keys only)."
+            },
+            {
+              "name": "cases",
+              "doc": "A partial map from key to a zero-argument branch function."
+            },
+            {
+              "name": "defaultCase",
+              "doc": "Run when no case matches; omit it to get undefined instead."
+            }
+          ],
+          "returns": "The selected branch's result, or undefined when nothing matched and no defaultCase was given.",
+          "examples": [
+            "Render one of several states\n```tsx\nchoose(status, {\n  loading: () => <Spinner />,\n  error: () => <ErrorBanner />,\n  success: () => <DataTable rows={rows} />,\n}, () => null);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "ChooseCases",
+          "slug": "ChooseCases",
+          "kind": "typeAlias",
+          "signature": "type ChooseCases<K, R> = Partial<Record<K, () => R>>",
+          "doc": "The branch map choose selects from: an optional zero-argument function per case key.",
+          "docFull": "The branch map `choose` selects from: an optional zero-argument function per case key.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "clientOnly",
           "slug": "clientOnly",
           "kind": "function",
@@ -3758,7 +3797,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.8.3",
+          "signature": "VERSION: 2.9.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -5038,10 +5077,10 @@
           "slug": "clientIp",
           "kind": "function",
           "signature": "clientIp(): string | undefined",
-          "doc": "The client's IP address for the current request, or undefined when it cannot be determined (a handler invoked directly in a test, not through denext's server loop).",
-          "docFull": "The client's IP address for the current request, or `undefined` when it cannot be\ndetermined (a handler invoked directly in a test, not through denext's server loop).\n\nWhen the app trusts a fronting proxy ({@linkcode AppConfig.trustForwardedHeaders} /\n`DENEXT_TRUST_PROXY=1`), the last hop of `x-forwarded-for` is returned; otherwise the\nsocket peer the server saw. Never read `x-forwarded-for` yourself without that flag — any\nclient can set it.\n\nReading it makes the render **dynamic** (per-request), exactly like {@linkcode headers}:\na page that branches on the client IP cannot be statically cached. Use it in a route\nhandler, a Server Action, or middleware where that is already the case.",
+          "doc": "The client's IP address for the current request. Throws outside a request context (like headers); undefined when the request has no recorded peer (a handler invoked directly in a test, not through denext's server loop).",
+          "docFull": "The client's IP address for the current request. Throws outside a request context\n(like {@linkcode headers}); `undefined` when the request has no recorded peer (a handler\ninvoked directly in a test, not through denext's server loop).\n\nWhen the app trusts a fronting proxy ({@linkcode AppConfig.trustForwardedHeaders} /\n`DENEXT_TRUST_PROXY=1`), the last hop of `x-forwarded-for` is returned; otherwise the\nsocket peer the server saw. Never read `x-forwarded-for` yourself without that flag — any\nclient can set it.\n\nReading it makes the render **dynamic** (per-request), exactly like {@linkcode headers}:\na page that branches on the client IP cannot be statically cached. Use it in a route\nhandler, a Server Action, or middleware where that is already the case.",
           "params": [],
-          "returns": "The client IP, or undefined outside denext's server loop.",
+          "returns": "The client IP, or undefined when the request has no recorded peer.",
           "examples": [],
           "denextOnly": true
         },
@@ -5259,16 +5298,16 @@
           "kind": "function",
           "signature": "createOtaHandler(options: OtaHandlerOptions): (request: Request) => Promise<Response | null>",
           "doc": "Build a handler that serves an OTA UI export to checkForUiUpdate / the native DenextOta plugin, following the serving rules every OTA server must keep:",
-          "docFull": "Build a handler that serves an OTA UI export to `checkForUiUpdate` / the native\n`DenextOta` plugin, following the serving rules every OTA server must keep:\n\n1. serve `_denext/ota.json` and ONLY the files it lists (anything else resolves `null`,\n   so a request can never reach a file the manifest does not name);\n2. put it behind the same auth as the app's API (wrap the handler; it does no auth);\n3. send `Cache-Control: no-store`, so no cache serves a stale manifest or file.\n\nOnly `GET`/`HEAD` are answered. The manifest is re-read when its mtime changes, so a\nre-export (plus `denext ota manifest`) needs no restart.",
+          "docFull": "Build a handler that serves an OTA UI export to `checkForUiUpdate` / the native\n`DenextOta` plugin, following the serving rules every OTA server must keep:\n\n1. serve `_denext/ota.json` and ONLY the files it lists (anything else resolves `null`,\n   so a request can never reach a file the manifest does not name);\n2. put it behind the same auth as the app's API (wrap the handler; it does no auth);\n3. send `Cache-Control: no-store`, so no cache serves a stale manifest or file.\n\nOnly `GET`/`HEAD` are answered (plus an `OPTIONS` preflight from an origin `cors` allows).\nThe manifest is re-read when its mtime changes, so a re-stamp (`denext ota manifest`, which\nreplaces the file atomically) needs no restart. Re-exporting in place is not atomic (a phone\ncould fetch a new manifest and old files, which then fail their hash check): export into a\nnew directory and point the handler at it, e.g. through a symlink you swap.",
           "params": [
             {
               "name": "options",
-              "doc": "The export directory and the path it is served under."
+              "doc": "The export directory, the path it is served under, and CORS."
             }
           ],
           "returns": "(request) => Response | null: null for a request that is not for the UI.",
           "examples": [
-            "```ts\nimport { createOtaHandler } from \"denext/server\";\n\nconst ota = createOtaHandler({ dir: \"out\", basePath: \"/mobile-ui\" });\nDeno.serve(async (req) => {\n  if (new URL(req.url).pathname.startsWith(\"/mobile-ui/\")) {\n    if (!(await isAuthorized(req))) return new Response(\"Unauthorized\", { status: 401 });\n    return (await ota(req)) ?? new Response(\"Not Found\", { status: 404 });\n  }\n  return app(req);\n});\n```"
+            "```ts\nimport { createOtaHandler } from \"denext/server\";\n\nconst ota = createOtaHandler({ dir: \"out\", basePath: \"/mobile-ui\", cors: true });\nDeno.serve(async (req) => {\n  if (new URL(req.url).pathname.startsWith(\"/mobile-ui/\")) {\n    // A CORS preflight carries no credentials: answer it before the auth check.\n    if (req.method === \"OPTIONS\") return (await ota(req)) ?? new Response(null, { status: 404 });\n    if (!(await isAuthorized(req))) return new Response(\"Unauthorized\", { status: 401 });\n    return (await ota(req)) ?? new Response(\"Not Found\", { status: 404 });\n  }\n  return app(req);\n});\n```"
           ],
           "denextOnly": true
         },
@@ -8402,8 +8441,8 @@
           "slug": "requestId",
           "kind": "function",
           "signature": "requestId(): string",
-          "doc": "The correlation id for the current request — the value logged with the request and its errors, and echoed as the x-request-id response header on an error. Honors an inbound x-request-id from a trusted proxy, else a fresh UUID.",
-          "docFull": "The correlation id for the current request — the value logged with the request and its\nerrors, and echoed as the `x-request-id` response header on an error. Honors an inbound\n`x-request-id` from a trusted proxy, else a fresh UUID.\n\nThis is plumbing for logging and `after()`, not request data, so reading it does **not**\nmake the render dynamic. Do not render it into a cacheable page — a cached copy would\ncarry one request's id for every later reader.",
+          "doc": "The correlation id for the current request — the value logged with the request and its errors, and echoed as the x-request-id response header on an error. Honors an inbound x-request-id only when the app trusts its proxy (trustForwardedHeaders / DENEXT_TRUST_PROXY=1); otherwise it is a fresh UUID, so a client can't pick its own id.",
+          "docFull": "The correlation id for the current request — the value logged with the request and its\nerrors, and echoed as the `x-request-id` response header on an error. Honors an inbound\n`x-request-id` only when the app trusts its proxy (`trustForwardedHeaders` /\n`DENEXT_TRUST_PROXY=1`); otherwise it is a fresh UUID, so a client can't pick its own id.\n\nThis is plumbing for logging and `after()`, not request data, so reading it does **not**\nmake the render dynamic. Do not render it into a cacheable page — a cached copy would\ncarry one request's id for every later reader.",
           "params": [],
           "returns": "The request's correlation id.",
           "examples": [],
@@ -8469,9 +8508,9 @@
           "kind": "function",
           "signature": "requestSignal(): AbortSignal | undefined",
           "doc": "The current request's abort signal — fires on client disconnect or the request timeout. Thread it into outgoing fetch()es (and any cancellable work) for cooperative cancellation, so a client that navigates away actually reclaims the work.",
-          "docFull": "The current request's abort signal — fires on client disconnect or the request timeout.\nThread it into outgoing `fetch()`es (and any cancellable work) for cooperative\ncancellation, so a client that navigates away actually reclaims the work.\n\nCancellation plumbing, not request data: reading it does **not** make the render dynamic,\nso a `use cache` component may still pass it to its fetches. `undefined` when running\noutside denext's server loop.",
+          "docFull": "The current request's abort signal — fires on client disconnect or the request timeout.\nThread it into outgoing `fetch()`es (and any cancellable work) for cooperative\ncancellation, so a client that navigates away actually reclaims the work.\n\nCancellation plumbing, not request data: reading it does **not** make the render dynamic.\nInside a `use cache` scope it is `undefined`: a cached fill is shared by single-flight\nfollowers and background refreshes, so one client's disconnect must not abort work other\nreaders are waiting on. Also `undefined` outside denext's server loop.",
           "params": [],
-          "returns": "The abort signal, or undefined outside a request.",
+          "returns": "The abort signal, or undefined outside a request or inside a use cache scope.",
           "examples": [],
           "denextOnly": true
         },
@@ -14117,8 +14156,8 @@
           "slug": "applyUiUpdate",
           "kind": "function",
           "signature": "applyUiUpdate(version: string): Promise<OtaApplyResult>",
-          "doc": "Switch to the UI prepareUiUpdate staged: the native side starts its trial, arms the 15 s rollback watchdog, points the webview at it and reloads. The new page must call otaBooted, exactly as after checkForUiUpdate.",
-          "docFull": "Switch to the UI {@linkcode prepareUiUpdate} staged: the native side starts its trial,\narms the 15 s rollback watchdog, points the webview at it and reloads. The new page must\ncall {@linkcode otaBooted}, exactly as after {@linkcode checkForUiUpdate}.\n\nOn success the page reloads, so the returned promise does not settle; it resolves only\nwith a failure: `unsupported` off native (or with a plugin that predates staged updates),\nor `error` when the native side refuses (`version` is not the staged one, a download or\ntrial is in progress, or the version was rolled back). It never throws.",
+          "doc": "Switch to the UI prepareUiUpdate staged: the native side starts its trial, arms the rollback watchdog (15 s of foreground time by default), points the webview at it and reloads. The new page must call otaBooted, exactly as after checkForUiUpdate.",
+          "docFull": "Switch to the UI {@linkcode prepareUiUpdate} staged: the native side starts its trial,\narms the rollback watchdog (15 s of foreground time by default), points the webview at it\nand reloads. The new page must\ncall {@linkcode otaBooted}, exactly as after {@linkcode checkForUiUpdate}.\n\nOn success the page reloads, so the returned promise does not settle; it resolves only\nwith a failure: `unsupported` off native (or with a plugin that predates staged updates),\nor `error` when the native side refuses (`version` is not the staged one, a download or\ntrial is in progress, or the version was rolled back). It never throws.",
           "params": [
             {
               "name": "version",
@@ -14149,7 +14188,7 @@
           "kind": "function",
           "signature": "checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>",
           "doc": "Check a server for a newer UI and, when it offers a different version, install it.",
-          "docFull": "Check a server for a newer UI and, when it offers a different version, install it.\n\n1. Fetches `${baseUrl}/_denext/ota.json` (with `headers`, `cache: \"no-store\"` and a\n   timeout) and validates its shape.\n2. Asks the native `DenextOta` plugin for its {@linkcode OtaStatus}; if the manifest's\n   version equals the running UI (`current`, else `bundled`), it returns `current`.\n3. Otherwise the plugin downloads `${baseUrl}/<path>` for every file (copying files it\n   already has by SHA-256), verifies each SHA-256 and size, switches the webview's web\n   root to the new directory and reloads. The new page must call {@linkcode otaBooted}\n   within 15 s or it is rolled back.\n\nIt never throws. Outside the native shell it resolves `{ kind: \"unsupported\" }` without\ntouching the network. One check runs at a time: a call made while another is in flight\ngets that call's promise (and its options).",
+          "docFull": "Check a server for a newer UI and, when it offers a different version, install it.\n\n1. Fetches `${baseUrl}/_denext/ota.json` (with `headers`, `cache: \"no-store\"` and a\n   timeout) and validates its shape.\n2. Asks the native `DenextOta` plugin for its {@linkcode OtaStatus}; if the manifest's\n   version equals the running UI (`pending`, else `current`, else `bundled`), it returns\n   `current` (as it does when the native side finds nothing to switch).\n3. Otherwise the plugin downloads `${baseUrl}/<path>` for every file (copying files it\n   already has by SHA-256), verifies each SHA-256 and size, switches the webview's web\n   root to the new directory and reloads. The new page must call {@linkcode otaBooted}\n   within the boot timeout (15 s of foreground time by default) or it is rolled back.\n\nIt never throws. Outside the native shell it resolves `{ kind: \"unsupported\" }` without\ntouching the network. One check runs at a time: a call made while another is in flight\ngets that call's promise (and its options).",
           "params": [
             {
               "name": "options",
@@ -14187,11 +14226,11 @@
           "kind": "function",
           "signature": "installMomentumSafeScroll(options?: MomentumSafeScrollOptions): () => void",
           "doc": "Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.",
-          "docFull": "Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.\n\nIn iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write during a touch\nfling cancels the momentum instantly. Virtualized lists (LegendList, react-virtuoso,\nTanStack Virtual) issue such writes while the user scrolls, to compensate for rows measured\ntaller or shorter than estimated, so a flick toward older content stops hard.\n\nWhile a finger is down, and while a scroller is still flinging after it lifts,\n`Element.prototype.scrollBy` / `scrollTo` / `scroll` and the `scrollTop` / `scrollLeft`\nsetters record the write as a pending delta instead of scrolling. The scroller's element\nchildren get a CSS `translate` of minus that delta, so the picture is what the write would\nhave shown, and the getters return the real offset plus the delta, so a library reading back\nthe offset sees what it wrote. When the fling settles (`scrollend`, or `settleMs` without a\n`scroll` event) or a new touch starts, the translate is removed and the real offset moves by\nthe delta in one synchronous step. Outside a gesture every call goes straight through;\n`behavior: \"smooth\"` calls (after applying any pending delta) and `scrollIntoView` always do.\n\n**denext's client runtime already installs it on iOS WebKit** (opt out with\n`momentumSafeScroll: false` in `denext.config.ts`), so call this only from a page that does\nnot run on denext's runtime. By default it installs only on iOS/iPadOS WebKit, where the bug\nexists; elsewhere, and without a DOM, it is a no-op. It is idempotent: while installed,\nanother call (whatever its options) returns the same uninstaller. Uninstalling applies any\npending delta and restores every patched `Element.prototype` member exactly.",
+          "docFull": "Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.\n\nIn iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write during a touch\nfling cancels the momentum instantly. Virtualized lists (LegendList, react-virtuoso,\nTanStack Virtual) issue such writes while the user scrolls, to compensate for rows measured\ntaller or shorter than estimated, so a flick toward older content stops hard.\n\nWhile a finger is down, and while a scroller is still flinging after it lifts,\n`Element.prototype.scrollBy` / `scrollTo` / `scroll` and the `scrollTop` / `scrollLeft`\nsetters record the write as a pending delta instead of scrolling. The scroller's element\nchildren get a CSS `translate` of minus that delta, so the picture is what the write would\nhave shown, and the getters return the real offset plus the delta, so a library reading back\nthe offset sees what it wrote. When the fling settles (`scrollend`, or `settleMs` without a\n`scroll` event) or a new touch starts, the translate is removed and the real offset moves by\nthe delta in one synchronous step. Deferred targets are clamped to the scroll range, so\n`el.scrollTop = el.scrollHeight` shows the bottom rather than blank space (`scrollHeight` /\n`scrollWidth` read as if the children were not shifted). Outside a gesture every call goes\nstraight through; so do `behavior: \"smooth\"` calls (a smooth `scrollBy` applies the pending\ndelta first; a smooth `scrollTo` drops it, as its target is absolute) and `scrollIntoView`\n(which first drops the pending delta of every scroller it moves).\n\nOnly element scrollers are deferred. The document scroller (`document.scrollingElement`,\n`<html>`, `<body>`) is never shifted, and its writes, including `window.scrollTo`, always go\nstraight through. While a list is shifted, its children carry the `translate` composed with\ntheir own computed `translate` (so Tailwind's `translate-*` classes keep their offset), and a\ntransformed child becomes the containing block of its `position: fixed` descendants and moves\nits `position: sticky` headers with it until the fling settles. Documents inside iframes are\nnot covered: each has its own `Element.prototype`.\n\n**denext's client runtime already installs it on iOS WebKit** (opt out with\n`momentumSafeScroll: false` in `denext.config.ts`), so call this only from a page that does\nnot run on denext's runtime. By default it installs only on iOS/iPadOS WebKit, where the bug\nexists; elsewhere, and without a DOM, it is a no-op. It is idempotent: while installed,\nanother call (whatever its options) returns the same uninstaller. Uninstalling applies any\npending delta and restores every patched `Element.prototype` member exactly.",
           "params": [
             {
               "name": "options",
-              "doc": "{ force, settleMs }: install on every platform; the quiet period, in ms, that ends a fling where scrollend is unsupported (default 120)."
+              "doc": "{ force, settleMs }: install on every platform; the quiet period, in ms, that ends a fling where scrollend is unsupported (default 250; where scrollend is supported it ends the fling, with a 1 s idle fallback)."
             }
           ],
           "returns": "The uninstaller.",
@@ -14346,8 +14385,8 @@
           "slug": "otaBooted",
           "kind": "function",
           "signature": "otaBooted(): Promise<void>",
-          "doc": "Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog after 15 s (and on the next launch, if the app died first). Harmless on the bundled UI or a confirmed one.",
-          "docFull": "Confirm to the native side that the running UI booted. Call it once after the app's\nfirst render: a UI on its trial launch that never calls it is rolled back by the\nnative watchdog after 15 s (and on the next launch, if the app died first). Harmless on\nthe bundled UI or a confirmed one.\n\nResolves on the web and when the plugin is missing, and never rejects: a failure here\nmust not break the app that just booted.",
+          "doc": "Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.",
+          "docFull": "Confirm to the native side that the running UI booted. Call it once after the app's\nfirst render: a UI on its trial launch that never calls it is rolled back by the\nnative watchdog (after 15 s of foreground time by default), and on the next launch if the\napp died twice before confirming. Harmless on the bundled UI or a confirmed one.\n\nIt sends this page's own UI version, read from the `_denext/ota.json` the page was served\nwith (its web root), and the native side confirms only when that is the version on trial.\nA late call from the page being replaced therefore cannot confirm the new UI. The manifest\nis read at the first call, before the page could have been switched away from; reading\n`otaStatus().pending` instead would name the new version as soon as the switch starts.\n\nResolves on the web and when the plugin is missing, and never rejects: a failure here\nmust not break the app that just booted.",
           "params": [],
           "returns": "A promise that settles once the native side has recorded the boot.",
           "examples": [
@@ -14383,9 +14422,9 @@
           "name": "OtaErrorCode",
           "slug": "OtaErrorCode",
           "kind": "typeAlias",
-          "signature": "type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure",
+          "signature": "type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old",
           "doc": "The code of a native DenextOta refusal, carried on an error result:",
-          "docFull": "The `code` of a native `DenextOta` refusal, carried on an `error` result:\n\n- `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;\n- `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`\n  (the native side recomputes it from the file list), does not match;\n- `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;\n- `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the\n  manifest's `signature` is missing or does not verify;\n- `insecure`: the binary embeds no key and `baseUrl` is plain `http` to a host other than\n  loopback (`localhost`, `127.0.0.1`, `::1`, or `10.0.2.2` on the Android emulator).\n\nThe signature and insecure checks run before any file is downloaded, and a refusal leaves\nthe running UI and any staged one as they were.",
+          "docFull": "The `code` of a native `DenextOta` refusal, carried on an `error` result:\n\n- `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;\n- `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`\n  (the native side recomputes it from the file list), does not match;\n- `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;\n- `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the\n  manifest's `signature` is missing or does not verify;\n- `insecure`: the binary embeds no key and `baseUrl` is plain `http` to a host other than\n  loopback (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);\n- `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,\n  or it has none after a sequenced manifest was accepted;\n- `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS\n  `CFBundleVersion`, Android `versionCode`).\n\nThe trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`, and\n`invalid` for a malformed or oversized manifest) run before any file is downloaded, and a\nrefusal leaves the running UI and any staged one as they were.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14438,6 +14477,25 @@
           "returns": "A promise that settles once the native side has reset (the page then reloads).",
           "examples": [
             "```ts\nimport { otaReset } from \"denext/mobile\";\nawait otaReset(); // e.g. from a \"Reset UI\" button in a debug menu\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "otaSignaturePayload",
+          "slug": "otaSignaturePayload",
+          "kind": "function",
+          "signature": "otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative>): Promise<Uint8Array>",
+          "doc": "The bytes an OTA manifest signature covers, as UTF-8 with \\n (0x0A) separators and no trailing newline. A manifest with a sequence uses the v2 format, one without uses v1:",
+          "docFull": "The bytes an OTA manifest signature covers, as UTF-8 with `\\n` (0x0A) separators and no\ntrailing newline. A manifest with a `sequence` uses the v2 format, one without uses v1:\n\n- v2: `\"denext-ota-v2\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\")`\n- v1: `\"denext-ota-v1\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\")`\n\n`\"1\"` is `required === true`, anything else `\"0\"`; `sha256hex` is lowercase hex of the SHA-256\nof the notes' UTF-8 (the empty string when absent); `sequence` and `minNative` are plain\ndecimal integers (no sign, no leading zeros, no exponent), and an absent `minNative` is the\nempty string. The version already covers every file, so the chain is files → version →\nsignature, and none of the metadata can change under a valid signature. The native\n`DenextOta` plugin builds the same bytes (v2 when the manifest has a `sequence`, else v1).",
+          "params": [
+            {
+              "name": "manifest",
+              "doc": "The version and the signed metadata."
+            }
+          ],
+          "returns": "The payload bytes.",
+          "examples": [
+            "```ts\nimport { otaSignaturePayload } from \"denext/mobile\";\nconst bytes = await otaSignaturePayload({ version, required: true, sequence: 1758700000 });\n// \"denext-ota-v2\\n<version>\\n1\\n<sha256 of \"\">\\n1758700000\\n\"\n```"
           ],
           "denextOnly": true
         },
@@ -14566,8 +14624,8 @@
           "slug": "useMomentumSafeScroll",
           "kind": "function",
           "signature": "useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void",
-          "doc": "Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. Options are read on the first mount.",
-          "docFull": "Hook form of {@linkcode installMomentumSafeScroll}: installs on mount and uninstalls when the\nlast mounted hook unmounts. An install made by denext's runtime or directly with\n{@linkcode installMomentumSafeScroll} is left in place. Options are read on the first mount.",
+          "doc": "Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. A change to force or settleMs re-runs the hook (it releases its share, then takes a new one); settleMs applies only when that share is the one that installs the shim, since a live install keeps its own options.",
+          "docFull": "Hook form of {@linkcode installMomentumSafeScroll}: installs on mount and uninstalls when the\nlast mounted hook unmounts. An install made by denext's runtime or directly with\n{@linkcode installMomentumSafeScroll} is left in place. A change to `force` or `settleMs` re-runs\nthe hook (it releases its share, then takes a new one); `settleMs` applies only when that\nshare is the one that installs the shim, since a live install keeps its own options.",
           "params": [
             {
               "name": "options",

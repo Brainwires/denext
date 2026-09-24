@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-09-24
+
 ### Added
 
 - **`choose(value, cases, defaultCase?)`** — a Lit-style control-flow helper, exported
@@ -8056,6 +8058,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.9.0]: https://jsr.io/@denext/denext@2.9.0
 [2.8.3]: https://jsr.io/@denext/denext@2.8.3
 [2.8.2]: https://jsr.io/@denext/denext@2.8.2
 [2.8.1]: https://jsr.io/@denext/denext@2.8.1
