@@ -164,11 +164,71 @@ real-device measurement.
 
 **First step, a measured spike:** alias `react-native` → `react-native-web` and `expo-*` →
 stubs, build T3's `apps/mobile/src` with denext, and count the failures by bucket (resolver,
-missing shim, native-only, denext compat bug). The results go in a table in this section;
-placeholder: table pending.
+missing shim, native-only, denext compat bug). Results: [Spike results](#spike-results-2026-09-24)
+below.
 
 **Scope:** rendering stays WebView/DOM. This is API compatibility, not native rendering, so
 it's consistent with POLICIES.md.
+
+### Spike results (2026-09-24)
+
+**Setup:** T3's `apps/mobile` built as a denext 2.9.0 SPA, `react-native` → react-native-web
+0.21.2. 106 specifiers across 92 native/expo packages aliased to throwing stubs, 13
+hand-written web shims, bundler workarounds applied through `denext patch`.
+
+**Outcome:**
+
+- The whole app builds in about 6 s: 2.59 MB minified, 781 KB gzipped (mostly shiki grammars).
+- All 33 deep-linked routes render in headless Chromium.
+- Against a real T3 server it paired over HTTP and WebSocket, listed the project, and rendered
+  the new-task composer with live data (branch, model picker).
+- Parity: the same entry built with real react-dom 19.2.3 gives identical route text and
+  element counts on 7 routes and identical third-party harness results. The one difference
+  was a denext bug (client booleanish attributes), fixed alongside this table.
+
+| Bucket            | Count            | Notes                                                                                                                                                                                                                                                                        |
+| ----------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| resolver          | 9                | Fixed by the resolve mode; the first build had 14 errors                                                                                                                                                                                                                     |
+| missing shim      | 18               | 11 threw from stubs; 1 blocked the app (`expo-secure-store`, the connection catalog); 4 degraded (`expo-sqlite`, `expo-file-system`, `expo-font`, `react-native-webview`); react-native-web lacks `Appearance.setColorScheme`; `react-native-image-viewing` has no web build |
+| native-only       | 0 hit at runtime | Stubbed without being exercised: `expo-widgets`, `@react-native-ai/apple`, `react-native-nitro-*`, `react-native-shiki-engine`, T3's native terminal/review-diff/markdown modules                                                                                            |
+| denext compat bug | 1                | Client booleanish attributes                                                                                                                                                                                                                                                 |
+
+**Resolve-mode spec** (the workarounds that were needed):
+
+- `react-native` wins over an installed real RN for every importer. A plain import-map key
+  loses: the node_modules resolver finds real RN's Flow source.
+- `.web.tsx`/`.web.ts`/`.web.jsx`/`.web.js` first, for relative/alias probes and for package
+  subpaths. Without it, native spec files pull RN Flow source (6 parse errors) and screens'
+  `TabsHost`/`TabsScreen` fail to resolve.
+- A `.js` → jsx loader (one package).
+- `__DEV__` and `global` → `globalThis` defines; both are required at runtime (reanimated,
+  gesture-handler).
+- An Expo-style root style: `html,body,#root{height:100%}` with `#root` as flex. Without it,
+  overlays intercept taps.
+- uniwind: importer-sensitive aliases, plus the Tailwind input and
+  `uniwind generate-artifacts` for extra themes.
+- A web entry using `AppRegistry.runApplication` instead of Expo's `registerRootComponent`.
+- Not needed: a Flow transform (Flow only arrived through wrong resolution) or an image-require
+  shim (the existing file loader works).
+- Open: `denext dev` fails. The npm prebundle can't resolve react-native-web's own deps through
+  the alias (`styleq`, `fbjs`, `@babel/runtime`, `@react-native/normalize-colors`), and a
+  `global.css` with `@import "tailwindcss"` gets a 500.
+
+**Third-party packages through web builds:**
+
+| Worked                                                                                       | Didn't                                    |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| react-native-web: all 12 primitives, zero console errors                                     | react-native-webview (no web platform)    |
+| gesture-handler 2.32                                                                         | react-native-image-viewing (no web build) |
+| reanimated 4.5.5 (`withTiming` settled near its first frame, same as with real React)        |                                           |
+| react-native-svg + tabler icons; safe-area-context; keyboard-controller; uniwind             |                                           |
+| react-native-screens + react-navigation native-stack: headers, back, navigate, URL linking   |                                           |
+| `@legendapp/list` (1000 items virtualized); `@react-native-menu/menu` (rendered, not opened) |                                           |
+
+**What it means:** the component layer works today on denext compat. What decides B2's scope
+is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `expo-sqlite`,
+`expo-file-system`, `expo-font` and `expo-linking`/`expo-notifications`. The last two map onto
+`denext/mobile`'s deep-link and push functions, which are in progress.
 
 ## Suggested order
 
