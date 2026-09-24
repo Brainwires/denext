@@ -186,26 +186,17 @@ export function dropsBooleanValue(prop: string): boolean {
 }
 
 /**
- * Enumerated attributes React serializes as the strings `"true"`/`"false"` rather than by
- * presence (lowercased names), plus every `aria-*`/`data-*`. `autocapitalize` is a denext
- * addition kept from earlier releases.
+ * Whether a boolean value for attribute `name` renders as `"true"`/`"false"` (matched
+ * case-insensitively, so the React prop `spellCheck` and the attribute `spellcheck` agree).
+ * React 19's booleanish-string props (`setProp`'s `contentEditable`/`spellCheck`/`draggable`/
+ * `value`/`autoReverse`/`externalResourcesRequired`/`focusable`/`preserveAlpha` case) plus
+ * every `aria-*`/`data-*` (`setValueForAttribute`). `autocapitalize` is a denext addition
+ * kept from earlier releases. A regex literal, not a module-level `Set`, so importing this into
+ * the client reconciler pins no table in the bundle and stays small.
  */
-const BOOLEANISH_ATTRS = /* @__PURE__ */ new Set([
-  "contenteditable",
-  "draggable",
-  "spellcheck",
-  "value",
-  "autoreverse",
-  "externalresourcesrequired",
-  "focusable",
-  "preservealpha",
-  "autocapitalize",
-]);
-
-/** Whether a boolean value for attribute `name` renders as `"true"`/`"false"`. */
 export function isBooleanishAttr(name: string): boolean {
-  const lower = name.toLowerCase();
-  return BOOLEANISH_ATTRS.has(lower) || lower.startsWith("aria-") || lower.startsWith("data-");
+  return /^(?:aria-|data-)|^(?:contenteditable|draggable|spellcheck|value|autoreverse|externalresourcesrequired|focusable|preservealpha|autocapitalize)$/i
+    .test(name);
 }
 
 /**

@@ -2535,7 +2535,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.9.0 The denext framework version.",
+      "text": "VERSION VERSION: 2.10.0-rc.1 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -9424,6 +9424,42 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/AuthSessionError",
+      "kind": "interface",
+      "title": "AuthSessionError",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/AuthSessionError",
+      "text": "AuthSessionError interface AuthSessionError The Error an openAuthSession promise rejects with.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/AuthSessionErrorCode",
+      "kind": "typeAlias",
+      "title": "AuthSessionErrorCode",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/AuthSessionErrorCode",
+      "text": "AuthSessionErrorCode type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout The code on an openAuthSession rejection: - cancelled: the user closed the sheet (or the popup) without finishing; - busy: another auth session is still open (one at a time); - invalid: url is not an absolute https: URL, callbackScheme is not a custom scheme, or timeoutMs is not a positive number; - unsupported: the shell has no DenextAuthSession plugin, the sheet could not be presented, the web popup was blocked, or there is no window (SSR); - timeout: timeoutMs passed first (the sheet or popup is closed where the platform allows it).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/AuthSessionOptions",
+      "kind": "interface",
+      "title": "AuthSessionOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/AuthSessionOptions",
+      "text": "AuthSessionOptions interface AuthSessionOptions Options for openAuthSession.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/AuthSessionResult",
+      "kind": "interface",
+      "title": "AuthSessionResult",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/AuthSessionResult",
+      "text": "AuthSessionResult interface AuthSessionResult What openAuthSession resolves with.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/BackSwipeOptions",
       "kind": "interface",
       "title": "BackSwipeOptions",
@@ -9439,6 +9475,78 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/checkForUiUpdate",
       "text": "checkForUiUpdate checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult> Check a server for a newer UI and, when it offers a different version, install it. 1. Fetches ${baseUrl}/_denext/ota.json (with headers, cache: \"no-store\" and a timeout) and validates its shape. 2. Asks the native DenextOta plugin for its OtaStatus; if the manifest's version equals the running UI (pending, else current, else bundled), it returns current (as it does when the native side finds nothing to switch). 3. Otherwise the plugin downloads ${baseUrl}/<path> for every file (copying files it already has by SHA-256), verifies each SHA-256 and size, switches the webview's web root to the new directory and reloads. The new page must call otaBooted within the boot timeout (15 s of foreground time by default) or it is rolled back. It never throws. Outside the native shell it resolves { kind: \"unsupported\" } without touching the network. One check runs at a time: a call made while another is in flight gets that call's promise (and its options). Where the UI is served, plus headers, timeout and fetch. What happened, as an OtaCheckResult.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/completeAuthSession",
+      "kind": "function",
+      "title": "completeAuthSession",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/completeAuthSession",
+      "text": "completeAuthSession completeAuthSession(): boolean Finish a web openAuthSession: call it on the callback page the provider redirects the popup to (an https page of the same origin). It posts this page's full URL (code, state and all) to the window that opened the popup, addressed to this origin only, then closes the popup. Not needed inside the native shell, where the callback never loads a page. true when it posted to an opener; false when this page has no opener (it was opened directly, or the provider's Cross-Origin-Opener-Policy severed it), so the page can fall back to handling the callback itself.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/DeepLinkEvent",
+      "kind": "interface",
+      "title": "DeepLinkEvent",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/DeepLinkEvent",
+      "text": "DeepLinkEvent interface DeepLinkEvent One link that opened the app.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/DeepLinkOptions",
+      "kind": "interface",
+      "title": "DeepLinkOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/DeepLinkOptions",
+      "text": "DeepLinkOptions interface DeepLinkOptions Options for onDeepLink and useDeepLink.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/deviceInfo-fn",
+      "kind": "function",
+      "title": "deviceInfo",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/deviceInfo-fn",
+      "text": "deviceInfo deviceInfo(): Promise<DeviceInfo> Facts about the device the page runs on. - Inside the native shell with @capacitor/device installed (denext mobile add device), the model, OS version and simulator flag from the OS. - Otherwise a best-effort parse of navigator.userAgent (model and OS version only; it can be wrong, and iPadOS reports itself as a Mac). During SSR only platform is set. The device facts; platform is always present.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/DeviceInfo-iface",
+      "kind": "interface",
+      "title": "DeviceInfo",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/DeviceInfo-iface",
+      "text": "DeviceInfo interface DeviceInfo What deviceInfo reports. Only platform is always known.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/haptic",
+      "kind": "function",
+      "title": "haptic",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/haptic",
+      "text": "haptic haptic(kind: HapticKind): Promise<void> Play a short haptic. - Inside the native shell with @capacitor/haptics installed (denext mobile add haptics), light/medium/heavy are an impact, success/warning/error a notification, and selection a selection tick. - Elsewhere it calls navigator.vibrate with a short pattern where the browser has it (Android Chrome), and does nothing otherwise (iOS Safari, desktop, SSR). The feedback to play. A promise that settles once the haptic was requested. It rejects with a TypeError for an unknown kind, or if the native plugin rejects.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/HapticKind",
+      "kind": "typeAlias",
+      "title": "HapticKind",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/HapticKind",
+      "text": "HapticKind type HapticKind = light | medium | heavy | success | warning | error | selection A haptic feedback kind haptic can play.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/hideSplash",
+      "kind": "function",
+      "title": "hideSplash",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/hideSplash",
+      "text": "hideSplash hideSplash(): Promise<void> Hide the native launch splash screen, through @capacitor/splash-screen inside the shell (denext mobile add splash). Call it once the first screen has rendered, when the plugin is configured with launchAutoHide: false. On the web, and when the plugin is not installed, it does nothing. A promise that settles once the splash is hidden (at once off the shell).",
       "denextOnly": true
     },
     {
@@ -9487,6 +9595,33 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/LinkAccept",
+      "kind": "typeAlias",
+      "title": "LinkAccept",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LinkAccept",
+      "text": "LinkAccept type LinkAccept = parenthesized | LinkAllowList Which incoming links to act on: a predicate over the parsed URL, or an allow-list.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LinkAllowList",
+      "kind": "interface",
+      "title": "LinkAllowList",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LinkAllowList",
+      "text": "LinkAllowList interface LinkAllowList An allow-list for incoming links.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LinkRoute",
+      "kind": "typeAlias",
+      "title": "LinkRoute",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LinkRoute",
+      "text": "LinkRoute type LinkRoute = boolean | parenthesized How to navigate to an accepted link: true navigates with the page's router, false leaves it to the callback, and a function navigates itself (e.g. (path) => router.push(path)).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/MomentumSafeScrollOptions",
       "kind": "interface",
       "title": "MomentumSafeScrollOptions",
@@ -9514,12 +9649,75 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/NetworkConnectionType",
+      "kind": "typeAlias",
+      "title": "NetworkConnectionType",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/NetworkConnectionType",
+      "text": "NetworkConnectionType type NetworkConnectionType = wifi | cellular | none | unknown The kind of connection a NetworkStatus reports.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/networkStatus-fn",
+      "kind": "function",
+      "title": "networkStatus",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/networkStatus-fn",
+      "text": "networkStatus networkStatus(): Promise<NetworkStatus> Whether the device is online right now, and over what. - Inside the native shell with @capacitor/network installed (denext mobile add network), the OS's reachability: connectionType is \"wifi\", \"cellular\", \"none\" or \"unknown\". - Otherwise navigator.onLine (only \"offline\" is reliable there), with wifi/cellular from the Network Information API where the browser exposes it. During SSR it reads as connected, type \"unknown\". The current status.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/NetworkStatus-iface",
+      "kind": "interface",
+      "title": "NetworkStatus",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/NetworkStatus-iface",
+      "text": "NetworkStatus interface NetworkStatus Whether the device is online, and over what.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/onAppResume",
       "kind": "function",
       "title": "onAppResume",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/onAppResume",
       "text": "onAppResume onAppResume(cb: (awayMs: number) => void): () => void Call cb each time the page returns to the foreground, with how long it was away in milliseconds. It listens for visibilitychange (every browser and webview), pagehide/pageshow (a back-forward-cache restore) and the pause/resume document events that Capacitor's iOS shell fires on scene background/foreground. Whichever signal arrives first counts; the others are deduplicated, so cb runs once per return. A subscription made while the page is already hidden measures from the moment of subscribing. The time away is wall-clock (Date.now()), not performance.now(): iOS's monotonic clock stops while the device sleeps, which would under-report a phone left locked for an hour. A backwards clock jump reads as 0. **The intended pattern** (the rule T3 Code's native app uses): under 10 s away, the connection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume the OS froze the page and its sockets, so reconnect and refetch. SSR-safe: without a document it subscribes to nothing and returns a no-op. Called with awayMs, the time since the page was hidden. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onDeepLink",
+      "kind": "function",
+      "title": "onDeepLink",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onDeepLink",
+      "text": "onDeepLink onDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): () => void Call callback for every link that opens the app, and (by default) navigate to it. - **Cold start:** the link that launched the app is delivered once per page, with launch: true, to every subscriber registered before the shell answers (so subscribe early: a root layout or the app shell). A subscriber that registers after that, say on a component that remounts after a navigation, never sees it again, and neither does the page after a reload in the same session (e.g. an OTA update). - **Warm:** every link opened while the app runs, with launch: false. A link that arrives while nobody is subscribed waits in the shell for the next subscriber. - **Filter:** only links that pass options.accept (default: the app's custom schemes, no https host) reach callback. An unfiltered deep link is an injection vector: anyone can craft one, so treat its path and query as untrusted input. - **Route:** an accepted link's in-app path is navigated (see DeepLinkOptions.route), once per link however many subscribers see it. - **Auth callbacks:** while openAuthSession waits in the shell, links with its callback scheme (and, for a few seconds after, the callback it received) are its own and are not delivered here. On the web (and during SSR) there is no native plugin and this does nothing: the browser already loaded the linked URL. Needs @capacitor/app in the shell (denext mobile add deep-links --scheme myapp). Called with each accepted link. Which links to accept, and how to navigate. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onPushReceived",
+      "kind": "function",
+      "title": "onPushReceived",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onPushReceived",
+      "text": "onPushReceived onPushReceived(callback: (notification: PushNotification) => void): () => void Call callback for each notification that arrives while the app is in the foreground (one that arrives in the background shows in the tray; its tap reaches onPushTapped). Outside the native shell it does nothing. Called with each notification. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onPushTapped",
+      "kind": "function",
+      "title": "onPushTapped",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onPushTapped",
+      "text": "onPushTapped onPushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): () => void Call callback when the user taps a notification (or one of its actions), and by default navigate to its data.path / data.url (see PushTapOptions). A tap that cold-started the app is kept by the shell until the first listener, so it still arrives when you subscribe shortly after boot: subscribe early (a root layout or the app shell), because only the subscribers present when it is handed over see it. Outside the native shell it does nothing. Called with each tap. Which links to accept, and how to navigate. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/openAuthSession",
+      "kind": "function",
+      "title": "openAuthSession",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/openAuthSession",
+      "text": "openAuthSession openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult> Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to. - **iOS** (inside the Capacitor shell): an ASWebAuthenticationSession sheet. It shares Safari's cookies unless preferEphemeral, and catches the redirect to <callbackScheme>: itself. - **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its intent filter for callbackScheme (denext mobile add auth-session --scheme <scheme>) and resolves the call. Coming back without a callback (back button, closing the tab) rejects cancelled. While a session is open, a link with that scheme is not routed by onDeepLink. - **Web**: a popup window. Register an https page of this origin as the redirect URI and call completeAuthSession there; the popup posts its URL back and closes. A blocked popup rejects unsupported (call this from a click handler), and a popup closed without a callback rejects cancelled. A provider page served with Cross-Origin-Opener-Policy: same-origin cuts the popup off from this page, which then reads as cancelled: use a full-page redirect for such providers. Only one session is open at a time (busy otherwise). PKCE and state stay your job: this only opens the page and hands back the callback URL. Generate state (and a PKCE verifier) before the call, compare state after it, and exchange the code on your server. The provider's authorization URL (absolute https:). The callback scheme, and the iOS ephemeral and timeout options. The callback URL. It rejects with an AuthSessionError whose code is one of AuthSessionErrorCode.",
       "denextOnly": true
     },
     {
@@ -9649,12 +9847,138 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/PushNotification",
+      "kind": "interface",
+      "title": "PushNotification",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushNotification",
+      "text": "PushNotification interface PushNotification A push notification, as the shell reports it.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PushPermission",
+      "kind": "typeAlias",
+      "title": "PushPermission",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushPermission",
+      "text": "PushPermission type PushPermission = granted | denied | prompt | unsupported Whether the app may show notifications, or \"unsupported\" outside the native shell.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PushRegistration",
+      "kind": "interface",
+      "title": "PushRegistration",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushRegistration",
+      "text": "PushRegistration interface PushRegistration A device's push registration: the token your server sends to, and where it is valid.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PushTap",
+      "kind": "interface",
+      "title": "PushTap",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushTap",
+      "text": "PushTap interface PushTap A tap on (or an action of) a notification.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PushTapOptions",
+      "kind": "interface",
+      "title": "PushTapOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushTapOptions",
+      "text": "PushTapOptions interface PushTapOptions Options for onPushTapped and usePushTapped.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/readClipboard",
+      "kind": "function",
+      "title": "readClipboard",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/readClipboard",
+      "text": "readClipboard readClipboard(): Promise<string> Read text from the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.readText(), which browsers gate behind a permission prompt or a user gesture. The clipboard's text (\"\" when it holds none).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/registerForPush",
+      "kind": "function",
+      "title": "registerForPush",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/registerForPush",
+      "text": "registerForPush registerForPush(options?: RegisterForPushOptions): Promise<PushRegistration> Register the device for remote notifications and resolve its token, for your server to send to through APNs (iOS) or FCM (Android). denext ships no push relay: store the token on your server (with the user it belongs to) and send from there. It listens for the plugin's registration / registrationError events, calls register(), and resolves the first answer, rejecting after timeoutMs (default 15 s). Its listeners are removed either way. Concurrent calls share one registration. Call it on every launch: the token can change. It does not ask for permission (see requestPushPermission), and it rejects outside the native shell or without @capacitor/push-notifications: there is no web-push fallback. The timeout. The platform and its token.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/RegisterForPushOptions",
+      "kind": "interface",
+      "title": "RegisterForPushOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/RegisterForPushOptions",
+      "text": "RegisterForPushOptions interface RegisterForPushOptions Options for registerForPush.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/requestPushPermission",
+      "kind": "function",
+      "title": "requestPushPermission",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/requestPushPermission",
+      "text": "requestPushPermission requestPushPermission(): Promise<PushPermission> Ask for permission to show notifications, when it has not been decided yet, and report the result: \"granted\", \"denied\" (the user said no; only the system settings can change it) or \"prompt\" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is \"unsupported\": there is no web-push fallback. Android before 13 needs no permission and always reads \"granted\". The permission state.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/SAFE_AREA_CSS",
       "kind": "variable",
       "title": "SAFE_AREA_CSS",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/SAFE_AREA_CSS",
       "text": "SAFE_AREA_CSS SAFE_AREA_CSS: string A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables. The insets are only non-zero when the viewport meta includes viewport-fit=cover. In the App Router, export viewport = { width: \"device-width\", initialScale: 1, viewportFit: \"cover\" } from the root layout. In SPA mode, put the meta tag in spa.head; denext's SPA shell keeps an app's own viewport meta instead of emitting its default.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/secureStore-var",
+      "kind": "variable",
+      "title": "secureStore",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/secureStore-var",
+      "text": "secureStore secureStore: SecureStore A string key-value store for secrets. - Inside the native shell with @aparajita/capacitor-secure-storage installed (denext mobile add secure-store), values live in the iOS Keychain (accessible when the device is unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the plugin's default prefix, so its own SecureStorage.getItem/setItem see the same entries. - **On the web it is NOT secret.** The fallback is a plain IndexedDB database (denext-secure-store) that any script on the origin, and anyone with the device's browser profile, can read. It keeps a web build working; it does not protect anything. Values are strings: JSON.stringify anything else.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SecureStore-iface",
+      "kind": "interface",
+      "title": "SecureStore",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SecureStore-iface",
+      "text": "SecureStore interface SecureStore The store secureStore implements.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/share",
+      "kind": "function",
+      "title": "share",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/share",
+      "text": "share share(opts: ShareOptions): Promise<ShareResult> Open the share sheet. - Inside the native shell with @capacitor/share installed (denext mobile add share), the OS share sheet. - Otherwise navigator.share where the browser has it (and canShare accepts the data). - Otherwise the text and URL are copied to the clipboard (joined by a space), and the result is \"copied\" so the UI can say so. A dismissed sheet resolves \"cancelled\" rather than rejecting. The title, text and URL to share. \"shared\", \"copied\" or \"cancelled\". It rejects with a TypeError when there is nothing to share, and when sharing or copying fails for another reason.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/ShareOptions",
+      "kind": "interface",
+      "title": "ShareOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/ShareOptions",
+      "text": "ShareOptions interface ShareOptions What share shares. At least one of text or url (or title) is needed.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/ShareResult",
+      "kind": "typeAlias",
+      "title": "ShareResult",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/ShareResult",
+      "text": "ShareResult type ShareResult = shared | copied | cancelled How a share ended: \"shared\" (the sheet completed), \"copied\" (no share sheet, so the text was copied to the clipboard) or \"cancelled\" (the user dismissed it).",
       "denextOnly": true
     },
     {
@@ -9676,6 +10000,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/useDeepLink",
+      "kind": "function",
+      "title": "useDeepLink",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useDeepLink",
+      "text": "useDeepLink useDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): void Hook form of onDeepLink: subscribes on mount, unsubscribes on unmount. The latest callback and options are used for each link (they are held in refs), so fresh closures each render never re-subscribe. Called with each accepted link. Which links to accept, and how to navigate.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useKeepAwake",
+      "kind": "function",
+      "title": "useKeepAwake",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useKeepAwake",
+      "text": "useKeepAwake useKeepAwake(active?: boolean): void Keep the screen from dimming and locking while the component is mounted and active is true (a video call, a recipe, a boarding pass). - Inside the native shell with @capacitor-community/keep-awake installed (denext mobile add keep-awake), the native flag. Several mounted callers share it: the screen may sleep again once the last one unmounts or turns active off. - Otherwise the Screen Wake Lock API (navigator.wakeLock), re-acquired whenever the page becomes visible again, since the browser releases it on every hide. Where the browser has no wake lock, or refuses one, it does nothing. Whether to hold the screen on (default true).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/useKeyboardInset",
       "kind": "function",
       "title": "useKeyboardInset",
@@ -9691,6 +10033,42 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/useMomentumSafeScroll",
       "text": "useMomentumSafeScroll useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. A change to force or settleMs re-runs the hook (it releases its share, then takes a new one); settleMs applies only when that share is the one that installs the shim, since a live install keeps its own options. { force, settleMs }, as for installMomentumSafeScroll.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useNetworkStatus",
+      "kind": "function",
+      "title": "useNetworkStatus",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useNetworkStatus",
+      "text": "useNetworkStatus useNetworkStatus(): NetworkStatus Hook form of networkStatus: the current status, updated on every change until unmount. Before mount (and during SSR) it reads { connected: true, connectionType: \"unknown\" }, so an offline banner never flashes on first paint. The latest network status.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/usePushReceived",
+      "kind": "function",
+      "title": "usePushReceived",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/usePushReceived",
+      "text": "usePushReceived usePushReceived(callback: (notification: PushNotification) => void): void Hook form of onPushReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback. Called with each notification received in the foreground.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/usePushTapped",
+      "kind": "function",
+      "title": "usePushTapped",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/usePushTapped",
+      "text": "usePushTapped usePushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): void Hook form of onPushTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options. Called with each tap. Which links to accept, and how to navigate.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/writeClipboard",
+      "kind": "function",
+      "title": "writeClipboard",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/writeClipboard",
+      "text": "writeClipboard writeClipboard(text: string): Promise<void> Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.writeText(). The text to copy. A promise that settles once the text is on the clipboard. It rejects where there is no clipboard (an insecure context, SSR) or when the platform refuses.",
       "denextOnly": true
     },
     {
@@ -9834,7 +10212,7 @@
       "title": "Common tasks",
       "module": "guide",
       "url": "https://github.com/Brainwires/denext/blob/main/AGENTS.md#common-tasks",
-      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` Branch on a value in JSX with choose from denext (Lit-style, lazy; own keys only): choose(status, { loading: () => <Spinner />, error: () => <Oops /> }, () => null). **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.user.id !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>; } ` Add the @denext/openapi plugin (plugins: [openapi()] in denext.config.ts) and those same definitions serve GET /openapi.json (OpenAPI 3.1) + a docs page at GET /docs, write openapi.json at build, and back denext openapi emit | diff | lint | types — zero extra annotation. Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are described in full; others are {} + a lint warning. Need GraphQL? @denext/graphql mounts GraphQL Yoga at /graphql (any GraphQLSchema; Pothos recommended, no decorators) and fromChannel(channel, key) turns a createChannel into a subscription source — the same push the Live socket delivers. A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (_ctx, key) => key === user:${(await auth())?.user.id}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { redirect } from \"denext\"; import { auth, cookies, createApi, getSession, requireAuth, requireSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in // With the denextAuth({ … }) plugin the same three calls cover server, middleware and API: const s = await auth(); // anywhere on the server; null while a second factor is pending // middleware.ts — a Response to redirect (302 + ?error=forbidden), or null to continue: export const middleware = (request: Request) => requireAuth(request, { role: \"admin\" }); // a route handler — requireSession({ role }) refuses with 403: export const GET = createApi().use(requireSession({ role: \"admin\" })).define(/* … */); ` Persist users with an adapter (sqliteAuthAdapter({ path }) on node:sqlite, or inMemoryAuthAdapter()), and gate a machine-to-machine API with requireBearer({ scope: \"pets:write\" }) (it reads the config denextAuth() was built with; pass authConfig first to be explicit) — it self-documents as bearerAuth for @denext/openapi (declare the matching securitySchemes: { bearerAuth: … } once in the openapi() options). credentials() with no authorize verifies against the adapter (getUserByEmail + getCredential + the hasher). Passwordless: providers: [magicLink(), emailOtp()] plus sendVerificationRequest (denext ships no mailer). Second factor: an enrolled user's sign-in comes back pending; your pages.mfa page renders when pendingMfaSession() returns a session and posts { code } to /auth/mfa; enrollment is /auth/mfa/enroll → /auth/mfa/confirm (from a complete session it needs a recent sign-in, session.authTime). Full guide: https://denext.dev/docs/auth Per-request facts from anywhere on the server (denext/server): clientIp() (the proxy's last x-forwarded-for hop only with trustForwardedHeaders / DENEXT_TRUST_PROXY=1, else the socket peer; a dynamic read like headers()), requestId() (the log / x-request-id correlation id — an inbound one is reused only behind a trusted proxy) and requestSignal() (the disconnect / timeout AbortSignal to thread into fetch(); undefined inside use cache). denextAuth inherits the app's trustForwardedHeaders unless it sets its own. **A project-local CLI verb (no plugin):** put it in denext.config.ts and run it as a verb. `ts // denext.config.ts export default { commands: [{ name: \"seed\", summary: \"Load fixtures\", run: (ctx) => seed() }], }; // denext seed — same flag parsing, --help and did-you-mean as a built-in. List this // project's own verbs with denext commands [--json]; they are in shell completions too. // denext --help lists them from the cache denext commands wrote (.denext/commands.json, // fingerprinted against denext.config.* / deno.json / deno.lock) without importing your // config; before the first run, or once one of those files changes, it points at denext commands. ` **A GUI over the project:** denext ui serves a loopback (127.0.0.1) project-management page — schema-driven denext.config.ts editing (a comment-preserving splice: outside the value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it next fires, an editor with a shape builder, and run history when tasks.history is on), plugins with option forms for the first-party ones and JSR search, every generate kind, Docker files plus in-place docker-compose.yml editing, a Desktop panel that composes the signing setup from the identities the keychain holds, a Setup page that readies a fresh clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts deno.json declares, and the project's own verbs. It works with JavaScript disabled, and **project code never runs in the UI's process** — every project-touching operation, including verb discovery (denext commands --json), is a deno subprocess. --read-only prevents writes by the UI, not execution of your config inside that discovery child. --offline keeps the UI and every process it starts off the network. Docs: https://denext.dev/docs/ui **A Capacitor shell:** denext/mobile (client-only) — isNativeShell(), useAppResume, openExternal, useKeyboardInset, useBackSwipe, SAFE_AREA_CSS, installMomentumSafeScroll / useMomentumSafeScroll. It talks to Capacitor through window.Capacitor, so no @capacitor/* import. iOS momentum scrolling survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit; momentumSafeScroll: false opts out). Docs: https://denext.dev/docs/desktop The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor, Safari included, whenever momentumSafeScroll is on (the default). Over-the-air UI updates (Capacitor): spa.ota: true (or denext ota manifest <dir>) stamps _denext/ota.json; denext ota keygen + --sign / DENEXT_OTA_SIGNING_KEY sign it; denext mobile add-ota [--public-key <file>] installs the native plugin (and embeds the key); checkForUiUpdate / prepareUiUpdate / applyUiUpdate / otaBooted from denext/mobile drive it; createOtaHandler from denext/server serves the export. An unsigned manifest over plain http is refused beyond loopback. **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. // KV / Postgres recipes: https://denext.dev/docs/database import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **A scheduled / background task (cron):** put it in tasks/<name>.ts; schedule it in denext.config.ts (scheduledTasks) or per-task; run it on demand with runTask(name) or denext task <name>. Uses Deno.cron where available (Deno Deploy), else a userland tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching Deno.cron), weekdays are **POSIX** (0–6, 0 = Sunday; denext translates them to names for Deno.cron), and a schedule never fires on startup nor overlaps a still-running instance of the same task. tasks: { history: true } records every run to .denext/tasks.db (historyMaxRuns per task, 14 days); the Cron page of denext ui shows it. `ts // tasks/cleanup.ts import { defineTask } from \"denext/server\"; export default defineTask({ description: \"purge expired sessions\", schedule: \"0 3 * * *\", // optional; or list it in config.scheduledTasks handler: async ({ payload }) => { await db.exec(\"DELETE FROM sessions WHERE expires_at < now()\"); }, }); // denext.config.ts → scheduledTasks: { \"0 0 * * 1\": [\"digest\", \"warm-cache\"] } // anywhere on the server: import { runTask } from \"denext/server\"; await runTask(\"cleanup\"); ` **A content collection (typed MD/MDX/YAML/JSON — the @denext/content-collections plugin):** add plugins: [contentCollections()] to denext.config.ts, declare collections in content.config.ts with a Standard Schema + a loader, then query them typed from a Server Component. The plugin validates entries and generates types — live in denext dev, and at denext build. `ts // content.config.ts import { defineCollection, defineContentConfig, glob } from \"@denext/content-collections/config\"; import { z } from \"zod\"; export default defineContentConfig({ collections: { blog: defineCollection({ loader: glob({ pattern: \"**/*.md\", base: \"content/blog\" }), schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }), }), }, }); ` `tsx // app/page.tsx — server-only query, typed to the schema import \"../.denext/content.ts\"; // registers the collection types (generated) import { getCollection } from \"@denext/content-collections/runtime\"; export default async function Blog() { const posts = await getCollection(\"blog\", (p) => !p.data.draft); // p.data is typed return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>; } // Render an entry's body: <Content entry={post} /> (or await renderContent(post)) from the // same module — .md through the first-party renderer, .mdx through a module compiled at build. // CLI: denext content build | list | validate (validate exits 1 on a schema failure — a CI gate). ` **A compile-time feature flag (dead-code-eliminated):** feature(\"KEY\") from denext/feature folds to a boolean literal at build time for any KEY in features — denext's feature() (cf. Bun's bun:bundle). feature() always returns the configured value; the untaken branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key not listed reads false. Flag names/states are embedded in the client bundle (don't encode secrets). `tsx import { feature } from \"denext/feature\"; export function Checkout() { return feature(\"NEW_CHECKOUT\") ? <NewCheckout /> : <LegacyCheckout />; } // denext.config.ts → features: { NEW_CHECKOUT: false } ` **Inspect / shrink the client bundle:** denext analyze breaks the bundle down by chunk + role; denext analyze --md writes a markdown report (per-module on the esbuild path) to pipe into CI. Imports of one export from a \"sideEffects\": false dep (lucide-react, Radix) are tree-shaken automatically on the esbuild path. optimizePackageImports (Next's key, top-level) goes further: barrel imports of listed packages are rewritten to the defining modules, so the barrel is never loaded. A built-in list (lucide-react, date-fns, lodash-es, …) is on by default; add packages, drop one with \"!pkg\", or disable it with false. Listing a package asserts it is side-effect free. Applied by the esbuild bundles only (not unbundled dev or the native deno bundle path). **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, reactCompiler, features, plugins, tailwind, csp, compatibilityMode, optimizePackageImports, momentumSafeScroll; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks six seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addPrepareStep (codegen the app imports — runs at build AND dev startup, and re-runs on watch-glob changes in dev), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See the [plugin guide](https://denext.dev/docs/plugins) and [examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).",
+      "text": "## Common tasks **A page with data (Server Component):** ``tsx // app/page.tsx export default async function Home() { const posts = await getPosts(); return <ul>{posts.map((p) => <li key={p.id}>{p.title}</li>)}</ul>; } ` **An interactive component:** `tsx // app/counter.tsx \"use client\"; import { useState } from \"denext\"; export function Counter() { const [n, setN] = useState(0); return <button type=\"button\" onClick={() => setN(n + 1)}>Clicked {n}</button>; } ` Branch on a value in JSX with choose from denext (Lit-style, lazy; own keys only): choose(status, { loading: () => <Spinner />, error: () => <Oops /> }, () => null). **A route handler (API):** `ts // app/api/hello/route.ts export function GET(_req: Request): Response { return Response.json({ ok: true }); } ` **A validated route handler + calling it with end-to-end types (no tRPC):** defineApi takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for params / query / body / response plus the errors it may fail with; the handler gets parsed, typed input and a schema mismatch is a structured 400 before it runs. denext dev/build generate .denext/api.ts from the route modules' TYPES and register it, so createApiClient() and useApi type-check every call — path, method, params, query, body, response, error codes. `ts // app/api/user/[id]/route.ts import { createApi, defineApi, requireSession } from \"denext/server\"; import { z } from \"zod\"; export const GET = defineApi({ params: z.object({ id: z.string() }), response: z.object({ id: z.string(), name: z.string() }), // strips undeclared keys, in prod too errors: { not_found: 404 }, }, async ({ params, fail }) => (await db.users.get(params.id)) ?? fail(\"not_found\")); export const PATCH = createApi().use(requireSession()).define({ params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1) }), errors: { not_owner: 403 }, }, async ({ params, body, ctx, fail }) => { if (ctx.session.user.id !== params.id) fail(\"not_owner\"); return db.users.update(params.id, body); }); ` `ts // anywhere (server component, client component, or a test) import { createApiClient, isApiClientError } from \"denext\"; import type {} from \"./.denext/api.ts\"; // registers the schema (type-only; nothing ships) const api = createApiClient(); // typed against THIS app's routes const user = await api(\"/api/user/[id]\", \"GET\", { params: { id: \"1\" } }); // user is typed try { await api(\"/api/user/[id]\", \"PATCH\", { params: { id: \"1\" }, body: { name: \"\" } }); } catch (err) { if (isApiClientError(err) && err.code === \"not_owner\") { /* narrowed to the declared codes */ } } ` `tsx // a client component — the hook; GETs in one tick ride ONE batched request \"use client\"; import { useApi } from \"denext\"; export function User({ id }: { id: string }) { const { data, error, pending } = useApi(\"/api/user/[id]\", \"GET\", { params: { id } }); return pending ? <p>…</p> : error ? <p>{error.code}</p> : <p>{data?.name}</p>; } ` Add the @denext/openapi plugin (plugins: [openapi()] in denext.config.ts) and those same definitions serve GET /openapi.json (OpenAPI 3.1) + a docs page at GET /docs, write openapi.json at build, and back denext openapi emit | diff | lint | types — zero extra annotation. Schemas that implement Standard JSON Schema (Zod ≥ 4.2, ArkType, Valibot) or TypeBox are described in full; others are {} + a lint warning. Need GraphQL? @denext/graphql mounts GraphQL Yoga at /graphql (any GraphQLSchema; Pothos recommended, no decorators) and fromChannel(channel, key) turns a createChannel into a subscription source — the same push the Live socket delivers. A plain handler still works and is still typed: return TypedResponse<T> / take a TypedRequest<B> from denext/server. A plain route.ts body is capped at 1 MiB (export const maxBodyBytes = N | false); redirect()/notFound() inside one are HTTP responses; a thrown ApiError(status, code, { data }) is a typed JSON error envelope. **Typed live data (validated subscription + server push):** `ts // app/live.ts \"use server\"; import { createChannel, defineSubscription } from \"denext/server\"; export const orderStatus = defineSubscription({ input: z.object({ id: z.string() }), // validated on every subscribe tags: ({ id }) => [order:${id}], // server-derived; re-pushed on revalidateTag authorize: async ({ id }) => (await auth())?.user.id === (await db.orders.owner(id)), resolve: ({ id }) => db.orders.status(id), }); export const orderEvents = createChannel<{ status: string }>({ authorize: async (_ctx, key) => key === user:${(await auth())?.user.id}, // REQUIRED }); // anywhere on the server: await orderEvents.publish(user:${userId}, { status: \"shipped\" }); ` `tsx \"use client\"; import { useChannel, useSubscription } from \"denext/live\"; import { orderEvents, orderStatus } from \"./live.ts\"; const { data } = useSubscription(orderStatus, { id }, { initial }); const { data: event } = useChannel(orderEvents, user:${userId}); ` **A typed Server Action (the mutation side, also type-checked):** defineAction validates FormData into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its Out flows into useActionState. `ts // app/actions.ts \"use server\"; import { ActionValidationError, defineAction } from \"denext/server\"; export const createPost = defineAction({ input: (f) => ({ title: String(f.title ?? \"\").trim() }), // typed input: { title: string } handler: async ({ title }) => { if (!title) throw new ActionValidationError(\"bad\", { title: \"Title is required\" }); return { id: await db.posts.insert({ title }) }; // Out inferred: { id: string } }, }); ` `tsx // app/new-post.tsx \"use client\"; import { idleActionState, useActionState } from \"denext\"; import { createPost } from \"./actions.ts\"; export function NewPost() { const [state, action] = useActionState(createPost, idleActionState<{ id: string }>()); return ( <form action={action}> <input name=\"title\" /> {!state.ok && state.fieldErrors?.title} {/* typed */} {state.ok && created ${state.data.id}} {/* typed */} </form> ); } ` **Reading cookies / a session (auth):** `ts import { redirect } from \"denext\"; import { auth, cookies, createApi, getSession, requireAuth, requireSession } from \"denext/server\"; // cookies are Secure + httpOnly + SameSite=Lax by DEFAULT; pass { httpOnly: false } to opt out. const session = await getSession<{ userId: string }>({ secret: Deno.env.get(\"SESSION_SECRET\")!, }); if (!session.data) redirect(\"/login\"); await session.set({ userId: user.id }); // sign in // With the denextAuth({ … }) plugin the same three calls cover server, middleware and API: const s = await auth(); // anywhere on the server; null while a second factor is pending // middleware.ts — a Response to redirect (302 + ?error=forbidden), or null to continue: export const middleware = (request: Request) => requireAuth(request, { role: \"admin\" }); // a route handler — requireSession({ role }) refuses with 403: export const GET = createApi().use(requireSession({ role: \"admin\" })).define(/* … */); ` Persist users with an adapter (sqliteAuthAdapter({ path }) on node:sqlite, or inMemoryAuthAdapter()), and gate a machine-to-machine API with requireBearer({ scope: \"pets:write\" }) (it reads the config denextAuth() was built with; pass authConfig first to be explicit) — it self-documents as bearerAuth for @denext/openapi (declare the matching securitySchemes: { bearerAuth: … } once in the openapi() options). credentials() with no authorize verifies against the adapter (getUserByEmail + getCredential + the hasher). Passwordless: providers: [magicLink(), emailOtp()] plus sendVerificationRequest (denext ships no mailer). Second factor: an enrolled user's sign-in comes back pending; your pages.mfa page renders when pendingMfaSession() returns a session and posts { code } to /auth/mfa; enrollment is /auth/mfa/enroll → /auth/mfa/confirm (from a complete session it needs a recent sign-in, session.authTime). Full guide: https://denext.dev/docs/auth Per-request facts from anywhere on the server (denext/server): clientIp() (the proxy's last x-forwarded-for hop only with trustForwardedHeaders / DENEXT_TRUST_PROXY=1, else the socket peer; a dynamic read like headers()), requestId() (the log / x-request-id correlation id — an inbound one is reused only behind a trusted proxy) and requestSignal() (the disconnect / timeout AbortSignal to thread into fetch(); undefined inside use cache). denextAuth inherits the app's trustForwardedHeaders unless it sets its own. **A project-local CLI verb (no plugin):** put it in denext.config.ts and run it as a verb. `ts // denext.config.ts export default { commands: [{ name: \"seed\", summary: \"Load fixtures\", run: (ctx) => seed() }], }; // denext seed — same flag parsing, --help and did-you-mean as a built-in. List this // project's own verbs with denext commands [--json]; they are in shell completions too. // denext --help lists them from the cache denext commands wrote (.denext/commands.json, // fingerprinted against denext.config.* / deno.json / deno.lock) without importing your // config; before the first run, or once one of those files changes, it points at denext commands. ` **A GUI over the project:** denext ui serves a loopback (127.0.0.1) project-management page — schema-driven denext.config.ts editing (a comment-preserving splice: outside the value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it next fires, an editor with a shape builder, and run history when tasks.history is on), plugins with option forms for the first-party ones and JSR search, every generate kind, Docker files plus in-place docker-compose.yml editing, a Desktop panel that composes the signing setup from the identities the keychain holds, a Setup page that readies a fresh clone, a Dev page that starts and stops the dev server, a Tasks page for the scripts deno.json declares, and the project's own verbs. It works with JavaScript disabled, and **project code never runs in the UI's process** — every project-touching operation, including verb discovery (denext commands --json), is a deno subprocess. --read-only prevents writes by the UI, not execution of your config inside that discovery child. --offline keeps the UI and every process it starts off the network. Docs: https://denext.dev/docs/ui **A Capacitor shell:** denext/mobile (client-only) — isNativeShell(), useAppResume, openExternal, useKeyboardInset, useBackSwipe, SAFE_AREA_CSS, installMomentumSafeScroll / useMomentumSafeScroll. It talks to Capacitor through window.Capacitor, so no @capacitor/* import. iOS momentum scrolling survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit; momentumSafeScroll: false opts out). Native capabilities with web fallbacks: haptic, readClipboard/writeClipboard, share, deviceInfo, networkStatus/useNetworkStatus, useKeepAwake, hideSplash, secureStore (NOT secret on the web); denext mobile add <capability...> [--dry-run] [--list] installs their plugins, and deep-links --scheme/--domain / push add onDeepLink/useDeepLink (filtered by accept, routed once) and requestPushPermission/registerForPush/onPushTapped (no web push; your server sends via APNs/FCM). auth-session --scheme myapp adds openAuthSession(url, { callbackScheme }) (OAuth in an iOS ASWebAuthenticationSession / Android Custom Tab / web popup finished by completeAuthSession(); resolves the callback URL, PKCE + state are yours). Docs: https://denext.dev/docs/desktop The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor, Safari included, whenever momentumSafeScroll is on (the default). Over-the-air UI updates (Capacitor): spa.ota: true (or denext ota manifest <dir>) stamps _denext/ota.json; denext ota keygen + --sign / DENEXT_OTA_SIGNING_KEY sign it; denext mobile add-ota [--public-key <file>] installs the native plugin (and embeds the key); checkForUiUpdate / prepareUiUpdate / applyUiUpdate / otaBooted from denext/mobile drive it; createOtaHandler from denext/server serves the export. An unsigned manifest over plain http is refused beyond loopback. **A database (zero-npm, server-only module):** `ts // lib/db.ts — Deno's built-in SQLite; no install. // KV / Postgres recipes: https://denext.dev/docs/database import { DatabaseSync } from \"node:sqlite\"; const db = new DatabaseSync(Deno.env.get(\"DB_PATH\") ?? \"app.db\"); export const listNotes = () => db.prepare(\"SELECT * FROM notes\").all(); ` Open the connection once at module scope; do writes in Server Actions. **A scheduled / background task (cron):** put it in tasks/<name>.ts; schedule it in denext.config.ts (scheduledTasks) or per-task; run it on demand with runTask(name) or denext task <name>. Uses Deno.cron where available (Deno Deploy), else a userland tick — no npm cron dependency. **Cron expressions are evaluated in UTC** (matching Deno.cron), weekdays are **POSIX** (0–6, 0 = Sunday; denext translates them to names for Deno.cron), and a schedule never fires on startup nor overlaps a still-running instance of the same task. tasks: { history: true } records every run to .denext/tasks.db (historyMaxRuns per task, 14 days); the Cron page of denext ui shows it. `ts // tasks/cleanup.ts import { defineTask } from \"denext/server\"; export default defineTask({ description: \"purge expired sessions\", schedule: \"0 3 * * *\", // optional; or list it in config.scheduledTasks handler: async ({ payload }) => { await db.exec(\"DELETE FROM sessions WHERE expires_at < now()\"); }, }); // denext.config.ts → scheduledTasks: { \"0 0 * * 1\": [\"digest\", \"warm-cache\"] } // anywhere on the server: import { runTask } from \"denext/server\"; await runTask(\"cleanup\"); ` **A content collection (typed MD/MDX/YAML/JSON — the @denext/content-collections plugin):** add plugins: [contentCollections()] to denext.config.ts, declare collections in content.config.ts with a Standard Schema + a loader, then query them typed from a Server Component. The plugin validates entries and generates types — live in denext dev, and at denext build. `ts // content.config.ts import { defineCollection, defineContentConfig, glob } from \"@denext/content-collections/config\"; import { z } from \"zod\"; export default defineContentConfig({ collections: { blog: defineCollection({ loader: glob({ pattern: \"**/*.md\", base: \"content/blog\" }), schema: z.object({ title: z.string(), date: z.string(), draft: z.boolean().default(false) }), }), }, }); ` `tsx // app/page.tsx — server-only query, typed to the schema import \"../.denext/content.ts\"; // registers the collection types (generated) import { getCollection } from \"@denext/content-collections/runtime\"; export default async function Blog() { const posts = await getCollection(\"blog\", (p) => !p.data.draft); // p.data is typed return <ul>{posts.map((p) => <li key={p.id}>{p.data.title}</li>)}</ul>; } // Render an entry's body: <Content entry={post} /> (or await renderContent(post)) from the // same module — .md through the first-party renderer, .mdx through a module compiled at build. // CLI: denext content build | list | validate (validate exits 1 on a schema failure — a CI gate). ` **A compile-time feature flag (dead-code-eliminated):** feature(\"KEY\") from denext/feature folds to a boolean literal at build time for any KEY in features — denext's feature() (cf. Bun's bun:bundle). feature() always returns the configured value; the untaken branch is dead-code eliminated where it folds (native App Router component modules, SPA, dev), and read at runtime on the compat drop-in App Router path. Keep the argument a string literal; a key not listed reads false. Flag names/states are embedded in the client bundle (don't encode secrets). `tsx import { feature } from \"denext/feature\"; export function Checkout() { return feature(\"NEW_CHECKOUT\") ? <NewCheckout /> : <LegacyCheckout />; } // denext.config.ts → features: { NEW_CHECKOUT: false } ` **Inspect / shrink the client bundle:** denext analyze breaks the bundle down by chunk + role; denext analyze --md writes a markdown report (per-module on the esbuild path) to pipe into CI. Imports of one export from a \"sideEffects\": false dep (lucide-react, Radix) are tree-shaken automatically on the esbuild path. optimizePackageImports (Next's key, top-level) goes further: barrel imports of listed packages are rewritten to the defining modules, so the barrel is never loaded. A built-in list (lucide-react, date-fns, lodash-es, …) is on by default; add packages, drop one with \"!pkg\", or disable it with false. Listing a package asserts it is side-effect free. Applied by the esbuild bundles only (not unbundled dev or the native deno bundle path). **Testing an app (no browser, JS-disabled path):** `ts import { createTestApp, createTestClient } from \"denext/testing\"; const client = createTestClient(await createTestApp(\"./\")); const res = await client.submit( client.form((await client.get(\"/login\")).text), { email, password, }, ); // res.status, client.cookies — a cookie jar persists the session across requests. ` **Testing a component (hooks/effects/events, no browser):** `ts import { fireEvent, render } from \"denext/testing\"; import { h } from \"denext/jsx-runtime\"; const screen = await render(h(Counter, null)); // async — await it await screen.fireEvent.click(screen.getByRole(\"button\")); // getByRole/getByText/getByLabelText/getByTestId; fireEvent.change wires to onChange. ` **Conformance-probing every route (CI gate):** `ts import { formatReport, probeApp } from \"denext/testing\"; const report = await probeApp(\"./\"); // renders every route, asserts valid HTML docs if (!report.ok) throw new Error(formatReport(report)); // or run denext doctor ` **Config:** denext.config.ts exports { ... } (redirects, rewrites, headers, i18n, images, cacheComponents, streaming, live, reactCompiler, features, plugins, tailwind, csp, compatibilityMode, optimizePackageImports, momentumSafeScroll; mode: \"spa\" + spa: { entry, … } for SPA mode). Not next.config.js. **Writing a plugin:** a DenextPlugin ({ name, setup(ctx) } from denext/plugin-kit, the semver-stable toolkit) hooks six seams — addRouteSynthesizer (add/adjust routes), addRequestHandler (claim unmatched requests), addBuildStep (emit assets), addPrepareStep (codegen the app imports — runs at build AND dev startup, and re-runs on watch-glob changes in dev), addTeardown (dispose on drain), and addCommand (contribute a CLI verb). Declare it as plugins: [myPlugin()]. See the [plugin guide](https://denext.dev/docs/plugins) and [examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).",
       "denextOnly": false
     },
     {

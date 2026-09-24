@@ -407,6 +407,229 @@ export default function RootLayout({ children }: { children: unknown }) {
         plain-browser path.
       </Callout>
 
+      <h3>Native capabilities</h3>
+      <p>
+        <code>denext/mobile</code>{" "}
+        also wraps the common Capacitor plugins. Each function calls the official plugin inside the
+        shell and falls back to a browser API (or does nothing) on the web, so the same code runs in
+        both places. <code>denext mobile add</code>{" "}
+        installs the plugins: it finds the project (the folder with{" "}
+        <code>capacitor.config.*</code>, or <code>--dir</code>), refuses a{" "}
+        <code>@capacitor/core</code>{" "}
+        major other than 8, adds the packages with the package manager your lockfile names, declares
+        any Android permissions they need, and runs <code>npx cap sync</code>.
+      </p>
+      <Code lang="bash">
+        {`denext mobile add --list                    # the capabilities and their plugins
+denext mobile add haptics share network --dry-run   # print the plan, change nothing
+denext mobile add haptics share network secure-store`}
+      </Code>
+      <ul>
+        <li>
+          <code>haptic(kind)</code>{" "}
+          (<code>haptics</code>): an impact, notification or selection tick; falls back to{" "}
+          <code>navigator.vibrate</code>.
+        </li>
+        <li>
+          <code>readClipboard()</code> / <code>writeClipboard(text)</code>{" "}
+          (<code>clipboard</code>): falls back to <code>navigator.clipboard</code>.
+        </li>
+        <li>
+          <code>share({"{ title, text, url }"})</code> (<code>share</code>): resolves{" "}
+          <code>"shared"</code>, <code>"cancelled"</code>, or <code>"copied"</code>{" "}
+          when there is no share sheet and the text went to the clipboard.
+        </li>
+        <li>
+          <code>deviceInfo()</code>{" "}
+          (<code>device</code>): platform, model, OS version; a best-effort user-agent read on the
+          web.
+        </li>
+        <li>
+          <code>networkStatus()</code> / <code>useNetworkStatus()</code>{" "}
+          (<code>network</code>): connected and the connection type; <code>navigator.onLine</code>
+          {" "}
+          on the web.
+        </li>
+        <li>
+          <code>useKeepAwake(active)</code>{" "}
+          (<code>keep-awake</code>): keeps the screen on; the Screen Wake Lock API on the web.
+        </li>
+        <li>
+          <code>hideSplash()</code> (<code>splash</code>): hides the launch splash when{" "}
+          <code>launchAutoHide</code> is off.
+        </li>
+        <li>
+          <code>secureStore.get / set / delete</code>{" "}
+          (<code>secure-store</code>): the iOS Keychain / Android Keystore. On the web it is a plain
+          IndexedDB database, which is <strong>not</strong> secret.
+        </li>
+      </ul>
+      <p>
+        <code>browser</code> installs the plugin <code>openExternal</code>{" "}
+        uses for its in-app browser. A new plugin is native code: ship a new app binary afterwards.
+      </p>
+
+      <h3>Deep links</h3>
+      <p>
+        <code>deep-links</code> installs <code>@capacitor/app</code>{" "}
+        and registers what opens the app: <code>--scheme</code> adds a custom URL scheme (
+        <code>CFBundleURLTypes</code>{" "}
+        in Info.plist, a VIEW intent filter on the launcher activity) and <code>--domain</code>{" "}
+        a universal link / app link domain (<code>applinks:</code> in the entitlements, an{" "}
+        <code>android:autoVerify</code>{" "}
+        https intent filter). Several are comma-separated, and running it again merges instead of
+        duplicating. A domain also has to serve <code>/.well-known/apple-app-site-association</code>
+        {" "}
+        and <code>/.well-known/assetlinks.json</code>, or the OS opens the link in the browser.
+      </p>
+      <Code lang="bash">
+        {`denext mobile add deep-links --scheme myapp --domain app.example.com`}
+      </Code>
+      <Code lang="tsx">
+        {`"use client";
+import { useDeepLink } from "denext/mobile";
+
+export function DeepLinks() {
+  // myapp://threads/42 and https://app.example.com/threads/42 both open /threads/42.
+  useDeepLink(({ url, launch }) => console.log("opened", url, launch), {
+    accept: { schemes: ["myapp"], hosts: ["app.example.com"] },
+  });
+  return null;
+}`}
+      </Code>
+      <p>
+        The link that cold-started the app arrives once per page with{" "}
+        <code>launch: true</code>, to the subscribers registered by then (so mount it in the root
+        layout); links opened while the app runs follow with <code>launch: false</code>.{" "}
+        <strong>Only accepted links reach your code.</strong>{" "}
+        The default accepts the app's custom schemes (the OS only delivers the ones you registered)
+        and no <code>https</code> host, so list your domains in <code>accept.hosts</code>{" "}
+        or pass a predicate. Anyone can craft a deep link, so treat its path and query as untrusted
+        input. An accepted link's in-app path is navigated once: pushed onto the history with a{" "}
+        <code>popstate</code>, which denext's router and history-based SPA routers follow. Pass{" "}
+        <code>route: (path) =&gt; router.push(path)</code> to use your own router, or{" "}
+        <code>route: false</code>{" "}
+        to handle it yourself. On the web it does nothing: the browser already loaded the URL.
+      </p>
+
+      <h3>Auth sessions</h3>
+      <p>
+        <code>openAuthSession(url, {"{ callbackScheme }"})</code>{" "}
+        signs in with an OAuth 2 / OpenID Connect provider in a system browser sheet and resolves
+        with the full callback URL the provider redirected to. <code>auth-session</code>{" "}
+        has no npm package: it installs denext's own <code>DenextAuthSession</code>{" "}
+        plugin (Swift and Java sources, the Xcode target entry, and its registration in{" "}
+        <code>DenextBridgeViewController</code> and <code>MainActivity</code>, which it shares with
+        {" "}
+        <code>add-ota</code>; either can run first). <code>--scheme</code>{" "}
+        registers the callback scheme the way <code>deep-links</code> does.
+      </p>
+      <Code lang="bash">
+        {`denext mobile add auth-session --scheme myapp`}
+      </Code>
+      <Code lang="tsx">
+        {`"use client";
+import { openAuthSession } from "denext/mobile";
+
+export async function signIn() {
+  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const authorize = new URL("https://auth.example.com/authorize");
+  authorize.searchParams.set("redirect_uri", "myapp://auth/callback");
+  authorize.searchParams.set("state", state);
+  const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
+  const params = new URL(url).searchParams;
+  if (params.get("state") !== state) throw new Error("state mismatch");
+  await fetch("/api/auth/exchange", { method: "POST", body: params.get("code") });
+}`}
+      </Code>
+      <ul>
+        <li>
+          <strong>iOS:</strong> an <code>ASWebAuthenticationSession</code>{" "}
+          sheet. It shares Safari's cookies (an existing provider login is reused) unless{" "}
+          <code>preferEphemeral: true</code>, and it catches the redirect to <code>myapp:</code>
+          {" "}
+          itself, so the scheme needs no Info.plist entry.
+        </li>
+        <li>
+          <strong>Android:</strong>{" "}
+          a Custom Tab. The redirect comes back through the app's intent filter for the scheme (so
+          {" "}
+          <code>--scheme</code>{" "}
+          is required there), and the plugin resolves with it. Coming back without a callback (back
+          button, closing the tab) rejects <code>cancelled</code>{" "}
+          after a short delay, so a redirect racing the return still wins. The tab is requested
+          through the Custom Tabs intent extra, with no <code>androidx.browser</code>{" "}
+          dependency; a browser without Custom Tabs opens a normal page. While a session waits,{" "}
+          <code>onDeepLink</code> leaves its callback alone.
+        </li>
+        <li>
+          <strong>Web:</strong> a popup (call it from a click handler, or it is blocked:{" "}
+          <code>unsupported</code>). Use an https page of your origin as the redirect URI and call
+          {" "}
+          <code>completeAuthSession()</code>{" "}
+          there: it posts the page's URL to the opener, addressed to this origin only, and closes
+          the popup. A popup closed without a callback rejects{" "}
+          <code>cancelled</code>. A provider that sends{" "}
+          <code>Cross-Origin-Opener-Policy: same-origin</code>{" "}
+          cuts the popup off from the page; use a full-page redirect for it.
+        </li>
+      </ul>
+      <p>
+        Only one session is open at a time (<code>busy</code>); <code>timeoutMs</code> gives up with
+        {" "}
+        <code>timeout</code>, and a non-https <code>url</code> or a bad scheme is{" "}
+        <code>invalid</code>.{" "}
+        <strong>
+          PKCE and <code>state</code> stay your job:
+        </strong>{" "}
+        denext only opens the page and hands back the callback URL. Check <code>state</code>{" "}
+        and exchange the <code>code</code> on your server.
+      </p>
+
+      <h3>Push notifications</h3>
+      <p>
+        <code>push</code> installs <code>@capacitor/push-notifications</code>, writes{" "}
+        <code>aps-environment</code>{" "}
+        (development) into the entitlements, adds the token forwarding the plugin needs to{" "}
+        <code>AppDelegate.swift</code>, and declares <code>POST_NOTIFICATIONS</code>{" "}
+        (Android 13+). Android also needs your Firebase project's{" "}
+        <code>android/app/google-services.json</code>: without it the install warns and registration
+        fails at runtime. iOS push needs a paid Apple Developer team with the Push Notifications
+        capability; an archive exported for TestFlight or the App Store is signed with{" "}
+        <code>production</code>. When the Xcode project has no entitlements file yet, denext writes
+        {" "}
+        <code>App/App.entitlements</code>{" "}
+        and prints the one manual step: select it as the App target's Code Signing Entitlements.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { registerForPush, requestPushPermission, usePushTapped } from "denext/mobile";
+
+export async function enablePush() {
+  if ((await requestPushPermission()) !== "granted") return;
+  const { platform, token } = await registerForPush(); // APNs (hex) or FCM token
+  await fetch("/api/devices", { method: "POST", body: JSON.stringify({ platform, token }) });
+}
+
+export function PushRouting() {
+  // A tap on a notification whose data is { "path": "/threads/42" } opens that thread.
+  usePushTapped(({ notification }) => console.log("tapped", notification.id));
+  return null;
+}`}
+      </Code>
+      <p>
+        <strong>denext ships no push relay.</strong>{" "}
+        Your server stores each token with its user and platform and sends through APNs (iOS, with
+        the app's bundle id as the topic, sandbox for development builds) or FCM (Android).{" "}
+        <code>onPushReceived</code> fires for a notification that arrives in the foreground;{" "}
+        <code>onPushTapped</code>{" "}
+        for a tap, including the one that launched the app, which the shell keeps for the first
+        listener. The tap navigates to <code>data.path</code> (an in-app path) or{" "}
+        <code>data.url</code> (under the same acceptance rules as deep links). Call{" "}
+        <code>registerForPush()</code>{" "}
+        on every launch, since the token can change. There is no web-push fallback.
+      </p>
+
       <h3>Over-the-air UI updates</h3>
       <p>
         A Capacitor app can pull a newer web UI from a server without a new app build: the shell

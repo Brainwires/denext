@@ -7,6 +7,11 @@
 //   denext ota keygen <out>       write a P-256 signing key (<out>) and its public key (<out>.pub)
 //   denext mobile add-ota [dir]   install the native DenextOta plugin into ios/ + android/
 //                                 (--public-key <file> embeds the verifying key)
+//   denext mobile add <cap...>    add the Capacitor plugins behind denext/mobile's capability
+//                                 functions (haptics, share, secure-store, deep-links, push,
+//                                 …), their native config, and `cap sync` (--dry-run plans,
+//                                 --list lists, --scheme / --domain configure deep-links);
+//                                 auth-session installs denext's own DenextAuthSession plugin
 //
 // Both are flat verbs whose first positional selects the action (as `desktop` does). Neither
 // loads the project's modules: `ota manifest` only hashes files, and `add-ota` only writes
@@ -24,6 +29,13 @@ import {
   parseOtaPublicKey,
 } from "../../build/ota-signing.ts";
 import { type AddOtaReport, addOtaToProject } from "../../build/mobile-ota-install.ts";
+import {
+  type AddCapabilitiesReport,
+  addMobileCapabilities,
+  type CommandRunner,
+  formatCapabilityPlan,
+  formatCapabilityTable,
+} from "../../build/mobile-capabilities.ts";
 
 /** Print `message` to stderr and exit 1. */
 function fail(message: string): never {
@@ -318,10 +330,129 @@ async function addOta(ctx: CommandContext): Promise<void> {
   if (failure !== undefined) fail(`\n  ${failure}`);
 }
 
-export const mobileCommand: CommandSpec = {
+/** Run a planned command with the terminal attached, resolving its exit code. */
+const runInherit: CommandRunner = async ({ cmd, args, cwd }) => {
+  const { code } = await new Deno.Command(cmd, {
+    args: [...args],
+    cwd,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).output();
+  return { code };
+};
+
+/** Print an `add` report (after the commands ran). */
+function printAddReport(report: AddCapabilitiesReport): void {
+  for (const path of report.written) console.log(`  wrote      ${path}`);
+  for (const path of report.unchanged) console.log(`  unchanged  ${path}`);
+  for (const note of report.skipped) console.log(`  skipped    ${note}`);
+  for (const warning of report.plan.warnings) console.log(`\n  WARNING: ${warning}`);
+  const manual = [...report.plan.manual, ...report.manual];
+  if (manual.length > 0) {
+    console.log("\n  Still to do by hand:");
+    for (const step of manual) console.log(`    - ${step}`);
+  }
+  if (report.plan.notes.length > 0) {
+    console.log("\n  Now call from denext/mobile:");
+    for (const note of report.plan.notes) console.log(`    - ${note}`);
+  }
+  console.log("\n  Native plugins changed: ship a new app binary (OTA only updates the web UI).");
+}
+
+/** A comma-separated list flag (`--scheme a,b`) as its trimmed, non-empty items. */
+function listFlag(value: string | number | boolean | undefined): string[] {
+  return typeof value === "string" ? value.split(",").map((v) => v.trim()).filter(Boolean) : [];
+}
+
+/** `denext mobile add <capability...>`. */
+async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise<void> {
+  if (ctx.flags.list === true) {
+    console.log(formatCapabilityTable());
+    return;
+  }
+  const dryRun = ctx.flags["dry-run"] === true;
+  const dir = ctx.flags.dir;
+  let report: AddCapabilitiesReport;
+  try {
+    report = await addMobileCapabilities({
+      capabilities: ctx.positionals.slice(1),
+      cwd: resolve(ctx.global.cwd ?? "."),
+      dir: typeof dir === "string" ? dir : undefined,
+      dryRun,
+      run,
+      schemes: listFlag(ctx.flags.scheme),
+      domains: listFlag(ctx.flags.domain),
+      force: ctx.flags.force === true,
+    });
+  } catch (err) {
+    fail(`denext mobile add: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (ctx.global.json) return console.log(JSON.stringify(report));
+  if (dryRun) {
+    console.log(`\n  denext mobile add --dry-run (nothing changed)\n`);
+    console.log(formatCapabilityPlan(report.plan));
+    return;
+  }
+  console.log(`\n  denext mobile add  ▸  ${report.plan.root}\n`);
+  printAddReport(report);
+}
+
+/**
+ * Build the `mobile` verb with `run` as the subprocess runner for `add` (tests pass a fake).
+ *
+ * @param run Runs `add`'s package install and `cap sync`.
+ * @returns The command spec.
+ */
+export function createMobileCommand(run: CommandRunner = runInherit): CommandSpec {
+  return {
+    ...mobileCommandSpec,
+    run: async (ctx) => {
+      const action = ctx.positionals[0];
+      if (action === "add-ota") return await addOta(ctx);
+      if (action === "add") return await addCapabilities(ctx, run);
+      fail(`denext mobile: unknown action "${action ?? ""}" (expected: add, add-ota).`);
+    },
+  };
+}
+
+const mobileCommandSpec: Omit<CommandSpec, "run"> = {
   name: "mobile",
-  summary: "Capacitor helpers (add-ota: install over-the-air UI updates)",
-  usage: "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n" +
+  summary: "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates)",
+  usage: "  denext mobile add <capability...>\n" +
+    "                                Add the Capacitor plugins behind denext/mobile's\n" +
+    "                                capability functions, then `npx cap sync`\n" +
+    "  denext mobile add deep-links --scheme myapp --domain app.example.com\n" +
+    "                                Register a URL scheme and universal / app link domains\n" +
+    "  denext mobile add push        Push notifications (entitlement, AppDelegate, permission)\n" +
+    "  denext mobile add auth-session --scheme myapp\n" +
+    "                                OAuth in a system browser sheet (openAuthSession)\n" +
+    "  denext mobile add --list      List the capabilities and the plugins they install\n" +
+    "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n" +
+    "\n" +
+    "  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n" +
+    "  with no fallback, else the current directory), refuses when its @capacitor/core major\n" +
+    "  is not the one the pinned plugins target, adds the packages with the package manager\n" +
+    "  its lockfile names (pnpm, npm, bun or yarn; npm without one), adds any Info.plist keys\n" +
+    "  (never replacing yours) and Android permissions the capability needs, and runs\n" +
+    "  `npx cap sync`. --dry-run prints the plan and changes nothing. Ship a new app binary\n" +
+    "  afterwards.\n" +
+    "\n" +
+    "  deep-links takes --scheme (CFBundleURLTypes + a VIEW intent filter) and --domain\n" +
+    "  (applinks: in the entitlements + an autoVerify https intent filter); give several as\n" +
+    "  a comma-separated list. The domains must also serve apple-app-site-association and\n" +
+    "  assetlinks.json. push writes aps-environment (development) into the entitlements, the\n" +
+    "  token forwarding into AppDelegate.swift and POST_NOTIFICATIONS into the manifest, and\n" +
+    "  warns when android/app/google-services.json (FCM) is missing. A new entitlements file\n" +
+    "  (ios/App/App/App.entitlements) must be selected in Xcode (Code Signing Entitlements);\n" +
+    "  the steps left to do by hand are printed.\n" +
+    "\n" +
+    "  auth-session has no npm package: it writes denext's DenextAuthSession plugin\n" +
+    "  (ios/App/App/DenextAuthSessionPlugin.swift, an ASWebAuthenticationSession sheet, added to\n" +
+    "  the App target; android dev/denext/authsession/*.java, a Custom Tab) and registers it\n" +
+    "  through DenextBridgeViewController and MainActivity, which it shares with add-ota (either\n" +
+    "  order works). --scheme registers the OAuth callback scheme as deep-links does; Android\n" +
+    "  needs it to receive the redirect. No install or `cap sync` runs for it alone.\n" +
     "\n" +
     "  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n" +
     "  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n" +
@@ -338,14 +469,19 @@ export const mobileCommand: CommandSpec = {
     "  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n" +
     "  template was kept.",
   positionals: [
-    { name: "action", help: "add-ota", required: true },
-    { name: "dir", help: "The Capacitor project (default: .)" },
+    { name: "action", help: "add | add-ota", required: true },
+    {
+      name: "args",
+      help: "add: capability names (see --list); add-ota: the Capacitor project (default: .)",
+      variadic: true,
+    },
   ],
   flags: [
     {
       name: "force",
       type: "boolean",
-      help: "Replace native template files that differ from denext's (loses local edits)",
+      help:
+        "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session)",
     },
     {
       name: "public-key",
@@ -354,10 +490,36 @@ export const mobileCommand: CommandSpec = {
       help:
         "Embed this OTA public key (base64 SPKI or PUBLIC KEY PEM) so the app verifies signatures",
     },
+    {
+      name: "dir",
+      type: "string",
+      valueName: "<dir>",
+      help: "add: the Capacitor project, with no fallback (default: the current directory)",
+    },
+    {
+      name: "dry-run",
+      type: "boolean",
+      help: "add: print the plan (packages, native config, commands) and change nothing",
+    },
+    {
+      name: "list",
+      type: "boolean",
+      help: "add: list the capabilities and the plugins they install",
+    },
+    {
+      name: "scheme",
+      type: "string",
+      valueName: "<scheme[,scheme]>",
+      help: "add deep-links / auth-session: custom URL schemes to register (comma-separated)",
+    },
+    {
+      name: "domain",
+      type: "string",
+      valueName: "<host[,host]>",
+      help: "add deep-links: universal link / app link domains (comma-separated)",
+    },
   ],
-  run: async (ctx) => {
-    const action = ctx.positionals[0];
-    if (action === "add-ota") return await addOta(ctx);
-    fail(`denext mobile: unknown action "${action ?? ""}" (expected: add-ota).`);
-  },
 };
+
+/** The `mobile` verb. */
+export const mobileCommand: CommandSpec = createMobileCommand();

@@ -8,6 +8,72 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.10.0-rc.1] - 2026-09-24
+
+### Added
+
+- **Native capabilities in `denext/mobile`.** `haptic(kind)`, `readClipboard()` /
+  `writeClipboard(text)`, `share({ title, text, url })` (`"shared"` / `"copied"` /
+  `"cancelled"`), `deviceInfo()`, `networkStatus()` / `useNetworkStatus()`,
+  `useKeepAwake(active)`, `hideSplash()` and `secureStore.get` / `set` / `delete`. Inside a
+  Capacitor shell each one calls its official plugin through `window.Capacitor.Plugins`
+  (still no `@capacitor/*` import); on the web it falls back to the matching browser API
+  (Vibration, async Clipboard, Web Share then a clipboard copy, the user agent,
+  `navigator.onLine`, Screen Wake Lock) or does nothing. `secureStore` uses the Keychain /
+  Keystore natively and a plain IndexedDB database on the web, which is **not** secret.
+  Importing `denext/mobile` still runs no code, and each export tree-shakes on its own.
+- **`denext mobile add <capability...>`** installs the plugins behind those functions
+  (`haptics`, `clipboard`, `share`, `device`, `network`, `keep-awake`, `splash`,
+  `secure-store`, `browser`) into a Capacitor project. It refuses when the project's
+  `@capacitor/core` major is not 8, adds the packages with the package manager its lockfile
+  names, declares the Android permissions a capability needs, and runs `npx cap sync`.
+  `--dry-run` prints the plan without changing anything, `--list` lists the capabilities,
+  and `--dir` points at the project.
+- **Deep links in `denext/mobile`.** `onDeepLink(callback, { accept, route })` /
+  `useDeepLink` deliver the link that cold-started the app (once per page, `launch: true`)
+  and every link opened while it runs, through `@capacitor/app`. Only accepted links reach
+  the callback: by default the app's custom schemes and no `https` host (list your
+  universal / app link domains in `accept: { hosts }`, or pass a predicate). An accepted
+  link's in-app path (`myapp://threads/42` → `/threads/42`) is navigated once, through the
+  history (`popstate`) or a `route(path)` function. On the web it does nothing.
+- **Push notifications in `denext/mobile`.** `requestPushPermission()`, `registerForPush()`
+  (the APNs / FCM token for your server; concurrent calls share one registration, and it
+  times out), `onPushReceived` / `usePushReceived` and `onPushTapped` / `usePushTapped`,
+  which navigates to a tapped notification's `data.path` or accepted `data.url`. A tap that
+  cold-started the app still arrives (the shell keeps it for the first listener). There is
+  no web-push fallback, and denext ships no push relay: your server sends through APNs /
+  FCM.
+- **`denext mobile add deep-links --scheme <s> --domain <d>`** registers URL schemes
+  (`CFBundleURLTypes`, a VIEW intent filter) and universal / app link domains
+  (`applinks:` associated domains, an `autoVerify` https intent filter), merging with what is
+  there. **`denext mobile add push`** writes the `aps-environment` entitlement, forwards the
+  token callbacks in `AppDelegate.swift`, declares `POST_NOTIFICATIONS`, and warns when
+  `android/app/google-services.json` is missing. A new `App.entitlements` still has to be
+  selected in Xcode; that and the other manual steps are printed.
+- **OAuth sign-in sheets in `denext/mobile`.** `openAuthSession(url, { callbackScheme,
+  preferEphemeral, timeoutMs })` opens the provider's page in an `ASWebAuthenticationSession`
+  sheet on iOS or a Custom Tab on Android and resolves with the full callback URL; it rejects
+  with a `code` of `cancelled`, `busy` (one session at a time), `invalid`, `unsupported` or
+  `timeout`. On the web it opens a popup, and the callback page calls
+  `completeAuthSession()` to post its URL back (same origin only). PKCE and `state` stay the
+  app's job. While a session waits, `onDeepLink` leaves its callback alone.
+- **`denext mobile add auth-session --scheme <s>`** installs denext's own `DenextAuthSession`
+  native plugin (no npm package): the Swift and Java sources, the Xcode target entry, and its
+  registration in `DenextBridgeViewController` and `MainActivity`. It shares those two files
+  with `denext mobile add-ota`, and either one can run first. `--scheme` registers the
+  callback scheme the way `deep-links` does (Android needs it to receive the redirect).
+
+### Fixed
+
+- **Booleanish attributes on the client.** A boolean on `aria-*`, `data-*`, `draggable`,
+  `spellCheck`, `contentEditable` (and React 19's other booleanish-string props) is now
+  written as `"true"` / `"false"`, as react-dom and denext's SSR already did. Before, the
+  client dropped the attribute for `false` and wrote `""` for `true`, so
+  `<input spellCheck={false}>` left spellcheck on and `aria-hidden={false}` vanished after
+  hydration (found running react-native-web on denext).
+- **Importing any `denext/mobile` export no longer bundles the OTA client.** Its module-level
+  setup is now lazy (an `isNativeShell`-only bundle: 3.7 KB → 0.4 KB).
+
 ## [2.9.0] - 2026-09-24
 
 ### Added
@@ -8058,6 +8124,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.10.0-rc.1]: https://jsr.io/@denext/denext@2.10.0-rc.1
 [2.9.0]: https://jsr.io/@denext/denext@2.9.0
 [2.8.3]: https://jsr.io/@denext/denext@2.8.3
 [2.8.2]: https://jsr.io/@denext/denext@2.8.2

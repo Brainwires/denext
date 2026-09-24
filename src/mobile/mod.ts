@@ -23,6 +23,22 @@
  *   that `denext mobile add-ota` installs; {@linkcode prepareUiUpdate} /
  *   {@linkcode applyUiUpdate} split the download from the switch for an app's own prompt;
  *   {@linkcode otaSignaturePayload} builds the exact bytes a manifest signature covers.
+ * - Native capabilities, each through its official Capacitor plugin in the shell
+ *   (`denext mobile add <capability>` installs it) and a web fallback elsewhere:
+ *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard},
+ *   {@linkcode share}, {@linkcode deviceInfo}, {@linkcode networkStatus} /
+ *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
+ *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
+ * - {@linkcode onDeepLink} / {@linkcode useDeepLink}: the custom-scheme and universal / app
+ *   links that open the app, filtered and routed (`denext mobile add deep-links`).
+ * - {@linkcode openAuthSession}: OAuth / OIDC sign-in in a system browser sheet
+ *   (ASWebAuthenticationSession on iOS, a Custom Tab on Android, a popup finished by
+ *   {@linkcode completeAuthSession} on the web), resolving with the callback URL
+ *   (`denext mobile add auth-session --scheme myapp`).
+ * - {@linkcode requestPushPermission}, {@linkcode registerForPush} (the APNs / FCM token for
+ *   your server), {@linkcode onPushReceived} / {@linkcode usePushReceived} and
+ *   {@linkcode onPushTapped} / {@linkcode usePushTapped} (`denext mobile add push`; no
+ *   web-push fallback).
  *
  * @example
  * ```tsx
@@ -71,3 +87,40 @@ export {
   prepareUiUpdate,
 } from "./ota.ts";
 export { type OtaManifest, type OtaManifestFile, otaSignaturePayload } from "./ota-manifest.ts";
+export { haptic, type HapticKind } from "./haptics.ts";
+export { readClipboard, writeClipboard } from "./clipboard.ts";
+export { share, type ShareOptions, type ShareResult } from "./share.ts";
+export { type DeviceInfo, deviceInfo } from "./device.ts";
+export {
+  type NetworkConnectionType,
+  type NetworkStatus,
+  networkStatus,
+  useNetworkStatus,
+} from "./network.ts";
+export { useKeepAwake } from "./keep-awake.ts";
+export { hideSplash } from "./splash.ts";
+export { type SecureStore, secureStore } from "./secure-store.ts";
+export { type DeepLinkEvent, type DeepLinkOptions, onDeepLink, useDeepLink } from "./deep-link.ts";
+export type { LinkAccept, LinkAllowList, LinkRoute } from "./link-routing.ts";
+export {
+  type AuthSessionError,
+  type AuthSessionErrorCode,
+  type AuthSessionOptions,
+  type AuthSessionResult,
+  completeAuthSession,
+  openAuthSession,
+} from "./auth-session.ts";
+export {
+  onPushReceived,
+  onPushTapped,
+  type PushNotification,
+  type PushPermission,
+  type PushRegistration,
+  type PushTap,
+  type PushTapOptions,
+  registerForPush,
+  type RegisterForPushOptions,
+  requestPushPermission,
+  usePushReceived,
+  usePushTapped,
+} from "./push.ts";

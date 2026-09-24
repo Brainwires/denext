@@ -3797,7 +3797,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.9.0",
+          "signature": "VERSION: 2.10.0-rc.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -14171,6 +14171,54 @@
           "denextOnly": true
         },
         {
+          "name": "AuthSessionError",
+          "slug": "AuthSessionError",
+          "kind": "interface",
+          "signature": "interface AuthSessionError",
+          "doc": "The Error an openAuthSession promise rejects with.",
+          "docFull": "The `Error` an {@linkcode openAuthSession} promise rejects with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthSessionErrorCode",
+          "slug": "AuthSessionErrorCode",
+          "kind": "typeAlias",
+          "signature": "type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout",
+          "doc": "The code on an openAuthSession rejection:",
+          "docFull": "The `code` on an {@linkcode openAuthSession} rejection:\n\n- `cancelled`: the user closed the sheet (or the popup) without finishing;\n- `busy`: another auth session is still open (one at a time);\n- `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,\n  or `timeoutMs` is not a positive number;\n- `unsupported`: the shell has no `DenextAuthSession` plugin, the sheet could not be\n  presented, the web popup was blocked, or there is no window (SSR);\n- `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform\n  allows it).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthSessionOptions",
+          "slug": "AuthSessionOptions",
+          "kind": "interface",
+          "signature": "interface AuthSessionOptions",
+          "doc": "Options for openAuthSession.",
+          "docFull": "Options for {@linkcode openAuthSession}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthSessionResult",
+          "slug": "AuthSessionResult",
+          "kind": "interface",
+          "signature": "interface AuthSessionResult",
+          "doc": "What openAuthSession resolves with.",
+          "docFull": "What {@linkcode openAuthSession} resolves with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "BackSwipeOptions",
           "slug": "BackSwipeOptions",
           "kind": "interface",
@@ -14198,6 +14246,115 @@
           "returns": "What happened, as an OtaCheckResult.",
           "examples": [
             "```ts\n\"use client\";\nimport { checkForUiUpdate, onAppResume, otaBooted } from \"denext/mobile\";\n\nconst check = () =>\n  checkForUiUpdate({\n    baseUrl: \"https://api.example.com/mobile-ui\",\n    headers: { authorization: `Bearer ${token}` },\n  });\n// After the first render: confirm this UI to the native watchdog, then check.\nawait otaBooted();\nawait check();\nonAppResume((awayMs) => awayMs >= 10_000 && void check());\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "completeAuthSession",
+          "slug": "completeAuthSession",
+          "kind": "function",
+          "signature": "completeAuthSession(): boolean",
+          "doc": "Finish a web openAuthSession: call it on the callback page the provider redirects the popup to (an https page of the same origin). It posts this page's full URL (code, state and all) to the window that opened the popup, addressed to this origin only, then closes the popup. Not needed inside the native shell, where the callback never loads a page.",
+          "docFull": "Finish a web {@linkcode openAuthSession}: call it on the callback page the provider redirects\nthe popup to (an https page of the same origin). It posts this page's full URL (`code`,\n`state` and all) to the window that opened the popup, addressed to this origin only, then\ncloses the popup. Not needed inside the native shell, where the callback never loads a page.",
+          "params": [],
+          "returns": "true when it posted to an opener; false when this page has no opener (it was opened directly, or the provider's Cross-Origin-Opener-Policy severed it), so the page can fall back to handling the callback itself.",
+          "examples": [
+            "```tsx\n// app/auth/callback/complete.tsx\n\"use client\";\nimport { useEffect } from \"denext\";\nimport { completeAuthSession } from \"denext/mobile\";\n\nexport function Complete() {\n  useEffect(() => {\n    if (!completeAuthSession()) location.replace(\"/login\");\n  }, []);\n  return <p>Signing you in…</p>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "DeepLinkEvent",
+          "slug": "DeepLinkEvent",
+          "kind": "interface",
+          "signature": "interface DeepLinkEvent",
+          "doc": "One link that opened the app.",
+          "docFull": "One link that opened the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeepLinkOptions",
+          "slug": "DeepLinkOptions",
+          "kind": "interface",
+          "signature": "interface DeepLinkOptions",
+          "doc": "Options for onDeepLink and useDeepLink.",
+          "docFull": "Options for {@linkcode onDeepLink} and {@linkcode useDeepLink}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "deviceInfo",
+          "slug": "deviceInfo-fn",
+          "kind": "function",
+          "signature": "deviceInfo(): Promise<DeviceInfo>",
+          "doc": "Facts about the device the page runs on.",
+          "docFull": "Facts about the device the page runs on.\n\n- Inside the native shell with `@capacitor/device` installed (`denext mobile add\n  device`), the model, OS version and simulator flag from the OS.\n- Otherwise a best-effort parse of `navigator.userAgent` (model and OS version only; it\n  can be wrong, and iPadOS reports itself as a Mac). During SSR only `platform` is set.",
+          "params": [],
+          "returns": "The device facts; platform is always present.",
+          "examples": [
+            "```ts\nimport { deviceInfo } from \"denext/mobile\";\n\nconst { platform, model, osVersion } = await deviceInfo();\nreport({ platform, model, osVersion });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "DeviceInfo",
+          "slug": "DeviceInfo-iface",
+          "kind": "interface",
+          "signature": "interface DeviceInfo",
+          "doc": "What deviceInfo reports. Only platform is always known.",
+          "docFull": "What {@linkcode deviceInfo} reports. Only `platform` is always known.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "haptic",
+          "slug": "haptic",
+          "kind": "function",
+          "signature": "haptic(kind: HapticKind): Promise<void>",
+          "doc": "Play a short haptic.",
+          "docFull": "Play a short haptic.\n\n- Inside the native shell with `@capacitor/haptics` installed (`denext mobile add\n  haptics`), `light`/`medium`/`heavy` are an impact, `success`/`warning`/`error` a\n  notification, and `selection` a selection tick.\n- Elsewhere it calls `navigator.vibrate` with a short pattern where the browser has it\n  (Android Chrome), and does nothing otherwise (iOS Safari, desktop, SSR).",
+          "params": [
+            {
+              "name": "kind",
+              "doc": "The feedback to play."
+            }
+          ],
+          "returns": "A promise that settles once the haptic was requested. It rejects with a TypeError for an unknown kind, or if the native plugin rejects.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { haptic } from \"denext/mobile\";\n\nexport function LikeButton() {\n  return <button type=\"button\" onClick={() => haptic(\"light\")}>Like</button>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "HapticKind",
+          "slug": "HapticKind",
+          "kind": "typeAlias",
+          "signature": "type HapticKind = light | medium | heavy | success | warning | error | selection",
+          "doc": "A haptic feedback kind haptic can play.",
+          "docFull": "A haptic feedback kind {@linkcode haptic} can play.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "hideSplash",
+          "slug": "hideSplash",
+          "kind": "function",
+          "signature": "hideSplash(): Promise<void>",
+          "doc": "Hide the native launch splash screen, through @capacitor/splash-screen inside the shell (denext mobile add splash). Call it once the first screen has rendered, when the plugin is configured with launchAutoHide: false. On the web, and when the plugin is not installed, it does nothing.",
+          "docFull": "Hide the native launch splash screen, through `@capacitor/splash-screen` inside the shell\n(`denext mobile add splash`). Call it once the first screen has rendered, when the plugin\nis configured with `launchAutoHide: false`. On the web, and when the plugin is not\ninstalled, it does nothing.",
+          "params": [],
+          "returns": "A promise that settles once the splash is hidden (at once off the shell).",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useEffect } from \"denext\";\nimport { hideSplash } from \"denext/mobile\";\n\nexport function AppReady() {\n  useEffect(() => void hideSplash(), []);\n  return null;\n}\n```"
           ],
           "denextOnly": true
         },
@@ -14293,6 +14450,42 @@
           "denextOnly": true
         },
         {
+          "name": "LinkAccept",
+          "slug": "LinkAccept",
+          "kind": "typeAlias",
+          "signature": "type LinkAccept = parenthesized | LinkAllowList",
+          "doc": "Which incoming links to act on: a predicate over the parsed URL, or an allow-list.",
+          "docFull": "Which incoming links to act on: a predicate over the parsed URL, or an allow-list.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LinkAllowList",
+          "slug": "LinkAllowList",
+          "kind": "interface",
+          "signature": "interface LinkAllowList",
+          "doc": "An allow-list for incoming links.",
+          "docFull": "An allow-list for incoming links.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LinkRoute",
+          "slug": "LinkRoute",
+          "kind": "typeAlias",
+          "signature": "type LinkRoute = boolean | parenthesized",
+          "doc": "How to navigate to an accepted link: true navigates with the page's router, false leaves it to the callback, and a function navigates itself (e.g. (path) => router.push(path)).",
+          "docFull": "How to navigate to an accepted link: `true` navigates with the page's router, `false` leaves\nit to the callback, and a function navigates itself (e.g. `(path) => router.push(path)`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MomentumSafeScrollOptions",
           "slug": "MomentumSafeScrollOptions",
           "kind": "interface",
@@ -14331,6 +14524,44 @@
           "denextOnly": true
         },
         {
+          "name": "NetworkConnectionType",
+          "slug": "NetworkConnectionType",
+          "kind": "typeAlias",
+          "signature": "type NetworkConnectionType = wifi | cellular | none | unknown",
+          "doc": "The kind of connection a NetworkStatus reports.",
+          "docFull": "The kind of connection a {@linkcode NetworkStatus} reports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "networkStatus",
+          "slug": "networkStatus-fn",
+          "kind": "function",
+          "signature": "networkStatus(): Promise<NetworkStatus>",
+          "doc": "Whether the device is online right now, and over what.",
+          "docFull": "Whether the device is online right now, and over what.\n\n- Inside the native shell with `@capacitor/network` installed (`denext mobile add\n  network`), the OS's reachability: `connectionType` is `\"wifi\"`, `\"cellular\"`, `\"none\"` or\n  `\"unknown\"`.\n- Otherwise `navigator.onLine` (only \"offline\" is reliable there), with `wifi`/`cellular`\n  from the Network Information API where the browser exposes it. During SSR it reads as\n  connected, type `\"unknown\"`.",
+          "params": [],
+          "returns": "The current status.",
+          "examples": [
+            "```ts\nimport { networkStatus } from \"denext/mobile\";\n\nif (!(await networkStatus()).connected) queue.holdUploads();\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "NetworkStatus",
+          "slug": "NetworkStatus-iface",
+          "kind": "interface",
+          "signature": "interface NetworkStatus",
+          "doc": "Whether the device is online, and over what.",
+          "docFull": "Whether the device is online, and over what.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "onAppResume",
           "slug": "onAppResume",
           "kind": "function",
@@ -14346,6 +14577,94 @@
           "returns": "A function that unsubscribes.",
           "examples": [
             "```ts\nimport { onAppResume } from \"denext/mobile\";\n\nconst stop = onAppResume((awayMs) => {\n  if (awayMs < 10_000) socket.ping();\n  else socket.reconnect();\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "onDeepLink",
+          "slug": "onDeepLink",
+          "kind": "function",
+          "signature": "onDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): () => void",
+          "doc": "Call callback for every link that opens the app, and (by default) navigate to it.",
+          "docFull": "Call `callback` for every link that opens the app, and (by default) navigate to it.\n\n- **Cold start:** the link that launched the app is delivered once per page, with\n  `launch: true`, to every subscriber registered before the shell answers (so subscribe\n  early: a root layout or the app shell). A subscriber that registers after that, say on a\n  component that remounts after a navigation, never sees it again, and neither does the\n  page after a reload in the same session (e.g. an OTA update).\n- **Warm:** every link opened while the app runs, with `launch: false`. A link that arrives\n  while nobody is subscribed waits in the shell for the next subscriber.\n- **Filter:** only links that pass `options.accept` (default: the app's custom schemes, no\n  `https` host) reach `callback`. An unfiltered deep link is an injection vector: anyone\n  can craft one, so treat its path and query as untrusted input.\n- **Route:** an accepted link's in-app path is navigated (see\n  {@linkcode DeepLinkOptions.route}), once per link however many subscribers see it.\n- **Auth callbacks:** while {@linkcode openAuthSession} waits in the shell, links with its\n  callback scheme (and, for a few seconds after, the callback it received) are its own and\n  are not delivered here.\n\nOn the web (and during SSR) there is no native plugin and this does nothing: the browser\nalready loaded the linked URL. Needs `@capacitor/app` in the shell (`denext mobile add\ndeep-links --scheme myapp`).",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each accepted link."
+            },
+            {
+              "name": "options",
+              "doc": "Which links to accept, and how to navigate."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onDeepLink } from \"denext/mobile\";\n\nconst stop = onDeepLink(\n  ({ url, launch }) => analytics.track(\"deep_link\", { url, launch }),\n  { accept: { schemes: [\"myapp\"], hosts: [\"app.example.com\"] } },\n);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "onPushReceived",
+          "slug": "onPushReceived",
+          "kind": "function",
+          "signature": "onPushReceived(callback: (notification: PushNotification) => void): () => void",
+          "doc": "Call callback for each notification that arrives while the app is in the foreground (one that arrives in the background shows in the tray; its tap reaches onPushTapped). Outside the native shell it does nothing.",
+          "docFull": "Call `callback` for each notification that arrives while the app is in the foreground (one\nthat arrives in the background shows in the tray; its tap reaches\n{@linkcode onPushTapped}). Outside the native shell it does nothing.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each notification."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onPushReceived } from \"denext/mobile\";\n\nconst stop = onPushReceived(({ title, body }) => toast(`${title}: ${body}`));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "onPushTapped",
+          "slug": "onPushTapped",
+          "kind": "function",
+          "signature": "onPushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): () => void",
+          "doc": "Call callback when the user taps a notification (or one of its actions), and by default navigate to its data.path / data.url (see PushTapOptions).",
+          "docFull": "Call `callback` when the user taps a notification (or one of its actions), and by default\nnavigate to its `data.path` / `data.url` (see {@linkcode PushTapOptions}).\n\nA tap that cold-started the app is kept by the shell until the first listener, so it still\narrives when you subscribe shortly after boot: subscribe early (a root layout or the app\nshell), because only the subscribers present when it is handed over see it. Outside the\nnative shell it does nothing.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each tap."
+            },
+            {
+              "name": "options",
+              "doc": "Which links to accept, and how to navigate."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onPushTapped } from \"denext/mobile\";\n\n// The server sends { \"path\": \"/threads/42\" } in the notification's data.\nconst stop = onPushTapped(({ notification }) => markRead(notification.id));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "openAuthSession",
+          "slug": "openAuthSession",
+          "kind": "function",
+          "signature": "openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>",
+          "doc": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.",
+          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\nOnly one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this\nonly opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)\nbefore the call, compare `state` after it, and exchange the `code` on your server.",
+          "params": [
+            {
+              "name": "url",
+              "doc": "The provider's authorization URL (absolute https:)."
+            },
+            {
+              "name": "options",
+              "doc": "The callback scheme, and the iOS ephemeral and timeout options."
+            }
+          ],
+          "returns": "The callback URL. It rejects with an AuthSessionError whose code is one of AuthSessionErrorCode.",
+          "examples": [
+            "```ts\nimport { openAuthSession } from \"denext/mobile\";\n\nexport async function signIn(): Promise<void> {\n  const state = crypto.randomUUID();\n  const authorize = new URL(\"https://auth.example.com/authorize\");\n  authorize.searchParams.set(\"client_id\", \"my-app\");\n  authorize.searchParams.set(\"redirect_uri\", \"myapp://auth/callback\");\n  authorize.searchParams.set(\"response_type\", \"code\");\n  authorize.searchParams.set(\"state\", state);\n  // (add code_challenge / code_challenge_method for PKCE)\n  const { url } = await openAuthSession(authorize.href, { callbackScheme: \"myapp\" });\n  const params = new URL(url).searchParams;\n  if (params.get(\"state\") !== state) throw new Error(\"state mismatch\");\n  await fetch(\"/api/auth/exchange\", { method: \"POST\", body: params.get(\"code\") });\n}\n```"
           ],
           "denextOnly": true
         },
@@ -14545,6 +14864,125 @@
           "denextOnly": true
         },
         {
+          "name": "PushNotification",
+          "slug": "PushNotification",
+          "kind": "interface",
+          "signature": "interface PushNotification",
+          "doc": "A push notification, as the shell reports it.",
+          "docFull": "A push notification, as the shell reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PushPermission",
+          "slug": "PushPermission",
+          "kind": "typeAlias",
+          "signature": "type PushPermission = granted | denied | prompt | unsupported",
+          "doc": "Whether the app may show notifications, or \"unsupported\" outside the native shell.",
+          "docFull": "Whether the app may show notifications, or `\"unsupported\"` outside the native shell.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PushRegistration",
+          "slug": "PushRegistration",
+          "kind": "interface",
+          "signature": "interface PushRegistration",
+          "doc": "A device's push registration: the token your server sends to, and where it is valid.",
+          "docFull": "A device's push registration: the token your server sends to, and where it is valid.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PushTap",
+          "slug": "PushTap",
+          "kind": "interface",
+          "signature": "interface PushTap",
+          "doc": "A tap on (or an action of) a notification.",
+          "docFull": "A tap on (or an action of) a notification.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PushTapOptions",
+          "slug": "PushTapOptions",
+          "kind": "interface",
+          "signature": "interface PushTapOptions",
+          "doc": "Options for onPushTapped and usePushTapped.",
+          "docFull": "Options for {@linkcode onPushTapped} and {@linkcode usePushTapped}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "readClipboard",
+          "slug": "readClipboard",
+          "kind": "function",
+          "signature": "readClipboard(): Promise<string>",
+          "doc": "Read text from the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.readText(), which browsers gate behind a permission prompt or a user gesture.",
+          "docFull": "Read text from the clipboard: through `@capacitor/clipboard` inside the native shell\n(`denext mobile add clipboard`), else `navigator.clipboard.readText()`, which browsers\ngate behind a permission prompt or a user gesture.",
+          "params": [],
+          "returns": "The clipboard's text (\"\" when it holds none).",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { readClipboard } from \"denext/mobile\";\n\nexport function PasteCode({ onCode }: { onCode: (code: string) => void }) {\n  return <button type=\"button\" onClick={async () => onCode(await readClipboard())}>Paste</button>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "registerForPush",
+          "slug": "registerForPush",
+          "kind": "function",
+          "signature": "registerForPush(options?: RegisterForPushOptions): Promise<PushRegistration>",
+          "doc": "Register the device for remote notifications and resolve its token, for your server to send to through APNs (iOS) or FCM (Android). denext ships no push relay: store the token on your server (with the user it belongs to) and send from there.",
+          "docFull": "Register the device for remote notifications and resolve its token, for your server to send\nto through APNs (iOS) or FCM (Android). denext ships no push relay: store the token on your\nserver (with the user it belongs to) and send from there.\n\nIt listens for the plugin's `registration` / `registrationError` events, calls `register()`,\nand resolves the first answer, rejecting after `timeoutMs` (default 15 s). Its listeners are\nremoved either way. Concurrent calls share one registration. Call it on every launch: the\ntoken can change. It does not ask for permission (see {@linkcode requestPushPermission}),\nand it rejects outside the native shell or without `@capacitor/push-notifications`: there\nis no web-push fallback.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The timeout."
+            }
+          ],
+          "returns": "The platform and its token.",
+          "examples": [
+            "```ts\nimport { registerForPush } from \"denext/mobile\";\n\nconst { platform, token } = await registerForPush();\nawait api(\"/api/devices\", \"POST\", { body: { platform, token } });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "RegisterForPushOptions",
+          "slug": "RegisterForPushOptions",
+          "kind": "interface",
+          "signature": "interface RegisterForPushOptions",
+          "doc": "Options for registerForPush.",
+          "docFull": "Options for {@linkcode registerForPush}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "requestPushPermission",
+          "slug": "requestPushPermission",
+          "kind": "function",
+          "signature": "requestPushPermission(): Promise<PushPermission>",
+          "doc": "Ask for permission to show notifications, when it has not been decided yet, and report the result: \"granted\", \"denied\" (the user said no; only the system settings can change it) or \"prompt\" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is \"unsupported\": there is no web-push fallback.",
+          "docFull": "Ask for permission to show notifications, when it has not been decided yet, and report the\nresult: `\"granted\"`, `\"denied\"` (the user said no; only the system settings can change it)\nor `\"prompt\"` (still undecided). A decided state comes back without prompting again.\nOutside the native shell (or without `@capacitor/push-notifications`) it is\n`\"unsupported\"`: there is no web-push fallback.\n\nAndroid before 13 needs no permission and always reads `\"granted\"`.",
+          "params": [],
+          "returns": "The permission state.",
+          "examples": [
+            "```ts\nimport { registerForPush, requestPushPermission } from \"denext/mobile\";\n\nif ((await requestPushPermission()) === \"granted\") {\n  const { platform, token } = await registerForPush();\n  await fetch(\"/api/devices\", { method: \"POST\", body: JSON.stringify({ platform, token }) });\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "SAFE_AREA_CSS",
           "slug": "SAFE_AREA_CSS",
           "kind": "variable",
@@ -14556,6 +14994,75 @@
           "examples": [
             "```tsx\nimport { SAFE_AREA_CSS } from \"denext/mobile\";\n\nexport default function RootLayout({ children }: { children: unknown }) {\n  return (\n    <html>\n      <head><style>{SAFE_AREA_CSS}</style></head>\n      <body style={{ paddingTop: \"var(--denext-safe-top)\" }}>{children}</body>\n    </html>\n  );\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "secureStore",
+          "slug": "secureStore-var",
+          "kind": "variable",
+          "signature": "secureStore: SecureStore",
+          "doc": "A string key-value store for secrets.",
+          "docFull": "A string key-value store for secrets.\n\n- Inside the native shell with `@aparajita/capacitor-secure-storage` installed (`denext\n  mobile add secure-store`), values live in the iOS Keychain (accessible when the device is\n  unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the\n  plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same\n  entries.\n- **On the web it is NOT secret.** The fallback is a plain IndexedDB database\n  (`denext-secure-store`) that any script on the origin, and anyone with the device's\n  browser profile, can read. It keeps a web build working; it does not protect anything.\n\nValues are strings: `JSON.stringify` anything else.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts\nimport { secureStore } from \"denext/mobile\";\n\nawait secureStore.set(\"refreshToken\", token);\nconst saved = await secureStore.get(\"refreshToken\"); // string | null\nawait secureStore.delete(\"refreshToken\"); // sign out\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SecureStore",
+          "slug": "SecureStore-iface",
+          "kind": "interface",
+          "signature": "interface SecureStore",
+          "doc": "The store secureStore implements.",
+          "docFull": "The store {@linkcode secureStore} implements.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "share",
+          "slug": "share",
+          "kind": "function",
+          "signature": "share(opts: ShareOptions): Promise<ShareResult>",
+          "doc": "Open the share sheet.",
+          "docFull": "Open the share sheet.\n\n- Inside the native shell with `@capacitor/share` installed (`denext mobile add share`),\n  the OS share sheet.\n- Otherwise `navigator.share` where the browser has it (and `canShare` accepts the data).\n- Otherwise the text and URL are copied to the clipboard (joined by a space), and the\n  result is `\"copied\"` so the UI can say so.\n\nA dismissed sheet resolves `\"cancelled\"` rather than rejecting.",
+          "params": [
+            {
+              "name": "opts",
+              "doc": "The title, text and URL to share."
+            }
+          ],
+          "returns": "\"shared\", \"copied\" or \"cancelled\". It rejects with a TypeError when there is nothing to share, and when sharing or copying fails for another reason.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { share } from \"denext/mobile\";\n\nexport function ShareButton({ url }: { url: string }) {\n  return (\n    <button type=\"button\" onClick={async () => {\n      if ((await share({ title: \"Look\", url })) === \"copied\") alert(\"Link copied\");\n    }}>Share</button>\n  );\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "ShareOptions",
+          "slug": "ShareOptions",
+          "kind": "interface",
+          "signature": "interface ShareOptions",
+          "doc": "What share shares. At least one of text or url (or title) is needed.",
+          "docFull": "What {@linkcode share} shares. At least one of `text` or `url` (or `title`) is needed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ShareResult",
+          "slug": "ShareResult",
+          "kind": "typeAlias",
+          "signature": "type ShareResult = shared | copied | cancelled",
+          "doc": "How a share ended: \"shared\" (the sheet completed), \"copied\" (no share sheet, so the text was copied to the clipboard) or \"cancelled\" (the user dismissed it).",
+          "docFull": "How a {@linkcode share} ended: `\"shared\"` (the sheet completed), `\"copied\"` (no share\nsheet, so the text was copied to the clipboard) or `\"cancelled\"` (the user dismissed it).",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -14601,6 +15108,48 @@
           "denextOnly": true
         },
         {
+          "name": "useDeepLink",
+          "slug": "useDeepLink",
+          "kind": "function",
+          "signature": "useDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): void",
+          "doc": "Hook form of onDeepLink: subscribes on mount, unsubscribes on unmount. The latest callback and options are used for each link (they are held in refs), so fresh closures each render never re-subscribe.",
+          "docFull": "Hook form of {@linkcode onDeepLink}: subscribes on mount, unsubscribes on unmount. The latest\n`callback` and `options` are used for each link (they are held in refs), so fresh closures\neach render never re-subscribe.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each accepted link."
+            },
+            {
+              "name": "options",
+              "doc": "Which links to accept, and how to navigate."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { useDeepLink } from \"denext/mobile\";\n\nexport function DeepLinks() {\n  const router = useRouter();\n  useDeepLink(() => {}, {\n    accept: { schemes: [\"myapp\"], hosts: [\"app.example.com\"] },\n    route: (path) => router.push(path),\n  });\n  return null;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useKeepAwake",
+          "slug": "useKeepAwake",
+          "kind": "function",
+          "signature": "useKeepAwake(active?: boolean): void",
+          "doc": "Keep the screen from dimming and locking while the component is mounted and active is true (a video call, a recipe, a boarding pass).",
+          "docFull": "Keep the screen from dimming and locking while the component is mounted and `active` is\ntrue (a video call, a recipe, a boarding pass).\n\n- Inside the native shell with `@capacitor-community/keep-awake` installed (`denext mobile\n  add keep-awake`), the native flag. Several mounted callers share it: the screen may sleep\n  again once the last one unmounts or turns `active` off.\n- Otherwise the Screen Wake Lock API (`navigator.wakeLock`), re-acquired whenever the page\n  becomes visible again, since the browser releases it on every hide. Where the browser has\n  no wake lock, or refuses one, it does nothing.",
+          "params": [
+            {
+              "name": "active",
+              "doc": "Whether to hold the screen on (default true)."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useKeepAwake } from \"denext/mobile\";\n\nexport function Recipe({ cooking }: { cooking: boolean }) {\n  useKeepAwake(cooking);\n  return <Steps />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "useKeyboardInset",
           "slug": "useKeyboardInset",
           "kind": "function",
@@ -14635,6 +15184,81 @@
           "returns": "",
           "examples": [
             "```tsx\n\"use client\";\nimport { useMomentumSafeScroll } from \"denext/mobile\";\n\nexport function Thread({ children }: { children: unknown }) {\n  useMomentumSafeScroll();\n  return <div style={{ overflowY: \"auto\" }}>{children}</div>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useNetworkStatus",
+          "slug": "useNetworkStatus",
+          "kind": "function",
+          "signature": "useNetworkStatus(): NetworkStatus",
+          "doc": "Hook form of networkStatus: the current status, updated on every change until unmount. Before mount (and during SSR) it reads { connected: true, connectionType: \"unknown\" }, so an offline banner never flashes on first paint.",
+          "docFull": "Hook form of {@linkcode networkStatus}: the current status, updated on every change until\nunmount. Before mount (and during SSR) it reads `{ connected: true, connectionType:\n\"unknown\" }`, so an offline banner never flashes on first paint.",
+          "params": [],
+          "returns": "The latest network status.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useNetworkStatus } from \"denext/mobile\";\n\nexport function OfflineBanner() {\n  const { connected } = useNetworkStatus();\n  return connected ? null : <p role=\"status\">You are offline</p>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "usePushReceived",
+          "slug": "usePushReceived",
+          "kind": "function",
+          "signature": "usePushReceived(callback: (notification: PushNotification) => void): void",
+          "doc": "Hook form of onPushReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.",
+          "docFull": "Hook form of {@linkcode onPushReceived}: subscribes on mount, unsubscribes on unmount, and\nalways calls the latest `callback`.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each notification received in the foreground."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { usePushReceived } from \"denext/mobile\";\n\nexport function Inbox() {\n  usePushReceived(() => inbox.refetch());\n  return <InboxList />;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "usePushTapped",
+          "slug": "usePushTapped",
+          "kind": "function",
+          "signature": "usePushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): void",
+          "doc": "Hook form of onPushTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options.",
+          "docFull": "Hook form of {@linkcode onPushTapped}: subscribes on mount, unsubscribes on unmount, and\nalways uses the latest `callback` and `options`.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each tap."
+            },
+            {
+              "name": "options",
+              "doc": "Which links to accept, and how to navigate."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { usePushTapped } from \"denext/mobile\";\n\nexport function PushRouting() {\n  const router = useRouter();\n  usePushTapped(() => {}, { route: (path) => router.push(path) });\n  return null;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "writeClipboard",
+          "slug": "writeClipboard",
+          "kind": "function",
+          "signature": "writeClipboard(text: string): Promise<void>",
+          "doc": "Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.writeText().",
+          "docFull": "Write text to the clipboard: through `@capacitor/clipboard` inside the native shell\n(`denext mobile add clipboard`), else `navigator.clipboard.writeText()`.",
+          "params": [
+            {
+              "name": "text",
+              "doc": "The text to copy."
+            }
+          ],
+          "returns": "A promise that settles once the text is on the clipboard. It rejects where there is no clipboard (an insecure context, SSR) or when the platform refuses.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { writeClipboard } from \"denext/mobile\";\n\nexport function CopyLink({ url }: { url: string }) {\n  return <button type=\"button\" onClick={() => writeClipboard(url)}>Copy link</button>;\n}\n```"
           ],
           "denextOnly": true
         }

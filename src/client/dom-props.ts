@@ -10,6 +10,7 @@ import {
   cssPropertyName,
   cssPropertyValue,
   dropsEmptyUrl,
+  isBooleanishAttr,
   serializeStyle,
 } from "../jsx/dom-attributes.ts";
 import { beginFormAction, endFormAction, type FormStatusSignal } from "../runtime/form-status.ts";
@@ -409,6 +410,10 @@ function setAttribute(el: Element, name: string, value: unknown): void {
   const attr = domAttrName(el, name);
   // Skip unsafe names: the DOM throws on them, and they must not reach markup.
   if (!isValidAttrName(attr)) return;
+  // Booleanish attributes (`aria-*`, `data-*`, `draggable`, `spellCheck`, …) take a boolean
+  // as the string "true"/"false", as React does (`<input spellCheck={false}>` must write
+  // `spellcheck="false"`, not drop the attribute). Tested on the prop name, as SSR does.
+  if (typeof value === "boolean" && isBooleanishAttr(name)) value = String(value);
   const tag = el.tagName.toLowerCase();
   // React removes a boolean or an empty `src`/`href` (except `<a href="">`, a reload link).
   const urlAttr = name === "src" || name === "href";

@@ -239,6 +239,12 @@ already covered, what official Capacitor plugins cover) is
   check so CI knows whether a change can ship over the air or needs a binary.
 - **Dev-server attach** — a phone running the app gets HMR from `denext dev` (the
   Metro model); tracked in detail under "Dev server attach" below.
+- **Expo / React Native compatibility layer** — react-native-web running on denext's
+  React compat, a `react-native` bundler resolve mode, and `denext/expo/*` shims over
+  the `denext/mobile` capabilities, so an existing Expo/RN app's source can run mostly
+  unchanged (`migrate --from expo`). Starts with a measured spike (T3's `apps/mobile/src`
+  aliased onto denext, failures counted by bucket). Detail:
+  [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md#compatibility-layer-running-expo--react-native-apps).
 - Later: app extensions (share extension, widgets, Live Activities) as
   `denext mobile add-<thing>` generators, and a real-device Android measurement
   before any "native feel" work.
