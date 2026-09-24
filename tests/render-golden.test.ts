@@ -43,7 +43,7 @@ Deno.test("golden: comprehensive tree serializes byte-for-byte", async () => {
 
   assertEquals(
     html,
-    '<div class="app" style="margin-top:4px;opacity:1;" hidden>' +
+    '<div class="app" style="margin-top:4px;opacity:1" hidden="">' +
       "<h1>Tom &amp; Jerry &lt;&quot;quotes&quot;&gt;</h1>" +
       '<ul><li data-x="a"><span class="sync">a</span></li>' +
       '<li data-x="b"><span class="sync">b</span></li></ul>' +

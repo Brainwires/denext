@@ -43,7 +43,7 @@ Deno.test("Image with priority loads eagerly and maps srcSet -> srcset", async (
 
 Deno.test("Script maps strategy to defer", async () => {
   const after = await renderToString(h(Script, { src: "/s.js" }));
-  assertStringIncludes(after, `<script src="/s.js" defer>`);
+  assertStringIncludes(after, `<script src="/s.js" defer="">`);
 
   const before = await renderToString(
     h(Script, { src: "/s.js", strategy: "beforeInteractive" }),
@@ -58,7 +58,7 @@ Deno.test("Script strategy=worker degrades to a deferred main-thread script", as
   // denext has no Partytown-style off-main-thread runtime, so `worker` is accepted
   // (next/script parity) but renders as afterInteractive (deferred external script).
   const html = await renderToString(h(Script, { src: "/w.js", strategy: "worker" }));
-  assertStringIncludes(html, `<script src="/w.js" defer>`);
+  assertStringIncludes(html, `<script src="/w.js" defer="">`);
 });
 
 Deno.test("Script renders inline source verbatim", async () => {

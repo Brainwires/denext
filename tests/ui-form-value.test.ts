@@ -181,11 +181,11 @@ Deno.test("list rows carry real submit buttons with their index and their list",
   // The first row cannot move up and the last cannot move down.
   assertStringIncludes(
     markup,
-    'value="up:0:redirects" title="Move up" aria-label="Move up" formnovalidate disabled',
+    'value="up:0:redirects" title="Move up" aria-label="Move up" formnovalidate="" disabled',
   );
   assertStringIncludes(
     markup,
-    'value="down:1:redirects" title="Move down" aria-label="Move down" formnovalidate disabled',
+    'value="down:1:redirects" title="Move down" aria-label="Move down" formnovalidate="" disabled',
   );
 });
 
@@ -293,7 +293,7 @@ Deno.test("the control primitive is the only place markup is built", () => {
     toHtml(
       control({ tag: "select", name: "s", value: "b", options: [{ value: "b", label: "B" }] }),
     ),
-    '<select name="s"><option value="b" selected>B</option></select>',
+    '<select name="s"><option value="b" selected="">B</option></select>',
   );
   assertStringIncludes(
     toHtml(control({ tag: "textarea", name: "t", value: "<x>", rows: 2 })),

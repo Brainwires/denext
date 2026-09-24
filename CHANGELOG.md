@@ -8,6 +8,29 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A component that renders `null`, `undefined` or a boolean creates no DOM node**, as in
+  React. The reconciler substituted an empty text node, which left a stray `""` node beside
+  its siblings, threw `doc.createTextNode is not a function` against a minimal container
+  stub, and on hydration claimed the server text node that followed it (a spurious
+  mismatch that rewrote that text). The reconciler also stopped capturing
+  `globalThis.document` at module load: nodes are created in the container's
+  `ownerDocument`, so a document installed after import (jsdom / happy-dom, test stubs)
+  works.
+- **SSR attributes match ReactDOMServer's**: a true boolean prop renders `disabled=""`
+  (not a bare `disabled`) across React's full boolean set; `tabIndex` → `tabindex`,
+  `autoFocus`/`multiple`/`muted` → lowercase, `crossOrigin` → `crossorigin` and
+  `transformOrigin` → `transform-origin`; `value`, `focusable` and the other
+  enumerated props serialize `"true"`/`"false"`; a boolean on a renamed or string-only
+  prop, an empty `src`/`href` and an invalid `cols`/`rows`/`size`/`span`/`rowSpan`/`start`
+  are omitted; a hyphenated custom element keeps its prop names as written. Found by
+  running T3 Code's vitest suite against denext's React compat.
+- **`serializeStyle` matches React**: no trailing `;`, a boolean value skipped, strings
+  trimmed, React's full unitless-number list, and no `style` attribute for an object with
+  nothing to render. The client reconciler shares the same table, so its `msTransition`
+  now hyphenates to `-ms-transition` there too.
+
 ## [2.8.0] - 2026-09-24
 
 ### Added

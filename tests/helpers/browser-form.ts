@@ -24,9 +24,12 @@ function attrOf(tag: string, name: string): string | undefined {
   return match ? unescapeAttr(match[1]) : undefined;
 }
 
-/** Whether a boolean attribute (`checked`, `disabled`, `selected`) is set on an opening tag. */
+/**
+ * Whether a boolean attribute (`checked`, `disabled`, `selected`) is set on an opening tag —
+ * bare or with a value (`disabled=""`, as ReactDOMServer and the renderer write it).
+ */
 function flagged(tag: string, name: string): boolean {
-  return new RegExp(`\\s${name}(?=[\\s>/]|$)`).test(tag);
+  return new RegExp(`\\s${name}(?=[\\s>/=]|$)`).test(tag);
 }
 
 /**

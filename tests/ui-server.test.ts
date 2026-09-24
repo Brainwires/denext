@@ -536,7 +536,7 @@ Deno.test("OpForm renders the CSRF token, the hidden fields and the button", () 
   assertStringIncludes(markup, 'name="_csrf" value="tok"');
   assertStringIncludes(markup, 'name="op" value="denojson"');
   assertStringIncludes(markup, 'name="confirm" value="1"');
-  assertStringIncludes(markup, '<button type="submit" disabled>Apply</button>');
+  assertStringIncludes(markup, '<button type="submit" disabled="">Apply</button>');
 });
 
 Deno.test("DiffBlock classes a unified diff's lines, escaping every one of them", () => {

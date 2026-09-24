@@ -23,7 +23,6 @@ import {
   familyResolveActive,
   reportSignatureChange,
   resolveFamilyCurrent,
-  textVNode,
 } from "../vnode-utils.ts";
 import { classComponentsDisabledError, isClassComponent } from "../../compat/class-detect.ts";
 import { resolveComponentType } from "../../runtime/react-brands.ts";
@@ -117,7 +116,6 @@ function withoutRef(props: unknown): unknown {
   return rest;
 }
 
-/** Run a component fiber's render, returning the single rendered vnode. */
 /** How a component fiber's implementation resolved under dev Fast Refresh / per-module HMR. */
 interface RefreshResolution {
   /** The impl to render: the family-current one under per-module HMR, else `vnode.type`. */
@@ -170,7 +168,7 @@ let classRuntimeUnavailable = false;
  * scheduled again, so the cost is at most one round trip of blank subtree. Only a load
  * failure surfaces the guided "class components are disabled" error.
  */
-function awaitClassRuntime(inst: Fiber): VNode {
+function awaitClassRuntime(inst: Fiber): VNode | null {
   const load = loadClassRuntime();
   const failed = (err: unknown) => {
     classRuntimeUnavailable = true;
@@ -185,7 +183,7 @@ function awaitClassRuntime(inst: Fiber): VNode {
     scheduleUpdate(inst); // re-render into the guided error (an error boundary can catch it)
   });
   inst.bailed = true;
-  return (inst.child?.vnode as VNode) ?? textVNode("");
+  return (inst.child?.vnode as VNode) ?? null;
 }
 
 /**
@@ -195,7 +193,7 @@ function awaitClassRuntime(inst: Fiber): VNode {
  * `inst.vnode.type` whenever this path is taken.) A shouldComponentUpdate/PureComponent
  * bail keeps the committed child.
  */
-function renderClassFiber(inst: Fiber): VNode {
+function renderClassFiber(inst: Fiber): VNode | null {
   const cs = getClassSupport();
   if (!__DENEXT_CLASS_COMPONENTS__ || classRuntimeUnavailable) {
     throw classComponentsDisabledError();
@@ -204,7 +202,7 @@ function renderClassFiber(inst: Fiber): VNode {
   const { vnode, bailed } = cs.renderClassInstance(inst as never);
   if (bailed) {
     inst.bailed = true;
-    return (inst.child?.vnode as VNode) ?? textVNode("");
+    return (inst.child?.vnode as VNode) ?? null;
   }
   // Class lifecycle callbacks (componentDidMount / componentDidUpdate) are queued onto the
   // fiber's effect arrays by the class-support bridge, NOT through scheduleEffect — so set
@@ -217,7 +215,7 @@ function renderClassFiber(inst: Fiber): VNode {
   ) {
     inst.flags |= HasEffect;
   }
-  return (vnode as VNode) ?? textVNode("");
+  return (vnode as VNode) ?? null;
 }
 
 type RenderFn = (props: unknown, ref?: unknown) => VNode;
@@ -290,7 +288,7 @@ function renderWithStrictMode(
   props: unknown,
   ref: unknown,
   forwardsRef: boolean,
-): VNode {
+): VNode | null {
   const depsBaseline = inst.hooks!.map((c) => c.deps);
   const result = runRenderPhase(inst, depsBaseline, type, props, ref, forwardsRef);
   if (inst.strict === true && devHydrationActive()) {
@@ -305,9 +303,9 @@ function renderWithStrictMode(
       setSuppressEffectQueue(false);
     }
     inst.idScope!.local = localAfterFirst;
-    return second ?? textVNode("");
+    return second ?? null;
   }
-  return result ?? textVNode("");
+  return result ?? null;
 }
 
 /**
@@ -335,7 +333,11 @@ function finishComponentRender(
   if (prof) prof(inst.vnode.type, performance.now() - profT0, inst);
 }
 
-export function renderComponent(inst: Fiber): VNode {
+/**
+ * Run a component fiber's render, returning what it rendered. `null` (a component that
+ * rendered `null`/`undefined`) reconciles to no children — no host node, as in React.
+ */
+export function renderComponent(inst: Fiber): VNode | null {
   const prevInst = currentFiber;
   const prevIdx = hookIndex;
   const swap = resolveRefreshSwap(inst);

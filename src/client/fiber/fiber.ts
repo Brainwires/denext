@@ -467,6 +467,9 @@ export function childrenDom(fiber: Fiber): (Element | Text)[] {
 
 /** Arrange `desired` nodes as the exact ordered children of `parent`. */
 export function syncChildren(parent: Element, desired: (Element | Text)[]): void {
+  // Nothing to place into an empty parent (a root whose tree rendered only `null`): no DOM
+  // is touched, so a bare container stub without `childNodes` works, as it does in React.
+  if (desired.length === 0 && (parent.childNodes?.length ?? 0) === 0) return;
   for (let i = 0; i < desired.length; i++) {
     const node = desired[i];
     const current = parent.childNodes[i] ?? null;
