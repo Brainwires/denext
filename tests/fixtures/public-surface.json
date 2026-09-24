@@ -1148,6 +1148,7 @@
     "openExternal:function",
     "otaBooted:function",
     "otaReset:function",
+    "otaSignaturePayload:function",
     "otaStatus:function",
     "prepareUiUpdate:function",
     "useAppResume:function",

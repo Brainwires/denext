@@ -8,6 +8,7 @@
 import { dirname, join } from "@std/path";
 import {
   isExcludedFromOtaManifest,
+  isOtaManifestPath,
   makeOtaManifest,
   OTA_MANIFEST_PATH,
   type OtaManifest,
@@ -35,14 +36,23 @@ async function listFiles(dir: string, prefix: string): Promise<string[]> {
  * {@linkcode OtaManifest}.
  *
  * @param dir The web root (e.g. `out/`).
- * @param meta Optional `required` / `notes` to carry (never part of the version).
+ * @param meta Optional `required` / `notes` / `sequence` / `minNative` to carry (never part of
+ *   the version).
  * @returns The manifest, files sorted by path.
+ * @throws RangeError when a file's path holds a control character (U+0000–U+001F, U+007F): such
+ *   a path could forge the lines the version hashes, so no side of OTA accepts it.
  */
 export async function collectOtaManifest(
   dir: string,
   meta: OtaManifestMeta = {},
 ): Promise<OtaManifest> {
   const paths = (await listFiles(dir, "")).filter((p) => !isExcludedFromOtaManifest(p));
+  const bad = paths.find((p) => !isOtaManifestPath(p));
+  if (bad !== undefined) {
+    throw new RangeError(
+      `${JSON.stringify(bad)} holds a control character, so it cannot be listed in an OTA manifest`,
+    );
+  }
   const files: OtaManifestFile[] = [];
   for (const path of paths) {
     const bytes = await Deno.readFile(join(dir, ...path.split("/")));
@@ -51,16 +61,28 @@ export async function collectOtaManifest(
   return await makeOtaManifest(files, meta);
 }
 
+/** The default signed `sequence`: the current Unix time in whole seconds. */
+export function defaultOtaSequence(now: number = Date.now()): number {
+  return Math.floor(now / 1000);
+}
+
 /**
  * (Re)write `<dir>/_denext/ota.json` for the web root `dir`.
  *
+ * The manifest is written last and atomically (a temporary file in `_denext/`, then a rename),
+ * so a server re-reading it never sees half a file. Swapping a whole export under a running
+ * server is still not atomic: export into a new directory and switch to it (a symlink, or the
+ * server's configured directory) once its manifest is written.
+ *
  * @param dir The web root (e.g. `out/`); it must contain an `index.html`.
- * @param meta Optional `required` / `notes`; a key left out is left out of the manifest.
+ * @param meta Optional `required` / `notes` / `sequence` / `minNative`; a key left out is left
+ *   out of the manifest, except that a signed manifest without a `sequence` gets
+ *   {@linkcode defaultOtaSequence} (so it is signed with the v2 payload).
  * @param signingKey An ECDSA P-256 private key (`loadOtaSigningKey`): the manifest then carries
- *   a `signature` over its version, `required` and `notes`.
+ *   a `signature` over its version and metadata.
  * @returns The manifest written.
- * @throws When `dir` has no `index.html` (the native side refuses such a UI), or when
- *   `meta.notes` is too long.
+ * @throws When `dir` has no `index.html` (the native side refuses such a UI), when
+ *   `meta.notes` is too long, or when a path or number is not allowed in a manifest.
  */
 export async function writeOtaManifest(
   dir: string,
@@ -72,10 +94,22 @@ export async function writeOtaManifest(
   } catch {
     throw new Error(`${dir} has no index.html, so it is not a web root an app can boot`);
   }
-  const collected = await collectOtaManifest(dir, meta);
+  const stamped = signingKey && meta.sequence === undefined
+    ? { ...meta, sequence: defaultOtaSequence() }
+    : meta;
+  const collected = await collectOtaManifest(dir, stamped);
   const manifest = signingKey ? await signOtaManifest(collected, signingKey) : collected;
   const target = join(dir, ...OTA_MANIFEST_PATH.split("/"));
   await Deno.mkdir(dirname(target), { recursive: true });
-  await Deno.writeTextFile(target, JSON.stringify(manifest) + "\n");
+  const temp = await Deno.makeTempFile({ dir: dirname(target), prefix: ".ota-", suffix: ".tmp" });
+  try {
+    await Deno.writeTextFile(temp, JSON.stringify(manifest) + "\n");
+    // makeTempFile creates 0600; the manifest is as public as the files it lists.
+    if (Deno.build.os !== "windows") await Deno.chmod(temp, 0o644);
+    await Deno.rename(temp, target);
+  } catch (err) {
+    await Deno.remove(temp).catch(() => {});
+    throw err;
+  }
   return manifest;
 }

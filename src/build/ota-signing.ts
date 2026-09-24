@@ -99,7 +99,14 @@ export async function parseOtaPublicKey(text: string): Promise<string> {
   throw new Error("the public key is not a base64 SPKI (or PUBLIC KEY PEM) ECDSA P-256 key");
 }
 
-/** `manifest` with its `signature` set (replacing any earlier one). */
+/**
+ * `manifest` with its `signature` set (replacing any earlier one). A manifest with a `sequence`
+ * is signed over the v2 payload (which also covers `sequence` and `minNative`), one without over
+ * v1; see {@linkcode otaSignaturePayload}. `writeOtaManifest` stamps a `sequence` before signing
+ * unless one is given, so only a manifest built by hand gets v1.
+ *
+ * @throws RangeError when `minNative` is set without a `sequence`.
+ */
 export async function signOtaManifest(
   manifest: OtaManifest,
   key: CryptoKey,

@@ -1,17 +1,17 @@
 import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 
 export const metadata = {
-  title: "Desktop apps",
+  title: "Desktop & mobile",
   description:
-    "Run, build, and package a denext app as a native desktop app with the denext desktop command: a signed/notarized macOS .app, a Linux bundle (.tar.gz / AppImage), or a Windows zip (Authenticode-signed when a certificate is configured).",
+    "Ship a denext app as a native desktop app (a signed/notarized macOS .app, a Linux bundle, a Windows zip) with the denext desktop command, and as an iOS/Android Capacitor app with denext/mobile and over-the-air UI updates.",
 };
 
 export default function Desktop() {
   return (
     <DocsShell
       active="desktop"
-      title="Desktop apps"
-      lead="denext exports a self-contained static app, and deno desktop wraps it in a native window and compiles it to a single binary. The denext desktop verb drives it — run to open a dev window, build to export, and package to produce a distributable bundle: a macOS .app (code-signed and, with a Developer ID identity and notarytool credentials, notarized + stapled) or a Linux bundle (.tar.gz, plus an AppImage when appimagetool is present). Windows packages to a zip via denext desktop package --target-os windows (Authenticode-signed when DENEXT_WINDOWS_CERT is set)."
+      title="Desktop & mobile"
+      lead="denext exports a self-contained static app, and deno desktop wraps it in a native window and compiles it to a single binary. The denext desktop verb drives it — run to open a dev window, build to export, and package to produce a distributable bundle: a macOS .app (code-signed and, with a Developer ID identity and notarytool credentials, notarized + stapled) or a Linux bundle (.tar.gz, plus an AppImage when appimagetool is present). Windows packages to a zip via denext desktop package --target-os windows (Authenticode-signed when DENEXT_WINDOWS_CERT is set). The same export ships in a Capacitor iOS/Android shell, driven by denext/mobile, and can update its UI over the air (signed manifests) without a new app build."
     >
       <h2>The desktop target</h2>
       <p>
@@ -362,6 +362,20 @@ export function Shell({ children }: { children: unknown }) {
 installMomentumSafeScroll(); // once at startup; a no-op off iOS WebKit`}
       </Code>
       <p>
+        What to expect while a list is shifted: deferred targets are clamped to the scroll range, so
+        {" "}
+        <code>el.scrollTop = el.scrollHeight</code> lands on the bottom, and the children&apos;s
+        {" "}
+        <code>translate</code> is composed with their own (a Tailwind <code>translate-*</code>{" "}
+        class keeps its offset). A transformed child becomes the containing block of its{" "}
+        <code>position: fixed</code> descendants, and <code>position: sticky</code>{" "}
+        headers inside it move with the list until the fling settles, so keep fixed overlays outside
+        the scroller. Only element scrollers are deferred: the document scroller is never shifted,
+        and its writes, <code>window.scrollTo</code> included, always go straight through. A{" "}
+        <code>scrollIntoView</code> or smooth <code>scrollTo</code>{" "}
+        drops the pending delta of the scroller it moves. Documents inside iframes are not covered.
+      </p>
+      <p>
         <code>SAFE_AREA_CSS</code> defines <code>--denext-safe-top</code>/<code>-right</code>/
         <code>-bottom</code>/<code>-left</code>{" "}
         from the device's safe-area insets. They are only non-zero with{" "}
@@ -411,7 +425,10 @@ export default function RootLayout({ children }: { children: unknown }) {
         instead, and must re-run it after anything that changes the export afterwards (swapping
         brand icons in, say). The scaffolded <code>mobile:sync</code> task stamps <code>out/</code>
         {" "}
-        before <code>cap sync</code>, so the bundled UI knows its version.
+        before{" "}
+        <code>cap sync</code>, so the bundled UI knows its version. A file whose path holds a
+        control character (a tab or newline could forge the lines the version hashes) makes the
+        stamp fail, and every other side refuses such a manifest.
       </p>
       <p>
         <strong>2. Install the native plugin.</strong> After <code>cap add ios</code> /{" "}
@@ -435,6 +452,16 @@ export default function RootLayout({ children }: { children: unknown }) {
         . Anything customised is left alone and printed as a one-line manual step.
       </p>
       <p>
+        <strong>After upgrading denext, re-run it and ship a new app binary.</strong>{" "}
+        The native plugin is compiled into the app, so a denext release that changes it reaches
+        devices only through a store build (the CHANGELOG says when one does). Each generated file
+        starts with a <code>denext-ota-template: N sha256=…</code> marker comment;{" "}
+        <code>add-ota</code>{" "}
+        upgrades a file in place when that hash still matches its body, or when it is byte for byte
+        a template an earlier denext wrote, and keeps a file you edited (<code>--force</code>{" "}
+        replaces it, edits included).
+      </p>
+      <p>
         <strong>3. Call it from the app.</strong>{" "}
         After the first render, confirm the boot, then check a server:
       </p>
@@ -451,7 +478,7 @@ const check = () =>
 
 export function OtaUpdates() {
   useEffect(() => {
-    void otaBooted().then(check); // confirm first: a trial UI has 15 s to do so
+    void otaBooted().then(check); // confirm first: a trial UI has 15 s (foreground) to do so
     return onAppResume((awayMs) => awayMs >= 10_000 && void check());
   }, []);
   return null;
@@ -465,9 +492,11 @@ export function OtaUpdates() {
         bundled UI. It never throws: it resolves <code>current</code>, <code>applied</code>,{" "}
         <code>skipped</code> (<code>rejected</code> / <code>busy</code>), <code>error</code>, or
         {" "}
-        <code>unsupported</code> on the web. <code>otaStatus()</code> and <code>otaReset()</code>
-        {" "}
-        report and undo it.
+        <code>unsupported</code>{" "}
+        on the web. The running UI is the one on its trial launch if any, else the confirmed
+        download, else the bundled one, and a version the native side finds already running also
+        resolves <code>current</code>. <code>otaStatus()</code> and <code>otaReset()</code>{" "}
+        report and undo it; a reset during a download cancels the download first.
       </p>
       <p>
         <strong>Build your own update prompt.</strong> <code>checkForUiUpdate</code>{" "}
@@ -518,7 +547,10 @@ export function UpdatePrompt() {
       <p>
         Both are hints for your prompt, not enforced by the shell, and neither is part of the{" "}
         <code>version</code>, so re-stamping with different notes does not make phones download the
-        same files again. A newer prepare replaces a staged UI; <code>otaReset()</code>{" "}
+        same files again. Notes are at most 2,000 characters: a longer <code>--notes</code>{" "}
+        fails the stamp, and a longer served <code>notes</code>{" "}
+        fails the check as malformed. A newer prepare replaces a staged UI; <code>otaReset()</code>
+        {" "}
         and a new app binary drop it. <code>otaStatus()</code> reports it as <code>staged</code>.
       </p>
       <p>
@@ -539,6 +571,38 @@ export function UpdatePrompt() {
         server writes the same three rules as its own route.
       </p>
       <p>
+        The manifest request comes from the webview's own origin (<code>capacitor://localhost</code>
+        {" "}
+        on iOS, <code>https://localhost</code> on Android), and an <code>Authorization</code>{" "}
+        header makes it a CORS preflighted request. Pass <code>cors: true</code>{" "}
+        to allow those origins (plus{" "}
+        <code>http://localhost</code>), or a string or list of exact origins: the handler then
+        answers an allowed <code>OPTIONS</code> preflight with <code>204</code>{" "}
+        and tags its responses with{" "}
+        <code>Access-Control-Allow-Origin</code>. A preflight carries no credentials, so route{" "}
+        <code>OPTIONS</code>{" "}
+        to the handler before your auth check. The native file downloads are not subject to CORS.
+      </p>
+      <Code lang="ts">
+        {`const ota = createOtaHandler({ dir: "out", basePath: "/mobile-ui", cors: true });
+Deno.serve(async (req) => {
+  if (new URL(req.url).pathname.startsWith("/mobile-ui/")) {
+    if (req.method === "OPTIONS") return (await ota(req)) ?? new Response(null, { status: 404 });
+    if (!(await isAuthorized(req))) return new Response("Unauthorized", { status: 401 });
+    return (await ota(req)) ?? new Response("Not Found", { status: 404 });
+  }
+  return app(req);
+});`}
+      </Code>
+      <p>
+        Publish a release atomically. <code>denext ota manifest</code>{" "}
+        writes the manifest last, through a temporary file and a rename, and the handler re-reads it
+        when it changes. Rewriting the files of a directory that is being served is not atomic,
+        though: a phone could fetch the new manifest and an old file, which then fails its hash.
+        Export each release into a new directory and switch the server to it once its manifest is
+        written (a symlink you swap, or the directory setting the server reads).
+      </p>
+      <p>
         <strong>Signed manifests.</strong>{" "}
         Without a signature, anyone who can answer the app's manifest request can serve a matching
         manifest and files, and that UI then runs with the app's stored credentials. Sign each
@@ -555,19 +619,60 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         <code>DENEXT_OTA_SIGNING_KEY</code> secret instead: <code>denext ota manifest</code> and a
         {" "}
         <code>spa.ota</code> export both sign with it when it is set (<code>--sign</code>{" "}
-        wins over it). The signature is ECDSA P-256 / SHA-256 over <code>denext-ota-v1</code>, the
-        {" "}
-        <code>version</code>, the <code>required</code> flag and a SHA-256 of the{" "}
-        <code>notes</code>, so none of them can be changed under a valid signature.{" "}
-        <code>add-ota --public-key</code> takes that <code>.pub</code> file or a{" "}
+        wins over it). <code>add-ota --public-key</code> takes that <code>.pub</code> file or a{" "}
         <code>PUBLIC KEY</code> PEM, writes the Info.plist string <code>DenextOtaPublicKey</code>
         {" "}
         and the <code>dev.denext.ota.PUBLIC_KEY</code>{" "}
-        meta-data, and replaces an earlier key when re-run. The key only ever comes from the app
-        binary, never from the server, so changing it takes an app release.
+        meta-data, and replaces an earlier key when re-run. It exits non-zero when it could not
+        embed the key on an installed platform, or kept an edited template there. The key only ever
+        comes from the app binary, never from the server, so changing it takes an app release:{" "}
+        <code>denext ota keygen --force</code>{" "}
+        replaces a key pair (the new key is written before the old one goes) and warns that every
+        installed binary embedding the old public key refuses the new signatures.
+      </p>
+      <p>
+        <strong>Release order and the native gate.</strong> Signing also stamps a{" "}
+        <code>sequence</code>: the current Unix time in seconds, or{" "}
+        <code>--sequence N</code>. Each device remembers the highest sequence it has accepted and
+        refuses a lower one, or a manifest with none once it has seen one (code{" "}
+        <code>downgrade</code>), so an old signed release cannot be replayed. It survives{" "}
+        <code>otaReset()</code>{" "}
+        and new binaries; only a reinstall clears it. Keep sequences growing: going from Unix times
+        to a small counter locks installed apps out. <code>--min-native N</code>{" "}
+        marks a UI that needs native code from app build <code>N</code>{" "}
+        on: an app whose build number (iOS{" "}
+        <code>CFBundleVersion</code>, as an integer or its first dot-separated part; Android{" "}
+        <code>versionCode</code>) is lower refuses it before downloading (code{" "}
+        <code>native_too_old</code>).
+      </p>
+      <Code lang="bash">
+        {`denext ota manifest out --sign ota.key --min-native 42   # sequence = now
+denext ota manifest out --sign ota.key --sequence 1758700000`}
+      </Code>
+      <p>
+        The signature is ECDSA P-256 / SHA-256, as standard base64 of the raw 64-byte{" "}
+        <code>r‖s</code>, over these UTF-8 bytes (<code>\n</code>{" "}
+        is one 0x0A byte, with no trailing newline). A manifest with a <code>sequence</code>{" "}
+        is signed as v2, one without as v1 (what denext 2.8 signed, still accepted):
+      </p>
+      <Code lang="text">
+        {`v2: denext-ota-v2\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>
+v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
+      </Code>
+      <p>
+        <code>1</code> means{" "}
+        <code>required: true</code>; the notes hash is lowercase hex of the SHA-256 of their UTF-8
+        (of the empty string without notes); the integers are plain decimal.{" "}
+        <code>otaSignaturePayload(manifest)</code> from <code>denext/mobile</code>{" "}
+        builds exactly these bytes, for a server that signs on its own.
       </p>
       <p>Before it downloads anything, the native plugin:</p>
       <ul>
+        <li>
+          checks the manifest: well-formed paths (no{" "}
+          <code>..</code>, backslash or control character), at most 20,000 files and 512 MiB in
+          total (code <code>invalid</code>);
+        </li>
         <li>
           recomputes the <code>version</code>{" "}
           from the manifest's file list and refuses a mismatch (code{" "}
@@ -580,26 +685,101 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         <li>
           with no key, refuses plain <code>http</code> (code{" "}
           <code>insecure</code>) unless the host is loopback: <code>localhost</code>,{" "}
-          <code>127.0.0.1</code>, <code>::1</code> or the Android emulator's{" "}
-          <code>10.0.2.2</code>. Unsigned updates over <code>https</code> still work.
+          <code>127.0.0.1</code>, <code>::1</code>, or the Android emulator's <code>10.0.2.2</code>
+          {" "}
+          in a debuggable Android build. Unsigned updates over <code>https</code> still work;
+        </li>
+        <li>
+          refuses an older <code>sequence</code> (code <code>downgrade</code>) and a{" "}
+          <code>minNative</code> above its build (code <code>native_too_old</code>).
         </li>
       </ul>
+      <p>
+        Then it streams each file to disk while hashing it, refuses it as soon as it grows past its
+        manifest <code>size</code> (code{" "}
+        <code>integrity</code>), gives each file 30 s plus the time a 32 KiB/s link needs, and the
+        whole update 30 minutes. It follows a redirect only within the <code>baseUrl</code>{" "}
+        origin, so your headers never reach another host. Files verified before a failure are kept,
+        so the next attempt resumes.
+      </p>
+      <p>
+        <strong>Transport.</strong>{" "}
+        A signature protects integrity, not confidentiality. With a key embedded, plain{" "}
+        <code>http</code>{" "}
+        stays allowed (an app whose own API is LAN http can serve its UI the same way), but the
+        request headers, bearer tokens included, and the UI's files then cross the network in the
+        clear. Use <code>https</code> wherever the network is not yours.
+      </p>
       <p>
         A refusal leaves the running UI and any staged one as they were, and reaches the app as{" "}
         <code>{'{ kind: "error", code }'}</code> (<code>OtaErrorCode</code> in{" "}
         <code>denext/mobile</code>). The web side only forwards the signature; the native side is
-        the authority.
+        the authority. Every code:
       </p>
+      <ul>
+        <li>
+          <code>invalid</code>: a malformed request or manifest, or one over the caps;
+        </li>
+        <li>
+          <code>busy</code>: a download or a trial launch is in progress (a <code>skipped</code>
+          {" "}
+          result);
+        </li>
+        <li>
+          <code>rejected</code>: this version was rolled back on this device (a <code>skipped</code>
+          {" "}
+          result, until <code>otaReset()</code>);
+        </li>
+        <li>
+          <code>download</code>: a file could not be fetched (HTTP error, timeout, a cross-origin
+          redirect, a reset, the 30-minute deadline);
+        </li>
+        <li>
+          <code>integrity</code>: a file, or the manifest's <code>version</code>, does not match;
+        </li>
+        <li>
+          <code>not_staged</code>: <code>applyUiUpdate</code> named a version that is not staged;
+        </li>
+        <li>
+          <code>signature</code>: a key is embedded and the signature is missing or wrong (or the
+          embedded key does not parse);
+        </li>
+        <li>
+          <code>insecure</code>: no key, and plain <code>http</code> to a non-loopback host;
+        </li>
+        <li>
+          <code>downgrade</code>: an older <code>sequence</code>, or none after a sequenced release;
+        </li>
+        <li>
+          <code>native_too_old</code>: the app build is below the manifest's <code>minNative</code>.
+        </li>
+      </ul>
       <p>
         <strong>Rollback rules.</strong>
       </p>
       <ul>
         <li>
           A new UI starts as a <em>trial</em>. <code>otaBooted()</code>{" "}
-          makes it current and deletes every other download. Without it, a 15 s watchdog rolls back
-          to the previous download or the bundled UI, and deletes the bad version.
+          makes it current and deletes every other download. Without it, a watchdog rolls back to
+          the previous download or the bundled UI, and deletes the bad version. The watchdog counts
+          foreground time only (it pauses while the app is inactive) and defaults to 15 s: set the
+          Info.plist number <code>DenextOtaBootTimeout</code> or the Android{" "}
+          <code>
+            {'<meta-data android:name="dev.denext.ota.BOOT_TIMEOUT" android:value="30" />'}
+          </code>{" "}
+          (seconds, 1 to 600) to change it.
         </li>
-        <li>If the app dies during the trial, the next launch rolls back before the first page.</li>
+        <li>
+          <code>otaBooted()</code> sends the page's own UI version (read from the{" "}
+          <code>_denext/ota.json</code>{" "}
+          it was served with), and the native side confirms only the version on trial, so a late
+          call from the page being replaced confirms nothing.
+        </li>
+        <li>
+          A trial gets two launches: if the app dies before the UI confirms (the OS may kill it in
+          the background), the next launch tries again; if it dies again, the launch after rolls
+          back before the first page.
+        </li>
         <li>
           A rolled-back version is refused (<code>skipped: rejected</code>) until{" "}
           <code>otaReset()</code>, so a broken server UI cannot loop.
@@ -614,11 +794,15 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
       </ul>
       <Callout kind="warn">
         <strong>Limits.</strong>{" "}
-        There is no downgrade protection: the device installs whatever version its server offers,
-        older ones included, and a signed old release stays valid, so an attacker who can answer the
-        manifest request can roll a device back to any UI you ever signed. Without an embedded key,
-        the transport (TLS) is the only thing standing between the app and a hostile UI. Rotating
-        the key takes an app release, and a leaked key is valid until then.
+        Downgrade protection covers sequenced (v2) releases: a device that never accepted a
+        sequenced manifest still takes an older v1 one. Without an embedded key, the transport (TLS)
+        is the only thing standing between the app and a hostile UI. Rotating the key takes an app
+        release, and a leaked key is valid until then. Downloaded files are verified once, when they
+        arrive: tampering with the app's data directory afterwards (which needs a jailbroken or
+        rooted device, or a debug build) is not detected at the next launch. On iOS, a web content
+        process that dies during a trial is reloaded by Capacitor itself; if that leaves the page
+        blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and the
+        next launch counts it as a failed trial attempt.
       </Callout>
 
       <h2>Environment variables</h2>

@@ -6,7 +6,8 @@
  * `denext ota manifest out`). {@linkcode checkForUiUpdate} fetches the same manifest from
  * a server and, when its version differs from the UI running now, has the native side
  * download, verify and switch to it. The switched-to UI must call {@linkcode otaBooted}
- * once it has rendered, or the native watchdog rolls it back after 15 s.
+ * once it has rendered, or the native watchdog rolls it back (after 15 s of foreground time
+ * by default; Info.plist `DenextOtaBootTimeout` / meta-data `dev.denext.ota.BOOT_TIMEOUT`).
  *
  * An app that asks the user first splits that in two: {@linkcode prepareUiUpdate} downloads
  * and verifies the new UI and leaves it staged (the running UI is untouched), the app shows
@@ -33,10 +34,15 @@ import { isOtaManifest, OTA_MANIFEST_PATH, type OtaManifest } from "./ota-manife
  * - `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the
  *   manifest's `signature` is missing or does not verify;
  * - `insecure`: the binary embeds no key and `baseUrl` is plain `http` to a host other than
- *   loopback (`localhost`, `127.0.0.1`, `::1`, or `10.0.2.2` on the Android emulator).
+ *   loopback (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);
+ * - `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,
+ *   or it has none after a sequenced manifest was accepted;
+ * - `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS
+ *   `CFBundleVersion`, Android `versionCode`).
  *
- * The signature and insecure checks run before any file is downloaded, and a refusal leaves
- * the running UI and any staged one as they were.
+ * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`, and
+ * `invalid` for a malformed or oversized manifest) run before any file is downloaded, and a
+ * refusal leaves the running UI and any staged one as they were.
  */
 export type OtaErrorCode =
   | "invalid"
@@ -46,7 +52,9 @@ export type OtaErrorCode =
   | "integrity"
   | "not_staged"
   | "signature"
-  | "insecure";
+  | "insecure"
+  | "downgrade"
+  | "native_too_old";
 
 const OTA_ERROR_CODES: ReadonlySet<string> = new Set<OtaErrorCode>([
   "invalid",
@@ -57,6 +65,8 @@ const OTA_ERROR_CODES: ReadonlySet<string> = new Set<OtaErrorCode>([
   "not_staged",
   "signature",
   "insecure",
+  "downgrade",
+  "native_too_old",
 ]);
 
 /** The native plugin's name: `window.Capacitor.Plugins.DenextOta`. */
@@ -88,7 +98,8 @@ interface DenextOtaPlugin {
     headers: Record<string, string>;
     manifest: OtaManifest;
   }): Promise<unknown>;
-  booted(): Promise<unknown>;
+  /** `version` binds the confirmation to this page's UI (a shell older than that ignores it). */
+  booted(options: { version?: string }): Promise<unknown>;
   reset(): Promise<unknown>;
   /** Added with prepare/apply; a shell installed before that lacks them. */
   download?(options: {
@@ -126,7 +137,7 @@ export interface OtaCheckOptions {
 export type OtaCheckResult =
   /** Not inside the native shell, or the shell has no `DenextOta` plugin. */
   | { readonly kind: "unsupported" }
-  /** The server offers the version already running. */
+  /** The server offers the version already running (or on its trial launch). */
   | { readonly kind: "current" }
   /** The new UI was downloaded and verified; the webview is reloading into it. */
   | { readonly kind: "applied"; readonly version: string }
@@ -282,8 +293,20 @@ async function newerManifest(
   } catch (err) {
     return { kind: "error", reason: `status failed: ${messageOf(err)}` };
   }
-  if (manifest.version === (status.current ?? status.bundled ?? null)) return { kind: "current" };
+  // A version on its trial launch is the one running (or about to be): offering it again is
+  // not an update, whatever `current` still says.
+  const running = status.pending ?? status.current ?? status.bundled ?? null;
+  if (manifest.version === running) return { kind: "current" };
   return { kind: "newer", manifest, baseUrl };
+}
+
+/**
+ * Whether a native `apply` / `download` result says it did nothing because the version is the
+ * running one (`switched: false` / `staged: false`; a shell older than that says neither).
+ */
+function isNoOp(result: unknown, key: "switched" | "staged"): boolean {
+  return typeof result === "object" && result !== null &&
+    (result as Record<string, unknown>)[key] === false;
 }
 
 /** A native download/apply rejection as a `skipped` or `error` result. */
@@ -297,34 +320,50 @@ function refusal(
   return nativeError(err);
 }
 
+/** Where {@linkcode install} stops short of installing: every result both runs share. */
+type InstallStop =
+  | { readonly kind: "unsupported" }
+  | { readonly kind: "current" }
+  | ReturnType<typeof refusal>;
+
+/**
+ * The steps {@linkcode checkForUiUpdate} and {@linkcode prepareUiUpdate} share: `unsupported`
+ * without a plugin; else fetch and validate the manifest, compare it with the running UI, and
+ * hand a newer one to the native side through `call` (`apply` or `download`). A `stop` ends the
+ * run: a failure, a refusal, or `current` when the version runs already (also when the native
+ * side reports `noOpKey: false`). Otherwise the manifest that was installed.
+ */
+async function install<P extends DenextOtaPlugin>(
+  plugin: P | undefined,
+  options: OtaCheckOptions,
+  noOpKey: "switched" | "staged",
+  call: (plugin: P, request: Parameters<DenextOtaPlugin["apply"]>[0]) => Promise<unknown>,
+): Promise<{ readonly stop: InstallStop } | { readonly manifest: OtaManifest }> {
+  if (!plugin) return { stop: { kind: "unsupported" } };
+  const found = await newerManifest(plugin, options);
+  if (found.kind !== "newer") return { stop: found };
+  const { manifest, baseUrl } = found;
+  let result: unknown;
+  try {
+    result = await call(plugin, { baseUrl, headers: { ...options.headers }, manifest });
+  } catch (err) {
+    return { stop: refusal(err) };
+  }
+  return isNoOp(result, noOpKey) ? { stop: { kind: "current" } } : { manifest };
+}
+
 /** The whole check; {@linkcode checkForUiUpdate} adds the single-flight wrapper. */
 async function runCheck(options: OtaCheckOptions): Promise<OtaCheckResult> {
   // Native `apply` (download + switch in one call), which every DenextOta shell has.
-  const plugin = otaPlugin();
-  if (!plugin) return { kind: "unsupported" };
-  const found = await newerManifest(plugin, options);
-  if (found.kind !== "newer") return found;
-  const { manifest, baseUrl } = found;
-  try {
-    await plugin.apply({ baseUrl, headers: { ...options.headers }, manifest });
-  } catch (err) {
-    return refusal(err);
-  }
-  return { kind: "applied", version: manifest.version };
+  const done = await install(otaPlugin(), options, "switched", (p, request) => p.apply(request));
+  return "stop" in done ? done.stop : { kind: "applied", version: done.manifest.version };
 }
 
 /** The whole prepare; {@linkcode prepareUiUpdate} adds the single-flight wrapper. */
 async function runPrepare(options: OtaCheckOptions): Promise<OtaPrepareResult> {
-  const plugin = stagingPlugin();
-  if (!plugin) return { kind: "unsupported" };
-  const found = await newerManifest(plugin, options);
-  if (found.kind !== "newer") return found;
-  const { manifest, baseUrl } = found;
-  try {
-    await plugin.download({ baseUrl, headers: { ...options.headers }, manifest });
-  } catch (err) {
-    return refusal(err);
-  }
+  const done = await install(stagingPlugin(), options, "staged", (p, r) => p.download(r));
+  if ("stop" in done) return done.stop;
+  const { manifest } = done;
   return {
     kind: "ready",
     version: manifest.version,
@@ -367,11 +406,12 @@ const prepareFlight = singleFlight<OtaPrepareResult>(runPrepare, asError);
  * 1. Fetches `${baseUrl}/_denext/ota.json` (with `headers`, `cache: "no-store"` and a
  *    timeout) and validates its shape.
  * 2. Asks the native `DenextOta` plugin for its {@linkcode OtaStatus}; if the manifest's
- *    version equals the running UI (`current`, else `bundled`), it returns `current`.
+ *    version equals the running UI (`pending`, else `current`, else `bundled`), it returns
+ *    `current` (as it does when the native side finds nothing to switch).
  * 3. Otherwise the plugin downloads `${baseUrl}/<path>` for every file (copying files it
  *    already has by SHA-256), verifies each SHA-256 and size, switches the webview's web
  *    root to the new directory and reloads. The new page must call {@linkcode otaBooted}
- *    within 15 s or it is rolled back.
+ *    within the boot timeout (15 s of foreground time by default) or it is rolled back.
  *
  * It never throws. Outside the native shell it resolves `{ kind: "unsupported" }` without
  * touching the network. One check runs at a time: a call made while another is in flight
@@ -438,7 +478,8 @@ export function prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareRes
 
 /**
  * Switch to the UI {@linkcode prepareUiUpdate} staged: the native side starts its trial,
- * arms the 15 s rollback watchdog, points the webview at it and reloads. The new page must
+ * arms the rollback watchdog (15 s of foreground time by default), points the webview at it
+ * and reloads. The new page must
  * call {@linkcode otaBooted}, exactly as after {@linkcode checkForUiUpdate}.
  *
  * On success the page reloads, so the returned promise does not settle; it resolves only
@@ -467,11 +508,41 @@ export async function applyUiUpdate(version: string): Promise<OtaApplyResult> {
   return await new Promise<never>(() => {});
 }
 
+/** This page's own UI version, once read (see {@linkcode pageUiVersion}). */
+let ownVersion: string | undefined;
+
+/**
+ * The version in the `_denext/ota.json` next to this page (the web root the webview serves), or
+ * undefined without one. It names the files this page was loaded from, whatever the native side
+ * has switched to since, which is what binds a confirmation to the page that sends it. The first
+ * version read is kept for the page's lifetime.
+ */
+async function pageUiVersion(): Promise<string | undefined> {
+  if (ownVersion !== undefined) return ownVersion;
+  try {
+    const href = (globalThis as { location?: { href?: string } }).location?.href;
+    if (typeof href !== "string") return undefined;
+    const response = await fetch(new URL(`/${OTA_MANIFEST_PATH}`, href), { cache: "no-store" });
+    if (!response.ok) return void await response.body?.cancel();
+    const body: unknown = await response.json();
+    if (isOtaManifest(body)) ownVersion = body.version;
+  } catch {
+    // No manifest to read (an unstamped UI, or no network stack): confirm without a version.
+  }
+  return ownVersion;
+}
+
 /**
  * Confirm to the native side that the running UI booted. Call it once after the app's
  * first render: a UI on its trial launch that never calls it is rolled back by the
- * native watchdog after 15 s (and on the next launch, if the app died first). Harmless on
- * the bundled UI or a confirmed one.
+ * native watchdog (after 15 s of foreground time by default), and on the next launch if the
+ * app died twice before confirming. Harmless on the bundled UI or a confirmed one.
+ *
+ * It sends this page's own UI version, read from the `_denext/ota.json` the page was served
+ * with (its web root), and the native side confirms only when that is the version on trial.
+ * A late call from the page being replaced therefore cannot confirm the new UI. The manifest
+ * is read at the first call, before the page could have been switched away from; reading
+ * `otaStatus().pending` instead would name the new version as soon as the switch starts.
  *
  * Resolves on the web and when the plugin is missing, and never rejects: a failure here
  * must not break the app that just booted.
@@ -490,8 +561,11 @@ export async function applyUiUpdate(version: string): Promise<OtaApplyResult> {
  * ```
  */
 export async function otaBooted(): Promise<void> {
+  const plugin = otaPlugin();
+  if (!plugin) return;
   try {
-    await otaPlugin()?.booted();
+    const version = await pageUiVersion();
+    await plugin.booted(version === undefined ? {} : { version });
   } catch {
     // Best effort: the watchdog decides, and a thrown confirm must not break the page.
   }

@@ -15,11 +15,19 @@
  * prompt (`prepareUiUpdate`). They are not part of what the version covers: two manifests
  * over the same files have the same version whatever their metadata says.
  *
+ * The optional `sequence` and `minNative` integers are signed release metadata too: the native
+ * plugin refuses a manifest whose `sequence` is lower than the highest it has accepted (code
+ * `downgrade`), and one whose `minNative` is above the app binary's build number (code
+ * `native_too_old`).
+ *
  * The optional `signature` binds the release to a key the app binary embeds: an ECDSA P-256 /
- * SHA-256 signature over {@linkcode otaSignaturePayload} (the version, `required` and a hash of
- * `notes`), so neither the files nor the metadata can be swapped without the private key. The
- * native plugin recomputes the version from the file list and verifies the signature; the web
- * side only forwards it.
+ * SHA-256 signature over {@linkcode otaSignaturePayload} (the version, `required`, a hash of
+ * `notes`, and `sequence` / `minNative` in the v2 format), so neither the files nor the metadata
+ * can be swapped without the private key. The native plugin recomputes the version from the file
+ * list and verifies the signature; the web side only forwards it.
+ *
+ * File paths may not contain control characters (U+0000–U+001F, U+007F): a path holding a tab or
+ * a newline could otherwise forge the `"<path>\t<sha256>\n"` lines the version hashes.
  *
  * Web-standard only (`crypto.subtle`), with no Deno APIs and nothing run at import, so the
  * client can use it without pulling in anything else.
@@ -55,6 +63,21 @@ export interface OtaManifest {
    */
   readonly notes?: string;
   /**
+   * A release counter that only grows (`denext ota manifest --sign` stamps the current Unix time
+   * in seconds; `--sequence <n>` sets it). The native plugin remembers the highest one it accepted
+   * and refuses a lower one, or a manifest without one after that (code `downgrade`). A
+   * non-negative integer no larger than `Number.MAX_SAFE_INTEGER`. Not part of the version;
+   * signed in the v2 payload.
+   */
+  readonly sequence?: number;
+  /**
+   * The lowest native build number (iOS `CFBundleVersion`, Android `versionCode`) this UI runs on
+   * (`denext ota manifest --min-native <n>`). An older app binary refuses it before downloading
+   * (code `native_too_old`). A non-negative safe integer. Not part of the version; signed in the
+   * v2 payload.
+   */
+  readonly minNative?: number;
+  /**
    * Standard (padded) base64 of the raw 64-byte `r‖s` ECDSA P-256 / SHA-256 signature over
    * {@linkcode otaSignaturePayload} (`denext ota manifest --sign <keyfile>`). An app whose binary
    * embeds a public key refuses a manifest without a valid one.
@@ -70,6 +93,10 @@ export interface OtaManifestMeta {
   readonly required?: boolean;
   /** See {@linkcode OtaManifest.notes}. Omitted from the manifest unless a string. */
   readonly notes?: string;
+  /** See {@linkcode OtaManifest.sequence}. Omitted from the manifest unless a number. */
+  readonly sequence?: number;
+  /** See {@linkcode OtaManifest.minNative}. Omitted from the manifest unless a number. */
+  readonly minNative?: number;
 }
 
 /** The longest `notes` a manifest may carry, in UTF-16 code units. */
@@ -80,6 +107,24 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 /** Whether `value` is a lowercase 64-digit hex string (a SHA-256, or a manifest version). */
 function isSha256Hex(value: unknown): value is string {
   return typeof value === "string" && SHA256_HEX.test(value);
+}
+
+/** Whether `value` is an integer in `0 … Number.MAX_SAFE_INTEGER` (a `sequence` / `minNative`). */
+function isReleaseInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+// deno-lint-ignore no-control-regex -- matching control characters is the point.
+const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Whether `path` may name a file in an OTA manifest: a non-empty string without control
+ * characters (U+0000–U+001F, U+007F). A tab or newline in a path could forge the
+ * `"<path>\t<sha256>\n"` lines the version hashes, so every side refuses them. (Traversal is
+ * refused separately, where a path is resolved.)
+ */
+export function isOtaManifestPath(path: unknown): path is string {
+  return typeof path === "string" && path !== "" && !CONTROL_CHARACTER.test(path);
 }
 
 /**
@@ -112,31 +157,63 @@ export async function otaManifestVersion(
   return await sha256Hex(new TextEncoder().encode(lines));
 }
 
-/** The first line of every signature payload; a new payload format gets a new tag. */
-const OTA_SIGNATURE_DOMAIN = "denext-ota-v1";
-
 /**
- * The bytes an OTA manifest signature covers: the UTF-8 of
- * `"denext-ota-v1\n" + version + "\n" + (required ? "1" : "0") + "\n" + sha256hex(notes ?? "")`
- * (no trailing newline). The version already covers every file, so the chain is files →
- * version → signature, and `required` / `notes` cannot be flipped under a valid signature.
- * The native `DenextOta` plugin builds the same bytes.
+ * The bytes an OTA manifest signature covers, as UTF-8 with `\n` (0x0A) separators and no
+ * trailing newline. A manifest with a `sequence` uses the v2 format, one without uses v1:
+ *
+ * - v2: `"denext-ota-v2\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "") + "\n"
+ *   + sequence + "\n" + (minNative ?? "")`
+ * - v1: `"denext-ota-v1\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "")`
+ *
+ * `"1"` is `required === true`, anything else `"0"`; `sha256hex` is lowercase hex of the SHA-256
+ * of the notes' UTF-8 (the empty string when absent); `sequence` and `minNative` are plain
+ * decimal integers (no sign, no leading zeros, no exponent), and an absent `minNative` is the
+ * empty string. The version already covers every file, so the chain is files → version →
+ * signature, and none of the metadata can change under a valid signature. The native
+ * `DenextOta` plugin builds the same bytes (v2 when the manifest has a `sequence`, else v1).
+ *
+ * @param manifest The version and the signed metadata.
+ * @returns The payload bytes.
+ * @throws RangeError when `sequence` or `minNative` is not a non-negative safe integer, or when
+ *   `minNative` is set without a `sequence` (v1 cannot carry it).
+ * @example
+ * ```ts
+ * import { otaSignaturePayload } from "denext/mobile";
+ * const bytes = await otaSignaturePayload({ version, required: true, sequence: 1758700000 });
+ * // "denext-ota-v2\n<version>\n1\n<sha256 of "">\n1758700000\n"
+ * ```
  */
 export async function otaSignaturePayload(
-  manifest: Pick<OtaManifest, "version" | "required" | "notes">,
+  manifest: Pick<OtaManifest, "version" | "required" | "notes" | "sequence" | "minNative">,
 ): Promise<Uint8Array> {
   const notesHash = await sha256Hex(new TextEncoder().encode(manifest.notes ?? ""));
   const required = manifest.required === true ? "1" : "0";
+  const { sequence, minNative } = manifest;
+  if (sequence === undefined) {
+    if (minNative !== undefined) {
+      throw new RangeError("minNative is only signed together with a sequence (payload v2)");
+    }
+    return new TextEncoder().encode(
+      `denext-ota-v1\n${manifest.version}\n${required}\n${notesHash}`,
+    );
+  }
+  if (!isReleaseInteger(sequence) || (minNative !== undefined && !isReleaseInteger(minNative))) {
+    throw new RangeError("sequence and minNative must be non-negative safe integers");
+  }
   return new TextEncoder().encode(
-    `${OTA_SIGNATURE_DOMAIN}\n${manifest.version}\n${required}\n${notesHash}`,
+    `denext-ota-v2\n${manifest.version}\n${required}\n${notesHash}\n${sequence}\n${
+      minNative ?? ""
+    }`,
   );
 }
 
 /**
- * Sort `files` by path and stamp the version over them, adding `meta`'s `required` and
- * `notes` when given (they never change the version).
+ * Sort `files` by path and stamp the version over them, adding `meta`'s `required`, `notes`,
+ * `sequence` and `minNative` when given (they never change the version).
  *
- * @throws RangeError when `meta.notes` is longer than {@linkcode OTA_NOTES_MAX_LENGTH}.
+ * @throws RangeError when `meta.notes` is longer than {@linkcode OTA_NOTES_MAX_LENGTH}, when
+ *   `sequence` / `minNative` is not a non-negative safe integer, or when a file path is not a
+ *   valid manifest path ({@linkcode isOtaManifestPath}).
  */
 export async function makeOtaManifest(
   files: ReadonlyArray<OtaManifestFile>,
@@ -147,36 +224,61 @@ export async function makeOtaManifest(
       `the release notes are ${meta.notes.length} characters; the limit is ${OTA_NOTES_MAX_LENGTH}`,
     );
   }
+  for (const key of ["sequence", "minNative"] as const) {
+    const value = meta[key];
+    if (value !== undefined && !isReleaseInteger(value)) {
+      throw new RangeError(`${key} must be a non-negative safe integer, not ${value}`);
+    }
+  }
+  const bad = files.find((f) => !isOtaManifestPath(f.path));
+  if (bad) {
+    throw new RangeError(
+      `${
+        JSON.stringify(bad.path)
+      } cannot be listed in an OTA manifest (empty, or a control character)`,
+    );
+  }
   const sorted = [...files].sort(byPath);
   return {
     version: await otaManifestVersion(sorted),
     ...(typeof meta.required === "boolean" ? { required: meta.required } : {}),
     ...(typeof meta.notes === "string" ? { notes: meta.notes } : {}),
+    ...(typeof meta.sequence === "number" ? { sequence: meta.sequence } : {}),
+    ...(typeof meta.minNative === "number" ? { minNative: meta.minNative } : {}),
     files: sorted,
   };
 }
 
-/** Whether `file` is a well-formed manifest entry (a non-empty path, a SHA-256, a size). */
+/**
+ * Whether `file` is a well-formed manifest entry: a path without control characters
+ * ({@linkcode isOtaManifestPath}), a SHA-256, a size.
+ */
 function isManifestFile(file: unknown): file is OtaManifestFile {
   if (typeof file !== "object" || file === null) return false;
   const { path, sha256, size } = file as Record<string, unknown>;
-  return typeof path === "string" && path !== "" && isSha256Hex(sha256) &&
+  return isOtaManifestPath(path) && isSha256Hex(sha256) &&
     typeof size === "number" && Number.isInteger(size) && size >= 0;
 }
 
 /**
  * Whether `value` has the manifest's shape: a 64-hex `version`, a non-empty `files` array of
- * `{ path, sha256, size }`, and, when present, a boolean `required` and a string `notes` of at
- * most {@linkcode OTA_NOTES_MAX_LENGTH} characters, and a string `signature`. Other keys are
+ * `{ path, sha256, size }` (paths without control characters), and, when present, a boolean
+ * `required`, a string `notes` of at most {@linkcode OTA_NOTES_MAX_LENGTH} characters,
+ * non-negative safe-integer `sequence` / `minNative`, and a string `signature`. Other keys are
  * ignored. It checks the shape only; the native side re-checks every path, recomputes the
  * version and verifies the signature before it downloads anything.
  */
 export function isOtaManifest(value: unknown): value is OtaManifest {
   if (typeof value !== "object" || value === null) return false;
-  const { version, files, required, notes, signature } = value as Record<string, unknown>;
+  const { version, files, required, notes, signature, sequence, minNative } = value as Record<
+    string,
+    unknown
+  >;
   return isSha256Hex(version) && Array.isArray(files) && files.length > 0 &&
     files.every(isManifestFile) &&
     (required === undefined || typeof required === "boolean") &&
     (notes === undefined || (typeof notes === "string" && notes.length <= OTA_NOTES_MAX_LENGTH)) &&
+    (sequence === undefined || isReleaseInteger(sequence)) &&
+    (minNative === undefined || isReleaseInteger(minNative)) &&
     (signature === undefined || typeof signature === "string");
 }

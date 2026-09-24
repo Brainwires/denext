@@ -5,7 +5,12 @@
 
 import { contentType } from "@std/media-types";
 import { extname, join, SEPARATOR } from "@std/path";
-import { isOtaManifest, OTA_MANIFEST_PATH, type OtaManifest } from "../mobile/ota-manifest.ts";
+import {
+  isOtaManifest,
+  isOtaManifestPath,
+  OTA_MANIFEST_PATH,
+  type OtaManifest,
+} from "../mobile/ota-manifest.ts";
 
 /** Options for {@linkcode createOtaHandler}. */
 export interface OtaHandlerOptions {
@@ -16,7 +21,26 @@ export interface OtaHandlerOptions {
    * then `https://host/mobile-ui`). Default `""`: the origin root.
    */
   basePath?: string;
+  /**
+   * Answer CORS for the web app's manifest request (`checkForUiUpdate` / `prepareUiUpdate`
+   * fetch `_denext/ota.json` from the webview's origin, and an `Authorization` header makes that
+   * a preflighted request). `true` allows the Capacitor webview origins `capacitor://localhost`
+   * (iOS), `https://localhost` and `http://localhost` (Android); a string or list allows exactly
+   * those origins. An allowed `OPTIONS` preflight is answered `204` with
+   * `Access-Control-Allow-Headers: authorization`, and `GET`/`HEAD` responses carry
+   * `Access-Control-Allow-Origin` for an allowed `Origin`. Default: no CORS headers, and
+   * `OPTIONS` is not answered. A preflight carries no credentials, so route `OPTIONS` to the
+   * handler before your auth check. Native file downloads are not subject to CORS.
+   */
+  cors?: true | string | readonly string[];
 }
+
+/** The webview origins `cors: true` allows. */
+const CAPACITOR_ORIGINS: readonly string[] = [
+  "capacitor://localhost",
+  "https://localhost",
+  "http://localhost",
+];
 
 /** The parsed manifest, re-read when the file's mtime changes. */
 interface Cached {
@@ -25,11 +49,39 @@ interface Cached {
   paths: Set<string>;
 }
 
-/** A path segment list that stays inside the directory. */
+/** A path segment list that stays inside the directory (no control characters either). */
 function safeSegments(path: string): string[] | null {
-  if (path === "" || path.includes("\\") || path.includes("\0")) return null;
+  if (!isOtaManifestPath(path) || path.includes("\\")) return null;
   const segments = path.split("/");
   return segments.every((s) => s !== "" && s !== "." && s !== "..") ? segments : null;
+}
+
+/** The set of origins `cors` allows (empty: CORS off). */
+function allowedOrigins(cors: OtaHandlerOptions["cors"]): ReadonlySet<string> {
+  if (cors === true) return new Set(CAPACITOR_ORIGINS);
+  if (typeof cors === "string") return new Set([cors]);
+  return new Set(cors ?? []);
+}
+
+/** The CORS headers for `request`'s `Origin` when it is allowed, else none. */
+function corsHeaders(request: Request, origins: ReadonlySet<string>): Record<string, string> {
+  const origin = request.headers.get("origin");
+  if (origins.size === 0) return {};
+  if (origin === null || !origins.has(origin)) return { vary: "Origin" };
+  return { "access-control-allow-origin": origin, vary: "Origin" };
+}
+
+/** The `204` answer to an allowed preflight. */
+function preflight(cors: Record<string, string>): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      ...cors,
+      "access-control-allow-methods": "GET, HEAD, OPTIONS",
+      "access-control-allow-headers": "authorization",
+      "access-control-max-age": "600",
+    },
+  });
 }
 
 /**
@@ -41,18 +93,23 @@ function safeSegments(path: string): string[] | null {
  * 2. put it behind the same auth as the app's API (wrap the handler; it does no auth);
  * 3. send `Cache-Control: no-store`, so no cache serves a stale manifest or file.
  *
- * Only `GET`/`HEAD` are answered. The manifest is re-read when its mtime changes, so a
- * re-export (plus `denext ota manifest`) needs no restart.
+ * Only `GET`/`HEAD` are answered (plus an `OPTIONS` preflight from an origin `cors` allows).
+ * The manifest is re-read when its mtime changes, so a re-stamp (`denext ota manifest`, which
+ * replaces the file atomically) needs no restart. Re-exporting in place is not atomic (a phone
+ * could fetch a new manifest and old files, which then fail their hash check): export into a
+ * new directory and point the handler at it, e.g. through a symlink you swap.
  *
- * @param options The export directory and the path it is served under.
+ * @param options The export directory, the path it is served under, and CORS.
  * @returns `(request) => Response | null`: `null` for a request that is not for the UI.
  * @example
  * ```ts
  * import { createOtaHandler } from "denext/server";
  *
- * const ota = createOtaHandler({ dir: "out", basePath: "/mobile-ui" });
+ * const ota = createOtaHandler({ dir: "out", basePath: "/mobile-ui", cors: true });
  * Deno.serve(async (req) => {
  *   if (new URL(req.url).pathname.startsWith("/mobile-ui/")) {
+ *     // A CORS preflight carries no credentials: answer it before the auth check.
+ *     if (req.method === "OPTIONS") return (await ota(req)) ?? new Response(null, { status: 404 });
  *     if (!(await isAuthorized(req))) return new Response("Unauthorized", { status: 401 });
  *     return (await ota(req)) ?? new Response("Not Found", { status: 404 });
  *   }
@@ -84,46 +141,63 @@ export function createOtaHandler(
     }
   }
 
-  const noStore = (type: string, length: number) =>
+  const origins = allowedOrigins(options.cors);
+
+  const noStore = (type: string, length: number, cors: Record<string, string>) =>
     new Headers({
+      ...cors,
       "content-type": type,
       "content-length": String(length),
       "cache-control": "no-store",
     });
 
-  return async (request) => {
-    if (request.method !== "GET" && request.method !== "HEAD") return null;
+  /** The request's path relative to `base`, or null when it is not under it. */
+  function relativePath(request: Request): string | null {
     const { pathname } = new URL(request.url);
     if (!pathname.startsWith(`${base}/`)) return null;
-    let rel: string;
     try {
-      rel = decodeURIComponent(pathname.slice(base.length + 1));
+      return decodeURIComponent(pathname.slice(base.length + 1));
     } catch {
       return null;
     }
-    const current = await load();
-    if (!current) return null;
-    const head = request.method === "HEAD";
-    if (rel === OTA_MANIFEST_PATH) {
-      const body = new TextEncoder().encode(JSON.stringify(current.manifest));
-      const headers = noStore("application/json; charset=utf-8", body.byteLength);
-      return new Response(head ? null : body, { headers });
-    }
+  }
+
+  /** The bytes of the listed file `rel`, or null when it is not listed or leaves the export. */
+  async function readListed(current: Cached, rel: string): Promise<Uint8Array | null> {
     const segments = current.paths.has(rel) ? safeSegments(rel) : null;
     if (!segments) return null;
-    let bytes: Uint8Array;
     try {
       // The real path must stay inside the export: a listed file later swapped for a
       // symlink (or a symlinked parent) cannot reach anything outside it.
       const real = await Deno.realPath(join(options.dir, ...segments));
       if (!real.startsWith((await Deno.realPath(options.dir)) + SEPARATOR)) return null;
-      bytes = await Deno.readFile(real);
+      return await Deno.readFile(real);
     } catch {
       return null;
     }
+  }
+
+  return async (request) => {
+    const rel = relativePath(request);
+    if (rel === null) return null;
+    const cors = corsHeaders(request, origins);
+    if (request.method === "OPTIONS") {
+      return "access-control-allow-origin" in cors ? preflight(cors) : null;
+    }
+    if (request.method !== "GET" && request.method !== "HEAD") return null;
+    const current = await load();
+    if (!current) return null;
+    const head = request.method === "HEAD";
+    if (rel === OTA_MANIFEST_PATH) {
+      const body = new TextEncoder().encode(JSON.stringify(current.manifest));
+      const headers = noStore("application/json; charset=utf-8", body.byteLength, cors);
+      return new Response(head ? null : body, { headers });
+    }
+    const bytes = await readListed(current, rel);
+    if (!bytes) return null;
     const type = contentType(extname(rel)) ?? "application/octet-stream";
     return new Response(head ? null : bytes as Uint8Array<ArrayBuffer>, {
-      headers: noStore(type, bytes.byteLength),
+      headers: noStore(type, bytes.byteLength, cors),
     });
   };
 }
