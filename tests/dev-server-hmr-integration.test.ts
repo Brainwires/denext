@@ -13,6 +13,17 @@ import { join, toFileUrl } from "@std/path";
 import { startDevOnDir } from "./e2e/harness.ts";
 
 const HELLO = new URL("../examples/hello", import.meta.url).pathname;
+
+/**
+ * Copy the example without its `.denext/` build cache. Other tests build `examples/hello` in
+ * parallel, and its SQLite cache's `-shm`/`-wal` side files come and go mid-copy (ENOENT).
+ */
+async function copyExample(src: string, dest: string): Promise<void> {
+  for await (const entry of Deno.readDir(src)) {
+    if (entry.name === ".denext") continue;
+    await copy(join(src, entry.name), join(dest, entry.name), { overwrite: true });
+  }
+}
 const FRAMEWORK_ROOT = new URL("../", import.meta.url).pathname;
 
 /** Point the copied app's `denext*` imports at the framework checkout (absolute URLs). */
@@ -130,9 +141,8 @@ Deno.test({
   sanitizeResources: false,
 }, async (t) => {
   const dir = await Deno.makeTempDir({ prefix: "denext_hmr_int_" });
-  await copy(HELLO, dir, { overwrite: true });
-  // Drop the copied build artifacts so nothing stale is served.
-  await Deno.remove(join(dir, ".denext"), { recursive: true }).catch(() => {});
+  // The build cache is skipped so nothing stale is served (and no racing SQLite side files).
+  await copyExample(HELLO, dir);
   await patchImports(dir);
 
   const server = await startDevOnDir(dir, { DENEXT_DEV_TYPECHECK: "0" });
