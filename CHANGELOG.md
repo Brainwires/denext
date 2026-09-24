@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Appending a child uses `appendChild`**, as React does; `insertBefore` is only called when a
+  node follows. Minimal DOM shims used in tests (which implement `appendChild` but not
+  `insertBefore`) now work, as they do under React.
+
 ## [2.8.1] - 2026-09-24
 
 ### Fixed

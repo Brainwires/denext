@@ -473,7 +473,10 @@ export function syncChildren(parent: Element, desired: (Element | Text)[]): void
   for (let i = 0; i < desired.length; i++) {
     const node = desired[i];
     const current = parent.childNodes[i] ?? null;
-    if (current !== node) parent.insertBefore(node, current);
+    if (current === node) continue;
+    // Append with appendChild, as React does; insertBefore only when a node follows.
+    if (current === null) parent.appendChild(node);
+    else parent.insertBefore(node, current);
   }
   while (parent.childNodes.length > desired.length) {
     parent.removeChild(parent.childNodes[parent.childNodes.length - 1]);
