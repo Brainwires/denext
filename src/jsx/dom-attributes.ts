@@ -11,42 +11,46 @@
  * HTML attribute names are case-insensitive — and lowercases only `autoFocus`, `multiple`
  * and `muted`. `checked`/`selected` come from React's `<input>`/`<option>` handling.
  */
-const BOOLEAN_PROPS: ReadonlyMap<string, string> = new Map([
-  ...[
-    "allowFullScreen",
-    "async",
-    "autoPlay",
-    "checked",
-    "controls",
-    "default",
-    "defer",
-    "disabled",
-    "disablePictureInPicture",
-    "disableRemotePlayback",
-    "formNoValidate",
-    "hidden",
-    "inert",
-    "itemScope",
-    "loop",
-    "noModule",
-    "noValidate",
-    "open",
-    "playsInline",
-    "readOnly",
-    "required",
-    "reversed",
-    "scoped",
-    "seamless",
-    "selected",
-  ].map((p) => [p, p] as const),
-  ["autoFocus", "autofocus"],
-  ["multiple", "multiple"],
-  ["muted", "muted"],
-]);
+const BOOLEAN_PROP_NAMES = [
+  "allowFullScreen",
+  "async",
+  "autoPlay",
+  "checked",
+  "controls",
+  "default",
+  "defer",
+  "disabled",
+  "disablePictureInPicture",
+  "disableRemotePlayback",
+  "formNoValidate",
+  "hidden",
+  "inert",
+  "itemScope",
+  "loop",
+  "noModule",
+  "noValidate",
+  "open",
+  "playsInline",
+  "readOnly",
+  "required",
+  "reversed",
+  "scoped",
+  "seamless",
+  "selected",
+];
+
+/** Built on first use: a module-level `new Map([...names.map()])` would pin it in client bundles. */
+let booleanProps: ReadonlyMap<string, string> | undefined;
 
 /** The attribute a React boolean prop renders as, or undefined when `prop` is not one. */
 export function booleanAttrName(prop: string): string | undefined {
-  return BOOLEAN_PROPS.get(prop);
+  booleanProps ??= new Map([
+    ...BOOLEAN_PROP_NAMES.map((p) => [p, p] as const),
+    ["autoFocus", "autofocus"],
+    ["multiple", "multiple"],
+    ["muted", "muted"],
+  ]);
+  return booleanProps.get(prop);
 }
 
 /**
@@ -76,7 +80,7 @@ const ATTR_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /** SVG presentation attributes React hyphenates (`strokeWidth` → `stroke-width`). */
-const HYPHENATED_SVG = new Set([
+const HYPHENATED_SVG = /* @__PURE__ */ new Set([
   "accentHeight",
   "alignmentBaseline",
   "arabicForm",
@@ -164,7 +168,7 @@ export function aliasedAttrName(prop: string): string | undefined {
 }
 
 /** Props React writes as plain strings or URLs, never by presence: a boolean value is dropped. */
-const STRING_ONLY_PROPS = new Set([
+const STRING_ONLY_PROPS = /* @__PURE__ */ new Set([
   "dir",
   "role",
   "viewBox",
@@ -186,7 +190,7 @@ export function dropsBooleanValue(prop: string): boolean {
  * presence (lowercased names), plus every `aria-*`/`data-*`. `autocapitalize` is a denext
  * addition kept from earlier releases.
  */
-const BOOLEANISH_ATTRS = new Set([
+const BOOLEANISH_ATTRS = /* @__PURE__ */ new Set([
   "contenteditable",
   "draggable",
   "spellcheck",
@@ -221,7 +225,7 @@ export function omitsAttrValue(prop: string, value: unknown): boolean {
  * Style properties that take a unitless number (React's `isUnitlessNumber`, keyed by the
  * style-object key): a raw number is NOT given a `px` suffix.
  */
-const UNITLESS_STYLE = new Set([
+const UNITLESS_STYLE = /* @__PURE__ */ new Set([
   "animationIterationCount",
   "aspectRatio",
   "borderImageOutset",
