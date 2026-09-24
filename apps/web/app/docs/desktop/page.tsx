@@ -338,7 +338,29 @@ export function Shell({ children }: { children: unknown }) {
           custom property (or a number of px), for shells that set the Keyboard plugin's{" "}
           <code>resize: "none"</code>.
         </li>
+        <li>
+          <code>installMomentumSafeScroll()</code> / <code>useMomentumSafeScroll()</code>{" "}
+          — keep iOS momentum scrolling alive; see below. The denext client runtime already installs
+          it, so call these only from a page that does not run on denext's runtime.
+        </li>
       </ul>
+      <p>
+        <strong>Momentum-safe scrolling is automatic on iOS.</strong>{" "}
+        In iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write during a touch
+        fling — <code>scrollBy</code>, <code>scrollTo</code>, assigning <code>scrollTop</code>{" "}
+        — stops the fling dead, and virtualized lists (LegendList, react-virtuoso, TanStack Virtual)
+        make exactly such writes to correct for rows measured taller or shorter than estimated. On
+        iOS/iPadOS WebKit the client runtime defers those writes while a gesture is in flight,
+        shifts the list's children with a CSS <code>translate</code>{" "}
+        so nothing moves on screen, and applies the offset in one step once the scroller rests.
+        Other platforms pay one user-agent check (the shim is its own lazily loaded chunk). Opt out
+        with <code>momentumSafeScroll: false</code> in{" "}
+        <code>denext.config.ts</code>; outside denext's runtime, install it yourself:
+      </p>
+      <Code lang="ts">
+        {`import { installMomentumSafeScroll } from "denext/mobile";
+installMomentumSafeScroll(); // once at startup; a no-op off iOS WebKit`}
+      </Code>
       <p>
         <code>SAFE_AREA_CSS</code> defines <code>--denext-safe-top</code>/<code>-right</code>/
         <code>-bottom</code>/<code>-left</code>{" "}

@@ -3,11 +3,17 @@
 
 import { join, toFileUrl } from "@std/path";
 import type * as esbuild from "esbuild";
-import { featureFlags, nodeResolveEnabled, type SpaConfig } from "../../server/config.ts";
+import {
+  featureFlags,
+  momentumSafeScrollEnabled,
+  nodeResolveEnabled,
+  type SpaConfig,
+} from "../../server/config.ts";
 import {
   appUsesActivity,
   appUsesViewTransition,
   bundleSourceFiles,
+  momentumScrollSeed,
   writeBundleOutput,
 } from "../bundle.ts";
 import { type AppCss, buildAppCss, extractRouteCss } from "../css.ts";
@@ -195,12 +201,13 @@ export async function bundleSpaInto(
     appUsesActivity(paths.projectDir, [entryPath]),
     appUsesViewTransition(paths.projectDir, [entryPath]),
   ]);
-  const entrySource = generateSpaEntry(
-    toFileUrl(entryPath).href,
-    dev,
-    paths.instrumentationClientPath,
-    { classComponents: paths.config?.classComponents ?? true, activity, viewTransition },
-  );
+  const entrySource = momentumScrollSeed(momentumSafeScrollEnabled(paths.config)) +
+    generateSpaEntry(
+      toFileUrl(entryPath).href,
+      dev,
+      paths.instrumentationClientPath,
+      { classComponents: paths.config?.classComponents ?? true, activity, viewTransition },
+    );
   const compat = await detectNextCompat(paths);
   // `spa.env` and Vite-style asset imports (`?url`/`?worker`) only apply on the compat
   // (esbuild) path; a denext-native SPA bundles with plain `deno bundle`. Warn rather

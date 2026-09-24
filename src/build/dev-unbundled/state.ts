@@ -112,6 +112,8 @@ export interface UnbundledDevOptions {
   features?: Record<string, boolean>;
   /** The project's `instrumentation-client` module (absolute path), imported first by every entry. */
   instrumentationClient?: string | null;
+  /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into every entry. */
+  momentumSafeScroll?: boolean;
   /**
    * SPA mode: the app's single client entry (absolute path to `main.tsx`). When set,
    * {@link ENTRY_PATH} (with no `?p=`) serves a per-module SPA entry that imports the

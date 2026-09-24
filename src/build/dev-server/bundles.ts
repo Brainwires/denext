@@ -3,6 +3,7 @@
 
 import type { PageRoute } from "../../router/manifest.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
+import { momentumSafeScrollEnabled } from "../../server/config.ts";
 import {
   bundleFlightEntry,
   bundleGlobalError,
@@ -32,6 +33,7 @@ function cacheChunks(st: DevState, bundle: BundleOutput): void {
 async function buildRouteBundle(st: DevState, route: PageRoute): Promise<string> {
   const bundle = await bundleRoute(route, {
     configPath: st.paths.configPath,
+    momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     importMap: await bundleImportMap(st),
     dev: true, // emit Fast Refresh registration into the entry
     devMetaFooter: await routeDevMeta(st, route),
@@ -99,6 +101,7 @@ export async function getFlightBundle(st: DevState): Promise<string> {
   }
   const bundle = await bundleFlightEntry(boundary, {
     configPath: st.paths.configPath,
+    momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     importMap: await bundleImportMap(st),
     dev: true, // emit Fast Refresh registration for client islands
     classRuntime: "eager", // dev installs the class runtime unconditionally
@@ -118,6 +121,7 @@ export async function getGlobalErrorBundle(st: DevState): Promise<string> {
   if (!m.rootGlobalError) return "// no global-error.tsx";
   const bundle = await bundleGlobalError(m.rootGlobalError, {
     configPath: st.paths.configPath,
+    momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     importMap: await bundleImportMap(st),
     dev: true,
   });

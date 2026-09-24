@@ -23,6 +23,7 @@ import {
   setRootRefresh,
 } from "../vnode-utils.ts";
 import { createFiber, type Fiber, NoLane, SyncLane, TransitionLane } from "./fiber.ts";
+import { bootMomentumSafeScroll } from "../momentum-boot.ts";
 
 // Wire the work loop into the scheduler (see `FlushHandlers` for why it is injected).
 setFlushHandlers(renderRoot, beginConcurrentRender, resumeConcurrent);
@@ -171,6 +172,7 @@ export function createRoot(container: Element, options?: RootOptions): Root {
     if (existing) return existing;
   }
   const handle = registerRoot(container, options, false, null);
+  void bootMomentumSafeScroll();
   const root: Root = {
     render: (vnode) => renderInto(handle, vnode),
     unmount() {
@@ -185,6 +187,7 @@ export function createRoot(container: Element, options?: RootOptions): Root {
 /** Hydrate `vnode` against server-rendered markup already in `container`. */
 export function hydrateRoot(container: Element, vnode: VNode, options?: RootOptions): Root {
   const handle = registerRoot(container, options, true, vnode);
+  void bootMomentumSafeScroll();
   renderRoot(handle, SyncLane);
   return {
     render: (next) => renderInto(handle, next),

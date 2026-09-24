@@ -15,6 +15,8 @@
  * - {@linkcode installKeyboardInset} / {@linkcode useKeyboardInset}: the keyboard height as
  *   `--denext-keyboard-inset`, for shells with Keyboard `resize: "none"`.
  * - {@linkcode useBackSwipe} / {@linkcode isBackSwipe}: swipe right to go back.
+ * - {@linkcode installMomentumSafeScroll} / {@linkcode useMomentumSafeScroll}: keep iOS
+ *   momentum scrolling alive while virtualized lists correct the scroll offset mid-fling.
  * - {@linkcode SAFE_AREA_CSS}: `--denext-safe-*` custom properties (needs `viewport-fit=cover`).
  * - {@linkcode checkForUiUpdate} / {@linkcode otaBooted} / {@linkcode otaStatus} /
  *   {@linkcode otaReset}: over-the-air UI updates through the native `DenextOta` plugin
@@ -48,6 +50,11 @@ export { onAppResume, useAppResume } from "./resume.ts";
 export { installKeyboardInset, type KeyboardInsetOptions, useKeyboardInset } from "./keyboard.ts";
 export { type BackSwipeOptions, isBackSwipe, useBackSwipe } from "./back-swipe.ts";
 export { SAFE_AREA_CSS } from "./safe-area.ts";
+export {
+  installMomentumSafeScroll,
+  type MomentumSafeScrollOptions,
+  useMomentumSafeScroll,
+} from "./momentum.ts";
 export {
   applyUiUpdate,
   checkForUiUpdate,

@@ -7,6 +7,7 @@
 
 import { actionIdFor } from "../runtime/server-action.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
+import { MOMENTUM_SCROLL_OPT_OUT } from "../client/momentum-boot.ts";
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { walk } from "@std/fs";
 import type { PageRoute } from "../router/manifest.ts";
@@ -700,6 +701,21 @@ function featureSeedBlock(features: Record<string, boolean>): string {
   return `globalThis.__DENEXT_FEATURES__ = ${JSON.stringify(features)};\n`;
 }
 
+/**
+ * The client-entry prelude for `momentumSafeScroll: false`: it sets the global the runtime's
+ * root boot reads (src/client/momentum-boot.ts) so the iOS momentum-safe scroll shim is never
+ * installed. Empty when the shim stays on (the default). Every client entry generator path
+ * prepends it — native `deno bundle` ({@linkcode bundleSourceFiles} / {@linkcode bundleRoutes}),
+ * the compat/SPA esbuild entries and the unbundled dev entries — since the runtime is shared
+ * and prebuilt, a per-app `define` could not reach it.
+ *
+ * @param enabled The resolved `momentumSafeScroll` value (`undefined` means on).
+ * @returns The statement to prepend, or `""`.
+ */
+export function momentumScrollSeed(enabled: boolean | undefined): string {
+  return enabled === false ? `globalThis.${MOMENTUM_SCROLL_OPT_OUT} = false;\n` : "";
+}
+
 /** The Flight entry's `main()`: read the island, adopt signal state, hydrate, boot resumability. */
 function flightMain(catchBody: string, classBoot: string): string {
   return `async function main() {
@@ -830,6 +846,11 @@ main();
 export interface BundleOptions {
   /** deno config path (`deno.json`) used to resolve the entry's imports. */
   configPath: string;
+  /**
+   * The app's `momentumSafeScroll` setting; `false` prepends {@linkcode momentumScrollSeed}
+   * to every entry so the runtime skips the iOS scroll shim. Unset keeps it on.
+   */
+  momentumSafeScroll?: boolean;
   /** Minify the output (production builds); omit for readable dev output. */
   minify?: boolean;
   /**
@@ -1396,7 +1417,7 @@ export async function bundleSourceFiles(
   await Deno.mkdir(srcDir);
   const entryPath = join(srcDir, "entry.tsx");
   try {
-    await Deno.writeTextFile(entryPath, entrySource);
+    await Deno.writeTextFile(entryPath, momentumScrollSeed(opts.momentumSafeScroll) + entrySource);
     const configPath = await prepareConfig(tmpDir, opts);
     const run = await runDenoBundle([entryPath], configPath, outDir, opts.minify, opts.dev);
     const { files } = run;
@@ -1451,7 +1472,9 @@ export async function bundleRoutes(
     const bases = routeEntries.map((_, i) => `entry_${i}`);
     const entryPaths = bases.map((b) => join(srcDir, `${b}.tsx`));
     await Promise.all(
-      routeEntries.map((re, i) => Deno.writeTextFile(entryPaths[i], re.source)),
+      routeEntries.map((re, i) =>
+        Deno.writeTextFile(entryPaths[i], momentumScrollSeed(opts.momentumSafeScroll) + re.source)
+      ),
     );
     const configPath = await prepareConfig(tmpDir, opts);
     const run = await runDenoBundle(entryPaths, configPath, outDir, opts.minify, opts.dev);

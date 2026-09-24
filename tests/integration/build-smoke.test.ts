@@ -145,6 +145,10 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * Re-based 61 → 62 KB for 2.5.0: the hydrator's `suppressHydrationWarning` walk (the nearest
  * host's opt-out, one level) and the DOM-props skip for the marker, on top of the 2.5 cycle's
  * navigation and session additions — measured 61,122 B (+0.9 KB over the 2.4 base).
+ * Re-based 62 → 63 KB for the iOS momentum-safe scroll boot (after 2.8.2): every root runs a
+ * user-agent test and, on iOS WebKit only, imports the shim as its own `momentum-scroll-*`
+ * chunk — +389 B raw in the shared graph (61,950 → 62,339 B); the 4.4 KB shim itself is never
+ * in this total.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -153,7 +157,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 62_000, `shared chunks total ${sharedTotal} bytes (budget 62 KB raw)`);
+  assert(sharedTotal < 63_000, `shared chunks total ${sharedTotal} bytes (budget 63 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);

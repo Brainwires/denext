@@ -1124,6 +1124,7 @@
   "denext/mobile": [
     "BackSwipeOptions:interface",
     "KeyboardInsetOptions:interface",
+    "MomentumSafeScrollOptions:interface",
     "NativePlatform:typeAlias",
     "OtaApplyResult:typeAlias",
     "OtaCheckOptions:interface",
@@ -1137,6 +1138,7 @@
     "applyUiUpdate:function",
     "checkForUiUpdate:function",
     "installKeyboardInset:function",
+    "installMomentumSafeScroll:function",
     "isBackSwipe:function",
     "isNativeShell:function",
     "nativePlatform:function",
@@ -1148,7 +1150,8 @@
     "prepareUiUpdate:function",
     "useAppResume:function",
     "useBackSwipe:function",
-    "useKeyboardInset:function"
+    "useKeyboardInset:function",
+    "useMomentumSafeScroll:function"
   ],
   "denext/compiler-runtime": [
     "AsyncScope:interface",

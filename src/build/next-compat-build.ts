@@ -30,6 +30,7 @@ import {
   frameworkRootUrl,
   generateFlightEntry,
   generateServerStub,
+  momentumScrollSeed,
 } from "./bundle.ts";
 // Public so `BuildNextCompatFlightOptions.classRuntime` documents against a reachable type.
 export type { ClassRuntimeMode } from "./bundle.ts";
@@ -251,6 +252,8 @@ export interface BuildNextCompatClientOptions {
   clientDir: string;
   /** The client hydration entries to bundle. */
   entries: NextCompatClientEntry[];
+  /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into every entry. */
+  momentumSafeScroll?: boolean;
   /** Minify the output bundles (production). */
   minify?: boolean;
   /** Compile the class-component runtime into the bundle. */
@@ -315,7 +318,7 @@ export async function buildNextCompatClientEntries(
   const entryPoints: Record<string, string> = {};
   for (const { id, source } of options.entries) {
     const entryPath = join(entriesDir, `${id}.tsx`);
-    await Deno.writeTextFile(entryPath, source);
+    await Deno.writeTextFile(entryPath, momentumScrollSeed(options.momentumSafeScroll) + source);
     entryPoints[id] = entryPath;
   }
   await bundleNextCompatModules({
@@ -355,6 +358,8 @@ export interface BuildNextCompatFlightOptions {
   boundary: BoundaryManifest;
   /** Output basename for the flight entry (default `flight.js`). */
   flightFile?: string;
+  /** The app's `momentumSafeScroll`; `false` seeds the runtime opt-out into the entry. */
+  momentumSafeScroll?: boolean;
   /** The project's `instrumentation-client` module (absolute path), run before the app's client code. */
   instrumentationClient?: string | null;
   /** Vite-style asset handling (see {@link AssetOptions.emitDir}); islands import images too. */
@@ -451,7 +456,7 @@ export async function buildNextCompatFlightEntry(
   const entryPath = join(entriesDir, `${flightId}.tsx`);
   await Deno.writeTextFile(
     entryPath,
-    generateFlightEntry(
+    momentumScrollSeed(options.momentumSafeScroll) + generateFlightEntry(
       options.boundary,
       options.dev,
       false,

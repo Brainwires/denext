@@ -8,7 +8,7 @@ import { resolveCacheComponents } from "../server/config.ts";
 import { collectedFontEntries, resetFonts } from "../compat/next/font/registry.ts";
 import { applyPlugins } from "../plugin/mod.ts";
 import type { ApiRoute, PageRoute } from "../router/manifest.ts";
-import { featureFlags, nodeResolveEnabled } from "../server/config.ts";
+import { featureFlags, momentumSafeScrollEnabled, nodeResolveEnabled } from "../server/config.ts";
 import { defaultLoader } from "../server/mod.ts";
 import type { ModuleLoader } from "../server/types.ts";
 import { routeServerModules } from "./bundle.ts";
@@ -97,6 +97,7 @@ export function compatBuildOptions(
     // App Router client path folds via the redirect map instead (build-pipeline/transforms.ts).
     define: { __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)) },
     resolveAllNodeModules: nodeResolveEnabled(paths.config),
+    momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
     mdxOptions: paths.config?.mdx,
     optimizePackageImports: optimizePackageImportsList(paths.config),
     useCache: resolveCacheComponents(paths.config),

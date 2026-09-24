@@ -769,6 +769,21 @@ export interface DenextConfig {
    */
   optimizePackageImports?: string[];
   /**
+   * Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset —
+   * default ON. In iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write
+   * during a touch fling (`scrollBy`, `scrollTo`, assigning `scrollTop`) stops the fling dead,
+   * and virtualized lists (LegendList, react-virtuoso, TanStack Virtual) issue exactly such
+   * writes to compensate for rows measured taller or shorter than estimated. The client
+   * runtime therefore defers those writes during a gesture (see `installMomentumSafeScroll`
+   * in `denext/mobile`) and applies them in one step once the scroller comes to rest.
+   *
+   * It installs only on iOS/iPadOS WebKit, loaded as its own chunk, so other platforms pay a
+   * user-agent check and nothing more. Set `false` to opt out.
+   *
+   * @default true
+   */
+  momentumSafeScroll?: boolean;
+  /**
    * @deprecated Every `experimental.*` key graduated to a top-level field by 2.5
    * (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The
    * old spellings are still honored, with a dev warning, when the top-level field is absent;
@@ -1006,6 +1021,15 @@ export interface ExperimentalConfig {
    * alias (with a dev warning) when the top-level field is absent.
    */
   optimizePackageImports?: string[];
+}
+
+/**
+ * Whether the client runtime auto-installs the iOS momentum-safe scroll shim. Default-on:
+ * only an explicit `momentumSafeScroll: false` disables it. Threaded into every client entry
+ * generator, which seeds the opt-out for the runtime.
+ */
+export function momentumSafeScrollEnabled(config: DenextConfig | null | undefined): boolean {
+  return config?.momentumSafeScroll !== false;
 }
 
 /**

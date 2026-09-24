@@ -3,7 +3,7 @@
 
 import { ensureDir } from "@std/fs";
 import { join, resolve } from "@std/path";
-import { featureFlags, type SpaConfig } from "../../server/config.ts";
+import { featureFlags, momentumSafeScrollEnabled, type SpaConfig } from "../../server/config.ts";
 import { buildAppCss, concatCss } from "../css.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
@@ -154,6 +154,7 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       compat,
       classComponents: paths.config?.classComponents ?? true,
       features: featureFlags(paths.config),
+      momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
       instrumentationClient: paths.instrumentationClientPath,
       spaEntry: entryPath,
     });

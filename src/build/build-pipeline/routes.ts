@@ -2,7 +2,7 @@
 // the native (non-compat) route + Flight client bundles.
 
 import { join } from "@std/path";
-import { featureFlags } from "../../server/config.ts";
+import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { localModulesOutside } from "../module-graph.ts";
 import {
@@ -88,6 +88,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
   }
   const out = await bundleRoutes(entries, {
     configPath: paths.configPath,
+    momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
     minify: prodMinify(),
     importMap: ctx.cssImportMap,
   });
@@ -140,6 +141,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
   log(`bundling Flight islands -> client/${FLIGHT_BUNDLE_FILE}`);
   const flightBundle = await bundleFlightEntry(ctx.boundary!, {
     configPath: ctx.paths.configPath,
+    momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
     minify: prodMinify(),
     importMap: ctx.cssImportMap,
     usesLive: ctx.usesLive,
