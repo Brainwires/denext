@@ -2,7 +2,7 @@
 // lazily-created unbundled dev loop.
 
 import { type RouteManifest, scanRoutes } from "../../router/manifest.ts";
-import { featureFlags } from "../../server/config.ts";
+import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { applyPlugins } from "../../plugin/mod.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
@@ -30,6 +30,7 @@ export function getUnbundled(st: DevState): UnbundledDev {
     compat: st.unbundledCompat,
     classComponents: st.paths.config?.classComponents ?? true,
     features: featureFlags(st.paths.config),
+    momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     instrumentationClient: st.paths.instrumentationClientPath,
   });
 }

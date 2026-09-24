@@ -8,6 +8,25 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.8.3] - 2026-09-24
+
+### Added
+
+- **Momentum-safe scrolling on iOS, on by default.** In iOS WebKit (Safari, WKWebView,
+  Capacitor) any programmatic scroll write during a touch fling (`scrollBy`, `scrollTo`,
+  assigning `scrollTop`) stops the fling dead, and virtualized lists (LegendList,
+  react-virtuoso, TanStack Virtual) make exactly such writes to correct for rows measured taller
+  or shorter than estimated, so a flick toward older content stopped hard. On iOS/iPadOS WebKit
+  the client runtime now defers those writes while a finger is down or the scroller is still
+  flinging: the delta is held as pending, the scroller's children get a CSS `translate` so
+  nothing moves on screen, the `scrollTop`/`scrollLeft` getters report real + pending, and the
+  offset is applied in one synchronous step at `scrollend` (or 120 ms without a `scroll`
+  event) or on the next touch. `behavior: "smooth"` calls and `scrollIntoView` pass through.
+  The shim is its own lazily loaded chunk; other platforms pay one user-agent check. Opt out
+  with the new top-level `momentumSafeScroll: false`. `denext/mobile` exports
+  `installMomentumSafeScroll(options?)` and `useMomentumSafeScroll(options?)` for pages outside
+  denext's runtime (idempotent; a no-op when the runtime already installed it).
+
 ## [2.8.2] - 2026-09-24
 
 ### Fixed
@@ -7882,6 +7901,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.8.3]: https://jsr.io/@denext/denext@2.8.3
 [2.8.2]: https://jsr.io/@denext/denext@2.8.2
 [2.8.1]: https://jsr.io/@denext/denext@2.8.1
 [2.8.0]: https://jsr.io/@denext/denext@2.8.0

@@ -441,6 +441,13 @@ function validateI18n(i18n: unknown, fail: Fail): void {
   }
 }
 
+/** `momentumSafeScroll` is an on/off switch; absent keeps the iOS scroll shim on. */
+function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
+  if (value !== undefined && typeof value !== "boolean") {
+    fail("momentumSafeScroll", "must be a boolean");
+  }
+}
+
 /** Nested fields whose absence would crash at request time rather than at boot. */
 /**
  * `features` (and its legacy alias `experimental.features`) must be a flat map of booleans —
@@ -526,6 +533,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateMode(config, fail);
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
+  validateMomentumSafeScroll(config.momentumSafeScroll, fail);
   validateRouting(config, fail);
   validateImageAllowlists(config.images, fail);
   validateImageNumerics(config.images, fail);

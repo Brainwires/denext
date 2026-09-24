@@ -272,8 +272,11 @@ discovery child. `--offline` keeps the UI and every process it starts off the ne
 Docs: https://denext.dev/docs/ui
 
 **A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `useAppResume`,
-`openExternal`, `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`. It talks to Capacitor
-through `window.Capacitor`, so no `@capacitor/*` import. Docs: https://denext.dev/docs/desktop
+`openExternal`, `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`,
+`installMomentumSafeScroll` / `useMomentumSafeScroll`. It talks to Capacitor
+through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling survives
+virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit;
+`momentumSafeScroll: false` opts out). Docs: https://denext.dev/docs/desktop
 
 **A database (zero-npm, server-only module):**
 

@@ -47,6 +47,7 @@ export const CONFIG_KEYS = [
   "asyncContext",
   "features",
   "optimizePackageImports",
+  "momentumSafeScroll",
   "experimental",
   "classComponents",
   "compatibilityMode",

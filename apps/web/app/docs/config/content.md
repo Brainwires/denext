@@ -302,8 +302,8 @@ export default {
 
 ## Build & optimization
 
-Build-time switches. All off by default except `nodeResolve` and the
-`optimizePackageImports` defaults.
+Build-time switches. All off by default except `nodeResolve`,
+`momentumSafeScroll` and the `optimizePackageImports` defaults.
 
 - **`reactCompiler`** — `boolean`. The build-time auto-memoization compiler (a
   React-Compiler-style pass; Next.js's key). Conservative by construction —
@@ -359,6 +359,17 @@ Build-time switches. All off by default except `nodeResolve` and the
   `exports` — the reason `denext migrate` never rewrites `package.json`. Set
   `false` to force app deps back through Deno's strict `npm:` loader (escape
   hatch).
+- **`momentumSafeScroll`** — `boolean` (**default on**). In iOS WebKit (Safari,
+  WKWebView, Capacitor) any programmatic scroll write during a touch fling
+  (`scrollBy`, `scrollTo`, assigning `scrollTop`) stops the fling dead, and
+  virtualized lists (LegendList, react-virtuoso, TanStack Virtual) make exactly
+  such writes to correct for rows measured taller or shorter than estimated.
+  On iOS/iPadOS WebKit the client runtime therefore defers those writes while a
+  gesture is in flight, shifts the list with a CSS `translate` so the picture is
+  unchanged, and applies the offset in one step once the scroller rests. Other
+  platforms pay one user-agent check; the shim is its own lazily loaded chunk.
+  Set `false` to opt out. See
+  [`denext/mobile`](/docs/desktop).
 
 > **`experimental` is superseded.** Everything denext shipped under it is
 > denext's own finished work, so every key graduated to a top-level field —

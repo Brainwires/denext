@@ -6,7 +6,7 @@ import { fromFileUrl, join } from "@std/path";
 import { resolveCacheComponents } from "../../server/config.ts";
 import { ensureDir } from "@std/fs";
 import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
-import { nodeResolveEnabled } from "../../server/config.ts";
+import { momentumSafeScrollEnabled, nodeResolveEnabled } from "../../server/config.ts";
 import { generateRouteEntry, routeServerModules } from "../bundle.ts";
 import {
   buildNextCompatClientEntries,
@@ -36,6 +36,7 @@ function compatBuildOptions(st: DevState, outDir: string, cssImportMap?: Record<
     outDir,
     classComponents: st.paths.config?.classComponents ?? true,
     resolveAllNodeModules: nodeResolveEnabled(st.paths.config),
+    momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     mdxOptions: st.paths.config?.mdx,
     optimizePackageImports: optimizePackageImportsList(st.paths.config),
     useCache: resolveCacheComponents(st.paths.config),

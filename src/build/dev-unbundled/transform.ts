@@ -5,6 +5,7 @@ import * as esbuild from "esbuild";
 import { dirname, fromFileUrl, toFileUrl } from "@std/path";
 import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";
+import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
 import { firstPartyResolver, resolveFirstParty, rewriteSpecifier } from "./resolve.ts";
 import {
@@ -201,7 +202,7 @@ export async function transformGeneratedEntry(
 ): Promise<string> {
   const sink: TransformEntry = { mtimeMs: 0, code: "", deps: [], selfAccepting: true };
   const result = await singleModuleBuild([ENTRY_NS], [
-    entryRewritePlugin(st, src, importerKey, sink),
+    entryRewritePlugin(st, momentumScrollSeed(st.opts.momentumSafeScroll) + src, importerKey, sink),
   ]);
   return outputText(result);
 }

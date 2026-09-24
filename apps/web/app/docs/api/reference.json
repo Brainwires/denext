@@ -3758,7 +3758,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.8.2",
+          "signature": "VERSION: 2.8.3",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -14182,6 +14182,25 @@
           "denextOnly": true
         },
         {
+          "name": "installMomentumSafeScroll",
+          "slug": "installMomentumSafeScroll",
+          "kind": "function",
+          "signature": "installMomentumSafeScroll(options?: MomentumSafeScrollOptions): () => void",
+          "doc": "Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.",
+          "docFull": "Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.\n\nIn iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write during a touch\nfling cancels the momentum instantly. Virtualized lists (LegendList, react-virtuoso,\nTanStack Virtual) issue such writes while the user scrolls, to compensate for rows measured\ntaller or shorter than estimated, so a flick toward older content stops hard.\n\nWhile a finger is down, and while a scroller is still flinging after it lifts,\n`Element.prototype.scrollBy` / `scrollTo` / `scroll` and the `scrollTop` / `scrollLeft`\nsetters record the write as a pending delta instead of scrolling. The scroller's element\nchildren get a CSS `translate` of minus that delta, so the picture is what the write would\nhave shown, and the getters return the real offset plus the delta, so a library reading back\nthe offset sees what it wrote. When the fling settles (`scrollend`, or `settleMs` without a\n`scroll` event) or a new touch starts, the translate is removed and the real offset moves by\nthe delta in one synchronous step. Outside a gesture every call goes straight through;\n`behavior: \"smooth\"` calls (after applying any pending delta) and `scrollIntoView` always do.\n\n**denext's client runtime already installs it on iOS WebKit** (opt out with\n`momentumSafeScroll: false` in `denext.config.ts`), so call this only from a page that does\nnot run on denext's runtime. By default it installs only on iOS/iPadOS WebKit, where the bug\nexists; elsewhere, and without a DOM, it is a no-op. It is idempotent: while installed,\nanother call (whatever its options) returns the same uninstaller. Uninstalling applies any\npending delta and restores every patched `Element.prototype` member exactly.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "{ force, settleMs }: install on every platform; the quiet period, in ms, that ends a fling where scrollend is unsupported (default 120)."
+            }
+          ],
+          "returns": "The uninstaller.",
+          "examples": [
+            "```ts\nimport { installMomentumSafeScroll } from \"denext/mobile\";\ninstallMomentumSafeScroll(); // once, at client startup\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "isBackSwipe",
           "slug": "isBackSwipe",
           "kind": "function",
@@ -14229,6 +14248,18 @@
           "signature": "interface KeyboardInsetOptions",
           "doc": "Options for installKeyboardInset and useKeyboardInset.",
           "docFull": "Options for {@linkcode installKeyboardInset} and {@linkcode useKeyboardInset}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "MomentumSafeScrollOptions",
+          "slug": "MomentumSafeScrollOptions",
+          "kind": "interface",
+          "signature": "interface MomentumSafeScrollOptions",
+          "doc": "Options for installMomentumSafeScroll and useMomentumSafeScroll (denext/mobile).",
+          "docFull": "Options for `installMomentumSafeScroll` and `useMomentumSafeScroll` (`denext/mobile`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14527,6 +14558,25 @@
           "returns": "The on-screen keyboard's height in CSS px.",
           "examples": [
             "```tsx\n\"use client\";\nimport { useKeyboardInset } from \"denext/mobile\";\n\nexport function Composer() {\n  const inset = useKeyboardInset();\n  return <form style={{ paddingBottom: inset }}><textarea /></form>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useMomentumSafeScroll",
+          "slug": "useMomentumSafeScroll",
+          "kind": "function",
+          "signature": "useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void",
+          "doc": "Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. Options are read on the first mount.",
+          "docFull": "Hook form of {@linkcode installMomentumSafeScroll}: installs on mount and uninstalls when the\nlast mounted hook unmounts. An install made by denext's runtime or directly with\n{@linkcode installMomentumSafeScroll} is left in place. Options are read on the first mount.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "{ force, settleMs }, as for installMomentumSafeScroll."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useMomentumSafeScroll } from \"denext/mobile\";\n\nexport function Thread({ children }: { children: unknown }) {\n  useMomentumSafeScroll();\n  return <div style={{ overflowY: \"auto\" }}>{children}</div>;\n}\n```"
           ],
           "denextOnly": true
         }
