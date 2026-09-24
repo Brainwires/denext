@@ -241,3 +241,50 @@ Deno.test("hydration: a null component does not claim the server text that follo
   assertEquals(count(div), 2);
   assert(text.nodeValue === "hello");
 });
+
+Deno.test("mount appends with appendChild alone (no insertBefore), as React does", async () => {
+  const document = {
+    nodeType: 9,
+    createElement: (tag: string) => stubElement(tag, document),
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  function stubElement(tag: string, owner: unknown) {
+    const el = {
+      nodeType: 1,
+      tagName: tag.toUpperCase(),
+      nodeName: tag.toUpperCase(),
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      ownerDocument: owner,
+      style: {},
+      childNodes: [] as unknown[],
+      parentNode: null as unknown,
+      appendChild(child: { parentNode: unknown }) {
+        child.parentNode = el;
+        el.childNodes.push(child);
+        return child;
+      },
+      removeChild(child: { parentNode: unknown }) {
+        el.childNodes.splice(el.childNodes.indexOf(child), 1);
+        child.parentNode = null;
+        return child;
+      },
+      setAttribute() {},
+      removeAttribute() {},
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    return el;
+  }
+  const { h } = await import("../src/jsx/jsx-runtime.ts");
+  const { act } = await import("../src/compat/react.ts");
+  const { createRoot } = await import("../src/compat/react-dom-client.ts");
+  const container = stubElement("div", document);
+  const root = createRoot(container as unknown as Element);
+  await act(() => root.render(h("section", null, h("span", null), h("b", null))));
+  const section = container.childNodes[0] as { tagName: string; childNodes: { tagName: string }[] };
+  if (section.tagName !== "SECTION") throw new Error("section not mounted");
+  const tags = section.childNodes.map((c) => c.tagName).join(",");
+  if (tags !== "SPAN,B") throw new Error(`children: ${tags}`);
+  await act(() => root.unmount());
+});
