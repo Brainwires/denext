@@ -1,6 +1,7 @@
 // The over-the-air UI manifest: the pinned version algorithm (src/mobile/ota-manifest.ts),
-// the directory walk that writes `_denext/ota.json` (src/build/ota-manifest.ts), the
-// `denext ota manifest` verb, and `createOtaHandler`'s serving rules (src/server/ota-handler.ts).
+// the directory walk that writes `_denext/ota.json` (src/build/ota-manifest.ts), manifest
+// signing (src/build/ota-signing.ts), the `denext ota manifest` / `denext ota keygen` verbs,
+// and `createOtaHandler`'s serving rules (src/server/ota-handler.ts).
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
@@ -10,10 +11,21 @@ import {
   makeOtaManifest,
   OTA_MANIFEST_PATH,
   OTA_NOTES_MAX_LENGTH,
+  type OtaManifest,
   otaManifestVersion,
+  otaSignaturePayload,
   sha256Hex,
 } from "../src/mobile/ota-manifest.ts";
 import { collectOtaManifest, writeOtaManifest } from "../src/build/ota-manifest.ts";
+import {
+  generateOtaKeyPair,
+  importOtaSigningKey,
+  loadOtaSigningKey,
+  OTA_SIGNING_KEY_ENV,
+  parseOtaPublicKey,
+  signOtaManifest,
+  verifyOtaManifest,
+} from "../src/build/ota-signing.ts";
 import { createOtaHandler } from "../src/server/ota-handler.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 
@@ -224,7 +236,7 @@ Deno.test("denext ota: --required and --notes are declared flags", () => {
   const flags = buildRegistry().get("ota")!.flags ?? [];
   assertEquals(
     flags.map((f) => [f.name, f.type]),
-    [["required", "boolean"], ["notes", "string"]],
+    [["required", "boolean"], ["notes", "string"], ["sign", "string"], ["force", "boolean"]],
   );
 });
 
@@ -272,4 +284,265 @@ Deno.test("createOtaHandler: nothing is served without a manifest", async () => 
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Signing: ECDSA P-256 / SHA-256 over the canonical payload (the native side builds the same).
+
+const EMPTY_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+Deno.test("ota signature: the canonical payload is the tagged version, required flag and notes hash", async () => {
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  const notesSha = await sha256Hex(encoder.encode("Fixes sign-in"));
+  assertEquals(
+    text(
+      await otaSignaturePayload({
+        version: FIXTURE_VERSION,
+        required: true,
+        notes: "Fixes sign-in",
+      }),
+    ),
+    `denext-ota-v1\n${FIXTURE_VERSION}\n1\n${notesSha}`,
+  );
+  // No notes hash as the empty string; an absent or false `required` is "0". No trailing newline.
+  assertEquals(await sha256Hex(encoder.encode("")), EMPTY_SHA);
+  assertEquals(
+    text(await otaSignaturePayload({ version: FIXTURE_VERSION })),
+    `denext-ota-v1\n${FIXTURE_VERSION}\n0\n${EMPTY_SHA}`,
+  );
+  assertEquals(
+    await otaSignaturePayload({ version: FIXTURE_VERSION, required: false, notes: "" }),
+    await otaSignaturePayload({ version: FIXTURE_VERSION }),
+  );
+  // Notes are hashed as UTF-8, and never embedded raw.
+  const payload = text(await otaSignaturePayload({ version: FIXTURE_VERSION, notes: "Größe ✓" }));
+  assertEquals(payload.split("\n")[3], await sha256Hex(encoder.encode("Größe ✓")));
+  assertEquals(payload.split("\n").length, 4);
+});
+
+const FILES = [
+  { path: "index.html", sha256: INDEX_HTML_SHA, size: 13 },
+  { path: "_denext/client/app.js", sha256: APP_JS_SHA, size: 14 },
+];
+
+/** A fresh key pair plus its imported signing key. */
+async function keys() {
+  const pair = await generateOtaKeyPair();
+  return { ...pair, signingKey: await importOtaSigningKey(pair.privateKeyPem) };
+}
+
+Deno.test("ota signature: sign/verify round-trips and binds version, required and notes", async () => {
+  const { publicKey, signingKey } = await keys();
+  const manifest = await signOtaManifest(
+    await makeOtaManifest(FILES, { required: true, notes: "Fixes sign-in" }),
+    signingKey,
+  );
+  assert(isOtaManifest(manifest));
+  // Standard padded base64 of the raw 64-byte r‖s WebCrypto produces.
+  assert(/^[A-Za-z0-9+/]{86}==$/.test(manifest.signature!), manifest.signature);
+  assert(await verifyOtaManifest(manifest, publicKey));
+
+  // Independently of the helper: WebCrypto verifies the raw signature over the payload.
+  const spki = Uint8Array.from(atob(publicKey), (c) => c.charCodeAt(0));
+  const key = await crypto.subtle.importKey(
+    "spki",
+    spki,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"],
+  );
+  const raw = Uint8Array.from(atob(manifest.signature!), (c) => c.charCodeAt(0));
+  assertEquals(raw.byteLength, 64);
+  assert(
+    await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      raw,
+      await otaSignaturePayload(manifest) as BufferSource,
+    ),
+  );
+
+  const tampered: Array<[string, OtaManifest]> = [
+    ["required flipped", { ...manifest, required: false }],
+    ["required dropped", { ...manifest, required: undefined }],
+    ["notes changed", { ...manifest, notes: "Fixes sign-in!" }],
+    ["notes dropped", { ...manifest, notes: undefined }],
+    ["version changed", { ...manifest, version: "0".repeat(64) }],
+    [
+      "a file swapped (version recomputed from the files)",
+      { ...manifest, files: [{ ...FILES[0], sha256: APP_JS_SHA }, FILES[1]] },
+    ],
+    ["signature dropped", { ...manifest, signature: undefined }],
+    ["signature garbage", { ...manifest, signature: "not base64!" }],
+  ];
+  for (const [label, bad] of tampered) assert(!(await verifyOtaManifest(bad, publicKey)), label);
+  // Another key's public half rejects it.
+  assert(!(await verifyOtaManifest(manifest, (await keys()).publicKey)), "wrong key");
+});
+
+Deno.test("ota signature: public keys parse from base64 SPKI or PEM, and only P-256", async () => {
+  const { publicKey } = await keys();
+  assertEquals(await parseOtaPublicKey(publicKey), publicKey);
+  assertEquals(await parseOtaPublicKey(`  ${publicKey}\n`), publicKey);
+  const pem = `-----BEGIN PUBLIC KEY-----\n${publicKey.match(/.{1,64}/g)!.join("\n")}\n` +
+    "-----END PUBLIC KEY-----\n";
+  assertEquals(await parseOtaPublicKey(pem), publicKey);
+  const p384 = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-384" }, true, [
+    "sign",
+    "verify",
+  ]);
+  const p384Spki = btoa(
+    String.fromCharCode(...new Uint8Array(await crypto.subtle.exportKey("spki", p384.publicKey))),
+  );
+  await assertRejects(() => parseOtaPublicKey(p384Spki), Error, "P-256");
+  await assertRejects(() => parseOtaPublicKey("hello"), Error, "P-256");
+  await assertRejects(() => importOtaSigningKey(publicKey), Error, "PRIVATE KEY");
+});
+
+/** Run `denext ota <positionals>` with `flags`, returning what it logged. */
+async function ota(
+  positionals: string[],
+  flags: Record<string, string | boolean> = {},
+  json = false,
+): Promise<string[]> {
+  const log = console.log;
+  const lines: string[] = [];
+  console.log = (...a: unknown[]) => void lines.push(a.join(" "));
+  try {
+    await buildRegistry().get("ota")!.run({
+      positionals,
+      flags,
+      global: { json, verbose: false, quiet: false },
+      rest: [],
+    });
+  } finally {
+    console.log = log;
+  }
+  return lines;
+}
+
+/** Run `fn` with DENEXT_OTA_SIGNING_KEY set to `value` (unset for undefined), then restore it. */
+async function withSigningEnv(value: string | undefined, fn: () => Promise<void>): Promise<void> {
+  const saved = Deno.env.get(OTA_SIGNING_KEY_ENV);
+  if (value === undefined) Deno.env.delete(OTA_SIGNING_KEY_ENV);
+  else Deno.env.set(OTA_SIGNING_KEY_ENV, value);
+  try {
+    await fn();
+  } finally {
+    if (saved === undefined) Deno.env.delete(OTA_SIGNING_KEY_ENV);
+    else Deno.env.set(OTA_SIGNING_KEY_ENV, saved);
+  }
+}
+
+Deno.test("denext ota keygen <out>: a 0600 PKCS#8 PEM, a one-line base64 SPKI .pub, the key printed", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ota_keygen_" });
+  const out = join(dir, "ota.key");
+  try {
+    const lines = await ota(["keygen", out]);
+    const pem = await Deno.readTextFile(out);
+    assert(pem.startsWith("-----BEGIN PRIVATE KEY-----\n"), pem);
+    assert(pem.endsWith("-----END PRIVATE KEY-----\n"), pem);
+    if (Deno.build.os !== "windows") assertEquals((await Deno.stat(out)).mode! & 0o777, 0o600);
+    const pub = await Deno.readTextFile(`${out}.pub`);
+    assertEquals(pub.split("\n").length, 2, "one line plus its newline");
+    const publicKey = pub.trim();
+    assertEquals(await parseOtaPublicKey(publicKey), publicKey);
+    assert(lines.some((l) => l.includes(publicKey)), lines.join("\n"));
+    // The pair belongs together.
+    const signed = await signOtaManifest(
+      await makeOtaManifest(FILES),
+      await importOtaSigningKey(pem),
+    );
+    assert(await verifyOtaManifest(signed, publicKey));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext ota keygen: refuses to overwrite without --force; --force replaces with 0600", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_ota_keygen_force_" });
+  const out = join(dir, "ota.key");
+  const exit = Deno.exit;
+  const error = console.error;
+  const errors: string[] = [];
+  try {
+    await Deno.writeTextFile(out, "keep me", { mode: 0o644 });
+    Deno.exit = ((code?: number) => {
+      throw new Error(`exit ${code}`);
+    }) as typeof Deno.exit;
+    console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+    await assertRejects(() => ota(["keygen", out]), Error, "exit 1");
+    assertEquals(await Deno.readTextFile(out), "keep me");
+    assert(errors.some((e) => e.includes("--force")), errors.join("\n"));
+    await ota(["keygen", out], { force: true });
+    assert((await Deno.readTextFile(out)).startsWith("-----BEGIN PRIVATE KEY-----"));
+    if (Deno.build.os !== "windows") assertEquals((await Deno.stat(out)).mode! & 0o777, 0o600);
+  } finally {
+    Deno.exit = exit;
+    console.error = error;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext ota manifest --sign <keyfile> signs; DENEXT_OTA_SIGNING_KEY is the fallback; --sign wins", async () => {
+  const dir = await webRoot();
+  const flagKey = await keys();
+  const envKey = await keys();
+  const keyFile = join(dir, "..", `${dir.split(/[\\/]/).pop()}.key`);
+  const written = async () =>
+    JSON.parse(await Deno.readTextFile(join(dir, "_denext", "ota.json"))) as OtaManifest;
+  try {
+    await Deno.writeTextFile(keyFile, flagKey.privateKeyPem);
+    await withSigningEnv(undefined, async () => {
+      const lines = await ota(["manifest", dir], { sign: keyFile, notes: "hi" });
+      assert(lines.some((l) => l.includes("signed")), lines.join("\n"));
+      assert(await verifyOtaManifest(await written(), flagKey.publicKey));
+
+      // No flag, no env: unsigned, as before.
+      await ota(["manifest", dir]);
+      assert(!("signature" in await written()));
+      assertEquals(await loadOtaSigningKey(), undefined);
+    });
+    await withSigningEnv(envKey.privateKeyPem, async () => {
+      const [json] = await ota(["manifest", dir], {}, true);
+      assertEquals(JSON.parse(json).signed, true);
+      assert(await verifyOtaManifest(await written(), envKey.publicKey));
+      // --sign wins over the env var.
+      await ota(["manifest", dir], { sign: keyFile });
+      const manifest = await written();
+      assert(await verifyOtaManifest(manifest, flagKey.publicKey));
+      assert(!(await verifyOtaManifest(manifest, envKey.publicKey)));
+    });
+    await withSigningEnv("not a key", async () => {
+      await assertRejects(() => loadOtaSigningKey(), Error, OTA_SIGNING_KEY_ENV);
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(keyFile).catch(() => {});
+  }
+});
+
+Deno.test("createOtaHandler: passes the manifest's signature through", async () => {
+  const dir = await webRoot();
+  try {
+    const { publicKey, signingKey } = await keys();
+    await writeOtaManifest(dir, { required: true }, signingKey);
+    const ota = createOtaHandler({ dir });
+    const served = await (await ota(new Request("http://host/_denext/ota.json")))!.json();
+    assert(isOtaManifest(served));
+    assert(typeof served.signature === "string");
+    assert(await verifyOtaManifest(served, publicKey));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("ota manifest: isOtaManifest accepts a string signature only", () => {
+  const base = {
+    version: FIXTURE_VERSION,
+    files: [{ path: "index.html", sha256: INDEX_HTML_SHA, size: 13 }],
+  };
+  assert(isOtaManifest({ ...base, signature: "c2ln" }));
+  assert(!isOtaManifest({ ...base, signature: 1 }));
+  assert(!isOtaManifest({ ...base, signature: null }));
 });

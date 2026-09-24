@@ -8,6 +8,33 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Signed over-the-air UI manifests.** `denext ota keygen <out>` writes an ECDSA P-256 signing
+  key (PKCS#8 PEM, mode 0600; `--force` to replace) and its public key as one-line base64 SPKI
+  (`<out>.pub`). `denext ota manifest <dir> --sign <keyfile>` adds a `signature` to
+  `_denext/ota.json`: ECDSA P-256 / SHA-256 over `denext-ota-v1`, the `version`, the `required`
+  flag and a SHA-256 of the `notes`, so none of them can change under a valid signature. In CI
+  the `DENEXT_OTA_SIGNING_KEY` env var (the PEM contents) signs instead, for `denext ota
+  manifest` and for a `spa.ota` export alike. `denext mobile add-ota --public-key <file>` (base64
+  SPKI or a `PUBLIC KEY` PEM, checked to be P-256) embeds the key as Info.plist
+  `DenextOtaPublicKey` and the AndroidManifest `dev.denext.ota.PUBLIC_KEY` meta-data, replacing
+  an earlier one. `otaSignaturePayload` builds the signed bytes, and `denext/mobile` exports
+  `OtaErrorCode`; an `error` result now carries the native refusal's `code`.
+
+### Security
+
+- **The native `DenextOta` plugin no longer trusts the manifest.** Before it downloads anything
+  it recomputes the `version` from the file list (a mismatch is refused with code `integrity`).
+  With a public key embedded in the app binary, it refuses a missing or invalid signature (code
+  `signature`) over any transport, and a key that is present but does not parse refuses every
+  manifest. With no key, it refuses plain `http` to any host but loopback (`localhost`,
+  `127.0.0.1`, `::1`, and the Android emulator's `10.0.2.2`) with code `insecure`, so a LAN
+  man-in-the-middle can no longer serve its own UI, which would run with the app's stored
+  credentials. A refusal leaves the running and staged UIs untouched. Re-run
+  `denext mobile add-ota --force` to update the native templates: an unsigned update served
+  over LAN `http` stops working until you sign it and embed the key, or serve it over `https`.
+
 ## [2.7.1] - 2026-09-23
 
 ### Added

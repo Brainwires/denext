@@ -4,7 +4,8 @@
 // `out/` intact, an output dir whose replacement would destroy project files is refused
 // (on the App Router and Pages Router paths too, by real location: case variants on a
 // case-insensitive filesystem and symlinks are resolved), `spa.precompress: false` ships
-// no `.gz` siblings, and `spa.ota: true` stamps `_denext/ota.json` over the final tree.
+// no `.gz` siblings, and `spa.ota: true` stamps `_denext/ota.json` over the final tree (signed
+// when DENEXT_OTA_SIGNING_KEY is set).
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { walk } from "@std/fs";
@@ -13,6 +14,11 @@ import { staticExport } from "../src/build/export.ts";
 import { resolveExportOutDir, swapStagingDir } from "../src/build/export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../src/build/paths.ts";
 import { collectOtaManifest } from "../src/build/ota-manifest.ts";
+import {
+  generateOtaKeyPair,
+  OTA_SIGNING_KEY_ENV,
+  verifyOtaManifest,
+} from "../src/build/ota-signing.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -168,6 +174,18 @@ Deno.test({
     assert(manifest.files.some((f: { path: string }) => f.path === "robots.txt"));
     // And it is the manifest `denext ota manifest` derives from the same tree.
     assertEquals(manifest, await collectOtaManifest(out));
+
+    // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the export signs it too.
+    const { privateKeyPem, publicKey } = await generateOtaKeyPair();
+    Deno.env.set(OTA_SIGNING_KEY_ENV, privateKeyPem);
+    try {
+      await staticExport(dir);
+    } finally {
+      Deno.env.delete(OTA_SIGNING_KEY_ENV);
+    }
+    const signed = JSON.parse(await Deno.readTextFile(join(out, "_denext", "ota.json")));
+    assertEquals(signed.version, manifest.version);
+    assert(await verifyOtaManifest(signed, publicKey), JSON.stringify(signed));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

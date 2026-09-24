@@ -15,6 +15,12 @@
  * prompt (`prepareUiUpdate`). They are not part of what the version covers: two manifests
  * over the same files have the same version whatever their metadata says.
  *
+ * The optional `signature` binds the release to a key the app binary embeds: an ECDSA P-256 /
+ * SHA-256 signature over {@linkcode otaSignaturePayload} (the version, `required` and a hash of
+ * `notes`), so neither the files nor the metadata can be swapped without the private key. The
+ * native plugin recomputes the version from the file list and verifies the signature; the web
+ * side only forwards it.
+ *
  * Web-standard only (`crypto.subtle`), with no Deno APIs and nothing run at import, so the
  * client can use it without pulling in anything else.
  *
@@ -48,6 +54,12 @@ export interface OtaManifest {
    * {@linkcode OTA_NOTES_MAX_LENGTH} characters. Not part of the version.
    */
   readonly notes?: string;
+  /**
+   * Standard (padded) base64 of the raw 64-byte `r‖s` ECDSA P-256 / SHA-256 signature over
+   * {@linkcode otaSignaturePayload} (`denext ota manifest --sign <keyfile>`). An app whose binary
+   * embeds a public key refuses a manifest without a valid one.
+   */
+  readonly signature?: string;
   /** Every file of the UI, sorted by path. */
   readonly files: ReadonlyArray<OtaManifestFile>;
 }
@@ -100,6 +112,26 @@ export async function otaManifestVersion(
   return await sha256Hex(new TextEncoder().encode(lines));
 }
 
+/** The first line of every signature payload; a new payload format gets a new tag. */
+const OTA_SIGNATURE_DOMAIN = "denext-ota-v1";
+
+/**
+ * The bytes an OTA manifest signature covers: the UTF-8 of
+ * `"denext-ota-v1\n" + version + "\n" + (required ? "1" : "0") + "\n" + sha256hex(notes ?? "")`
+ * (no trailing newline). The version already covers every file, so the chain is files →
+ * version → signature, and `required` / `notes` cannot be flipped under a valid signature.
+ * The native `DenextOta` plugin builds the same bytes.
+ */
+export async function otaSignaturePayload(
+  manifest: Pick<OtaManifest, "version" | "required" | "notes">,
+): Promise<Uint8Array> {
+  const notesHash = await sha256Hex(new TextEncoder().encode(manifest.notes ?? ""));
+  const required = manifest.required === true ? "1" : "0";
+  return new TextEncoder().encode(
+    `${OTA_SIGNATURE_DOMAIN}\n${manifest.version}\n${required}\n${notesHash}`,
+  );
+}
+
 /**
  * Sort `files` by path and stamp the version over them, adding `meta`'s `required` and
  * `notes` when given (they never change the version).
@@ -135,14 +167,16 @@ function isManifestFile(file: unknown): file is OtaManifestFile {
 /**
  * Whether `value` has the manifest's shape: a 64-hex `version`, a non-empty `files` array of
  * `{ path, sha256, size }`, and, when present, a boolean `required` and a string `notes` of at
- * most {@linkcode OTA_NOTES_MAX_LENGTH} characters. Other keys are ignored. It checks the
- * shape only; the native side re-checks every path before it writes anything.
+ * most {@linkcode OTA_NOTES_MAX_LENGTH} characters, and a string `signature`. Other keys are
+ * ignored. It checks the shape only; the native side re-checks every path, recomputes the
+ * version and verifies the signature before it downloads anything.
  */
 export function isOtaManifest(value: unknown): value is OtaManifest {
   if (typeof value !== "object" || value === null) return false;
-  const { version, files, required, notes } = value as Record<string, unknown>;
+  const { version, files, required, notes, signature } = value as Record<string, unknown>;
   return isSha256Hex(version) && Array.isArray(files) && files.length > 0 &&
     files.every(isManifestFile) &&
     (required === undefined || typeof required === "boolean") &&
-    (notes === undefined || (typeof notes === "string" && notes.length <= OTA_NOTES_MAX_LENGTH));
+    (notes === undefined || (typeof notes === "string" && notes.length <= OTA_NOTES_MAX_LENGTH)) &&
+    (signature === undefined || typeof signature === "string");
 }

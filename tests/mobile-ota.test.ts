@@ -219,7 +219,7 @@ Deno.test("checkForUiUpdate: native rejected/busy → skipped; other rejections 
   const { plugin: p } = plugin({ bundled: BUNDLED }, reject("integrity"));
   await withShell({ DenextOta: p }, async () => {
     const r = await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch });
-    assertEquals(r, { kind: "error", reason: "nope (integrity)" });
+    assertEquals(r, { kind: "error", reason: "nope (integrity)", code: "integrity" });
   });
   // A failing status() is an error too, not a throw.
   const broken = plugin({}).plugin;
@@ -373,7 +373,7 @@ Deno.test("prepareUiUpdate: native rejected/busy → skipped; other failures →
   const { plugin: p, calls } = plugin({ bundled: BUNDLED }, reject("integrity"));
   await withShell({ DenextOta: p }, async () => {
     const r = await prepareUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch });
-    assertEquals(r, { kind: "error", reason: "nope (integrity)" });
+    assertEquals(r, { kind: "error", reason: "nope (integrity)", code: "integrity" });
     const http = fakeFetch(() => new Response("nope", { status: 503 }));
     const e: OtaPrepareResult = await prepareUiUpdate({ baseUrl: BASE, fetch: http.fetch });
     assert(e.kind === "error" && e.reason.includes("HTTP 503"), JSON.stringify(e));
@@ -439,7 +439,11 @@ Deno.test("applyUiUpdate: unsupported off native or on an older plugin; native r
     () => Promise.reject(Object.assign(new Error("UI x is not staged"), { code: "not_staged" })),
   );
   await withShell({ DenextOta: p }, async () => {
-    assertEquals(await applyUiUpdate(SERVER), { kind: "error", reason: "UI x is not staged" });
+    assertEquals(await applyUiUpdate(SERVER), {
+      kind: "error",
+      reason: "UI x is not staged",
+      code: "not_staged",
+    });
     assertEquals(calls.activate, [{ version: SERVER }]);
   });
 });
@@ -448,5 +452,36 @@ Deno.test("otaStatus: reports the staged version", async () => {
   const { plugin: p } = plugin({ bundled: BUNDLED, staged: SERVER });
   await withShell({ DenextOta: p }, async () => {
     assertEquals((await otaStatus())?.staged, SERVER);
+  });
+});
+
+Deno.test("signed OTA: the manifest's signature crosses the bridge on apply and download", async () => {
+  const signed = { ...MANIFEST, required: true, notes: "n", signature: "c2ln".repeat(22) };
+  const f = () => fakeFetch(() => Response.json(signed));
+  const { plugin: p, calls } = plugin({ bundled: BUNDLED });
+  await withShell({ DenextOta: p }, async () => {
+    assertEquals((await checkForUiUpdate({ baseUrl: BASE, fetch: f().fetch })).kind, "applied");
+    assertEquals(calls.apply[0].manifest, signed);
+    assertEquals((await prepareUiUpdate({ baseUrl: BASE, fetch: f().fetch })).kind, "ready");
+    assertEquals(calls.download[0].manifest.signature, signed.signature);
+  });
+});
+
+Deno.test("signed OTA: native signature/insecure refusals are errors carrying their code", async () => {
+  const reject = (code: string) => () =>
+    Promise.reject(Object.assign(new Error(`refused (${code})`), { code }));
+  for (const code of ["signature", "insecure"] as const) {
+    const { plugin: p } = plugin({ bundled: BUNDLED }, reject(code));
+    await withShell({ DenextOta: p }, async () => {
+      const expected = { kind: "error" as const, reason: `refused (${code})`, code };
+      assertEquals(await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch }), expected);
+      assertEquals(await prepareUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch }), expected);
+    });
+  }
+  // An unknown native code is not claimed as one of ours.
+  const { plugin: p } = plugin({ bundled: BUNDLED }, reject("mystery"));
+  await withShell({ DenextOta: p }, async () => {
+    const r = await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch });
+    assertEquals(r, { kind: "error", reason: "refused (mystery)" });
   });
 });

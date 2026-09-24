@@ -374,9 +374,9 @@ export default function RootLayout({ children }: { children: unknown }) {
       <h3>Over-the-air UI updates</h3>
       <p>
         A Capacitor app can pull a newer web UI from a server without a new app build: the shell
-        downloads the files, verifies each SHA-256, switches its web root to them and reloads. It is
-        off until you install the native <code>DenextOta</code>{" "}
-        plugin, and a UI that fails to boot rolls itself back.
+        downloads the files, verifies each SHA-256 (and, with a key embedded, the manifest's
+        signature), switches its web root to them and reloads. It is off until you install the
+        native <code>DenextOta</code> plugin, and a UI that fails to boot rolls itself back.
       </p>
       <p>
         <strong>1. Stamp the export.</strong> The manifest <code>_denext/ota.json</code>{" "}
@@ -517,6 +517,58 @@ export function UpdatePrompt() {
         server writes the same three rules as its own route.
       </p>
       <p>
+        <strong>Signed manifests.</strong>{" "}
+        Without a signature, anyone who can answer the app's manifest request can serve a matching
+        manifest and files, and that UI then runs with the app's stored credentials. Sign each
+        release with a key only you hold, and embed the public half in the app binary:
+      </p>
+      <Code lang="bash">
+        {`denext ota keygen ota.key                        # ota.key (PKCS#8 PEM, 0600) + ota.key.pub
+denext mobile add-ota --public-key ota.key.pub   # Info.plist + AndroidManifest.xml
+denext ota manifest out --sign ota.key           # adds "signature" to _denext/ota.json`}
+      </Code>
+      <p>
+        Keep <code>ota.key</code> out of the repository. In CI, put its PEM <em>contents</em> in the
+        {" "}
+        <code>DENEXT_OTA_SIGNING_KEY</code> secret instead: <code>denext ota manifest</code> and a
+        {" "}
+        <code>spa.ota</code> export both sign with it when it is set (<code>--sign</code>{" "}
+        wins over it). The signature is ECDSA P-256 / SHA-256 over <code>denext-ota-v1</code>, the
+        {" "}
+        <code>version</code>, the <code>required</code> flag and a SHA-256 of the{" "}
+        <code>notes</code>, so none of them can be changed under a valid signature.{" "}
+        <code>add-ota --public-key</code> takes that <code>.pub</code> file or a{" "}
+        <code>PUBLIC KEY</code> PEM, writes the Info.plist string <code>DenextOtaPublicKey</code>
+        {" "}
+        and the <code>dev.denext.ota.PUBLIC_KEY</code>{" "}
+        meta-data, and replaces an earlier key when re-run. The key only ever comes from the app
+        binary, never from the server, so changing it takes an app release.
+      </p>
+      <p>Before it downloads anything, the native plugin:</p>
+      <ul>
+        <li>
+          recomputes the <code>version</code>{" "}
+          from the manifest's file list and refuses a mismatch (code{" "}
+          <code>integrity</code>), so the chain is files → version → signature;
+        </li>
+        <li>
+          with a public key embedded, refuses a missing or invalid signature (code{" "}
+          <code>signature</code>), over <code>https</code> and <code>http</code> alike;
+        </li>
+        <li>
+          with no key, refuses plain <code>http</code> (code{" "}
+          <code>insecure</code>) unless the host is loopback: <code>localhost</code>,{" "}
+          <code>127.0.0.1</code>, <code>::1</code> or the Android emulator's{" "}
+          <code>10.0.2.2</code>. Unsigned updates over <code>https</code> still work.
+        </li>
+      </ul>
+      <p>
+        A refusal leaves the running UI and any staged one as they were, and reaches the app as{" "}
+        <code>{'{ kind: "error", code }'}</code> (<code>OtaErrorCode</code> in{" "}
+        <code>denext/mobile</code>). The web side only forwards the signature; the native side is
+        the authority.
+      </p>
+      <p>
         <strong>Rollback rules.</strong>
       </p>
       <ul>
@@ -539,11 +591,12 @@ export function UpdatePrompt() {
         </li>
       </ul>
       <Callout kind="warn">
-        <strong>Limits.</strong> The SHA-256 checks catch corruption, not an attacker: over LAN{" "}
-        <code>http</code>, a man-in-the-middle can serve a matching manifest and files alike.
-        Production needs TLS end to end or a manifest signed by the server and verified on the
-        device, which denext does not ship yet. There is no downgrade protection either: the device
-        installs whatever version its server offers, older ones included.
+        <strong>Limits.</strong>{" "}
+        There is no downgrade protection: the device installs whatever version its server offers,
+        older ones included, and a signed old release stays valid, so an attacker who can answer the
+        manifest request can roll a device back to any UI you ever signed. Without an embedded key,
+        the transport (TLS) is the only thing standing between the app and a hostile UI. Rotating
+        the key takes an app release, and a leaked key is valid until then.
       </Callout>
 
       <h2>Environment variables</h2>

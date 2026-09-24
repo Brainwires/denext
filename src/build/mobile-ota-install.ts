@@ -2,8 +2,10 @@
 // Capacitor project. It writes the native templates (src/build/ota-native-templates.ts),
 // adds the Swift files to the Xcode app target (src/build/pbxproj.ts), points the storyboard
 // and SceneDelegate at `DenextBridgeViewController` while they still name the stock
-// `CAPBridgeViewController`, and rewrites a stock `MainActivity`. Anything customised is
-// left alone and reported as a one-line manual step. Running it twice changes nothing.
+// `CAPBridgeViewController`, and rewrites a stock `MainActivity`. With a public key it also
+// embeds the OTA signature key (Info.plist `DenextOtaPublicKey`, AndroidManifest meta-data
+// `dev.denext.ota.PUBLIC_KEY`), replacing an earlier one. Anything customised is left alone
+// and reported as a one-line manual step. Running it twice changes nothing.
 
 import { join, relative } from "@std/path";
 import { addSourceFiles } from "./pbxproj.ts";
@@ -17,6 +19,12 @@ export interface AddOtaOptions {
   force?: boolean;
   /** Id generator for new pbxproj objects (tests). */
   randomId?: () => string;
+  /**
+   * The OTA signature public key as one-line base64 SPKI (already validated, e.g. by
+   * `parseOtaPublicKey`). Embedded in Info.plist and AndroidManifest.xml, replacing an
+   * earlier value; left out, neither file is touched.
+   */
+  publicKey?: string;
 }
 
 /** What {@linkcode addOtaToProject} did, as project-relative paths and one-line notes. */
@@ -157,6 +165,60 @@ async function reportBridgeSubclasses(inst: Installer, root: string): Promise<vo
   }
 }
 
+/** The Info.plist key the iOS plugin reads its OTA public key from. */
+const IOS_PUBLIC_KEY_KEY = "DenextOtaPublicKey";
+/** The `<meta-data>` name the Android plugin reads its OTA public key from. */
+const ANDROID_PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY";
+
+const PLIST_PUBLIC_KEY = new RegExp(
+  `<key>${IOS_PUBLIC_KEY_KEY}</key>\\s*<string>[^<]*</string>`,
+);
+
+/** `plist` with `DenextOtaPublicKey` set to `key`, or null when it has no top-level dict. */
+function withPlistPublicKey(plist: string, key: string): string | null {
+  const entry = `<key>${IOS_PUBLIC_KEY_KEY}</key>\n\t<string>${key}</string>`;
+  if (PLIST_PUBLIC_KEY.test(plist)) return plist.replace(PLIST_PUBLIC_KEY, entry);
+  const end = plist.lastIndexOf("</dict>");
+  if (end < 0 || !plist.slice(end).includes("</plist>")) return null;
+  const lineStart = plist.lastIndexOf("\n", end - 1) + 1;
+  // A `</dict>` on a line of its own gets the entry on the lines above it.
+  if (plist.slice(lineStart, end).trim() === "") {
+    return `${plist.slice(0, lineStart)}\t${entry}\n${plist.slice(lineStart)}`;
+  }
+  return `${plist.slice(0, end)}\t${entry}\n${plist.slice(end)}`;
+}
+
+const MANIFEST_PUBLIC_KEY = new RegExp(
+  `<meta-data\\b[^>]*android:name="${ANDROID_PUBLIC_KEY_META.replaceAll(".", "\\.")}"[^>]*/>`,
+);
+
+/** `manifest` with the public-key `<meta-data>` set to `key`, or null without `</application>`. */
+function withManifestPublicKey(manifest: string, key: string): string | null {
+  const element = `<meta-data android:name="${ANDROID_PUBLIC_KEY_META}" android:value="${key}" />`;
+  if (MANIFEST_PUBLIC_KEY.test(manifest)) return manifest.replace(MANIFEST_PUBLIC_KEY, element);
+  const end = manifest.lastIndexOf("</application>");
+  if (end < 0) return null;
+  const lineStart = manifest.lastIndexOf("\n", end - 1) + 1;
+  const indent = manifest.slice(lineStart, end);
+  if (indent.trim() !== "") return `${manifest.slice(0, end)}${element}\n${manifest.slice(end)}`;
+  return `${manifest.slice(0, lineStart)}${indent}    ${element}\n${manifest.slice(lineStart)}`;
+}
+
+/** Embed `key` with `inject`, or report `step` as manual when the file has no place for it. */
+async function embedPublicKey(
+  inst: Installer,
+  path: string,
+  inject: (text: string, key: string) => string | null,
+  step: string,
+): Promise<void> {
+  const key = inst.opts.publicKey;
+  if (key === undefined) return;
+  const text = await readText(path);
+  const next = text === undefined ? null : inject(text, key);
+  if (next === null) return void inst.report.manual.push(`${inst.rel(path)}: ${step}`);
+  await inst.edit(path, () => next);
+}
+
 async function installIos(inst: Installer): Promise<void> {
   const root = inst.opts.dir;
   const pbxprojPath = join(root, PBXPROJ);
@@ -174,6 +236,12 @@ async function installIos(inst: Installer): Promise<void> {
   await reportBridgeSubclasses(inst, root);
   await wireStoryboard(inst, root);
   await wireSceneDelegate(inst, root);
+  await embedPublicKey(
+    inst,
+    join(root, IOS_APP, "Info.plist"),
+    withPlistPublicKey,
+    `add the string key ${IOS_PUBLIC_KEY_KEY} (the base64 public key) to the top-level dict.`,
+  );
 }
 
 /** The stock Capacitor `MainActivity.java`: a bare `extends BridgeActivity {}`. */
@@ -249,6 +317,12 @@ async function installAndroid(inst: Installer): Promise<void> {
     await inst.template(join(root, ANDROID_OTA_DIR, name), content);
   }
   await wireMainActivity(inst, root);
+  await embedPublicKey(
+    inst,
+    join(root, "android", "app", "src", "main", "AndroidManifest.xml"),
+    withManifestPublicKey,
+    `add <meta-data android:name="${ANDROID_PUBLIC_KEY_META}" android:value="<base64 public key>" /> inside <application>.`,
+  );
 }
 
 /**

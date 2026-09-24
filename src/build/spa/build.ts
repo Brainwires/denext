@@ -9,6 +9,7 @@ import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
 import { writeOtaManifest } from "../ota-manifest.ts";
+import { loadOtaSigningKey } from "../ota-signing.ts";
 import {
   assertEntryExists,
   CLIENT_PREFIX,
@@ -121,12 +122,17 @@ export async function exportSpa(
     await copyPublic(paths.publicDir, staging);
     // Last, once every file of the export is in place: the OTA manifest hashes the final
     // tree (`*.gz` siblings excluded), so nothing may be written after it.
+    // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the manifest is signed too.
     if (spa.ota === true) {
-      const { version, files } = await writeOtaManifest(staging);
+      const { version, files, signature } = await writeOtaManifest(
+        staging,
+        {},
+        await loadOtaSigningKey(),
+      );
       console.log(
-        `  OTA manifest: _denext/ota.json (version ${
-          version.slice(0, 12)
-        }…, ${files.length} files)`,
+        `  OTA manifest: _denext/ota.json (version ${version.slice(0, 12)}…, ${files.length} files${
+          signature ? ", signed" : ""
+        })`,
       );
     }
   });

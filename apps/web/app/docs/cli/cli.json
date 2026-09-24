@@ -541,12 +541,18 @@
       "name": "mobile",
       "summary": "Capacitor helpers (add-ota: install over-the-air UI updates)",
       "usage": "denext mobile <action> [dir] [options]",
-      "description": "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n\n  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n  left alone and listed as one-line manual steps. Safe to run again.",
+      "description": "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n\n  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n  left alone and listed as one-line manual steps. Safe to run again.\n\n  --public-key ota.key.pub (from `denext ota keygen`) embeds the verifying key as Info.plist\n  DenextOtaPublicKey and the dev.denext.ota.PUBLIC_KEY meta-data in AndroidManifest.xml\n  (replacing an earlier one); the app then refuses any manifest not signed with its key.",
       "flags": [
         {
           "name": "force",
           "type": "boolean",
           "description": "Replace native template files that differ from denext's (loses local edits)"
+        },
+        {
+          "name": "public-key",
+          "type": "string",
+          "valueName": "<file>",
+          "description": "Embed this OTA public key (base64 SPKI or PUBLIC KEY PEM) so the app verifies signatures"
         }
       ],
       "positionals": [
@@ -567,8 +573,8 @@
     {
       "name": "ota",
       "summary": "Over-the-air UI manifest for Capacitor apps",
-      "usage": "denext ota <action> [dir] [options]",
-      "description": "  denext ota manifest out     Write out/_denext/ota.json (paths, SHA-256s, sizes, version)\n  denext ota manifest out --required --notes \"Fixes sign-in\"\n                              Also mark the UI required and attach release notes\n\n  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n  makes `denext export` write it for you. `*.gz` files are never listed. `--required` and\n  `--notes` feed the app's own update prompt (prepareUiUpdate in denext/mobile); they are\n  not part of the version.",
+      "usage": "denext ota <action> [path] [options]",
+      "description": "  denext ota manifest out     Write out/_denext/ota.json (paths, SHA-256s, sizes, version)\n  denext ota manifest out --required --notes \"Fixes sign-in\"\n                              Also mark the UI required and attach release notes\n  denext ota manifest out --sign ota.key\n                              Also sign it (or set DENEXT_OTA_SIGNING_KEY to the PEM)\n  denext ota keygen ota.key   Write a P-256 signing key (0600) and ota.key.pub\n\n  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n  makes `denext export` write it for you. `*.gz` files are never listed. `--required` and\n  `--notes` feed the app's own update prompt (prepareUiUpdate in denext/mobile); they are\n  not part of the version, but the signature covers them. An app whose binary embeds the\n  public key (`denext mobile add-ota --public-key ota.key.pub`) refuses an unsigned or\n  wrongly signed manifest; one without a key refuses plain http beyond loopback.",
       "flags": [
         {
           "name": "required",
@@ -580,6 +586,17 @@
           "type": "string",
           "valueName": "<text>",
           "description": "Release notes for the app's update prompt (at most 2000 characters)"
+        },
+        {
+          "name": "sign",
+          "type": "string",
+          "valueName": "<keyfile>",
+          "description": "Sign the manifest with this PKCS#8 PEM key (default: $DENEXT_OTA_SIGNING_KEY, if set)"
+        },
+        {
+          "name": "force",
+          "type": "boolean",
+          "description": "keygen: replace existing key files"
         }
       ],
       "positionals": [
@@ -587,13 +604,13 @@
           "name": "action",
           "required": true,
           "variadic": false,
-          "description": "manifest"
+          "description": "manifest | keygen"
         },
         {
-          "name": "dir",
+          "name": "path",
           "required": false,
           "variadic": false,
-          "description": "The static export directory (e.g. out)"
+          "description": "manifest: the static export directory (e.g. out); keygen: the private key file"
         }
       ]
     },

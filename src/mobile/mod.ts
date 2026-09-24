@@ -55,6 +55,7 @@ export {
   otaBooted,
   type OtaCheckOptions,
   type OtaCheckResult,
+  type OtaErrorCode,
   type OtaPrepareResult,
   otaReset,
   type OtaStatus,

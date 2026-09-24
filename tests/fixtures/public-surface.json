@@ -1128,6 +1128,7 @@
     "OtaApplyResult:typeAlias",
     "OtaCheckOptions:interface",
     "OtaCheckResult:typeAlias",
+    "OtaErrorCode:typeAlias",
     "OtaManifest:interface",
     "OtaManifestFile:interface",
     "OtaPrepareResult:typeAlias",
