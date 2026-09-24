@@ -407,6 +407,68 @@ export default function RootLayout({ children }: { children: unknown }) {
         plain-browser path.
       </Callout>
 
+      <h3>Native capabilities</h3>
+      <p>
+        <code>denext/mobile</code>{" "}
+        also wraps the common Capacitor plugins. Each function calls the official plugin inside the
+        shell and falls back to a browser API (or does nothing) on the web, so the same code runs in
+        both places. <code>denext mobile add</code>{" "}
+        installs the plugins: it finds the project (the folder with{" "}
+        <code>capacitor.config.*</code>, or <code>--dir</code>), refuses a{" "}
+        <code>@capacitor/core</code>{" "}
+        major other than 8, adds the packages with the package manager your lockfile names, declares
+        any Android permissions they need, and runs <code>npx cap sync</code>.
+      </p>
+      <Code lang="bash">
+        {`denext mobile add --list                    # the capabilities and their plugins
+denext mobile add haptics share network --dry-run   # print the plan, change nothing
+denext mobile add haptics share network secure-store`}
+      </Code>
+      <ul>
+        <li>
+          <code>haptic(kind)</code>{" "}
+          (<code>haptics</code>): an impact, notification or selection tick; falls back to{" "}
+          <code>navigator.vibrate</code>.
+        </li>
+        <li>
+          <code>readClipboard()</code> / <code>writeClipboard(text)</code>{" "}
+          (<code>clipboard</code>): falls back to <code>navigator.clipboard</code>.
+        </li>
+        <li>
+          <code>share({"{ title, text, url }"})</code> (<code>share</code>): resolves{" "}
+          <code>"shared"</code>, <code>"cancelled"</code>, or <code>"copied"</code>{" "}
+          when there is no share sheet and the text went to the clipboard.
+        </li>
+        <li>
+          <code>deviceInfo()</code>{" "}
+          (<code>device</code>): platform, model, OS version; a best-effort user-agent read on the
+          web.
+        </li>
+        <li>
+          <code>networkStatus()</code> / <code>useNetworkStatus()</code>{" "}
+          (<code>network</code>): connected and the connection type; <code>navigator.onLine</code>
+          {" "}
+          on the web.
+        </li>
+        <li>
+          <code>useKeepAwake(active)</code>{" "}
+          (<code>keep-awake</code>): keeps the screen on; the Screen Wake Lock API on the web.
+        </li>
+        <li>
+          <code>hideSplash()</code> (<code>splash</code>): hides the launch splash when{" "}
+          <code>launchAutoHide</code> is off.
+        </li>
+        <li>
+          <code>secureStore.get / set / delete</code>{" "}
+          (<code>secure-store</code>): the iOS Keychain / Android Keystore. On the web it is a plain
+          IndexedDB database, which is <strong>not</strong> secret.
+        </li>
+      </ul>
+      <p>
+        <code>browser</code> installs the plugin <code>openExternal</code>{" "}
+        uses for its in-app browser. A new plugin is native code: ship a new app binary afterwards.
+      </p>
+
       <h3>Over-the-air UI updates</h3>
       <p>
         A Capacitor app can pull a newer web UI from a server without a new app build: the shell

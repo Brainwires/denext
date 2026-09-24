@@ -11,6 +11,7 @@
 
 import { join, relative } from "@std/path";
 import { addSourceFiles } from "./pbxproj.ts";
+import { plistEntry, plistTopDict, withPlistString } from "./mobile-native-config.ts";
 import {
   isPristineOtaTemplate,
   OTA_ANDROID_FILES,
@@ -208,75 +209,10 @@ const IOS_PUBLIC_KEY_KEY = "DenextOtaPublicKey";
 /** The `<meta-data>` name the Android plugin reads its OTA public key from. */
 const ANDROID_PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY";
 
-/** The top-level dict of a plist: where its `</dict>` is, and its keys with their offsets. */
-interface PlistTopDict {
-  /** Offset of the top-level `</dict>`. */
-  close: number;
-  /** Each top-level `<key>`: its name and the offset just past `</key>`. */
-  keys: Array<{ name: string; end: number }>;
-}
-
-/** A `<key>…</key>` (group 1: its text) or a `<dict>` / `<array>` tag (2: `/`, 3: name, 4: `/`). */
-const PLIST_TAG = /<key>([^<]*)<\/key>|<(\/?)(dict|array)\b[^>]*?(\/?)>/g;
-
-/**
- * What a `<dict>` / `<array>` tag at `depth` means for the top-level dict: `"ok"` to go on,
- * `"end"` for its closing tag, `"bad"` when the plist has no top-level dict to speak of.
- */
-function topLevelStep(tag: RegExpMatchArray, depth: number): "ok" | "end" | "bad" {
-  const [, key, closing, name, selfClosing] = tag;
-  if (key !== undefined) return "ok";
-  if (depth === 0) return !closing && !selfClosing && name === "dict" ? "ok" : "bad";
-  if (depth === 1 && closing) return name === "dict" ? "end" : "bad";
-  return "ok";
-}
-
-/** How a tag changes the nesting depth: a `<key>` or a self-closing tag does not. */
-function depthDelta(tag: RegExpMatchArray): number {
-  if (tag[1] !== undefined || tag[4]) return 0;
-  return tag[2] ? -1 : 1;
-}
-
-/**
- * The top-level `<dict>` of `plist`, scanning `<dict>` / `<array>` nesting so a key of a nested
- * dict (an ATS exception, say) never counts; null without a top-level dict.
- */
-function plistTopDict(plist: string): PlistTopDict | null {
-  const start = plist.indexOf("<plist");
-  if (start < 0) return null;
-  const keys: PlistTopDict["keys"] = [];
-  let depth = 0;
-  for (const tag of plist.slice(start).matchAll(PLIST_TAG)) {
-    const index = start + tag.index;
-    if (tag[1] !== undefined && depth === 1) {
-      keys.push({ name: tag[1], end: index + tag[0].length });
-    }
-    const step = topLevelStep(tag, depth);
-    if (step !== "ok") return step === "end" ? { close: index, keys } : null;
-    depth += depthDelta(tag);
-  }
-  return null;
-}
-
-/** The `<string>` right after a top-level key ending at `end`, as its span and value. */
-function plistStringAfter(plist: string, end: number): { end: number; value: string } | null {
-  const m = /^\s*<string>([^<]*)<\/string>/.exec(plist.slice(end));
-  return m ? { end: end + m[0].length, value: m[1] } : null;
-}
-
-/** The top-level `DenextOtaPublicKey` entry of `plist`, if any. */
-function plistPublicKeyEntry(
-  plist: string,
-  top: PlistTopDict,
-): { keyEnd: number; value: { end: number; value: string } | null } | undefined {
-  const key = top.keys.find((k) => k.name === IOS_PUBLIC_KEY_KEY);
-  return key && { keyEnd: key.end, value: plistStringAfter(plist, key.end) };
-}
-
 /** Whether `plist`'s top-level dict carries a non-empty `DenextOtaPublicKey` string. */
 function plistHasPublicKey(plist: string): boolean {
   const top = plistTopDict(plist);
-  const entry = top && plistPublicKeyEntry(plist, top);
+  const entry = top && plistEntry(plist, top, IOS_PUBLIC_KEY_KEY);
   return (entry?.value?.value.trim() ?? "") !== "";
 }
 
@@ -285,22 +221,7 @@ function plistHasPublicKey(plist: string): boolean {
  * dict (or the key holds something other than a string).
  */
 function withPlistPublicKey(plist: string, key: string): string | null {
-  const top = plistTopDict(plist);
-  if (!top) return null;
-  const entry = `<key>${IOS_PUBLIC_KEY_KEY}</key>\n\t<string>${key}</string>`;
-  const existing = plistPublicKeyEntry(plist, top);
-  if (existing) {
-    if (!existing.value) return null;
-    const keyStart = plist.lastIndexOf("<key>", existing.keyEnd);
-    return plist.slice(0, keyStart) + entry + plist.slice(existing.value.end);
-  }
-  const end = top.close;
-  const lineStart = plist.lastIndexOf("\n", end - 1) + 1;
-  // A `</dict>` on a line of its own gets the entry on the lines above it.
-  if (plist.slice(lineStart, end).trim() === "") {
-    return `${plist.slice(0, lineStart)}\t${entry}\n${plist.slice(lineStart)}`;
-  }
-  return `${plist.slice(0, end)}\t${entry}\n${plist.slice(end)}`;
+  return withPlistString(plist, IOS_PUBLIC_KEY_KEY, key, true);
 }
 
 const MANIFEST_PUBLIC_KEY = new RegExp(

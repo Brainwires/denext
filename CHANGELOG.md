@@ -8,6 +8,26 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Native capabilities in `denext/mobile`.** `haptic(kind)`, `readClipboard()` /
+  `writeClipboard(text)`, `share({ title, text, url })` (`"shared"` / `"copied"` /
+  `"cancelled"`), `deviceInfo()`, `networkStatus()` / `useNetworkStatus()`,
+  `useKeepAwake(active)`, `hideSplash()` and `secureStore.get` / `set` / `delete`. Inside a
+  Capacitor shell each one calls its official plugin through `window.Capacitor.Plugins`
+  (still no `@capacitor/*` import); on the web it falls back to the matching browser API
+  (Vibration, async Clipboard, Web Share then a clipboard copy, the user agent,
+  `navigator.onLine`, Screen Wake Lock) or does nothing. `secureStore` uses the Keychain /
+  Keystore natively and a plain IndexedDB database on the web, which is **not** secret.
+  Importing `denext/mobile` still runs no code, and each export tree-shakes on its own.
+- **`denext mobile add <capability...>`** installs the plugins behind those functions
+  (`haptics`, `clipboard`, `share`, `device`, `network`, `keep-awake`, `splash`,
+  `secure-store`, `browser`) into a Capacitor project. It refuses when the project's
+  `@capacitor/core` major is not 8, adds the packages with the package manager its lockfile
+  names, declares the Android permissions a capability needs, and runs `npx cap sync`.
+  `--dry-run` prints the plan without changing anything, `--list` lists the capabilities,
+  and `--dir` points at the project.
+
 ## [2.9.0] - 2026-09-24
 
 ### Added

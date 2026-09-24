@@ -56,7 +56,9 @@ export type OtaErrorCode =
   | "downgrade"
   | "native_too_old";
 
-const OTA_ERROR_CODES: ReadonlySet<string> = new Set<OtaErrorCode>([
+// An array literal, not a `new Set(...)`: bundlers keep a module-level constructor call,
+// which would pin this module into every bundle that imports `denext/mobile`.
+const OTA_ERROR_CODES: readonly string[] = [
   "invalid",
   "busy",
   "rejected",
@@ -67,7 +69,7 @@ const OTA_ERROR_CODES: ReadonlySet<string> = new Set<OtaErrorCode>([
   "insecure",
   "downgrade",
   "native_too_old",
-]);
+] satisfies readonly OtaErrorCode[];
 
 /** The native plugin's name: `window.Capacitor.Plugins.DenextOta`. */
 const PLUGIN_NAME = "DenextOta";
@@ -230,7 +232,7 @@ function nativeError(
   err: unknown,
 ): { readonly kind: "error"; readonly reason: string; readonly code?: OtaErrorCode } {
   const code = codeOf(err);
-  return typeof code === "string" && OTA_ERROR_CODES.has(code)
+  return typeof code === "string" && OTA_ERROR_CODES.includes(code)
     ? { kind: "error", reason: messageOf(err), code: code as OtaErrorCode }
     : { kind: "error", reason: messageOf(err) };
 }
@@ -397,8 +399,10 @@ const asError = (err: unknown): { readonly kind: "error"; readonly reason: strin
   reason: messageOf(err),
 });
 
-const checkFlight = singleFlight<OtaCheckResult>(runCheck, asError);
-const prepareFlight = singleFlight<OtaPrepareResult>(runPrepare, asError);
+// Created on first use, not at module scope: a module-level call is a side effect bundlers
+// keep, so `import { isNativeShell } from "denext/mobile"` would ship the whole OTA client.
+let checkFlight: ((options: OtaCheckOptions) => Promise<OtaCheckResult>) | undefined;
+let prepareFlight: ((options: OtaCheckOptions) => Promise<OtaPrepareResult>) | undefined;
 
 /**
  * Check a server for a newer UI and, when it offers a different version, install it.
@@ -436,6 +440,7 @@ const prepareFlight = singleFlight<OtaPrepareResult>(runPrepare, asError);
  * ```
  */
 export function checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult> {
+  checkFlight ??= singleFlight<OtaCheckResult>(runCheck, asError);
   return checkFlight(options);
 }
 
@@ -473,6 +478,7 @@ export function checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResu
  * ```
  */
 export function prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult> {
+  prepareFlight ??= singleFlight<OtaPrepareResult>(runPrepare, asError);
   return prepareFlight(options);
 }
 
