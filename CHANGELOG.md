@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-09-24
+
 ### Added
 
 - **Signed over-the-air UI manifests.** `denext ota keygen <out>` writes an ECDSA P-256 signing
@@ -7847,6 +7849,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.8.0]: https://jsr.io/@denext/denext@2.8.0
 [2.7.1]: https://jsr.io/@denext/denext@2.7.1
 [2.7.0]: https://jsr.io/@denext/denext@2.7.0
 [2.6.0]: https://jsr.io/@denext/denext@2.6.0
