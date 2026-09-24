@@ -66,6 +66,7 @@ Deno.test("cache moved to Rendering when Data retired, beside cacheComponents", 
   // that key sitting with the other caching concern.
   assertEquals(groupOf("cache"), "rendering");
   assertEquals(groupOf("cacheComponents"), "rendering");
+  assertEquals(groupOf("momentumSafeScroll"), "rendering");
   assert(!(CONFIG_GROUPS as readonly string[]).includes("data"));
 });
 

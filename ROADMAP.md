@@ -215,6 +215,34 @@ fenced block against the template would keep them that way).
   would not have to change. Committing to an agent-driveable write surface is a
   3.0 decision, not a 2.6 one.
 
+## Mobile (Capacitor) parity
+
+What a React Native / Expo app gets that `denext/mobile` + a Capacitor shell still
+lacks — measured against T3 Code's React Native app. The full comparison (what is
+already covered, what official Capacitor plugins cover) is
+[REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md); rendering stays WebView (see
+[POLICIES.md](./POLICIES.md#engineering-guardrails)). In day-one order:
+
+- **Push notifications** — a `denext/mobile` registration + permission API over
+  the Capacitor push plugin, and notification-tap → deep-link routing. The single
+  biggest gap.
+- **Auth sessions + deep links** — `openAuthSession()` (ASWebAuthenticationSession
+  on iOS, Custom Tabs on Android) and an `onDeepLink` hook (URL-open events, cold
+  and warm start), for OAuth in a system browser sheet and pairing links.
+- **The `denext mobile add <capability>` wrapper pattern** — install an official
+  Capacitor plugin, register it natively (as `add-ota` does), and expose it as a
+  typed `denext/mobile` hook with a web / desktop fallback: haptics, clipboard,
+  share, filesystem, device, network, splash screen, camera / pickers, secure
+  storage, keep-awake.
+- **CI signing + build recipe** — a GitHub Actions recipe that builds signed iOS /
+  Android artifacts (the EAS Build equivalent), plus a native-layer fingerprint
+  check so CI knows whether a change can ship over the air or needs a binary.
+- **Dev-server attach** — a phone running the app gets HMR from `denext dev` (the
+  Metro model); tracked in detail under "Dev server attach" below.
+- Later: app extensions (share extension, widgets, Live Activities) as
+  `denext mobile add-<thing>` generators, and a real-device Android measurement
+  before any "native feel" work.
+
 ## Candidate features (from the framework-gap survey)
 
 Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack (the three picks that shipped

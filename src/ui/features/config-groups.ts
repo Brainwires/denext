@@ -41,6 +41,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "classComponents",
     "reactCompiler",
     "asyncContext",
+    // Client-runtime behaviour (iOS momentum scrolling), not a toolchain switch.
+    "momentumSafeScroll",
     "images",
     "tailwind",
     "mdx",

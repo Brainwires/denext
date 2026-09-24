@@ -32,6 +32,7 @@ import { emitAuthEvent } from "./events.ts";
 import { hasMfaAdapter } from "./mfa.ts";
 import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { assertEmailProviderConfig } from "./providers-email.ts";
+import { authTrustsProxy } from "./rate-limit.ts";
 import { handleAuthRequest } from "./routes.ts";
 import type { SessionStore } from "./session-store.ts";
 import { readAuthSession, refreshIfStale } from "./session.ts";
@@ -86,7 +87,6 @@ function validateConfig(config: AuthConfig): void {
   validateProviders(config.providers);
   assertCredentialsVerifiable(config);
   assertEmailProviderConfig(config);
-  warnOnUndeclaredProxy(config);
   // Resolving validates the 2.5 surface too: an unusable `basePath`, an invalid cookie
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
   // — at config time, not on the first login.
@@ -174,18 +174,21 @@ let warnedNoProxyTrust = false;
 
 /**
  * A config with a `canonicalOrigin` is a config meant for production, and in production
- * denext is behind something. If `trustForwardedHeaders` was never decided, say so once at
- * boot: without it every per-IP rate-limit bucket keys on the proxy rather than the
+ * denext is behind something. If proxy trust was decided neither on `denextAuth` nor at the
+ * app level (`trustForwardedHeaders` in `denext.config.ts` / `DENEXT_TRUST_PROXY=1`, which
+ * auth inherits), say so once, on the first auth request (the app-level setting is only
+ * known then): without it every per-IP rate-limit bucket keys on the proxy rather than the
  * client, and `clientIp` reports the proxy to the app's own handlers too.
  */
 function warnOnUndeclaredProxy(config: AuthConfig): void {
-  if (!config.canonicalOrigin || config.trustForwardedHeaders !== undefined) return;
-  if (warnedNoProxyTrust) return;
+  if (warnedNoProxyTrust || !config.canonicalOrigin) return;
+  if (config.trustForwardedHeaders !== undefined || authTrustsProxy(config)) return;
   warnedNoProxyTrust = true;
   console.warn(
     "denextAuth: `canonicalOrigin` is set but `trustForwardedHeaders` is not — if a reverse " +
-      "proxy fronts this app, set it to true (only when the proxy OVERWRITES " +
-      "`x-forwarded-for`) so rate limits and `signInFailed.ip` see the real client.",
+      "proxy fronts this app, set `trustForwardedHeaders: true` in denext.config.ts (or " +
+      "`DENEXT_TRUST_PROXY=1`; denextAuth inherits it) — only when the proxy OVERWRITES " +
+      "`x-forwarded-for` — so rate limits, `signInFailed.ip` and `clientIp()` see the real client.",
   );
 }
 
@@ -223,7 +226,10 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
   return {
     name: "denext-auth",
     setup(ctx) {
-      ctx.addRequestHandler((request) => handleAuthRequest(request, config));
+      ctx.addRequestHandler((request) => {
+        warnOnUndeclaredProxy(config);
+        return handleAuthRequest(request, config);
+      });
       // Anything holding a resource (the sqlite handles) is released on server drain: the
       // session store, and the adapter — whose `close()` had never been wired up, so a
       // `sqliteAuthAdapter` kept its file handle open for the life of the process.

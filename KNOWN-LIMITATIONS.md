@@ -116,14 +116,23 @@ next-compat interop path — denext's own apps are unaffected):
   `name`/`httpEquiv`/`itemProp` and duplicate `<base>` are **not** collapsed — denext's
   collector also receives React-19-style in-tree `<meta>` that React itself never dedupes,
   so the set is kept conservative on purpose.
-- **SSR attribute serialization follows ReactDOMServer for the common cases, not all.**
-  `defaultValue`/`defaultChecked`, textarea/select values, the camelCase → HTML/SVG name
-  map, `"true"`/`"false"` for enumerated and `aria-*`/`data-*` attributes, and CSS custom
-  properties match React. Still different: an element with both `dangerouslySetInnerHTML`
-  and children renders the HTML (React throws); `key` is visible on `props` of an
-  authored element (React strips it); and `defaultProps` on a **function** component is
-  honored as a compat extension (React 19 removed it) because popular npm libraries still
-  rely on it.
+- **SSR attribute serialization follows ReactDOMServer's tables (2.8.1), with a few
+  differences.** Boolean props (`disabled=""`), the camelCase → HTML/SVG name map
+  (`tabindex`, `crossorigin`, `stroke-width`, …), `"true"`/`"false"` for enumerated and
+  `aria-*`/`data-*` attributes, the dropped empty `src`/`href` (kept on `<a href="">`),
+  invalid `cols`/`rows`/`size`/`span`, `defaultValue`/`defaultChecked` (on `<input>` only),
+  textarea/select values, inline styles and CSS custom properties match React. Still
+  different:
+  - `true` on an attribute React doesn't know renders `name=""` (React drops it, keeping
+    only `data-*`/`aria-*`), matching what the client reconciler sets;
+  - `autoCapitalize={true}` renders `autoCapitalize="true"` (React drops it);
+  - `'` in text and attribute values is escaped as `&#39;` (React writes `&#x27;` — the same
+    character to every parser, but a byte-for-byte snapshot differs);
+  - an element with both `dangerouslySetInnerHTML` and children renders the HTML (React
+    throws);
+  - `key` is visible on `props` of an authored element (React strips it);
+  - `defaultProps` on a **function** component is honored as a compat extension (React 19
+    removed it) because popular npm libraries still rely on it.
 - **A few React internals are shims.** The introspection hooks `captureOwnerStack()` /
   `cacheSignal()` return `null` (rendering is unaffected — only dev tooling that reads them
   gets nothing). `addTransitionType()` is fully wired — it drives `startViewTransition({ types })`
@@ -363,14 +372,26 @@ four documented bounds of the opt-in:
   renders a dead page: **LAN / mobile dev attach is not supported yet** (tracked in
   [ROADMAP.md](./ROADMAP.md)). `denext desktop run` serves a static export over loopback, which
   is unaffected.
-- **Over-the-air UI updates have no downgrade protection.** A signed manifest proves who
-  released a UI, not that it is the newest one: a device installs whatever version its server
-  offers, and every release ever signed stays valid, so whoever can answer the manifest request
-  can roll a device back to an older signed UI. Without an embedded public key, TLS is the only
-  protection (plain `http` is refused beyond loopback). The public key lives in the app binary,
-  so rotating it (or recovering from a leaked private key) takes an app release. The Android
-  template, signature verification included, is written against Capacitor 8's `BridgeActivity`
-  API but has not been built in CI; the iOS one is build-checked with `xcodebuild`.
+- **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
+  manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
+  accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
+  (code `native_too_old`). A device that has never accepted a sequenced manifest (one updated only
+  by denext ≤ 2.8 releases) still installs an older v1-signed UI. Without an embedded public key,
+  TLS is the only protection (plain `http` is refused beyond loopback), and with one, plain `http`
+  still exposes the request headers and files. The public key lives in the app binary, so
+  rotating it (or recovering from a leaked private key) takes an app release. The Android
+  template is compiled against Capacitor 8.5 by hand, not in CI; the iOS one is build-checked
+  with `xcodebuild`.
+- **Downloaded OTA files are verified once, when they arrive.** The native plugin does not re-hash
+  a version's files at each launch (that would cost every cold start), so a file changed in the
+  app's data directory afterwards (a jailbroken or rooted device, or a debug build) is served as
+  is.
+- **An iOS web content process that dies during an OTA trial is reloaded by Capacitor, not by
+  the plugin.** `CAPBridgeViewController.loadView()` is final, so the plugin cannot take over
+  `webViewWebContentProcessDidTerminate` without replacing Capacitor's navigation delegate; if
+  Capacitor's `reload()` leaves the trial UI blank, the boot watchdog rolls it back. On Android a
+  renderer crash ends the app process (Capacitor does not handle `onRenderProcessGone`), and the
+  next launch counts it as one of the trial's two attempts.
 
 ### Testing helpers (`denext doctor`, `probeApp`)
 

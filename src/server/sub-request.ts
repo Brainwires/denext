@@ -130,7 +130,11 @@ export async function runSubRequest(
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
   }
-  const child = createRequestContext(request, request.signal);
+  // The child's `x-request-id` is the parent's id + a suffix, set by denext itself — honor it.
+  const child = createRequestContext(request, request.signal, {
+    trustForwardedHeaders: parentCtx.trustForwardedHeaders,
+    trustRequestId: true,
+  });
   child.subRequestDepth = depth;
   child.routes = parentCtx.routes;
   const res = await runWithContext(child, () => run(app, child, request));

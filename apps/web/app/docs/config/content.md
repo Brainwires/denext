@@ -174,8 +174,10 @@ itself (it reads neither the config keys nor the env vars for them).
   `Host` (every Server Action answers `403` otherwise).
 - **`trustForwardedHeaders`** — `boolean` (env `DENEXT_TRUST_PROXY=1`; default
   `false`). Trust `X-Forwarded-Proto` / `X-Forwarded-Host` from a reverse proxy
-  when deriving the origin. Only when clients **cannot** reach denext directly.
-  Ignored when `canonicalOrigin` is set.
+  when deriving the origin, and `X-Forwarded-For` / an inbound `X-Request-Id`
+  for `clientIp()`, `requestId()` and the rate limiters (`denextAuth` inherits
+  it unless it sets its own). Only when clients **cannot** reach denext
+  directly. The origin part is ignored when `canonicalOrigin` is set.
 - **`requestTimeout`** — `number` ms (env `DENEXT_REQUEST_TIMEOUT_MS`; default
   `30000`, `0` disables). A request running past it is aborted and answered
   `503`; the per-request `AbortSignal` fires so cooperative work cancels.
@@ -325,8 +327,8 @@ Build-time switches. All off by default except `nodeResolve`,
   branch is dead-code eliminated. A key not listed reads `false`; flag names and
   states are embedded in the client bundle. See
   [Feature flags](/docs/bundling#feature-flags-compile-time).
-- **`optimizePackageImports`** — `string[]` (a built-in default list is always
-  on). Next.js's barrel-import optimization: `import { Check } from
+- **`optimizePackageImports`** — `string[] | false` (a built-in default list is
+  on unless you pass `false`). Next.js's barrel-import optimization: `import { Check } from
   "lucide-react"` is rewritten to an import of the module that defines `Check`,
   so the bundler never loads the package's barrel. That saves build time, and it keeps
   an icon library's thousand re-exports out of the module graph — and when the
@@ -336,19 +338,29 @@ Build-time switches. All off by default except `nodeResolve`,
   `ramda`, `rxjs`, `@tabler/icons-react`, `@heroicons/react/20/solid`,
   `@heroicons/react/24/solid`, `@heroicons/react/24/outline`, `react-icons/*`
   (a trailing `/*` matches every subpath), `@mui/icons-material`, `recharts`,
-  `react-use`, `@headlessui/react` and `effect`. It applies to the compat
-  (esbuild) client and server bundles, SPA mode included, under `nodeResolve`,
-  and rewrites app source and npm modules alike. Only named value imports move
+  `react-use`, `@headlessui/react` and `effect`. A `"!pkg"` entry removes one
+  (`"!recharts"`; `"!react-icons/*"` drops the wildcard entry), and `false`
+  turns the optimization off, defaults included. It applies to the compat
+  (esbuild) client and server bundles, SPA mode included, under `nodeResolve`
+  — in production builds and compat dev rebuilds — and rewrites app source and
+  npm modules alike. The unbundled per-module dev server and the native
+  `deno bundle` path do not apply it (dev still loads the barrel; the built
+  output is what the rewrite shapes). Only named value imports move
   (`import type`, default, `* as` and dynamic `import()` are left alone), and
   only names the barrel re-exports from another module: a name the barrel
   defines itself stays on the barrel, and a barrel that runs code of its own,
   carries a directive (`"use client"`) or cannot be analysed is left untouched —
-  it never fails a build. Next's `experimental.optimizePackageImports` spelling
-  is honored with a dev warning.
+  it never fails a build. Decorators count as code that runs. **Listing a
+  package asserts its modules are side-effect free** (as in Next.js): the
+  modules beside the one a name comes from are never loaded, so a top-level side
+  effect in one of them (a polyfill, a `register()` call) no longer runs —
+  exclude such a package with `"!pkg"`. Next's
+  `experimental.optimizePackageImports` spelling is honored with a dev warning.
 
   ```ts
   export default {
-    optimizePackageImports: ["@acme/icons", "@acme/ui/*"],
+    optimizePackageImports: ["@acme/icons", "@acme/ui/*", "!recharts"],
+    // or: optimizePackageImports: false — no barrel rewriting at all
   } satisfies DenextConfig;
   ```
 - **`nodeResolve`** — `boolean` (**default on** for the compat build). denext's
@@ -368,7 +380,10 @@ Build-time switches. All off by default except `nodeResolve`,
   gesture is in flight, shifts the list with a CSS `translate` so the picture is
   unchanged, and applies the offset in one step once the scroller rests. Other
   platforms pay one user-agent check; the shim is its own lazily loaded chunk.
-  Set `false` to opt out. See
+  Only element scrollers are deferred (the document scroller never is), and
+  iframes are not covered; a shifted list's `position: fixed` descendants and
+  sticky headers move with it until the fling settles. Set `false` to opt out
+  (it holds in every build: App Router, Pages Router, SPA, dev and export). See
   [`denext/mobile`](/docs/desktop).
 
 > **`experimental` is superseded.** Everything denext shipped under it is

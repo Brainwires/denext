@@ -170,7 +170,10 @@ Reach the signal from anywhere in the request with `requestSignal()` from
 Component or Server Action fetching data does not, and threading
 `requestSignal()` into those `fetch()`es is what lets the timeout (and a client
 disconnect) actually reclaim the work. It returns `undefined` outside denext's
-server loop, so a test that calls a handler directly is unaffected. The client
+server loop, so a test that calls a handler directly is unaffected, and
+`undefined` inside a `use cache` scope — a cached fill is shared with other
+readers (single-flight followers, background refreshes), so one client's
+disconnect must not abort it. The client
 IP and the correlation id are reachable the same way: `clientIp()` (the trusted
 proxy's last `x-forwarded-for` hop when `trustForwardedHeaders` is set, else the
 socket peer — never read the header yourself) and `requestId()` (the value
@@ -353,10 +356,12 @@ users out once, since the cookie is renamed).
 ## 8. Correlation ids
 
 Every response carries a request id (surfaced in the request log and echoed as
-`x-request-id` on error responses). denext reuses an inbound `x-request-id` from
-your proxy when present (sanitized to safe token characters and length-bounded),
-otherwise it mints a UUID. Propagate a trace id from your edge as `x-request-id`
-to correlate proxy and app logs.
+`x-request-id` on error responses). When the app trusts its proxy
+(`trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`), denext reuses an inbound
+`x-request-id` (sanitized to safe token characters and length-bounded);
+otherwise it mints a UUID, so a client can't choose the id your logs carry.
+Propagate a trace id from your edge as `x-request-id` to correlate proxy and
+app logs.
 
 ## 9. Request logging
 

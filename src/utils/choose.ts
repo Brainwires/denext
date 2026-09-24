@@ -1,3 +1,6 @@
+/** The branch map `choose` selects from: an optional zero-argument function per case key. */
+export type ChooseCases<K extends PropertyKey, R> = Partial<Record<K, () => R>>;
+
 /**
  * `choose(value, cases, defaultCase?)` — pick a branch by value and run it.
  *
@@ -6,6 +9,11 @@
  * result. When no case matches it calls `defaultCase` if one was given, otherwise it
  * returns `undefined`. Only the selected branch runs — the others are never invoked —
  * so it reads as a lazy `switch` you can drop straight into JSX.
+ *
+ * Only `cases`' OWN keys match (`Object.hasOwn`): inherited names such as `toString`,
+ * `constructor`, `valueOf`, `hasOwnProperty` or `__proto__` fall through to
+ * `defaultCase` unless `cases` declares them itself. An own key whose value is
+ * `undefined` also falls through to `defaultCase`.
  *
  * Because `defaultCase` is a separate argument rather than a `"default"` key, a `value`
  * of the literal string `"default"` matches a `default` entry in `cases`, not the fallback.
@@ -21,24 +29,17 @@
  *
  * @typeParam K - The union of case keys (the type of `value`).
  * @typeParam R - What each branch returns.
- */
-
-/** The branch map `choose` selects from: an optional zero-argument function per case key. */
-export type ChooseCases<K extends PropertyKey, R> = Partial<Record<K, () => R>>;
-
-/**
- * Selects the branch for `value` and runs it, or `defaultCase` when none matches.
- *
- * @param value The key to look up in `cases`.
+ * @param value The key to look up in `cases` (own keys only).
  * @param cases A partial map from key to a zero-argument branch function.
  * @param defaultCase Run when no case matches; omit it to get `undefined` instead.
- * @returns The selected branch's result, or `undefined` when nothing matched.
+ * @returns The selected branch's result, or `undefined` when nothing matched and no
+ *   `defaultCase` was given.
  */
 export function choose<K extends PropertyKey, R>(
   value: K,
   cases: ChooseCases<K, R>,
   defaultCase?: () => R,
 ): R | undefined {
-  const branch = cases[value] ?? defaultCase;
+  const branch = (Object.hasOwn(cases, value) ? cases[value] : undefined) ?? defaultCase;
   return branch?.();
 }

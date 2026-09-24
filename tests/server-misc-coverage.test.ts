@@ -26,6 +26,7 @@ import {
   warnUnkeyedParamReads,
 } from "../src/server/request-context.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
+import { unstable_cache, withCacheScope } from "../src/server/cache.ts";
 
 // ---- abort.ts --------------------------------------------------------------
 
@@ -138,9 +139,13 @@ Deno.test("createRequestContext mints a UUID request id when none is inbound", (
   assertEquals(ctx.deferred.length, 0);
 });
 
-Deno.test("createRequestContext sanitizes and reuses an inbound x-request-id", () => {
+Deno.test("createRequestContext sanitizes and reuses a trusted proxy's inbound x-request-id", () => {
   // A valid header value carrying spaces (outside \x21-\x7E) — those are stripped.
-  const ctx = ctxFor("http://localhost/", { "x-request-id": "abc 123 def" });
+  const ctx = createRequestContext(
+    new Request("http://localhost/", { headers: { "x-request-id": "abc 123 def" } }),
+    undefined,
+    { trustForwardedHeaders: true },
+  );
   assertEquals(ctx.requestId, "abc123def");
 });
 
@@ -306,10 +311,29 @@ Deno.test("clientIp() is undefined outside denext's server loop, and requires a 
 });
 
 Deno.test("requestId() returns the id and does NOT mark the render dynamic", () => {
-  const ctx = ctxFor("http://localhost/", { "x-request-id": "trace-123" });
+  const ctx = createRequestContext(
+    new Request("http://localhost/", { headers: { "x-request-id": "trace-123" } }),
+    undefined,
+    { trustForwardedHeaders: true },
+  );
   const id = runWithContext(ctx, () => requestId());
   assertEquals(id, "trace-123");
   assert(!ctx.usedDynamicApi, "the request id is plumbing, not a dynamic read");
+});
+
+Deno.test("requestId() ignores an inbound x-request-id unless the proxy is trusted", () => {
+  const ctx = ctxFor("http://localhost/", { "x-request-id": "client-picked" });
+  const id = runWithContext(ctx, () => requestId());
+  assert(id !== "client-picked", "a client can't choose its own correlation id");
+  assert(/^[0-9a-f-]{36}$/.test(id), "a fresh UUID is minted");
+  // trustRequestId overrides the default (internal sub-requests derive their own id).
+  const sub = createRequestContext(
+    new Request("http://localhost/", { headers: { "x-request-id": "parent#1" } }),
+    undefined,
+    { trustForwardedHeaders: false, trustRequestId: true },
+  );
+  assertEquals(sub.requestId, "parent#1");
+  assertEquals(sub.trustForwardedHeaders, false);
 });
 
 Deno.test("requestSignal() returns the context signal, undefined outside a request", () => {
@@ -318,6 +342,41 @@ Deno.test("requestSignal() returns the context signal, undefined outside a reque
   assertEquals(runWithContext(ctx, () => requestSignal()), controller.signal);
   assertEquals(requestSignal(), undefined);
   assert(!ctx.usedDynamicApi, "threading the abort signal does not make the render dynamic");
+});
+
+Deno.test("requestSignal() is undefined inside a use-cache scope (shared fills never inherit one request's abort)", async () => {
+  const controller = new AbortController();
+  const ctx = ctxFor("http://localhost/", undefined, controller.signal);
+  const seen: (AbortSignal | undefined)[] = [];
+  await runWithContext(ctx, () =>
+    withCacheScope(() => {
+      seen.push(requestSignal());
+      return 1;
+    }));
+  assertEquals(seen, [undefined]);
+  // Outside the scope, in the same request, the signal is still there.
+  assertEquals(runWithContext(ctx, () => requestSignal()), controller.signal);
+});
+
+Deno.test("requestSignal(): the leader's client disconnect does not abort a single-flight fill a follower awaits", async () => {
+  const leaderCtl = new AbortController();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const load = unstable_cache(async () => {
+    const signal = requestSignal(); // what a loader would thread into its fetch()
+    await gate;
+    signal?.throwIfAborted();
+    return "filled";
+  }, ["request-signal-single-flight"]);
+  const leader = runWithContext(
+    ctxFor("http://localhost/", undefined, leaderCtl.signal),
+    () => load(),
+  );
+  const follower = runWithContext(ctxFor("http://localhost/"), () => load());
+  leaderCtl.abort(); // the leader's client navigates away mid-fill
+  release();
+  assertEquals(await follower, "filled", "the follower is not failed by another request's abort");
+  assertEquals(await leader, "filled");
 });
 
 Deno.test("addResourceHint records + dedupes inside a request, no-op outside", () => {

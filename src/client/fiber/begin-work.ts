@@ -26,7 +26,7 @@ import { normalizeChildren } from "../vnode-utils.ts";
 import { propsAndContextEqual, providerContexts } from "../context-map.ts";
 import { isClassComponent } from "../../compat/class-detect.ts";
 import { type Fiber, NoLane, type SuspenseListState } from "./fiber.ts";
-import { noteOffscreen, noteProfiler } from "./state.ts";
+import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
 import { renderLanes } from "./scheduler.ts";
 
 /** Perform one unit of work; return the next unit (first child) or null. */
@@ -434,6 +434,7 @@ export function beginWork(wip: Fiber): Fiber | null {
 
     case "portal": {
       wip.stateNode = wip.vnode.props.target as Element;
+      notePortalTarget(wip.stateNode);
       reconcileChildren(
         wip,
         (wip.vnode.props?.children ?? null) as VNodeChildren,

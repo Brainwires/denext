@@ -102,3 +102,16 @@ Deno.test('choose: a "default" value matches a `default` case, not the fallback'
   const out = choose<"default", string>("default", { default: () => "case" }, () => "fallback");
   assertEquals(out, "case");
 });
+
+Deno.test("choose: inherited Object.prototype names fall through to defaultCase (own keys only)", () => {
+  for (const key of ["toString", "constructor", "valueOf", "hasOwnProperty", "__proto__"]) {
+    const out = choose<string, string>(key, { a: () => "a" }, () => "fallback");
+    assertEquals(out, "fallback", key);
+    assertEquals(choose<string, string>(key, { a: () => "a" }), undefined, key);
+  }
+});
+
+Deno.test("choose: an OWN key named like a prototype member still matches", () => {
+  const cases = { toString: () => "own" };
+  assertEquals(choose<"toString", string>("toString", cases, () => "fallback"), "own");
+});

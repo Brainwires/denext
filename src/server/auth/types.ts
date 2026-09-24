@@ -511,8 +511,9 @@ export interface AuthConfig {
    * The app runs behind a proxy/load balancer that sets `x-forwarded-for`, so every
    * per-IP rate-limit budget (and `signInFailed`'s `ip`) may key on that header's LAST hop
    * (the one the proxy appended). Off by default — without a proxy the header is
-   * attacker-controlled, and the limiters key on the socket peer instead. Mirrors the
-   * server-level option.
+   * attacker-controlled, and the limiters key on the socket peer instead. **Unset, it
+   * inherits the app-level `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`**, so the auth
+   * limiters and `clientIp()` agree on the client; set it only to override the app for auth.
    */
   trustForwardedHeaders?: boolean;
   /** Optional sign-in/session callbacks. */

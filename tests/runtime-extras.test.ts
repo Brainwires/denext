@@ -84,6 +84,8 @@ Deno.test("createRequestContext sanitizes a hostile inbound x-request-id", () =>
     new Request("http://x/", {
       headers: { "x-request-id": " trace 1\t\x7f\x80xyz " },
     }),
+    undefined,
+    { trustForwardedHeaders: true },
   );
   assertEquals(ctx.requestId, "trace1xyz");
   assert(!/[^\x21-\x7E]/.test(ctx.requestId), "only safe token characters survive");
@@ -93,12 +95,16 @@ Deno.test("createRequestContext bounds the id length and falls back to a UUID", 
   const long = "a".repeat(500);
   const bounded = createRequestContext(
     new Request("http://x/", { headers: { "x-request-id": long } }),
+    undefined,
+    { trustForwardedHeaders: true },
   );
   assertEquals(bounded.requestId.length, 200);
 
   // An all-unsafe header sanitizes to empty → a fresh UUID is minted.
   const empty = createRequestContext(
     new Request("http://x/", { headers: { "x-request-id": "\t\x7f\x80 " } }),
+    undefined,
+    { trustForwardedHeaders: true },
   );
   assert(/^[0-9a-f-]{36}$/.test(empty.requestId), "minted a UUID when nothing safe remained");
 });

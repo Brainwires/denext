@@ -21,6 +21,7 @@
 
 import { emitAuthEvent } from "./events.ts";
 import {
+  authTrustsProxy,
   clientIpBucket,
   proxiedWithoutTrust,
   type RateLimiter,
@@ -75,7 +76,7 @@ async function guardLimit(
   const { limiter: limiterFor, key: keyFor } = LIMITS[limit];
   const limiter = limiterFor(ctx.config);
   if (!limiter || proxiedWithoutTrust(ctx.request, ctx.config)) return await handler(ctx);
-  const options = { trustForwardedHeaders: ctx.config.trustForwardedHeaders };
+  const options = { trustForwardedHeaders: authTrustsProxy(ctx.config) };
   const key = keyFor(ctx.request, options);
   const retryAfter = await limiter.hit(key);
   if (retryAfter !== null) {

@@ -151,7 +151,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     reactCompiler: "toggle",
     asyncContext: "toggle",
     features: "map",
-    optimizePackageImports: "chips",
+    optimizePackageImports: "union", // `string[] | false`: a chips branch + a `false` branch
     momentumSafeScroll: "toggle",
     experimental: "group",
     classComponents: "toggle",

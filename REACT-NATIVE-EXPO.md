@@ -9,6 +9,11 @@ Most items are "an official Capacitor plugin exists; denext should wrap it in a 
 A few are real gaps. Not yet audited: which T3 screens use which dependency, so the ranking
 below is by expected day-one impact, not measured usage.
 
+This is about matching what React Native / Expo **apps** get, not about rendering natively:
+per [POLICIES.md](./POLICIES.md#engineering-guardrails), React Native / native rendering is
+out of scope and Capacitor/WebView stays the mobile story. The actionable items are tracked in
+[ROADMAP.md](./ROADMAP.md) under "Mobile (Capacitor) parity".
+
 ## Real gaps (denext work)
 
 1. **Push notifications.** T3 uses `expo-notifications` plus its own relay (APNs/FCM through
@@ -21,15 +26,13 @@ below is by expected day-one impact, not measured usage.
    The single biggest gap.
 
 2. **OTA runtime-version gate.** `expo-updates` refuses an update built for a newer native layer
-   (`runtimeVersion`). denext's OTA does not check this yet: an OTA UI whose JS calls a native
-   plugin the installed binary lacks would boot and then fail, and the 15 s watchdog only
-   catches a UI that never boots. Needed:
-   - a `nativeVersion` (or fingerprint) field in `_denext/ota.json`, compared natively before
-     download/apply;
-   - a fingerprint check of the native layer (Expo's `mobile-fingerprint-check` equivalent) so CI
-     knows whether a change can ship over the air or needs a binary release.
-
-   Small, and it belongs in denext.
+   (`runtimeVersion`). In 2.8.3 denext's OTA did not check this: an OTA UI whose JS calls a
+   native plugin the installed binary lacks would boot and then fail, and the 15 s watchdog only
+   catches a UI that never boots. A native-version gate (a version field in `_denext/ota.json`
+   compared natively before download/apply) and downgrade protection are being added in the next
+   release. Still open after that: a fingerprint check of the native layer (Expo's
+   `mobile-fingerprint-check` equivalent) so CI knows whether a change can ship over the air or
+   needs a binary release.
 
 3. **Auth sessions + deep links.** T3 signs in with Clerk via `expo-auth-session` /
    `expo-web-browser`: OAuth in a system browser sheet that returns to the app through a URL
@@ -48,8 +51,8 @@ below is by expected day-one impact, not measured usage.
    `gesture-handler`, `reanimated`, native menus (`@react-native-menu/menu`), blur/glass
    (`expo-blur`, `expo-glass-effect`) and SF Symbols (`expo-symbols`). A WebView approximates
    these with CSS, View Transitions and `useBackSwipe`. iOS WKWebView holds up well. The
-   Android emulator numbers on biscuits (software rendering, no GPU) showed heavy jank and are
-   not representative. A real Android device measurement is needed before claiming parity
+   Android emulator numbers (a software-rendered emulator on a build host without a GPU) showed
+   heavy jank and are not representative. A real Android device measurement is needed before claiming parity
    either way.
 
 ## Covered by official Capacitor plugins (denext should wrap them)
@@ -84,7 +87,12 @@ that general.
 ## Already covered, or better, on the denext side
 
 - **OTA updates** (`expo-updates`): done in denext 2.7–2.8, with an app-driven update prompt
-  and signed manifests (ECDSA P-256, public key in the binary).
+  and signed manifests (ECDSA P-256, public key in the binary). The native-version gate and
+  downgrade protection (gap 2) are added in the next release.
+- **Momentum scrolling in virtualized lists** (what `FlashList` / `FlatList` get natively):
+  denext 2.8.3 keeps iOS WebKit's momentum fling alive while a virtualized list (LegendList,
+  react-virtuoso, TanStack Virtual) corrects its scroll offset — on by default, in Capacitor and
+  iOS Safari alike (`momentumSafeScroll: false` opts out).
 - **Local database** (`expo-sqlite`): IndexedDB / OPFS in the WebView; denext ships OPFS hooks.
 - **Keyboard + safe areas**: `useKeyboardInset`, `SAFE_AREA_CSS`, `useBackSwipe`, `useAppResume`.
 - **Terminal, composer editor, markdown, diff review, syntax highlighting.** T3 wrote native

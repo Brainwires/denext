@@ -47,7 +47,13 @@ import {
   hasMfaAdapter,
   verifySecondFactor,
 } from "./mfa.ts";
-import { clientIpBucket, consumeHitBudget, mfaLimiter, subjectBucketKeys } from "./rate-limit.ts";
+import {
+  authTrustsProxy,
+  clientIpBucket,
+  consumeHitBudget,
+  mfaLimiter,
+  subjectBucketKeys,
+} from "./rate-limit.ts";
 import {
   afterSignIn,
   type AuthRoute,
@@ -141,7 +147,7 @@ function emitMfaFailure(
   return emitAuthEvent(ctx.options, "signInFailed", {
     provider: session.provider,
     reason,
-    ip: clientIpBucket(ctx.request, { trustForwardedHeaders: ctx.config.trustForwardedHeaders }),
+    ip: clientIpBucket(ctx.request, { trustForwardedHeaders: authTrustsProxy(ctx.config) }),
   });
 }
 

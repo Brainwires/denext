@@ -1055,7 +1055,11 @@ function formActionUrl(value: unknown): string | null {
   return typeof permalink === "string" ? permalink : null;
 }
 
-/** `defaultValue`/`defaultChecked` render as the attribute they seed (a no-JS form is filled in). */
+/**
+ * `defaultValue`/`defaultChecked` render on an `<input>` as the attribute they seed (a no-JS
+ * form is filled in); a `<textarea>`/`<select>` takes its default as content, and on any other
+ * element React drops them.
+ */
 const FORM_DEFAULTS: Readonly<Record<string, string>> = {
   defaultValue: "value",
   defaultChecked: "checked",
@@ -1078,7 +1082,9 @@ function attributeFor(
   // Function-valued props (e.g. a client-only form `action={fn}`) are skipped.
   if (typeof value === "function" || typeof value === "symbol" || value == null) return "";
   if (custom) return customElementAttribute(rawName, value, tag);
-  const prop = FORM_DEFAULTS[rawName] ?? rawName;
+  const seeded = FORM_DEFAULTS[rawName];
+  if (seeded !== undefined && tag !== "input") return "";
+  const prop = seeded ?? rawName;
   const booleanName = booleanAttrName(prop);
   if (booleanName !== undefined) return value ? ` ${booleanName}=""` : "";
   return namedAttribute(prop, aliasedAttrName(prop) ?? prop, value, tag);
@@ -1103,7 +1109,7 @@ function namedAttribute(
   // component spreading untrusted keys, e.g. `<div {...untrusted}>`).
   if (isFormContentValue(tag, name) || !isValidAttrName(name)) return "";
   if (typeof value === "boolean") return booleanValueAttribute(prop, name, value);
-  if (omitsAttrValue(prop, value)) return "";
+  if (omitsAttrValue(prop, value, tag)) return "";
   // `<iframe srcdoc>` embeds a full HTML document that runs scripts — an XSS
   // sink attribute-escaping can't neutralize. Nudge in dev (no-op in prod).
   if (name === "srcdoc" && tag === "iframe") warnSrcdoc();

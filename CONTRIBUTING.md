@@ -11,7 +11,7 @@ deno task check      # deno fmt --check && deno lint && deno test  (the CI gate)
 Two helpers make it painless:
 
 ```sh
-deno task check:fix  # deno fmt + deno lint --fix, then a report-only deno lint
+deno task check:fix  # test-count badge + deno fmt + deno lint --fix, then a report-only deno lint
 deno task hooks:install   # install the pre-commit hook (once per clone)
 deno task release-check   # check + doc-lint + deno publish --dry-run (run before tagging)
 ```
@@ -19,7 +19,10 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
 - **`check:fix`** auto-fixes everything that _can_ be auto-fixed — formatting
   and the handful of fixable lint issues — then runs `deno lint` one more time
   to **report what it couldn't fix**. If that final lint fails, the remaining
-  issues are correctness rules you must resolve by hand (below).
+  issues are correctness rules you must resolve by hand (below). It first
+  refreshes the test-count badge (`deno task badge:tests`); the pre-commit hook
+  stages `.github/badges/tests.json` when the count moved, so CI's
+  `badge:tests --check` never trips on a forgotten badge.
 - **`hooks:install`** points `core.hooksPath` at [`.githooks/`](./.githooks);
   the `pre-commit` hook runs `check:fix` (fast — no tests) so a commit can't
   land with a formatting or lint problem, then runs the **Fallow gate** (below).

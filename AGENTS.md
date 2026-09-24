@@ -77,6 +77,9 @@ export function Counter() {
 }
 ```
 
+Branch on a value in JSX with `choose` from `denext` (Lit-style, lazy; own keys only):
+`choose(status, { loading: () => <Spinner />, error: () => <Oops /> }, () => null)`.
+
 **A route handler (API):**
 
 ```ts
@@ -242,6 +245,13 @@ enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `/auth/mfa/enroll` → `/auth/mfa/confirm` (from a complete session it needs a recent sign-in,
 `session.authTime`). Full guide: https://denext.dev/docs/auth
 
+Per-request facts from anywhere on the server (`denext/server`): `clientIp()` (the proxy's last
+`x-forwarded-for` hop only with `trustForwardedHeaders` / `DENEXT_TRUST_PROXY=1`, else the socket
+peer; a dynamic read like `headers()`), `requestId()` (the log / `x-request-id` correlation id —
+an inbound one is reused only behind a trusted proxy) and `requestSignal()` (the disconnect /
+timeout `AbortSignal` to thread into `fetch()`; `undefined` inside `use cache`). `denextAuth`
+inherits the app's `trustForwardedHeaders` unless it sets its own.
+
 **A project-local CLI verb (no plugin):** put it in `denext.config.ts` and run it as a verb.
 
 ```ts
@@ -277,6 +287,16 @@ Docs: https://denext.dev/docs/ui
 through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling survives
 virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit;
 `momentumSafeScroll: false` opts out). Docs: https://denext.dev/docs/desktop
+
+The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
+Safari included, whenever `momentumSafeScroll` is on (the default).
+
+Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
+`_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it;
+`denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
+`checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
+drive it; `createOtaHandler` from `denext/server` serves the export. An unsigned manifest over
+plain `http` is refused beyond loopback.
 
 **A database (zero-npm, server-only module):**
 
@@ -363,7 +383,11 @@ export function Checkout() {
 **Inspect / shrink the client bundle:** `denext analyze` breaks the bundle down by chunk + role;
 `denext analyze --md` writes a markdown report (per-module on the esbuild path) to pipe into CI.
 Imports of one export from a `"sideEffects": false` dep (lucide-react, Radix) are tree-shaken
-automatically on the esbuild path.
+automatically on the esbuild path. `optimizePackageImports` (Next's key, top-level) goes further:
+barrel imports of listed packages are rewritten to the defining modules, so the barrel is never
+loaded. A built-in list (lucide-react, date-fns, lodash-es, …) is on by default; add packages,
+drop one with `"!pkg"`, or disable it with `false`. Listing a package asserts it is side-effect
+free. Applied by the esbuild bundles only (not unbundled dev or the native `deno bundle` path).
 
 **Testing an app (no browser, JS-disabled path):**
 
@@ -400,7 +424,7 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
 i18n, images, `cacheComponents`, `streaming`, `live`, `reactCompiler`, `features`, `plugins`,
-`tailwind`, `csp`, `compatibilityMode`;
+`tailwind`, `csp`, `compatibilityMode`, `optimizePackageImports`, `momentumSafeScroll`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from

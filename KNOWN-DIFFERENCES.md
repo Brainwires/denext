@@ -137,6 +137,22 @@ internal design choice with no observable difference lives in
   sides; `server-only` in the client bundle is still a build error, and the runtime
   `clientOnly()` guard still throws on the server.
 
+## Browser behaviour
+
+- **On iOS/iPadOS WebKit, denext patches `Element.prototype`'s scroll members** (default on;
+  `momentumSafeScroll: false` in `denext.config.ts` opts out). This applies to every iOS
+  Safari visitor, not only Capacitor shells. While a finger is down or a fling runs,
+  programmatic scroll writes on element scrollers (`scrollBy`, `scrollTo`, `scroll`, the
+  `scrollTop` / `scrollLeft` setters) are deferred instead of cancelling the momentum:
+  `scrollTop` reads real + pending (clamped to the scroll range), `scrollHeight` /
+  `scrollWidth` read as unshifted, and the scroller's children carry a temporary `translate`
+  composed with their own until the fling settles. A shifted child is the containing block of
+  its `position: fixed` descendants, and sticky headers inside it move with the list for that
+  time. The document scroller is never shifted: its writes, `window.scrollTo` included, always
+  apply at once. `scrollIntoView` and smooth `scrollTo` drop the pending delta of the scroller
+  they move. Documents inside iframes are not covered. React and Next leave scroll writes alone,
+  so there a virtualized list's anchoring correction stops an iOS fling dead.
+
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line

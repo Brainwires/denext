@@ -3,7 +3,7 @@ import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 export const metadata = {
   title: "Bundling & feature flags",
   description:
-    "Understand and shrink your client bundle: denext analyze (with a markdown per-module report), compile-time feature flags that dead-code-eliminate gated branches, and automatic tree-shaking of sideEffects:false dependencies.",
+    "Understand and shrink your client bundle: denext analyze (with a markdown per-module report), compile-time feature flags that dead-code-eliminate gated branches, automatic tree-shaking of sideEffects:false dependencies, and optimizePackageImports barrel rewriting.",
 };
 
 export default function Bundling() {
@@ -11,7 +11,7 @@ export default function Bundling() {
     <DocsShell
       active="bundling"
       title="Bundling & feature flags"
-      lead="See what's in your client bundle and make it smaller: denext analyze (with a markdown per-module report), feature() flags that fold to a literal so the untaken branch is dead-code eliminated, and automatic barrel tree-shaking of sideEffects:false deps."
+      lead="See what's in your client bundle and make it smaller: denext analyze (with a markdown per-module report), feature() flags that fold to a literal so the untaken branch is dead-code eliminated, automatic barrel tree-shaking of sideEffects:false deps, and optimizePackageImports, which rewrites barrel imports so the barrel is never loaded."
     >
       <h2>Analyze the bundle</h2>
       <p>
@@ -112,6 +112,40 @@ export default {
         Only the boolean <code>"sideEffects": false</code>{" "}
         form is honored; the array form is treated conservatively as having side effects (never
         wrongly dropped). The native <code>deno bundle</code> path does its own tree-shaking.
+      </Callout>
+
+      <h2>Barrel imports: optimizePackageImports</h2>
+      <p>
+        Tree-shaking drops unused exports, but the bundler still <em>loads</em>{" "}
+        the barrel and every module it re-exports. <code>optimizePackageImports</code>{" "}
+        (Next.js's key, top-level in <code>denext.config.ts</code>) rewrites{" "}
+        <code>{`import { Check } from "lucide-react"`}</code>{" "}
+        to an import of the module that defines{" "}
+        <code>Check</code>, so the barrel never enters the module graph — and when a package also
+        code-splits every export (lucide's{" "}
+        <code>dynamicIconImports</code>), none of those chunks land in your startup chunk list. A
+        built-in list is on by default (<code>lucide-react</code>, <code>date-fns</code>,{" "}
+        <code>lodash-es</code>, <code>react-icons/*</code>, <code>@mui/icons-material</code>,{" "}
+        <code>recharts</code>, …); your entries are added to it.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  optimizePackageImports: ["@acme/icons", "!recharts"], // add one, exclude a default
+  // optimizePackageImports: false,                      // or turn it off entirely
+} satisfies import("denext/server").DenextConfig;`}
+      </Code>
+      <Callout kind="warn">
+        Listing a package asserts its modules are <strong>side-effect free</strong>{" "}
+        (Next.js's contract too): a top-level side effect in a module you don't import no longer
+        runs. A barrel that runs code of its own (a call, a decorator, a directive) is detected and
+        left alone.
+      </Callout>
+      <Callout kind="note">
+        The rewrite runs in the esbuild bundles (compat client/server and SPA, production builds and
+        compat dev rebuilds). The unbundled per-module dev server and the native{" "}
+        <code>deno bundle</code> path don't apply it. See{" "}
+        <a href="/docs/config#build--optimization">the config reference</a>.
       </Callout>
     </DocsShell>
   );

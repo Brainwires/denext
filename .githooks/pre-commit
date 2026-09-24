@@ -35,6 +35,13 @@ if git diff --cached --name-only --diff-filter=ACM | grep -q .; then
   git diff --cached --name-only --diff-filter=ACM -z | xargs -0 git add --
 fi
 
+# `check:fix` also refreshed the test-count badge (`deno task badge:tests`); stage it when
+# the count moved, so the committed badge always matches the committed tests (CI runs
+# `badge:tests --check`).
+if ! git diff --quiet -- .github/badges/tests.json; then
+  git add -- .github/badges/tests.json
+fi
+
 # Fallow code-intelligence gate. `fallow audit` scopes dead-code + complexity +
 # duplication to the changeset and exits 1 on a `fail` verdict (0 otherwise), so
 # `set -e` aborts the commit on failure. Fallow is REQUIRED — resolve it like

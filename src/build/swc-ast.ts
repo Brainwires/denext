@@ -14,23 +14,33 @@ import { join, toFileUrl } from "@std/path";
 // deno-lint-ignore no-explicit-any -- swc's AST is an untyped node graph.
 export type Node = any;
 
-let swcReady: Promise<(src: string) => Promise<Node>> | null = null;
+type SwcModule = typeof import("@denext/swc");
+let swcModule: Promise<SwcModule> | null = null;
+const swcParsers = new Map<boolean, Promise<(src: string) => Promise<Node>>>();
 
 /**
  * Initialize `@denext/swc` once (process-wide) and return a bound `parse` that
  * accepts TSX source. The wasm module is loaded and initialized lazily on first
  * use and the resulting parser is memoized.
+ *
+ * @param decorators Also accept decorator syntax (`@d class C {}`). Off by default, so a
+ *   transform that can't reason about decorators sees the module as unparseable and leaves it.
  */
-export function swcParse(): Promise<(src: string) => Promise<Node>> {
-  if (!swcReady) {
-    swcReady = (async () => {
-      const mod = await import("@denext/swc");
+export function swcParse(decorators = false): Promise<(src: string) => Promise<Node>> {
+  let parser = swcParsers.get(decorators);
+  if (!parser) {
+    swcModule ??= import("@denext/swc").then(async (mod) => {
       await mod.default(); // initialize the wasm module
-      return (src: string) =>
-        mod.parse(src, { syntax: "typescript", tsx: true, target: "es2022" }) as Promise<Node>;
-    })();
+      return mod;
+    });
+    parser = swcModule.then((mod) => (src: string) =>
+      mod.parse(src, { syntax: "typescript", tsx: true, decorators, target: "es2022" }) as Promise<
+        Node
+      >
+    );
+    swcParsers.set(decorators, parser);
   }
-  return swcReady;
+  return parser;
 }
 
 /** A source edit: replace `[start, end)` with `text` (insert when start === end). */
@@ -167,10 +177,13 @@ export interface ParsedModule {
 /**
  * Parse `source` with {@link MARKER} prepended so offsets have an exact base regardless
  * of leading trivia. Returns null for an unparseable or empty module (callers return the
- * source unchanged).
+ * source unchanged). `decorators` also accepts decorator syntax (see {@link swcParse}).
  */
-export async function parseModule(source: string): Promise<ParsedModule | null> {
-  const parse = await swcParse();
+export async function parseModule(
+  source: string,
+  options: { decorators?: boolean } = {},
+): Promise<ParsedModule | null> {
+  const parse = await swcParse(options.decorators ?? false);
   let ast: Node;
   try {
     ast = await parse(MARKER + source);

@@ -124,7 +124,30 @@ Deno.test("onRequest fires once with method, path, status, and duration", async 
   assert(seen[0].requestId.length > 0, "a correlation id is minted (OBS-M1)");
 });
 
-Deno.test("onRequest reuses an inbound x-request-id and it rides the error response", async () => {
+Deno.test("onRequest reuses a trusted proxy's inbound x-request-id and it rides the error response", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const seen: RequestLogInfo[] = [];
+  const app = createApp({
+    getManifest: isrManifest,
+    load: (_fp) =>
+      Promise.resolve({
+        default: (_p: PageProps) => {
+          throw new Error("boom");
+        },
+      }),
+    onRequest: (info) => seen.push(info),
+    trustForwardedHeaders: true, // an inbound id is honored only behind a trusted proxy
+  });
+  const res = await app(
+    new Request("http://localhost/cached", { headers: { "x-request-id": "trace-123" } }),
+  );
+  await res.text();
+  assertEquals(res.status, 500);
+  assertEquals(res.headers.get("x-request-id"), "trace-123");
+  assertEquals(seen[0].requestId, "trace-123");
+});
+
+Deno.test("an inbound x-request-id is ignored (fresh UUID) when the app does not trust a proxy", async () => {
   setCacheStore(inMemoryCacheStore());
   const seen: RequestLogInfo[] = [];
   const app = createApp({
@@ -138,12 +161,12 @@ Deno.test("onRequest reuses an inbound x-request-id and it rides the error respo
     onRequest: (info) => seen.push(info),
   });
   const res = await app(
-    new Request("http://localhost/cached", { headers: { "x-request-id": "trace-123" } }),
+    new Request("http://localhost/cached", { headers: { "x-request-id": "client-picked" } }),
   );
   await res.text();
   assertEquals(res.status, 500);
-  assertEquals(res.headers.get("x-request-id"), "trace-123");
-  assertEquals(seen[0].requestId, "trace-123");
+  assert(res.headers.get("x-request-id") !== "client-picked");
+  assert(/^[0-9a-f-]{36}$/.test(seen[0].requestId), "minted a UUID instead");
 });
 
 Deno.test({

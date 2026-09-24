@@ -24,6 +24,86 @@ links back to the release that introduced it.
   generated file changed shape.** Migrate writes config by default and is
   non-destructive to your source; see [Migrating from Next.js](/docs/migrating).
 
+## Upgrading to 2.9
+
+- **Over-the-air UI updates (Capacitor): re-run `denext mobile add-ota --force` and ship a new
+  binary.** The native plugin gained signed payload v2 (a `sequence` for downgrade protection and
+  an optional `minNative` gate), bounded streaming downloads, redirect refusal and a sturdier boot
+  watchdog. `add-ota` now upgrades unedited older templates itself, and with `--public-key` it
+  fails if a template was kept. `denext ota manifest --sign` stamps a `sequence` by default. Once
+  an app has accepted a sequenced manifest, it refuses unsequenced ones, so sign every release
+  with a denext ≥ 2.9 CLI.
+- **`requestId()` no longer trusts a client's `x-request-id`** unless `trustForwardedHeaders` /
+  `DENEXT_TRUST_PROXY=1` is on. If your logs or idempotency relied on clients choosing the id,
+  send it through your proxy, or read the header yourself.
+- **`denextAuth` follows the app's `trustForwardedHeaders`** when its own is unset. Set it
+  explicitly on `denextAuth` if the auth limiter should see a different address than
+  `clientIp()`.
+- **`requestSignal()` is `undefined` inside `use cache`.** Code that passed it into cached
+  fetches now runs them to completion.
+- **`optimizePackageImports`** accepts `false` (off entirely) and `"!pkg"` (drop one default).
+  Multi-line imports keep their line count, so source maps below them are correct again.
+- **SSR:** `defaultValue` / `defaultChecked` render only on `<input>`, and `<a href="">` is kept,
+  both as in React.
+
+## Upgrading to 2.8
+
+- **An unsigned over-the-air update served over plain `http` is refused beyond loopback.**
+  The native `DenextOta` plugin now refuses a manifest fetched over `http` from any host but
+  `localhost` / `127.0.0.1` / `::1` / `10.0.2.2` (code `insecure`) unless it is signed. To keep
+  shipping OTA updates:
+  1. `denext ota keygen ota-signing.pem` — writes the private key (keep it out of git) and
+     `ota-signing.pem.pub`;
+  2. `denext mobile add-ota --force --public-key ota-signing.pem.pub` — refreshes the native
+     templates and embeds the public key;
+  3. sign every manifest: `denext ota manifest <dir> --sign ota-signing.pem`, or set
+     `DENEXT_OTA_SIGNING_KEY` (the PEM contents) in CI for `denext ota manifest` and a
+     `spa.ota` export alike;
+  4. **rebuild and ship the app binary** — the key lives in the binary, so devices keep
+     refusing unsigned-over-`http` updates until they run the new build.
+
+  Serving the updates over `https` instead also works (the templates still need the
+  `--force` refresh and a rebuild). ([2.8.0](/docs/changelog#280---2026-09-24))
+- **SSR attributes follow ReactDOMServer's tables** — expect snapshot and golden-HTML test
+  changes, no runtime action. A true boolean prop renders `disabled=""` (was a bare
+  `disabled`); `tabIndex` → `tabindex`, `autoFocus` / `multiple` / `muted` → lowercase,
+  `crossOrigin` → `crossorigin`, `transformOrigin` → `transform-origin`; `value`, `focusable`
+  and the other enumerated props render `"true"` / `"false"`; an empty `src` / `href` is
+  dropped (except `<a href="">`, since the next release) and an invalid `cols` / `rows` /
+  `size` / `span` / `rowSpan` / `start` is omitted; a kebab-case style key with a number gets
+  `px` (`{ "line-height": 2 }` → `line-height:2px`, as in React — use `lineHeight` for a
+  unitless value). `serializeStyle` output has no trailing `;`, and a component that renders
+  `null` / `undefined` / a boolean no longer leaves an empty text node in the DOM (so
+  `childNodes` counts and DOM snapshots shrink). Regenerate the affected snapshots.
+  ([2.8.1](/docs/changelog#281---2026-09-24))
+- **iOS momentum-safe scrolling is on by default, for Safari visitors too** — not just
+  Capacitor. On iOS/iPadOS WebKit the client runtime defers programmatic scroll writes during
+  a touch fling, so virtualized lists stop killing momentum. Nothing to do unless your app
+  depends on a scroll write landing mid-fling; opt out with `momentumSafeScroll: false` in
+  `denext.config.ts`. ([2.8.3](/docs/changelog#283---2026-09-24))
+
+## Upgrading to 2.7
+
+- **`optimizePackageImports` is on by default.** The compat (esbuild) and SPA bundles rewrite
+  barrel imports of a built-in list (`lucide-react`, `date-fns`, `lodash-es`, `ramda`, `rxjs`,
+  `@tabler/icons-react`, `@heroicons/react/*`, `react-icons/*`, `@mui/icons-material`,
+  `recharts`, `react-use`, `@headlessui/react`, `effect`) to the modules that define each
+  name. Listing a package asserts its modules are side-effect free, so a top-level side effect
+  in a module you don't import no longer runs. If one of those packages relies on that,
+  exclude it with a `"!pkg"` entry (`optimizePackageImports: ["!recharts"]`), or turn the
+  optimization off with `optimizePackageImports: false` (both since the next release; before
+  that the default list could not be disabled). Next's
+  `experimental.optimizePackageImports` is honored with a dev warning — move it to the top
+  level. ([2.7.1](/docs/changelog#271---2026-09-23))
+
+## Upgrading to 2.6
+
+- **`useSyncExternalStore` updates run at sync priority**, whatever transition is in
+  flight (React's `forceStoreRerender`). A store change that lands while a `startTransition`
+  render is in progress abandons that render and restarts the transition after the sync
+  commit. Nothing to change; a test that asserted a store update was deferred behind a
+  transition now sees it commit first. ([2.6.0](/docs/changelog#260---2026-09-21))
+
 ## Upgrading to 2.5
 
 2.5 shipped through six release candidates; this section covers every change that needs
