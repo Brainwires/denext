@@ -3,11 +3,54 @@
 // It finds the project (the folder holding capacitor.config.*), refuses when the installed
 // @capacitor/core major is not the one the pinned plugins target, adds the npm packages with
 // the project's own package manager, writes any Info.plist keys and Android permissions the
-// capability needs, and runs `npx cap sync`. Every subprocess goes through a runner the caller
-// passes in, so tests never spawn a real install.
+// capability needs, and runs `npx cap sync`. A capability that takes options (deep-links:
+// --scheme / --domain) or needs more than plist keys and permissions (push: entitlements and
+// AppDelegate forwarding) computes its edits in a `configure` hook. Every subprocess goes
+// through a runner the caller passes in, so tests never spawn a real install.
 
-import { join, resolve } from "@std/path";
-import { withManifestPermission, withPlistDefault } from "./mobile-native-config.ts";
+import { dirname, join, resolve } from "@std/path";
+import {
+  EMPTY_ENTITLEMENTS,
+  withAppDelegatePushForwarding,
+  withManifestIntentFilter,
+  withManifestPermission,
+  withPlistDefault,
+  withPlistString,
+  withPlistStringArray,
+  withPlistUrlScheme,
+} from "./mobile-native-config.ts";
+
+/** The options on `denext mobile add`'s command line that a capability may take. */
+export interface CapabilityOptions {
+  /** `--scheme`: custom URL schemes (deep-links). */
+  readonly schemes: readonly string[];
+  /** `--domain`: universal link / app link domains (deep-links). */
+  readonly domains: readonly string[];
+}
+
+/** One text edit to a native file, with the line the plan prints for it. */
+export interface NativeEdit {
+  /** What it adds, for the plan (`CFBundleURLTypes: myapp`). */
+  readonly label: string;
+  /** The edited text, the same text when already there, or null when it has no place to go. */
+  readonly apply: (text: string) => string | null;
+}
+
+/** Native config a capability computes from the command-line options. */
+export interface CapabilityConfig {
+  /** Edits to ios/App/App/Info.plist. */
+  readonly infoPlist?: readonly NativeEdit[];
+  /** Edits to the app's entitlements file (created when absent). */
+  readonly entitlements?: readonly NativeEdit[];
+  /** Edits to android/app/src/main/AndroidManifest.xml. */
+  readonly manifest?: readonly NativeEdit[];
+  /** Edits to ios/App/App/AppDelegate.swift. */
+  readonly appDelegate?: readonly NativeEdit[];
+  /** Project-relative files the capability needs at runtime, each with the warning printed when missing. */
+  readonly requiredFiles?: Readonly<Record<string, string>>;
+  /** Steps `denext mobile add` cannot do, printed after the run. */
+  readonly manual?: readonly string[];
+}
 
 /** One capability: the npm package behind it and the native config it needs. */
 export interface MobileCapability {
@@ -23,10 +66,126 @@ export interface MobileCapability {
   readonly androidPermissions?: readonly string[];
   /** A one-line note printed with the plan. */
   readonly notes?: string;
+  /** The {@linkcode CapabilityOptions} it takes (others are refused when it is the only one). */
+  readonly options?: readonly (keyof CapabilityOptions)[];
+  /** Native config computed from the options; throws for options it cannot use. */
+  readonly configure?: (options: CapabilityOptions) => CapabilityConfig;
 }
 
 /** The Capacitor major every pinned plugin below targets. */
 const CAPACITOR_MAJOR = 8;
+
+/** Schemes that are not an app's own (the web, the OS, Capacitor's webview origin). */
+const RESERVED_SCHEMES = [
+  "http",
+  "https",
+  "file",
+  "content",
+  "javascript",
+  "data",
+  "blob",
+  "about",
+  "mailto",
+  "tel",
+  "sms",
+  "intent",
+  "capacitor",
+];
+
+/** A custom scheme, checked: lower-case (Android matches schemes case-sensitively). */
+function checkScheme(scheme: string): string {
+  if (!/^[a-z][a-z0-9+.-]*$/.test(scheme)) {
+    throw new Error(
+      `--scheme ${scheme}: a scheme is lower-case letters, digits, "+", "-" or "." after a ` +
+        `letter, with no "://" (e.g. --scheme myapp).`,
+    );
+  }
+  if (RESERVED_SCHEMES.includes(scheme)) {
+    throw new Error(`--scheme ${scheme}: not an app scheme (use --domain for https links).`);
+  }
+  return scheme;
+}
+
+/** A universal link / app link domain, checked: a host name, optionally `*.`-prefixed. */
+function checkDomain(domain: string): string {
+  const host = domain.toLowerCase();
+  if (!/^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) {
+    throw new Error(
+      `--domain ${domain}: pass a host name such as app.example.com (no scheme or path).`,
+    );
+  }
+  return host;
+}
+
+/** `deep-links`: URL types, intent filters and associated domains for the options. */
+function configureDeepLinks(options: CapabilityOptions): CapabilityConfig {
+  const schemes = options.schemes.map(checkScheme);
+  const domains = options.domains.map(checkDomain);
+  if (schemes.length === 0 && domains.length === 0) {
+    throw new Error(
+      "deep-links needs --scheme <scheme> (a custom URL scheme) and/or --domain <host> " +
+        "(universal links / app links); several are comma-separated.",
+    );
+  }
+  const applinks = domains.map((d) => `applinks:${d}`);
+  return {
+    infoPlist: schemes.map((scheme) => ({
+      label: `CFBundleURLTypes: ${scheme}`,
+      apply: (text) => withPlistUrlScheme(text, scheme),
+    })),
+    manifest: [
+      ...schemes.map((scheme) => ({
+        label: `intent-filter ${scheme}://`,
+        apply: (text: string) => withManifestIntentFilter(text, { scheme }),
+      })),
+      ...domains.map((host) => ({
+        label: `intent-filter https://${host} (autoVerify)`,
+        apply: (text: string) => withManifestIntentFilter(text, { host }),
+      })),
+    ],
+    entitlements: applinks.length === 0 ? [] : [{
+      label: `com.apple.developer.associated-domains: ${applinks.join(", ")}`,
+      apply: (text) =>
+        withPlistStringArray(text, "com.apple.developer.associated-domains", applinks),
+    }],
+    manual: domains.flatMap((d) => [
+      `serve https://${d}/.well-known/apple-app-site-association (applinks for <TEAM ID>.<bundle id>) ` +
+      `and https://${d}/.well-known/assetlinks.json (package name + signing certificate SHA-256); ` +
+      "without them iOS and Android open the link in the browser instead of the app",
+    ]).concat(
+      domains.length === 0 ? [] : [
+        `https links reach onDeepLink only when listed: accept: { hosts: [${
+          domains.map((d) => `"${d}"`).join(", ")
+        }] }`,
+      ],
+    ),
+  };
+}
+
+/** `push`: the aps-environment entitlement, AppDelegate forwarding, and FCM's config file. */
+function configurePush(): CapabilityConfig {
+  return {
+    entitlements: [{
+      label: "aps-environment: development (when absent)",
+      apply: (text) => withPlistString(text, "aps-environment", "development", false),
+    }],
+    appDelegate: [{
+      label: "forward didRegisterForRemoteNotificationsWithDeviceToken / didFail… to Capacitor",
+      apply: withAppDelegatePushForwarding,
+    }],
+    requiredFiles: {
+      "android/app/google-services.json":
+        "no android/app/google-services.json: registerForPush() fails on Android until you add " +
+        "your Firebase project's google-services.json there (FCM needs it).",
+    },
+    manual: [
+      "iOS push needs a paid Apple Developer team with the Push Notifications capability on the " +
+      "App ID. aps-environment is `development` (sandbox APNs) for debug builds; an archive " +
+      "exported for TestFlight / the App Store is signed with `production`, so send its tokens " +
+      "to production APNs",
+    ],
+  };
+}
 
 /**
  * Every capability `denext mobile add` knows, keyed by the name on its command line. Ranges
@@ -88,6 +247,22 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "openExternal(url) in the in-app browser",
   },
+  "deep-links": {
+    npm: "@capacitor/app",
+    version: "^8.1.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "onDeepLink / useDeepLink (pass accept: { hosts } for https links)",
+    options: ["schemes", "domains"],
+    configure: configureDeepLinks,
+  },
+  push: {
+    npm: "@capacitor/push-notifications",
+    version: "^8.1.2",
+    capacitorMajor: CAPACITOR_MAJOR,
+    androidPermissions: ["android.permission.POST_NOTIFICATIONS"],
+    notes: "requestPushPermission / registerForPush / onPushReceived / onPushTapped",
+    configure: configurePush,
+  },
 };
 
 /** A package manager `denext mobile add` can drive. */
@@ -124,6 +299,22 @@ export interface CapabilityPlan {
   readonly permissions: readonly string[];
   /** Notes for each capability (`name: note`). */
   readonly notes: readonly string[];
+  /** Edits from the capabilities' `configure` hooks, per native file. */
+  readonly native: NativeEditPlan;
+  /** The entitlements files the entitlement edits go to (project-relative). */
+  readonly entitlementsFiles: readonly string[];
+  /** Problems that do not stop the install but will stop the capability working. */
+  readonly warnings: readonly string[];
+  /** Steps to do by hand. */
+  readonly manual: readonly string[];
+}
+
+/** The `configure` edits of every chosen capability, per native file. */
+export interface NativeEditPlan {
+  readonly infoPlist: readonly NativeEdit[];
+  readonly entitlements: readonly NativeEdit[];
+  readonly manifest: readonly NativeEdit[];
+  readonly appDelegate: readonly NativeEdit[];
 }
 
 /** What {@linkcode addMobileCapabilities} did, as project-relative paths and notes. */
@@ -153,6 +344,10 @@ export interface AddCapabilitiesOptions {
   readonly run?: CommandRunner;
   /** The capability table (tests); defaults to {@linkcode MOBILE_CAPABILITIES}. */
   readonly table?: Readonly<Record<string, MobileCapability>>;
+  /** `--scheme`: custom URL schemes (deep-links). */
+  readonly schemes?: readonly string[];
+  /** `--domain`: universal link / app link domains (deep-links). */
+  readonly domains?: readonly string[];
 }
 
 const CAPACITOR_CONFIGS = [
@@ -164,6 +359,10 @@ const CAPACITOR_CONFIGS = [
 ];
 const INFO_PLIST = "ios/App/App/Info.plist";
 const ANDROID_MANIFEST = "android/app/src/main/AndroidManifest.xml";
+const APP_DELEGATE = "ios/App/App/AppDelegate.swift";
+const PBXPROJ = "ios/App/App.xcodeproj/project.pbxproj";
+/** The entitlements file written when the Xcode project names none (SRCROOT is ios/App). */
+const DEFAULT_ENTITLEMENTS = "App/App.entitlements";
 
 /** Lockfile → package manager, in detection order. */
 const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
@@ -282,6 +481,103 @@ function pickCapabilities(
   return [...new Set(names)];
 }
 
+/** The capabilities in `table` that take `key`, for an error message. */
+function takersOf(table: Readonly<Record<string, MobileCapability>>, key: keyof CapabilityOptions) {
+  const names = Object.keys(table).filter((n) => table[n].options?.includes(key));
+  return names.length === 0 ? "no capability" : names.join(", ");
+}
+
+/** The command-line options, deduplicated, refusing one that no chosen capability takes. */
+function capabilityOptions(
+  opts: AddCapabilitiesOptions,
+  names: readonly string[],
+  table: Readonly<Record<string, MobileCapability>>,
+): CapabilityOptions {
+  const options: CapabilityOptions = {
+    schemes: [...new Set(opts.schemes ?? [])],
+    domains: [...new Set(opts.domains ?? [])],
+  };
+  const flags = [["schemes", "--scheme"], ["domains", "--domain"]] as const;
+  for (const [key, flag] of flags) {
+    if (options[key].length === 0) continue;
+    if (names.some((n) => table[n].options?.includes(key))) continue;
+    throw new Error(`${flag} is only for ${takersOf(table, key)}; add it or drop ${flag}.`);
+  }
+  return options;
+}
+
+/** Every chosen capability's `configure` result, merged per native file. */
+function configureAll(
+  caps: readonly MobileCapability[],
+  options: CapabilityOptions,
+): { native: NativeEditPlan; requiredFiles: Record<string, string>; manual: string[] } {
+  const configs = caps.map((c) => c.configure?.(options) ?? {});
+  return {
+    native: {
+      infoPlist: configs.flatMap((c) => c.infoPlist ?? []),
+      entitlements: configs.flatMap((c) => c.entitlements ?? []),
+      manifest: configs.flatMap((c) => c.manifest ?? []),
+      appDelegate: configs.flatMap((c) => c.appDelegate ?? []),
+    },
+    requiredFiles: Object.assign({}, ...configs.map((c) => c.requiredFiles ?? {})),
+    manual: configs.flatMap((c) => c.manual ?? []),
+  };
+}
+
+/**
+ * The entitlements files the Xcode project signs with (its CODE_SIGN_ENTITLEMENTS values,
+ * relative to ios/App), and the values that name a build variable this cannot resolve. With
+ * none set, `ios/App/App/App.entitlements`, not yet wired.
+ */
+async function entitlementsTarget(
+  root: string,
+): Promise<{ files: string[]; wired: boolean; unresolved: string[] }> {
+  const pbxproj = await readText(join(root, PBXPROJ)) ?? "";
+  const setting = /\bCODE_SIGN_ENTITLEMENTS\s*=\s*("?)([^";\n]+)\1\s*;/g;
+  const values = [
+    ...new Set(
+      [...pbxproj.matchAll(setting)].map((m) => m[2].trim().replace(/^\$\(SRCROOT\)\//, "")),
+    ),
+  ];
+  const unresolved = values.filter((v) => v.includes("$(") || v.startsWith("/"));
+  const files = values.filter((v) => !unresolved.includes(v)).map((v) => `ios/App/${v}`);
+  if (files.length > 0) return { files, wired: true, unresolved };
+  return { files: [`ios/App/${DEFAULT_ENTITLEMENTS}`], wired: false, unresolved };
+}
+
+/** The manual steps entitlement edits need: wiring a new file, or editing an unresolved one. */
+async function entitlementSteps(
+  root: string,
+  target: { wired: boolean; unresolved: string[] },
+  edits: readonly NativeEdit[],
+): Promise<string[]> {
+  if (edits.length === 0 || !(await exists(join(root, PBXPROJ)))) return [];
+  const labels = edits.map((e) => e.label).join("; ");
+  const steps = target.unresolved.map((v) =>
+    `the Xcode project also signs with ${v}, which denext cannot resolve: add ${labels} to it`
+  );
+  if (!target.wired) {
+    steps.push(
+      `point the App target at ios/App/${DEFAULT_ENTITLEMENTS}: in Xcode, App target → Build ` +
+        `Settings → Code Signing Entitlements = ${DEFAULT_ENTITLEMENTS} (Debug and Release), ` +
+        "or add the capability under Signing & Capabilities, which sets the same. denext wrote " +
+        "the file but does not edit that build setting",
+    );
+  }
+  return steps;
+}
+
+/** A warning for each required file that is missing where its platform folder exists. */
+async function missingFiles(root: string, required: Record<string, string>): Promise<string[]> {
+  const warnings: string[] = [];
+  for (const [rel, warning] of Object.entries(required)) {
+    if (await exists(join(root, dirname(rel))) && !(await exists(join(root, rel)))) {
+      warnings.push(warning);
+    }
+  }
+  return warnings;
+}
+
 /**
  * Work out what `denext mobile add` will do, without changing anything: the project root,
  * its package manager, the install and sync commands, and the native config edits. It throws
@@ -296,6 +592,10 @@ export async function planMobileCapabilities(
 ): Promise<CapabilityPlan> {
   const table = opts.table ?? MOBILE_CAPABILITIES;
   const names = pickCapabilities(opts.capabilities, table);
+  const configured = configureAll(
+    names.map((n) => table[n]),
+    capabilityOptions(opts, names, table),
+  );
   const root = await findProject(opts.cwd, opts.dir);
   const core = await capacitorCore(root);
   const mismatched = names.filter((n) => table[n].capacitorMajor !== core.major);
@@ -311,6 +611,7 @@ export async function planMobileCapabilities(
   }
   const { manager, lockfile } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
+  const target = await entitlementsTarget(root);
   return {
     root,
     capabilities: names,
@@ -325,6 +626,13 @@ export async function planMobileCapabilities(
     ),
     permissions: [...new Set(caps.flatMap((c) => c.androidPermissions ?? []))],
     notes: names.flatMap((n) => table[n].notes ? [`${n}: ${table[n].notes}`] : []),
+    native: configured.native,
+    entitlementsFiles: target.files,
+    warnings: await missingFiles(root, configured.requiredFiles),
+    manual: [
+      ...(await entitlementSteps(root, target, configured.native.entitlements)),
+      ...configured.manual,
+    ],
   };
 }
 
@@ -348,9 +656,19 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
     }`,
     `  install        ${commandLine(plan.install)}`,
     ...plan.plist.map((p) => `  Info.plist     ${p.key} (when absent)`),
+    ...plan.native.infoPlist.map((e) => `  Info.plist     ${e.label}`),
+    ...plan.native.entitlements.map((e) =>
+      `  entitlements   ${e.label} (${plan.entitlementsFiles.join(", ")})`
+    ),
+    ...plan.native.appDelegate.map((e) => `  AppDelegate    ${e.label}`),
     ...plan.permissions.map((p) => `  manifest       <uses-permission ${p}>`),
+    ...plan.native.manifest.map((e) => `  manifest       ${e.label}`),
     `  sync           ${commandLine(plan.sync)}`,
+    ...plan.warnings.map((w) => `  WARNING        ${w}`),
   ];
+  if (plan.manual.length > 0) {
+    lines.push("", "  By hand:", ...plan.manual.map((m) => `    - ${m}`));
+  }
   if (plan.notes.length > 0) {
     lines.push("", "  Then call from denext/mobile:", ...plan.notes.map((n) => `    - ${n}`));
   }
@@ -371,39 +689,40 @@ export function formatCapabilityTable(
   ).join("\n");
 }
 
-/** Apply `edit` to the file at `rel` under `root`, recording the outcome in `report`. */
+/**
+ * Apply `edits` in turn to the file at `rel` under the project root, recording the outcome in
+ * `report`. A missing file is skipped, unless `create` gives its initial text and its folder
+ * exists.
+ */
 async function editNative(
   report: AddCapabilitiesReport,
   rel: string,
-  platform: string,
-  edit: (text: string) => string | null,
+  edits: readonly NativeEdit[],
+  create?: string,
 ): Promise<void> {
+  if (edits.length === 0) return;
   const path = join(report.plan.root, rel);
-  const text = await readText(path);
-  if (text === undefined) {
-    report.skipped.push(
-      `${platform}: no ${rel} (run \`cap add ${platform.toLowerCase()}\` first).`,
-    );
+  const platform = rel.split("/")[0];
+  const existing = await readText(path);
+  const canCreate = create !== undefined && await exists(dirname(path));
+  if (existing === undefined && !canCreate) {
+    const hint = await exists(join(report.plan.root, platform))
+      ? "add the entries by hand"
+      : `run \`npx cap add ${platform}\` first`;
+    report.skipped.push(`${platform === "ios" ? "iOS" : "Android"}: no ${rel} (${hint}).`);
     return;
   }
-  const next = edit(text);
+  const text = existing ?? create!;
+  let next: string | null = text;
+  for (const edit of edits) next = next === null ? null : edit.apply(next);
   if (next === null) {
-    report.skipped.push(`${rel}: could not find where to add the entries; add them by hand.`);
+    const labels = edits.map((e) => e.label).join("; ");
+    report.skipped.push(`${rel}: could not add ${labels}; add them by hand.`);
     return;
   }
-  if (next === text) return void report.unchanged.push(rel);
+  if (next === existing) return void report.unchanged.push(rel);
   await Deno.writeTextFile(path, next);
   report.written.push(rel);
-}
-
-/** Apply every edit in turn; null as soon as one has no place to go. */
-function chain<T>(text: string, items: readonly T[], edit: (t: string, item: T) => string | null) {
-  let out: string | null = text;
-  for (const item of items) {
-    if (out === null) return null;
-    out = edit(out, item);
-  }
-  return out;
 }
 
 /** Run `command`, throwing when it exits non-zero. */
@@ -420,8 +739,9 @@ async function runChecked(
 
 /**
  * Install capabilities into a Capacitor project: plan (see
- * {@linkcode planMobileCapabilities}), then add the packages, write the Info.plist keys and
- * Android permissions, and run `npx cap sync`. With `dryRun` it only plans.
+ * {@linkcode planMobileCapabilities}), then add the packages, write the Info.plist keys,
+ * entitlements, AppDelegate forwarding and Android manifest entries the capabilities need, and
+ * run `npx cap sync`. With `dryRun` it only plans.
  *
  * @param opts The capability names, where to look, and the command runner.
  * @returns The plan, the native files changed, and the commands run.
@@ -440,22 +760,20 @@ export async function addMobileCapabilities(
   if (opts.dryRun) return report;
   if (!opts.run) throw new Error("addMobileCapabilities: a command runner is required.");
   await runChecked(opts.run, plan.install, report.ran);
-  if (plan.plist.length > 0) {
-    await editNative(
-      report,
-      INFO_PLIST,
-      "iOS",
-      (t) => chain(t, plan.plist, (text, p) => withPlistDefault(text, p.key, p.value)),
-    );
+  const plistDefaults = plan.plist.map((p): NativeEdit => ({
+    label: p.key,
+    apply: (text) => withPlistDefault(text, p.key, p.value),
+  }));
+  await editNative(report, INFO_PLIST, [...plistDefaults, ...plan.native.infoPlist]);
+  for (const file of plan.entitlementsFiles) {
+    await editNative(report, file, plan.native.entitlements, EMPTY_ENTITLEMENTS);
   }
-  if (plan.permissions.length > 0) {
-    await editNative(
-      report,
-      ANDROID_MANIFEST,
-      "Android",
-      (t) => chain(t, plan.permissions, withManifestPermission),
-    );
-  }
+  await editNative(report, APP_DELEGATE, plan.native.appDelegate);
+  const permissions = plan.permissions.map((p): NativeEdit => ({
+    label: `<uses-permission ${p}>`,
+    apply: (text) => withManifestPermission(text, p),
+  }));
+  await editNative(report, ANDROID_MANIFEST, [...permissions, ...plan.native.manifest]);
   await runChecked(opts.run, plan.sync, report.ran);
   return report;
 }

@@ -16,7 +16,15 @@ import {
   planMobileCapabilities,
   type PlannedCommand,
 } from "../src/build/mobile-capabilities.ts";
-import { withManifestPermission, withPlistDefault } from "../src/build/mobile-native-config.ts";
+import {
+  EMPTY_ENTITLEMENTS,
+  withAppDelegatePushForwarding,
+  withManifestIntentFilter,
+  withManifestPermission,
+  withPlistDefault,
+  withPlistStringArray,
+  withPlistUrlScheme,
+} from "../src/build/mobile-native-config.ts";
 import { createMobileCommand } from "../src/cli/commands/mobile.ts";
 
 const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
@@ -345,6 +353,8 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "splash",
     "secure-store",
     "browser",
+    "deep-links",
+    "push",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
@@ -410,4 +420,319 @@ Deno.test("native config: withPlistDefault / withManifestPermission edge cases",
   const sdk23 = '<manifest><uses-permission-sdk-23 android:name="a.B"/><application/></manifest>';
   assertEquals(withManifestPermission(sdk23, "a.B"), sdk23);
   assertEquals(withManifestPermission("<manifest/>", "a.B"), null);
+});
+
+// ---- deep-links and push -------------------------------------------------------------------
+
+const APP_DELEGATE_PATH = "ios/App/App/AppDelegate.swift";
+const ENTITLEMENTS_PATH = "ios/App/App/App.entitlements";
+const PBXPROJ_PATH = "ios/App/App.xcodeproj/project.pbxproj";
+
+const APP_DELEGATE = `import UIKit
+import Capacitor
+
+@UIApplicationMain
+class AppDelegate: UIResponder, UIApplicationDelegate {
+
+    var window: UIWindow?
+
+    func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        // A "}" in a comment and a string must not end the class: "{ }"
+        return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
+    }
+}
+`;
+
+const ACTIVITY_MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="@string/app_name">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".Other" />
+    </application>
+</manifest>
+`;
+
+const PBXPROJ = "// !$*UTF8*$!\n{ objects = { }; }\n";
+
+/** A project with an iOS app (Info.plist, AppDelegate, pbxproj) and an Android activity. */
+function nativeProject(extra: Record<string, string | null> = {}) {
+  return {
+    [APP_DELEGATE_PATH]: APP_DELEGATE,
+    [MANIFEST_PATH]: ACTIVITY_MANIFEST,
+    [PBXPROJ_PATH]: PBXPROJ,
+    ...extra,
+  };
+}
+
+/** Occurrences of `needle` in `text`. */
+const count = (text: string, needle: string) => text.split(needle).length - 1;
+
+Deno.test("mobile add deep-links: URL types, intent filters and associated domains, idempotent", async () => {
+  await inProject(nativeProject(), async (dir) => {
+    const { run, calls } = fakeRunner();
+    const opts = {
+      capabilities: ["deep-links"],
+      cwd: dir,
+      run,
+      schemes: ["myapp", "myapp-dev"],
+      domains: ["app.example.com"],
+    };
+    const report = await addMobileCapabilities(opts);
+    assertEquals(calls[0].args, ["install", "@capacitor/app@^8.1.1"]);
+    assertEquals(report.written.sort(), [ENTITLEMENTS_PATH, MANIFEST_PATH, PLIST_PATH].sort());
+
+    const plist = await read(dir, PLIST_PATH);
+    assertStringIncludes(
+      plist,
+      "\t<key>CFBundleURLTypes</key>\n\t<array>\n\t\t<dict>\n\t\t\t<key>CFBundleURLName</key>\n" +
+        "\t\t\t<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>\n\t\t\t<key>CFBundleURLSchemes</key>\n" +
+        "\t\t\t<array>\n\t\t\t\t<string>myapp</string>\n\t\t\t</array>\n\t\t</dict>\n",
+    );
+    assertStringIncludes(plist, "<string>myapp-dev</string>");
+    assertEquals(count(plist, "<key>CFBundleURLTypes</key>"), 1);
+
+    const manifest = await read(dir, MANIFEST_PATH);
+    assertStringIncludes(
+      manifest,
+      "            <intent-filter>\n" +
+        '                <action android:name="android.intent.action.VIEW" />\n' +
+        '                <category android:name="android.intent.category.DEFAULT" />\n' +
+        '                <category android:name="android.intent.category.BROWSABLE" />\n' +
+        '                <data android:scheme="myapp" />\n' +
+        "            </intent-filter>\n",
+    );
+    assertStringIncludes(
+      manifest,
+      '<intent-filter android:autoVerify="true">\n' +
+        '                <action android:name="android.intent.action.VIEW" />\n' +
+        '                <category android:name="android.intent.category.DEFAULT" />\n' +
+        '                <category android:name="android.intent.category.BROWSABLE" />\n' +
+        '                <data android:scheme="https" android:host="app.example.com" />\n',
+    );
+    assert(
+      manifest.indexOf('android:host="app.example.com"') < manifest.indexOf(".Other"),
+      "added to the launcher activity",
+    );
+
+    const entitlements = await read(dir, ENTITLEMENTS_PATH);
+    assertStringIncludes(
+      entitlements,
+      "\t<key>com.apple.developer.associated-domains</key>\n\t<array>\n" +
+        "\t\t<string>applinks:app.example.com</string>\n\t</array>\n",
+    );
+    assertStringIncludes(report.plan.manual.join("\n"), "Code Signing Entitlements");
+    assertStringIncludes(report.plan.manual.join("\n"), "apple-app-site-association");
+    assertStringIncludes(report.plan.manual.join("\n"), 'accept: { hosts: ["app.example.com"] }');
+
+    // Again: nothing to add anywhere.
+    const again = await addMobileCapabilities(opts);
+    assertEquals(again.written, []);
+    assertEquals(again.unchanged.sort(), [ENTITLEMENTS_PATH, MANIFEST_PATH, PLIST_PATH].sort());
+    assertEquals(await read(dir, PLIST_PATH), plist);
+    assertEquals(await read(dir, MANIFEST_PATH), manifest);
+    assertEquals(await read(dir, ENTITLEMENTS_PATH), entitlements);
+
+    // A new scheme and domain merge into what is there.
+    await addMobileCapabilities({
+      ...opts,
+      schemes: ["MYAPP-DEV".toLowerCase(), "extra"],
+      domains: ["b.example.com"],
+    });
+    const merged = await read(dir, PLIST_PATH);
+    assertEquals(count(merged, "<string>myapp-dev</string>"), 1);
+    assertEquals(count(merged, "<key>CFBundleURLTypes</key>"), 1);
+    assertStringIncludes(merged, "<string>extra</string>");
+    const mergedEnt = await read(dir, ENTITLEMENTS_PATH);
+    assertStringIncludes(
+      mergedEnt,
+      "<string>applinks:app.example.com</string>\n\t\t<string>applinks:b.example.com</string>",
+    );
+    assertEquals(count(await read(dir, MANIFEST_PATH), 'android:scheme="extra"'), 1);
+  });
+});
+
+Deno.test("mobile add deep-links: option checks", async () => {
+  await inProject({}, async (dir) => {
+    const plan = (o: Record<string, unknown>) =>
+      planMobileCapabilities({ capabilities: ["deep-links"], cwd: dir, ...o });
+    await assertRejects(() => plan({}), Error, "deep-links needs --scheme");
+    await assertRejects(() => plan({ schemes: ["My App"] }), Error, "--scheme My App");
+    await assertRejects(() => plan({ schemes: ["https"] }), Error, "use --domain");
+    await assertRejects(() => plan({ domains: ["https://x.com/a"] }), Error, "--domain https");
+    await assertRejects(
+      () => planMobileCapabilities({ capabilities: ["haptics"], cwd: dir, schemes: ["myapp"] }),
+      Error,
+      "--scheme is only for deep-links",
+    );
+    const ok = await plan({ schemes: ["myapp"], domains: ["*.Example.com"] });
+    assertEquals(ok.native.manifest.map((e) => e.label), [
+      "intent-filter myapp://",
+      "intent-filter https://*.example.com (autoVerify)",
+    ]);
+    const text = formatCapabilityPlan(ok);
+    assertStringIncludes(text, "Info.plist     CFBundleURLTypes: myapp");
+    assertStringIncludes(text, "entitlements   com.apple.developer.associated-domains");
+    assertStringIncludes(text, "manifest       intent-filter myapp://");
+  });
+});
+
+Deno.test("mobile add push: entitlement, AppDelegate forwarding, permission; FCM warning", async () => {
+  await inProject(nativeProject(), async (dir) => {
+    const { run } = fakeRunner();
+    const report = await addMobileCapabilities({ capabilities: ["push"], cwd: dir, run });
+    assertEquals(
+      report.written.sort(),
+      [APP_DELEGATE_PATH, ENTITLEMENTS_PATH, MANIFEST_PATH].sort(),
+    );
+    assertStringIncludes(
+      await read(dir, ENTITLEMENTS_PATH),
+      "\t<key>aps-environment</key>\n\t<string>development</string>\n</dict>",
+    );
+    const delegate = await read(dir, APP_DELEGATE_PATH);
+    assertStringIncludes(
+      delegate,
+      "    }\n\n    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {\n" +
+        "        NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: deviceToken)\n    }\n",
+    );
+    assert(delegate.endsWith("object: error)\n    }\n}\n"), delegate);
+    assertStringIncludes(
+      await read(dir, MANIFEST_PATH),
+      '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+    );
+    assertEquals(report.plan.warnings.length, 1);
+    assertStringIncludes(report.plan.warnings[0], "google-services.json");
+    assertStringIncludes(report.plan.manual.join("\n"), "production");
+
+    const again = await addMobileCapabilities({ capabilities: ["push"], cwd: dir, run });
+    assertEquals(again.written, []);
+    assertEquals(await read(dir, APP_DELEGATE_PATH), delegate);
+  });
+  // With google-services.json: no warning. A production aps-environment is kept.
+  const production = EMPTY_ENTITLEMENTS.replace(
+    "<dict>\n",
+    "<dict>\n\t<key>aps-environment</key>\n\t<string>production</string>\n",
+  );
+  await inProject(
+    nativeProject({
+      "android/app/google-services.json": "{}",
+      "ios/App/App/Custom.entitlements": production,
+      [PBXPROJ_PATH]: PBXPROJ +
+        'CODE_SIGN_ENTITLEMENTS = App/Custom.entitlements;\nCODE_SIGN_ENTITLEMENTS = "$(SRCROOT)/App/Custom.entitlements";\n',
+    }),
+    async (dir) => {
+      const report = await addMobileCapabilities({
+        capabilities: ["push"],
+        cwd: dir,
+        run: fakeRunner().run,
+      });
+      assertEquals(report.plan.warnings, []);
+      assertEquals(report.plan.entitlementsFiles, ["ios/App/App/Custom.entitlements"]);
+      assert(!report.plan.manual.join("\n").includes("Code Signing Entitlements"), "already wired");
+      assertEquals(await read(dir, "ios/App/App/Custom.entitlements"), production);
+      assert(!(await Deno.stat(join(dir, ENTITLEMENTS_PATH)).then(() => true, () => false)));
+    },
+  );
+});
+
+Deno.test("mobile add push: an AppDelegate with its own callback, and no ios/ at all", async () => {
+  const custom = APP_DELEGATE.replace(
+    "    var window",
+    "    func application(_ a: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken t: Data) {}\n    var window",
+  );
+  await inProject(nativeProject({ [APP_DELEGATE_PATH]: custom }), async (dir) => {
+    const report = await addMobileCapabilities({
+      capabilities: ["push"],
+      cwd: dir,
+      run: fakeRunner().run,
+    });
+    assertStringIncludes(report.skipped.join("\n"), `${APP_DELEGATE_PATH}: could not add forward`);
+    assertEquals(await read(dir, APP_DELEGATE_PATH), custom);
+  });
+  await inProject({ [PLIST_PATH]: null }, async (dir) => {
+    const report = await addMobileCapabilities({
+      capabilities: ["push"],
+      cwd: dir,
+      run: fakeRunner().run,
+    });
+    assertStringIncludes(report.skipped.join("\n"), "iOS: no ios/App/App/App.entitlements");
+    assertStringIncludes(report.skipped.join("\n"), "npx cap add ios");
+    assertEquals(report.plan.manual.filter((m) => m.includes("Code Signing")), []);
+  });
+});
+
+Deno.test("native config: plist array / URL scheme / intent filter / AppDelegate edge cases", () => {
+  // An existing empty array, and a key of the wrong type.
+  const withEmpty = INFO_PLIST.replace(
+    "</dict>\n</plist>",
+    "\t<key>CFBundleURLTypes</key>\n\t<array/>\n</dict>\n</plist>",
+  );
+  const filled = withPlistUrlScheme(withEmpty, "myapp");
+  assertStringIncludes(filled!, "<array>\n\t\t<dict>");
+  assertEquals(withPlistUrlScheme(filled!, "MyApp"), filled, "schemes match case-insensitively");
+  const wrongType = INFO_PLIST.replace(
+    "</dict>\n</plist>",
+    "\t<key>CFBundleURLTypes</key>\n\t<string>x</string>\n</dict>\n</plist>",
+  );
+  assertEquals(withPlistUrlScheme(wrongType, "myapp"), null);
+  assertEquals(withPlistStringArray(wrongType, "CFBundleURLTypes", ["a"]), null);
+  assertEquals(withPlistUrlScheme("nope", "myapp"), null);
+  assertEquals(withPlistStringArray("nope", "k", ["a"]), null);
+  const emptyArray = EMPTY_ENTITLEMENTS.replace("<dict>\n", "<dict>\n\t<key>k</key>\n\t<array/>\n");
+  assertStringIncludes(
+    withPlistStringArray(emptyArray, "k", ["a&b"])!,
+    "<key>k</key>\n\t<array>\n\t\t<string>a&amp;b</string>\n\t</array>",
+  );
+
+  // No launcher activity, or two of them: nowhere to add a filter.
+  assertEquals(withManifestIntentFilter("<manifest/>", { scheme: "x" }), null);
+  const two = ACTIVITY_MANIFEST.replace(
+    '<activity android:name=".Other" />',
+    ACTIVITY_MANIFEST.slice(
+      ACTIVITY_MANIFEST.indexOf("<activity"),
+      ACTIVITY_MANIFEST.indexOf("</activity>") + 11,
+    ),
+  );
+  assertEquals(withManifestIntentFilter(two, { scheme: "x" }), null);
+  // A lone activity without MAIN still gets it.
+  const lone =
+    '<manifest><application><activity android:name=".A"></activity></application></manifest>';
+  assertStringIncludes(withManifestIntentFilter(lone, { host: "a.com" })!, 'android:host="a.com"');
+
+  assertEquals(withAppDelegatePushForwarding("struct NotADelegate {}"), null);
+  assertEquals(withAppDelegatePushForwarding('class AppDelegate { let s = "'), null);
+  const opaque = 'class AppDelegate {\n    let s = """\n}\n"""\n    /* } */ let t = "\\"}"\n}\n';
+  assert(withAppDelegatePushForwarding(opaque)!.endsWith("object: error)\n    }\n}\n"));
+  assertEquals(withAppDelegatePushForwarding('class AppDelegate { let s = """ }'), null);
+  assertEquals(withAppDelegatePushForwarding("class AppDelegate { /* }"), null);
+  assertEquals(withAppDelegatePushForwarding("class AppDelegate { // }"), null);
+  const oneLine = withAppDelegatePushForwarding("class AppDelegate { var x = 1 }")!;
+  assertStringIncludes(oneLine, "var x = 1 \n");
+  assert(oneLine.endsWith("}\n}"));
+});
+
+Deno.test("denext mobile add: --scheme / --domain are comma-separated lists", async () => {
+  await inProject(nativeProject(), async (dir) => {
+    const { run } = fakeRunner();
+    const out = await runVerb(
+      ["add", "deep-links"],
+      { dir, scheme: "myapp, other", domain: "app.example.com" },
+      run,
+    );
+    const text = out.join("\n");
+    assertStringIncludes(text, `wrote      ${PLIST_PATH}`);
+    assertStringIncludes(text, "Still to do by hand:");
+    const plist = await read(dir, PLIST_PATH);
+    assertStringIncludes(plist, "<string>myapp</string>");
+    assertStringIncludes(plist, "<string>other</string>");
+
+    const pushed = await runVerb(["add", "push"], { dir }, run);
+    assertStringIncludes(pushed.join("\n"), "WARNING: no android/app/google-services.json");
+  });
 });

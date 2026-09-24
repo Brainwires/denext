@@ -27,6 +27,38 @@ and this project adheres to
   names, declares the Android permissions a capability needs, and runs `npx cap sync`.
   `--dry-run` prints the plan without changing anything, `--list` lists the capabilities,
   and `--dir` points at the project.
+- **Deep links in `denext/mobile`.** `onDeepLink(callback, { accept, route })` /
+  `useDeepLink` deliver the link that cold-started the app (once per page, `launch: true`)
+  and every link opened while it runs, through `@capacitor/app`. Only accepted links reach
+  the callback: by default the app's custom schemes and no `https` host (list your
+  universal / app link domains in `accept: { hosts }`, or pass a predicate). An accepted
+  link's in-app path (`myapp://threads/42` → `/threads/42`) is navigated once, through the
+  history (`popstate`) or a `route(path)` function. On the web it does nothing.
+- **Push notifications in `denext/mobile`.** `requestPushPermission()`, `registerForPush()`
+  (the APNs / FCM token for your server; concurrent calls share one registration, and it
+  times out), `onPushReceived` / `usePushReceived` and `onPushTapped` / `usePushTapped`,
+  which navigates to a tapped notification's `data.path` or accepted `data.url`. A tap that
+  cold-started the app still arrives (the shell keeps it for the first listener). There is
+  no web-push fallback, and denext ships no push relay: your server sends through APNs /
+  FCM.
+- **`denext mobile add deep-links --scheme <s> --domain <d>`** registers URL schemes
+  (`CFBundleURLTypes`, a VIEW intent filter) and universal / app link domains
+  (`applinks:` associated domains, an `autoVerify` https intent filter), merging with what is
+  there. **`denext mobile add push`** writes the `aps-environment` entitlement, forwards the
+  token callbacks in `AppDelegate.swift`, declares `POST_NOTIFICATIONS`, and warns when
+  `android/app/google-services.json` is missing. A new `App.entitlements` still has to be
+  selected in Xcode; that and the other manual steps are printed.
+
+### Fixed
+
+- **Booleanish attributes on the client.** A boolean on `aria-*`, `data-*`, `draggable`,
+  `spellCheck`, `contentEditable` (and React 19's other booleanish-string props) is now
+  written as `"true"` / `"false"`, as react-dom and denext's SSR already did. Before, the
+  client dropped the attribute for `false` and wrote `""` for `true`, so
+  `<input spellCheck={false}>` left spellcheck on and `aria-hidden={false}` vanished after
+  hydration (found running react-native-web on denext).
+- **Importing any `denext/mobile` export no longer bundles the OTA client.** Its module-level
+  setup is now lazy (an `isNativeShell`-only bundle: 3.7 KB → 0.4 KB).
 
 ## [2.9.0] - 2026-09-24
 

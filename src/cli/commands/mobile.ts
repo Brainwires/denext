@@ -8,8 +8,9 @@
 //   denext mobile add-ota [dir]   install the native DenextOta plugin into ios/ + android/
 //                                 (--public-key <file> embeds the verifying key)
 //   denext mobile add <cap...>    add the Capacitor plugins behind denext/mobile's capability
-//                                 functions (haptics, share, secure-store, …), their native
-//                                 config, and `cap sync` (--dry-run plans, --list lists)
+//                                 functions (haptics, share, secure-store, deep-links, push,
+//                                 …), their native config, and `cap sync` (--dry-run plans,
+//                                 --list lists, --scheme / --domain configure deep-links)
 //
 // Both are flat verbs whose first positional selects the action (as `desktop` does). Neither
 // loads the project's modules: `ota manifest` only hashes files, and `add-ota` only writes
@@ -345,11 +346,21 @@ function printAddReport(report: AddCapabilitiesReport): void {
   for (const path of report.written) console.log(`  wrote      ${path}`);
   for (const path of report.unchanged) console.log(`  unchanged  ${path}`);
   for (const note of report.skipped) console.log(`  skipped    ${note}`);
+  for (const warning of report.plan.warnings) console.log(`\n  WARNING: ${warning}`);
+  if (report.plan.manual.length > 0) {
+    console.log("\n  Still to do by hand:");
+    for (const step of report.plan.manual) console.log(`    - ${step}`);
+  }
   if (report.plan.notes.length > 0) {
     console.log("\n  Now call from denext/mobile:");
     for (const note of report.plan.notes) console.log(`    - ${note}`);
   }
   console.log("\n  Native plugins changed: ship a new app binary (OTA only updates the web UI).");
+}
+
+/** A comma-separated list flag (`--scheme a,b`) as its trimmed, non-empty items. */
+function listFlag(value: string | number | boolean | undefined): string[] {
+  return typeof value === "string" ? value.split(",").map((v) => v.trim()).filter(Boolean) : [];
 }
 
 /** `denext mobile add <capability...>`. */
@@ -368,6 +379,8 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
       dir: typeof dir === "string" ? dir : undefined,
       dryRun,
       run,
+      schemes: listFlag(ctx.flags.scheme),
+      domains: listFlag(ctx.flags.domain),
     });
   } catch (err) {
     fail(`denext mobile add: ${err instanceof Error ? err.message : String(err)}`);
@@ -406,6 +419,9 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
   usage: "  denext mobile add <capability...>\n" +
     "                                Add the Capacitor plugins behind denext/mobile's\n" +
     "                                capability functions, then `npx cap sync`\n" +
+    "  denext mobile add deep-links --scheme myapp --domain app.example.com\n" +
+    "                                Register a URL scheme and universal / app link domains\n" +
+    "  denext mobile add push        Push notifications (entitlement, AppDelegate, permission)\n" +
     "  denext mobile add --list      List the capabilities and the plugins they install\n" +
     "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n" +
     "\n" +
@@ -416,6 +432,15 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  (never replacing yours) and Android permissions the capability needs, and runs\n" +
     "  `npx cap sync`. --dry-run prints the plan and changes nothing. Ship a new app binary\n" +
     "  afterwards.\n" +
+    "\n" +
+    "  deep-links takes --scheme (CFBundleURLTypes + a VIEW intent filter) and --domain\n" +
+    "  (applinks: in the entitlements + an autoVerify https intent filter); give several as\n" +
+    "  a comma-separated list. The domains must also serve apple-app-site-association and\n" +
+    "  assetlinks.json. push writes aps-environment (development) into the entitlements, the\n" +
+    "  token forwarding into AppDelegate.swift and POST_NOTIFICATIONS into the manifest, and\n" +
+    "  warns when android/app/google-services.json (FCM) is missing. A new entitlements file\n" +
+    "  (ios/App/App/App.entitlements) must be selected in Xcode (Code Signing Entitlements);\n" +
+    "  the steps left to do by hand are printed.\n" +
     "\n" +
     "  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n" +
     "  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n" +
@@ -467,6 +492,18 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "list",
       type: "boolean",
       help: "add: list the capabilities and the plugins they install",
+    },
+    {
+      name: "scheme",
+      type: "string",
+      valueName: "<scheme[,scheme]>",
+      help: "add deep-links: custom URL schemes to register (comma-separated)",
+    },
+    {
+      name: "domain",
+      type: "string",
+      valueName: "<host[,host]>",
+      help: "add deep-links: universal link / app link domains (comma-separated)",
     },
   ],
 };

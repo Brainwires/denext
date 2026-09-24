@@ -29,6 +29,12 @@
  *   {@linkcode share}, {@linkcode deviceInfo}, {@linkcode networkStatus} /
  *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
+ * - {@linkcode onDeepLink} / {@linkcode useDeepLink}: the custom-scheme and universal / app
+ *   links that open the app, filtered and routed (`denext mobile add deep-links`).
+ * - {@linkcode requestPushPermission}, {@linkcode registerForPush} (the APNs / FCM token for
+ *   your server), {@linkcode onPushReceived} / {@linkcode usePushReceived} and
+ *   {@linkcode onPushTapped} / {@linkcode usePushTapped} (`denext mobile add push`; no
+ *   web-push fallback).
  *
  * @example
  * ```tsx
@@ -90,3 +96,19 @@ export {
 export { useKeepAwake } from "./keep-awake.ts";
 export { hideSplash } from "./splash.ts";
 export { type SecureStore, secureStore } from "./secure-store.ts";
+export { type DeepLinkEvent, type DeepLinkOptions, onDeepLink, useDeepLink } from "./deep-link.ts";
+export type { LinkAccept, LinkAllowList, LinkRoute } from "./link-routing.ts";
+export {
+  onPushReceived,
+  onPushTapped,
+  type PushNotification,
+  type PushPermission,
+  type PushRegistration,
+  type PushTap,
+  type PushTapOptions,
+  registerForPush,
+  type RegisterForPushOptions,
+  requestPushPermission,
+  usePushReceived,
+  usePushTapped,
+} from "./push.ts";

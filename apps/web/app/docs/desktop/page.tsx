@@ -469,6 +469,93 @@ denext mobile add haptics share network secure-store`}
         uses for its in-app browser. A new plugin is native code: ship a new app binary afterwards.
       </p>
 
+      <h3>Deep links</h3>
+      <p>
+        <code>deep-links</code> installs <code>@capacitor/app</code>{" "}
+        and registers what opens the app: <code>--scheme</code> adds a custom URL scheme (
+        <code>CFBundleURLTypes</code>{" "}
+        in Info.plist, a VIEW intent filter on the launcher activity) and <code>--domain</code>{" "}
+        a universal link / app link domain (<code>applinks:</code> in the entitlements, an{" "}
+        <code>android:autoVerify</code>{" "}
+        https intent filter). Several are comma-separated, and running it again merges instead of
+        duplicating. A domain also has to serve <code>/.well-known/apple-app-site-association</code>
+        {" "}
+        and <code>/.well-known/assetlinks.json</code>, or the OS opens the link in the browser.
+      </p>
+      <Code lang="bash">
+        {`denext mobile add deep-links --scheme myapp --domain app.example.com`}
+      </Code>
+      <Code lang="tsx">
+        {`"use client";
+import { useDeepLink } from "denext/mobile";
+
+export function DeepLinks() {
+  // myapp://threads/42 and https://app.example.com/threads/42 both open /threads/42.
+  useDeepLink(({ url, launch }) => console.log("opened", url, launch), {
+    accept: { schemes: ["myapp"], hosts: ["app.example.com"] },
+  });
+  return null;
+}`}
+      </Code>
+      <p>
+        The link that cold-started the app arrives once per page with{" "}
+        <code>launch: true</code>, to the subscribers registered by then (so mount it in the root
+        layout); links opened while the app runs follow with <code>launch: false</code>.{" "}
+        <strong>Only accepted links reach your code.</strong>{" "}
+        The default accepts the app's custom schemes (the OS only delivers the ones you registered)
+        and no <code>https</code> host, so list your domains in <code>accept.hosts</code>{" "}
+        or pass a predicate. Anyone can craft a deep link, so treat its path and query as untrusted
+        input. An accepted link's in-app path is navigated once: pushed onto the history with a{" "}
+        <code>popstate</code>, which denext's router and history-based SPA routers follow. Pass{" "}
+        <code>route: (path) =&gt; router.push(path)</code> to use your own router, or{" "}
+        <code>route: false</code>{" "}
+        to handle it yourself. On the web it does nothing: the browser already loaded the URL.
+      </p>
+
+      <h3>Push notifications</h3>
+      <p>
+        <code>push</code> installs <code>@capacitor/push-notifications</code>, writes{" "}
+        <code>aps-environment</code>{" "}
+        (development) into the entitlements, adds the token forwarding the plugin needs to{" "}
+        <code>AppDelegate.swift</code>, and declares <code>POST_NOTIFICATIONS</code>{" "}
+        (Android 13+). Android also needs your Firebase project's{" "}
+        <code>android/app/google-services.json</code>: without it the install warns and registration
+        fails at runtime. iOS push needs a paid Apple Developer team with the Push Notifications
+        capability; an archive exported for TestFlight or the App Store is signed with{" "}
+        <code>production</code>. When the Xcode project has no entitlements file yet, denext writes
+        {" "}
+        <code>App/App.entitlements</code>{" "}
+        and prints the one manual step: select it as the App target's Code Signing Entitlements.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { registerForPush, requestPushPermission, usePushTapped } from "denext/mobile";
+
+export async function enablePush() {
+  if ((await requestPushPermission()) !== "granted") return;
+  const { platform, token } = await registerForPush(); // APNs (hex) or FCM token
+  await fetch("/api/devices", { method: "POST", body: JSON.stringify({ platform, token }) });
+}
+
+export function PushRouting() {
+  // A tap on a notification whose data is { "path": "/threads/42" } opens that thread.
+  usePushTapped(({ notification }) => console.log("tapped", notification.id));
+  return null;
+}`}
+      </Code>
+      <p>
+        <strong>denext ships no push relay.</strong>{" "}
+        Your server stores each token with its user and platform and sends through APNs (iOS, with
+        the app's bundle id as the topic, sandbox for development builds) or FCM (Android).{" "}
+        <code>onPushReceived</code> fires for a notification that arrives in the foreground;{" "}
+        <code>onPushTapped</code>{" "}
+        for a tap, including the one that launched the app, which the shell keeps for the first
+        listener. The tap navigates to <code>data.path</code> (an in-app path) or{" "}
+        <code>data.url</code> (under the same acceptance rules as deep links). Call{" "}
+        <code>registerForPush()</code>{" "}
+        on every launch, since the token can change. There is no web-push fallback.
+      </p>
+
       <h3>Over-the-air UI updates</h3>
       <p>
         A Capacitor app can pull a newer web UI from a server without a new app build: the shell

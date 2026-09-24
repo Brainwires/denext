@@ -289,7 +289,10 @@ virtualized-list scroll corrections automatically (the runtime installs the shim
 `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
 `useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web); `denext mobile add
-<capability...> [--dry-run] [--list]` installs their plugins. Docs: https://denext.dev/docs/desktop
+<capability...> [--dry-run] [--list]` installs their plugins, and `deep-links --scheme/--domain`
+/ `push` add `onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
+`requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via
+APNs/FCM). Docs: https://denext.dev/docs/desktop
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
 Safari included, whenever `momentumSafeScroll` is on (the default).
