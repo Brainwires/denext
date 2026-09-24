@@ -276,8 +276,11 @@ discovery child. `--offline` keeps the UI and every process it starts off the ne
 Docs: https://denext.dev/docs/ui
 
 **A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `useAppResume`,
-`openExternal`, `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`. It talks to Capacitor
-through `window.Capacitor`, so no `@capacitor/*` import. Docs: https://denext.dev/docs/desktop
+`openExternal`, `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`,
+`installMomentumSafeScroll` / `useMomentumSafeScroll`. It talks to Capacitor
+through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling survives
+virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit;
+`momentumSafeScroll: false` opts out). Docs: https://denext.dev/docs/desktop
 
 **A database (zero-npm, server-only module):**
 
@@ -763,7 +766,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.8.2` — The denext framework version.
+- `VERSION: 2.8.3` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -1556,9 +1559,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface BackSwipeOptions` — Options for useBackSwipe and isBackSwipe.
 - `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
+- `installMomentumSafeScroll(options?: MomentumSafeScrollOptions): () => void` — Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.
 - `isBackSwipe(dx: number, dy: number, opts?: BackSwipeOptions): boolean` — The pure gesture test behind useBackSwipe: whether a movement of dx/dy CSS px from the touch start is a back swipe, i.e. rightward by at least minDistance and horizontal by at least ratio × the absolute vertical movement.
 - `isNativeShell(): boolean` — Whether the page runs inside a Capacitor iOS/Android native shell (webview origin capacitor://localhost on iOS, https://localhost on Android). false on the web, when @capacitor/core is merely bundled into a web build, and during SSR.
 - `interface KeyboardInsetOptions` — Options for installKeyboardInset and useKeyboardInset.
+- `interface MomentumSafeScrollOptions` — Options for installMomentumSafeScroll and useMomentumSafeScroll (denext/mobile).
 - `nativePlatform(): NativePlatform` — The platform the page runs on: "ios" or "android" inside a Capacitor native shell, otherwise "web". SSR-safe ("web" when there is no window). A Capacitor custom platform (e.g. Electron) also reads "web": only the iOS and Android shells count.
 - `type NativePlatform = ios | android | web` — The platform a page runs on, as denext/mobile distinguishes them.
 - `onAppResume(cb: (awayMs: number) => void): () => void` — Call cb each time the page returns to the foreground, with how long it was away in milliseconds.
@@ -1579,6 +1584,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useAppResume(cb: (awayMs: number) => void): void` — Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes.
 - `useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void` — Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies.
 - `useKeyboardInset(opts?: KeyboardInsetOptions): number` — Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).
+- `useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void` — Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. Options are read on the first mount.
 
 ### `denext/cli/command`
 
