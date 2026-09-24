@@ -2535,7 +2535,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.9.0 The denext framework version.",
+      "text": "VERSION VERSION: 2.10.0-rc.1 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -9424,6 +9424,42 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/AuthSessionError",
+      "kind": "interface",
+      "title": "AuthSessionError",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/AuthSessionError",
+      "text": "AuthSessionError interface AuthSessionError The Error an openAuthSession promise rejects with.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/AuthSessionErrorCode",
+      "kind": "typeAlias",
+      "title": "AuthSessionErrorCode",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/AuthSessionErrorCode",
+      "text": "AuthSessionErrorCode type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout The code on an openAuthSession rejection: - cancelled: the user closed the sheet (or the popup) without finishing; - busy: another auth session is still open (one at a time); - invalid: url is not an absolute https: URL, callbackScheme is not a custom scheme, or timeoutMs is not a positive number; - unsupported: the shell has no DenextAuthSession plugin, the sheet could not be presented, the web popup was blocked, or there is no window (SSR); - timeout: timeoutMs passed first (the sheet or popup is closed where the platform allows it).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/AuthSessionOptions",
+      "kind": "interface",
+      "title": "AuthSessionOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/AuthSessionOptions",
+      "text": "AuthSessionOptions interface AuthSessionOptions Options for openAuthSession.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/AuthSessionResult",
+      "kind": "interface",
+      "title": "AuthSessionResult",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/AuthSessionResult",
+      "text": "AuthSessionResult interface AuthSessionResult What openAuthSession resolves with.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/BackSwipeOptions",
       "kind": "interface",
       "title": "BackSwipeOptions",
@@ -9439,6 +9475,78 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/checkForUiUpdate",
       "text": "checkForUiUpdate checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult> Check a server for a newer UI and, when it offers a different version, install it. 1. Fetches ${baseUrl}/_denext/ota.json (with headers, cache: \"no-store\" and a timeout) and validates its shape. 2. Asks the native DenextOta plugin for its OtaStatus; if the manifest's version equals the running UI (pending, else current, else bundled), it returns current (as it does when the native side finds nothing to switch). 3. Otherwise the plugin downloads ${baseUrl}/<path> for every file (copying files it already has by SHA-256), verifies each SHA-256 and size, switches the webview's web root to the new directory and reloads. The new page must call otaBooted within the boot timeout (15 s of foreground time by default) or it is rolled back. It never throws. Outside the native shell it resolves { kind: \"unsupported\" } without touching the network. One check runs at a time: a call made while another is in flight gets that call's promise (and its options). Where the UI is served, plus headers, timeout and fetch. What happened, as an OtaCheckResult.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/completeAuthSession",
+      "kind": "function",
+      "title": "completeAuthSession",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/completeAuthSession",
+      "text": "completeAuthSession completeAuthSession(): boolean Finish a web openAuthSession: call it on the callback page the provider redirects the popup to (an https page of the same origin). It posts this page's full URL (code, state and all) to the window that opened the popup, addressed to this origin only, then closes the popup. Not needed inside the native shell, where the callback never loads a page. true when it posted to an opener; false when this page has no opener (it was opened directly, or the provider's Cross-Origin-Opener-Policy severed it), so the page can fall back to handling the callback itself.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/DeepLinkEvent",
+      "kind": "interface",
+      "title": "DeepLinkEvent",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/DeepLinkEvent",
+      "text": "DeepLinkEvent interface DeepLinkEvent One link that opened the app.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/DeepLinkOptions",
+      "kind": "interface",
+      "title": "DeepLinkOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/DeepLinkOptions",
+      "text": "DeepLinkOptions interface DeepLinkOptions Options for onDeepLink and useDeepLink.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/deviceInfo-fn",
+      "kind": "function",
+      "title": "deviceInfo",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/deviceInfo-fn",
+      "text": "deviceInfo deviceInfo(): Promise<DeviceInfo> Facts about the device the page runs on. - Inside the native shell with @capacitor/device installed (denext mobile add device), the model, OS version and simulator flag from the OS. - Otherwise a best-effort parse of navigator.userAgent (model and OS version only; it can be wrong, and iPadOS reports itself as a Mac). During SSR only platform is set. The device facts; platform is always present.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/DeviceInfo-iface",
+      "kind": "interface",
+      "title": "DeviceInfo",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/DeviceInfo-iface",
+      "text": "DeviceInfo interface DeviceInfo What deviceInfo reports. Only platform is always known.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/haptic",
+      "kind": "function",
+      "title": "haptic",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/haptic",
+      "text": "haptic haptic(kind: HapticKind): Promise<void> Play a short haptic. - Inside the native shell with @capacitor/haptics installed (denext mobile add haptics), light/medium/heavy are an impact, success/warning/error a notification, and selection a selection tick. - Elsewhere it calls navigator.vibrate with a short pattern where the browser has it (Android Chrome), and does nothing otherwise (iOS Safari, desktop, SSR). The feedback to play. A promise that settles once the haptic was requested. It rejects with a TypeError for an unknown kind, or if the native plugin rejects.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/HapticKind",
+      "kind": "typeAlias",
+      "title": "HapticKind",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/HapticKind",
+      "text": "HapticKind type HapticKind = light | medium | heavy | success | warning | error | selection A haptic feedback kind haptic can play.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/hideSplash",
+      "kind": "function",
+      "title": "hideSplash",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/hideSplash",
+      "text": "hideSplash hideSplash(): Promise<void> Hide the native launch splash screen, through @capacitor/splash-screen inside the shell (denext mobile add splash). Call it once the first screen has rendered, when the plugin is configured with launchAutoHide: false. On the web, and when the plugin is not installed, it does nothing. A promise that settles once the splash is hidden (at once off the shell).",
       "denextOnly": true
     },
     {
@@ -9487,6 +9595,33 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/LinkAccept",
+      "kind": "typeAlias",
+      "title": "LinkAccept",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LinkAccept",
+      "text": "LinkAccept type LinkAccept = parenthesized | LinkAllowList Which incoming links to act on: a predicate over the parsed URL, or an allow-list.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LinkAllowList",
+      "kind": "interface",
+      "title": "LinkAllowList",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LinkAllowList",
+      "text": "LinkAllowList interface LinkAllowList An allow-list for incoming links.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LinkRoute",
+      "kind": "typeAlias",
+      "title": "LinkRoute",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LinkRoute",
+      "text": "LinkRoute type LinkRoute = boolean | parenthesized How to navigate to an accepted link: true navigates with the page's router, false leaves it to the callback, and a function navigates itself (e.g. (path) => router.push(path)).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/MomentumSafeScrollOptions",
       "kind": "interface",
       "title": "MomentumSafeScrollOptions",
@@ -9514,12 +9649,75 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/NetworkConnectionType",
+      "kind": "typeAlias",
+      "title": "NetworkConnectionType",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/NetworkConnectionType",
+      "text": "NetworkConnectionType type NetworkConnectionType = wifi | cellular | none | unknown The kind of connection a NetworkStatus reports.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/networkStatus-fn",
+      "kind": "function",
+      "title": "networkStatus",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/networkStatus-fn",
+      "text": "networkStatus networkStatus(): Promise<NetworkStatus> Whether the device is online right now, and over what. - Inside the native shell with @capacitor/network installed (denext mobile add network), the OS's reachability: connectionType is \"wifi\", \"cellular\", \"none\" or \"unknown\". - Otherwise navigator.onLine (only \"offline\" is reliable there), with wifi/cellular from the Network Information API where the browser exposes it. During SSR it reads as connected, type \"unknown\". The current status.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/NetworkStatus-iface",
+      "kind": "interface",
+      "title": "NetworkStatus",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/NetworkStatus-iface",
+      "text": "NetworkStatus interface NetworkStatus Whether the device is online, and over what.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/onAppResume",
       "kind": "function",
       "title": "onAppResume",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/onAppResume",
       "text": "onAppResume onAppResume(cb: (awayMs: number) => void): () => void Call cb each time the page returns to the foreground, with how long it was away in milliseconds. It listens for visibilitychange (every browser and webview), pagehide/pageshow (a back-forward-cache restore) and the pause/resume document events that Capacitor's iOS shell fires on scene background/foreground. Whichever signal arrives first counts; the others are deduplicated, so cb runs once per return. A subscription made while the page is already hidden measures from the moment of subscribing. The time away is wall-clock (Date.now()), not performance.now(): iOS's monotonic clock stops while the device sleeps, which would under-report a phone left locked for an hour. A backwards clock jump reads as 0. **The intended pattern** (the rule T3 Code's native app uses): under 10 s away, the connection is probably intact, so probe it (a ping, a cheap refetch); 10 s or more, assume the OS froze the page and its sockets, so reconnect and refetch. SSR-safe: without a document it subscribes to nothing and returns a no-op. Called with awayMs, the time since the page was hidden. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onDeepLink",
+      "kind": "function",
+      "title": "onDeepLink",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onDeepLink",
+      "text": "onDeepLink onDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): () => void Call callback for every link that opens the app, and (by default) navigate to it. - **Cold start:** the link that launched the app is delivered once per page, with launch: true, to every subscriber registered before the shell answers (so subscribe early: a root layout or the app shell). A subscriber that registers after that, say on a component that remounts after a navigation, never sees it again, and neither does the page after a reload in the same session (e.g. an OTA update). - **Warm:** every link opened while the app runs, with launch: false. A link that arrives while nobody is subscribed waits in the shell for the next subscriber. - **Filter:** only links that pass options.accept (default: the app's custom schemes, no https host) reach callback. An unfiltered deep link is an injection vector: anyone can craft one, so treat its path and query as untrusted input. - **Route:** an accepted link's in-app path is navigated (see DeepLinkOptions.route), once per link however many subscribers see it. - **Auth callbacks:** while openAuthSession waits in the shell, links with its callback scheme (and, for a few seconds after, the callback it received) are its own and are not delivered here. On the web (and during SSR) there is no native plugin and this does nothing: the browser already loaded the linked URL. Needs @capacitor/app in the shell (denext mobile add deep-links --scheme myapp). Called with each accepted link. Which links to accept, and how to navigate. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onPushReceived",
+      "kind": "function",
+      "title": "onPushReceived",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onPushReceived",
+      "text": "onPushReceived onPushReceived(callback: (notification: PushNotification) => void): () => void Call callback for each notification that arrives while the app is in the foreground (one that arrives in the background shows in the tray; its tap reaches onPushTapped). Outside the native shell it does nothing. Called with each notification. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onPushTapped",
+      "kind": "function",
+      "title": "onPushTapped",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onPushTapped",
+      "text": "onPushTapped onPushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): () => void Call callback when the user taps a notification (or one of its actions), and by default navigate to its data.path / data.url (see PushTapOptions). A tap that cold-started the app is kept by the shell until the first listener, so it still arrives when you subscribe shortly after boot: subscribe early (a root layout or the app shell), because only the subscribers present when it is handed over see it. Outside the native shell it does nothing. Called with each tap. Which links to accept, and how to navigate. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/openAuthSession",
+      "kind": "function",
+      "title": "openAuthSession",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/openAuthSession",
+      "text": "openAuthSession openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult> Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to. - **iOS** (inside the Capacitor shell): an ASWebAuthenticationSession sheet. It shares Safari's cookies unless preferEphemeral, and catches the redirect to <callbackScheme>: itself. - **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its intent filter for callbackScheme (denext mobile add auth-session --scheme <scheme>) and resolves the call. Coming back without a callback (back button, closing the tab) rejects cancelled. While a session is open, a link with that scheme is not routed by onDeepLink. - **Web**: a popup window. Register an https page of this origin as the redirect URI and call completeAuthSession there; the popup posts its URL back and closes. A blocked popup rejects unsupported (call this from a click handler), and a popup closed without a callback rejects cancelled. A provider page served with Cross-Origin-Opener-Policy: same-origin cuts the popup off from this page, which then reads as cancelled: use a full-page redirect for such providers. Only one session is open at a time (busy otherwise). PKCE and state stay your job: this only opens the page and hands back the callback URL. Generate state (and a PKCE verifier) before the call, compare state after it, and exchange the code on your server. The provider's authorization URL (absolute https:). The callback scheme, and the iOS ephemeral and timeout options. The callback URL. It rejects with an AuthSessionError whose code is one of AuthSessionErrorCode.",
       "denextOnly": true
     },
     {
@@ -9649,12 +9847,138 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/PushNotification",
+      "kind": "interface",
+      "title": "PushNotification",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushNotification",
+      "text": "PushNotification interface PushNotification A push notification, as the shell reports it.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PushPermission",
+      "kind": "typeAlias",
+      "title": "PushPermission",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushPermission",
+      "text": "PushPermission type PushPermission = granted | denied | prompt | unsupported Whether the app may show notifications, or \"unsupported\" outside the native shell.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PushRegistration",
+      "kind": "interface",
+      "title": "PushRegistration",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushRegistration",
+      "text": "PushRegistration interface PushRegistration A device's push registration: the token your server sends to, and where it is valid.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PushTap",
+      "kind": "interface",
+      "title": "PushTap",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushTap",
+      "text": "PushTap interface PushTap A tap on (or an action of) a notification.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PushTapOptions",
+      "kind": "interface",
+      "title": "PushTapOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PushTapOptions",
+      "text": "PushTapOptions interface PushTapOptions Options for onPushTapped and usePushTapped.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/readClipboard",
+      "kind": "function",
+      "title": "readClipboard",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/readClipboard",
+      "text": "readClipboard readClipboard(): Promise<string> Read text from the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.readText(), which browsers gate behind a permission prompt or a user gesture. The clipboard's text (\"\" when it holds none).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/registerForPush",
+      "kind": "function",
+      "title": "registerForPush",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/registerForPush",
+      "text": "registerForPush registerForPush(options?: RegisterForPushOptions): Promise<PushRegistration> Register the device for remote notifications and resolve its token, for your server to send to through APNs (iOS) or FCM (Android). denext ships no push relay: store the token on your server (with the user it belongs to) and send from there. It listens for the plugin's registration / registrationError events, calls register(), and resolves the first answer, rejecting after timeoutMs (default 15 s). Its listeners are removed either way. Concurrent calls share one registration. Call it on every launch: the token can change. It does not ask for permission (see requestPushPermission), and it rejects outside the native shell or without @capacitor/push-notifications: there is no web-push fallback. The timeout. The platform and its token.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/RegisterForPushOptions",
+      "kind": "interface",
+      "title": "RegisterForPushOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/RegisterForPushOptions",
+      "text": "RegisterForPushOptions interface RegisterForPushOptions Options for registerForPush.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/requestPushPermission",
+      "kind": "function",
+      "title": "requestPushPermission",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/requestPushPermission",
+      "text": "requestPushPermission requestPushPermission(): Promise<PushPermission> Ask for permission to show notifications, when it has not been decided yet, and report the result: \"granted\", \"denied\" (the user said no; only the system settings can change it) or \"prompt\" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is \"unsupported\": there is no web-push fallback. Android before 13 needs no permission and always reads \"granted\". The permission state.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/SAFE_AREA_CSS",
       "kind": "variable",
       "title": "SAFE_AREA_CSS",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/SAFE_AREA_CSS",
       "text": "SAFE_AREA_CSS SAFE_AREA_CSS: string A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables. The insets are only non-zero when the viewport meta includes viewport-fit=cover. In the App Router, export viewport = { width: \"device-width\", initialScale: 1, viewportFit: \"cover\" } from the root layout. In SPA mode, put the meta tag in spa.head; denext's SPA shell keeps an app's own viewport meta instead of emitting its default.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/secureStore-var",
+      "kind": "variable",
+      "title": "secureStore",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/secureStore-var",
+      "text": "secureStore secureStore: SecureStore A string key-value store for secrets. - Inside the native shell with @aparajita/capacitor-secure-storage installed (denext mobile add secure-store), values live in the iOS Keychain (accessible when the device is unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the plugin's default prefix, so its own SecureStorage.getItem/setItem see the same entries. - **On the web it is NOT secret.** The fallback is a plain IndexedDB database (denext-secure-store) that any script on the origin, and anyone with the device's browser profile, can read. It keeps a web build working; it does not protect anything. Values are strings: JSON.stringify anything else.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SecureStore-iface",
+      "kind": "interface",
+      "title": "SecureStore",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SecureStore-iface",
+      "text": "SecureStore interface SecureStore The store secureStore implements.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/share",
+      "kind": "function",
+      "title": "share",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/share",
+      "text": "share share(opts: ShareOptions): Promise<ShareResult> Open the share sheet. - Inside the native shell with @capacitor/share installed (denext mobile add share), the OS share sheet. - Otherwise navigator.share where the browser has it (and canShare accepts the data). - Otherwise the text and URL are copied to the clipboard (joined by a space), and the result is \"copied\" so the UI can say so. A dismissed sheet resolves \"cancelled\" rather than rejecting. The title, text and URL to share. \"shared\", \"copied\" or \"cancelled\". It rejects with a TypeError when there is nothing to share, and when sharing or copying fails for another reason.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/ShareOptions",
+      "kind": "interface",
+      "title": "ShareOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/ShareOptions",
+      "text": "ShareOptions interface ShareOptions What share shares. At least one of text or url (or title) is needed.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/ShareResult",
+      "kind": "typeAlias",
+      "title": "ShareResult",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/ShareResult",
+      "text": "ShareResult type ShareResult = shared | copied | cancelled How a share ended: \"shared\" (the sheet completed), \"copied\" (no share sheet, so the text was copied to the clipboard) or \"cancelled\" (the user dismissed it).",
       "denextOnly": true
     },
     {
@@ -9676,6 +10000,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/useDeepLink",
+      "kind": "function",
+      "title": "useDeepLink",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useDeepLink",
+      "text": "useDeepLink useDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): void Hook form of onDeepLink: subscribes on mount, unsubscribes on unmount. The latest callback and options are used for each link (they are held in refs), so fresh closures each render never re-subscribe. Called with each accepted link. Which links to accept, and how to navigate.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useKeepAwake",
+      "kind": "function",
+      "title": "useKeepAwake",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useKeepAwake",
+      "text": "useKeepAwake useKeepAwake(active?: boolean): void Keep the screen from dimming and locking while the component is mounted and active is true (a video call, a recipe, a boarding pass). - Inside the native shell with @capacitor-community/keep-awake installed (denext mobile add keep-awake), the native flag. Several mounted callers share it: the screen may sleep again once the last one unmounts or turns active off. - Otherwise the Screen Wake Lock API (navigator.wakeLock), re-acquired whenever the page becomes visible again, since the browser releases it on every hide. Where the browser has no wake lock, or refuses one, it does nothing. Whether to hold the screen on (default true).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/useKeyboardInset",
       "kind": "function",
       "title": "useKeyboardInset",
@@ -9691,6 +10033,42 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/useMomentumSafeScroll",
       "text": "useMomentumSafeScroll useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. A change to force or settleMs re-runs the hook (it releases its share, then takes a new one); settleMs applies only when that share is the one that installs the shim, since a live install keeps its own options. { force, settleMs }, as for installMomentumSafeScroll.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useNetworkStatus",
+      "kind": "function",
+      "title": "useNetworkStatus",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useNetworkStatus",
+      "text": "useNetworkStatus useNetworkStatus(): NetworkStatus Hook form of networkStatus: the current status, updated on every change until unmount. Before mount (and during SSR) it reads { connected: true, connectionType: \"unknown\" }, so an offline banner never flashes on first paint. The latest network status.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/usePushReceived",
+      "kind": "function",
+      "title": "usePushReceived",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/usePushReceived",
+      "text": "usePushReceived usePushReceived(callback: (notification: PushNotification) => void): void Hook form of onPushReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback. Called with each notification received in the foreground.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/usePushTapped",
+      "kind": "function",
+      "title": "usePushTapped",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/usePushTapped",
+      "text": "usePushTapped usePushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): void Hook form of onPushTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options. Called with each tap. Which links to accept, and how to navigate.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/writeClipboard",
+      "kind": "function",
+      "title": "writeClipboard",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/writeClipboard",
+      "text": "writeClipboard writeClipboard(text: string): Promise<void> Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.writeText(). The text to copy. A promise that settles once the text is on the clipboard. It rejects where there is no clipboard (an insecure context, SSR) or when the platform refuses.",
       "denextOnly": true
     },
     {
