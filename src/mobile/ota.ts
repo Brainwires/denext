@@ -23,6 +23,42 @@
 import { shellPlugin } from "./bridge.ts";
 import { isOtaManifest, OTA_MANIFEST_PATH, type OtaManifest } from "./ota-manifest.ts";
 
+/**
+ * The `code` of a native `DenextOta` refusal, carried on an `error` result:
+ *
+ * - `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;
+ * - `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`
+ *   (the native side recomputes it from the file list), does not match;
+ * - `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;
+ * - `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the
+ *   manifest's `signature` is missing or does not verify;
+ * - `insecure`: the binary embeds no key and `baseUrl` is plain `http` to a host other than
+ *   loopback (`localhost`, `127.0.0.1`, `::1`, or `10.0.2.2` on the Android emulator).
+ *
+ * The signature and insecure checks run before any file is downloaded, and a refusal leaves
+ * the running UI and any staged one as they were.
+ */
+export type OtaErrorCode =
+  | "invalid"
+  | "busy"
+  | "rejected"
+  | "download"
+  | "integrity"
+  | "not_staged"
+  | "signature"
+  | "insecure";
+
+const OTA_ERROR_CODES: ReadonlySet<string> = new Set<OtaErrorCode>([
+  "invalid",
+  "busy",
+  "rejected",
+  "download",
+  "integrity",
+  "not_staged",
+  "signature",
+  "insecure",
+]);
+
 /** The native plugin's name: `window.Capacitor.Plugins.DenextOta`. */
 const PLUGIN_NAME = "DenextOta";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -99,8 +135,11 @@ export type OtaCheckResult =
    * `otaReset()` clears that) or `"busy"` (an apply or a trial launch is in progress).
    */
   | { readonly kind: "skipped"; readonly reason: "rejected" | "busy" }
-  /** Network, HTTP, JSON, manifest-shape, timeout, download or integrity failure. */
-  | { readonly kind: "error"; readonly reason: string };
+  /**
+   * Network, HTTP, JSON, manifest-shape, timeout, download, integrity, signature or transport
+   * failure. `code` is set when the native side refused (see {@linkcode OtaErrorCode}).
+   */
+  | { readonly kind: "error"; readonly reason: string; readonly code?: OtaErrorCode };
 
 /**
  * The outcome of {@linkcode prepareUiUpdate}. It never throws; every failure is a value.
@@ -129,8 +168,11 @@ export type OtaPrepareResult =
    * `otaReset()` clears that) or `"busy"` (a download or a trial launch is in progress).
    */
   | { readonly kind: "skipped"; readonly reason: "rejected" | "busy" }
-  /** Network, HTTP, JSON, manifest-shape, timeout, download or integrity failure. */
-  | { readonly kind: "error"; readonly reason: string };
+  /**
+   * Network, HTTP, JSON, manifest-shape, timeout, download, integrity, signature or transport
+   * failure. `code` is set when the native side refused (see {@linkcode OtaErrorCode}).
+   */
+  | { readonly kind: "error"; readonly reason: string; readonly code?: OtaErrorCode };
 
 /**
  * The outcome of {@linkcode applyUiUpdate} when it settles. On success the webview reloads
@@ -142,9 +184,9 @@ export type OtaApplyResult =
   /**
    * The native side refused: the version is not the staged one (`not_staged`), a download or
    * trial is in progress (`busy`), the version was rolled back (`rejected`), or it is not a
-   * version at all (`invalid`). `reason` is the native message.
+   * version at all (`invalid`). `reason` is the native message, `code` the native code.
    */
-  | { readonly kind: "error"; readonly reason: string };
+  | { readonly kind: "error"; readonly reason: string; readonly code?: OtaErrorCode };
 
 /** The `DenextOta` plugin when the shell registered one with every method, else undefined. */
 function otaPlugin(): DenextOtaPlugin | undefined {
@@ -170,6 +212,16 @@ function messageOf(err: unknown): string {
 /** The `code` of a Capacitor plugin rejection (`CapacitorException.code`), if any. */
 function codeOf(err: unknown): unknown {
   return typeof err === "object" && err !== null ? (err as { code?: unknown }).code : undefined;
+}
+
+/** A native refusal as an `error` result, with its code when it is a known one. */
+function nativeError(
+  err: unknown,
+): { readonly kind: "error"; readonly reason: string; readonly code?: OtaErrorCode } {
+  const code = codeOf(err);
+  return typeof code === "string" && OTA_ERROR_CODES.has(code)
+    ? { kind: "error", reason: messageOf(err), code: code as OtaErrorCode }
+    : { kind: "error", reason: messageOf(err) };
 }
 
 /** Fetch and validate `${baseUrl}/_denext/ota.json`; a string is the failure reason. */
@@ -239,10 +291,10 @@ function refusal(
   err: unknown,
 ):
   | { readonly kind: "skipped"; readonly reason: "rejected" | "busy" }
-  | { readonly kind: "error"; readonly reason: string } {
+  | { readonly kind: "error"; readonly reason: string; readonly code?: OtaErrorCode } {
   const code = codeOf(err);
   if (code === "rejected" || code === "busy") return { kind: "skipped", reason: code };
-  return { kind: "error", reason: messageOf(err) };
+  return nativeError(err);
 }
 
 /** The whole check; {@linkcode checkForUiUpdate} adds the single-flight wrapper. */
@@ -409,7 +461,7 @@ export async function applyUiUpdate(version: string): Promise<OtaApplyResult> {
   try {
     await plugin.activate({ version });
   } catch (err) {
-    return { kind: "error", reason: messageOf(err) };
+    return nativeError(err);
   }
   // The native side has switched the web root and is reloading: this page is going away.
   return await new Promise<never>(() => {});

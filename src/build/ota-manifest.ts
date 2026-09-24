@@ -2,7 +2,8 @@
 // write `_denext/ota.json` into it. `denext export` runs it as its last step when
 // `spa.ota` is on, and `denext ota manifest <dir>` runs it on demand (for an app that
 // post-processes its export, e.g. swapping brand icons in, and must re-stamp afterwards).
-// The version algorithm lives in src/mobile/ota-manifest.ts, shared with the client.
+// The version algorithm lives in src/mobile/ota-manifest.ts, shared with the client; signing
+// (a key given, or DENEXT_OTA_SIGNING_KEY) lives in ./ota-signing.ts.
 
 import { dirname, join } from "@std/path";
 import {
@@ -14,6 +15,7 @@ import {
   type OtaManifestMeta,
   sha256Hex,
 } from "../mobile/ota-manifest.ts";
+import { signOtaManifest } from "./ota-signing.ts";
 
 /** Every regular file under `dir`, as forward-slash paths prefixed with `prefix`. */
 async function listFiles(dir: string, prefix: string): Promise<string[]> {
@@ -54,6 +56,8 @@ export async function collectOtaManifest(
  *
  * @param dir The web root (e.g. `out/`); it must contain an `index.html`.
  * @param meta Optional `required` / `notes`; a key left out is left out of the manifest.
+ * @param signingKey An ECDSA P-256 private key (`loadOtaSigningKey`): the manifest then carries
+ *   a `signature` over its version, `required` and `notes`.
  * @returns The manifest written.
  * @throws When `dir` has no `index.html` (the native side refuses such a UI), or when
  *   `meta.notes` is too long.
@@ -61,13 +65,15 @@ export async function collectOtaManifest(
 export async function writeOtaManifest(
   dir: string,
   meta: OtaManifestMeta = {},
+  signingKey?: CryptoKey,
 ): Promise<OtaManifest> {
   try {
     if (!(await Deno.stat(join(dir, "index.html"))).isFile) throw new Error("not a file");
   } catch {
     throw new Error(`${dir} has no index.html, so it is not a web root an app can boot`);
   }
-  const manifest = await collectOtaManifest(dir, meta);
+  const collected = await collectOtaManifest(dir, meta);
+  const manifest = signingKey ? await signOtaManifest(collected, signingKey) : collected;
   const target = join(dir, ...OTA_MANIFEST_PATH.split("/"));
   await Deno.mkdir(dirname(target), { recursive: true });
   await Deno.writeTextFile(target, JSON.stringify(manifest) + "\n");

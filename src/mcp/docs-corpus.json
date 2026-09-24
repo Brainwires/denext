@@ -2517,7 +2517,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.7.1 The denext framework version.",
+      "text": "VERSION VERSION: 2.8.0 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -9529,6 +9529,15 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/OtaCheckResult",
       "text": "OtaCheckResult type OtaCheckResult = object | object | object | object | object The outcome of checkForUiUpdate. It never throws; every failure is a value.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/OtaErrorCode",
+      "kind": "typeAlias",
+      "title": "OtaErrorCode",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/OtaErrorCode",
+      "text": "OtaErrorCode type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure The code of a native DenextOta refusal, carried on an error result: - invalid: a malformed request or manifest; busy, rejected: see the results; - download: a file could not be fetched; integrity: a file, or the manifest's version (the native side recomputes it from the file list), does not match; - not_staged: applyUiUpdate named a version that is not staged; - signature: the app binary embeds a public key (denext mobile add-ota --public-key) and the manifest's signature is missing or does not verify; - insecure: the binary embeds no key and baseUrl is plain http to a host other than loopback (localhost, 127.0.0.1, ::1, or 10.0.2.2 on the Android emulator). The signature and insecure checks run before any file is downloaded, and a refusal leaves the running UI and any staged one as they were.",
       "denextOnly": true
     },
     {

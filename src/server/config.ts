@@ -302,7 +302,8 @@ export interface SpaConfig {
    * them) into the export directory as its last step. A Capacitor shell with the
    * `DenextOta` plugin (`denext mobile add-ota`) reads the bundled copy to know which UI it
    * ships, and `checkForUiUpdate` from `denext/mobile` compares a server's copy against it.
-   * Default `false`. `*.gz` siblings are never listed.
+   * Default `false`. `*.gz` siblings are never listed. When the `DENEXT_OTA_SIGNING_KEY` env var
+   * holds a PKCS#8 PEM (`denext ota keygen`), the manifest is also signed.
    */
   ota?: boolean;
   /** `deno desktop` packaging settings (used when building the desktop app). */

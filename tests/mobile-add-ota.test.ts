@@ -1,11 +1,13 @@
 // `denext mobile add-ota` (src/build/mobile-ota-install.ts): installs the DenextOta native
 // templates into a Capacitor 8 project, wires the stock bridge view controller and
-// MainActivity, reports customised ones as manual steps, and is idempotent.
+// MainActivity, embeds the OTA public key, reports customised ones as manual steps, and is
+// idempotent.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { addOtaToProject } from "../src/build/mobile-ota-install.ts";
 import { OTA_ANDROID_FILES, OTA_IOS_FILES } from "../src/build/ota-native-templates.ts";
+import { generateOtaKeyPair } from "../src/build/ota-signing.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 
 const PBXPROJ = await Deno.readTextFile(
@@ -307,4 +309,268 @@ Deno.test("native templates: Android registers and implements download/activate 
   assertStringIncludes(body(store, "synchronized void reset()"), ".remove(KEY_STAGED)");
   assert(!body(store, "private File prepareLaunch()").includes("STAGED"));
   assert(!body(store, "synchronized File startDirectory()").includes("STAGED"));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Signed OTA: the public key embedded by --public-key, and the native verification branches.
+
+const STOCK_INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>App</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+</dict>
+</plist>
+`;
+
+const STOCK_ANDROID_MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="true"
+        android:label="@string/app_name">
+
+        <activity android:name=".MainActivity" android:exported="true" />
+    </application>
+
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
+`;
+
+const INFO_PLIST = "ios/App/App/Info.plist";
+const ANDROID_MANIFEST = "android/app/src/main/AndroidManifest.xml";
+
+/** A stock project that also has Info.plist and AndroidManifest.xml. */
+const keyedProject = () =>
+  project({ [INFO_PLIST]: STOCK_INFO_PLIST, [ANDROID_MANIFEST]: STOCK_ANDROID_MANIFEST });
+
+Deno.test("add-ota: publicKey is embedded in Info.plist and AndroidManifest, idempotently", async () => {
+  const dir = await keyedProject();
+  try {
+    const first = (await generateOtaKeyPair()).publicKey;
+    const report = await addOtaToProject({ dir, publicKey: first });
+    assertEquals(report.manual, []);
+    assert(report.written.includes(INFO_PLIST) && report.written.includes(ANDROID_MANIFEST));
+    const plist = await read(dir, INFO_PLIST);
+    assertStringIncludes(
+      plist,
+      `\t<key>DenextOtaPublicKey</key>\n\t<string>${first}</string>\n</dict>\n</plist>`,
+    );
+    // The nested ATS dict is untouched: the key goes into the top-level dict.
+    assertStringIncludes(plist, "\t\t<true/>\n\t</dict>\n\t<key>DenextOtaPublicKey</key>");
+    const manifest = await read(dir, ANDROID_MANIFEST);
+    assertStringIncludes(
+      manifest,
+      `        <meta-data android:name="dev.denext.ota.PUBLIC_KEY" android:value="${first}" />\n    </application>`,
+    );
+
+    // Same key again: nothing changes.
+    const again = await addOtaToProject({ dir, publicKey: first });
+    assertEquals(again.written, []);
+    assertEquals(await read(dir, INFO_PLIST), plist);
+    assertEquals(await read(dir, ANDROID_MANIFEST), manifest);
+
+    // A new key replaces the old one (exactly one entry each).
+    const second = (await generateOtaKeyPair()).publicKey;
+    await addOtaToProject({ dir, publicKey: second });
+    const plist2 = await read(dir, INFO_PLIST);
+    const manifest2 = await read(dir, ANDROID_MANIFEST);
+    assertEquals(plist2, plist.replace(first, second));
+    assertEquals(manifest2, manifest.replace(first, second));
+    assertEquals(plist2.split("DenextOtaPublicKey").length, 2);
+    assertEquals(manifest2.split("dev.denext.ota.PUBLIC_KEY").length, 2);
+
+    // Without a key, neither file is touched (and an embedded key stays).
+    const plain = await addOtaToProject({ dir });
+    assert(!plain.written.includes(INFO_PLIST) && !plain.written.includes(ANDROID_MANIFEST));
+    assertEquals(await read(dir, INFO_PLIST), plist2);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("add-ota: a project without Info.plist / AndroidManifest gets manual key steps", async () => {
+  const dir = await project();
+  try {
+    const report = await addOtaToProject({
+      dir,
+      publicKey: (await generateOtaKeyPair()).publicKey,
+    });
+    assert(report.manual.some((m) => m.startsWith(INFO_PLIST) && m.includes("DenextOtaPublicKey")));
+    assert(
+      report.manual.some((m) =>
+        m.startsWith(ANDROID_MANIFEST) && m.includes("dev.denext.ota.PUBLIC_KEY")
+      ),
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Run `denext mobile add-ota <dir>` with `flags`, returning what it logged. */
+async function addOtaVerb(dir: string, flags: Record<string, string | boolean>): Promise<string[]> {
+  const log = console.log;
+  const lines: string[] = [];
+  console.log = (...a: unknown[]) => void lines.push(a.join(" "));
+  try {
+    await buildRegistry().get("mobile")!.run({
+      positionals: ["add-ota", dir],
+      flags,
+      global: { json: false, verbose: false, quiet: false },
+      rest: [],
+    });
+  } finally {
+    console.log = log;
+  }
+  return lines;
+}
+
+Deno.test("denext mobile add-ota --public-key takes base64 SPKI or a PEM; no key prints the https note", async () => {
+  const dir = await keyedProject();
+  try {
+    const plain = await addOtaVerb(dir, {});
+    assert(
+      plain.some((l) => l.includes("unsigned OTA only works over https or loopback")),
+      plain.join("\n"),
+    );
+    const { publicKey } = await generateOtaKeyPair();
+    const pem = `-----BEGIN PUBLIC KEY-----\n${publicKey.match(/.{1,64}/g)!.join("\n")}\n` +
+      "-----END PUBLIC KEY-----\n";
+    await Deno.writeTextFile(join(dir, "ota.pem"), pem);
+    const keyed = await addOtaVerb(dir, { "public-key": join(dir, "ota.pem") });
+    assert(!keyed.some((l) => l.includes("unsigned OTA")), keyed.join("\n"));
+    assertStringIncludes(await read(dir, INFO_PLIST), `<string>${publicKey}</string>`);
+    assertStringIncludes(await read(dir, ANDROID_MANIFEST), `android:value="${publicKey}"`);
+    // `denext ota keygen`'s .pub (one base64 line) works as is.
+    const other = (await generateOtaKeyPair()).publicKey;
+    await Deno.writeTextFile(join(dir, "ota.key.pub"), other + "\n");
+    await addOtaVerb(dir, { "public-key": join(dir, "ota.key.pub") });
+    assertStringIncludes(await read(dir, INFO_PLIST), `<string>${other}</string>`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext mobile add-ota --public-key refuses a key that is not P-256 SPKI, writing nothing", async () => {
+  const dir = await keyedProject();
+  const exit = Deno.exit;
+  const error = console.error;
+  const errors: string[] = [];
+  try {
+    await Deno.writeTextFile(join(dir, "bad.pub"), "definitely not a key");
+    Deno.exit = ((code?: number) => {
+      throw new Error(`exit ${code}`);
+    }) as typeof Deno.exit;
+    console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+    let thrown = "";
+    try {
+      await addOtaVerb(dir, { "public-key": join(dir, "bad.pub") });
+    } catch (err) {
+      thrown = String(err);
+    }
+    assertStringIncludes(thrown, "exit 1");
+    assert(errors.some((e) => e.includes("P-256")), errors.join("\n"));
+    assertEquals(await read(dir, INFO_PLIST), STOCK_INFO_PLIST);
+    assertEquals(await read(dir, ANDROID_MANIFEST), STOCK_ANDROID_MANIFEST);
+  } finally {
+    Deno.exit = exit;
+    console.error = error;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("native templates: iOS recomputes the version and enforces the signature/transport policy", () => {
+  const store = OTA_IOS_FILES["DenextOtaStore.swift"];
+  const init = body(store, "init(baseUrl: String?, headers: JSObject?, manifest: JSObject?)");
+  // files → version → signature, all inside the request parse (before any download).
+  const recompute = init.indexOf("DenextOtaStore.manifestVersion(files) == version");
+  const trust = init.indexOf("try DenextOtaStore.checkTrust(");
+  assert(recompute > 0 && trust > recompute, init);
+  assertStringIncludes(init, `code: "integrity"`);
+  assertStringIncludes(init, `signature: manifest["signature"] as? String`);
+  assertStringIncludes(store, "$0.path.utf16.lexicographicallyPrecedes($1.path.utf16)");
+  assertStringIncludes(store, '.map { "\\($0.path)\\t\\($0.sha256)\\n" }');
+  assertStringIncludes(
+    store,
+    '"denext-ota-v1\\n\\(version)\\n\\(required ? "1" : "0")\\n\\(sha256Hex(Data(notes.utf8)))"',
+  );
+  // The key comes from Info.plist only, through CryptoKit.
+  assertStringIncludes(store, `static let publicKeyInfoKey = "DenextOtaPublicKey"`);
+  assertStringIncludes(store, "Bundle.main.object(forInfoDictionaryKey:");
+  assertStringIncludes(store, "P256.Signing.PublicKey(derRepresentation: der)");
+  assertStringIncludes(store, "P256.Signing.ECDSASignature(rawRepresentation: raw)");
+  assertStringIncludes(store, "key.isValidSignature(ecdsa, for: payload)");
+  const policy = body(store, "static func checkTrust(");
+  assertStringIncludes(policy, `code: "signature"`);
+  assertStringIncludes(policy, `case .invalid:\n            throw OtaError(code: "signature"`);
+  assertStringIncludes(policy, `code: "insecure"`);
+  assertStringIncludes(
+    policy,
+    `baseUrl.scheme?.lowercased() == "https" || loopbackHosts.contains(host)`,
+  );
+  assertStringIncludes(
+    store,
+    `static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1", "[::1]", "10.0.2.2"]`,
+  );
+  // The plugin parses (and so verifies) the request before touching any state.
+  const plugin = OTA_IOS_FILES["DenextOtaPlugin.swift"];
+  for (const method of ["download", "apply"]) {
+    const fn = body(plugin, `@objc func ${method}(`);
+    assert(fn.indexOf("parseRequest(call)") < fn.indexOf("DispatchQueue.main.async"), fn);
+  }
+});
+
+Deno.test("native templates: Android recomputes the version and enforces the signature/transport policy", () => {
+  const plugin = OTA_ANDROID_FILES["DenextOtaPlugin.java"];
+  const store = OTA_ANDROID_FILES["DenextOtaStore.java"];
+  const parse = plugin.slice(
+    plugin.indexOf("private static DenextOtaStore.ApplyRequest parseApplyRequest("),
+  );
+  const recompute = parse.indexOf("DenextOtaStore.manifestVersion(files).equals(version)");
+  const trust = parse.indexOf("store.checkTrust(");
+  assert(recompute > 0 && trust > recompute, parse);
+  assertStringIncludes(parse, `new DenextOtaStore.OtaException("integrity"`);
+  for (const method of ["download", "apply"]) {
+    assertStringIncludes(
+      body(plugin, `public void ${method}(`),
+      "parseApplyRequest(call, store())",
+    );
+  }
+  assertStringIncludes(store, "Collections.sort(sorted, (a, b) -> a.path.compareTo(b.path));");
+  assertStringIncludes(store, ".append('\\t').append(file.sha256).append('\\n');");
+  assertStringIncludes(
+    store,
+    `"denext-ota-v1\\n" + version + "\\n" + (required ? "1" : "0") + "\\n"`,
+  );
+  // The key comes from the manifest meta-data only; raw r‖s becomes DER for SHA256withECDSA.
+  assertStringIncludes(store, `PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY"`);
+  assertStringIncludes(store, "PackageManager.GET_META_DATA");
+  assertStringIncludes(
+    store,
+    `KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(spki))`,
+  );
+  assertStringIncludes(store, `Signature.getInstance("SHA256withECDSA")`);
+  assertStringIncludes(store, "import android.util.Base64;");
+  assert(!store.includes("P1363".concat("Format")) && !store.includes("java.util.Base64"));
+  assertStringIncludes(store, "static byte[] rawSignatureToDer(byte[] raw)");
+  const policy = body(store, "void checkTrust(");
+  assertStringIncludes(policy, `new OtaException(\n                    "insecure"`);
+  assertStringIncludes(
+    policy,
+    `"https".equalsIgnoreCase(base.getScheme()) && !LOOPBACK_HOSTS.contains(host)`,
+  );
+  assertStringIncludes(
+    store,
+    `throw new OtaException("signature", "The manifest signature is missing or does not verify.")`,
+  );
+  assertStringIncludes(
+    store,
+    `Arrays.asList("localhost", "127.0.0.1", "::1", "[::1]", "10.0.2.2")`,
+  );
 });

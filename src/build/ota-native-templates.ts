@@ -71,7 +71,9 @@ import Foundation
 /// - \`status() → { current, bundled, pending, rejected, staged }\`
 /// - \`download({ baseUrl, headers, manifest }) → { version, downloaded, copied }\`: downloads and
 ///   verifies the version and records it as staged, WITHOUT switching to it; rejects with code
-///   \`invalid\`, \`busy\`, \`rejected\`, \`download\` or \`integrity\`
+///   \`invalid\`, \`busy\`, \`rejected\`, \`download\`, \`integrity\`, \`signature\` or \`insecure\`
+///   (the last two, and a version that does not match the files, before any download: see
+///   \`DenextOtaStore.checkTrust\`)
 /// - \`activate({ version }) → { version }\`: switches to the staged version (its trial launch);
 ///   rejects with code \`invalid\`, \`busy\`, \`not_staged\` or \`rejected\`
 /// - \`apply({ baseUrl, headers, manifest }) → { version, downloaded, copied }\`: \`download\` then
@@ -364,6 +366,10 @@ final class DenextOtaStore {
         let size: Int
     }
 
+    /// The request \`download\` and \`apply\` take. Building one is the whole trust check, done
+    /// before anything is downloaded or any state changes: the file list must hash to the
+    /// manifest's \`version\` (code \`integrity\`), and \`checkTrust\` must accept the signature
+    /// or the transport (codes \`signature\` / \`insecure\`).
     struct ApplyRequest {
         let baseUrl: URL
         let headers: [String: String]
@@ -401,6 +407,17 @@ final class DenextOtaStore {
             guard seen.contains("index.html") else {
                 throw OtaError(code: "invalid", message: "The manifest has no index.html.")
             }
+            // The version is recomputed from the files, never trusted: files → version → signature.
+            guard DenextOtaStore.manifestVersion(files) == version else {
+                throw OtaError(code: "integrity", message: "The manifest version does not match its files.")
+            }
+            try DenextOtaStore.checkTrust(
+                baseUrl: baseUrl,
+                version: version,
+                required: (manifest["required"] as? Bool) ?? false,
+                notes: (manifest["notes"] as? String) ?? "",
+                signature: manifest["signature"] as? String
+            )
             self.baseUrl = baseUrl
             self.headers = headerFields
             self.version = version
@@ -478,6 +495,77 @@ final class DenextOtaStore {
 
     static func sha256Hex(_ data: Data) -> String {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    // MARK: Trust
+
+    /// The Info.plist string key holding the OTA public key: base64 of the DER SubjectPublicKeyInfo
+    /// of an ECDSA P-256 key (\`denext mobile add-ota --public-key\`). Read from the app binary only.
+    static let publicKeyInfoKey = "DenextOtaPublicKey"
+    /// The hosts an unsigned UI may come from over plain http when no public key is embedded.
+    static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1", "[::1]", "10.0.2.2"]
+
+    enum PublicKeyConfig {
+        case unset
+        case invalid
+        case key(P256.Signing.PublicKey)
+    }
+
+    /// The embedded public key. A value that is present but does not parse is \`invalid\`, which
+    /// refuses every manifest (fail closed) rather than falling back to unsigned updates.
+    static let publicKey: PublicKeyConfig = {
+        guard let text = (Bundle.main.object(forInfoDictionaryKey: DenextOtaStore.publicKeyInfoKey) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return .unset
+        }
+        guard let der = Data(base64Encoded: text),
+              let key = try? P256.Signing.PublicKey(derRepresentation: der) else {
+            return .invalid
+        }
+        return .key(key)
+    }()
+
+    /// The manifest version of \`files\`: SHA-256 over the \`"<path>\\t<sha256>\\n"\` lines sorted by
+    /// path in UTF-16 code-unit order, exactly as \`otaManifestVersion\` in denext computes it.
+    static func manifestVersion(_ files: [ManifestFile]) -> String {
+        let lines = files
+            .sorted { $0.path.utf16.lexicographicallyPrecedes($1.path.utf16) }
+            .map { "\\($0.path)\\t\\($0.sha256)\\n" }
+            .joined()
+        return sha256Hex(Data(lines.utf8))
+    }
+
+    /// The bytes a manifest signature covers (denext's \`otaSignaturePayload\`): the UTF-8 of
+    /// \`"denext-ota-v1\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes)\`.
+    static func signaturePayload(version: String, required: Bool, notes: String) -> Data {
+        let text = "denext-ota-v1\\n\\(version)\\n\\(required ? "1" : "0")\\n\\(sha256Hex(Data(notes.utf8)))"
+        return Data(text.utf8)
+    }
+
+    /// The download policy, checked before any file is fetched. With a public key embedded, the
+    /// manifest must carry a valid signature (code \`signature\`), whatever the transport. Without
+    /// one, only https, or plain http to a loopback host, is allowed (code \`insecure\`).
+    static func checkTrust(baseUrl: URL, version: String, required: Bool, notes: String, signature: String?) throws {
+        switch publicKey {
+        case .key(let key):
+            let payload = signaturePayload(version: version, required: required, notes: notes)
+            guard let signature = signature,
+                  let raw = Data(base64Encoded: signature),
+                  let ecdsa = try? P256.Signing.ECDSASignature(rawRepresentation: raw),
+                  key.isValidSignature(ecdsa, for: payload) else {
+                throw OtaError(code: "signature", message: "The manifest signature is missing or does not verify.")
+            }
+        case .invalid:
+            throw OtaError(code: "signature", message: "Info.plist \\(publicKeyInfoKey) is not a base64 P-256 public key.")
+        case .unset:
+            let host = (baseUrl.host ?? "").lowercased()
+            guard baseUrl.scheme?.lowercased() == "https" || loopbackHosts.contains(host) else {
+                throw OtaError(
+                    code: "insecure",
+                    message: "Refusing an unsigned UI over plain http from \\(host); use https or embed a public key."
+                )
+            }
+        }
     }
 
     /// \`<directory>/_denext/ota.json\` as a JSON object, if present and readable.
@@ -849,8 +937,9 @@ import org.json.JSONObject;
  *   <li>{@code status() → { current, bundled, pending, rejected, staged }}
  *   <li>{@code download({ baseUrl, headers, manifest }) → { version, downloaded, copied }}:
  *       downloads and verifies the version and records it as staged, WITHOUT switching to it;
- *       rejects with code {@code invalid}, {@code busy}, {@code rejected}, {@code download} or
- *       {@code integrity}
+ *       rejects with code {@code invalid}, {@code busy}, {@code rejected}, {@code download},
+ *       {@code integrity}, {@code signature} or {@code insecure} (the last two, and a version that
+ *       does not match the files, before any download: see {@link DenextOtaStore#checkTrust})
  *   <li>{@code activate({ version }) → { version }}: switches to the staged version (its trial
  *       launch); rejects with code {@code invalid}, {@code busy}, {@code not_staged} or
  *       {@code rejected}
@@ -911,7 +1000,7 @@ public class DenextOtaPlugin extends Plugin {
     public void download(PluginCall call) {
         final DenextOtaStore.ApplyRequest request;
         try {
-            request = parseApplyRequest(call);
+            request = parseApplyRequest(call, store());
         } catch (DenextOtaStore.OtaException ex) {
             call.reject(ex.getMessage(), ex.code);
             return;
@@ -974,7 +1063,7 @@ public class DenextOtaPlugin extends Plugin {
     public void apply(PluginCall call) {
         final DenextOtaStore.ApplyRequest request;
         try {
-            request = parseApplyRequest(call);
+            request = parseApplyRequest(call, store());
         } catch (DenextOtaStore.OtaException ex) {
             call.reject(ex.getMessage(), ex.code);
             return;
@@ -1129,7 +1218,14 @@ public class DenextOtaPlugin extends Plugin {
         return value == null ? JSONObject.NULL : value;
     }
 
-    private static DenextOtaStore.ApplyRequest parseApplyRequest(PluginCall call) throws DenextOtaStore.OtaException {
+    /**
+     * The request download and apply take. Building one is the whole trust check, done before
+     * anything is downloaded or any state changes: the file list must hash to the manifest's
+     * version (code integrity), and {@link DenextOtaStore#checkTrust} must accept the signature or
+     * the transport (codes signature / insecure).
+     */
+    private static DenextOtaStore.ApplyRequest parseApplyRequest(PluginCall call, DenextOtaStore store)
+        throws DenextOtaStore.OtaException {
         String baseUrl = call.getString("baseUrl");
         Uri base = baseUrl == null ? null : Uri.parse(baseUrl);
         if (
@@ -1185,6 +1281,19 @@ public class DenextOtaPlugin extends Plugin {
         if (!seen.contains("index.html")) {
             throw new DenextOtaStore.OtaException("invalid", "The manifest has no index.html.");
         }
+        // The version is recomputed from the files, never trusted: files → version → signature.
+        if (!DenextOtaStore.manifestVersion(files).equals(version)) {
+            throw new DenextOtaStore.OtaException("integrity", "The manifest version does not match its files.");
+        }
+        Object notes = manifest.opt("notes");
+        Object signature = manifest.opt("signature");
+        store.checkTrust(
+            base,
+            version,
+            Boolean.TRUE.equals(manifest.opt("required")),
+            notes instanceof String ? (String) notes : "",
+            signature instanceof String ? (String) signature : null
+        );
         return new DenextOtaStore.ApplyRequest(baseUrl, headers, version, files);
     }
 }
@@ -1197,9 +1306,11 @@ package dev.denext.ota;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.util.Base64;
 import androidx.annotation.Nullable;
 import androidx.core.content.pm.PackageInfoCompat;
 import com.getcapacitor.Logger;
@@ -1209,15 +1320,27 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigInteger;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
+import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.PublicKey;
+import java.security.Signature;
+import java.security.interfaces.ECPublicKey;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -1266,6 +1389,21 @@ final class DenextOtaStore {
     private static final String KEY_BINARY_VERSION = "binaryVersion";
     private static final int MAX_CONCURRENT_DOWNLOADS = 6;
     private static final int PER_FILE_TIMEOUT_MS = 30_000;
+    /**
+     * The {@code <meta-data>} (inside {@code <application>}) holding the OTA public key: base64 of
+     * the DER SubjectPublicKeyInfo of an ECDSA P-256 key ({@code denext mobile add-ota --public-key}).
+     * Read from the app binary only.
+     */
+    static final String PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY";
+    /** The group order n of NIST P-256 (secp256r1), which identifies the curve of a parsed key. */
+    private static final BigInteger P256_ORDER = new BigInteger(
+        "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
+        16
+    );
+    /** The hosts an unsigned UI may come from over plain http when no public key is embedded. */
+    static final Set<String> LOOPBACK_HOSTS = new HashSet<>(
+        Arrays.asList("localhost", "127.0.0.1", "::1", "[::1]", "10.0.2.2")
+    );
 
     private static DenextOtaStore shared;
 
@@ -1350,6 +1488,148 @@ final class DenextOtaStore {
 
     static boolean isSha256(@Nullable String value) {
         return value != null && value.matches("[0-9a-f]{64}");
+    }
+
+    /**
+     * The manifest version of {@code files}: SHA-256 over the {@code "<path>\\t<sha256>\\n"} lines
+     * sorted by path ({@link String#compareTo} is UTF-16 code-unit order, as in denext's
+     * {@code otaManifestVersion}).
+     */
+    static String manifestVersion(List<ManifestFile> files) {
+        List<ManifestFile> sorted = new ArrayList<>(files);
+        Collections.sort(sorted, (a, b) -> a.path.compareTo(b.path));
+        StringBuilder lines = new StringBuilder();
+        for (ManifestFile file : sorted) {
+            lines.append(file.path).append('\\t').append(file.sha256).append('\\n');
+        }
+        return sha256Hex(lines.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * The bytes a manifest signature covers (denext's {@code otaSignaturePayload}): the UTF-8 of
+     * {@code "denext-ota-v1\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes)}.
+     */
+    static byte[] signaturePayload(String version, boolean required, String notes) {
+        String text = "denext-ota-v1\\n" + version + "\\n" + (required ? "1" : "0") + "\\n"
+            + sha256Hex(notes.getBytes(StandardCharsets.UTF_8));
+        return text.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The download policy, checked before any file is fetched. With a public key embedded, the
+     * manifest must carry a valid signature (code signature), whatever the transport; a key that
+     * is present but does not parse refuses every manifest. Without one, only https, or plain
+     * http to a loopback host, is allowed (code insecure).
+     */
+    void checkTrust(Uri base, String version, boolean required, String notes, @Nullable String signature)
+        throws OtaException {
+        String encodedKey = publicKeyMetaData();
+        if (encodedKey == null) {
+            String host = base.getHost() == null ? "" : base.getHost().toLowerCase(Locale.ROOT);
+            if (!"https".equalsIgnoreCase(base.getScheme()) && !LOOPBACK_HOSTS.contains(host)) {
+                throw new OtaException(
+                    "insecure",
+                    "Refusing an unsigned UI over plain http from " + host + "; use https or embed a public key."
+                );
+            }
+            return;
+        }
+        PublicKey key = parsePublicKey(encodedKey);
+        if (key == null) {
+            throw new OtaException("signature", "The " + PUBLIC_KEY_META + " meta-data is not a base64 P-256 public key.");
+        }
+        if (!isValidSignature(key, signaturePayload(version, required, notes), signature)) {
+            throw new OtaException("signature", "The manifest signature is missing or does not verify.");
+        }
+    }
+
+    /** The {@link #PUBLIC_KEY_META} value, or null when the app embeds none. */
+    @Nullable
+    private String publicKeyMetaData() throws OtaException {
+        ApplicationInfo info;
+        try {
+            info = context.getPackageManager().getApplicationInfo(context.getPackageName(), PackageManager.GET_META_DATA);
+        } catch (PackageManager.NameNotFoundException ex) {
+            throw new OtaException("signature", "Could not read the app's meta-data.");
+        }
+        Object value = info.metaData == null ? null : info.metaData.get(PUBLIC_KEY_META);
+        if (value == null) {
+            return null;
+        }
+        // A non-string value is kept (and then fails to parse): present but unusable fails closed.
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    /** An EC P-256 public key from base64 DER SubjectPublicKeyInfo, or null (another curve included). */
+    @Nullable
+    private static PublicKey parsePublicKey(String encoded) {
+        try {
+            byte[] spki = Base64.decode(encoded, Base64.DEFAULT);
+            PublicKey key = KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(spki));
+            if (!(key instanceof ECPublicKey) || !P256_ORDER.equals(((ECPublicKey) key).getParams().getOrder())) {
+                return null;
+            }
+            return key;
+        } catch (IllegalArgumentException | GeneralSecurityException ex) {
+            return null;
+        }
+    }
+
+    /** Whether {@code signature} (base64 of the raw 64-byte r‖s) verifies over {@code payload}. */
+    private static boolean isValidSignature(PublicKey key, byte[] payload, @Nullable String signature) {
+        if (signature == null) {
+            return false;
+        }
+        try {
+            byte[] der = rawSignatureToDer(Base64.decode(signature, Base64.DEFAULT));
+            if (der == null) {
+                return false;
+            }
+            Signature verifier = Signature.getInstance("SHA256withECDSA");
+            verifier.initVerify(key);
+            verifier.update(payload);
+            return verifier.verify(der);
+        } catch (IllegalArgumentException | GeneralSecurityException ex) {
+            return false;
+        }
+    }
+
+    /**
+     * WebCrypto's raw r‖s (32 + 32 bytes) as the ASN.1 DER {@code SEQUENCE { INTEGER r, INTEGER s }}
+     * that {@code SHA256withECDSA} verifies (the P1363 algorithm name needs API 33). Null unless
+     * {@code raw} is 64 bytes.
+     */
+    @Nullable
+    static byte[] rawSignatureToDer(byte[] raw) {
+        if (raw.length != 64) {
+            return null;
+        }
+        byte[] r = derInteger(raw, 0);
+        byte[] s = derInteger(raw, 32);
+        // At most 2 × 35 bytes, so the short length form always fits.
+        byte[] der = new byte[2 + r.length + s.length];
+        der[0] = 0x30;
+        der[1] = (byte) (r.length + s.length);
+        System.arraycopy(r, 0, der, 2, r.length);
+        System.arraycopy(s, 0, der, 2 + r.length, s.length);
+        return der;
+    }
+
+    /** The 32 bytes at {@code offset} as a DER INTEGER: leading zeros stripped, 0x00 prepended when the high bit is set. */
+    private static byte[] derInteger(byte[] raw, int offset) {
+        int start = offset;
+        int end = offset + 32;
+        while (start < end - 1 && raw[start] == 0) {
+            start++;
+        }
+        boolean pad = (raw[start] & 0x80) != 0;
+        int length = end - start + (pad ? 1 : 0);
+        byte[] out = new byte[2 + length];
+        out[0] = 0x02;
+        out[1] = (byte) length;
+        System.arraycopy(raw, start, out, pad ? 3 : 2, end - start);
+        return out;
     }
 
     /** A forward-slash path that stays inside its directory: no empty, "." or ".." segments. */
