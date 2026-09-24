@@ -393,6 +393,14 @@ four documented bounds of the opt-in:
   renderer crash ends the app process (Capacitor does not handle `onRenderProcessGone`), and the
   next launch counts it as one of the trial's two attempts.
 
+- **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
+  `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so
+  `deno run -A jsr:@denext/denext/cli …` fails on denext's own `npm:esbuild` import before any
+  denext code runs; next to a `pnpm-workspace.yaml`, Deno 2.9.7 then also migrates that file's
+  `packages` / `catalog` into the root `package.json` as `workspaces` / `catalog`. denext cannot
+  intercept either (both happen while Deno loads the module graph), so pass
+  `--node-modules-dir=none` (or `--no-config`) there.
+
 ### Testing helpers (`denext doctor`, `probeApp`)
 
 - **`denext doctor` / `probeApp` see a crash only as the framework's bare 500.** The

@@ -416,14 +416,29 @@ export default function RootLayout({ children }: { children: unknown }) {
         installs the plugins: it finds the project (the folder with{" "}
         <code>capacitor.config.*</code>, or <code>--dir</code>), refuses a{" "}
         <code>@capacitor/core</code>{" "}
-        major other than 8, adds the packages with the package manager your lockfile names, declares
-        any Android permissions they need, and runs <code>npx cap sync</code>.
+        major other than 8, adds the packages with the package manager the nearest lockfile names
+        (looking up to the repository root, so a pnpm / yarn / bun workspace's lockfile counts; else
+        a <code>packageManager</code>{" "}
+        field; else npm), declares any Android permissions they need, and runs{" "}
+        <code>npx cap sync</code>. The install runs in the Capacitor project folder.
       </p>
       <Code lang="bash">
         {`denext mobile add --list                    # the capabilities and their plugins
 denext mobile add haptics share network --dry-run   # print the plan, change nothing
 denext mobile add haptics share network secure-store`}
       </Code>
+      <Callout kind="warn">
+        Running the CLI straight from JSR inside a Node workspace? Pass{" "}
+        <code>--node-modules-dir=none</code>: without it Deno reads the workspace's{" "}
+        <code>package.json</code>, fails to resolve denext's own <code>npm:</code> imports from its
+        {" "}
+        <code>node_modules</code>, and (with a <code>pnpm-workspace.yaml</code>) rewrites the root
+        {" "}
+        <code>package.json</code>.
+        <Code lang="bash">
+          {`deno run -A --node-modules-dir=none jsr:@denext/denext/cli mobile add haptics --dry-run`}
+        </Code>
+      </Callout>
       <ul>
         <li>
           <code>haptic(kind)</code>{" "}

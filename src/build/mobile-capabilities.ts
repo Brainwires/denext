@@ -10,7 +10,7 @@
 // hook's `install` step; with no package to add, neither the install nor `cap sync` runs. Every
 // subprocess goes through a runner the caller passes in, so tests never spawn a real install.
 
-import { dirname, join, resolve } from "@std/path";
+import { dirname, join, relative, resolve } from "@std/path";
 import {
   EMPTY_ENTITLEMENTS,
   withAppDelegatePushForwarding,
@@ -341,9 +341,15 @@ export interface CapabilityPlan {
   readonly root: string;
   /** The capabilities, deduplicated, in command-line order. */
   readonly capabilities: readonly string[];
-  /** The detected package manager, and the lockfile it came from (none: npm by default). */
+  /**
+   * The detected package manager and where it came from: `lockfile` is the lockfile (or
+   * `pnpm-workspace.yaml`) relative to `root`, e.g. `../../pnpm-lock.yaml` in a workspace;
+   * `packageManagerField` the `package.json` whose `packageManager` field named it. Neither:
+   * npm by default.
+   */
   readonly packageManager: PackageManager;
   readonly lockfile?: string;
+  readonly packageManagerField?: string;
   /** The `@capacitor/core` major found, and where it was read. */
   readonly capacitorMajor: number;
   readonly capacitorSource: "installed" | "package.json";
@@ -509,12 +515,68 @@ async function capacitorCore(
   return { major: declaredMajor, source: "package.json" };
 }
 
-/** The package manager, from the first lockfile found; npm without one. */
-async function detectPackageManager(
-  root: string,
-): Promise<{ manager: PackageManager; lockfile?: string }> {
+/** Where the package manager was detected: a lockfile, or a `packageManager` field. */
+interface DetectedPackageManager {
+  manager: PackageManager;
+  lockfile?: string;
+  packageManagerField?: string;
+}
+
+/** The pnpm workspace marker, a pnpm signal checked after the lockfiles in each folder. */
+const PNPM_WORKSPACE = "pnpm-workspace.yaml";
+
+/** The folders from `root` up to the first holding `.git` (inclusive), else the filesystem root. */
+async function workspaceAncestors(root: string): Promise<string[]> {
+  const dirs: string[] = [];
+  for (let dir = root;; dir = dirname(dir)) {
+    dirs.push(dir);
+    if (dirname(dir) === dir || await exists(join(dir, ".git"))) return dirs;
+  }
+}
+
+/** The package manager `dir`'s lockfile (or pnpm-workspace.yaml) names, and that file. */
+async function lockfileIn(
+  dir: string,
+): Promise<{ manager: PackageManager; path: string } | undefined> {
   for (const [lockfile, manager] of LOCKFILES) {
-    if (await exists(join(root, lockfile))) return { manager, lockfile };
+    if (await exists(join(dir, lockfile))) return { manager, path: join(dir, lockfile) };
+  }
+  if (await exists(join(dir, PNPM_WORKSPACE))) {
+    return { manager: "pnpm", path: join(dir, PNPM_WORKSPACE) };
+  }
+  return undefined;
+}
+
+/** The manager `dir/package.json`'s `packageManager` field names (`"pnpm@11.10.0"`). */
+async function packageManagerFieldIn(dir: string): Promise<PackageManager | undefined> {
+  const text = await readText(join(dir, "package.json"));
+  if (text === undefined) return undefined;
+  let field: unknown;
+  try {
+    field = (JSON.parse(text) as { packageManager?: unknown }).packageManager;
+  } catch {
+    return undefined;
+  }
+  const m = typeof field === "string" ? /^(npm|pnpm|yarn|bun)@/.exec(field) : null;
+  return m ? m[1] as PackageManager : undefined;
+}
+
+/**
+ * The package manager, walking up from the Capacitor project `root` to the repository root
+ * (the first folder holding `.git`) or the filesystem root, so a project inside a workspace
+ * (pnpm, yarn, bun, npm) uses the workspace's manager. Precedence: the nearest lockfile
+ * (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder); then the
+ * nearest `package.json` `packageManager` field; then npm.
+ */
+async function detectPackageManager(root: string): Promise<DetectedPackageManager> {
+  const dirs = await workspaceAncestors(root);
+  for (const dir of dirs) {
+    const found = await lockfileIn(dir);
+    if (found) return { manager: found.manager, lockfile: relative(root, found.path) };
+  }
+  for (const dir of dirs) {
+    const manager = await packageManagerFieldIn(dir);
+    if (manager) return { manager, packageManagerField: relative(root, join(dir, "package.json")) };
   }
   return { manager: "npm" };
 }
@@ -673,7 +735,7 @@ export async function planMobileCapabilities(
       } targets. Upgrade Capacitor, or install a matching plugin version by hand.`,
     );
   }
-  const { manager, lockfile } = await detectPackageManager(root);
+  const { manager, lockfile, packageManagerField } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
   const specs = caps.flatMap((c) => c.npm ? [`${c.npm}@${c.version}`] : []);
   const target = await entitlementsTarget(root);
@@ -682,6 +744,7 @@ export async function planMobileCapabilities(
     capabilities: names,
     packageManager: manager,
     lockfile,
+    packageManagerField,
     capacitorMajor: core.major,
     capacitorSource: core.source,
     install: specs.length > 0 ? addCommand(manager, specs, root) : undefined,
@@ -706,6 +769,13 @@ function commandLine(command: PlannedCommand): string {
   return [command.cmd, ...command.args].join(" ");
 }
 
+/** Where the plan's package manager came from, for the dry-run line. */
+function packageManagerSource(plan: CapabilityPlan): string {
+  if (plan.lockfile) return plan.lockfile;
+  if (plan.packageManagerField) return `packageManager in ${plan.packageManagerField}`;
+  return "no lockfile";
+}
+
 /**
  * The plan as the lines `denext mobile add --dry-run` prints.
  *
@@ -716,9 +786,7 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
   const lines = [
     `  project        ${plan.root}`,
     `  capacitor      @capacitor/core ${plan.capacitorMajor} (${plan.capacitorSource})`,
-    `  package mgr    ${plan.packageManager}${
-      plan.lockfile ? ` (${plan.lockfile})` : " (no lockfile)"
-    }`,
+    `  package mgr    ${plan.packageManager} (${packageManagerSource(plan)})`,
     `  install        ${plan.install ? commandLine(plan.install) : "(no npm package)"}`,
     ...plan.native.installs.map((i) => `  native         ${i.label}`),
     ...plan.plist.map((p) => `  Info.plist     ${p.key} (when absent)`),

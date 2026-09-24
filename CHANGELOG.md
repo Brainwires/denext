@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`denext mobile add` picks a workspace's package manager.** It looked for a lockfile only
+  in the Capacitor project folder, so a project inside a pnpm workspace (lockfile at the
+  repository root) fell back to `npm install`, which breaks the workspace. It now walks up to
+  the first folder holding `.git` (or the filesystem root): the nearest `pnpm-lock.yaml`,
+  `package-lock.json`, `bun.lock`, `bun.lockb` or `yarn.lock` wins (a `pnpm-workspace.yaml`
+  counts as pnpm), then the nearest `package.json` `packageManager` field (`"pnpm@11.10.0"`),
+  then npm. The install still runs in the Capacitor project folder, and `--dry-run` prints
+  where the manager came from (`pnpm (../../pnpm-lock.yaml)`).
+- **Docs: run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** Without
+  it, Deno fails to resolve denext's `npm:` imports from the workspace's `node_modules`, and
+  next to a `pnpm-workspace.yaml` Deno 2.9.7 rewrites the root `package.json`. denext cannot
+  prevent this itself; the desktop guide and KNOWN-LIMITATIONS.md now say so.
+
 ## [2.10.0-rc.1] - 2026-09-24
 
 ### Added

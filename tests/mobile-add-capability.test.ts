@@ -1,6 +1,7 @@
 // `denext mobile add <capability...>` (src/build/mobile-capabilities.ts +
 // src/cli/commands/mobile.ts): finds the Capacitor project, refuses a mismatched
-// @capacitor/core major, picks the package manager from the lockfile, adds Info.plist keys and
+// @capacitor/core major, picks the package manager from the nearest lockfile (walking up to the
+// repository root), else a packageManager field, adds Info.plist keys and
 // Android permissions, and runs the install and `cap sync` through an injected runner. No test
 // spawns a real process.
 
@@ -66,6 +67,8 @@ async function project(files: Record<string, string | null> = {}): Promise<strin
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
     [PLIST_PATH]: INFO_PLIST,
     [MANIFEST_PATH]: MANIFEST,
+    // Bounds the package-manager walk to this folder, so no lockfile above the temp dir leaks in.
+    ".git/HEAD": "ref: refs/heads/main\n",
     ...files,
   };
   for (const [path, content] of Object.entries(all)) {
@@ -122,6 +125,146 @@ Deno.test("mobile add: the package manager comes from the lockfile (npm without 
       });
     });
   }
+});
+
+/**
+ * A workspace in a temp dir: `files` at its root (null leaves a file out), with the fake
+ * Capacitor project under `app` (`apps/capacitor` by default). Runs `fn` with the project
+ * root, then removes the whole tree.
+ */
+async function inWorkspace(
+  files: Record<string, string | null>,
+  fn: (projectRoot: string) => Promise<void>,
+  app = "apps/capacitor",
+): Promise<void> {
+  const top = await Deno.makeTempDir({ prefix: "denext_mobile_ws_" });
+  try {
+    for (const [path, content] of Object.entries(files)) {
+      if (content === null) continue;
+      await Deno.mkdir(join(top, path, ".."), { recursive: true });
+      await Deno.writeTextFile(join(top, path), content);
+    }
+    const inner = await project({ ".git/HEAD": null });
+    const root = join(top, app);
+    await Deno.mkdir(join(root, ".."), { recursive: true });
+    await Deno.rename(inner, root);
+    await fn(root);
+  } finally {
+    await Deno.remove(top, { recursive: true });
+  }
+}
+
+async function planIn(root: string) {
+  return await planMobileCapabilities({ capabilities: ["haptics"], cwd: root });
+}
+
+Deno.test("mobile add: a workspace lockfile two levels up picks its manager; install stays in the project", async () => {
+  await inWorkspace(
+    { ".git/HEAD": "", "pnpm-lock.yaml": "", "package.json": "{}" },
+    async (root) => {
+      const plan = await planIn(root);
+      assertEquals(plan.packageManager, "pnpm");
+      assertEquals(plan.lockfile, join("..", "..", "pnpm-lock.yaml"));
+      assertEquals(plan.install, {
+        cmd: "pnpm",
+        args: ["add", "@capacitor/haptics@^8.0.2"],
+        cwd: root,
+      });
+      assertStringIncludes(
+        formatCapabilityPlan(plan),
+        "package mgr    pnpm (../../pnpm-lock.yaml)",
+      );
+    },
+  );
+  // pnpm-workspace.yaml alone is a pnpm signal too.
+  await inWorkspace(
+    { ".git/HEAD": "", "pnpm-workspace.yaml": "packages: [apps/*]\n" },
+    async (root) => {
+      const plan = await planIn(root);
+      assertEquals(plan.packageManager, "pnpm");
+      assertEquals(plan.lockfile, join("..", "..", "pnpm-workspace.yaml"));
+    },
+  );
+});
+
+Deno.test("mobile add: a packageManager field names the manager when there is no lockfile", async () => {
+  // The workspace root's field.
+  await inWorkspace(
+    { ".git/HEAD": "", "package.json": JSON.stringify({ packageManager: "pnpm@11.10.0" }) },
+    async (root) => {
+      const plan = await planIn(root);
+      assertEquals(plan.packageManager, "pnpm");
+      assertEquals(plan.lockfile, undefined);
+      assertEquals(plan.packageManagerField, join("..", "..", "package.json"));
+      assertStringIncludes(
+        formatCapabilityPlan(plan),
+        "package mgr    pnpm (packageManager in ../../package.json)",
+      );
+    },
+  );
+  // The project's own field; an unknown manager or a broken package.json is no signal.
+  await inWorkspace({ ".git/HEAD": "", "package.json": "{ not json" }, async (root) => {
+    await Deno.writeTextFile(
+      join(root, "package.json"),
+      JSON.stringify({
+        packageManager: "yarn@4.1.0",
+        dependencies: { "@capacitor/core": "^8.0.0" },
+      }),
+    );
+    const plan = await planIn(root);
+    assertEquals([plan.packageManager, plan.packageManagerField], ["yarn", "package.json"]);
+  });
+  await inWorkspace(
+    { ".git/HEAD": "", "package.json": JSON.stringify({ packageManager: "deno@2.9.7" }) },
+    async (root) => assertEquals((await planIn(root)).packageManager, "npm"),
+  );
+  // A lockfile anywhere up the walk beats a nearer packageManager field.
+  await inWorkspace(
+    {
+      ".git/HEAD": "",
+      "bun.lock": "",
+      "apps/package.json": JSON.stringify({ packageManager: "pnpm@11.10.0" }),
+    },
+    async (root) => assertEquals((await planIn(root)).packageManager, "bun"),
+  );
+});
+
+Deno.test("mobile add: the nearest lockfile beats an outer one", async () => {
+  await inWorkspace(
+    { ".git/HEAD": "", "pnpm-lock.yaml": "", "apps/yarn.lock": "" },
+    async (root) => {
+      const plan = await planIn(root);
+      assertEquals(plan.packageManager, "yarn");
+      assertEquals(plan.lockfile, join("..", "yarn.lock"));
+    },
+  );
+});
+
+Deno.test("mobile add: the walk stops at the folder holding .git", async () => {
+  // .git at apps/: the lockfile above the repository root is not this project's.
+  await inWorkspace({ "apps/.git/HEAD": "", "pnpm-lock.yaml": "" }, async (root) => {
+    const plan = await planIn(root);
+    assertEquals(plan.packageManager, "npm");
+    assertEquals(plan.lockfile, undefined);
+    assertStringIncludes(formatCapabilityPlan(plan), "package mgr    npm (no lockfile)");
+  });
+  // The .git folder itself is still searched (the repository root holds the lockfile).
+  await inWorkspace({ "apps/.git/HEAD": "", "apps/bun.lockb": "" }, async (root) => {
+    assertEquals((await planIn(root)).packageManager, "bun");
+  });
+});
+
+Deno.test("mobile add: no lockfile and no packageManager field fall back to npm", async () => {
+  await inWorkspace({ ".git/HEAD": "", "package.json": "{}" }, async (root) => {
+    const plan = await planIn(root);
+    assertEquals(plan.packageManager, "npm");
+    assertEquals([plan.lockfile, plan.packageManagerField], [undefined, undefined]);
+    assertEquals(plan.install, {
+      cmd: "npm",
+      args: ["install", "@capacitor/haptics@^8.0.2"],
+      cwd: root,
+    });
+  });
 });
 
 Deno.test("mobile add: runs the install, edits the manifest, then cap sync", async () => {
