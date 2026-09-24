@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`choose(value, cases, defaultCase?)`** — a Lit-style control-flow helper, exported
+  from `@denext/denext`. Picks a branch by value and runs only the selected one — a lazy
+  `switch` for JSX. Returns the matched branch's result, `defaultCase()` when nothing
+  matches, or `undefined` when there is no default. The companion type `ChooseCases` is
+  exported too.
+
 ## [2.8.3] - 2026-09-24
 
 ### Added
