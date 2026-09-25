@@ -1,0 +1,10 @@
+<!-- denext-app-extension-template: 1 sha256=4636dd7f3498dd2c72b4a35a8e29b6dd49778ce222146b88d57d8ec29f2077b8 -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:initialLayout="@layout/denext_widget_status"
+  android:minWidth="110dp"
+  android:minHeight="40dp"
+  android:resizeMode="horizontal|vertical"
+  android:targetCellWidth="2"
+  android:targetCellHeight="1"
+  android:updatePeriodMillis="0"
+  android:widgetCategory="home_screen" />

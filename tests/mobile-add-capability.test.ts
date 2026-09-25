@@ -130,6 +130,77 @@ Deno.test("mobile add: the package manager comes from the lockfile (npm without 
   }
 });
 
+Deno.test("mobile add: exact @capacitor/* pins get exact versions, with each manager's flag", async () => {
+  const exactPkg = JSON.stringify({
+    dependencies: { "@capacitor/core": "8.5.2", "@capacitor/app": "8.1.1" },
+    devDependencies: { "@capacitor/cli": "8.5.2" },
+  });
+  const cases: Array<[string | null, string, string, string]> = [
+    ["pnpm-lock.yaml", "pnpm", "add", "--save-exact"],
+    ["package-lock.json", "npm", "install", "--save-exact"],
+    ["bun.lock", "bun", "add", "--exact"],
+    ["yarn.lock", "yarn", "add", "--exact"],
+  ];
+  for (const [lockfile, cmd, verb, flag] of cases) {
+    await inProject({ "package.json": exactPkg, [lockfile!]: "" }, async (dir) => {
+      const plan = await planMobileCapabilities({ capabilities: ["haptics", "barcode"], cwd: dir });
+      assertEquals(plan.install, {
+        cmd,
+        args: [verb, flag, "@capacitor/haptics@8.0.2", "@capacitor/barcode-scanner@3.1.2"],
+        cwd: dir,
+      }, String(lockfile));
+      assertStringIncludes(
+        formatCapabilityPlan(plan),
+        `install        ${cmd} ${verb} ${flag} @capacitor/haptics@8.0.2`,
+      );
+    });
+  }
+  // A real run hands the exact specs to the runner.
+  await inProject({ "package.json": exactPkg }, async (dir) => {
+    const { run, calls } = fakeRunner();
+    await addMobileCapabilities({ capabilities: ["share"], cwd: dir, run });
+    assertEquals(calls[0].args, ["install", "--save-exact", "@capacitor/share@8.0.2"]);
+  });
+});
+
+Deno.test("mobile add: any @capacitor/* range (or none declared) keeps caret ranges", async () => {
+  const mixed = [
+    { "@capacitor/core": "8.5.2", "@capacitor/app": "^8.1.1" },
+    { "@capacitor/core": "~8.5.2" },
+    { "@capacitor/core": ">=8.0.0" },
+    { "@capacitor/core": "8.x" },
+  ];
+  for (const dependencies of mixed) {
+    await inProject({ "package.json": JSON.stringify({ dependencies }) }, async (dir) => {
+      const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
+      assertEquals(
+        plan.install?.args,
+        ["install", "@capacitor/haptics@^8.0.2"],
+        JSON.stringify(dependencies),
+      );
+    });
+  }
+  // Exact only in devDependencies but a range in dependencies: still carets.
+  await inProject({
+    "package.json": JSON.stringify({
+      dependencies: { "@capacitor/core": "^8.5.2" },
+      devDependencies: { "@capacitor/cli": "8.5.2" },
+    }),
+  }, async (dir) => {
+    const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
+    assertEquals(plan.install?.args, ["install", "@capacitor/haptics@^8.0.2"]);
+  });
+  // Exact non-Capacitor dependencies say nothing about the Capacitor style.
+  await inProject({
+    "package.json": JSON.stringify({
+      dependencies: { "@capacitor/core": "^8.5.2", "left-pad": "1.3.0" },
+    }),
+  }, async (dir) => {
+    const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
+    assertEquals(plan.install?.args, ["install", "@capacitor/haptics@^8.0.2"]);
+  });
+});
+
 /**
  * A workspace in a temp dir: `files` at its root (null leaves a file out), with the fake
  * Capacitor project under `app` (`apps/capacitor` by default). Runs `fn` with the project
@@ -749,6 +820,29 @@ Deno.test("mobile add deep-links: option checks", async () => {
   });
 });
 
+Deno.test(
+  "mobile add --dry-run: a --scheme shared by several capabilities lists CFBundleURLTypes once",
+  async () => {
+    await inProject({}, async (dir) => {
+      // deep-links, auth-session and share-extension each compute their own identical
+      // `CFBundleURLTypes: myapp` Info.plist edit for the same --scheme; the write already
+      // de-duplicates (the second and third apply() see their own change already there), and
+      // the plan must say so too instead of listing it three times.
+      const plan = await planMobileCapabilities({
+        capabilities: ["deep-links", "auth-session", "share-extension"],
+        cwd: dir,
+        schemes: ["myapp"],
+      });
+      assertEquals(
+        plan.native.infoPlist.filter((e) => e.label === "CFBundleURLTypes: myapp").length,
+        1,
+      );
+      const text = formatCapabilityPlan(plan);
+      assertEquals(count(text, "Info.plist     CFBundleURLTypes: myapp"), 1);
+    });
+  },
+);
+
 Deno.test("mobile add push: entitlement, AppDelegate forwarding, permission; FCM warning", async () => {
   await inProject(nativeProject(), async (dir) => {
     const { run } = fakeRunner();
@@ -806,6 +900,59 @@ Deno.test("mobile add push: entitlement, AppDelegate forwarding, permission; FCM
     },
   );
 });
+
+Deno.test(
+  "mobile add push: entitlements wired by another capability's install earlier in the same run " +
+    "drops the stale Code Signing Entitlements step",
+  async () => {
+    await inProject(nativeProject(), async (dir) => {
+      // A fixture capability standing in for share-extension/widget/live-activity with
+      // --app-group: its `install` step wires the App target's CODE_SIGN_ENTITLEMENTS, same as
+      // installAppGroup does, before push's own entitlements edit is written.
+      const table: Record<string, MobileCapability> = {
+        ...MOBILE_CAPABILITIES,
+        "wire-group": {
+          capacitorMajor: 8,
+          configure: () => ({
+            install: {
+              label: "wire the App target's entitlements (test fixture)",
+              run: async ({ dir: root }) => {
+                await Deno.writeTextFile(
+                  join(root, PBXPROJ_PATH),
+                  PBXPROJ.replace(
+                    "{ objects = { }; }",
+                    "{ objects = { }; }\nCODE_SIGN_ENTITLEMENTS = App/App.entitlements;\n",
+                  ),
+                );
+                return {
+                  written: [PBXPROJ_PATH],
+                  upgraded: [],
+                  kept: [],
+                  unchanged: [],
+                  manual: [],
+                  skipped: [],
+                };
+              },
+            },
+          }),
+        },
+      };
+      const report = await addMobileCapabilities({
+        capabilities: ["wire-group", "push"],
+        cwd: dir,
+        run: fakeRunner().run,
+        table,
+      });
+      // The App target had no CODE_SIGN_ENTITLEMENTS when the plan was made (before wire-group's
+      // install ran), so the naive plan-time note would still say to wire it by hand; the final
+      // report must not, since wire-group wired it before push's entitlements file was written.
+      assert(
+        !report.plan.manual.join("\n").includes("Code Signing Entitlements"),
+        "wired by an earlier install in the same run",
+      );
+    });
+  },
+);
 
 Deno.test("mobile add push: an AppDelegate with its own callback, and no ios/ at all", async () => {
   const custom = APP_DELEGATE.replace(

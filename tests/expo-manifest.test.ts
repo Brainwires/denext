@@ -7,6 +7,7 @@ import { EXPO_SHIMS } from "../src/expo/manifest.ts";
 import {
   expoRuntimeEntries,
   expoRuntimeFiles,
+  expoShimName,
   expoShimSpecifier,
   isExpoBridgeImport,
 } from "../src/build/expo-shims.ts";
@@ -18,9 +19,13 @@ const EXPO_DIR = new URL("../src/expo/", import.meta.url);
 /** The shim name of a manifest module path. */
 const nameOf = (module: string) => module.replace(/^\.\//, "").replace(/\.ts$/, "");
 
+/** The npm package of a manifest key (`expo-file-system/legacy` → `expo-file-system`). */
+const packageOf = (key: string) => key.split("/")[0];
+
 Deno.test("expo manifest: every entry's module exists, exports something, and omits what it says", async () => {
   for (const [pkg, shim] of Object.entries(EXPO_SHIMS)) {
-    assert(/^expo(-[a-z0-9-]+)?$/.test(pkg), `${pkg} is an expo package name`);
+    assert(/^expo(-[a-z0-9-]+)?(\/[a-z0-9-]+)?$/.test(pkg), `${pkg} is an expo package name`);
+    if (pkg.includes("/")) assert(packageOf(pkg) in EXPO_SHIMS, `${pkg}: its package has a shim`);
     assert(["full", "partial", "stub"].includes(shim.status), `${pkg}: status`);
     assert(/^\d+\.\d+\.\d+$/.test(shim.pinned), `${pkg}: pinned is an exact version`);
     const mod = await import(new URL(shim.module, EXPO_DIR).href);
@@ -42,16 +47,24 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   const runtime = runtimeEntryPoints("file:///fw/");
   const files = expoRuntimeFiles();
   for (const [pkg, shim] of Object.entries(EXPO_SHIMS)) {
-    const name = nameOf(shim.module);
-    assertEquals(exports[`./expo/${name}`], `./src/expo/${name}.ts`, `deno.json export for ${pkg}`);
+    const file = nameOf(shim.module);
+    const name = expoShimName(pkg)!;
+    const flat = name.replaceAll("/", "-");
+    assertEquals(exports[`./expo/${name}`], `./src/expo/${file}.ts`, `deno.json export for ${pkg}`);
     assertEquals(
-      runtime[`expo-${name}`],
-      `file:///fw/src/expo/${name}.ts`,
+      runtime[`expo-${flat}`],
+      `file:///fw/src/expo/${file}.ts`,
       `runtime entry for ${pkg}`,
     );
-    assertEquals(files[`denext/expo/${name}`], `expo-${name}.js`);
+    assertEquals(files[`denext/expo/${name}`], `expo-${flat}.js`);
     assertEquals(expoShimSpecifier(pkg), `denext/expo/${name}`);
   }
+  assertEquals(expoShimName("expo-haptics"), "haptics");
+  assertEquals(expoShimName("expo-file-system/legacy"), "file-system/legacy");
+  assertEquals(expoShimName("expo-location"), null);
+  assertEquals(expoShimSpecifier("expo-file-system/legacy"), "denext/expo/file-system/legacy");
+  assertEquals(files["denext/expo/file-system/legacy"], "expo-file-system-legacy.js");
+  assertEquals(expoShimSpecifier("expo-file-system/next"), null);
   assertEquals(Object.keys(expoRuntimeEntries((r) => r)).length, Object.keys(EXPO_SHIMS).length);
   assertEquals(expoShimSpecifier("expo/fetch"), "denext/expo/expo");
   assertEquals(expoShimSpecifier("expo/config"), null);
@@ -109,9 +122,10 @@ Deno.test({
       string,
       string
     >;
-    for (const [pkg, shim] of Object.entries(EXPO_SHIMS)) {
+    for (const [key, shim] of Object.entries(EXPO_SHIMS)) {
+      const pkg = packageOf(key);
       assert(pkg in deps, `${pkg} is not a dependency of T3's app`);
-      assertEquals(shim.pinned, deps[pkg].replace(/^[~^]/, ""), `${pkg} pin`);
+      assertEquals(shim.pinned, deps[pkg].replace(/^[~^]/, ""), `${key} pin`);
     }
     for (const pkg of Object.keys(deps).filter((d) => /^expo(-|$)/.test(d))) {
       assert(pkg in EXPO_SHIMS || NOT_SHIMMED.includes(pkg), `${pkg} has no shim`);

@@ -1,0 +1,7493 @@
+{
+  "versions": {
+    "expo": "57.0.18",
+    "expo-asset": "57.0.15",
+    "expo-audio": "57.0.4",
+    "expo-auth-session": "57.0.10",
+    "expo-blur": "57.0.2",
+    "expo-build-properties": "57.0.15",
+    "expo-camera": "57.0.4",
+    "expo-clipboard": "57.0.1",
+    "expo-constants": "57.0.16",
+    "expo-crypto": "57.0.2",
+    "expo-dev-client": "57.0.16",
+    "expo-device": "57.0.1",
+    "expo-document-picker": "57.0.1",
+    "expo-file-system": "57.0.6",
+    "expo-font": "57.0.2",
+    "expo-glass-effect": "57.0.1",
+    "expo-haptics": "57.0.2",
+    "expo-image": "57.0.3",
+    "expo-image-manipulator": "57.0.17",
+    "expo-image-picker": "57.0.14",
+    "expo-keep-awake": "57.0.2",
+    "expo-linking": "57.0.8",
+    "expo-network": "57.0.1",
+    "expo-notifications": "57.0.15",
+    "expo-paste-input": "0.1.15",
+    "expo-quick-actions": "6.0.2",
+    "expo-secure-store": "57.0.2",
+    "expo-sharing": "57.0.17",
+    "expo-sqlite": "57.0.2",
+    "expo-splash-screen": "57.0.8",
+    "expo-symbols": "57.0.2",
+    "expo-updates": "57.0.19",
+    "expo-video": "57.0.3",
+    "expo-web-browser": "57.0.2",
+    "expo-widgets": "57.0.15"
+  },
+  "capturedAt": "2026-09-25T18:18:50.027Z",
+  "surfaces": [
+    {
+      "specifier": "expo",
+      "resolved": true,
+      "symbols": {
+        "disableErrorHandling": {
+          "name": "disableErrorHandling",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "registerRootComponent": {
+          "name": "registerRootComponent",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "isRunningInExpoGo": {
+          "name": "isRunningInExpoGo",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getExpoGoProjectConfig": {
+          "name": "getExpoGoProjectConfig",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "EventEmitter": {
+          "name": "EventEmitter",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "SharedObject": {
+          "name": "SharedObject",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "SharedRef": {
+          "name": "SharedRef",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "NativeModule": {
+          "name": "NativeModule",
+          "kind": "typeAlias",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "requireNativeModule": {
+          "name": "requireNativeModule",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "requireOptionalNativeModule": {
+          "name": "requireOptionalNativeModule",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "requireNativeView": {
+          "name": "requireNativeView",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "registerWebModule": {
+          "name": "registerWebModule",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "reloadAppAsync": {
+          "name": "reloadAppAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "installOnUIRuntime": {
+          "name": "installOnUIRuntime",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        },
+        "createPermissionHook": {
+          "name": "createPermissionHook",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "useEvent": {
+          "name": "useEvent",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 4
+        },
+        "useEventListener": {
+          "name": "useEventListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 3
+        }
+      }
+    },
+    {
+      "specifier": "expo-asset",
+      "resolved": true,
+      "symbols": {
+        "ANDROID_EMBEDDED_URL_BASE_RESOURCE": {
+          "name": "ANDROID_EMBEDDED_URL_BASE_RESOURCE",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "Asset": {
+          "name": "Asset",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "byHash",
+            "byUri",
+            "fromMetadata",
+            "fromModule",
+            "fromURI",
+            "loadAsync",
+            "prototype"
+          ]
+        },
+        "useAssets": {
+          "name": "useAssets",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-audio",
+      "resolved": true,
+      "symbols": {
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        },
+        "useAudioPlayer": {
+          "name": "useAudioPlayer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAudioPlayerStatus": {
+          "name": "useAudioPlayerStatus",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAudioSampleListener": {
+          "name": "useAudioSampleListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAudioRecorder": {
+          "name": "useAudioRecorder",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAudioPlaylist": {
+          "name": "useAudioPlaylist",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAudioPlaylistStatus": {
+          "name": "useAudioPlaylistStatus",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createAudioPlaylist": {
+          "name": "createAudioPlaylist",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createAudioPlayer": {
+          "name": "createAudioPlayer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setIsAudioActiveAsync": {
+          "name": "setIsAudioActiveAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setAudioModeAsync": {
+          "name": "setAudioModeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestRecordingPermissionsAsync": {
+          "name": "requestRecordingPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestNotificationPermissionsAsync": {
+          "name": "requestNotificationPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getRecordingPermissionsAsync": {
+          "name": "getRecordingPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "preload": {
+          "name": "preload",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "clearPreloadedSource": {
+          "name": "clearPreloadedSource",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "clearAllPreloadedSources": {
+          "name": "clearAllPreloadedSources",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPreloadedSources": {
+          "name": "getPreloadedSources",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAudioRecorderState": {
+          "name": "useAudioRecorderState",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAudioStream": {
+          "name": "useAudioStream",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "AudioModule": {
+          "name": "AudioModule",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "AudioPlayer",
+            "AudioPlaylist",
+            "AudioRecorder",
+            "AudioStream",
+            "ViewPrototypes",
+            "_TEventsMap_DONT_USE_IT",
+            "addListener",
+            "clearAllPreloadedSources",
+            "clearPreloadedSource",
+            "emit",
+            "getPreloadedSources",
+            "getRecordingPermissionsAsync",
+            "listenerCount",
+            "preload",
+            "removeAllListeners",
+            "removeListener",
+            "requestNotificationPermissionsAsync",
+            "requestRecordingPermissionsAsync",
+            "setAudioModeAsync",
+            "setIsAudioActiveAsync",
+            "startObserving",
+            "stopObserving"
+          ]
+        },
+        "NativeAudioModule": {
+          "name": "NativeAudioModule",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "AudioPlayer": {
+          "name": "AudioPlayer",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "AudioRecorder": {
+          "name": "AudioRecorder",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "AudioPlaylist": {
+          "name": "AudioPlaylist",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "AudioStream": {
+          "name": "AudioStream",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "IOSOutputFormat": {
+          "name": "IOSOutputFormat",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "60958AC3",
+            "AC3",
+            "AES3",
+            "ALAW",
+            "AMR",
+            "AMR_WB",
+            "APPLEIMA4",
+            "APPLELOSSLESS",
+            "AUDIBLE",
+            "DVIINTELIMA",
+            "ENHANCEDAC3",
+            "ILBC",
+            "LINEARPCM",
+            "MACE3",
+            "MACE6",
+            "MICROSOFTGSM",
+            "MPEG4AAC",
+            "MPEG4AAC_ELD",
+            "MPEG4AAC_ELD_SBR",
+            "MPEG4AAC_ELD_V2",
+            "MPEG4AAC_HE",
+            "MPEG4AAC_HE_V2",
+            "MPEG4AAC_LD",
+            "MPEG4AAC_SPATIAL",
+            "MPEG4CELP",
+            "MPEG4HVXC",
+            "MPEG4TWINVQ",
+            "MPEGLAYER1",
+            "MPEGLAYER2",
+            "MPEGLAYER3",
+            "QDESIGN",
+            "QDESIGN2",
+            "QUALCOMM",
+            "ULAW"
+          ]
+        },
+        "AudioQuality": {
+          "name": "AudioQuality",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "HIGH",
+            "LOW",
+            "MAX",
+            "MEDIUM",
+            "MIN"
+          ]
+        },
+        "RecordingPresets": {
+          "name": "RecordingPresets",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "HIGH_QUALITY",
+            "LOW_QUALITY"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-auth-session",
+      "resolved": true,
+      "symbols": {
+        "AuthRequest": {
+          "name": "AuthRequest",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "useAutoDiscovery": {
+          "name": "useAutoDiscovery",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useLoadedAuthRequest": {
+          "name": "useLoadedAuthRequest",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAuthRequestResult": {
+          "name": "useAuthRequestResult",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useAuthRequest": {
+          "name": "useAuthRequest",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "dismiss": {
+          "name": "dismiss",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getRedirectUrl": {
+          "name": "getRedirectUrl",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "makeRedirectUri": {
+          "name": "makeRedirectUri",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "loadAsync": {
+          "name": "loadAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getDefaultReturnUrl": {
+          "name": "getDefaultReturnUrl",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ResponseError": {
+          "name": "ResponseError",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "isError",
+            "prototype"
+          ]
+        },
+        "AuthError": {
+          "name": "AuthError",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "isError",
+            "prototype"
+          ]
+        },
+        "TokenError": {
+          "name": "TokenError",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "isError",
+            "prototype"
+          ]
+        },
+        "requestAsync": {
+          "name": "requestAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "issuerWithWellKnownUrl": {
+          "name": "issuerWithWellKnownUrl",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "fetchDiscoveryAsync": {
+          "name": "fetchDiscoveryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "resolveDiscoveryAsync": {
+          "name": "resolveDiscoveryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getCurrentTimeInSeconds": {
+          "name": "getCurrentTimeInSeconds",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "exchangeCodeAsync": {
+          "name": "exchangeCodeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "refreshAsync": {
+          "name": "refreshAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "revokeAsync": {
+          "name": "revokeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "fetchUserInfoAsync": {
+          "name": "fetchUserInfoAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "TokenResponse": {
+          "name": "TokenResponse",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "fromQueryParams",
+            "isTokenFresh",
+            "prototype"
+          ]
+        },
+        "Request": {
+          "name": "Request",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "TokenRequest": {
+          "name": "TokenRequest",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "AccessTokenRequest": {
+          "name": "AccessTokenRequest",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "RefreshTokenRequest": {
+          "name": "RefreshTokenRequest",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "RevokeTokenRequest": {
+          "name": "RevokeTokenRequest",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "CodeChallengeMethod": {
+          "name": "CodeChallengeMethod",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Plain",
+            "S256"
+          ]
+        },
+        "ResponseType": {
+          "name": "ResponseType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Code",
+            "IdToken",
+            "Token"
+          ]
+        },
+        "Prompt": {
+          "name": "Prompt",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Consent",
+            "Login",
+            "None",
+            "SelectAccount"
+          ]
+        },
+        "TokenTypeHint": {
+          "name": "TokenTypeHint",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AccessToken",
+            "RefreshToken"
+          ]
+        },
+        "GrantType": {
+          "name": "GrantType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AuthorizationCode",
+            "ClientCredentials",
+            "Implicit",
+            "RefreshToken"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-blur",
+      "resolved": true,
+      "symbols": {
+        "BlurView": {
+          "name": "BlurView",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "BlurTargetView": {
+          "name": "BlurTargetView",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-build-properties",
+      "resolved": true,
+      "symbols": {
+        "withBuildProperties": {
+          "name": "withBuildProperties",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-camera",
+      "resolved": true,
+      "symbols": {
+        "scanFromURLAsync": {
+          "name": "scanFromURLAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "CameraView": {
+          "name": "CameraView",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ConversionTables",
+            "defaultProps",
+            "dismissScanner",
+            "getAvailableVideoCodecsAsync",
+            "isAvailableAsync",
+            "isModernBarcodeScannerAvailable",
+            "launchScanner",
+            "onModernBarcodeScanned",
+            "prototype"
+          ]
+        },
+        "useCameraPermissions": {
+          "name": "useCameraPermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useMicrophonePermissions": {
+          "name": "useMicrophonePermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Camera": {
+          "name": "Camera",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "getCameraPermissionsAsync",
+            "getMicrophonePermissionsAsync",
+            "requestCameraPermissionsAsync",
+            "requestMicrophonePermissionsAsync",
+            "scanFromURLAsync"
+          ]
+        },
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        },
+        "CameraNativeModule": {
+          "name": "CameraNativeModule",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "PictureRef": {
+          "name": "PictureRef",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-clipboard",
+      "resolved": true,
+      "symbols": {
+        "getStringAsync": {
+          "name": "getStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setStringAsync": {
+          "name": "setStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasStringAsync": {
+          "name": "hasStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getUrlAsync": {
+          "name": "getUrlAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setUrlAsync": {
+          "name": "setUrlAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasUrlAsync": {
+          "name": "hasUrlAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getImageAsync": {
+          "name": "getImageAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setImageAsync": {
+          "name": "setImageAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasImageAsync": {
+          "name": "hasImageAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addClipboardListener": {
+          "name": "addClipboardListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeClipboardListener": {
+          "name": "removeClipboardListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isPasteButtonAvailable": {
+          "name": "isPasteButtonAvailable",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "valueOf"
+          ]
+        },
+        "ClipboardPasteButton": {
+          "name": "ClipboardPasteButton",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ContentType": {
+          "name": "ContentType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "HTML",
+            "IMAGE",
+            "PLAIN_TEXT",
+            "URL"
+          ]
+        },
+        "StringFormat": {
+          "name": "StringFormat",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "HTML",
+            "PLAIN_TEXT"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-constants",
+      "resolved": true,
+      "symbols": {
+        "AppOwnership": {
+          "name": "AppOwnership",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Expo"
+          ]
+        },
+        "ExecutionEnvironment": {
+          "name": "ExecutionEnvironment",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Bare",
+            "Standalone",
+            "StoreClient"
+          ]
+        },
+        "UserInterfaceIdiom": {
+          "name": "UserInterfaceIdiom",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Desktop",
+            "Handset",
+            "TV",
+            "Tablet",
+            "Unsupported"
+          ]
+        },
+        "default": {
+          "name": "default",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "__unsafeNoWarnManifest",
+            "__unsafeNoWarnManifest2",
+            "appOwnership",
+            "debugMode",
+            "deviceName",
+            "deviceYearClass",
+            "easConfig",
+            "executionEnvironment",
+            "experienceUrl",
+            "expoConfig",
+            "expoGoConfig",
+            "expoRuntimeVersion",
+            "expoVersion",
+            "getWebViewUserAgentAsync",
+            "intentUri",
+            "isDetached",
+            "isHeadless",
+            "linkingUri",
+            "manifest",
+            "manifest2",
+            "name",
+            "platform",
+            "sessionId",
+            "statusBarHeight",
+            "supportedExpoSdks",
+            "systemFonts",
+            "systemVersion"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-crypto",
+      "resolved": true,
+      "symbols": {
+        "getRandomBytes": {
+          "name": "getRandomBytes",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getRandomBytesAsync": {
+          "name": "getRandomBytesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "digestStringAsync": {
+          "name": "digestStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getRandomValues": {
+          "name": "getRandomValues",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "randomUUID": {
+          "name": "randomUUID",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "digest": {
+          "name": "digest",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "CryptoDigestAlgorithm": {
+          "name": "CryptoDigestAlgorithm",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "MD2",
+            "MD4",
+            "MD5",
+            "SHA1",
+            "SHA256",
+            "SHA384",
+            "SHA512"
+          ]
+        },
+        "CryptoEncoding": {
+          "name": "CryptoEncoding",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BASE64",
+            "HEX"
+          ]
+        },
+        "aesEncryptAsync": {
+          "name": "aesEncryptAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "aesDecryptAsync": {
+          "name": "aesDecryptAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            },
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "AESEncryptionKey": {
+          "name": "AESEncryptionKey",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "generate",
+            "import",
+            "prototype"
+          ]
+        },
+        "AESSealedData": {
+          "name": "AESSealedData",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "fromCombined",
+            "fromParts",
+            "prototype"
+          ]
+        },
+        "AESKeySize": {
+          "name": "AESKeySize",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AES128",
+            "AES192",
+            "AES256"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-dev-client",
+      "resolved": true,
+      "symbols": {
+        "openMenu": {
+          "name": "openMenu",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hideMenu": {
+          "name": "hideMenu",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "closeMenu": {
+          "name": "closeMenu",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "registerDevMenuItems": {
+          "name": "registerDevMenuItems",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-device",
+      "resolved": true,
+      "symbols": {
+        "getDeviceTypeAsync": {
+          "name": "getDeviceTypeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getUptimeAsync": {
+          "name": "getUptimeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getMaxMemoryAsync": {
+          "name": "getMaxMemoryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isRootedExperimentalAsync": {
+          "name": "isRootedExperimentalAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isSideLoadingEnabledAsync": {
+          "name": "isSideLoadingEnabledAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPlatformFeaturesAsync": {
+          "name": "getPlatformFeaturesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasPlatformFeatureAsync": {
+          "name": "hasPlatformFeatureAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "DeviceType": {
+          "name": "DeviceType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DESKTOP",
+            "PHONE",
+            "TABLET",
+            "TV",
+            "UNKNOWN"
+          ]
+        },
+        "isDevice": {
+          "name": "isDevice",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "valueOf"
+          ]
+        },
+        "brand": {
+          "name": "brand",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "manufacturer": {
+          "name": "manufacturer",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "modelId": {
+          "name": "modelId",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        },
+        "modelName": {
+          "name": "modelName",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "designName": {
+          "name": "designName",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "productName": {
+          "name": "productName",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "deviceType": {
+          "name": "deviceType",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "deviceYearClass": {
+          "name": "deviceYearClass",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "totalMemory": {
+          "name": "totalMemory",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "supportedCpuArchitectures": {
+          "name": "supportedCpuArchitectures",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "at",
+            "concat",
+            "copyWithin",
+            "entries",
+            "every",
+            "fill",
+            "filter",
+            "find",
+            "findIndex",
+            "findLast",
+            "findLastIndex",
+            "flat",
+            "flatMap",
+            "forEach",
+            "includes",
+            "indexOf",
+            "join",
+            "keys",
+            "lastIndexOf",
+            "length",
+            "map",
+            "pop",
+            "push",
+            "reduce",
+            "reduceRight",
+            "reverse",
+            "shift",
+            "slice",
+            "some",
+            "sort",
+            "splice",
+            "toLocaleString",
+            "toReversed",
+            "toSorted",
+            "toSpliced",
+            "toString",
+            "unshift",
+            "values",
+            "with"
+          ]
+        },
+        "osName": {
+          "name": "osName",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "osVersion": {
+          "name": "osVersion",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "osBuildId": {
+          "name": "osBuildId",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "osInternalBuildId": {
+          "name": "osInternalBuildId",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "osBuildFingerprint": {
+          "name": "osBuildFingerprint",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "platformApiLevel": {
+          "name": "platformApiLevel",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "deviceName": {
+          "name": "deviceName",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-document-picker",
+      "resolved": true,
+      "symbols": {
+        "getDocumentAsync": {
+          "name": "getDocumentAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-file-system",
+      "resolved": true,
+      "symbols": {
+        "Paths": {
+          "name": "Paths",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "appleSharedContainers",
+            "availableDiskSpace",
+            "basename",
+            "bundle",
+            "cache",
+            "dirname",
+            "document",
+            "extname",
+            "info",
+            "isAbsolute",
+            "join",
+            "normalize",
+            "parse",
+            "prototype",
+            "relative",
+            "totalDiskSpace"
+          ]
+        },
+        "File": {
+          "name": "File",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "createDownloadTask",
+            "downloadFileAsync",
+            "pickFileAsync",
+            "prototype"
+          ]
+        },
+        "Directory": {
+          "name": "Directory",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "pickDirectoryAsync",
+            "prototype"
+          ]
+        },
+        "UploadTask": {
+          "name": "UploadTask",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "DownloadTask": {
+          "name": "DownloadTask",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "fromSavable",
+            "prototype"
+          ]
+        },
+        "DEFAULT_DEBOUNCE_MS": {
+          "name": "DEFAULT_DEBOUNCE_MS",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "FileMode": {
+          "name": "FileMode",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Append",
+            "ReadOnly",
+            "ReadWrite",
+            "Truncate",
+            "WriteOnly"
+          ]
+        },
+        "EncodingType": {
+          "name": "EncodingType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Base64",
+            "UTF8"
+          ]
+        },
+        "UploadType": {
+          "name": "UploadType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BINARY_CONTENT",
+            "MULTIPART"
+          ]
+        },
+        "getInfoAsync": {
+          "name": "getInfoAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "readAsStringAsync": {
+          "name": "readAsStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getContentUriAsync": {
+          "name": "getContentUriAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "writeAsStringAsync": {
+          "name": "writeAsStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteAsync": {
+          "name": "deleteAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteLegacyDocumentDirectoryAndroid": {
+          "name": "deleteLegacyDocumentDirectoryAndroid",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "moveAsync": {
+          "name": "moveAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "copyAsync": {
+          "name": "copyAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "makeDirectoryAsync": {
+          "name": "makeDirectoryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "readDirectoryAsync": {
+          "name": "readDirectoryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getFreeDiskStorageAsync": {
+          "name": "getFreeDiskStorageAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getTotalDiskCapacityAsync": {
+          "name": "getTotalDiskCapacityAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "downloadAsync": {
+          "name": "downloadAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "uploadAsync": {
+          "name": "uploadAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createDownloadResumable": {
+          "name": "createDownloadResumable",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 5,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createUploadTask": {
+          "name": "createUploadTask",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 4,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-file-system/legacy",
+      "resolved": true,
+      "symbols": {
+        "getInfoAsync": {
+          "name": "getInfoAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "readAsStringAsync": {
+          "name": "readAsStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getContentUriAsync": {
+          "name": "getContentUriAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "writeAsStringAsync": {
+          "name": "writeAsStringAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteAsync": {
+          "name": "deleteAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteLegacyDocumentDirectoryAndroid": {
+          "name": "deleteLegacyDocumentDirectoryAndroid",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "moveAsync": {
+          "name": "moveAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "copyAsync": {
+          "name": "copyAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "makeDirectoryAsync": {
+          "name": "makeDirectoryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "readDirectoryAsync": {
+          "name": "readDirectoryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getFreeDiskStorageAsync": {
+          "name": "getFreeDiskStorageAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getTotalDiskCapacityAsync": {
+          "name": "getTotalDiskCapacityAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "downloadAsync": {
+          "name": "downloadAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "uploadAsync": {
+          "name": "uploadAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createDownloadResumable": {
+          "name": "createDownloadResumable",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 5,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createUploadTask": {
+          "name": "createUploadTask",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 4,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "documentDirectory": {
+          "name": "documentDirectory",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "cacheDirectory": {
+          "name": "cacheDirectory",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "bundleDirectory": {
+          "name": "bundleDirectory",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "FileSystemCancellableNetworkTask": {
+          "name": "FileSystemCancellableNetworkTask",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "UploadTask": {
+          "name": "UploadTask",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "DownloadResumable": {
+          "name": "DownloadResumable",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "StorageAccessFramework": {
+          "name": "StorageAccessFramework",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "copyAsync",
+            "createFileAsync",
+            "deleteAsync",
+            "getUriForDirectoryInRoot",
+            "makeDirectoryAsync",
+            "moveAsync",
+            "readAsStringAsync",
+            "readDirectoryAsync",
+            "requestDirectoryPermissionsAsync",
+            "writeAsStringAsync"
+          ]
+        },
+        "FileSystemSessionType": {
+          "name": "FileSystemSessionType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BACKGROUND",
+            "FOREGROUND"
+          ]
+        },
+        "FileSystemUploadType": {
+          "name": "FileSystemUploadType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BINARY_CONTENT",
+            "MULTIPART"
+          ]
+        },
+        "EncodingType": {
+          "name": "EncodingType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Base64",
+            "UTF8"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-font",
+      "resolved": true,
+      "symbols": {
+        "useFonts": {
+          "name": "useFonts",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isLoaded": {
+          "name": "isLoaded",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getLoadedFonts": {
+          "name": "getLoadedFonts",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isLoading": {
+          "name": "isLoading",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "loadAsync": {
+          "name": "loadAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unloadAllAsync": {
+          "name": "unloadAllAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unloadAsync": {
+          "name": "unloadAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "FontDisplay": {
+          "name": "FontDisplay",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AUTO",
+            "BLOCK",
+            "FALLBACK",
+            "OPTIONAL",
+            "SWAP"
+          ]
+        },
+        "renderToImageAsync": {
+          "name": "renderToImageAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-glass-effect",
+      "resolved": true,
+      "symbols": {
+        "GlassView": {
+          "name": "GlassView",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "GlassContainer": {
+          "name": "GlassContainer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isLiquidGlassAvailable": {
+          "name": "isLiquidGlassAvailable",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isGlassEffectAPIAvailable": {
+          "name": "isGlassEffectAPIAvailable",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-haptics",
+      "resolved": true,
+      "symbols": {
+        "notificationAsync": {
+          "name": "notificationAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "impactAsync": {
+          "name": "impactAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "selectionAsync": {
+          "name": "selectionAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "performAndroidHapticsAsync": {
+          "name": "performAndroidHapticsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "NotificationFeedbackType": {
+          "name": "NotificationFeedbackType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Error",
+            "Success",
+            "Warning"
+          ]
+        },
+        "ImpactFeedbackStyle": {
+          "name": "ImpactFeedbackStyle",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Heavy",
+            "Light",
+            "Medium",
+            "Rigid",
+            "Soft"
+          ]
+        },
+        "AndroidHaptics": {
+          "name": "AndroidHaptics",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Clock_Tick",
+            "Confirm",
+            "Context_Click",
+            "Drag_Start",
+            "Gesture_End",
+            "Gesture_Start",
+            "Keyboard_Press",
+            "Keyboard_Release",
+            "Keyboard_Tap",
+            "Long_Press",
+            "No_Haptics",
+            "Reject",
+            "Segment_Frequent_Tick",
+            "Segment_Tick",
+            "Text_Handle_Move",
+            "Toggle_Off",
+            "Toggle_On",
+            "Virtual_Key",
+            "Virtual_Key_Release"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-image",
+      "resolved": true,
+      "symbols": {
+        "Image": {
+          "name": "Image",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Image",
+            "clearDiskCache",
+            "clearMemoryCache",
+            "configureCache",
+            "generateBlurhashAsync",
+            "generateThumbhashAsync",
+            "getCachePathAsync",
+            "loadAsync",
+            "prefetch",
+            "prototype",
+            "readFromCacheAsync",
+            "writeToCacheAsync"
+          ]
+        },
+        "ImageBackground": {
+          "name": "ImageBackground",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useImage": {
+          "name": "useImage",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ImageRef": {
+          "name": "ImageRef",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "ImageNativeModule": {
+          "name": "ImageNativeModule",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-image-manipulator",
+      "resolved": true,
+      "symbols": {
+        "ImageManipulator": {
+          "name": "ImageManipulator",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "Context",
+            "Image",
+            "ViewPrototypes",
+            "_TEventsMap_DONT_USE_IT",
+            "addListener",
+            "emit",
+            "listenerCount",
+            "manipulate",
+            "removeAllListeners",
+            "removeListener",
+            "startObserving",
+            "stopObserving"
+          ]
+        },
+        "manipulateAsync": {
+          "name": "manipulateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useImageManipulator": {
+          "name": "useImageManipulator",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "SaveFormat": {
+          "name": "SaveFormat",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "JPEG",
+            "PNG",
+            "WEBP"
+          ]
+        },
+        "FlipType": {
+          "name": "FlipType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Horizontal",
+            "Vertical"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-image-picker",
+      "resolved": true,
+      "symbols": {
+        "getCameraPermissionsAsync": {
+          "name": "getCameraPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getMediaLibraryPermissionsAsync": {
+          "name": "getMediaLibraryPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestCameraPermissionsAsync": {
+          "name": "requestCameraPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestMediaLibraryPermissionsAsync": {
+          "name": "requestMediaLibraryPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPendingResultAsync": {
+          "name": "getPendingResultAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "launchCameraAsync": {
+          "name": "launchCameraAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "launchImageLibraryAsync": {
+          "name": "launchImageLibraryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useMediaLibraryPermissions": {
+          "name": "useMediaLibraryPermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useCameraPermissions": {
+          "name": "useCameraPermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        },
+        "MediaTypeOptions": {
+          "name": "MediaTypeOptions",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "All",
+            "Images",
+            "Videos"
+          ]
+        },
+        "VideoExportPreset": {
+          "name": "VideoExportPreset",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "H264_1280x720",
+            "H264_1920x1080",
+            "H264_3840x2160",
+            "H264_640x480",
+            "H264_960x540",
+            "HEVC_1920x1080",
+            "HEVC_3840x2160",
+            "HighestQuality",
+            "LowQuality",
+            "MediumQuality",
+            "Passthrough"
+          ]
+        },
+        "UIImagePickerControllerQualityType": {
+          "name": "UIImagePickerControllerQualityType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "High",
+            "IFrame1280x720",
+            "IFrame960x540",
+            "Low",
+            "Medium",
+            "VGA640x480"
+          ]
+        },
+        "UIImagePickerPresentationStyle": {
+          "name": "UIImagePickerPresentationStyle",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AUTOMATIC",
+            "CURRENT_CONTEXT",
+            "FORM_SHEET",
+            "FULL_SCREEN",
+            "OVER_CURRENT_CONTEXT",
+            "OVER_FULL_SCREEN",
+            "PAGE_SHEET",
+            "POPOVER"
+          ]
+        },
+        "UIImagePickerPreferredAssetRepresentationMode": {
+          "name": "UIImagePickerPreferredAssetRepresentationMode",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Automatic",
+            "Compatible",
+            "Current"
+          ]
+        },
+        "CameraType": {
+          "name": "CameraType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "back",
+            "front"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-keep-awake",
+      "resolved": true,
+      "symbols": {
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useKeepAwake": {
+          "name": "useKeepAwake",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "activateKeepAwake": {
+          "name": "activateKeepAwake",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "activateKeepAwakeAsync": {
+          "name": "activateKeepAwakeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deactivateKeepAwake": {
+          "name": "deactivateKeepAwake",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addListener": {
+          "name": "addListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "ExpoKeepAwakeTag": {
+          "name": "ExpoKeepAwakeTag",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "KeepAwakeEventState": {
+          "name": "KeepAwakeEventState",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "RELEASE"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-linking",
+      "resolved": true,
+      "symbols": {
+        "addEventListener": {
+          "name": "addEventListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "parseInitialURLAsync": {
+          "name": "parseInitialURLAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "sendIntent": {
+          "name": "sendIntent",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "openSettings": {
+          "name": "openSettings",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getInitialURL": {
+          "name": "getInitialURL",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getLinkingURL": {
+          "name": "getLinkingURL",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "clearInitialURL": {
+          "name": "clearInitialURL",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "openURL": {
+          "name": "openURL",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "canOpenURL": {
+          "name": "canOpenURL",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useURL": {
+          "name": "useURL",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useLinkingURL": {
+          "name": "useLinkingURL",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "parse": {
+          "name": "parse",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createURL": {
+          "name": "createURL",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasCustomScheme": {
+          "name": "hasCustomScheme",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "collectManifestSchemes": {
+          "name": "collectManifestSchemes",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasConstantsManifest": {
+          "name": "hasConstantsManifest",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "resolveScheme": {
+          "name": "resolveScheme",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-network",
+      "resolved": true,
+      "symbols": {
+        "getNetworkStateAsync": {
+          "name": "getNetworkStateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getIpAddressAsync": {
+          "name": "getIpAddressAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isAirplaneModeEnabledAsync": {
+          "name": "isAirplaneModeEnabledAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addNetworkStateListener": {
+          "name": "addNetworkStateListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useNetworkState": {
+          "name": "useNetworkState",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "NetworkStateType": {
+          "name": "NetworkStateType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BLUETOOTH",
+            "CELLULAR",
+            "ETHERNET",
+            "NONE",
+            "OTHER",
+            "UNKNOWN",
+            "VPN",
+            "WIFI",
+            "WIMAX"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-notifications",
+      "resolved": true,
+      "symbols": {
+        "getDevicePushTokenAsync": {
+          "name": "getDevicePushTokenAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unregisterForNotificationsAsync": {
+          "name": "unregisterForNotificationsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getExpoPushTokenAsync": {
+          "name": "getExpoPushTokenAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "subscribeToTopicAsync": {
+          "name": "subscribeToTopicAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unsubscribeFromTopicAsync": {
+          "name": "unsubscribeFromTopicAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPresentedNotificationsAsync": {
+          "name": "getPresentedNotificationsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "dismissNotificationAsync": {
+          "name": "dismissNotificationAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "dismissAllNotificationsAsync": {
+          "name": "dismissAllNotificationsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getNotificationChannelsAsync": {
+          "name": "getNotificationChannelsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getNotificationChannelAsync": {
+          "name": "getNotificationChannelAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setNotificationChannelAsync": {
+          "name": "setNotificationChannelAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteNotificationChannelAsync": {
+          "name": "deleteNotificationChannelAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getNotificationChannelGroupsAsync": {
+          "name": "getNotificationChannelGroupsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getNotificationChannelGroupAsync": {
+          "name": "getNotificationChannelGroupAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setNotificationChannelGroupAsync": {
+          "name": "setNotificationChannelGroupAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteNotificationChannelGroupAsync": {
+          "name": "deleteNotificationChannelGroupAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getBadgeCountAsync": {
+          "name": "getBadgeCountAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setBadgeCountAsync": {
+          "name": "setBadgeCountAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAllScheduledNotificationsAsync": {
+          "name": "getAllScheduledNotificationsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "scheduleNotificationAsync": {
+          "name": "scheduleNotificationAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "cancelScheduledNotificationAsync": {
+          "name": "cancelScheduledNotificationAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "cancelAllScheduledNotificationsAsync": {
+          "name": "cancelAllScheduledNotificationsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getNotificationCategoriesAsync": {
+          "name": "getNotificationCategoriesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setNotificationCategoryAsync": {
+          "name": "setNotificationCategoryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteNotificationCategoryAsync": {
+          "name": "deleteNotificationCategoryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getNextTriggerDateAsync": {
+          "name": "getNextTriggerDateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useLastNotificationResponse": {
+          "name": "useLastNotificationResponse",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setAutoServerRegistrationEnabledAsync": {
+          "name": "setAutoServerRegistrationEnabledAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "registerTaskAsync": {
+          "name": "registerTaskAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "BackgroundNotificationTaskResult": {
+          "name": "BackgroundNotificationTaskResult",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Failed",
+            "NewData",
+            "NoData"
+          ]
+        },
+        "unregisterTaskAsync": {
+          "name": "unregisterTaskAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addPushTokenListener": {
+          "name": "addPushTokenListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addNotificationReceivedListener": {
+          "name": "addNotificationReceivedListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addNotificationsDroppedListener": {
+          "name": "addNotificationsDroppedListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addNotificationResponseReceivedListener": {
+          "name": "addNotificationResponseReceivedListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getLastNotificationResponseAsync": {
+          "name": "getLastNotificationResponseAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getLastNotificationResponse": {
+          "name": "getLastNotificationResponse",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "clearLastNotificationResponseAsync": {
+          "name": "clearLastNotificationResponseAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "clearLastNotificationResponse": {
+          "name": "clearLastNotificationResponse",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addNotificationResponseClearedListener": {
+          "name": "addNotificationResponseClearedListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "DEFAULT_ACTION_IDENTIFIER": {
+          "name": "DEFAULT_ACTION_IDENTIFIER",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "setNotificationHandler": {
+          "name": "setNotificationHandler",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "NotificationTimeoutError": {
+          "name": "NotificationTimeoutError",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "isError",
+            "prototype"
+          ]
+        },
+        "getPermissionsAsync": {
+          "name": "getPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestPermissionsAsync": {
+          "name": "requestPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "AndroidNotificationVisibility": {
+          "name": "AndroidNotificationVisibility",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "PRIVATE",
+            "PUBLIC",
+            "SECRET",
+            "UNKNOWN"
+          ]
+        },
+        "AndroidAudioContentType": {
+          "name": "AndroidAudioContentType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "MOVIE",
+            "MUSIC",
+            "SONIFICATION",
+            "SPEECH",
+            "UNKNOWN"
+          ]
+        },
+        "AndroidImportance": {
+          "name": "AndroidImportance",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DEFAULT",
+            "HIGH",
+            "LOW",
+            "MAX",
+            "MIN",
+            "NONE",
+            "UNKNOWN",
+            "UNSPECIFIED"
+          ]
+        },
+        "AndroidAudioUsage": {
+          "name": "AndroidAudioUsage",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ALARM",
+            "ASSISTANCE_ACCESSIBILITY",
+            "ASSISTANCE_NAVIGATION_GUIDANCE",
+            "ASSISTANCE_SONIFICATION",
+            "GAME",
+            "MEDIA",
+            "NOTIFICATION",
+            "NOTIFICATION_COMMUNICATION_DELAYED",
+            "NOTIFICATION_COMMUNICATION_INSTANT",
+            "NOTIFICATION_COMMUNICATION_REQUEST",
+            "NOTIFICATION_EVENT",
+            "NOTIFICATION_RINGTONE",
+            "UNKNOWN",
+            "VOICE_COMMUNICATION",
+            "VOICE_COMMUNICATION_SIGNALLING"
+          ]
+        },
+        "IosAlertStyle": {
+          "name": "IosAlertStyle",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ALERT",
+            "BANNER",
+            "NONE"
+          ]
+        },
+        "IosAllowsPreviews": {
+          "name": "IosAllowsPreviews",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ALWAYS",
+            "NEVER",
+            "WHEN_AUTHENTICATED"
+          ]
+        },
+        "IosAuthorizationStatus": {
+          "name": "IosAuthorizationStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AUTHORIZED",
+            "DENIED",
+            "EPHEMERAL",
+            "NOT_DETERMINED",
+            "PROVISIONAL"
+          ]
+        },
+        "SchedulableTriggerInputTypes": {
+          "name": "SchedulableTriggerInputTypes",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CALENDAR",
+            "DAILY",
+            "DATE",
+            "MONTHLY",
+            "TIME_INTERVAL",
+            "WEEKLY",
+            "YEARLY"
+          ]
+        },
+        "AndroidNotificationPriority": {
+          "name": "AndroidNotificationPriority",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DEFAULT",
+            "HIGH",
+            "LOW",
+            "MAX",
+            "MIN"
+          ]
+        },
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-paste-input",
+      "resolved": true,
+      "symbols": {
+        "TextInputWrapperView": {
+          "name": "TextInputWrapperView",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        },
+        "TextInputWrapper": {
+          "name": "TextInputWrapper",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        }
+      }
+    },
+    {
+      "specifier": "expo-quick-actions",
+      "resolved": true,
+      "symbols": {
+        "addListener": {
+          "name": "addListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "initial": {
+          "name": "initial",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "icon",
+            "id",
+            "params",
+            "subtitle",
+            "title"
+          ]
+        },
+        "maxCount": {
+          "name": "maxCount",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "setItems": {
+          "name": "setItems",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "isSupported": {
+          "name": "isSupported",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-secure-store",
+      "resolved": true,
+      "symbols": {
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteItemAsync": {
+          "name": "deleteItemAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getItemAsync": {
+          "name": "getItemAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setItemAsync": {
+          "name": "setItemAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setItem": {
+          "name": "setItem",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getItem": {
+          "name": "getItem",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "canUseBiometricAuthentication": {
+          "name": "canUseBiometricAuthentication",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "AFTER_FIRST_UNLOCK": {
+          "name": "AFTER_FIRST_UNLOCK",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY": {
+          "name": "AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "ALWAYS": {
+          "name": "ALWAYS",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "WHEN_PASSCODE_SET_THIS_DEVICE_ONLY": {
+          "name": "WHEN_PASSCODE_SET_THIS_DEVICE_ONLY",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "ALWAYS_THIS_DEVICE_ONLY": {
+          "name": "ALWAYS_THIS_DEVICE_ONLY",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "WHEN_UNLOCKED": {
+          "name": "WHEN_UNLOCKED",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "WHEN_UNLOCKED_THIS_DEVICE_ONLY": {
+          "name": "WHEN_UNLOCKED_THIS_DEVICE_ONLY",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-sharing",
+      "resolved": true,
+      "symbols": {
+        "useIncomingShare": {
+          "name": "useIncomingShare",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "shareAsync": {
+          "name": "shareAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getSharedPayloads": {
+          "name": "getSharedPayloads",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getResolvedSharedPayloadsAsync": {
+          "name": "getResolvedSharedPayloadsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "clearSharedPayloads": {
+          "name": "clearSharedPayloads",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-sqlite",
+      "resolved": true,
+      "symbols": {
+        "openDatabaseAsync": {
+          "name": "openDatabaseAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "openDatabaseSync": {
+          "name": "openDatabaseSync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deserializeDatabaseAsync": {
+          "name": "deserializeDatabaseAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deserializeDatabaseSync": {
+          "name": "deserializeDatabaseSync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteDatabaseAsync": {
+          "name": "deleteDatabaseAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteDatabaseSync": {
+          "name": "deleteDatabaseSync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "backupDatabaseAsync": {
+          "name": "backupDatabaseAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "backupDatabaseSync": {
+          "name": "backupDatabaseSync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addDatabaseChangeListener": {
+          "name": "addDatabaseChangeListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "SQLiteDatabase": {
+          "name": "SQLiteDatabase",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "defaultDatabaseDirectory": {
+          "name": "defaultDatabaseDirectory",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        },
+        "bundledExtensions": {
+          "name": "bundledExtensions",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        },
+        "SQLiteSession": {
+          "name": "SQLiteSession",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "SQLiteStatement": {
+          "name": "SQLiteStatement",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "SQLiteTaggedQuery": {
+          "name": "SQLiteTaggedQuery",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "useSQLiteContext": {
+          "name": "useSQLiteContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "importDatabaseFromAssetAsync": {
+          "name": "importDatabaseFromAssetAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deepEqual": {
+          "name": "deepEqual",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "SQLiteProvider": {
+          "name": "SQLiteProvider",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        }
+      }
+    },
+    {
+      "specifier": "expo-splash-screen",
+      "resolved": true,
+      "symbols": {
+        "preventAutoHideAsync": {
+          "name": "preventAutoHideAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setOptions": {
+          "name": "setOptions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hide": {
+          "name": "hide",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hideAsync": {
+          "name": "hideAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-symbols",
+      "resolved": true,
+      "symbols": {
+        "unstable_getMaterialSymbolSourceAsync": {
+          "name": "unstable_getMaterialSymbolSourceAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 3,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "SymbolView": {
+          "name": "SymbolView",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-updates",
+      "resolved": true,
+      "symbols": {
+        "reloadAsync": {
+          "name": "reloadAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "checkForUpdateAsync": {
+          "name": "checkForUpdateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getExtraParamsAsync": {
+          "name": "getExtraParamsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setExtraParamAsync": {
+          "name": "setExtraParamAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "readLogEntriesAsync": {
+          "name": "readLogEntriesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "clearLogEntriesAsync": {
+          "name": "clearLogEntriesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "fetchUpdateAsync": {
+          "name": "fetchUpdateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setUpdateURLAndRequestHeadersOverride": {
+          "name": "setUpdateURLAndRequestHeadersOverride",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setUpdateRequestHeadersOverride": {
+          "name": "setUpdateRequestHeadersOverride",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "showReloadScreen": {
+          "name": "showReloadScreen",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hideReloadScreen": {
+          "name": "hideReloadScreen",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isEnabled": {
+          "name": "isEnabled",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "valueOf"
+          ]
+        },
+        "updateId": {
+          "name": "updateId",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "channel": {
+          "name": "channel",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "runtimeVersion": {
+          "name": "runtimeVersion",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "checkAutomatically": {
+          "name": "checkAutomatically",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "localAssets": {
+          "name": "localAssets",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        },
+        "isEmergencyLaunch": {
+          "name": "isEmergencyLaunch",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "valueOf"
+          ]
+        },
+        "emergencyLaunchReason": {
+          "name": "emergencyLaunchReason",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        },
+        "launchDuration": {
+          "name": "launchDuration",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "isEmbeddedLaunch": {
+          "name": "isEmbeddedLaunch",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "valueOf"
+          ]
+        },
+        "isUsingEmbeddedAssets": {
+          "name": "isUsingEmbeddedAssets",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "valueOf"
+          ]
+        },
+        "manifest": {
+          "name": "manifest",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "assets",
+            "id"
+          ]
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "getDate",
+            "getDay",
+            "getFullYear",
+            "getHours",
+            "getMilliseconds",
+            "getMinutes",
+            "getMonth",
+            "getSeconds",
+            "getTime",
+            "getTimezoneOffset",
+            "getUTCDate",
+            "getUTCDay",
+            "getUTCFullYear",
+            "getUTCHours",
+            "getUTCMilliseconds",
+            "getUTCMinutes",
+            "getUTCMonth",
+            "getUTCSeconds",
+            "getVarDate",
+            "setDate",
+            "setFullYear",
+            "setHours",
+            "setMilliseconds",
+            "setMinutes",
+            "setMonth",
+            "setSeconds",
+            "setTime",
+            "setUTCDate",
+            "setUTCFullYear",
+            "setUTCHours",
+            "setUTCMilliseconds",
+            "setUTCMinutes",
+            "setUTCMonth",
+            "setUTCSeconds",
+            "toDateString",
+            "toISOString",
+            "toJSON",
+            "toLocaleDateString",
+            "toLocaleString",
+            "toLocaleTimeString",
+            "toString",
+            "toTimeString",
+            "toUTCString",
+            "valueOf"
+          ]
+        },
+        "latestContext": {
+          "name": "latestContext",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "checkError",
+            "downloadError",
+            "downloadProgress",
+            "downloadedManifest",
+            "isChecking",
+            "isDownloading",
+            "isRestarting",
+            "isStartupProcedureRunning",
+            "isUpdateAvailable",
+            "isUpdatePending",
+            "lastCheckForUpdateTime",
+            "latestManifest",
+            "restartCount",
+            "rollback",
+            "sequenceNumber"
+          ]
+        },
+        "addUpdatesStateChangeListener": {
+          "name": "addUpdatesStateChangeListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "emitTestStateChangeEvent": {
+          "name": "emitTestStateChangeEvent",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "resetLatestContext": {
+          "name": "resetLatestContext",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "UpdateCheckResultNotAvailableReason": {
+          "name": "UpdateCheckResultNotAvailableReason",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "NO_UPDATE_AVAILABLE_ON_SERVER",
+            "ROLLBACK_NO_EMBEDDED",
+            "ROLLBACK_REJECTED_BY_SELECTION_POLICY",
+            "UPDATE_PREVIOUSLY_FAILED",
+            "UPDATE_REJECTED_BY_SELECTION_POLICY"
+          ]
+        },
+        "UpdatesLogEntryCode": {
+          "name": "UpdatesLogEntryCode",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ASSETS_FAILED_TO_LOAD",
+            "INITIALIZATION_ERROR",
+            "JS_RUNTIME_ERROR",
+            "NONE",
+            "NO_UPDATES_AVAILABLE",
+            "UNKNOWN",
+            "UPDATE_ASSETS_NOT_AVAILABLE",
+            "UPDATE_CODE_SIGNING_ERROR",
+            "UPDATE_FAILED_TO_LOAD",
+            "UPDATE_HAS_INVALID_SIGNATURE",
+            "UPDATE_SERVER_UNREACHABLE"
+          ]
+        },
+        "UpdatesLogEntryLevel": {
+          "name": "UpdatesLogEntryLevel",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DEBUG",
+            "ERROR",
+            "FATAL",
+            "INFO",
+            "TRACE",
+            "WARN"
+          ]
+        },
+        "UpdatesCheckAutomaticallyValue": {
+          "name": "UpdatesCheckAutomaticallyValue",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "NEVER",
+            "ON_ERROR_RECOVERY",
+            "ON_LOAD",
+            "WIFI_ONLY"
+          ]
+        },
+        "useUpdates": {
+          "name": "useUpdates",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "UpdateInfoType": {
+          "name": "UpdateInfoType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "NEW",
+            "ROLLBACK"
+          ]
+        },
+        "ExpoUpdatesModule": {
+          "name": "ExpoUpdatesModule",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-video",
+      "resolved": true,
+      "symbols": {
+        "isPictureInPictureSupported": {
+          "name": "isPictureInPictureSupported",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "clearVideoCacheAsync": {
+          "name": "clearVideoCacheAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setVideoCacheSizeAsync": {
+          "name": "setVideoCacheSizeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getCurrentVideoCacheSize": {
+          "name": "getCurrentVideoCacheSize",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "VideoView": {
+          "name": "VideoView",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "useVideoPlayer": {
+          "name": "useVideoPlayer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createVideoPlayer": {
+          "name": "createVideoPlayer",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "VideoAirPlayButton": {
+          "name": "VideoAirPlayButton",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "VideoPlayer": {
+          "name": "VideoPlayer",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-web-browser",
+      "resolved": true,
+      "symbols": {
+        "getCustomTabsSupportingBrowsersAsync": {
+          "name": "getCustomTabsSupportingBrowsersAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "warmUpAsync": {
+          "name": "warmUpAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "mayInitWithUrlAsync": {
+          "name": "mayInitWithUrlAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "coolDownAsync": {
+          "name": "coolDownAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "openBrowserAsync": {
+          "name": "openBrowserAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "dismissBrowser": {
+          "name": "dismissBrowser",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "openAuthSessionAsync": {
+          "name": "openAuthSessionAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "dismissAuthSession": {
+          "name": "dismissAuthSession",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "maybeCompleteAuthSession": {
+          "name": "maybeCompleteAuthSession",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "WebBrowserResultType": {
+          "name": "WebBrowserResultType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CANCEL",
+            "DISMISS",
+            "LOCKED",
+            "OPENED"
+          ]
+        },
+        "WebBrowserPresentationStyle": {
+          "name": "WebBrowserPresentationStyle",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AUTOMATIC",
+            "CURRENT_CONTEXT",
+            "FORM_SHEET",
+            "FULL_SCREEN",
+            "OVER_CURRENT_CONTEXT",
+            "OVER_FULL_SCREEN",
+            "PAGE_SHEET",
+            "POPOVER"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-widgets",
+      "resolved": true,
+      "symbols": {
+        "after": {
+          "name": "after",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createWidget": {
+          "name": "createWidget",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 2
+        },
+        "createLiveActivity": {
+          "name": "createLiveActivity",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "addUserInteractionListener": {
+          "name": "addUserInteractionListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addPushToStartTokenListener": {
+          "name": "addPushToStartTokenListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Widget": {
+          "name": "Widget",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "LiveActivity": {
+          "name": "LiveActivity",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "LiveActivityFactory": {
+          "name": "LiveActivityFactory",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "widgetsDirectory": {
+          "name": "widgetsDirectory",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "anchor",
+            "at",
+            "big",
+            "blink",
+            "bold",
+            "charAt",
+            "charCodeAt",
+            "codePointAt",
+            "concat",
+            "endsWith",
+            "fixed",
+            "fontcolor",
+            "fontsize",
+            "includes",
+            "indexOf",
+            "isWellFormed",
+            "italics",
+            "lastIndexOf",
+            "length",
+            "link",
+            "localeCompare",
+            "match",
+            "matchAll",
+            "normalize",
+            "padEnd",
+            "padStart",
+            "repeat",
+            "replace",
+            "replaceAll",
+            "search",
+            "slice",
+            "small",
+            "split",
+            "startsWith",
+            "strike",
+            "sub",
+            "substr",
+            "substring",
+            "sup",
+            "toLocaleLowerCase",
+            "toLocaleUpperCase",
+            "toLowerCase",
+            "toString",
+            "toUpperCase",
+            "toWellFormed",
+            "trim",
+            "trimEnd",
+            "trimLeft",
+            "trimRight",
+            "trimStart",
+            "valueOf"
+          ]
+        }
+      }
+    }
+  ]
+}

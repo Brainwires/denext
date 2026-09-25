@@ -1,0 +1,26 @@
+<!-- denext-app-extension-template: 1 sha256=69635b30e9a05d0edef87447471fb2baf490a6fc92ba78b7626ae9270d8f9c68 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/denext_widget_root"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="#FFFFFFFF"
+  android:orientation="vertical"
+  android:padding="12dp">
+  <TextView
+    android:id="@+id/denext_widget_title"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:maxLines="2"
+    android:textColor="#FF111111"
+    android:textSize="16sp"
+    android:textStyle="bold" />
+
+  <TextView
+    android:id="@+id/denext_widget_body"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:maxLines="4"
+    android:textColor="#FF555555"
+    android:textSize="14sp" />
+</LinearLayout>

@@ -260,12 +260,27 @@ export class VideoPlayer {
 }
 
 /**
+ * Android player-builder options (seek increments), applied before the native player is
+ * built. Accepted and ignored here: the browser's controls set their own increments.
+ */
+export interface PlayerBuilderOptions {
+  /** The seek-back increment, in seconds (ignored). */
+  seekBackwardIncrement?: number;
+  /** The seek-forward increment, in seconds (ignored). */
+  seekForwardIncrement?: number;
+}
+
+/**
  * A player not tied to a component (call `release()` when done).
  *
  * @param source The source.
+ * @param _playerBuilderOptions Android builder options (ignored).
  * @returns The player.
  */
-export function createVideoPlayer(source: VideoSource): VideoPlayer {
+export function createVideoPlayer(
+  source: VideoSource,
+  _playerBuilderOptions?: PlayerBuilderOptions,
+): VideoPlayer {
   return new VideoPlayer(source);
 }
 
@@ -274,11 +289,13 @@ export function createVideoPlayer(source: VideoSource): VideoPlayer {
  *
  * @param source The source.
  * @param setup Called once with the new player (set `loop`, call `play()`, …).
+ * @param _playerBuilderOptions Android builder options (ignored).
  * @returns The player.
  */
 export function useVideoPlayer(
   source: VideoSource,
   setup?: (player: VideoPlayer) => void,
+  _playerBuilderOptions?: PlayerBuilderOptions,
 ): VideoPlayer {
   const player = useMemo(() => new VideoPlayer(source), []);
   const key = typeof source === "string" ? source : source?.uri ?? "";

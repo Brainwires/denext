@@ -8,9 +8,125 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [2.10.0-rc.3] - 2026-09-25
+## [2.10.0-rc.5] - 2026-09-25
+
+### Fixed
+
+- **The package publishes to JSR again.** `src/desktop/auth-session.ts` declared a global
+  (`declare global { var __denext … }`), which JSR refuses ("modifying global types is not
+  allowed"), so `2.10.0-rc.4` was tagged but never published; its changes ship in this release.
+  The desktop globals are now read through a cast, and a test fails on any `declare global` in
+  published source (`deno publish --dry-run` does not catch it).
+
+## [2.10.0-rc.4] - 2026-09-25 (tagged, not published)
 
 ### Added
+
+- **`denext/expo/file-system/legacy`: the `expo-file-system/legacy` API in React Native mode.**
+  An Expo app that imports `expo-file-system/legacy` now gets a shim instead of the real
+  (native-only) package: `documentDirectory` / `cacheDirectory`, `getInfoAsync`,
+  `readAsStringAsync` / `writeAsStringAsync` (UTF-8 or base64, append, byte ranges),
+  `deleteAsync` (`idempotent`), `moveAsync`, `copyAsync`, `makeDirectoryAsync`
+  (`intermediates`), `readDirectoryAsync`, `downloadAsync`, `uploadAsync` (binary or multipart, over `fetch`) and the disk-space calls (the
+  origin's storage quota), over the same files as the SDK 57 object API
+  (`@capacitor/filesystem` in the shell, OPFS on the web). Resumable downloads, upload tasks,
+  the Storage Access Framework and content URIs throw an error naming denext. A manifest key can now
+  be a package subpath (`EXPO_SHIMS["expo-file-system/legacy"]`).
+- **`showContextMenu(items, options)` in `denext/mobile`.** Opens a context menu and resolves
+  with the chosen item's `id` (or `null`): an app-registered `DenextContextMenu` Capacitor
+  plugin when there is one (denext ships none), else an accessible in-page popover that lists
+  every item, with keyboard navigation. Items take `disabled`, `destructive` and `icon`; the menu
+  opens at `x` / `y` or under an `anchor` rect. Nothing runs at import, and it is SSR-safe.
+- **`openAuthSession` in a Deno Desktop window.** When `runtimePlatform()` is `"desktop"` it
+  runs the RFC 8252 loopback flow: the desktop runtime opens the system browser and a one-shot
+  `127.0.0.1` listener for the redirect (the authorization URL's loopback `redirect_uri` gets
+  its port), then resolves with the callback URL. The runtime's local endpoint takes a POST with
+  a per-launch token (compared in constant time) from a loopback origin only, and never logs the
+  URL. Same result and error codes as on mobile; the default timeout is 5 minutes.
+- **A signed UI self-updater for Deno Desktop: `denext/desktop/updater`.**
+  `checkForDesktopUpdate` / `prepareDesktopUpdate` / `applyDesktopUpdate` (plus
+  `desktopUpdateStatus` / `desktopUpdateReset`) fetch the mobile OTA manifest format from a
+  `feedUrl`, verify its ECDSA P-256 signature, sequence and every file's SHA-256 before
+  anything is swapped, and install the UI as an overlay in the app-support directory (the
+  signed bundle is never modified), with an atomic pointer swap. `runDesktop({ updater })`
+  serves the overlay; a boot beacon from the loaded page confirms it, and a version that never
+  confirms is rolled back and refused. A signature is always required. The module re-exports
+  the `OtaManifest` / `OtaManifestFile` types its results carry.
+- **React Native surface-parity gate: `deno task parity:native`.** Diffs react-native-web's
+  runtime exports against React Native 0.86's declared ones and fails on a deviation that is
+  neither waived nor in the known-gaps ledger (`parity:native:refresh`, `parity:native:gaps`);
+  a CI job runs it on PRs to `main`. Its `expo` target skips until the `expo-*` baselines are
+  captured.
+- **`examples/mobile`**: every `denext/mobile` capability on one screen of a Capacitor 8 app,
+  set up with the real `denext mobile add` commands (recorded in its README), including deep
+  links, push, auth sessions, the share extension, a configurable widget, a Live Activity and
+  signed OTA.
+
+### Fixed
+
+- **Unbundled dev no longer fails an SPA that imports its own stylesheet.** A first-party
+  `import "./styles.css"` (or `.scss` / `.sass`) resolved to the file and reached the JS
+  transform, which answered 500 and stopped the page (a Capacitor app under `denext mobile dev`
+  stayed on its splash). Stylesheets now always map to the empty module; the CSS is linked
+  separately, as before.
+
+- **`denext mobile add` no longer prints a stale "point the App target at App.entitlements"
+  step** when an app-group capability in the same run (or an earlier one) already wired the
+  entitlements file, and a URL scheme shared by `deep-links`, `auth-session` and
+  `share-extension` is one plan line, not three.
+- **Spurious SPA dev rebuilds on Linux.** `Deno.writeTextFile` truncates before writing, and
+  inotify reports the truncate as its own change; a watcher that read the file in that window
+  saw an empty file and took denext's own write for an edit. Writes in progress now count as
+  self-writes.
+- **`denext mobile dev` on a physical iPhone hung on the splash screen.** `server.cleartext` is
+  Android-only; on iOS the WebView never reached `http://<LAN IP>:3000` because App Transport
+  Security blocked it and, without `NSLocalNetworkUsageDescription`, iOS 14+ silently denied the
+  local-network request. `mobile dev` now adds `NSAppTransportSecurity` →
+  `NSAllowsLocalNetworking` (merged into an existing ATS dict) and a default
+  `NSLocalNetworkUsageDescription` (an existing one is kept) to `ios/App/App/Info.plist` for the
+  session, backs up its original bytes with the config in `.denext/mobile-dev-backup.json`, and
+  restores them on exit and with `--restore` (a planted backup can only restore that plist). An
+  unchanged plist is never rewritten; a changed one prints "Info.plist changed: rebuild and run
+  the app from Xcode". The printed steps now name `ios/App/App.xcworkspace` only when it exists,
+  else `ios/App/App.xcodeproj` (Capacitor 8 Swift Package Manager projects have no workspace).
+- **`denext mobile dev` could leave the dev URL in the native projects.** The exit restore relied
+  on `npx cap copy` to rewrite `ios/App/App/capacitor.config.json` and
+  `android/app/src/main/assets/capacitor.config.json`, but that copy fails when the `webDir`
+  export is missing (the usual state during a dev session), so both git-ignored copies kept
+  `server.url` and the next native build shipped an app that loaded the dev server. The restore
+  (on exit and with `--restore`) now scrubs them itself: each gets back the `server` block it had
+  at session start (recorded in `.denext/mobile-dev-backup.json`; a planted backup can only name
+  those two paths), and a copy with no record (an older backup, or none) loses a `server.url`
+  that is a LAN or loopback `http` origin. A clean copy is never rewritten. A failed closing
+  `cap copy` is now a note: run your export and `npx cap copy` before a release build.
+  `--restore` now runs `cap copy` too (same note on failure) and prints one line per file it
+  changed (`restored …`, `scrubbed the dev server URL from …`), or "nothing to restore".
+- **`denext mobile add-ota --dry-run` wrote the files.** The flag was ignored and the templates,
+  the Xcode project, the storyboard, SceneDelegate, MainActivity and the public key were all
+  written. It now changes nothing: it prints `--dry-run (nothing changed)` and what a real run
+  would write, upgrade, leave unchanged or keep (with the steps left by hand); the report,
+  including `--json` (which adds `"dryRun": true`), is the one a real run would produce, and
+  `--public-key` still exits non-zero when a real run would.
+- **`denext mobile add` added caret ranges to a project that pins Capacitor exactly.** When every
+  `@capacitor/*` package in `package.json` (dependencies and devDependencies) is an exact version,
+  the capability packages are now added exactly as well: the version the capability table was
+  verified against (the range's minimum, e.g. `@capacitor/app@8.1.1`), with the package manager's
+  exact flag (`npm install --save-exact`, `pnpm add --save-exact`, `yarn add --exact`,
+  `bun add --exact`) so it is saved without a caret. Any range among them keeps caret ranges.
+- **An Android `MainActivity` denext composed stopped being recognised once its text changed.**
+  denext knew its own `MainActivity` only by an exact match against the current release's
+  source, so any change to that source would have turned an earlier release's unedited activity
+  into a manual step. It is now written under a `// denext-main-activity-template: <n>
+  sha256=<hex>` marker line (like the iOS bridge view controller), and any activity whose marker
+  still matches its body is upgraded in place. Activities written before the marker (the OTA-only
+  one of 2.7.0 … 2.9.0 and every feature combination of 2.10.0-rc.1 … rc.3) are recognised by
+  their SHA-256, with the package line normalised, and upgraded too, including when the feature
+  being added is already registered. An edited activity is still kept, as is a marked one that
+  registers a plugin this release does not know. No native template is downgraded any more: a
+  `MainActivity`, `DenextBridgeViewController` or OTA / auth-session / app-extension template file
+  whose marker generation is newer than this release writes is left as it is. A shared file that
+  already registers the feature is unchanged; anything else is kept with a manual step to upgrade
+  denext (`--force` still replaces the template files and the bridge view controller).
 
 - **App extensions: `denext mobile add share-extension | widget | live-activity`.** Three
   generators, in the style of `add-ota`, add native app extensions to a Capacitor project and
@@ -123,6 +239,25 @@ and this project adheres to
 
 ### Changed
 
+- **The `denext/expo/*` shims now match their pinned `expo-*` packages' export surface: the
+  expo half of `deno task parity:native` has no known gaps left (29 before).**
+  - `expo-camera`'s permission calls are on the `Camera` object only, as in expo-camera 57
+    (`getCameraPermissionsAsync` and the three others are no longer top-level exports), and
+    `Camera.scanFromURLAsync` is there too.
+  - The native-module classes (`CameraNativeModule`, `ImageNativeModule`, `ExpoUpdatesModule`,
+    `NativeAudioModule`) and expo-audio's `AudioPlaylist` / `AudioStream` are exported as
+    typed stand-ins that throw a clear "unavailable on the web" error when constructed.
+  - `expo-file-system` exports SDK 57's legacy top-level functions (`readAsStringAsync`,
+    `getInfoAsync`, …) as the same deprecation stubs Expo ships: each warns and throws Expo's
+    migration message.
+  - `expo-crypto` exports the `AESKeySize` enum, and `expo-sqlite` exports `deepEqual`.
+  - `installOnUIRuntime(holder)`, `setBadgeCountAsync(count, options)`,
+    `createVideoPlayer(source, playerBuilderOptions)` and
+    `useVideoPlayer(source, setup, playerBuilderOptions)` take Expo's extra parameter
+    (ignored: no worklets runtime, the Badging API only, Android-only builder options).
+  - The parity extractor resolves packages with TypeScript's `Bundler` resolution, so a package
+    that publishes its types only through `exports` (expo-quick-actions) is now compared
+    instead of skipped. The React / Next baseline is unaffected.
 - **An explicit `denext dev --host` allows the host it binds** through the dev origin gate
   (`0.0.0.0` / `::` allow this machine's own addresses). `.denext/dev.json` now records the
   bind as given in `hostname` and the allowed hosts in `devOrigins`; `origin` stays the
@@ -8337,6 +8472,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.10.0-rc.5]: https://jsr.io/@denext/denext@2.10.0-rc.5
+[2.10.0-rc.4]: https://jsr.io/@denext/denext@2.10.0-rc.4
 [2.10.0-rc.3]: https://jsr.io/@denext/denext@2.10.0-rc.3
 [2.10.0-rc.2]: https://jsr.io/@denext/denext@2.10.0-rc.2
 [2.10.0-rc.1]: https://jsr.io/@denext/denext@2.10.0-rc.1

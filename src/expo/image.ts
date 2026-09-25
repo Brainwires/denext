@@ -21,7 +21,13 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { useEffect, useState } from "../runtime/hooks.ts";
-import { flattenStyle, hasReactNative, hostView, viewStyle } from "./internal/common.ts";
+import {
+  flattenStyle,
+  hasReactNative,
+  hostView,
+  nativeOnly,
+  viewStyle,
+} from "./internal/common.ts";
 import { backing, displayUrl } from "./internal/fs.ts";
 import * as RN from "./internal/react-native.ts";
 
@@ -219,4 +225,44 @@ export function ImageBackground(props: ImageBackgroundProps): VNode {
     h(Image, { ...imageProps, style: imageFill }),
     children as never,
   );
+}
+
+/**
+ * The type of expo-image's native module (what `requireNativeModule("ExpoImage")` returns).
+ * There is no native module on the web: constructing this stand-in throws. Use
+ * {@linkcode Image} and its static cache calls instead.
+ */
+export class ImageNativeModule {
+  /** Load an image into memory. */
+  declare loadAsync: (source: ImageSource, options?: Record<string, unknown>) => Promise<unknown>;
+  /** Preload images into the cache. */
+  declare prefetch: (
+    urls: string[],
+    cachePolicy?: string,
+    headers?: Record<string, string>,
+  ) => Promise<boolean>;
+  /** Clear the memory cache. */
+  declare clearMemoryCache: () => Promise<boolean>;
+  /** Clear the disk cache. */
+  declare clearDiskCache: () => Promise<boolean>;
+  /** Configure the cache limits. */
+  declare configureCache: (config: Record<string, unknown>) => void;
+  /** The cached file of a key. */
+  declare getCachePathAsync: (cacheKey: string) => Promise<string | null>;
+  /** Write an image to the cache under a key. */
+  declare writeToCacheAsync: (source: unknown, cacheKey: string) => Promise<void>;
+  /** Read an image from the cache. */
+  declare readFromCacheAsync: (cacheKey: string) => Promise<unknown>;
+  /** Compute an image's blurhash. */
+  declare generateBlurhashAsync: (
+    source: unknown,
+    numberOfComponents: [number, number] | { width: number; height: number },
+  ) => Promise<string | null>;
+  /** Compute an image's thumbhash. */
+  declare generateThumbhashAsync: (source: unknown) => Promise<string>;
+
+  /** Always throws: there is no native image module on the web. */
+  constructor() {
+    throw nativeOnly("expo-image", "ImageNativeModule");
+  }
 }

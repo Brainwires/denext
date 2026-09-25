@@ -185,3 +185,4 @@ export {
 export * from "./share-receive.ts";
 export * from "./widgets.ts";
 export * from "./live-activity.ts";
+export { type ContextMenuItem, type ContextMenuOptions, showContextMenu } from "./context-menu.ts";

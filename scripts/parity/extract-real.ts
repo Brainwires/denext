@@ -14,12 +14,21 @@
 // deno-lint-ignore no-import-prefix
 import ts from "npm:typescript@5";
 import { CATALOG, REAL_PACKAGES } from "./spec.ts";
-import type { CallSig, Surface, SurfaceSymbol } from "./types.ts";
+import { type CallSig, isInternalName, type Surface, type SurfaceSymbol } from "./types.ts";
 
-/** Read the installed version of each real package from its node_modules manifest. */
-export function readVersions(workDir: string): Record<string, string> {
+/** Minimal entry shape the real-side extractor needs: the public specifier + npm import. */
+export interface RealTarget {
+  specifier: string;
+  real: string;
+}
+
+/** Read the installed version of each named package from its node_modules manifest. */
+export function readVersionsFor(
+  workDir: string,
+  packages: readonly string[],
+): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const pkg of REAL_PACKAGES) {
+  for (const pkg of packages) {
     try {
       const manifest = JSON.parse(
         Deno.readTextFileSync(`${workDir}/node_modules/${pkg}/package.json`),
@@ -30,6 +39,11 @@ export function readVersions(workDir: string): Record<string, string> {
     }
   }
   return out;
+}
+
+/** Read the installed version of each real (React/Next) package from node_modules. */
+export function readVersions(workDir: string): Record<string, string> {
+  return readVersionsFor(workDir, REAL_PACKAGES);
 }
 
 /** Reduce a TS call signature to the structural fields parity checks. */
@@ -75,8 +89,29 @@ function kindOf(flags: number, callable: boolean): SurfaceSymbol["kind"] {
  */
 function membersOf(type: ts.Type, callable: boolean): string[] | undefined {
   if (callable) return undefined;
-  const props = type.getProperties();
-  return props.length ? props.map((p) => p.getName()).sort() : undefined;
+  const names = type.getProperties().map((p) => p.getName()).filter((n) => !isInternalName(n));
+  return names.length ? names.sort() : undefined;
+}
+
+/** Whether an export alias is type-only: `export type { X } from …` or `export { type X }`. */
+function isTypeOnlyAlias(sym: ts.Symbol): boolean {
+  return (sym.declarations ?? []).some((d) =>
+    ts.isExportSpecifier(d) && (d.isTypeOnly || d.parent.parent.isTypeOnly)
+  );
+}
+
+/**
+ * The flags that classify an export, and whether it is type-only. A re-export
+ * (`export { X } from …`) is an alias whose own flags say nothing about what it names, so it
+ * takes its target's.
+ */
+function exportFlags(
+  checker: ts.TypeChecker,
+  sym: ts.Symbol,
+): { flags: number; typeOnly: boolean } {
+  const flags = sym.getFlags();
+  if (!(flags & ts.SymbolFlags.Alias)) return { flags, typeOnly: false };
+  return { flags: checker.getAliasedSymbol(sym).getFlags(), typeOnly: isTypeOnlyAlias(sym) };
 }
 
 /** The first call signature's type-parameter count; undefined for a non-callable. */
@@ -87,18 +122,20 @@ function typeParamCountOf(cs: readonly ts.Signature[]): number | undefined {
 
 /** Normalize one exported member symbol. */
 function normalize(checker: ts.TypeChecker, sym: ts.Symbol): SurfaceSymbol {
-  const flags = sym.getFlags();
+  const { flags, typeOnly } = exportFlags(checker, sym);
+  // A type-only export is not importable at runtime: its value side (calls, members) is moot.
+  const isValue = !typeOnly && !!(flags & ts.SymbolFlags.Value);
   const type = checker.getTypeOfSymbol(sym);
-  const cs = type.getCallSignatures();
+  const cs = isValue ? type.getCallSignatures() : [];
   const callable = cs.length > 0;
   return {
     name: sym.getName(),
     kind: kindOf(flags, callable),
-    isValue: !!(flags & (ts.SymbolFlags.Value | ts.SymbolFlags.Alias)),
-    isType: TYPE_FLAGS.some((f) => flags & f),
+    isValue,
+    isType: typeOnly || TYPE_FLAGS.some((f) => flags & f),
     callSignatures: callable ? cs.map(callSig) : undefined,
     typeParamCount: typeParamCountOf(cs),
-    members: membersOf(type, callable),
+    members: isValue ? membersOf(type, callable) : undefined,
   };
 }
 
@@ -110,10 +147,30 @@ function normalize(checker: ts.TypeChecker, sym: ts.Symbol): SurfaceSymbol {
  * @returns One {@link Surface} per specifier (unresolved specifiers have `resolved:false`).
  */
 export function extractRealSurfaces(workDir: string): Surface[] {
+  return extractRealSurfacesFor(workDir, CATALOG);
+}
+
+/**
+ * Extract the real surface for an arbitrary set of targets (the same machinery the
+ * React/Next catalog uses, opened up for the native/expo catalogs). Each target's
+ * `real` specifier is pre-resolved; an unresolvable one becomes `resolved:false`.
+ *
+ * @param workDir A directory whose `node_modules` has each target's package installed.
+ * @param targets The public-specifier ↔ npm-import pairs to extract.
+ */
+export function extractRealSurfacesFor(
+  workDir: string,
+  targets: readonly RealTarget[],
+): Surface[] {
   const compilerOptions: ts.CompilerOptions = {
     module: ts.ModuleKind.ESNext,
     target: ts.ScriptTarget.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Node10,
+    // Bundler, not Node10: Node10 ignores package.json `exports`, so a package that
+    // publishes its types only through an exports map (expo-quick-actions) would resolve to
+    // nothing and never be compared. Bundler reads `exports` (the `types` condition) and
+    // still falls back to `types`/`typesVersions` and bare file lookup for packages without
+    // one (next's `next/navigation.d.ts`).
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
     esModuleInterop: true,
     skipLibCheck: true,
     noEmit: true,
@@ -123,7 +180,7 @@ export function extractRealSurfaces(workDir: string): Surface[] {
   // Pre-resolve each specifier so an upstream-removed subpath (e.g.
   // react-dom/test-utils on React 19) becomes `resolved:false` instead of a crash.
   const containing = `${workDir}/__parity_entry__.ts`;
-  const resolvedSpecs = CATALOG.map((e) => ({
+  const resolvedSpecs = targets.map((e) => ({
     entry: e,
     ok: !!ts.resolveModuleName(e.real, containing, compilerOptions, host).resolvedModule,
   }));

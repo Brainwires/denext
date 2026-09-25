@@ -7,11 +7,13 @@ import {
   createUnbundledState,
   DEP_PREFIX,
   depSlug,
+  EMPTY_MODULE,
   FS_PREFIX,
   NPM_PREFIX,
+  type TransformEntry,
   type UnbundledState,
 } from "../src/build/dev-unbundled/state.ts";
-import { compatDepUrl } from "../src/build/dev-unbundled/resolve.ts";
+import { compatDepUrl, rewriteSpecifier } from "../src/build/dev-unbundled/resolve.ts";
 import { onChange, propagate } from "../src/build/dev-unbundled/hmr.ts";
 import { NEXT_ALIASES, REACT_ALIASES } from "../src/build/next-compat.ts";
 
@@ -37,6 +39,18 @@ Deno.test("compatDepUrl maps react/next/denext to the runtime, npm to the dep bu
   assertEquals(compatDepUrl(st, "https://esm.sh/x"), null);
   assertEquals(compatDepUrl(st, "lodash-es"), `${NPM_PREFIX}${depSlug("lodash-es")}.js`);
   assert(st.npmSpecs.has("lodash-es"), "an npm specifier is noted for the on-demand bundle");
+});
+
+Deno.test("rewriteSpecifier sends a first-party stylesheet to the empty shim, not the JS transform", () => {
+  const st = state(false);
+  const e: TransformEntry = { mtimeMs: 0, code: "", deps: [], selfAccepting: false };
+  assertEquals(rewriteSpecifier(st, "./styles.css", "/proj/src/styles.css", e), EMPTY_MODULE);
+  assertEquals(
+    rewriteSpecifier(st, "./a.module.scss?x", "/proj/src/a.module.scss", e),
+    EMPTY_MODULE,
+  );
+  assertEquals(e.deps.length, 0, "no graph edge for a stylesheet");
+  assert(rewriteSpecifier(st, "./app.tsx", "/proj/src/app.tsx", e).startsWith(FS_PREFIX));
 });
 
 /** entry → A (self-accepting) → B → C; B also imports D (a leaf that self-accepts). */

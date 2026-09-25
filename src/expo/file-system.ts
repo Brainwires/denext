@@ -15,9 +15,10 @@
  *
  * The index only knows files written through this shim. `Paths.document` is
  * `file:///documents/` and `Paths.cache` is `file:///cache/`; any other URI (a picker's
- * `blob:` URL, `http(s):`) can be read, not written. The legacy API
- * (`expo-file-system/legacy`), file handles, streams, watchers and upload/download tasks are
- * not provided (see the manifest).
+ * `blob:` URL, `http(s):`) can be read, not written. File handles, streams, watchers and
+ * upload/download tasks are not provided (see the manifest). The legacy API
+ * (`expo-file-system/legacy`) is its own shim, `denext/expo/file-system/legacy`, over the
+ * same files.
  *
  * @example
  * ```ts
@@ -33,10 +34,11 @@
  * @module
  */
 
-import { base64ToBytes, bytesToBase64 } from "../mobile/base64.ts";
+import { bytesToBase64 } from "../mobile/base64.ts";
 import {
   appendBytes,
   backing,
+  baseName,
   cached,
   children,
   copy,
@@ -47,6 +49,7 @@ import {
   readBytes,
   remove,
   stat,
+  toBytes,
   writeBytes,
 } from "./internal/fs.ts";
 
@@ -179,21 +182,9 @@ function joinUris(parts: readonly PathPart[]): string {
   return uri;
 }
 
-/** The last path segment of `uri`. */
-function baseName(uri: string): string {
-  const trimmed = uri.replace(/\/+$/, "");
-  return trimmed.slice(trimmed.lastIndexOf("/") + 1);
-}
-
 /** Refuse to replace `uri` unless `overwrite`. */
 function checkFree(uri: string, overwrite: boolean | undefined, what: string): void {
   if (stat(uri) && !overwrite) throw new Error(`${what} ${uri} already exists`);
-}
-
-/** `content` as bytes, decoding base64 when asked. */
-function toBytes(content: string | Uint8Array, encoding?: string): Uint8Array {
-  if (typeof content !== "string") return content;
-  return encoding === "base64" ? base64ToBytes(content) : new TextEncoder().encode(content);
 }
 
 /** The destination URI for relocating `source` into (or onto) `destination`. */
@@ -579,4 +570,198 @@ export class Paths {
   static isAbsolute(path: PathPart): boolean {
     return /^([a-z][a-z0-9+.-]*:|\/)/i.test(partUri(path));
   }
+}
+
+// ── the legacy top-level functions ─────────────────────────────────────────────────────
+// expo-file-system 57 still exports the pre-SDK-54 functions from its root, but only as
+// deprecation stubs: each warns and throws, pointing at the object API or at
+// `expo-file-system/legacy`. These behave the same, with Expo's own message.
+
+/** Warn and build the error expo-file-system 57 throws from a legacy top-level function. */
+function legacyMethod(name: string): Error {
+  const message = `Method ${name} imported from "expo-file-system" is deprecated.\n` +
+    `You can migrate to the new filesystem API using "File" and "Directory" classes or ` +
+    `import the legacy API from "expo-file-system/legacy".\nAPI reference and examples are ` +
+    `available in the filesystem docs: https://docs.expo.dev/versions/v54.0.0/sdk/filesystem/`;
+  console.warn(message);
+  return new Error(message);
+}
+
+/**
+ * @deprecated Use `new File().info()`. Rejects, as in expo-file-system 57.
+ *
+ * @param _fileUri The URI.
+ * @param _options The options.
+ */
+export function getInfoAsync(_fileUri: string, _options?: Record<string, unknown>): Promise<never> {
+  return Promise.reject(legacyMethod("getInfoAsync"));
+}
+
+/**
+ * @deprecated Use `new File().text()`. Rejects, as in expo-file-system 57.
+ *
+ * @param _fileUri The URI.
+ * @param _options The options.
+ */
+export function readAsStringAsync(
+  _fileUri: string,
+  _options?: Record<string, unknown>,
+): Promise<never> {
+  return Promise.reject(legacyMethod("readAsStringAsync"));
+}
+
+/**
+ * @deprecated Rejects, as in expo-file-system 57.
+ *
+ * @param _fileUri The URI.
+ */
+export function getContentUriAsync(_fileUri: string): Promise<never> {
+  return Promise.reject(legacyMethod("getContentUriAsync"));
+}
+
+/**
+ * @deprecated Use `new File().write()`. Rejects, as in expo-file-system 57.
+ *
+ * @param _fileUri The URI.
+ * @param _contents The text.
+ * @param _options The options.
+ */
+export function writeAsStringAsync(
+  _fileUri: string,
+  _contents: string,
+  _options?: Record<string, unknown>,
+): Promise<never> {
+  return Promise.reject(legacyMethod("writeAsStringAsync"));
+}
+
+/**
+ * @deprecated Use `new File().delete()` or `new Directory().delete()`. Rejects, as in
+ * expo-file-system 57.
+ *
+ * @param _fileUri The URI.
+ * @param _options The options.
+ */
+export function deleteAsync(_fileUri: string, _options?: Record<string, unknown>): Promise<never> {
+  return Promise.reject(legacyMethod("deleteAsync"));
+}
+
+/** @deprecated Rejects, as in expo-file-system 57. */
+export function deleteLegacyDocumentDirectoryAndroid(): Promise<never> {
+  return Promise.reject(legacyMethod("deleteLegacyDocumentDirectoryAndroid"));
+}
+
+/**
+ * @deprecated Use `new File().move()`. Rejects, as in expo-file-system 57.
+ *
+ * @param _options The source and destination.
+ */
+export function moveAsync(_options: { from: string; to: string }): Promise<never> {
+  return Promise.reject(legacyMethod("moveAsync"));
+}
+
+/**
+ * @deprecated Use `new File().copy()`. Rejects, as in expo-file-system 57.
+ *
+ * @param _options The source and destination.
+ */
+export function copyAsync(_options: { from: string; to: string }): Promise<never> {
+  return Promise.reject(legacyMethod("copyAsync"));
+}
+
+/**
+ * @deprecated Use `new Directory().create()`. Rejects, as in expo-file-system 57.
+ *
+ * @param _fileUri The URI.
+ * @param _options The options.
+ */
+export function makeDirectoryAsync(
+  _fileUri: string,
+  _options?: Record<string, unknown>,
+): Promise<never> {
+  return Promise.reject(legacyMethod("makeDirectoryAsync"));
+}
+
+/**
+ * @deprecated Use `new Directory().list()`. Rejects, as in expo-file-system 57.
+ *
+ * @param _fileUri The URI.
+ */
+export function readDirectoryAsync(_fileUri: string): Promise<never> {
+  return Promise.reject(legacyMethod("readDirectoryAsync"));
+}
+
+/** @deprecated Use `Paths.availableDiskSpace`. Rejects, as in expo-file-system 57. */
+export function getFreeDiskStorageAsync(): Promise<never> {
+  return Promise.reject(legacyMethod("getFreeDiskStorageAsync"));
+}
+
+/** @deprecated Use `Paths.totalDiskSpace`. Rejects, as in expo-file-system 57. */
+export function getTotalDiskCapacityAsync(): Promise<never> {
+  return Promise.reject(legacyMethod("getTotalDiskCapacityAsync"));
+}
+
+/**
+ * @deprecated Use `File.downloadFileAsync`. Rejects, as in expo-file-system 57.
+ *
+ * @param _uri The remote URL.
+ * @param _fileUri The destination URI.
+ * @param _options The options.
+ */
+export function downloadAsync(
+  _uri: string,
+  _fileUri: string,
+  _options?: Record<string, unknown>,
+): Promise<never> {
+  return Promise.reject(legacyMethod("downloadAsync"));
+}
+
+/**
+ * @deprecated Use `fetch`. Rejects, as in expo-file-system 57.
+ *
+ * @param _url The remote URL.
+ * @param _fileUri The file URI.
+ * @param _options The options.
+ */
+export function uploadAsync(
+  _url: string,
+  _fileUri: string,
+  _options?: Record<string, unknown>,
+): Promise<never> {
+  return Promise.reject(legacyMethod("uploadAsync"));
+}
+
+/**
+ * @deprecated Throws, as in expo-file-system 57.
+ *
+ * @param _uri The remote URL.
+ * @param _fileUri The destination URI.
+ * @param _options The options.
+ * @param _callback The progress callback.
+ * @param _resumeData Saved resume data.
+ */
+export function createDownloadResumable(
+  _uri: string,
+  _fileUri: string,
+  _options?: Record<string, unknown>,
+  _callback?: (progress: unknown) => void,
+  _resumeData?: string,
+): never {
+  throw legacyMethod("createDownloadResumable");
+}
+
+/**
+ * @deprecated Throws, as in expo-file-system 57.
+ *
+ * @param _url The remote URL.
+ * @param _fileUri The file URI.
+ * @param _options The options.
+ * @param _callback The progress callback.
+ */
+export function createUploadTask(
+  _url: string,
+  _fileUri: string,
+  _options?: Record<string, unknown>,
+  _callback?: (progress: unknown) => void,
+): never {
+  throw legacyMethod("createUploadTask");
 }

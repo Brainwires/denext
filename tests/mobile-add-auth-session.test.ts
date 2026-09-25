@@ -15,7 +15,13 @@ import {
   isPristineAuthSessionTemplate,
   renderAuthSessionTemplate,
 } from "../src/build/auth-session-native-templates.ts";
-import { OTA_IOS_FILES, renderOtaTemplate } from "../src/build/ota-native-templates.ts";
+import {
+  isPristineOtaTemplate,
+  OTA_IOS_FILES,
+  OTA_TEMPLATE_VERSION,
+  renderOtaTemplate,
+} from "../src/build/ota-native-templates.ts";
+import { markedTemplateIntact, renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 import {
   bridgeViewControllerSource,
   mainActivitySource,
@@ -179,7 +185,7 @@ Deno.test("add auth-session: a stock project gets the plugin, the bridge and the
       "window?.rootViewController = DenextBridgeViewController()",
     );
     const activity = await read(dir, MAIN_ACTIVITY);
-    assertEquals(activity, mainActivitySource("com.example.app", new Set(["auth-session"])));
+    assertEquals(activity, await mainActivitySource("com.example.app", new Set(["auth-session"])));
     assertStringIncludes(activity, "import dev.denext.authsession.DenextAuthSessionPlugin;");
     assert(!activity.includes("DenextOta"));
     assert(
@@ -224,7 +230,7 @@ Deno.test("add auth-session + add-ota: both orders register both plugins, identi
       const activity = await read(dir, MAIN_ACTIVITY);
       assertEquals(
         activity,
-        mainActivitySource("com.example.app", new Set(["ota", "auth-session"])),
+        await mainActivitySource("com.example.app", new Set(["ota", "auth-session"])),
       );
       assert(
         activity.indexOf("DenextOta.prepare(this, bridgeBuilder);") <
@@ -262,7 +268,7 @@ Deno.test("add-ota alone still writes exactly the OTA bridge and MainActivity", 
     );
     assertEquals(
       await read(dir, MAIN_ACTIVITY),
-      mainActivitySource("com.example.app", new Set(["ota"])),
+      await mainActivitySource("com.example.app", new Set(["ota"])),
     );
     assert(!(await read(dir, MAIN_ACTIVITY)).includes("DenextAuthSession"));
   });
@@ -282,6 +288,32 @@ Deno.test("add auth-session: an edited template is kept unless --force", async (
     const forced = await addAuthSessionToProject({ dir, force: true });
     assert(forced.written.includes(IOS_PLUGIN));
     assert(await isPristineAuthSessionTemplate(await read(dir, IOS_PLUGIN)));
+  });
+});
+
+Deno.test("add auth-session: a template a newer denext wrote is kept; --force replaces", async () => {
+  await inProject(async (dir) => {
+    await addAuthSessionToProject({ dir });
+    const newer = await renderMarkedTemplate(
+      "auth-session",
+      AUTH_SESSION_TEMPLATE_VERSION + 1,
+      "// newer\n",
+    );
+    for (const path of [IOS_PLUGIN, ANDROID_PLUGIN]) {
+      await Deno.writeTextFile(join(dir, path), newer);
+    }
+    const report = await addAuthSessionToProject({ dir });
+    assertEquals(report.kept, [IOS_PLUGIN, ANDROID_PLUGIN]);
+    assertEquals(report.written, []);
+    for (const path of [IOS_PLUGIN, ANDROID_PLUGIN]) {
+      assert(report.manual.some((m) => m.startsWith(`${path} was written by a newer denext`)));
+      assertEquals(await read(dir, path), newer);
+    }
+    await addAuthSessionToProject({ dir, force: true });
+    assertEquals(
+      await read(dir, IOS_PLUGIN),
+      await renderAuthSessionTemplate(AUTH_SESSION_IOS_FILES["DenextAuthSessionPlugin.swift"]),
+    );
   });
 });
 
@@ -338,6 +370,126 @@ Deno.test("add auth-session: an OTA bridge from an earlier denext waits for add-
       await bridgeViewControllerSource(new Set(["ota", "auth-session"])),
     );
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The composed bridge keeps the pristine-hash contract: its marker is computed over the composed
+// body, so a later installer recognises it as an unedited denext file and upgrades it in place.
+
+/** `text` as an earlier generation of `family` would have written it: another body, re-marked. */
+async function olderGeneration(family: string, version: number, text: string): Promise<string> {
+  const body = text.slice(text.indexOf("\n") + 1).replace("super.capacitorDidLoad()", "// older");
+  assert(body !== text.slice(text.indexOf("\n") + 1), "the body must change");
+  return await renderMarkedTemplate(family, version, body);
+}
+
+Deno.test("composed bridge: every feature combination carries a marker matching its body", async () => {
+  const features = ["ota", "auth-session", "share-receive", "widgets", "live-activity"] as const;
+  for (let mask = 1; mask < 1 << features.length; mask++) {
+    const set = new Set(features.filter((_, i) => mask & (1 << i)));
+    const text = await bridgeViewControllerSource(set);
+    const family = /^\/\/ denext-([a-z-]+)-template: /.exec(text)?.[1];
+    assert(family, [...set].join("+"));
+    assertEquals(await markedTemplateIntact(family, text), true, [...set].join("+"));
+  }
+});
+
+Deno.test("composed bridge: add-ota → add auth-session → add-ota upgrades or leaves it, never keeps it", async () => {
+  await inProject(async (dir) => {
+    await addOtaToProject({ dir });
+    await addAuthSessionToProject({ dir });
+    const composed = await read(dir, BRIDGE);
+    assertEquals(composed, await bridgeViewControllerSource(new Set(["ota", "auth-session"])));
+    // Same template version: nothing to do, nothing kept.
+    const same = await addOtaToProject({ dir });
+    assertEquals(same.kept, []);
+    assertEquals(same.written, []);
+    assert(same.unchanged.includes(BRIDGE));
+    // A composed bridge from an earlier OTA generation: upgraded in place.
+    const older = await olderGeneration("ota", OTA_TEMPLATE_VERSION - 1, composed);
+    assert(await isPristineOtaTemplate("DenextBridgeViewController.swift", older));
+    await Deno.writeTextFile(join(dir, BRIDGE), older);
+    const bumped = await addOtaToProject({ dir });
+    assertEquals(bumped.kept, []);
+    assertEquals(bumped.manual, []);
+    assertEquals(bumped.upgraded, [BRIDGE]);
+    assertEquals(await read(dir, BRIDGE), composed);
+    // The control: a composed bridge edited under its marker is the user's, and kept.
+    await Deno.writeTextFile(join(dir, BRIDGE), composed.replace("super.capacitorDidLoad()", "x"));
+    assertEquals((await addOtaToProject({ dir })).kept, [BRIDGE]);
+  });
+});
+
+Deno.test("composed bridge: add auth-session → add-ota → add-ota upgrades or leaves it, never keeps it", async () => {
+  await inProject(async (dir) => {
+    await addAuthSessionToProject({ dir });
+    // The auth-only bridge from an earlier auth-session generation: add-ota still upgrades it.
+    const authOnly = await read(dir, BRIDGE);
+    await Deno.writeTextFile(
+      join(dir, BRIDGE),
+      await olderGeneration("auth-session", AUTH_SESSION_TEMPLATE_VERSION - 1, authOnly),
+    );
+    const first = await addOtaToProject({ dir });
+    assertEquals(first.kept, []);
+    assertEquals(first.upgraded.includes(BRIDGE), true, first.upgraded.join());
+    const composed = await read(dir, BRIDGE);
+    assertEquals(composed, await bridgeViewControllerSource(new Set(["ota", "auth-session"])));
+    const same = await addOtaToProject({ dir });
+    assertEquals(same.kept, []);
+    assertEquals(same.written, []);
+    assertEquals((await addAuthSessionToProject({ dir })).written, []);
+    await Deno.writeTextFile(
+      join(dir, BRIDGE),
+      await olderGeneration("ota", OTA_TEMPLATE_VERSION - 1, composed),
+    );
+    const bumped = await addOtaToProject({ dir });
+    assertEquals(bumped.kept, []);
+    assertEquals(bumped.upgraded, [BRIDGE]);
+    assertEquals(await read(dir, BRIDGE), composed);
+    // MainActivity is already the current composed source: add-ota leaves it alone.
+    assertEquals(
+      await read(dir, MAIN_ACTIVITY),
+      await mainActivitySource("com.example.app", new Set(["ota", "auth-session"])),
+    );
+    assert(bumped.unchanged.includes(MAIN_ACTIVITY));
+  });
+});
+
+Deno.test("composed bridge: one a newer denext wrote is never downgraded", async () => {
+  for (
+    const [family, version] of [
+      ["ota", OTA_TEMPLATE_VERSION + 1],
+      ["auth-session", AUTH_SESSION_TEMPLATE_VERSION + 1],
+      ["app-extension", 99],
+    ] as const
+  ) {
+    await inProject(async (dir) => {
+      await addAuthSessionToProject({ dir });
+      const newer = await olderGeneration(family, version, await read(dir, BRIDGE));
+      assert(!newer.includes("DenextOtaPlugin()"));
+      await Deno.writeTextFile(join(dir, BRIDGE), newer);
+      // Its registration is already there: unchanged, not rewritten.
+      const again = await addAuthSessionToProject({ dir });
+      assert(again.unchanged.includes(BRIDGE), family);
+      assert(!again.written.includes(BRIDGE), family);
+      assertEquals(again.manual, [], family);
+      // add-ota needs a registration it lacks: kept, with a manual step naming the newer denext.
+      const ota = await addOtaToProject({ dir });
+      assert(ota.kept.includes(BRIDGE), family);
+      assert(!ota.written.includes(BRIDGE), family);
+      assert(
+        ota.manual.some((m) => m.startsWith(`${BRIDGE} was written by a newer denext`)),
+        `${family}: ${ota.manual.join("\n")}`,
+      );
+      assertEquals(await read(dir, BRIDGE), newer, family);
+      // --force still replaces it.
+      await addOtaToProject({ dir, force: true });
+      assertEquals(
+        await read(dir, BRIDGE),
+        await bridgeViewControllerSource(new Set(["ota", "auth-session"])),
+      );
+    });
+  }
 });
 
 Deno.test("add auth-session: a custom MainActivity becomes a manual step", async () => {

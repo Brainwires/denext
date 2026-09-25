@@ -204,8 +204,14 @@ export function reloadAppAsync(_reason?: string): Promise<void> {
   return Promise.resolve();
 }
 
-/** Install a worklet runtime helper (there is no UI runtime here): does nothing. */
-export function installOnUIRuntime(): void {}
+/**
+ * Install Expo Modules on the worklets UI runtime (there is no UI runtime here): does
+ * nothing.
+ *
+ * @param _uiRuntimeHolder The holder from react-native-worklets' `getUIRuntimeHolder()`
+ * (ignored).
+ */
+export function installOnUIRuntime(_uiRuntimeHolder?: object): void {}
 
 /** Turn off Expo's global error handler (there is none here): does nothing. */
 export function disableErrorHandling(): void {}

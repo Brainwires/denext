@@ -296,7 +296,29 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         {" "}
         <code>.denext/</code>; the next <code>mobile dev</code> (or{" "}
         <code>mobile dev --restore</code>) restores it first. <code>cap copy</code> needs the{" "}
-        <code>webDir</code> built once.
+        <code>webDir</code>{" "}
+        built once. The restore does not depend on it: it takes the dev URL out of the native config
+        copies (<code>ios/App/App/capacitor.config.json</code>,{" "}
+        <code>android/app/src/main/assets/capacitor.config.json</code>) itself, so they stop
+        pointing at the dev server even when the closing <code>cap copy</code>{" "}
+        fails; then run your export and <code>npx cap copy</code> before a release build.
+      </p>
+      <p>
+        On iOS, <code>cleartext</code> does nothing (it is Android's{" "}
+        <code>usesCleartextTraffic</code>, which <code>cap copy</code>{" "}
+        writes for you). A WebView reaches a LAN dev server only when{" "}
+        <code>ios/App/App/Info.plist</code> has <code>NSAppTransportSecurity</code> →{" "}
+        <code>NSAllowsLocalNetworking</code> (App Transport Security) and a{" "}
+        <code>NSLocalNetworkUsageDescription</code>{" "}
+        (without one, iOS 14+ silently denies local-network requests and the app hangs on its splash
+        screen). <code>mobile dev</code>{" "}
+        adds both for the session, merging into an existing ATS dict and keeping an existing
+        description, and puts the plist back with the config. A changed Info.plist is a native
+        change: rebuild and run the app from Xcode (it prints so). Xcode opens{" "}
+        <code>ios/App/App.xcworkspace</code> for a CocoaPods project and{" "}
+        <code>ios/App/App.xcodeproj</code>{" "}
+        for a Swift Package Manager one (Capacitor 8's default), and the printed steps name
+        whichever exists.
       </p>
       <p>
         Without the helper, <code>denext dev --lan</code>{" "}
@@ -563,6 +585,58 @@ denext mobile add haptics share network secure-store`}
         uses for its in-app browser. A new plugin is native code: ship a new app binary afterwards.
       </p>
 
+      <h3 id="context-menus">Context menus</h3>
+      <p>
+        <code>showContextMenu(items, options)</code>{" "}
+        opens a menu and resolves with the chosen item's <code>id</code>, or <code>null</code>{" "}
+        when it is dismissed. Inside the shell it hands every item to a native{" "}
+        <code>DenextContextMenu</code>{" "}
+        plugin when the app registers one (denext ships none: it is feature-detected by that name
+        and a <code>show({"{ items, title, x, y }"})</code> method resolving{" "}
+        <code>{"{ selectedId }"}</code>). Everywhere else, the shell without that plugin, the web
+        and a Deno Desktop window, it renders an accessible popover in the page: a{" "}
+        <code>role="menu"</code> with a <code>role="menuitem"</code> per item, opened at{" "}
+        <code>x</code> / <code>y</code> or under an <code>anchor</code>{" "}
+        rect. Up / Down move, Enter or Space choose, Escape or a press outside dismisses it, and it
+        removes every node and listener it added when it resolves.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { showContextMenu } from "denext/mobile";
+
+export function Row({ id, onDelete }: { id: string; onDelete: (id: string) => void }) {
+  return (
+    <button
+      type="button"
+      onContextMenu={async (e) => {
+        e.preventDefault();
+        const choice = await showContextMenu(
+          [
+            { id: "open", label: "Open" },
+            { id: "archive", label: "Archive", disabled: true },
+            { id: "delete", label: "Delete", destructive: true },
+          ],
+          { x: e.clientX, y: e.clientY, title: "Thread" },
+        );
+        if (choice === "delete") onDelete(id);
+      }}
+    >
+      {id}
+    </button>
+  );
+}`}
+      </Code>
+      <p>
+        The popover always lists every item: a <code>disabled</code>{" "}
+        one is shown but not selectable (<code>aria-disabled</code>), a <code>destructive</code>
+        {" "}
+        one carries <code>data-destructive</code>, and <code>icon</code>{" "}
+        is a glyph before the label. It sets only its position, so style it through{" "}
+        <code>[role="menu"]</code> and <code>[role="menuitem"]</code>{" "}
+        in your CSS. It is SSR-safe: importing it runs nothing, and called without a DOM (or with no
+        items) it renders nothing and resolves <code>null</code>.
+      </p>
+
       <h3>Deep links</h3>
       <p>
         <code>deep-links</code> installs <code>@capacitor/app</code>{" "}
@@ -678,6 +752,76 @@ export async function signIn() {
         </strong>{" "}
         denext only opens the page and hands back the callback URL. Check <code>state</code>{" "}
         and exchange the <code>code</code> on your server.
+      </p>
+
+      <h3 id="desktop-sign-in">Sign-in on Deno Desktop</h3>
+      <p>
+        In a Deno Desktop window (<code>runtimePlatform()</code> is{" "}
+        <code>"desktop"</code>), the same <code>openAuthSession</code>{" "}
+        call runs the RFC 8252 loopback flow instead, with nothing to install: the desktop runtime
+        opens the provider's page in the system browser, listens once on an ephemeral{" "}
+        <code>127.0.0.1</code> port, rewrites the host and port of the authorization URL's{" "}
+        <code>redirect_uri</code>{" "}
+        to that listener (keeping its path and query), and resolves with the callback URL when the
+        provider redirects there. The browser tab then shows a static "You can close this tab."
+        page.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { openAuthSession, runtimePlatform } from "denext/mobile";
+
+export async function signIn() {
+  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const desktop = runtimePlatform() === "desktop";
+  const authorize = new URL("https://auth.example.com/authorize");
+  authorize.searchParams.set(
+    "redirect_uri",
+    desktop ? "http://127.0.0.1/auth/callback" : "myapp://auth/callback",
+  );
+  authorize.searchParams.set("state", state);
+  // callbackScheme is required by the type, and ignored on desktop.
+  const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
+  const params = new URL(url).searchParams;
+  if (params.get("state") !== state) throw new Error("state mismatch");
+  // exchange params.get("code") with the PKCE verifier
+}`}
+      </Code>
+      <ul>
+        <li>
+          <strong>
+            <code>callbackScheme</code> is ignored,
+          </strong>{" "}
+          and the <code>redirect_uri</code> must be a loopback <code>http</code>{" "}
+          URI with no fragment: <code>http://127.0.0.1/...</code> (<code>localhost</code> and{" "}
+          <code>[::1]</code> are accepted and rewritten to{" "}
+          <code>127.0.0.1</code>). The authorization URL itself must be{" "}
+          <code>https</code>. Anything else rejects <code>invalid</code>. Register the loopback{" "}
+          redirect with the provider as a desktop / native client that allows any port, since the
+          port changes on every sign-in.
+        </li>
+        <li>
+          <strong>
+            PKCE and <code>state</code> are your job,
+          </strong>{" "}
+          here more than anywhere. Any process on the machine can connect to the loopback port, and
+          the first request to the callback path wins, so a local program that finds the port can
+          race a forged redirect in before the real browser. Generate <code>state</code>{" "}
+          and re-check it on the callback, and use PKCE so an intercepted <code>code</code>{" "}
+          is useless without your verifier.
+        </li>
+        <li>
+          <strong>Cancel is only a timeout.</strong>{" "}
+          The app cannot see the user close the browser tab, so the session waits until{" "}
+          <code>timeoutMs</code> (default 5 minutes on desktop) and then rejects{" "}
+          <code>timeout</code>. Pass a shorter <code>timeoutMs</code>{" "}
+          if your UI offers a retry. One session runs at a time (<code>busy</code>), and outside a
+          desktop window the call takes the web path.
+        </li>
+      </ul>
+      <p>
+        The runtime's local endpoint only answers a <code>POST</code>{" "}
+        carrying the per-launch token it injects into the page (compared in constant time), from the
+        app's own loopback origin, and it never logs the authorization or callback URL.
       </p>
 
       <h3>Push notifications</h3>
@@ -1335,6 +1479,116 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and the
         next launch counts it as a failed trial attempt.
       </Callout>
+
+      <h3 id="desktop-updates">Desktop UI self-updates</h3>
+      <p>
+        <code>denext/desktop/updater</code>{" "}
+        does for a Deno Desktop app what OTA does for a phone: it pulls a newer signed UI (the
+        export the window serves) without a new app build. It updates the UI only, never the binary:
+        the code-signed bundle is left untouched, and the verified files go to an overlay in the
+        app-support directory (macOS{" "}
+        <code>~/Library/Application Support/&lt;appId&gt;/ui-updates</code>, Linux{" "}
+        <code>$XDG_DATA_HOME</code> or <code>~/.local/share/&lt;appId&gt;/ui-updates</code>, Windows
+        {" "}
+        <code>%APPDATA%\&lt;appId&gt;\ui-updates</code>, or <code>dataDir</code>). A change to{" "}
+        <code>desktop.ts</code>, its Deno-side code, or the denext runtime still needs a new binary.
+      </p>
+      <p>
+        Pass the same config to <code>runDesktop({"{ updater }"})</code>{" "}
+        and to the update calls. All of them run in the Deno process (<code>desktop.ts</code>), not
+        in the page:
+      </p>
+      <Code lang="ts">
+        {`import { runDesktop } from "denext/desktop";
+import {
+  applyDesktopUpdate,
+  checkForDesktopUpdate,
+  type DesktopUpdaterConfig,
+  prepareDesktopUpdate,
+} from "denext/desktop/updater";
+import config from "./denext.config.ts";
+
+const updater: DesktopUpdaterConfig = {
+  feedUrl: "https://updates.example.com/desktop-ui", // serves the signed export
+  publicKey: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…", // the contents of ota.key.pub
+  appId: "com.example.app",
+};
+
+await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy, updater });
+
+// Stage a newer UI in the background; the window switches to it at the next launch.
+try {
+  const update = await checkForDesktopUpdate(updater);
+  if (update.available) {
+    const staged = await prepareDesktopUpdate(updater);
+    await applyDesktopUpdate(staged.version, updater);
+  }
+} catch (err) {
+  console.error("UI update failed:", err); // a DesktopUpdateError with a .code
+}`}
+      </Code>
+      <ul>
+        <li>
+          <code>checkForDesktopUpdate(config)</code> fetches{" "}
+          <code>{"${feedUrl}/_denext/ota.json"}</code>, verifies it, and resolves{" "}
+          <code>{"{ available: false }"}</code> for the running version, else{" "}
+          <code>available: true</code> with <code>version</code>, <code>required</code> and{" "}
+          <code>notes</code>.
+        </li>
+        <li>
+          <code>prepareDesktopUpdate(config)</code>{" "}
+          downloads every file into a staging directory (copying the unchanged ones from the active
+          overlay), checks each SHA-256, and resolves{" "}
+          <code>{"{ version, required, notes }"}</code>. Any failure discards the staging directory.
+        </li>
+        <li>
+          <code>applyDesktopUpdate(version, config)</code>{" "}
+          re-verifies the staged files and flips the active pointer with an atomic rename. The page
+          that is running keeps running; the next launch serves the new UI.
+        </li>
+        <li>
+          <code>desktopUpdateStatus(config)</code> reports <code>current</code>,{" "}
+          <code>pending</code>, <code>staged</code>, <code>rejected</code> and{" "}
+          <code>highestSequence</code>; <code>desktopUpdateReset(config)</code>{" "}
+          deletes the overlay and its state and goes back to the bundled export.
+        </li>
+      </ul>
+      <p>
+        <strong>Signing.</strong>{" "}
+        The feed is the mobile OTA format, signed with the same ECDSA P-256 keys and tools:{" "}
+        <code>denext ota keygen</code>, then <code>denext ota manifest out --sign ota.key</code> (or
+        {" "}
+        <code>DENEXT_OTA_SIGNING_KEY</code>), served by <code>createOtaHandler</code>{" "}
+        or any server that follows the serving rules above. <code>publicKey</code>{" "}
+        takes the base64 SPKI from <code>ota.key.pub</code> or a <code>PUBLIC KEY</code>{" "}
+        PEM, and a signature is always required: an unsigned manifest is refused (
+        <code>unsigned</code>), and so is one that does not verify (<code>signature</code>) or whose
+        {" "}
+        <code>version</code>{" "}
+        does not match its file list (<code>integrity</code>). The updater sends no request headers,
+        so the feed cannot sit behind the app's auth; it honours <code>HTTPS_PROXY</code> /{" "}
+        <code>NO_PROXY</code>.
+      </p>
+      <p>
+        <strong>The sequence only moves forward.</strong> A manifest whose <code>sequence</code>
+        {" "}
+        is not strictly greater than the highest one accepted, or that has none after a sequenced
+        release, is refused (<code>downgrade</code>), so every release needs a new sequence (the
+        default Unix time does that).
+      </p>
+      <p>
+        <strong>Rollback.</strong> An applied version starts{" "}
+        <em>pending</em>. The next launch serves it once and arms a boot marker; the script{" "}
+        <code>runDesktop</code>{" "}
+        injects into the page then sends a boot beacon when the page has loaded (a <code>POST</code>
+        {" "}
+        to <code>/_denext/desktop/booted</code>{" "}
+        with the per-launch token), and that confirms it. If the app dies or quits before the
+        beacon, the launch after rolls back to the previous overlay or the bundled export before
+        serving anything, deletes the bad version, and refuses it (<code>rejected</code>, until{" "}
+        <code>desktopUpdateReset</code>) along with its sequence. Unlike mobile, a pending version
+        gets one trial launch.
+      </p>
 
       <h3 id="native-fingerprint">Native fingerprint</h3>
       <p>

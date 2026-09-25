@@ -28,7 +28,7 @@ import {
 } from "./native-template-marker.ts";
 
 /** The generation of the templates, stamped into every file the installers write. */
-const APP_EXTENSION_TEMPLATE_VERSION = 1;
+export const APP_EXTENSION_TEMPLATE_VERSION = 1;
 
 /** The marker family of the app extension templates. */
 const FAMILY = "app-extension";

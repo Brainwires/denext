@@ -29,7 +29,7 @@
 
 import { nativePlatform } from "../mobile/bridge.ts";
 import { applyUiUpdate, prepareUiUpdate } from "../mobile/ota.ts";
-import { expoConfigGlobal } from "./internal/common.ts";
+import { expoConfigGlobal, nativeOnly } from "./internal/common.ts";
 
 /** Why no update is available. */
 export enum UpdateCheckResultNotAvailableReason {
@@ -286,4 +286,76 @@ export function useUpdates(): UseUpdatesReturnType {
     isRestarting: false,
     restartCount: 0,
   };
+}
+
+/**
+ * The type of expo-updates' native module (what `requireNativeModule("ExpoUpdates")` returns).
+ * There is no native module on the web: constructing this stand-in throws. Use the package's
+ * functions ({@linkcode checkForUpdateAsync}, {@linkcode fetchUpdateAsync},
+ * {@linkcode reloadAsync}) and constants instead.
+ */
+export class ExpoUpdatesModule {
+  /** Whether this launch fell back to the embedded update after an error. */
+  declare isEmergencyLaunch: boolean;
+  /** Why the emergency launch happened. */
+  declare emergencyLaunchReason: string | null;
+  /** How long the launch took, in milliseconds. */
+  declare launchDuration: number | null;
+  /** Whether the embedded update is running. */
+  declare isEmbeddedLaunch: boolean;
+  /** Whether updates are enabled. */
+  declare isEnabled: boolean;
+  /** Whether the embedded assets are in use. */
+  declare isUsingEmbeddedAssets?: boolean;
+  /** The runtime version. */
+  declare runtimeVersion: string;
+  /** When the app checks for updates. */
+  declare checkAutomatically: string;
+  /** The release channel. */
+  declare channel: string;
+  /** Whether API availability defers to native in development. */
+  declare shouldDeferToNativeForAPIMethodAvailabilityInDevelopment: boolean;
+  /** The running update's id. */
+  declare updateId?: string;
+  /** When the running update was published. */
+  declare commitTime?: string;
+  /** The running update's manifest, as JSON text. */
+  declare manifestString?: string;
+  /** The running update's manifest. */
+  declare manifest?: Partial<Manifest>;
+  /** The running update's assets, by key. */
+  declare localAssets?: Record<string, string>;
+  /** The update state machine's starting context. */
+  declare initialContext: Record<string, unknown>;
+  /** Restart the app on the newest update. */
+  declare reload: (options?: Record<string, unknown> | null) => Promise<void>;
+  /** Ask the update server for a newer update. */
+  declare checkForUpdateAsync: () => Promise<unknown>;
+  /** The extra parameters sent with update requests. */
+  declare getExtraParamsAsync: () => Promise<Record<string, string>>;
+  /** Set (or, with null, remove) an extra update-request parameter. */
+  declare setExtraParamAsync: (key: string, value: string | null) => Promise<void>;
+  /** The update log entries not older than `maxAge` milliseconds. */
+  declare readLogEntriesAsync: (maxAge: number) => Promise<UpdatesLogEntry[]>;
+  /** Clear the update log. */
+  declare clearLogEntriesAsync: () => Promise<void>;
+  /** Download the newest update. */
+  declare fetchUpdateAsync: () => Promise<unknown>;
+  /** Override the update URL and request headers. */
+  declare setUpdateURLAndRequestHeadersOverride: (
+    configOverride: { updateUrl: string; requestHeaders: Record<string, string> | null } | null,
+  ) => void;
+  /** Override the update request headers. */
+  declare setUpdateRequestHeadersOverride: (
+    requestHeaders: Record<string, string> | null,
+  ) => void;
+  /** Show the reload screen. */
+  declare showReloadScreen: (options?: Record<string, unknown> | null) => Promise<void>;
+  /** Hide the reload screen. */
+  declare hideReloadScreen: () => Promise<void>;
+
+  /** Always throws: there is no native updates module on the web. */
+  constructor() {
+    throw nativeOnly("expo-updates", "ExpoUpdatesModule");
+  }
 }

@@ -17,6 +17,25 @@ const KEEP = 4;
 /** Absolute path (as written, and its real path) → the contents denext last wrote there. */
 const written = new Map<string, string[]>();
 
+/**
+ * Absolute path → how many of denext's own writes to it are still in progress. A write
+ * opens the file with O_TRUNC and only then writes the bytes, and Linux inotify reports the
+ * truncate as a `modify` of its own. When the watcher handles that event before the write
+ * lands (likely on a loaded machine), the file reads empty, which denext never recorded, so
+ * the content check alone took denext's own write for an edit. Events that arrive while one
+ * of these writes is in progress are therefore denext's own.
+ */
+const inFlight = new Map<string, number>();
+
+/** Adjust the in-progress write count for every spelling of `path`. */
+function markInFlight(keys: string[], delta: 1 | -1): void {
+  for (const key of keys) {
+    const n = (inFlight.get(key) ?? 0) + delta;
+    if (n > 0) inFlight.set(key, n);
+    else inFlight.delete(key);
+  }
+}
+
 /** The spellings a watcher may report for `path`: as given, and resolved through symlinks. */
 function spellings(path: string): string[] {
   const abs = resolve(path);
@@ -54,18 +73,26 @@ export async function writeManagedFile(path: string, content: string): Promise<b
   const current = await Deno.readTextFile(path).catch(() => null);
   recordSelfWrite(path, content);
   if (current === content) return false;
-  await Deno.writeTextFile(path, content);
+  const keys = spellings(path);
+  markInFlight(keys, 1);
+  try {
+    await Deno.writeTextFile(path, content);
+  } finally {
+    markInFlight(keys, -1);
+  }
   return true;
 }
 
 /**
- * Whether a watcher event on `path` is denext's own write: the file currently holds content
+ * Whether a watcher event on `path` is denext's own write: denext is writing the file right
+ * now (the event may be the truncate that precedes the bytes), or the file holds content
  * denext wrote there. A file denext never wrote, or one now holding anything else, is an edit.
  *
  * @param path The path the watcher reported.
  * @returns True when the event should be ignored.
  */
 export function isSelfWrite(path: string): boolean {
+  if (inFlight.has(resolve(path))) return true;
   const contents = written.get(resolve(path));
   if (!contents) return false;
   try {

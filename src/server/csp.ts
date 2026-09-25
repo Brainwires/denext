@@ -28,7 +28,7 @@ import { swapRuntimeHash } from "./swap-runtime.ts";
 export type { CspSetting, RouteCsp };
 
 /** SHA-256 of `text` as base64 (the form a CSP `'sha256-…'` source expects). */
-async function sha256Base64(text: string): Promise<string> {
+export async function sha256Base64(text: string): Promise<string> {
   const bytes = new TextEncoder().encode(text);
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   let binary = "";

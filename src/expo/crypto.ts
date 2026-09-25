@@ -4,7 +4,7 @@
  * browser has.
  *
  * WebCrypto has no MD2/MD4/MD5: those algorithms reject. The AES API (`aesEncryptAsync`,
- * `AESEncryptionKey`, …) is not provided (see the manifest).
+ * `AESEncryptionKey`, …) is not provided (see the manifest); only its `AESKeySize` enum is.
  *
  * @example
  * ```ts
@@ -53,6 +53,19 @@ export interface CryptoDigestOptions {
 
 /** A digest, as a hex or base64 string. */
 export type Digest = string;
+
+/**
+ * AES key sizes in bits, as Expo's AES API takes them. The AES functions themselves
+ * (`aesEncryptAsync`, `AESEncryptionKey`, …) are not provided here; use `crypto.subtle`.
+ */
+export enum AESKeySize {
+  /** A 128-bit key. */
+  AES128 = 128,
+  /** A 192-bit key (unsupported on the web, as in Expo). */
+  AES192 = 192,
+  /** A 256-bit key. */
+  AES256 = 256,
+}
 
 /** The algorithms WebCrypto can digest. */
 const SUBTLE_ALGORITHMS: readonly string[] = ["SHA-1", "SHA-256", "SHA-384", "SHA-512"];

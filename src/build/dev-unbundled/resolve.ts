@@ -125,7 +125,7 @@ export function compatDepUrl(st: UnbundledState, spec: string): string | null {
 /**
  * Dev URL for a resolved import. First-party paths → `/_denext/@fs<abs>?v=<version>`
  * (records the graph edge + baked version); `denext`/`denext/*` → a pre-bundled dep;
- * a stylesheet → the empty shim (route CSS is linked separately); anything else
+ * a stylesheet, first-party or not → the empty shim (CSS is linked separately); anything else
  * (node:/data:/http:) passes through unchanged.
  */
 export function rewriteSpecifier(
@@ -134,12 +134,14 @@ export function rewriteSpecifier(
   firstParty: string | null,
   entry: TransformEntry,
 ): string {
+  // A stylesheet is linked separately, so even the app's own `./styles.css` must not reach
+  // the JS transform (it would 500 the module and the whole page with it).
+  if (/\.(css|scss|sass)(?:[?#].*)?$/i.test(spec)) return EMPTY_MODULE;
   if (firstParty) {
     const v = versionOf(st, firstParty);
     entry.deps.push({ abs: firstParty, v });
     return `${FS_PREFIX}${firstParty}?v=${v}`;
   }
-  if (/\.(css|scss|sass)(?:[?#].*)?$/i.test(spec)) return EMPTY_MODULE;
   if (st.compat) {
     const u = compatDepUrl(st, spec);
     if (u) return u;

@@ -92,10 +92,20 @@ export function isCompatEntry(serveSrc: string): boolean {
   return /\b(?:serveCompat|buildNextCompatPages)\s*\(/.test(stripComments(serveSrc));
 }
 
+/** The Capacitor config file names `denext mobile add` itself looks for. */
+const CAPACITOR_CONFIGS = [
+  "capacitor.config.ts",
+  "capacitor.config.js",
+  "capacitor.config.mjs",
+  "capacitor.config.cjs",
+  "capacitor.config.json",
+];
+
 function tagsFor(dir: string): string[] {
   const tags = configTags(readOr(`${dir}/denext.config.ts`, ""));
   if (!tags.includes("compat") && isCompatEntry(readOr(`${dir}/serve.ts`, ""))) tags.push("compat");
   if (exists(`${dir}/desktop.ts`)) tags.push("desktop");
+  if (CAPACITOR_CONFIGS.some((name) => exists(`${dir}/${name}`))) tags.push("mobile");
   if (exists(`${dir}/pages`)) tags.push("pages-router");
   if (exists(`${dir}/app`) && !tags.includes("spa")) tags.push("app-router");
   return tags;

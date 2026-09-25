@@ -3797,7 +3797,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.10.0-rc.3",
+          "signature": "VERSION: 2.10.0-rc.5",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -14114,9 +14114,21 @@
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
-          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined): (request: Request, url: URL) => Promise<Response>",
+          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>): (request: Request, url: URL) => Promise<Response>",
           "doc": "The desktop request handler: the onRequest escape hatch, the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
           "docFull": "The desktop request handler: the `onRequest` escape hatch, the backend proxy, the export's\nstatic assets (`no-store`), the `index.html` shell for navigations, else 404. Exported\nfor tests; {@linkcode runDesktop} wires it to `Deno.serve`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "injectDesktopGlobal",
+          "slug": "injectDesktopGlobal",
+          "kind": "function",
+          "signature": "injectDesktopGlobal(html: string, token: string, beacon?: boolean): Promise<string>",
+          "doc": "Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.",
+          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14309,6 +14321,30 @@
           "examples": [
             "```tsx\n// app/auth/callback/complete.tsx\n\"use client\";\nimport { useEffect } from \"denext\";\nimport { completeAuthSession } from \"denext/mobile\";\n\nexport function Complete() {\n  useEffect(() => {\n    if (!completeAuthSession()) location.replace(\"/login\");\n  }, []);\n  return <p>Signing you in…</p>;\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "ContextMenuItem",
+          "slug": "ContextMenuItem",
+          "kind": "interface",
+          "signature": "interface ContextMenuItem",
+          "doc": "One entry in a showContextMenu menu.",
+          "docFull": "One entry in a {@linkcode showContextMenu} menu.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ContextMenuOptions",
+          "slug": "ContextMenuOptions",
+          "kind": "interface",
+          "signature": "interface ContextMenuOptions",
+          "doc": "Where and how showContextMenu opens.",
+          "docFull": "Where and how {@linkcode showContextMenu} opens.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -15842,6 +15878,29 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "showContextMenu",
+          "slug": "showContextMenu",
+          "kind": "function",
+          "signature": "showContextMenu(items: typeOperator, options?: ContextMenuOptions): Promise<string | null>",
+          "doc": "Open a context menu and resolve the chosen item's id, or null if it was dismissed.",
+          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with an app-registered `DenextContextMenu` plugin (see below), the OS\n  menu — every item, including `disabled` and `destructive` ones, is handed to it.\n- Otherwise (the web, desktop, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item, opened at `(x, y)` or under `anchor`. It is keyboard\n  navigable (Up/Down to move, Enter/Space to choose, Escape to dismiss), dismisses on an\n  outside pointer press, respects `disabled` (shown, not selectable) and `destructive`, and\n  removes every node and listener it added when it resolves.\n\nThe web fallback always renders **every** item, so no menu action is silently dropped.\n\nThere is no first-party Capacitor context-menu plugin; the native path is feature-detected\nby the plugin name `DenextContextMenu` with a `show({ items, title?, x?, y? })` method resolving\n`{ selectedId?: string | null }`. Register such a plugin natively to take the OS path;\nwithout it, the web popover is used inside the shell too.",
+          "params": [
+            {
+              "name": "items",
+              "doc": "The menu entries (every one is rendered)."
+            },
+            {
+              "name": "options",
+              "doc": "x/y or anchor for placement, and an optional title."
+            }
+          ],
+          "returns": "The chosen item's id, or null when dismissed (or in a non-DOM context, or when items is empty).",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { showContextMenu } from \"denext/mobile\";\n\nexport function Row({ id }: { id: string }) {\n  return (\n    <button\n      type=\"button\"\n      onContextMenu={async (e) => {\n        e.preventDefault();\n        const choice = await showContextMenu(\n          [\n            { id: \"open\", label: \"Open\" },\n            { id: \"delete\", label: \"Delete\", destructive: true },\n          ],\n          { x: e.clientX, y: e.clientY },\n        );\n        if (choice === \"delete\") await remove(id);\n      }}\n    >\n      Actions\n    </button>\n  );\n}\n```"
+          ],
           "denextOnly": true
         },
         {

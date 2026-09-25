@@ -561,13 +561,26 @@ export function getBadgeCountAsync(): Promise<number> {
   return Promise.resolve(badge);
 }
 
+/** Options for {@linkcode setBadgeCountAsync}. */
+export interface SetBadgeCountOptions {
+  /**
+   * Expo's web badge options (the `badgin` library's `method`, `favicon`, `title`). Ignored:
+   * the badge is always set through the Badging API.
+   */
+  web?: Record<string, unknown>;
+}
+
 /**
  * Set the app badge through the Badging API where the browser (or installed PWA) has it.
  *
  * @param count The count (0 clears it).
+ * @param _options Expo's web options (ignored: there is no favicon or title fallback).
  * @returns `true` when the badge was set.
  */
-export async function setBadgeCountAsync(count: number): Promise<boolean> {
+export async function setBadgeCountAsync(
+  count: number,
+  _options?: SetBadgeCountOptions,
+): Promise<boolean> {
   badge = count;
   const nav = (globalThis as {
     navigator?: { setAppBadge?: (n: number) => Promise<void>; clearAppBadge?: () => Promise<void> };

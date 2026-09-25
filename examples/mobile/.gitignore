@@ -1,0 +1,16 @@
+# npm packages for the Capacitor shell (npm install recreates them)
+node_modules/
+
+# denext build output and the static export Capacitor bundles
+.denext/
+out/
+
+# Xcode / Gradle build output (ios/.gitignore and android/.gitignore cover the rest,
+# including the web assets `cap sync` copies into the native projects)
+ios/App/build/
+ios/DerivedData/
+android/build/
+android/app/build/
+
+# OTA signing keys: never commit a private key
+*.key

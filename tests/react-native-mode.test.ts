@@ -357,6 +357,13 @@ const EXPO_FIXTURE: Record<string, string> = {
   "node_modules/expo/i.js": 'export const registerRootComponent = "REAL_EXPO";\n',
   "node_modules/expo/config.js": 'export const config = "REAL_EXPO_CONFIG";\n',
   "node_modules/expo/fetch.js": 'export const fetch = "REAL_EXPO_FETCH";\n',
+  "node_modules/expo-file-system/package.json": JSON.stringify({
+    name: "expo-file-system",
+    exports: { ".": "./i.js", "./legacy": "./legacy.js" },
+  }),
+  "node_modules/expo-file-system/i.js": 'export const File = "REAL_EXPO_FS";\n',
+  "node_modules/expo-file-system/legacy.js":
+    'export const readAsStringAsync = "REAL_EXPO_FS_LEGACY";\n',
   "node_modules/expo-location/package.json": JSON.stringify({
     name: "expo-location",
     main: "i.js",
@@ -368,8 +375,9 @@ import { registerRootComponent } from "expo";
 import { fetch } from "expo/fetch";
 import { config } from "expo/config.js";
 import { getCurrentPositionAsync } from "expo-location";
+import { readAsStringAsync } from "expo-file-system/legacy";
 import { View } from "denext-expo-react-native";
-export const result = { impactAsync, registerRootComponent, fetch, config, getCurrentPositionAsync, View };
+export const result = { impactAsync, registerRootComponent, fetch, config, getCurrentPositionAsync, readAsStringAsync, View };
 `,
 };
 
@@ -392,7 +400,7 @@ async function bundleExpoFixture(expoShims: boolean): Promise<Record<string, unk
         }));
         build.onLoad({ filter: /.*/, namespace: "stand-in" }, (args) => ({
           contents: `const shim = ${JSON.stringify(args.path)};
-export { shim as impactAsync, shim as registerRootComponent, shim as fetch };`,
+export { shim as impactAsync, shim as registerRootComponent, shim as fetch, shim as readAsStringAsync };`,
           loader: "js",
         }));
       },
@@ -422,6 +430,11 @@ Deno.test("reactNative bundle: expo-* resolves to its denext/expo shim; unshimme
   assertEquals(r.fetch, "denext/expo/expo", "the known subpath expo/fetch → the same shim");
   assertEquals(r.config, "REAL_EXPO_CONFIG", "an unknown subpath resolves normally");
   assertEquals(
+    r.readAsStringAsync,
+    "denext/expo/file-system/legacy",
+    "a subpath with its own shim → that shim",
+  );
+  assertEquals(
     r.getCurrentPositionAsync,
     "REAL_EXPO_LOCATION",
     "a package without a shim resolves normally",
@@ -435,6 +448,7 @@ Deno.test("reactNative bundle: expoShims: false resolves every expo-* package no
   assertEquals(r.impactAsync, "REAL_EXPO_HAPTICS");
   assertEquals(r.registerRootComponent, "REAL_EXPO");
   assertEquals(r.fetch, "REAL_EXPO_FETCH");
+  assertEquals(r.readAsStringAsync, "REAL_EXPO_FS_LEGACY");
 });
 
 const SPA = { entry: "./src/main.tsx" };

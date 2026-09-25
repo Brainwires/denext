@@ -13,7 +13,7 @@
 //            them if they matter.
 //   info   — a denext-only export (extra surface). Never a problem.
 
-import type { CallSig, Surface, SurfaceSymbol } from "./types.ts";
+import { type CallSig, isInternalName, type Surface, type SurfaceSymbol } from "./types.ts";
 import { isWaived, type Waiver } from "./waivers.ts";
 
 export type Severity = "error" | "warn" | "info";
@@ -141,13 +141,14 @@ function arityDetail(real: SurfaceSymbol, den: SurfaceSymbol): string | null {
 /**
  * Members — only when both resolved a member list. `prototype`/`constructor` are class
  * machinery (they surface when the real export is a class but denext models it as a plain
- * object/singleton), not public API members — ignore them.
+ * object/singleton), not public API members — ignore them, as are TypeScript-internal
+ * `__@` names (a baseline captured before the extractor dropped them may still hold some).
  */
 const CLASS_MACHINERY = new Set(["prototype", "constructor"]);
 function missingMembers(real: SurfaceSymbol, den: SurfaceSymbol): string[] {
   if (!real.members || !den.members) return [];
   const have = new Set(den.members);
-  return real.members.filter((m) => !have.has(m) && !CLASS_MACHINERY.has(m));
+  return real.members.filter((m) => !have.has(m) && !CLASS_MACHINERY.has(m) && !isInternalName(m));
 }
 
 /**

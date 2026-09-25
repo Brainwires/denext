@@ -10,11 +10,25 @@
 // another `cap copy` so the native projects stop pointing at the dev server too. A run killed
 // outright (SIGKILL, power loss) leaves the backup behind; the next `mobile dev` (or
 // `mobile dev --restore`) puts the config back before doing anything else.
+//
+// iOS needs two Info.plist keys for the WebView to reach a LAN dev server at all (`cleartext`
+// is Android-only): App Transport Security's `NSAllowsLocalNetworking`, and a
+// `NSLocalNetworkUsageDescription` (without one, iOS 14+ silently denies local-network
+// requests). They are added for the session the same way, backed up in the same file and put
+// back with the config. Android needs nothing more: `cap copy` turns `server.cleartext` into
+// `android:usesCleartextTraffic="true"` in the capacitor-cordova-android-plugins manifest,
+// which the manifest merger carries into the app.
+//
+// `cap copy` also writes the config into the native projects (the two NATIVE_CONFIGS), and on
+// exit it FAILS when the `webDir` export is missing, as it usually is during a dev session. So
+// the restore never relies on it: it scrubs the native copies itself, putting back the `server`
+// block each had at session start (recorded in the backup), then tries `cap copy` anyway.
 
 import { join, resolve } from "@std/path";
 import { commit, objectDeleteEdits, objectSetEdits, unwrap } from "./config-edit.ts";
 import { type Node, parseModule } from "./swc-ast.ts";
 import { CAPACITOR_CONFIGS, type CommandRunner } from "./mobile-capabilities.ts";
+import { withPlistDefault, withPlistDictTrue } from "./mobile-native-config.ts";
 
 /** A dev server `mobile dev` started or attached to. */
 export interface MobileDevServer {
@@ -47,6 +61,19 @@ export interface MobileDevOptions {
   /** `--dir`: the Capacitor project (default: `cwd`). */
   readonly dir?: string;
 }
+
+/** The iOS app's Info.plist, relative to the Capacitor project. */
+const IOS_INFO_PLIST = "ios/App/App/Info.plist";
+
+/** The config copies `cap copy` writes into the native projects, relative to the project. */
+const NATIVE_CONFIGS: readonly string[] = [
+  "ios/App/App/capacitor.config.json",
+  "android/app/src/main/assets/capacitor.config.json",
+];
+
+/** The `NSLocalNetworkUsageDescription` added when the app declares none. */
+export const LOCAL_NETWORK_USAGE =
+  "Connects to the denext dev server on your computer for live reload.";
 
 /** Where the pre-edit config is kept while a session runs. */
 function backupPath(root: string): string {
@@ -181,44 +208,357 @@ export async function withoutServerBlock(file: string, source: string): Promise<
 }
 
 /**
- * Put a config a previous session edited back to its original bytes, if a backup is left.
+ * The Info.plist source with what a WebView needs to load a dev server on the LAN:
+ * `NSAppTransportSecurity` → `NSAllowsLocalNetworking` = true (merged into an existing ATS
+ * dict) and a `NSLocalNetworkUsageDescription` when the app has none (its own is kept).
+ * Unchanged when both are already there; null when the plist has no top-level dict, or its
+ * `NSAppTransportSecurity` is not a dict.
  *
- * @param root The Capacitor project.
- * @returns The file restored, or `null` when there was nothing to restore.
+ * @param plist The Info.plist text.
+ * @returns The edited text.
  */
-export async function restoreCapacitorConfig(root: string): Promise<string | null> {
-  let backup: { file?: unknown; original?: unknown };
+export function withLocalNetworkAccess(plist: string): string | null {
+  const ats = withPlistDictTrue(plist, "NSAppTransportSecurity", "NSAllowsLocalNetworking");
+  return ats && withPlistDefault(ats, "NSLocalNetworkUsageDescription", LOCAL_NETWORK_USAGE);
+}
+
+/** One backed-up file: its path relative to the project, and its original text. */
+interface BackedUpFile {
+  file: string;
+  original: string;
+}
+
+/**
+ * What `.denext/mobile-dev-backup.json` holds: the config, the Info.plist when edited, and the
+ * native config copies that existed at session start.
+ */
+interface MobileDevBackup extends BackedUpFile {
+  plist?: BackedUpFile;
+  native?: BackedUpFile[];
+}
+
+/** A backup's parsed targets (absolute paths). */
+interface BackupTargets {
+  files: BackedUpFile[];
+  native: BackedUpFile[];
+}
+
+/** `entry` as a backed-up file inside `root` that `allowed` accepts, or null. */
+function backedUp(
+  root: string,
+  entry: unknown,
+  allowed: (file: string) => boolean,
+): BackedUpFile | null {
+  if (typeof entry !== "object" || entry === null) return null;
+  const { file, original } = entry as Record<string, unknown>;
+  if (typeof file !== "string" || typeof original !== "string") return null;
+  const path = resolve(root, file);
+  return allowed(path) ? { file: path, original } : null;
+}
+
+/**
+ * The files a backup restores. Only ever a capacitor.config.* and ios/App/App/Info.plist inside
+ * this project: the backup is a file on disk, and a planted one must not turn "restore" into
+ * "write anywhere".
+ */
+function backupTargets(root: string, backup: unknown): BackupTargets {
+  const bad = new Error(`${backupPath(root)} is not a mobile dev backup; remove it by hand`);
+  const config = backedUp(
+    root,
+    backup,
+    (path) => CAPACITOR_CONFIGS.some((name) => path === join(root, name)),
+  );
+  if (!config) throw bad;
+  const { plist: plistEntry, native: nativeEntries } = backup as Record<string, unknown>;
+  const files = [config];
+  if (plistEntry !== undefined) {
+    const plist = backedUp(root, plistEntry, (path) => path === join(root, IOS_INFO_PLIST));
+    if (!plist) throw bad;
+    files.push(plist);
+  }
+  if (nativeEntries === undefined) return { files, native: [] };
+  if (!Array.isArray(nativeEntries)) throw bad;
+  const isNative = (path: string) => NATIVE_CONFIGS.some((name) => path === join(root, name));
+  const native = nativeEntries.map((entry) => backedUp(root, entry, isNative));
+  if (native.some((entry) => entry === null)) throw bad;
+  return { files, native: native as BackedUpFile[] };
+}
+
+/** True for an `http:` URL on a loopback or private-LAN host: a dev server, never production. */
+function isDevServerUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  let url: URL;
   try {
-    backup = JSON.parse(await Deno.readTextFile(backupPath(root)));
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:") return false;
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "localhost" || host.endsWith(".local") || host === "::1" ||
+    /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host) ||
+    /^f[cde][0-9a-f]{0,2}:/.test(host);
+}
+
+/** A native copy's `server` block with the dev-server keys a crashed session left removed. */
+function withoutDevServer(server: unknown): unknown {
+  if (typeof server !== "object" || server === null || Array.isArray(server)) return server;
+  const block = server as Record<string, unknown>;
+  if (!isDevServerUrl(block.url)) return server;
+  const { url: _url, cleartext, ...rest } = block;
+  if (cleartext !== undefined && cleartext !== true) rest.cleartext = cleartext;
+  return Object.keys(rest).length > 0 ? rest : undefined;
+}
+
+/** A JSON config's `server` value, or null when the text is not a JSON object. */
+function jsonServer(text: string): { server: unknown } | null {
+  try {
+    const config = JSON.parse(text) as unknown;
+    if (typeof config !== "object" || config === null || Array.isArray(config)) return null;
+    return { server: (config as Record<string, unknown>).server };
   } catch {
     return null;
   }
-  const file = typeof backup.file === "string" ? resolve(root, backup.file) : null;
-  // Only ever a capacitor.config.* inside this project: the backup is a file on disk, and a
-  // planted one must not turn "restore" into "write anywhere".
-  const known = file !== null && CAPACITOR_CONFIGS.some((name) => file === join(root, name));
-  if (!known || typeof backup.original !== "string") {
-    throw new Error(`${backupPath(root)} is not a mobile dev backup; remove it by hand`);
-  }
-  await Deno.writeTextFile(file, backup.original);
-  await Deno.remove(backupPath(root));
-  return file;
 }
 
-/** Back up `file`'s bytes, then write the dev-server edit over it. */
-async function applyDevServerUrl(root: string, file: string, url: string): Promise<void> {
+/**
+ * The native copy with its `server` block set to `server` (removed when undefined), keeping
+ * the file's indent and trailing newline; unchanged text when the value already matches.
+ */
+function withServer(text: string, server: unknown): string {
+  const config = JSON.parse(text) as Record<string, unknown>;
+  if (JSON.stringify(config.server) === JSON.stringify(server)) return text;
+  if (server === undefined) delete config.server;
+  else config.server = server;
+  const indent = /\n([ \t]+)"/.exec(text)?.[1] ?? "  ";
+  return JSON.stringify(config, null, indent) + (text.endsWith("\n") ? "\n" : "");
+}
+
+/**
+ * Take the dev server out of the native config copies `cap copy` wrote: each gets back the
+ * `server` block its backed-up original had (none: the key goes). A copy with no backup entry
+ * (an older backup, or none) loses a `server.url` that is a LAN/loopback `http` origin.
+ * Written only when it changes. Resolves to the files written.
+ */
+async function scrubNativeConfigs(root: string, backedUpNative: BackedUpFile[]): Promise<string[]> {
+  const written: string[] = [];
+  for (const name of NATIVE_CONFIGS) {
+    const path = join(root, name);
+    let text: string;
+    try {
+      text = await Deno.readTextFile(path);
+    } catch {
+      continue;
+    }
+    const current = jsonServer(text);
+    if (!current) continue;
+    const entry = backedUpNative.find((e) => e.file === path);
+    const original = entry ? jsonServer(entry.original) : null;
+    const next = withServer(text, original ? original.server : withoutDevServer(current.server));
+    if (next === text) continue;
+    await Deno.writeTextFile(path, next);
+    written.push(path);
+  }
+  return written;
+}
+
+/** The native config copies present now, as backup entries (paths relative to the project). */
+async function nativeOriginals(root: string): Promise<BackedUpFile[]> {
+  const entries: BackedUpFile[] = [];
+  for (const file of NATIVE_CONFIGS) {
+    try {
+      entries.push({ file, original: await Deno.readTextFile(join(root, file)) });
+    } catch {
+      // not generated yet (no `cap add` for that platform)
+    }
+  }
+  return entries;
+}
+
+/** What a restore changed: the files put back from the backup, and the native copies scrubbed. */
+interface MobileDevRestore {
+  /** The backup's config file, or null when no backup was left. */
+  readonly config: string | null;
+  /** The config / Info.plist files whose bytes were put back (unchanged ones are not written). */
+  readonly restored: string[];
+  /** The native config copies the dev server URL was taken out of. */
+  readonly scrubbed: string[];
+}
+
+/** Write `original` over `file` unless it already holds exactly those bytes; true when written. */
+async function writeIfChanged(file: string, original: string): Promise<boolean> {
+  const bytes = new TextEncoder().encode(original);
+  try {
+    const current = await Deno.readFile(file);
+    if (current.length === bytes.length && current.every((b, i) => b === bytes[i])) return false;
+  } catch {
+    // missing: write it
+  }
+  await Deno.writeFile(file, bytes);
+  return true;
+}
+
+/**
+ * Put a config (and Info.plist) a previous session edited back to its original bytes, if a
+ * backup is left, and take the dev server out of the native config copies either way (they
+ * are git-ignored, so a leftover `server.url` would ship silently in the next native build).
+ *
+ * @param root The Capacitor project.
+ * @returns What changed.
+ */
+async function restoreMobileDev(root: string): Promise<MobileDevRestore> {
+  let backup: unknown;
+  try {
+    backup = JSON.parse(await Deno.readTextFile(backupPath(root)));
+  } catch {
+    return { config: null, restored: [], scrubbed: await scrubNativeConfigs(root, []) };
+  }
+  const { files, native } = backupTargets(root, backup);
+  const restored: string[] = [];
+  for (const { file, original } of files) {
+    if (await writeIfChanged(file, original)) restored.push(file);
+  }
+  const scrubbed = await scrubNativeConfigs(root, native);
+  await Deno.remove(backupPath(root));
+  return { config: files[0].file, restored, scrubbed };
+}
+
+/**
+ * {@linkcode restoreMobileDev}, reduced to one path.
+ *
+ * @param root The Capacitor project.
+ * @returns The config file restored (else the first native copy scrubbed), or `null` when
+ * there was nothing to restore.
+ */
+export async function restoreCapacitorConfig(root: string): Promise<string | null> {
+  const { config, scrubbed } = await restoreMobileDev(root);
+  return config ?? scrubbed[0] ?? null;
+}
+
+/** One line per file a restore changed, or "nothing to restore". */
+function restoreLines({ restored, scrubbed }: MobileDevRestore): string[] {
+  const lines = [
+    ...restored.map((file) => `  restored ${file}`),
+    ...scrubbed.map((file) => `  scrubbed the dev server URL from ${file}`),
+  ];
+  return lines.length > 0 ? lines : ["  nothing to restore"];
+}
+
+/** `cap copy` after a restore: a failure (usually a missing webDir export) is only a note. */
+async function copyAfterRestore(deps: Pick<MobileDevDeps, "run" | "log">, root: string) {
+  await capCopy(deps, root).catch((err) =>
+    deps.log(
+      `  note: ${err.message}. The native projects no longer point at the dev server, but ` +
+        "their web assets were not refreshed: run your export and `npx cap copy` before a " +
+        "release build.",
+    )
+  );
+}
+
+/**
+ * `denext mobile dev --restore`: put back what a killed session left, log one line per file
+ * changed, and re-run `cap copy` when anything changed (a failure is a note, not an error).
+ *
+ * @param root The Capacitor project.
+ * @param deps Runs `npx cap copy`, and prints.
+ */
+export async function restoreMobileDevSession(
+  root: string,
+  deps: Pick<MobileDevDeps, "run" | "log">,
+): Promise<void> {
+  const result = await restoreMobileDev(root);
+  for (const line of restoreLines(result)) deps.log(line);
+  if (result.restored.length + result.scrubbed.length > 0) await copyAfterRestore(deps, root);
+}
+
+/** The Info.plist's text, or null when there is none (or it is not UTF-8, e.g. binary). */
+async function readPlist(path: string): Promise<string | null> {
+  try {
+    const bytes = await Deno.readFile(path);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/** The Info.plist edit for the session: its backup entry and edited text, or null for none. */
+async function plistEdit(
+  root: string,
+  log: (line: string) => void,
+): Promise<{ backup: BackedUpFile; edited: string } | null> {
+  const original = await readPlist(join(root, IOS_INFO_PLIST));
+  if (original === null) return null;
+  const edited = withLocalNetworkAccess(original);
+  if (edited === null) {
+    log(
+      `  warning: could not edit ${IOS_INFO_PLIST}; add NSAppTransportSecurity > ` +
+        "NSAllowsLocalNetworking = true and an NSLocalNetworkUsageDescription by hand",
+    );
+    return null;
+  }
+  return edited === original ? null : { backup: { file: IOS_INFO_PLIST, original }, edited };
+}
+
+/**
+ * Back up the config's bytes (and the Info.plist's, when it changes), then write the
+ * dev-server edits over them. Resolves to whether the Info.plist changed.
+ */
+async function applyDevSession(
+  root: string,
+  file: string,
+  url: string,
+  log: (line: string) => void,
+): Promise<boolean> {
   const original = await Deno.readTextFile(file);
   const edited = await withDevServerUrl(file, original, url);
+  const plist = await plistEdit(root, log);
+  const backup: MobileDevBackup = { file: file.slice(root.length + 1), original };
+  if (plist) backup.plist = plist.backup;
+  const native = await nativeOriginals(root);
+  if (native.length > 0) backup.native = native;
   await Deno.mkdir(join(root, ".denext"), { recursive: true });
-  await Deno.writeTextFile(
-    backupPath(root),
-    JSON.stringify({ file: file.slice(root.length + 1), original }),
-  );
+  await Deno.writeTextFile(backupPath(root), JSON.stringify(backup));
   await Deno.writeTextFile(file, edited);
+  if (plist) await Deno.writeTextFile(join(root, IOS_INFO_PLIST), plist.edited);
+  return plist !== null;
+}
+
+/**
+ * A warning when the Android app declares its own `android:networkSecurityConfig`: on API 24+
+ * that config overrides the `usesCleartextTraffic` `cap copy` writes, so the device may refuse
+ * the dev server's plain http. Null when there is no manifest or it declares none.
+ */
+async function androidCleartextWarning(root: string, url: string): Promise<string | null> {
+  let manifest: string;
+  try {
+    manifest = await Deno.readTextFile(join(root, "android/app/src/main/AndroidManifest.xml"));
+  } catch {
+    return null;
+  }
+  if (!/\bandroid:networkSecurityConfig\s*=/.test(manifest)) return null;
+  const host = new URL(url).hostname;
+  return [
+    "  warning: android/app/src/main/AndroidManifest.xml declares android:networkSecurityConfig.",
+    "  On Android 7+ (API 24+) that config overrides usesCleartextTraffic, so the device may",
+    `  refuse ${url}. Allow cleartext for ${host} in your network security config`,
+    `  (<domain-config cleartextTrafficPermitted="true"><domain>${host}</domain></domain-config>),`,
+    "  or serve the dev server over https.",
+  ].join("\n");
+}
+
+/** The Xcode project to open: the `.xcworkspace` (CocoaPods) if there is one, else the
+ * `.xcodeproj` (Swift Package Manager projects have no workspace). */
+async function xcodeProject(root: string): Promise<string> {
+  try {
+    await Deno.stat(join(root, "ios/App/App.xcworkspace"));
+    return "ios/App/App.xcworkspace";
+  } catch {
+    return "ios/App/App.xcodeproj";
+  }
 }
 
 /** `npx cap copy`: pushes the (edited or restored) config into the native projects. */
-async function capCopy(deps: MobileDevDeps, root: string): Promise<void> {
+async function capCopy(deps: Pick<MobileDevDeps, "run">, root: string): Promise<void> {
   const { code } = await deps.run({ cmd: "npx", args: ["cap", "copy"], cwd: root });
   if (code !== 0) {
     throw new Error(
@@ -228,8 +568,14 @@ async function capCopy(deps: MobileDevDeps, root: string): Promise<void> {
   }
 }
 
+/** The iOS side of the next steps: which Xcode project, and whether the Info.plist changed. */
+interface IosSession {
+  readonly project: string;
+  readonly plistChanged: boolean;
+}
+
 /** What to do on the device once the config points at the dev server. */
-function nextSteps(server: MobileDevServer): string {
+function nextSteps(server: MobileDevServer, ios: IosSession): string {
   const loopback = /\/\/(localhost|127\.)/.test(server.url);
   return [
     "",
@@ -237,13 +583,20 @@ function nextSteps(server: MobileDevServer): string {
     (server.attached ? " (attached to the running dev server)" : ""),
     "",
     "  Run the app on the device:",
-    "    iOS      open ios/App/App.xcworkspace in Xcode and Run (or `npx cap run ios`)",
+    `    iOS      open ${ios.project} in Xcode and Run (or \`npx cap run ios\`)`,
     "    Android  `npx cap run android` (or Run in Android Studio)",
+    ...(ios.plistChanged
+      ? [
+        "  Info.plist changed: rebuild and run the app from Xcode (it now allows local-network",
+        "  http and declares local-network use, a native change `cap copy` does not carry).",
+      ]
+      : []),
     loopback
       ? "  The URL is loopback: only the iOS simulator (or Android with `adb reverse tcp:PORT " +
         "tcp:PORT`) reaches it. Use --lan for a physical device on your network."
       : "  The device must be on the same network as this machine.",
-    "  Edits reload on the device. Ctrl-C restores capacitor.config and runs `cap copy` again.",
+    `  Edits reload on the device. Ctrl-C restores capacitor.config` +
+    (ios.plistChanged ? " and Info.plist," : "") + " and runs `cap copy` again.",
     "",
   ].join("\n");
 }
@@ -265,16 +618,16 @@ export async function runMobileDev(options: MobileDevOptions, deps: MobileDevDep
   const stopped = deps.waitForStop();
   const server = await deps.startServer();
   try {
-    await applyDevServerUrl(root, file, server.url);
+    const plistChanged = await applyDevSession(root, file, server.url, deps.log);
     await capCopy(deps, root);
-    deps.log(nextSteps(server));
+    deps.log(nextSteps(server, { project: await xcodeProject(root), plistChanged }));
+    const android = await androidCleartextWarning(root, server.url);
+    if (android) deps.log(android);
     await Promise.race([stopped, server.finished]);
   } finally {
     try {
-      await restoreCapacitorConfig(root);
-      await capCopy(deps, root).catch((err) =>
-        deps.log(`  warning: ${err.message}; run \`npx cap copy\` before building a release`)
-      );
+      await restoreMobileDev(root);
+      await copyAfterRestore(deps, root);
     } finally {
       await server.stop();
     }

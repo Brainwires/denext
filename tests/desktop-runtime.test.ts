@@ -93,6 +93,78 @@ Deno.test("desktop handler: no shell when the export has no index.html", async (
   }
 });
 
+Deno.test("desktop handler: boot beacon confirms via a token-gated endpoint (updater on)", async () => {
+  const dir = await exportDir();
+  try {
+    let booted = 0;
+    const token = "tok-abc-123";
+    const handle = createDesktopHandler({}, dir, undefined, token, () => {
+      booted++;
+    });
+    const at = (path: string) => `http://127.0.0.1${path}`;
+
+    // The shell carries the boot-confirm beacon (and the __denext global) when the updater is on.
+    const shell = await handle(
+      new Request(at("/"), { headers: { accept: "text/html" } }),
+      new URL(at("/")),
+    );
+    const html = await shell.text();
+    assertStringIncludes(html, "globalThis.__denext=");
+    assertStringIncludes(html, "/_denext/desktop/booted");
+
+    // A GET is rejected; only POST confirms.
+    const bad = await handle(
+      new Request(at("/_denext/desktop/booted")),
+      new URL(at("/_denext/desktop/booted")),
+    );
+    assertEquals(bad.status, 405);
+    assertEquals(booted, 0);
+
+    // A POST without the per-launch token is refused (a cross-origin drive-by cannot confirm).
+    const noToken = await handle(
+      new Request(at("/_denext/desktop/booted"), { method: "POST" }),
+      new URL(at("/_denext/desktop/booted")),
+    );
+    assertEquals(noToken.status, 403);
+    assertEquals(booted, 0);
+
+    // A POST with the token confirms exactly once.
+    const ok = await handle(
+      new Request(at("/_denext/desktop/booted"), {
+        method: "POST",
+        headers: { "x-denext-desktop-token": token },
+      }),
+      new URL(at("/_denext/desktop/booted")),
+    );
+    assertEquals(ok.status, 204);
+    assertEquals(booted, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop handler: no beacon and no booted endpoint when the updater is off", async () => {
+  const dir = await exportDir();
+  try {
+    const handle = createDesktopHandler({}, dir, undefined, "tok"); // no onBooted
+    const shell = await handle(
+      new Request("http://127.0.0.1/", { headers: { accept: "text/html" } }),
+      new URL("http://127.0.0.1/"),
+    );
+    const html = await shell.text();
+    assertStringIncludes(html, "globalThis.__denext=");
+    assertEquals(html.includes("/_denext/desktop/booted"), false);
+    // Without the updater the path is not special — it 404s through normal routing.
+    const res = await handle(
+      new Request("http://127.0.0.1/_denext/desktop/booted", { method: "POST" }),
+      new URL("http://127.0.0.1/_denext/desktop/booted"),
+    );
+    assertEquals(res.status, 404);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("resolveOutDir: relative to importMetaUrl when given, else cwd", () => {
   const importMetaUrl = "file:///app/src/main.ts";
   assertEquals(resolveOutDir({ importMetaUrl }), fromFileUrl("file:///app/src/out"));

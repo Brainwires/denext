@@ -23,6 +23,7 @@ import {
 } from "../src/build/mobile-app-extensions.ts";
 import { addOtaToProject } from "../src/build/mobile-ota-install.ts";
 import {
+  APP_EXTENSION_TEMPLATE_VERSION,
   isPristineAppExtensionTemplate,
   renderAppExtensionTemplate,
   SHARE_EXTENSION_IOS_FILES,
@@ -41,7 +42,7 @@ import {
   widgetsBundleSource,
   widgetSource,
 } from "../src/build/widget-native-templates.ts";
-import { markedTemplateIntact } from "../src/build/native-template-marker.ts";
+import { markedTemplateIntact, renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 import { targetBuildSetting } from "../src/build/pbxproj.ts";
 import {
   addMobileCapabilities,
@@ -477,6 +478,35 @@ Deno.test("templates: an edited widget view is kept, an unedited earlier one upg
     // --force replaces it.
     await addWidgetsToProject({ dir, names: ["Status"], force: true });
     assertEquals(await read(dir, path), await renderAppExtensionTemplate(widgetSource("Status")));
+  });
+});
+
+Deno.test("templates: an app extension template a newer denext wrote is kept; --force replaces", async () => {
+  await inProject(async (dir) => {
+    await addWidgetsToProject({ dir, names: ["Status"] });
+    const swift = "ios/App/DenextWidgets/StatusWidget.swift";
+    const xml = "android/app/src/main/res/layout/denext_widget_status.xml";
+    const gen = APP_EXTENSION_TEMPLATE_VERSION + 1;
+    const newer = {
+      [swift]: await renderMarkedTemplate("app-extension", gen, "// newer\n"),
+      [xml]: await renderMarkedTemplate("app-extension", gen, "<newer/>\n", "xml"),
+    };
+    const before = { [swift]: await read(dir, swift), [xml]: await read(dir, xml) };
+    for (const [path, text] of Object.entries(newer)) {
+      await Deno.writeTextFile(join(dir, path), text);
+    }
+    const report = await addWidgetsToProject({ dir, names: ["Status"] });
+    for (const [path, text] of Object.entries(newer)) {
+      assert(report.kept.includes(path), path);
+      assert(!report.written.includes(path), path);
+      assert(
+        report.manual.some((m) => m.startsWith(`${path} was written by a newer denext`)),
+        path,
+      );
+      assertEquals(await read(dir, path), text);
+    }
+    await addWidgetsToProject({ dir, names: ["Status"], force: true });
+    for (const [path, text] of Object.entries(before)) assertEquals(await read(dir, path), text);
   });
 });
 

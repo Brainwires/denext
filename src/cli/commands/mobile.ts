@@ -7,7 +7,8 @@
 //                                 stamping a sequence)
 //   denext ota keygen <out>       write a P-256 signing key (<out>) and its public key (<out>.pub)
 //   denext mobile add-ota [dir]   install the native DenextOta plugin into ios/ + android/
-//                                 (--public-key <file> embeds the verifying key)
+//                                 (--public-key <file> embeds the verifying key,
+//                                 --dry-run lists the changes and makes none)
 //   denext mobile add <cap...>    add the Capacitor plugins behind denext/mobile's capability
 //                                 functions (haptics, share, secure-store, deep-links, push,
 //                                 …), their native config, and `cap sync` (--dry-run plans,
@@ -55,7 +56,7 @@ import {
 } from "../../build/mobile-capabilities.ts";
 import {
   type MobileDevServer,
-  restoreCapacitorConfig,
+  restoreMobileDevSession,
   runMobileDev,
 } from "../../build/mobile-dev.ts";
 import { pickLanAddress } from "../../build/dev-server/lan.ts";
@@ -334,18 +335,20 @@ export const otaCommand: CommandSpec = {
   },
 };
 
-/** Print an add-ota report. */
-function printReport(report: AddOtaReport): void {
+/** Print an add-ota report; a dry run's lists say what a real run would do, and stop there. */
+function printReport(report: AddOtaReport, dryRun: boolean): void {
   const upgraded = new Set(report.upgraded);
+  const [upgrade, write] = dryRun ? ["would upgrade", "would write  "] : ["upgraded", "wrote   "];
   for (const path of report.written) {
-    console.log(`  ${upgraded.has(path) ? "upgraded" : "wrote   "}   ${path}`);
+    console.log(`  ${upgraded.has(path) ? upgrade : write}   ${path}`);
   }
   for (const path of report.unchanged) console.log(`  unchanged  ${path}`);
   for (const note of report.skipped) console.log(`  skipped    ${note}`);
   if (report.manual.length > 0) {
-    console.log("\n  Still to do by hand:");
+    console.log(dryRun ? "\n  By hand:" : "\n  Still to do by hand:");
     for (const note of report.manual) console.log(`    - ${note}`);
   }
+  if (dryRun) return;
   console.log(
     "\n  Next: stamp the bundled UI (`spa.ota: true`, or `denext ota manifest out` before\n" +
       "  `cap sync`), serve the export (see createOtaHandler in denext/server), and call\n" +
@@ -399,16 +402,21 @@ async function publicKeyFlag(ctx: CommandContext): Promise<string | undefined> {
 async function addOta(ctx: CommandContext): Promise<void> {
   const dir = resolve(ctx.global.cwd ?? ".", ctx.positionals[1] ?? ".");
   const publicKey = await publicKeyFlag(ctx);
+  const dryRun = ctx.flags["dry-run"] === true;
   let report: AddOtaReport;
   try {
-    report = await addOtaToProject({ dir, force: ctx.flags.force === true, publicKey });
+    report = await addOtaToProject({ dir, force: ctx.flags.force === true, publicKey, dryRun });
   } catch (err) {
     fail(`denext mobile add-ota: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (ctx.global.json) console.log(JSON.stringify(report));
+  if (ctx.global.json) console.log(JSON.stringify(dryRun ? { ...report, dryRun } : report));
   else {
-    console.log(`\n  denext mobile add-ota  ▸  ${dir}\n`);
-    printReport(report);
+    console.log(
+      dryRun
+        ? `\n  denext mobile add-ota --dry-run (nothing changed)  ▸  ${dir}\n`
+        : `\n  denext mobile add-ota  ▸  ${dir}\n`,
+    );
+    printReport(report, dryRun);
   }
   if (report.skipped.length === 2) {
     fail("\n  denext mobile add-ota: no ios/ or android/ project found.");
@@ -572,8 +580,10 @@ async function mobileDev(ctx: CommandContext, run: CommandRunner): Promise<void>
   const dir = typeof ctx.flags.dir === "string" ? ctx.flags.dir : undefined;
   try {
     if (ctx.flags.restore === true) {
-      const restored = await restoreCapacitorConfig(resolve(cwd, dir ?? "."));
-      console.log(restored ? `  restored ${restored}` : "  nothing to restore");
+      await restoreMobileDevSession(resolve(cwd, dir ?? "."), {
+        run,
+        log: (line) => console.log(line),
+      });
       return;
     }
     await runMobileDev({ cwd, dir }, {
@@ -723,19 +733,25 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  Capacitor project's capacitor.config.* (--dir, else the current directory) and runs\n" +
     "  `npx cap copy`, so the app loads the dev server and reloads on every edit. --lan binds\n" +
     "  the LAN IPv4 (a physical device on the same network); without it the URL is\n" +
-    "  localhost (the iOS simulator, or Android behind `adb reverse`). The config edit is\n" +
-    "  temporary: Ctrl-C, SIGTERM or an error puts the original bytes back and runs\n" +
+    "  localhost (the iOS simulator, or Android behind `adb reverse`). On iOS it also adds\n" +
+    "  NSAppTransportSecurity > NSAllowsLocalNetworking and (when absent) an\n" +
+    "  NSLocalNetworkUsageDescription to ios/App/App/Info.plist, without which the WebView\n" +
+    "  never reaches a LAN server; a changed Info.plist needs a rebuild from Xcode. The edits\n" +
+    "  are temporary: Ctrl-C, SIGTERM or an error puts the original bytes back and runs\n" +
     "  `cap copy` again. A killed run leaves a backup in .denext/; the next `mobile dev`, or\n" +
-    "  `mobile dev --restore`, restores it first. `cap copy` needs the webDir built once.\n" +
+    "  `mobile dev --restore`, restores it first. The restore also takes the dev URL out of\n" +
+    "  the native config copies itself, so they are clean even when `cap copy` fails because\n" +
+    "  the webDir was never built (export and `npx cap copy` before a release build).\n" +
     "\n" +
     "  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n" +
     "  with no fallback, else the current directory), refuses when its @capacitor/core major\n" +
     "  is not the one the pinned plugins target, adds the packages with the package manager\n" +
     "  the nearest lockfile names (pnpm, npm, bun or yarn, looking up to the repository root\n" +
-    "  for a workspace's; else a packageManager field; else npm), adds any Info.plist keys\n" +
-    "  (never replacing yours) and Android permissions the capability needs, and runs\n" +
-    "  `npx cap sync`. --dry-run prints the plan and changes nothing. Ship a new app binary\n" +
-    "  afterwards.\n" +
+    "  for a workspace's; else a packageManager field; else npm) as caret ranges, or as exact\n" +
+    "  versions (the range's minimum) when package.json pins every @capacitor/* package\n" +
+    "  exactly, adds any Info.plist keys (never replacing yours) and Android permissions the\n" +
+    "  capability needs, and runs `npx cap sync`. --dry-run prints the plan and changes\n" +
+    "  nothing. Ship a new app binary afterwards.\n" +
     "\n" +
     "  deep-links takes --scheme (CFBundleURLTypes + a VIEW intent filter) and --domain\n" +
     "  (applinks: in the entitlements + an autoVerify https intent filter); give several as\n" +
@@ -774,16 +790,19 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n" +
     "  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n" +
     "  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n" +
-    "  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n" +
-    "  left alone and listed as one-line manual steps. Safe to run again, and run it after every\n" +
-    "  denext upgrade: unedited templates from an earlier denext are upgraded in place (ship a\n" +
-    "  new app binary afterwards).\n" +
+    "  DenextOta.prepare(this, bridgeBuilder) from MainActivity, when it is the stock one or one\n" +
+    "  denext generated (recognised by its marker line, or as a shape an earlier denext shipped).\n" +
+    "  Customised files are left alone and listed as one-line manual steps, as are a MainActivity\n" +
+    "  or bridge view controller a newer denext wrote (never downgraded). Safe to run again, and\n" +
+    "  run it after every denext upgrade: unedited templates from an earlier denext are upgraded\n" +
+    "  in place (ship a new app binary afterwards).\n" +
     "\n" +
     "  --public-key ota.key.pub (from `denext ota keygen`) embeds the verifying key as Info.plist\n" +
     "  DenextOtaPublicKey and the dev.denext.ota.PUBLIC_KEY meta-data in AndroidManifest.xml\n" +
     "  (replacing an earlier one); the app then refuses any manifest not signed with its key.\n" +
     "  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n" +
-    "  template was kept.",
+    "  template was kept. --dry-run lists what it would write, upgrade or keep and changes\n" +
+    "  nothing.",
   positionals: [
     { name: "action", help: "add | add-ota | dev | fingerprint", required: true },
     {
@@ -847,12 +866,15 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     {
       name: "restore",
       type: "boolean",
-      help: "dev: only put back a capacitor.config an interrupted session left edited",
+      help:
+        "dev: only put back what an interrupted session left (capacitor.config, Info.plist, the " +
+        "dev URL in the native config copies), then run `cap copy`",
     },
     {
       name: "dry-run",
       type: "boolean",
-      help: "add: print the plan (packages, native config, commands) and change nothing",
+      help:
+        "add, add-ota: print the plan (packages, native files, config, commands) and change nothing",
     },
     {
       name: "list",

@@ -101,6 +101,18 @@ export function parentUri(uri: string): string {
   return trimmed.slice(0, trimmed.lastIndexOf("/") + 1);
 }
 
+/** The last path segment of `uri`. */
+export function baseName(uri: string): string {
+  const trimmed = uri.replace(/\/+$/, "");
+  return trimmed.slice(trimmed.lastIndexOf("/") + 1);
+}
+
+/** `content` as bytes, decoding base64 when asked. */
+export function toBytes(content: string | Uint8Array, encoding?: string): Uint8Array {
+  if (typeof content !== "string") return content;
+  return encoding === "base64" ? base64ToBytes(content) : new TextEncoder().encode(content);
+}
+
 /** The index entry for `uri` (a root counts as a folder), or undefined. */
 export function stat(uri: string): IndexEntry | undefined {
   if (isRoot(uri)) return { dir: true, size: 0, mtime: 0 };

@@ -7,16 +7,15 @@
 > pillars in [MISSION.md](./MISSION.md); the standing engineering guardrails and
 > the security policy in [POLICIES.md](./POLICIES.md).
 >
-> `development` is closing out **2.5** (the version line `deno task bump`
-> rewrites). The line carried `denext ui` (the config editor, Cron and Desktop
-> pages, the wizard, the compose editor), the auth flexibility cut + database
-> adapter + bearer tokens, the emailed auth flows and TOTP two-factor, the
-> DevTools completeness pass, the compiled `denext` binary and task run history,
-> then six release candidates of hardening — all in
-> [CHANGELOG.md](./CHANGELOG.md). What remains is the 2.6 candidates, the last
-> build-time-purity item, the TanStack Start depth of the router plugins, and
-> the unscheduled candidates. Items target the next minor unless marked
-> otherwise; this file is rewritten each cycle.
+> `development` is closing out **2.10** (the version line `deno task bump`
+> rewrites): the Capacitor capability set, app extensions, the native
+> fingerprint, dev-server attach for phones and the Expo / React Native
+> compatibility layer — all in [CHANGELOG.md](./CHANGELOG.md) and
+> [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md). What remains is the
+> next-minor candidates (carried since 2.5), Android native feel and desktop
+> dev attach, the last build-time-purity item, the TanStack Start depth of the
+> router plugins, and the unscheduled candidates. Items target the next minor
+> unless marked otherwise; this file is rewritten each cycle.
 
 ---
 
@@ -129,7 +128,7 @@ touches the zero-npm **runtime** guardrail; both are build-time.
   compat e2es (`tests/e2e/next-compat-*`, `spa-compat`, `unbundled-*`) are the
   gate.
 
-## After 2.5 (2.6 candidates)
+## Next-minor candidates (carried since 2.5)
 
 **Auth:**
 
@@ -228,11 +227,15 @@ sessions, the `denext mobile add <capability>` pattern (haptics, clipboard, shar
 filesystem, device, network, splash, camera / pickers, barcode, quick actions, secure
 storage, keep-awake, SQLite), app extensions (share extension, widgets, Live Activities),
 the native fingerprint + CI recipe, dev-server attach for phones, and the Expo / React
-Native compatibility layer (`reactNative` mode, `denext/expo/*`, `migrate --from expo`).
-Still open:
+Native compatibility layer (`reactNative` mode, `denext/expo/*`, `migrate --from expo`),
+`showContextMenu`, the React Native surface-parity gate, and for Deno Desktop the OAuth
+loopback sheet and a signed UI self-updater. Still open:
 
-- **Android "native feel" on real hardware** — the measurement so far is an emulator
-  comparison; a real-device run is still needed before claiming parity either way.
+- **Android "native feel"** — the emulator comparison has run (2026-09-25, see
+  REACT-NATIVE-EXPO.md gap 5). Against the RN app, T3's Capacitor build starts in under half the
+  time and uses less memory, but misses vsync on 67–70% of fling frames against 25–28% for RN.
+  Next step: a real device. If the scroll gap holds there, profile the WebView list. The Android
+  capability halves are still built and unit-tested only.
 - **Desktop dev-server attach** — tracked under "Dev server attach" below.
 
 ## Candidate features (from the framework-gap survey)
@@ -265,6 +268,12 @@ scheduled.
   workerd, not Deno). Builds on the existing plugin `addBuildStep` seam.
 
 ## Later (unscheduled)
+
+- **Windows desktop installers + signing** — an installer (`setup.exe`) and Authenticode
+  signing for `deno desktop` bundles, so Smart App Control trusts them. denext apps ship no
+  node-gyp / native deps, so signing the one executable (and the installer) is enough. The
+  packaging scripts in `examples/native/scripts` need their scaffold regeneration kept
+  byte-identical first.
 
 - Generated clients for **non-denext consumers** in **other languages** from the
   OpenAPI/GraphQL documents. TypeScript consumers are served:

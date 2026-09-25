@@ -151,6 +151,53 @@ function normalize(sym: Json, byName: Map<string, Json>): SurfaceSymbol {
   return { name: sym.name, kind, ...shape(sym, decls, dec.def ?? {}, byName) };
 }
 
+/**
+ * The names a module exports type-only: every name of an `export type { … }` statement and each
+ * `type`-marked name of an `export { type X, … }` one (the exported name: `X as Y` → `Y`).
+ * `deno doc` documents such a re-export as the declaration it names (a class, a function), so
+ * without this a type-only export would pass for a runtime value.
+ *
+ * @param source The module's source text.
+ */
+export function typeOnlyExports(source: string): Set<string> {
+  // Local names bound only as types: `import type { X }` / `import { type X }`.
+  const importedTypes = new Set<string>();
+  for (const spec of typedSpecifiers(source, /\bimport\s+(type\s+)?\{([^}]*)\}\s*from/g)) {
+    if (spec.typed) importedTypes.add(spec.exported);
+  }
+  const names = new Set<string>();
+  for (const spec of typedSpecifiers(source, /\bexport\s+(type\s+)?\{([^}]*)\}/g)) {
+    if (spec.typed || importedTypes.has(spec.local)) names.add(spec.exported);
+  }
+  return names;
+}
+
+/**
+ * Every specifier of the `{ … }` clauses `clause` matches, with its local and outward names
+ * and whether a `type` keyword (on the clause or the specifier) makes it type-only.
+ */
+function typedSpecifiers(
+  source: string,
+  clause: RegExp,
+): Array<{ local: string; exported: string; typed: boolean }> {
+  const specs: Array<{ local: string; exported: string; typed: boolean }> = [];
+  for (const [, whole, list] of source.matchAll(clause)) {
+    for (const raw of list.split(",")) {
+      const spec = raw.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "").trim();
+      if (!spec) continue;
+      const [local, exported = local] = spec.replace(/^type\s+/, "").split(/\s+as\s+/)
+        .map((part) => part.trim());
+      if (exported) specs.push({ local, exported, typed: Boolean(whole) || /^type\s/.test(spec) });
+    }
+  }
+  return specs;
+}
+
+/** `sym` as a type-only export: no runtime value, so no calls or members to compare. */
+function asTypeOnly(sym: SurfaceSymbol): SurfaceSymbol {
+  return { name: sym.name, kind: sym.kind, isValue: false, isType: true };
+}
+
 /** A public, non-default, non-dunder export. */
 function isPublicSymbol(s: Json): boolean {
   const dec = s.declarations?.[0];
@@ -166,27 +213,62 @@ function isPublicSymbol(s: Json): boolean {
  * @param root Repo root (absolute); catalog `denext` paths are resolved against it.
  * @returns One {@link Surface} per specifier.
  */
-export async function extractDenextSurfaces(root: string): Promise<Surface[]> {
+export function extractDenextSurfaces(root: string): Promise<Surface[]> {
+  return extractDenextSurfacesFor(root, CATALOG);
+}
+
+/** Minimal entry shape the denext-side extractor needs: the public specifier + backing file. */
+export interface DenextTarget {
+  specifier: string;
+  denext: string;
+}
+
+/**
+ * Extract denext's surface for an arbitrary set of targets (the same `deno doc`
+ * machinery the React/Next catalog uses, opened up for the expo shim catalog).
+ *
+ * @param root Repo root (absolute); each target's `denext` path is resolved against it.
+ * @param targets The public-specifier ↔ backing-file pairs to document.
+ * @param opts `tolerateMissing` returns an empty surface for a backing file that does
+ *   not exist (a shim the manifest lists but the peer has not written yet) instead of
+ *   throwing — the diff then reports its symbols as missing.
+ */
+export async function extractDenextSurfacesFor(
+  root: string,
+  targets: readonly DenextTarget[],
+  opts: { tolerateMissing?: boolean } = {},
+): Promise<Surface[]> {
   const cache = new Map<string, Record<string, SurfaceSymbol>>();
 
   const surfaceForFile = async (rel: string): Promise<Record<string, SurfaceSymbol>> => {
     const cached = cache.get(rel);
     if (cached) return cached;
+    if (opts.tolerateMissing) {
+      try {
+        await Deno.stat(`${root}/${rel}`);
+      } catch {
+        cache.set(rel, {});
+        return {};
+      }
+    }
     const syms = await docFor(`${root}/${rel}`);
+    const typeOnly = typeOnlyExports(await Deno.readTextFile(`${root}/${rel}`));
     const byName = new Map<string, Json>();
     for (const s of syms) {
       if (!byName.has(s.name)) byName.set(s.name, s);
     }
     const out: Record<string, SurfaceSymbol> = {};
     for (const s of syms) {
-      if (isPublicSymbol(s) && !out[s.name]) out[s.name] = normalize(s, byName);
+      if (!isPublicSymbol(s) || out[s.name]) continue;
+      const sym = normalize(s, byName);
+      out[s.name] = typeOnly.has(s.name) ? asTypeOnly(sym) : sym;
     }
     cache.set(rel, out);
     return out;
   };
 
   const surfaces: Surface[] = [];
-  for (const e of CATALOG) {
+  for (const e of targets) {
     surfaces.push({
       specifier: e.specifier,
       resolved: true,

@@ -285,25 +285,32 @@ including verb discovery (`denext commands --json`), is a `deno` subprocess.
 discovery child. `--offline` keeps the UI and every process it starts off the network.
 Docs: https://denext.dev/docs/ui
 
-**A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `useAppResume`,
-`openExternal`, `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`,
-`installMomentumSafeScroll` / `useMomentumSafeScroll`. It talks to Capacitor
-through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling survives
-virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit;
-`momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
+**A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `runtimePlatform()`
+(`"ios" | "android" | "desktop" | "web"`), `useAppResume`, `openExternal`, `useKeyboardInset`,
+`useBackSwipe`, `SAFE_AREA_CSS`, `installMomentumSafeScroll` / `useMomentumSafeScroll`. It talks
+to Capacitor through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling
+survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS
+WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
 `useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickDocument`/`scanBarcode` (`null`
-when cancelled) and `setQuickActions`/`useQuickAction` (home-screen shortcuts); `denext mobile add
-<capability...> [--dry-run] [--list]` installs their plugins, and `deep-links --scheme/--domain`
-/ `push` add `onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
+when cancelled), `setQuickActions`/`useQuickAction` (home-screen shortcuts), `openSqlite` (the
+app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` (an in-page menu
+unless the app registers a native one); `denext mobile add <capability...> [--dry-run] [--list]`
+installs their plugins, and `deep-links --scheme/--domain` / `push` add
+`onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
 `requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via
-APNs/FCM). `auth-session --scheme myapp` adds `openAuthSession(url, { callbackScheme })` (OAuth
-in an iOS ASWebAuthenticationSession / Android Custom Tab / web popup finished by
-`completeAuthSession()`; resolves the callback URL, PKCE + `state` are yours). Live reload on
-a device: `denext mobile dev --lan` points the app's `server.url` at `denext dev` for the
-session (restored on exit); a non-loopback host loads the dev assets only when opted in
-(`denext dev --lan`, `--host`, `allowedDevOrigins`). Docs:
+APNs/FCM; Android needs `google-services.json`). `auth-session --scheme myapp` adds
+`openAuthSession(url, { callbackScheme })` (OAuth in an iOS ASWebAuthenticationSession / Android
+Custom Tab / web popup finished by `completeAuthSession()`, and in a Deno Desktop window the
+system browser with a loopback redirect; resolves the callback URL, PKCE + `state` are yours).
+App extensions: `denext mobile add share-extension | widget --name <N> [--configurable
+<param:enum=a|b>] | live-activity --name <N>` generate the native targets behind
+`onShareReceived`, `setWidgetData`/`reloadWidgets` and
+`startLiveActivity`/`updateLiveActivity`/`endLiveActivity` (iOS only; they share an App Group).
+Live reload on a device: `denext mobile dev --lan` points the app's `server.url` at
+`denext dev` for the session (restored on exit); a non-loopback host loads the dev assets only
+when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`). Docs:
 https://denext.dev/docs/desktop
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
@@ -314,7 +321,19 @@ Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <d
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. An unsigned manifest over
-plain `http` is refused beyond loopback.
+plain `http` is refused beyond loopback. Whether a change can ship over the air:
+`denext mobile fingerprint [--diff old.json] [--write]` hashes the native layer, and
+`denext ota manifest --native-fingerprint auto` makes a binary with another fingerprint refuse
+the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
+`denext/desktop/updater` (`checkForDesktopUpdate` / `prepareDesktopUpdate` /
+`applyDesktopUpdate`).
+
+**An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
+app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
+expo-router's routes), and every `expo-*` import resolves to a `denext/expo/*` shim over
+`denext/mobile` (`denext/expo/manifest` lists what each omits; the synchronous JSI APIs are not
+provided). `denext migrate --from expo` writes the `deno.json`, the config and a
+`capacitor.config.ts`, and reports native-only packages. Docs: https://denext.dev/docs/react-native
 
 **A database (zero-npm, server-only module):**
 
@@ -806,7 +825,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.10.0-rc.3` — The denext framework version.
+- `VERSION: 2.10.0-rc.5` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -1589,7 +1608,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop`
 
-- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined): (request: Request, url: URL) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>): (request: Request, url: URL) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `injectDesktopGlobal(html: string, token: string, beacon?: boolean): Promise<string>` — Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.
 - `resolveOutDir(options: RunDesktopOptions): string` — The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.
 - `runDesktop(options?: RunDesktopOptions): Promise<void>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server.
 - `interface RunDesktopOptions`
@@ -1607,6 +1627,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type BarcodeScanErrorCode = unsupported | denied` — The code on a scanBarcode rejection: unsupported (no scanner here: no plugin, and no BarcodeDetector or camera in the browser, or none of the formats asked for) or denied (camera permission refused).
 - `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `completeAuthSession(): boolean` — Finish a web openAuthSession: call it on the callback page the provider redirects the popup to (an https page of the same origin). It posts this page's full URL (code, state and all) to the window that opened the popup, addressed to this origin only, then closes the popup. Not needed inside the native shell, where the callback never loads a page.
+- `interface ContextMenuItem` — One entry in a showContextMenu menu.
+- `interface ContextMenuOptions` — Where and how showContextMenu opens.
 - `interface DeepLinkEvent` — One link that opened the app.
 - `interface DeepLinkOptions` — Options for onDeepLink and useDeepLink.
 - `deleteFile(path: string, options?: FileLocationOptions): Promise<void>` — Delete a file.
@@ -1708,6 +1730,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SharedFile` — A file shared to the app, copied where the app can read it.
 - `interface ShareOptions` — What share shares. At least one of text or url (or title) is needed.
 - `type ShareResult = shared | copied | cancelled` — How a share ended: "shared" (the sheet completed), "copied" (no share sheet, so the text was copied to the clipboard) or "cancelled" (the user dismissed it).
+- `showContextMenu(items: typeOperator, options?: ContextMenuOptions): Promise<string | null>` — Open a context menu and resolve the chosen item's id, or null if it was dismissed.
 - `type SqliteBackend = native | opfs | memory` — Where a database lives: the native plugin, OPFS in the browser, or memory.
 - `type SqliteBindValue = string | number | boolean | null | Uint8Array | ArrayBuffer` — A value a statement binds: booleans bind as 1/0, an ArrayBuffer as a blob.
 - `interface SqliteDatabase` — An open database (openSqlite).

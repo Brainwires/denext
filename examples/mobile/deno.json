@@ -1,0 +1,29 @@
+{
+  "tasks": {
+    "dev": "deno run -A --node-modules-dir=none ../../cli.ts dev .",
+    "build": "deno run -A --node-modules-dir=none ../../cli.ts build .",
+    "export": "deno run -A --node-modules-dir=none ../../cli.ts export .",
+    "cap:sync": "deno task export && node_modules/.bin/cap sync",
+    "ios": "xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -destination generic/platform=iOS -jobs 2 -allowProvisioningUpdates DEVELOPMENT_TEAM=$DENEXT_IOS_TEAM build",
+    "mobile:dev": "deno run -A --node-modules-dir=none ../../cli.ts mobile dev . --lan",
+    "ota:serve": "deno run -A --node-modules-dir=none serve.ts"
+  },
+  "nodeModulesDir": "none",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/mobile": "../../src/mobile/mod.ts"
+  },
+  "lint": {
+    "plugins": ["../../src/lint/denext-plugin.ts"]
+  },
+  "exclude": ["ios/", "android/", "node_modules/", "out/", ".denext/"]
+}
