@@ -1,0 +1,347 @@
+{
+  "note": "Real, currently-open native (react-native / expo) signature deviations. Burn this down; `deno task parity:native` fails on any deviation NOT listed here. Regenerate with `deno task parity:native:gaps`.",
+  "gaps": [
+    {
+      "specifier": "react-native",
+      "symbol": "ActionSheetIOS",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ActivityIndicatorBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ActivityIndicatorComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "codegenNativeCommands",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "codegenNativeComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "CodegenTypes",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "DevMenu",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "DevSettings",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "DrawerLayoutAndroidBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "DrawerLayoutAndroidComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "DrawerLayoutAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "DynamicColorIOS",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "FlatListComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ImageBackgroundBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ImageBackgroundComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ImageBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ImageComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "InputAccessoryView",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "KeyboardAvoidingViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "KeyboardAvoidingViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "NativeAppEventEmitter",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "NativeComponentRegistry",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "PermissionsAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "PlatformColor",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ProgressBarAndroidBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ProgressBarAndroidComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ProgressBarAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "PushNotificationIOS",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "RefreshControlBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "RefreshControlComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "registerCallableModule",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "requireNativeComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "RootTagContext",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "SafeAreaViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "SafeAreaViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ScrollViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ScrollViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "SectionListComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "Settings",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "SwitchBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "SwitchComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "Systrace",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TextBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TextComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TextInputBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TextInputComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ToastAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TouchableNativeFeedbackBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TouchableNativeFeedbackComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TouchableWithoutFeedbackBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TouchableWithoutFeedbackComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TurboModuleRegistry",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "useAnimatedColor",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "useAnimatedValue",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "useAnimatedValueXY",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "ViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    }
+  ]
+}

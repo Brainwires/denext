@@ -1,0 +1,56 @@
+name: Parity (react-native / expo)
+
+# Blocking structural-parity gate for denext's mobile compat surface — the twin of the
+# React/ReactDOM/Next gate that runs offline in `ci.yml`'s `check` job. Unlike that one,
+# this needs npm (it installs `react-native-web`, the package `src/build/react-native.ts`
+# aliases `react-native` to, for the live diff), so it is its own job with Node set up —
+# mirroring the `next-compat` job. It is BASELINE-GATED: it fails only on a NEW deviation
+# not already waived (scripts/parity/native/waivers.ts) or tracked in the known-gaps
+# ledger (scripts/parity/native/baselines/known-gaps.json).
+#
+#   • react-native — live `react-native-web` vs the committed baseline.
+#   • expo — each `denext/expo/<name>` shim vs its pinned `expo-*` baseline, minus the
+#     shim's `omitted` list. SKIPPED (green) until `src/expo/manifest.ts` lands, so this
+#     stays green while the shims are built incrementally.
+#
+# Heavy (installs npm): PRs to `main` and `main` itself, where it gates the release merge —
+# same policy as the `integration` / `next-compat` jobs in ci.yml. Run it any time via the
+# workflow_dispatch button. Accept a new baseline with `deno task parity:native:refresh`
+# and record intentional gaps with `deno task parity:native:gaps`.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.6"
+
+      - name: Set up Node
+        # `parity:native` installs `react-native-web` (and any pinned `expo-*`) via npm.
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache Deno dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/deno
+          key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
+          restore-keys: ${{ runner.os }}-deno-
+
+      - name: Native parity gate (react-native + expo)
+        run: deno task parity:native

@@ -166,12 +166,44 @@ function isPublicSymbol(s: Json): boolean {
  * @param root Repo root (absolute); catalog `denext` paths are resolved against it.
  * @returns One {@link Surface} per specifier.
  */
-export async function extractDenextSurfaces(root: string): Promise<Surface[]> {
+export function extractDenextSurfaces(root: string): Promise<Surface[]> {
+  return extractDenextSurfacesFor(root, CATALOG);
+}
+
+/** Minimal entry shape the denext-side extractor needs: the public specifier + backing file. */
+export interface DenextTarget {
+  specifier: string;
+  denext: string;
+}
+
+/**
+ * Extract denext's surface for an arbitrary set of targets (the same `deno doc`
+ * machinery the React/Next catalog uses, opened up for the expo shim catalog).
+ *
+ * @param root Repo root (absolute); each target's `denext` path is resolved against it.
+ * @param targets The public-specifier ↔ backing-file pairs to document.
+ * @param opts `tolerateMissing` returns an empty surface for a backing file that does
+ *   not exist (a shim the manifest lists but the peer has not written yet) instead of
+ *   throwing — the diff then reports its symbols as missing.
+ */
+export async function extractDenextSurfacesFor(
+  root: string,
+  targets: readonly DenextTarget[],
+  opts: { tolerateMissing?: boolean } = {},
+): Promise<Surface[]> {
   const cache = new Map<string, Record<string, SurfaceSymbol>>();
 
   const surfaceForFile = async (rel: string): Promise<Record<string, SurfaceSymbol>> => {
     const cached = cache.get(rel);
     if (cached) return cached;
+    if (opts.tolerateMissing) {
+      try {
+        await Deno.stat(`${root}/${rel}`);
+      } catch {
+        cache.set(rel, {});
+        return {};
+      }
+    }
     const syms = await docFor(`${root}/${rel}`);
     const byName = new Map<string, Json>();
     for (const s of syms) {
@@ -186,7 +218,7 @@ export async function extractDenextSurfaces(root: string): Promise<Surface[]> {
   };
 
   const surfaces: Surface[] = [];
-  for (const e of CATALOG) {
+  for (const e of targets) {
     surfaces.push({
       specifier: e.specifier,
       resolved: true,

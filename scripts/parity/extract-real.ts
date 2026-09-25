@@ -16,10 +16,19 @@ import ts from "npm:typescript@5";
 import { CATALOG, REAL_PACKAGES } from "./spec.ts";
 import type { CallSig, Surface, SurfaceSymbol } from "./types.ts";
 
-/** Read the installed version of each real package from its node_modules manifest. */
-export function readVersions(workDir: string): Record<string, string> {
+/** Minimal entry shape the real-side extractor needs: the public specifier + npm import. */
+export interface RealTarget {
+  specifier: string;
+  real: string;
+}
+
+/** Read the installed version of each named package from its node_modules manifest. */
+export function readVersionsFor(
+  workDir: string,
+  packages: readonly string[],
+): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const pkg of REAL_PACKAGES) {
+  for (const pkg of packages) {
     try {
       const manifest = JSON.parse(
         Deno.readTextFileSync(`${workDir}/node_modules/${pkg}/package.json`),
@@ -30,6 +39,11 @@ export function readVersions(workDir: string): Record<string, string> {
     }
   }
   return out;
+}
+
+/** Read the installed version of each real (React/Next) package from node_modules. */
+export function readVersions(workDir: string): Record<string, string> {
+  return readVersionsFor(workDir, REAL_PACKAGES);
 }
 
 /** Reduce a TS call signature to the structural fields parity checks. */
@@ -110,6 +124,21 @@ function normalize(checker: ts.TypeChecker, sym: ts.Symbol): SurfaceSymbol {
  * @returns One {@link Surface} per specifier (unresolved specifiers have `resolved:false`).
  */
 export function extractRealSurfaces(workDir: string): Surface[] {
+  return extractRealSurfacesFor(workDir, CATALOG);
+}
+
+/**
+ * Extract the real surface for an arbitrary set of targets (the same machinery the
+ * React/Next catalog uses, opened up for the native/expo catalogs). Each target's
+ * `real` specifier is pre-resolved; an unresolvable one becomes `resolved:false`.
+ *
+ * @param workDir A directory whose `node_modules` has each target's package installed.
+ * @param targets The public-specifier ↔ npm-import pairs to extract.
+ */
+export function extractRealSurfacesFor(
+  workDir: string,
+  targets: readonly RealTarget[],
+): Surface[] {
   const compilerOptions: ts.CompilerOptions = {
     module: ts.ModuleKind.ESNext,
     target: ts.ScriptTarget.ESNext,
@@ -123,7 +152,7 @@ export function extractRealSurfaces(workDir: string): Surface[] {
   // Pre-resolve each specifier so an upstream-removed subpath (e.g.
   // react-dom/test-utils on React 19) becomes `resolved:false` instead of a crash.
   const containing = `${workDir}/__parity_entry__.ts`;
-  const resolvedSpecs = CATALOG.map((e) => ({
+  const resolvedSpecs = targets.map((e) => ({
     entry: e,
     ok: !!ts.resolveModuleName(e.real, containing, compilerOptions, host).resolvedModule,
   }));
