@@ -190,7 +190,8 @@ The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile`
   local-network usage string in `Info.plist` (now added for the session); the restore now scrubs
   the dev URL from the native config copies itself; and unbundled dev sent an SPA's own
   `import "./styles.css"` through the JS transform, which failed the page before it hid the
-  splash. The desktop half of dev-server attach is open (ROADMAP).
+  splash. The desktop half of dev-server attach shipped too: `denext desktop dev` opens a Deno
+  Desktop window whose runtime reverse-proxies HTTP + HMR to `denext dev`.
 - **Build + CI** (EAS Build / Submit, preview builds, `mobile-fingerprint-check`): **shipped
   (2.10.0-rc.3)** as `examples/capacitor-ci`, a GitHub Actions recipe that runs the fingerprint
   check from gap 2 and either ships a signed OTA manifest or builds signed binaries
@@ -384,9 +385,9 @@ is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `ex
 1. ~~Push notifications, the OTA runtime-version gate, auth sessions + deep links, and the
    `mobile add <capability>` wrapper pattern.~~ Shipped (2.9.0, 2.10.0-rc.1–rc.3); verified on
    the iPhone.
-2. ~~App extensions (share, widgets, Live Activities) and dev-server attach for phones.~~
-   Shipped (2.10.0-rc.3); verified on the iPhone except a real push-to-start push. Left: the
-   desktop half of dev-server attach (ROADMAP).
+2. ~~App extensions (share, widgets, Live Activities) and dev-server attach for phones, plus the
+   desktop half of dev-server attach (`denext desktop dev`).~~ Shipped (2.10.0-rc.3; desktop
+   attach in the following release); verified on the iPhone except a real push-to-start push.
 3. ~~The compatibility layer: the measured spike, the `react-native` resolve mode, the
    `denext/expo/*` shims, and `migrate --from expo`.~~ Shipped (2.10.0-rc.2–rc.3). Left: the
    app's own stubs for non-Expo native modules (see Integration above).

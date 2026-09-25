@@ -7,6 +7,9 @@
 // address they bound is added to that list; nothing else is.
 
 import { encodeQr, renderQrTerminal } from "../../utils/qr-code.ts";
+// The strict loopback test lives in one place (used as a security gate by `denext desktop dev`).
+// Imported for lan.ts's own use AND re-exported so lan.ts's callers keep importing it from here.
+import { isLoopbackHost } from "../../utils/loopback.ts";
 
 /** The slice of `Deno.NetworkInterfaceInfo` the selection reads (so tests can inject it). */
 export interface LanInterface {
@@ -24,11 +27,7 @@ const PREFERRED = /^(en0|eth0|wlan\d*|wlp\S*|enp\S*)$/;
 /** Hostnames that mean "every interface" when bound. */
 const WILDCARD_HOSTS = new Set(["0.0.0.0", "::", "[::]"]);
 
-/** Hostnames that are loopback (already allowed by the gate). */
-function isLoopbackHost(host: string): boolean {
-  const h = host.replace(/^\[|\]$/g, "");
-  return h === "localhost" || h.endsWith(".localhost") || h === "::1" || h.startsWith("127.");
-}
+export { isLoopbackHost };
 
 /** A usable LAN IPv4: not loopback (127/8), not link-local (169.254/16), not unspecified. */
 function isLanIpv4(iface: LanInterface): boolean {

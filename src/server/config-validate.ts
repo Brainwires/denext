@@ -8,6 +8,7 @@
 import { type DenextConfig, isOrigin } from "./config.ts";
 import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "./config-keys.generated.ts";
 import { editDistance } from "../utils/edit-distance.ts";
+import { isLoopbackHost } from "../utils/loopback.ts";
 import { VERB_NAME } from "../cli/command.ts";
 
 /**
@@ -176,14 +177,6 @@ function validateSpaOta(ota: unknown, fail: Fail): void {
   if (ota !== undefined && typeof ota !== "boolean") fail("spa.ota", "must be a boolean");
 }
 
-/** Match the whole 127.0.0.0/8 block, localhost, or ::1 — NOT a `127.` prefix (which
- * would also accept `127.0.0.1.evil.com`, DNS-resolvable to an attacker IP). */
-function isLoopback(h: string): boolean {
-  const host = h.replace(/^\[|\]$/g, "").toLowerCase();
-  return host === "localhost" || host === "::1" ||
-    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-}
-
 type Proxy = NonNullable<NonNullable<DenextConfig["spa"]>["proxy"]>;
 
 /** `spa.proxy.prefixes`: a non-empty array of "/"-rooted path strings. */
@@ -206,7 +199,7 @@ function validateProxyTarget(proxy: Proxy, fail: Fail): void {
   } catch {
     fail("spa.proxy.target", 'must be an absolute URL (e.g. "http://127.0.0.1:3773")');
   }
-  if (target && !proxy.allowNonLoopback && !isLoopback(target.hostname)) {
+  if (target && !proxy.allowNonLoopback && !isLoopbackHost(target.hostname)) {
     fail(
       "spa.proxy.target",
       `must be a loopback host (127.0.0.1 / localhost / [::1]) unless \`allowNonLoopback: true\` — got "${target.hostname}"`,

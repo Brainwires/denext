@@ -226,17 +226,16 @@ Shipped in the 2.10 line (see CHANGELOG): push notifications, deep links, auth
 sessions, the `denext mobile add <capability>` pattern (haptics, clipboard, share,
 filesystem, device, network, splash, camera / pickers, barcode, quick actions, secure
 storage, keep-awake, SQLite), app extensions (share extension, widgets, Live Activities),
-the native fingerprint + CI recipe, dev-server attach for phones, and the Expo / React
-Native compatibility layer (`reactNative` mode, `denext/expo/*`, `migrate --from expo`),
-`showContextMenu`, the React Native surface-parity gate, and for Deno Desktop the OAuth
-loopback sheet and a signed UI self-updater. Still open:
+the native fingerprint + CI recipe, dev-server attach for phones AND desktop
+(`denext desktop dev`), and the Expo / React Native compatibility layer (`reactNative` mode,
+`denext/expo/*`, `migrate --from expo`), `showContextMenu`, the React Native surface-parity gate,
+and for Deno Desktop the OAuth loopback sheet and a signed UI self-updater. Still open:
 
 - **Android "native feel"** — the emulator comparison has run (2026-09-25, see
   REACT-NATIVE-EXPO.md gap 5). Against the RN app, T3's Capacitor build starts in under half the
   time and uses less memory, but misses vsync on 67–70% of fling frames against 25–28% for RN.
   Next step: a real device. If the scroll gap holds there, profile the WebView list. The Android
   capability halves are still built and unit-tested only.
-- **Desktop dev-server attach** — tracked under "Dev server attach" below.
 
 ## Candidate features (from the framework-gap survey)
 
@@ -245,20 +244,26 @@ Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack (the three picks that shipped
 CHANGELOG/FEATURES). The rest are kept here so they aren't lost; not yet
 scheduled.
 
-- **Dev server attach for desktop apps (the Metro model).** A packaged desktop
+- **Dev server attach for desktop apps (the Metro model).** ~~A packaged desktop
   window should be able to attach to `denext dev` and get HMR, the way a React
-  Native app attaches to Metro. The phone half shipped (`allowedDevOrigins`,
-  `denext dev --lan`, an explicit `--host` allowing what it binds, and
-  `denext mobile dev` for Capacitor live reload; see CHANGELOG). What is left:
-  - **`denext desktop dev`** — a window over a loopback reverse proxy to the dev
-    server (reusing `src/build/dev-proxy.ts`), so `location.origin` stays
-    loopback and neither the CSP nor the origin gate has to be relaxed.
-  - **A dev-vs-release packaging permission split** — `migrate --desktop` bakes
-    `--allow-net=127.0.0.1,localhost` into the compiled task, which a dev attach
-    would have to widen; the scaffold and package paths use `-A`. Pick one story
-    per mode.
-  - Optional: a spike on `deno desktop --inspect-renderer` (CDP into the window,
-    which `src/profile/browser.ts` already knows how to drive).
+  Native app attaches to Metro.~~ **Shipped** (see CHANGELOG). The phone half
+  shipped first (`allowedDevOrigins`, `denext dev --lan`, an explicit `--host`
+  allowing what it binds, and `denext mobile dev` for Capacitor live reload);
+  the desktop half is now `denext desktop dev`:
+  - **`denext desktop dev`** — a window whose runtime reverse-proxies EVERYTHING
+    (HTTP + HMR) over loopback to the dev server (reusing
+    `src/build/dev-proxy.ts`), so `location.origin` stays loopback and neither
+    the CSP nor the origin gate has to be relaxed. Proxy mode is reachable only
+    through the dev-only `DENEXT_DESKTOP_DEV_URL` env seam this verb sets; the
+    token-gated `/_denext/desktop/*` endpoints are never proxied; the per-launch
+    token is stripped before proxying; the target is loopback-only unless `--lan`;
+    and an attached dev server is left running on exit.
+  - **The dev-vs-release packaging permission split** is resolved by the proxy
+    design: the window needs net to the loopback dev port only, exactly what a
+    packaged build's baked `--allow-net=127.0.0.1,localhost` already grants, so
+    `denext desktop dev` widens no permission over a packaged build.
+  - Optional (still open): a spike on `deno desktop --inspect-renderer` (CDP into
+    the window, which `src/profile/browser.ts` already knows how to drive).
 - **Deploy adapter API + presets** (the larger, separate bet — Nitro / Next 16
   Adapters): a typed build manifest (routes, prerenders, assets, cache rules) +
   a pluggable adapter seam with first-party presets. Achievable targets for a

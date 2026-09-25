@@ -1084,12 +1084,19 @@
     "subscribeBoundaries:function"
   ],
   "denext/desktop": [
+    "DESKTOP_DEV_LAN_ENV:variable",
+    "DESKTOP_DEV_URL_ENV:variable",
+    "DesktopDevProxyDecision:typeAlias",
+    "DesktopProxyFn:typeAlias",
     "ProxyModule:typeAlias",
     "RunDesktopOptions:interface",
     "createDesktopHandler:function",
+    "desktopDevProxyDecision:function",
     "injectDesktopGlobal:function",
+    "isDenoCliExecPath:function",
     "resolveOutDir:function",
-    "runDesktop:function"
+    "runDesktop:function",
+    "stripDesktopCredentials:function"
   ],
   "denext/desktop/updater": [
     "DesktopUpdateCheck:interface",

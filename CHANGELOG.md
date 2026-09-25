@@ -8,6 +8,24 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.10.0-rc.6] - 2026-09-25
+
+### Added
+
+- **`denext desktop dev`: live reload for the Deno Desktop window (the Metro model for desktop).**
+  Starts a `denext dev` server (or attaches to one already answering at the target) and opens a
+  `deno desktop` window whose local runtime reverse-proxies EVERYTHING — HTTP and the HMR
+  WebSocket — to it, so `location.origin` stays loopback and neither the CSP nor the dev origin
+  gate has to be relaxed; edits hot-reload in the native window. Proxy mode is turned on ONLY by
+  the dev-only `DENEXT_DESKTOP_DEV_URL` env seam that this verb sets on the child, so a
+  `run` / `package` window is unchanged (it serves the static export). The token-gated
+  `/_denext/desktop/*` endpoints are always served locally and never proxied, the per-launch
+  desktop token is stripped before a request reaches the dev server, the target is loopback-only
+  unless `--lan` opts in, and the dev server is stopped on exit only when this verb started it (an
+  attached one keeps running). The window needs net to the loopback dev port only — exactly what a
+  packaged build's baked `--allow-net=127.0.0.1,localhost` already grants, so no permission is
+  widened. This completes the desktop half of dev-server attach.
+
 ## [2.10.0-rc.5] - 2026-09-25
 
 ### Fixed
@@ -8472,6 +8490,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.10.0-rc.6]: https://jsr.io/@denext/denext@2.10.0-rc.6
 [2.10.0-rc.5]: https://jsr.io/@denext/denext@2.10.0-rc.5
 [2.10.0-rc.4]: https://jsr.io/@denext/denext@2.10.0-rc.4
 [2.10.0-rc.3]: https://jsr.io/@denext/denext@2.10.0-rc.3
