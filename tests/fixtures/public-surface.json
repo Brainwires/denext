@@ -1296,10 +1296,14 @@
   "denext/expo/audio": [
     "AudioPlayer:class",
     "AudioPlayerOptions:interface",
+    "AudioPlaylist:class",
+    "AudioPlaylistLoopMode:typeAlias",
     "AudioQuality:enum",
     "AudioRecorder:class",
     "AudioSource:typeAlias",
     "AudioStatus:interface",
+    "AudioStream:class",
+    "NativeAudioModule:class",
     "PermissionExpiration:typeAlias",
     "PermissionResponse:interface",
     "PermissionStatus:enum",
@@ -1371,6 +1375,7 @@
     "BarcodeSettings:interface",
     "BarcodeType:typeAlias",
     "Camera:variable",
+    "CameraNativeModule:class",
     "CameraType:typeAlias",
     "CameraView:function",
     "CameraViewProps:interface",
@@ -1378,10 +1383,6 @@
     "PermissionHookOptions:typeAlias",
     "PermissionResponse:interface",
     "PermissionStatus:enum",
-    "getCameraPermissionsAsync:function",
-    "getMicrophonePermissionsAsync:function",
-    "requestCameraPermissionsAsync:function",
-    "requestMicrophonePermissionsAsync:function",
     "scanFromURLAsync:function",
     "useCameraPermissions:variable",
     "useMicrophonePermissions:variable"
@@ -1413,6 +1414,7 @@
     "default:variable"
   ],
   "denext/expo/crypto": [
+    "AESKeySize:enum",
     "CryptoDigestAlgorithm:enum",
     "CryptoDigestOptions:interface",
     "CryptoEncoding:enum",
@@ -1508,7 +1510,23 @@
     "PathPart:typeAlias",
     "Paths:class",
     "RelocationOptions:interface",
-    "UploadType:enum"
+    "UploadType:enum",
+    "copyAsync:function",
+    "createDownloadResumable:function",
+    "createUploadTask:function",
+    "deleteAsync:function",
+    "deleteLegacyDocumentDirectoryAndroid:function",
+    "downloadAsync:function",
+    "getContentUriAsync:function",
+    "getFreeDiskStorageAsync:function",
+    "getInfoAsync:function",
+    "getTotalDiskCapacityAsync:function",
+    "makeDirectoryAsync:function",
+    "moveAsync:function",
+    "readAsStringAsync:function",
+    "readDirectoryAsync:function",
+    "uploadAsync:function",
+    "writeAsStringAsync:function"
   ],
   "denext/expo/font": [
     "FontDisplay:enum",
@@ -1548,6 +1566,7 @@
     "ImageBackground:function",
     "ImageBackgroundProps:typeAlias",
     "ImageContentFit:typeAlias",
+    "ImageNativeModule:class",
     "ImageProps:interface",
     "ImageSource:typeAlias"
   ],
@@ -1666,6 +1685,7 @@
     "PermissionStatus:enum",
     "PushTokenListener:typeAlias",
     "SchedulableTriggerInputTypes:enum",
+    "SetBadgeCountOptions:interface",
     "Subscription:interface",
     "addNotificationReceivedListener:function",
     "addNotificationResponseClearedListener:function",
@@ -1757,6 +1777,7 @@
     "SQLiteTaggedQuery:class",
     "SQLiteVariadicBindParams:typeAlias",
     "bundledExtensions:variable",
+    "deepEqual:function",
     "defaultDatabaseDirectory:variable",
     "deleteDatabaseAsync:function",
     "openDatabaseAsync:function",
@@ -1770,6 +1791,7 @@
     "unstable_getMaterialSymbolSourceAsync:function"
   ],
   "denext/expo/updates": [
+    "ExpoUpdatesModule:class",
     "Manifest:interface",
     "UpdateCheckResult:typeAlias",
     "UpdateCheckResultNotAvailableReason:enum",
@@ -1800,6 +1822,7 @@
     "useUpdates:function"
   ],
   "denext/expo/video": [
+    "PlayerBuilderOptions:interface",
     "Subscription:interface",
     "VideoPlayer:class",
     "VideoPlayerEvents:interface",

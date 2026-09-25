@@ -39,8 +39,17 @@ import { GlassView, isGlassEffectAPIAvailable } from "../src/expo/glass-effect.t
 import { SymbolView } from "../src/expo/symbols.ts";
 import { TextInputWrapper } from "../src/expo/paste-input.ts";
 import { Image } from "../src/expo/image.ts";
-import { AudioPlayer, RecordingPresets } from "../src/expo/audio.ts";
-import { VideoPlayer } from "../src/expo/video.ts";
+import {
+  AudioPlayer,
+  AudioPlaylist,
+  AudioStream,
+  NativeAudioModule,
+  RecordingPresets,
+} from "../src/expo/audio.ts";
+import { createVideoPlayer, useVideoPlayer, VideoPlayer } from "../src/expo/video.ts";
+import { ImageNativeModule } from "../src/expo/image.ts";
+import * as FileSystem from "../src/expo/file-system.ts";
+import { deepEqual } from "../src/expo/sqlite.ts";
 import { FlipType, manipulateAsync, SaveFormat } from "../src/expo/image-manipulator.ts";
 import { resetFileSystemForTesting, settled } from "../src/expo/internal/fs.ts";
 import { resetPushForTesting } from "../src/mobile/push.ts";
@@ -531,14 +540,20 @@ Deno.test("expo-image-picker / expo-document-picker: Expo results from the nativ
 Deno.test("expo-camera: permissions follow the scanner plugin or the browser", async () => {
   const scanner = recorder(["scanBarcode"]);
   await inShell({ CapacitorBarcodeScanner: scanner.plugin }, async () => {
-    assertEquals((await Camera.getCameraPermissionsAsync()).status, "granted");
+    assertEquals((await Camera.Camera.getCameraPermissionsAsync()).status, "granted");
   });
   const permissions = { query: () => Promise.resolve({ state: "denied" }) };
   await withGlobals({ navigator: { permissions } }, async () => {
-    const response = await Camera.getCameraPermissionsAsync();
+    const response = await Camera.Camera.getCameraPermissionsAsync();
     assertEquals([response.status, response.canAskAgain], ["denied", false]);
   });
   await assertRejects(() => Camera.scanFromURLAsync("https://x/qr.png"), Error, "BarcodeDetector");
+  // As in expo-camera 57: the permission calls are only on `Camera`, and so is scanFromURLAsync.
+  assertEquals(Camera.Camera.scanFromURLAsync, Camera.scanFromURLAsync);
+  for (const name of ["getCameraPermissionsAsync", "requestMicrophonePermissionsAsync"]) {
+    assertEquals(name in Camera, false);
+    assertEquals(typeof (Camera.Camera as Any)[name], "function");
+  }
 });
 
 // ---- font / asset / expo core / stubs --------------------------------------
@@ -704,4 +719,105 @@ Deno.test("expo-image-manipulator: actions run in order on a canvas; the result 
     TypeError,
     "unknown action",
   );
+});
+
+// ---- parity round-out: native stand-ins, legacy stubs, extra parameters ----
+
+Deno.test("expo native-module classes are stand-ins that throw when constructed", () => {
+  const cases: Array<[string, () => unknown]> = [
+    ["expo-camera's CameraNativeModule", () => new Camera.CameraNativeModule()],
+    ["expo-image's ImageNativeModule", () => new ImageNativeModule()],
+    ["expo-updates's ExpoUpdatesModule", () => new Updates.ExpoUpdatesModule()],
+    ["expo-audio's NativeAudioModule", () => new NativeAudioModule()],
+    ["expo-audio's AudioPlaylist", () => new AudioPlaylist([], 500, "none")],
+    [
+      "expo-audio's AudioStream",
+      () => new AudioStream({ sampleRate: 44100, channels: 1, encoding: "float32" }),
+    ],
+  ];
+  for (const [label, construct] of cases) {
+    assertThrows(construct, Error, `${label} is native-only and unavailable on the web`);
+  }
+  // Importing and introspecting them is harmless.
+  assertEquals(typeof Camera.CameraNativeModule, "function");
+  assertEquals(Updates.ExpoUpdatesModule.name, "ExpoUpdatesModule");
+});
+
+Deno.test("expo-file-system: the legacy top-level functions warn and throw as in SDK 57", async () => {
+  const warnings: unknown[] = [];
+  const warn = console.warn;
+  console.warn = (message: unknown) => void warnings.push(message);
+  try {
+    await assertRejects(
+      () => FileSystem.readAsStringAsync("file:///documents/a.txt"),
+      Error,
+      'Method readAsStringAsync imported from "expo-file-system" is deprecated.',
+    );
+    await assertRejects(
+      () => FileSystem.moveAsync({ from: "file:///a", to: "file:///b" }),
+      Error,
+      '"expo-file-system/legacy"',
+    );
+    await assertRejects(() => FileSystem.getFreeDiskStorageAsync(), Error, "getFreeDiskStorage");
+    assertThrows(
+      () => FileSystem.createDownloadResumable("https://x/f", "file:///documents/f"),
+      Error,
+      "Method createDownloadResumable",
+    );
+    assertThrows(
+      () => FileSystem.createUploadTask("https://x/u", "file:///documents/f"),
+      Error,
+      "Method createUploadTask",
+    );
+  } finally {
+    console.warn = warn;
+  }
+  assertEquals(warnings.length, 5);
+});
+
+Deno.test("expo-crypto AESKeySize and expo-sqlite deepEqual match Expo", () => {
+  assertEquals(
+    [Crypto.AESKeySize.AES128, Crypto.AESKeySize.AES192, Crypto.AESKeySize.AES256],
+    [128, 192, 256],
+  );
+  assert(deepEqual({ a: 1, b: { c: [1, 2] } }, { b: { c: [1, 2] }, a: 1 }));
+  assert(deepEqual(undefined, undefined));
+  assertEquals(deepEqual({ a: 1 }, { a: 2 }), false);
+  assertEquals(deepEqual({ a: 1 }, { a: 1, b: 2 }), false);
+  assertEquals(deepEqual({ a: 1 }, undefined), false);
+  assertEquals(deepEqual({ a: { b: 1 } }, { a: { b: "1" } }), false);
+});
+
+Deno.test("expo functions accept Expo's extra parameters", async () => {
+  Expo.installOnUIRuntime({});
+  const badges: number[] = [];
+  const navigator = {
+    setAppBadge: (n: number) => {
+      badges.push(n);
+      return Promise.resolve();
+    },
+    clearAppBadge: () => Promise.resolve(),
+  };
+  await withGlobals({ navigator }, async () => {
+    assertEquals(await Notifications.setBadgeCountAsync(4, { web: { method: "Title" } }), true);
+  });
+  assertEquals([badges, await Notifications.getBadgeCountAsync()], [[4], 4]);
+  const player = createVideoPlayer(null, { seekForwardIncrement: 5 });
+  assert(player instanceof VideoPlayer);
+  player.release();
+
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const root = createRoot(container as Any);
+  let seen: VideoPlayer | undefined;
+  let setUp: VideoPlayer | undefined;
+  function Probe() {
+    seen = useVideoPlayer(null, (p) => void (setUp = p), { seekBackwardIncrement: 5 });
+    return null;
+  }
+  root.render(h(Probe as Any, null));
+  flushSync();
+  assert(seen instanceof VideoPlayer);
+  assertEquals(setUp, seen);
+  root.unmount?.();
 });

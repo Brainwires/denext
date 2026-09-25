@@ -9,9 +9,9 @@ name: Parity (react-native / expo)
 # ledger (scripts/parity/native/baselines/known-gaps.json).
 #
 #   • react-native — live `react-native-web` vs the committed baseline.
-#   • expo — each `denext/expo/<name>` shim vs its pinned `expo-*` baseline, minus the
-#     shim's `omitted` list. SKIPPED (green) until `src/expo/manifest.ts` lands, so this
-#     stays green while the shims are built incrementally.
+#   • expo — each `denext/expo/<name>` shim (listed in `src/expo/manifest.ts`) vs its
+#     pinned `expo-*` baseline (scripts/parity/native/baselines/expo.baseline.json), minus
+#     the shim's `omitted` list. Offline: it runs `deno doc` over the shims, no npm.
 #
 # Heavy (installs npm): PRs to `main` and `main` itself, where it gates the release merge —
 # same policy as the `integration` / `next-compat` jobs in ci.yml. Run it any time via the

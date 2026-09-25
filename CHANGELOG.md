@@ -211,6 +211,25 @@ and this project adheres to
 
 ### Changed
 
+- **The `denext/expo/*` shims now match their pinned `expo-*` packages' export surface: the
+  expo half of `deno task parity:native` has no known gaps left (29 before).**
+  - `expo-camera`'s permission calls are on the `Camera` object only, as in expo-camera 57
+    (`getCameraPermissionsAsync` and the three others are no longer top-level exports), and
+    `Camera.scanFromURLAsync` is there too.
+  - The native-module classes (`CameraNativeModule`, `ImageNativeModule`, `ExpoUpdatesModule`,
+    `NativeAudioModule`) and expo-audio's `AudioPlaylist` / `AudioStream` are exported as
+    typed stand-ins that throw a clear "unavailable on the web" error when constructed.
+  - `expo-file-system` exports SDK 57's legacy top-level functions (`readAsStringAsync`,
+    `getInfoAsync`, …) as the same deprecation stubs Expo ships: each warns and throws Expo's
+    migration message.
+  - `expo-crypto` exports the `AESKeySize` enum, and `expo-sqlite` exports `deepEqual`.
+  - `installOnUIRuntime(holder)`, `setBadgeCountAsync(count, options)`,
+    `createVideoPlayer(source, playerBuilderOptions)` and
+    `useVideoPlayer(source, setup, playerBuilderOptions)` take Expo's extra parameter
+    (ignored: no worklets runtime, the Badging API only, Android-only builder options).
+  - The parity extractor resolves packages with TypeScript's `Bundler` resolution, so a package
+    that publishes its types only through `exports` (expo-quick-actions) is now compared
+    instead of skipped. The React / Next baseline is unaffected.
 - **An explicit `denext dev --host` allows the host it binds** through the dev origin gate
   (`0.0.0.0` / `::` allow this machine's own addresses). `.denext/dev.json` now records the
   bind as given in `hostname` and the allowed hosts in `devOrigins`; `origin` stays the

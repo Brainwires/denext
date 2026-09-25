@@ -44,6 +44,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "registerRootComponent mounts through react-native-web's AppRegistry, so the app's " +
       "own index.ts is the web entry. No native modules: requireNativeModule throws, " +
       "requireOptionalNativeModule returns null, requireNativeView renders nothing. " +
+      "installOnUIRuntime does nothing (no worklets UI runtime). " +
       "`expo/fetch` resolves here too (the platform fetch).",
   },
   "expo-asset": {
@@ -71,7 +72,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "IOSOutputFormat",
     ],
     notes: "Playback over HTMLAudioElement, recording over MediaRecorder (WebM/MP4, metering " +
-      "from a Web Audio analyser). Audio-session calls resolve without effect.",
+      "from a Web Audio analyser). Audio-session calls resolve without effect. Playlists and " +
+      "PCM streams are not provided: the AudioPlaylist and AudioStream classes (and the " +
+      "NativeAudioModule type) are stand-ins that throw when constructed.",
   },
   "expo-auth-session": {
     module: "./auth-session.ts",
@@ -112,7 +115,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     omitted: ["PictureRef"],
     notes: "Permissions and barcode scanning only: CameraView with onBarcodeScanned opens " +
       "denext's full-screen scanner (Capacitor barcode plugin / BarcodeDetector) instead of an " +
-      "inline preview. No photo capture or recording (takePictureAsync, recordAsync).",
+      "inline preview. No photo capture or recording (takePictureAsync, recordAsync). The " +
+      "permission calls live on the Camera object, as in Expo; CameraNativeModule is a " +
+      "stand-in that throws when constructed.",
   },
   "expo-clipboard": {
     module: "./clipboard.ts",
@@ -133,7 +138,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "57.0.2",
     status: "partial",
     omitted: ["aesEncryptAsync", "aesDecryptAsync", "AESEncryptionKey", "AESSealedData"],
-    notes: "WebCrypto: SHA-1/SHA-2 digests, random bytes and UUIDs. MD2/MD4/MD5 reject.",
+    notes: "WebCrypto: SHA-1/SHA-2 digests, random bytes and UUIDs. MD2/MD4/MD5 reject. " +
+      "Of the AES API only the AESKeySize enum is exported; encrypt with crypto.subtle.",
   },
   "expo-dev-client": {
     module: "./dev-client.ts",
@@ -169,7 +175,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "them, and the *Sync readers answer only for files written or read this session. Not " +
       "provided: open()/file handles, streams, watch(), upload/download tasks, pickers " +
       "(File.pickFileAsync, Directory.pickDirectoryAsync) and the legacy API " +
-      "(expo-file-system/legacy, which resolves to the real package).",
+      "(expo-file-system/legacy, which resolves to the real package). The legacy top-level " +
+      "functions (readAsStringAsync, getInfoAsync, …) are deprecation stubs in SDK 57 and " +
+      "here alike: each warns and throws Expo's migration error.",
   },
   "expo-font": {
     module: "./font.ts",
@@ -197,7 +205,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     status: "partial",
     omitted: ["useImage", "ImageRef"],
     notes: "react-native-web's Image (or <img>) with contentFit; no placeholders, transitions " +
-      "or blurhash; the cache calls resolve true.",
+      "or blurhash; the cache calls resolve true. ImageNativeModule is a stand-in that " +
+      "throws when constructed.",
   },
   "expo-image-manipulator": {
     module: "./image-manipulator.ts",
@@ -272,7 +281,8 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "Remote push over @capacitor/push-notifications (APNs/FCM device tokens). " +
       "getExpoPushTokenAsync needs Expo's push service; send through APNs/FCM with the device " +
       "token instead. No local scheduling, categories, topics or background tasks. The " +
-      "handler is called, but presentation follows the plugin's presentationOptions.",
+      "handler is called, but presentation follows the plugin's presentationOptions. " +
+      "setBadgeCountAsync uses the Badging API; its web (badgin) options are ignored.",
   },
   "expo-paste-input": {
     module: "./paste-input.ts",
@@ -359,14 +369,16 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "UpdatesLogEntryLevel",
     ],
     notes: "Maps to denext's OTA (prepareUiUpdate/applyUiUpdate) with the Expo config's " +
-      "updates.url as the server; update metadata (updateId, channel, manifest, log) is empty.",
+      "updates.url as the server; update metadata (updateId, channel, manifest, log) is " +
+      "empty. ExpoUpdatesModule is a stand-in that throws when constructed.",
   },
   "expo-video": {
     module: "./video.ts",
     pinned: "57.0.3",
     status: "partial",
     omitted: ["VideoAirPlayButton"],
-    notes: "An HTMLVideoElement player; no thumbnails, Picture in Picture, subtitles or cache.",
+    notes: "An HTMLVideoElement player; no thumbnails, Picture in Picture, subtitles or cache. " +
+      "The Android playerBuilderOptions are accepted and ignored.",
   },
   "expo-web-browser": {
     module: "./web-browser.ts",

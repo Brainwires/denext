@@ -36,7 +36,7 @@
     "expo-web-browser": "57.0.2",
     "expo-widgets": "57.0.15"
   },
-  "capturedAt": "2026-09-25T12:25:14.334Z",
+  "capturedAt": "2026-09-25T12:55:49.705Z",
   "surfaces": [
     {
       "specifier": "expo",
@@ -283,7 +283,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2026,7 +2026,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2086,7 +2086,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2152,7 +2152,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2212,7 +2212,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2272,7 +2272,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2374,8 +2374,8 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
-            "__@unscopables@856",
+            "__@iterator@585",
+            "__@unscopables@858",
             "at",
             "concat",
             "copyWithin",
@@ -2423,7 +2423,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2483,7 +2483,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2543,7 +2543,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2603,7 +2603,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2663,7 +2663,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -2737,7 +2737,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -3926,7 +3926,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -4895,7 +4895,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -5161,8 +5161,78 @@
     },
     {
       "specifier": "expo-quick-actions",
-      "resolved": false,
-      "symbols": {}
+      "resolved": true,
+      "symbols": {
+        "addListener": {
+          "name": "addListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "initial": {
+          "name": "initial",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "icon",
+            "id",
+            "params",
+            "subtitle",
+            "title"
+          ]
+        },
+        "maxCount": {
+          "name": "maxCount",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "toExponential",
+            "toFixed",
+            "toLocaleString",
+            "toPrecision",
+            "toString",
+            "valueOf"
+          ]
+        },
+        "setItems": {
+          "name": "setItems",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 1
+        },
+        "isSupported": {
+          "name": "isSupported",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
     },
     {
       "specifier": "expo-secure-store",
@@ -5953,7 +6023,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -6013,7 +6083,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -6073,7 +6143,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -6133,7 +6203,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -6208,7 +6278,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",
@@ -6310,7 +6380,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@toPrimitive@1307",
+            "__@toPrimitive@1320",
             "getDate",
             "getDay",
             "getFullYear",
@@ -6904,7 +6974,7 @@
           "isValue": true,
           "isType": false,
           "members": [
-            "__@iterator@583",
+            "__@iterator@585",
             "anchor",
             "at",
             "big",

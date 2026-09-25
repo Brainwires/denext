@@ -28,6 +28,21 @@ export function subscription(stop: () => void): Subscription {
   };
 }
 
+/**
+ * The error a web stand-in for a native-only Expo class throws when constructed. Most (like
+ * `CameraNativeModule` or `ExpoUpdatesModule`) are type declarations of what
+ * `requireNativeModule` returns, not objects an app builds; the package's JS API is the way in.
+ *
+ * @param pkg The package (`"expo-camera"`).
+ * @param name The class (`"CameraNativeModule"`).
+ */
+export function nativeOnly(pkg: string, name: string): Error {
+  return new Error(
+    `denext/expo: ${pkg}'s ${name} is native-only and unavailable on the web. ` +
+      `Use ${pkg}'s JS API instead.`,
+  );
+}
+
 /** A permission's state, as `expo-modules-core` reports it. */
 export enum PermissionStatus {
   /** The user granted it. */

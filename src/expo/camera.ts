@@ -28,6 +28,7 @@ import { nativePlugin } from "../mobile/plugin.ts";
 import {
   createPermissionHook,
   hostView,
+  nativeOnly,
   type PermissionExpiration,
   type PermissionHookOptions,
   type PermissionResponse,
@@ -154,7 +155,7 @@ function toResult(value: string, format: string): BarcodeScanningResult {
  *
  * @returns The permission.
  */
-export async function getCameraPermissionsAsync(): Promise<PermissionResponse> {
+async function getCameraPermissionsAsync(): Promise<PermissionResponse> {
   if (nativePlugin("CapacitorBarcodeScanner", ["scanBarcode"])) {
     return permissionResponse(PermissionStatus.GRANTED);
   }
@@ -166,7 +167,7 @@ export async function getCameraPermissionsAsync(): Promise<PermissionResponse> {
  *
  * @returns The permission.
  */
-export async function requestCameraPermissionsAsync(): Promise<PermissionResponse> {
+async function requestCameraPermissionsAsync(): Promise<PermissionResponse> {
   if (nativePlugin("CapacitorBarcodeScanner", ["scanBarcode"])) {
     return permissionResponse(PermissionStatus.GRANTED);
   }
@@ -178,7 +179,7 @@ export async function requestCameraPermissionsAsync(): Promise<PermissionRespons
  *
  * @returns The permission.
  */
-export async function getMicrophonePermissionsAsync(): Promise<PermissionResponse> {
+async function getMicrophonePermissionsAsync(): Promise<PermissionResponse> {
   return permissionResponse(await webPermission("microphone"));
 }
 
@@ -187,7 +188,7 @@ export async function getMicrophonePermissionsAsync(): Promise<PermissionRespons
  *
  * @returns The permission.
  */
-export async function requestMicrophonePermissionsAsync(): Promise<PermissionResponse> {
+async function requestMicrophonePermissionsAsync(): Promise<PermissionResponse> {
   return permissionResponse(await requestMediaPermission({ audio: true }));
 }
 
@@ -215,18 +216,65 @@ export const useMicrophonePermissions: (
   requestMethod: requestMicrophonePermissionsAsync,
 });
 
-/** The camera permission calls, as Expo's `Camera` object groups them. */
+/**
+ * The permission calls and {@linkcode scanFromURLAsync}, as Expo's `Camera` object groups them
+ * (expo-camera exports the permission calls only here). Camera: granted when the native
+ * scanner plugin is installed (it asks when it opens), else the browser's camera permission
+ * (a request is a `getUserMedia` call, stopped at once). Microphone: the browser's.
+ */
 export const Camera: {
-  getCameraPermissionsAsync: typeof getCameraPermissionsAsync;
-  requestCameraPermissionsAsync: typeof requestCameraPermissionsAsync;
-  getMicrophonePermissionsAsync: typeof getMicrophonePermissionsAsync;
-  requestMicrophonePermissionsAsync: typeof requestMicrophonePermissionsAsync;
+  getCameraPermissionsAsync: () => Promise<PermissionResponse>;
+  requestCameraPermissionsAsync: () => Promise<PermissionResponse>;
+  getMicrophonePermissionsAsync: () => Promise<PermissionResponse>;
+  requestMicrophonePermissionsAsync: () => Promise<PermissionResponse>;
+  scanFromURLAsync: (url: string, barcodeTypes?: BarcodeType[]) => Promise<
+    BarcodeScanningResult[]
+  >;
 } = {
   getCameraPermissionsAsync,
   requestCameraPermissionsAsync,
   getMicrophonePermissionsAsync,
   requestMicrophonePermissionsAsync,
+  scanFromURLAsync,
 };
+
+/**
+ * The type of expo-camera's native module (what `requireNativeModule("ExpoCamera")` returns).
+ * There is no native module on the web: constructing this stand-in throws. Use
+ * {@linkcode Camera}, {@linkcode CameraView} and the permission hooks instead.
+ */
+export class CameraNativeModule {
+  /** Whether the system scanner UI is available (never, here). */
+  declare readonly isModernBarcodeScannerAvailable: boolean;
+  /** Whether recording can be toggled (never, here). */
+  declare readonly toggleRecordingAsyncAvailable: boolean;
+  /** Whether a camera is available. */
+  declare readonly isAvailableAsync: () => Promise<boolean>;
+  /** Open the system scanner UI. */
+  declare readonly launchScanner: (options?: Record<string, unknown>) => Promise<void>;
+  /** Close the system scanner UI. */
+  declare readonly dismissScanner: () => Promise<void>;
+  /** Decode the barcodes in an image. */
+  declare readonly scanFromURLAsync: (
+    url: string,
+    barcodeTypes?: BarcodeType[],
+  ) => Promise<BarcodeScanningResult[]>;
+  /** The camera permission. */
+  declare readonly getCameraPermissionsAsync: () => Promise<PermissionResponse>;
+  /** Request the camera permission. */
+  declare readonly requestCameraPermissionsAsync: () => Promise<PermissionResponse>;
+  /** The microphone permission. */
+  declare readonly getMicrophonePermissionsAsync: () => Promise<PermissionResponse>;
+  /** Request the microphone permission. */
+  declare readonly requestMicrophonePermissionsAsync: () => Promise<PermissionResponse>;
+  /** The video codecs the camera can record with. */
+  declare readonly getAvailableVideoCodecsAsync: () => Promise<string[]>;
+
+  /** Always throws: there is no native camera module on the web. */
+  constructor() {
+    throw nativeOnly("expo-camera", "CameraNativeModule");
+  }
+}
 
 /**
  * Decode the barcodes in the image at `url` with the browser's `BarcodeDetector`.

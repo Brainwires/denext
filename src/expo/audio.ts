@@ -26,6 +26,7 @@ import { useEffect, useMemo, useRef, useState } from "../runtime/hooks.ts";
 import {
   createEmitter,
   type Emitter,
+  nativeOnly,
   type PermissionExpiration,
   type PermissionResponse,
   permissionResponse,
@@ -645,4 +646,144 @@ export async function getRecordingPermissionsAsync(): Promise<PermissionResponse
  */
 export async function requestRecordingPermissionsAsync(): Promise<PermissionResponse> {
   return permissionResponse(await requestMediaPermission({ audio: true }));
+}
+
+/** How a playlist repeats: not at all, the current track, or the whole list. */
+export type AudioPlaylistLoopMode = "none" | "single" | "all";
+
+/**
+ * The type of expo-audio's playlist. Playlists are not provided here (`useAudioPlaylist` and
+ * `createAudioPlaylist` are not exported): constructing this stand-in throws. Queue
+ * {@linkcode AudioPlayer}s instead.
+ */
+export class AudioPlaylist {
+  /** The playlist's id. */
+  declare id: string;
+  /** The current track's index. */
+  declare readonly currentIndex: number;
+  /** How many tracks there are. */
+  declare readonly trackCount: number;
+  /** The tracks. */
+  declare readonly sources: unknown[];
+  /** Whether it is playing. */
+  declare playing: boolean;
+  /** Whether it is muted. */
+  declare muted: boolean;
+  /** Whether the current track is loaded. */
+  declare isLoaded: boolean;
+  /** Whether it is buffering. */
+  declare isBuffering: boolean;
+  /** The position in the current track, in seconds. */
+  declare currentTime: number;
+  /** The current track's length, in seconds. */
+  declare duration: number;
+  /** The volume, 0 to 1. */
+  declare volume: number;
+  /** The playback rate. */
+  declare playbackRate: number;
+  /** How it repeats. */
+  declare loop: AudioPlaylistLoopMode;
+  /** The current status. */
+  declare currentStatus: Record<string, unknown>;
+  /** Play. */
+  declare play: () => void;
+  /** Pause. */
+  declare pause: () => void;
+  /** Go to the next track. */
+  declare next: () => void;
+  /** Go to the previous track. */
+  declare previous: () => void;
+  /** Go to a track. */
+  declare skipTo: (index: number) => void;
+  /** Seek in the current track. */
+  declare seekTo: (seconds: number) => Promise<void>;
+  /** Append a track. */
+  declare add: (source: AudioSource) => void;
+  /** Insert a track. */
+  declare insert: (source: AudioSource, index: number) => void;
+  /** Remove a track. */
+  declare remove: (index: number) => void;
+  /** Remove every track. */
+  declare clear: () => void;
+  /** Release it. */
+  declare destroy: () => void;
+
+  /**
+   * Always throws: playlists are not provided on the web.
+   *
+   * @param _sources The tracks.
+   * @param _updateInterval The status interval.
+   * @param _loop How it repeats.
+   */
+  constructor(_sources: AudioSource[], _updateInterval: number, _loop: AudioPlaylistLoopMode) {
+    throw nativeOnly("expo-audio", "AudioPlaylist");
+  }
+}
+
+/**
+ * The type of expo-audio's raw PCM input stream. Streams are not provided here
+ * (`useAudioStream` is not exported): constructing this stand-in throws. Record with
+ * {@linkcode AudioRecorder}, or read the microphone through Web Audio.
+ */
+export class AudioStream {
+  /** The stream's id. */
+  declare id: string;
+  /** The sample rate, in Hz. */
+  declare readonly sampleRate: number;
+  /** The channel count. */
+  declare readonly channels: number;
+  /** Whether it is streaming. */
+  declare readonly isStreaming: boolean;
+  /** Start streaming. */
+  declare start: () => Promise<void>;
+  /** Stop streaming. */
+  declare stop: () => void;
+
+  /**
+   * Always throws: audio streams are not provided on the web.
+   *
+   * @param _options The sample rate, channel count and encoding.
+   */
+  constructor(_options: { sampleRate: number; channels: number; encoding: string }) {
+    throw nativeOnly("expo-audio", "AudioStream");
+  }
+}
+
+/**
+ * The type of expo-audio's native module (what `requireNativeModule("ExpoAudio")` returns).
+ * There is no native module on the web: constructing this stand-in throws. Use the package's
+ * functions and {@linkcode AudioPlayer} / {@linkcode AudioRecorder} instead.
+ */
+export class NativeAudioModule {
+  /** Activate or deactivate the audio session. */
+  declare setIsAudioActiveAsync: (active: boolean) => Promise<void>;
+  /** Set the audio mode. */
+  declare setAudioModeAsync: (mode: Record<string, unknown>) => Promise<void>;
+  /** Request the recording permission. */
+  declare requestRecordingPermissionsAsync: () => Promise<PermissionResponse>;
+  /** Request the notification permission (lock-screen controls). */
+  declare requestNotificationPermissionsAsync: () => Promise<PermissionResponse>;
+  /** The recording permission. */
+  declare getRecordingPermissionsAsync: () => Promise<PermissionResponse>;
+  /** Preload a source. */
+  declare preload: (source: AudioSource, preferredForwardBufferDuration: number) => Promise<void>;
+  /** Drop a preloaded source. */
+  declare clearPreloadedSource: (source: AudioSource) => Promise<void>;
+  /** Drop every preloaded source. */
+  declare clearAllPreloadedSources: () => Promise<void>;
+  /** The preloaded sources. */
+  declare getPreloadedSources: () => Promise<string[]>;
+  /** The player class. */
+  declare readonly AudioPlayer: typeof AudioPlayer;
+  /** The recorder class. */
+  declare readonly AudioRecorder: typeof AudioRecorder;
+  /** The playlist class. */
+  declare readonly AudioPlaylist: typeof AudioPlaylist;
+  /** The stream class. */
+  declare readonly AudioStream: typeof AudioStream;
+
+  /** Always throws: there is no native audio module on the web. */
+  constructor() {
+    throw nativeOnly("expo-audio", "NativeAudioModule");
+  }
 }

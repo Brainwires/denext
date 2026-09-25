@@ -142,7 +142,12 @@ export function extractRealSurfacesFor(
   const compilerOptions: ts.CompilerOptions = {
     module: ts.ModuleKind.ESNext,
     target: ts.ScriptTarget.ESNext,
-    moduleResolution: ts.ModuleResolutionKind.Node10,
+    // Bundler, not Node10: Node10 ignores package.json `exports`, so a package that
+    // publishes its types only through an exports map (expo-quick-actions) would resolve to
+    // nothing and never be compared. Bundler reads `exports` (the `types` condition) and
+    // still falls back to `types`/`typesVersions` and bare file lookup for packages without
+    // one (next's `next/navigation.d.ts`).
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
     esModuleInterop: true,
     skipLibCheck: true,
     noEmit: true,

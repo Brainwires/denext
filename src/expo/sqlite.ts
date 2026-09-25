@@ -606,3 +606,24 @@ export function useSQLiteContext(): SQLiteDatabase {
   if (!db) throw new Error("useSQLiteContext must be used within a <SQLiteProvider>");
   return db;
 }
+
+/**
+ * Whether two objects are deeply equal (own enumerable keys, recursively), as expo-sqlite's
+ * provider compares its options.
+ *
+ * @param a One object.
+ * @param b The other.
+ * @returns Whether they are equal.
+ */
+export function deepEqual(
+  a: { [key: string]: unknown } | undefined,
+  b: { [key: string]: unknown } | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a == null || b == null || typeof a !== "object" || typeof b !== "object") return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length &&
+    keys.every((key) =>
+      deepEqual(a[key] as { [key: string]: unknown }, b[key] as { [key: string]: unknown })
+    );
+}
