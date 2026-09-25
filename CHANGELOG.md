@@ -42,6 +42,12 @@ and this project adheres to
 
 ### Fixed
 
+- **Unbundled dev no longer fails an SPA that imports its own stylesheet.** A first-party
+  `import "./styles.css"` (or `.scss` / `.sass`) resolved to the file and reached the JS
+  transform, which answered 500 and stopped the page (a Capacitor app under `denext mobile dev`
+  stayed on its splash). Stylesheets now always map to the empty module; the CSS is linked
+  separately, as before.
+
 - **`denext mobile add` no longer prints a stale "point the App target at App.entitlements"
   step** when an app-group capability in the same run (or an earlier one) already wired the
   entitlements file, and a URL scheme shared by `deep-links`, `auth-session` and

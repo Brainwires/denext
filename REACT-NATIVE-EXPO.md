@@ -185,10 +185,12 @@ The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile`
 - **Live reload on device** (`expo-dev-client` + Metro): **shipped (2.10.0-rc.3).**
   `denext mobile dev` points the Capacitor shell at `denext dev` for the session (`--lan` for a
   physical device, restored on exit), and `allowedDevOrigins` / `denext dev --lan` let the
-  phone in. Running it on the iPhone found two bugs, both fixed for 2.10.0: iOS needs
-  `NSAllowsLocalNetworking` and a local-network usage string in `Info.plist` (now added for the
-  session), and the restore now scrubs the dev URL from the native config copies itself. The
-  desktop half of dev-server attach is open (ROADMAP).
+  phone in. **Verified on the iPhone (2026-09-25):** a source edit reloads on the device.
+  Getting there found three bugs, all fixed for 2.10.0: iOS needs `NSAllowsLocalNetworking` and a
+  local-network usage string in `Info.plist` (now added for the session); the restore now scrubs
+  the dev URL from the native config copies itself; and unbundled dev sent an SPA's own
+  `import "./styles.css"` through the JS transform, which failed the page before it hid the
+  splash. The desktop half of dev-server attach is open (ROADMAP).
 - **Build + CI** (EAS Build / Submit, preview builds, `mobile-fingerprint-check`): **shipped
   (2.10.0-rc.3)** as `examples/capacitor-ci`, a GitHub Actions recipe that runs the fingerprint
   check from gap 2 and either ships a signed OTA manifest or builds signed binaries
