@@ -7,6 +7,7 @@ import {
   featureFlags,
   momentumSafeScrollEnabled,
   nodeResolveEnabled,
+  reactNativeOptions,
   type SpaConfig,
 } from "../../server/config.ts";
 import {
@@ -24,6 +25,7 @@ import type { ProjectPaths } from "../paths.ts";
 import { spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
 import { optimizePackageImportsList } from "../optimize-package-imports.ts";
+import { reactNativeBundleOptions } from "../react-native.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { CLIENT_PREFIX, ENTRY_FILE, generateSpaEntry, STYLE_FILE } from "./shared.ts";
 
@@ -119,6 +121,8 @@ async function bundleCompatSpa(
 ): Promise<void> {
   const config = paths.config!;
   const spa = config.spa!;
+  // React Native mode: react-native → react-native-web, `.web.*` first, JSX in `.js`, RN globals.
+  const rn = reactNativeBundleOptions(config, paths.projectDir, dev);
   await buildNextCompatClientEntries({
     projectDir: paths.projectDir,
     configPath: paths.configPath,
@@ -131,6 +135,7 @@ async function bundleCompatSpa(
     // shim for any `feature()` call the onLoad fold leaves (non-literal arg, unset key).
     define: {
       ...spaDefines(spa, dev),
+      ...rn?.define,
       __DENEXT_FEATURES__: JSON.stringify(featureFlags(paths.config)),
     },
     // Vite-style asset imports (?url/?worker/.wasm/…) → files under clientDir, URLs
@@ -150,12 +155,25 @@ async function bundleCompatSpa(
     // Redirect stylesheet imports to their shims — covers `.scss` in sibling workspace
     // packages the esbuild default resolver would otherwise choke on.
     cssImportMap: css?.importMap,
-    extraPlugins: spaBundlePlugins(paths.projectDir, dev, paths.config),
+    extraPlugins: withPluginsFirst(
+      rn?.plugins,
+      spaBundlePlugins(paths.projectDir, dev, paths.config),
+    ),
+    platformExtensions: rn?.platformExtensions,
+    jsxInJs: rn?.jsxInJs,
   });
   // Tear the esbuild service down only for a one-shot build/export. In dev this runs on
   // every rebuild, so stopping it would force a cold re-init each keystroke (and could
   // kill the process-shared service mid-flight); the dev server stops it once on shutdown.
   if (!dev) await stopNextCompat();
+}
+
+/** `first` ahead of `rest`; `rest` itself (possibly undefined) when there is nothing first. */
+function withPluginsFirst(
+  first: esbuild.Plugin[] | undefined,
+  rest: esbuild.Plugin[] | undefined,
+): esbuild.Plugin[] | undefined {
+  return first && first.length > 0 ? [...first, ...(rest ?? [])] : rest;
 }
 
 /**
@@ -210,7 +228,8 @@ export async function bundleSpaInto(
       paths.instrumentationClientPath,
       { classComponents: paths.config?.classComponents ?? true, activity, viewTransition },
     );
-  const compat = await detectNextCompat(paths);
+  // React Native mode needs the esbuild path (its resolver and loaders live there).
+  const compat = reactNativeOptions(paths.config) !== null || await detectNextCompat(paths);
   // `spa.env` and Vite-style asset imports (`?url`/`?worker`) only apply on the compat
   // (esbuild) path; a denext-native SPA bundles with plain `deno bundle`. Warn rather
   // than silently ignore, so the footgun surfaces.

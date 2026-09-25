@@ -229,6 +229,7 @@ export {
   type LiveSubscriptionRequest,
   type LocalPattern,
   type MdxConfig,
+  type ReactNativeConfig,
   type RedirectRule,
   type RemotePattern,
   type ResolvedRules,

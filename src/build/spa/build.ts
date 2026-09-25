@@ -5,6 +5,7 @@ import { join } from "@std/path";
 import { prepareDesktopIcon } from "../desktop-icon.ts";
 import { resolveExportOutDir, writeViaStaging } from "../export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../paths.ts";
+import { reactNativeRootStyle } from "../../server/config.ts";
 import { bundleSpaInto } from "./bundle.ts";
 import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
@@ -46,6 +47,7 @@ async function bundleAndShell(
     scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
     styleHref: hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
     preload,
+    reactNativeRootStyle: reactNativeRootStyle(paths.config),
   });
   await Deno.writeTextFile(join(shellDir, SHELL_FILE), html);
 }

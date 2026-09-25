@@ -44,6 +44,7 @@ export const NAV: {
       { slug: "react-router", label: "React Router" },
       { slug: "effect", label: "Effect" },
       { slug: "spa", label: "SPA mode" },
+      { slug: "react-native", label: "React Native / Expo" },
       { slug: "pages-router", label: "Pages Router" },
       { slug: "middleware", label: "Middleware" },
       { slug: "auth", label: "Auth" },

@@ -2,6 +2,7 @@
 // unbundled module graph, the generation's client assets, `public/`, and the shell.
 
 import { devOriginAllowed } from "../dev-server/dev-endpoints.ts";
+import { reactNativeRootStyle } from "../../server/config.ts";
 import { serveStatic } from "../../server/static.ts";
 import { sseStream } from "../sse.ts";
 import { SPA_DEV_RELOAD } from "./dev-reload-script.ts";
@@ -60,6 +61,7 @@ function htmlResponse(request: Request, html: string, status = 200): Response {
  * CSS. Bundled loop: build the current generation first, rendering the error as HTML.
  */
 async function serveShell(st: SpaDevState, request: Request): Promise<Response> {
+  const rnRootStyle = reactNativeRootStyle(st.paths.config);
   if (await ensureUnbundled(st) && st.unbundled) {
     const css = await getUnbundledCss(st);
     const html = await spaShellHtml({
@@ -67,6 +69,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
       scriptSrc: st.unbundled.spaEntryUrl(),
       styleHref: css.length > 0 ? UNBUNDLED_STYLE_PATH : undefined,
       devScriptSrc: DEV_RELOAD_JS_PATH,
+      reactNativeRootStyle: rnRootStyle,
     });
     return htmlResponse(request, html);
   }
@@ -84,6 +87,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
     scriptSrc: `${CLIENT_PREFIX}${ENTRY_FILE}`,
     styleHref: st.hasStyles ? `${CLIENT_PREFIX}${STYLE_FILE}` : undefined,
     devScriptSrc: DEV_RELOAD_JS_PATH,
+    reactNativeRootStyle: rnRootStyle,
   });
   return htmlResponse(request, html);
 }

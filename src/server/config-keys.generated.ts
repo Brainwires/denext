@@ -48,6 +48,7 @@ export const CONFIG_KEYS = [
   "features",
   "optimizePackageImports",
   "momentumSafeScroll",
+  "reactNative",
   "experimental",
   "classComponents",
   "compatibilityMode",

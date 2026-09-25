@@ -138,7 +138,12 @@ layer, in three parts.
      - run react-native-web on denext compat and fix what breaks;
      - a bundler "react-native" resolve mode: `react-native` → `react-native-web`, `.web.tsx`
        before `.tsx`, the `__DEV__`/`global` defines, and Metro-style `require("./img.png")`
-       with `@2x`/`@3x`;
+       with `@2x`/`@3x`. **Done (B2.1):** `reactNative: true` in `denext.config.ts` (SPA mode;
+       [guide](https://denext.dev/docs/react-native)). It covers every item of the resolve-mode
+       spec below except uniwind (a documented recipe) and the web entry, which stays the app's.
+       `require("./img.png")` works through the file loader; `@2x`/`@3x` variants are not
+       picked by pixel ratio (documented). T3's `apps/mobile` builds with it and no denext patch;
+       all 41 swept deep-link routes render the same text as the patched build;
      - `denext migrate --from expo`.
 2. **`expo-*` API shims**, aliased the same way `react` → denext is.
    - Each `expo-*` import maps to a `denext/expo/*` module with the same API: a thin layer over
@@ -193,7 +198,8 @@ hand-written web shims, bundler workarounds applied through `denext patch`.
 | native-only       | 0 hit at runtime | Stubbed without being exercised: `expo-widgets`, `@react-native-ai/apple`, `react-native-nitro-*`, `react-native-shiki-engine`, T3's native terminal/review-diff/markdown modules                                                                                            |
 | denext compat bug | 1                | Client booleanish attributes                                                                                                                                                                                                                                                 |
 
-**Resolve-mode spec** (the workarounds that were needed):
+**Resolve-mode spec** (the workarounds that were needed; all but uniwind and the web entry are
+now built in as `reactNative: true`):
 
 - `react-native` wins over an installed real RN for every importer. A plain import-map key
   loses: the node_modules resolver finds real RN's Flow source.
