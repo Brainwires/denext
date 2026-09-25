@@ -214,7 +214,8 @@
       "blurb": "A denext SPA in a Capacitor 8 shell that exercises every denext/mobile capability on one scrollable page: haptics, clipboard, share, device info, network, keep-awake, the splash screen, the secure…",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/mobile",
       "tags": [
-        "spa"
+        "spa",
+        "mobile"
       ],
       "hasReadme": true
     },
@@ -225,6 +226,7 @@
       "url": "https://github.com/Brainwires/denext/tree/main/examples/native",
       "tags": [
         "desktop",
+        "mobile",
         "app-router"
       ],
       "hasReadme": true

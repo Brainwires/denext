@@ -749,6 +749,29 @@ Deno.test("mobile add deep-links: option checks", async () => {
   });
 });
 
+Deno.test(
+  "mobile add --dry-run: a --scheme shared by several capabilities lists CFBundleURLTypes once",
+  async () => {
+    await inProject({}, async (dir) => {
+      // deep-links, auth-session and share-extension each compute their own identical
+      // `CFBundleURLTypes: myapp` Info.plist edit for the same --scheme; the write already
+      // de-duplicates (the second and third apply() see their own change already there), and
+      // the plan must say so too instead of listing it three times.
+      const plan = await planMobileCapabilities({
+        capabilities: ["deep-links", "auth-session", "share-extension"],
+        cwd: dir,
+        schemes: ["myapp"],
+      });
+      assertEquals(
+        plan.native.infoPlist.filter((e) => e.label === "CFBundleURLTypes: myapp").length,
+        1,
+      );
+      const text = formatCapabilityPlan(plan);
+      assertEquals(count(text, "Info.plist     CFBundleURLTypes: myapp"), 1);
+    });
+  },
+);
+
 Deno.test("mobile add push: entitlement, AppDelegate forwarding, permission; FCM warning", async () => {
   await inProject(nativeProject(), async (dir) => {
     const { run } = fakeRunner();
@@ -806,6 +829,59 @@ Deno.test("mobile add push: entitlement, AppDelegate forwarding, permission; FCM
     },
   );
 });
+
+Deno.test(
+  "mobile add push: entitlements wired by another capability's install earlier in the same run " +
+    "drops the stale Code Signing Entitlements step",
+  async () => {
+    await inProject(nativeProject(), async (dir) => {
+      // A fixture capability standing in for share-extension/widget/live-activity with
+      // --app-group: its `install` step wires the App target's CODE_SIGN_ENTITLEMENTS, same as
+      // installAppGroup does, before push's own entitlements edit is written.
+      const table: Record<string, MobileCapability> = {
+        ...MOBILE_CAPABILITIES,
+        "wire-group": {
+          capacitorMajor: 8,
+          configure: () => ({
+            install: {
+              label: "wire the App target's entitlements (test fixture)",
+              run: async ({ dir: root }) => {
+                await Deno.writeTextFile(
+                  join(root, PBXPROJ_PATH),
+                  PBXPROJ.replace(
+                    "{ objects = { }; }",
+                    "{ objects = { }; }\nCODE_SIGN_ENTITLEMENTS = App/App.entitlements;\n",
+                  ),
+                );
+                return {
+                  written: [PBXPROJ_PATH],
+                  upgraded: [],
+                  kept: [],
+                  unchanged: [],
+                  manual: [],
+                  skipped: [],
+                };
+              },
+            },
+          }),
+        },
+      };
+      const report = await addMobileCapabilities({
+        capabilities: ["wire-group", "push"],
+        cwd: dir,
+        run: fakeRunner().run,
+        table,
+      });
+      // The App target had no CODE_SIGN_ENTITLEMENTS when the plan was made (before wire-group's
+      // install ran), so the naive plan-time note would still say to wire it by hand; the final
+      // report must not, since wire-group wired it before push's entitlements file was written.
+      assert(
+        !report.plan.manual.join("\n").includes("Code Signing Entitlements"),
+        "wired by an earlier install in the same run",
+      );
+    });
+  },
+);
 
 Deno.test("mobile add push: an AppDelegate with its own callback, and no ios/ at all", async () => {
   const custom = APP_DELEGATE.replace(

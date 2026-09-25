@@ -864,6 +864,21 @@ function capabilityOptions(
   return options;
 }
 
+/**
+ * `edits`, keeping the first of any with the same label. Two capabilities that take the same
+ * `--scheme` (deep-links, auth-session, share-extension) each compute their own identical
+ * `CFBundleURLTypes: <scheme>` edit; applying both is already a no-op (the second `apply` sees
+ * its own change already there), so the plan lists it once too.
+ */
+function dedupeByLabel(edits: readonly NativeEdit[]): NativeEdit[] {
+  const seen = new Set<string>();
+  return edits.filter((e) => {
+    if (seen.has(e.label)) return false;
+    seen.add(e.label);
+    return true;
+  });
+}
+
 /** Every chosen capability's `configure` result, merged per native file. */
 function configureAll(
   caps: readonly MobileCapability[],
@@ -872,11 +887,11 @@ function configureAll(
   const configs = caps.map((c) => c.configure?.(options) ?? {});
   return {
     native: {
-      infoPlist: configs.flatMap((c) => c.infoPlist ?? []),
-      entitlements: configs.flatMap((c) => c.entitlements ?? []),
-      manifest: configs.flatMap((c) => c.manifest ?? []),
-      appDelegate: configs.flatMap((c) => c.appDelegate ?? []),
-      variablesGradle: configs.flatMap((c) => c.variablesGradle ?? []),
+      infoPlist: dedupeByLabel(configs.flatMap((c) => c.infoPlist ?? [])),
+      entitlements: dedupeByLabel(configs.flatMap((c) => c.entitlements ?? [])),
+      manifest: dedupeByLabel(configs.flatMap((c) => c.manifest ?? [])),
+      appDelegate: dedupeByLabel(configs.flatMap((c) => c.appDelegate ?? [])),
+      variablesGradle: dedupeByLabel(configs.flatMap((c) => c.variablesGradle ?? [])),
       installs: configs.flatMap((c) => c.install ? [c.install] : []),
     },
     requiredFiles: Object.assign({}, ...configs.map((c) => c.requiredFiles ?? {})),
@@ -921,6 +936,19 @@ function appEntitlementValues(pbxproj: string): string[] {
   }
 }
 
+/**
+ * The manual step to wire a freshly written `App/App.entitlements` into the App target, printed
+ * only while the target still names no CODE_SIGN_ENTITLEMENTS — checked once more after every
+ * edit has run (see {@linkcode addMobileCapabilities}), since a native install this same run
+ * (share-extension / widget / live-activity with `--app-group`) can wire it before that check.
+ */
+function wiringStep(): string {
+  return `point the App target at ios/App/${DEFAULT_ENTITLEMENTS}: in Xcode, App target → Build ` +
+    `Settings → Code Signing Entitlements = ${DEFAULT_ENTITLEMENTS} (Debug and Release), ` +
+    "or add the capability under Signing & Capabilities, which sets the same. denext wrote " +
+    "the file but does not edit that build setting";
+}
+
 /** The manual steps entitlement edits need: wiring a new file, or editing an unresolved one. */
 async function entitlementSteps(
   root: string,
@@ -932,15 +960,32 @@ async function entitlementSteps(
   const steps = target.unresolved.map((v) =>
     `the Xcode project also signs with ${v}, which denext cannot resolve: add ${labels} to it`
   );
-  if (!target.wired) {
-    steps.push(
-      `point the App target at ios/App/${DEFAULT_ENTITLEMENTS}: in Xcode, App target → Build ` +
-        `Settings → Code Signing Entitlements = ${DEFAULT_ENTITLEMENTS} (Debug and Release), ` +
-        "or add the capability under Signing & Capabilities, which sets the same. denext wrote " +
-        "the file but does not edit that build setting",
-    );
-  }
+  if (!target.wired) steps.push(wiringStep());
   return steps;
+}
+
+/**
+ * Whether the App target now names a CODE_SIGN_ENTITLEMENTS, read fresh from `project.pbxproj`
+ * with {@linkcode targetBuildSetting} — called after every edit of a real run so a step that
+ * wired it (an app-group install earlier in the same run, or one already in the pbxproj) drops
+ * the stale {@linkcode wiringStep}. `undefined` (no pbxproj to check) counts as wired: there is
+ * nothing to point at by hand.
+ */
+async function appTargetWired(root: string): Promise<boolean> {
+  const pbxproj = await readText(join(root, PBXPROJ));
+  return pbxproj === undefined || appEntitlementValues(pbxproj).length > 0;
+}
+
+/**
+ * `plan` with {@linkcode wiringStep}'s manual note dropped when the App target is wired by the
+ * time every edit of this run has landed, even though it was not yet wired when the plan was
+ * made (see {@linkcode appTargetWired}).
+ */
+async function withResolvedEntitlementsNote(plan: CapabilityPlan): Promise<CapabilityPlan> {
+  const line = wiringStep();
+  if (plan.native.entitlements.length === 0 || !plan.manual.includes(line)) return plan;
+  if (!(await appTargetWired(plan.root))) return plan;
+  return { ...plan, manual: plan.manual.filter((m) => m !== line) };
 }
 
 /** A warning for each required file that is missing where its platform folder exists. */
@@ -1195,5 +1240,5 @@ export async function addMobileCapabilities(
   await editNative(report, ANDROID_MANIFEST, [...permissions, ...plan.native.manifest]);
   await editNative(report, VARIABLES_GRADLE, plan.native.variablesGradle);
   if (plan.sync) await runChecked(opts.run, plan.sync, report.ran);
-  return report;
+  return { ...report, plan: await withResolvedEntitlementsNote(plan) };
 }

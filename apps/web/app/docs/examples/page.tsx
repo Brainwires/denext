@@ -20,6 +20,7 @@ const TAG_LEGEND: [string, string][] = [
   ["compat", "compatibilityMode: true — react / next/* are aliased to denext."],
   ["plugin:<name>", "A plugin declared in the example's denext.config.ts."],
   ["desktop", "A desktop.ts — the example also packages as a native app."],
+  ["mobile", "A capacitor.config.* — the example also runs as an iOS / Android app."],
 ];
 
 /** The blurb, or an honest stand-in when the example has no README to read one from. */
