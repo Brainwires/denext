@@ -103,9 +103,11 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
         {" "}
         <code>DENEXT_DESKTOP_DEV_URL</code>{" "}
         environment variable on the window process, and that is the only switch that turns proxy
-        mode on. A <code>denext desktop run</code>{" "}
-        or a packaged build never sets it, so those windows serve the static export exactly as
-        before. Ctrl-C stops the window; a dev server that <code>desktop dev</code>{" "}
+        mode on. The runtime honours it only when the window runs under the <code>deno</code>{" "}
+        CLI (a packaged app ignores it), only for an <code>http:</code> loopback URL unless{" "}
+        <code>--lan</code> also set its own opt-in, so a <code>denext desktop run</code>{" "}
+        or a packaged build serves the static export exactly as before, whatever its environment.
+        Ctrl-C stops the window; a dev server that <code>desktop dev</code>{" "}
         started is stopped too, and one it merely attached to is left running.
       </p>
       <Callout kind="note">
@@ -113,29 +115,29 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
         {" "}
         <code>localhost</code>) unless you pass <code>--lan</code>{" "}
         — the desktop window and its dev server normally run on the same machine. Attaching to a dev
-        server elsewhere on the network (with <code>--lan</code>, or a non-loopback{" "}
-        <code>--host</code>) exposes the app and its source to anyone who can reach that address, so
-        use it only on a network you trust. The token-gated <code>/_denext/desktop/*</code>{" "}
+        server elsewhere on the network (only with <code>--lan</code>; a non-loopback{" "}
+        <code>--host</code>{" "}
+        without it is refused) exposes the app and its source to anyone who can reach that address,
+        so use it only on a network you trust. The token-gated <code>/_denext/desktop/*</code>{" "}
         endpoints (the OAuth loopback sheet and the updater boot beacon) are always served locally
         and are never proxied to the dev server, and the per-launch desktop token is stripped from a
         request before it is forwarded.
       </Callout>
       <Callout kind="note">
         <strong>No extra permissions.</strong> <code>denext desktop dev</code>{" "}
-        needs network access to the loopback dev port only — exactly what a packaged build's baked
-        {" "}
+        needs network access to the loopback dev port only — exactly what the baked{" "}
         <code>--allow-net=127.0.0.1,localhost</code>{" "}
-        already grants. Nothing is widened versus a release build: the same permission story covers
-        both dev and packaged windows, because the window talks only to the local dev server.
+        of a packaged build already grants. Nothing is widened versus a release build: the same
+        permission story covers both dev and packaged windows, because the window talks only to the
+        local dev server.
       </Callout>
       <Callout kind="note">
-        Because the HTML is served straight from the dev server in proxy mode, the desktop runtime
-        does not inject its <code>globalThis.__denext</code> marker, so{" "}
-        <code>runtimePlatform()</code> reports <code>"web"</code> during{" "}
-        <code>denext desktop dev</code>: desktop-only paths — the <code>openAuthSession</code>{" "}
-        loopback sheet and the OTA boot beacon — stay inert (they fall back to their web behaviour).
-        Use <code>denext desktop run</code>{" "}
-        or a packaged build to exercise those. Live-reloading the UI itself is unaffected.
+        In proxy mode the runtime injects its <code>globalThis.__denext</code>{" "}
+        marker into the HTML the dev server returns, so <code>runtimePlatform()</code> reports{" "}
+        <code>"desktop"</code> as in a real window, and <code>openAuthSession</code>{" "}
+        and the OTA boot beacon work against the local runtime. With <code>--lan</code>{" "}
+        the per-launch token is not injected (the page comes from another machine), so those
+        token-gated features are refused; live-reloading the UI itself is unaffected.
       </Callout>
 
       <h2>Building for one or more architectures (macOS)</h2>

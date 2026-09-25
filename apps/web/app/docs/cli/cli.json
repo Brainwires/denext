@@ -233,7 +233,7 @@
       "name": "desktop",
       "summary": "Build/run/package the app as a native desktop app",
       "usage": "denext desktop [action] [dir] [options]",
-      "description": "  denext desktop run                     Export + open in a deno desktop window\n  denext desktop build                   Export the SPA to out/\n  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS",
+      "description": "  denext desktop run                     Export + open in a deno desktop window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS",
       "flags": [
         {
           "name": "entry",
@@ -246,6 +246,24 @@
           "type": "string",
           "valueName": "<os>",
           "description": "package for: macos | linux (default: the host OS; cross-builds where supported)"
+        },
+        {
+          "name": "port",
+          "alias": "p",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "dev: the dev server port to start or attach to (default: 3000)"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "valueName": "<host>",
+          "description": "dev: the host to bind and proxy to (default: localhost; non-loopback needs --lan)"
+        },
+        {
+          "name": "lan",
+          "type": "boolean",
+          "description": "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)"
         }
       ],
       "positionals": [
@@ -253,7 +271,7 @@
           "name": "action",
           "required": false,
           "variadic": false,
-          "description": "run | build | package (default: run)"
+          "description": "run | build | dev | package (default: run)"
         },
         {
           "name": "dir",
