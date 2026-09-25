@@ -2,6 +2,180 @@
   "note": "Real, currently-open native (react-native / expo) signature deviations. Burn this down; `deno task parity:native` fails on any deviation NOT listed here. Regenerate with `deno task parity:native:gaps`.",
   "gaps": [
     {
+      "specifier": "expo-audio",
+      "symbol": "AudioPlaylist",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-audio",
+      "symbol": "AudioStream",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-audio",
+      "symbol": "NativeAudioModule",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-camera",
+      "symbol": "Camera",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): scanFromURLAsync"
+    },
+    {
+      "specifier": "expo-camera",
+      "symbol": "CameraNativeModule",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-crypto",
+      "symbol": "AESKeySize",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "copyAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "createDownloadResumable",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "createUploadTask",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "deleteAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "deleteLegacyDocumentDirectoryAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "downloadAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "getContentUriAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "getFreeDiskStorageAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "getInfoAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "getTotalDiskCapacityAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "makeDirectoryAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "moveAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "readAsStringAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "readDirectoryAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "uploadAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-file-system",
+      "symbol": "writeAsStringAsync",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-image",
+      "symbol": "ImageNativeModule",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-notifications",
+      "symbol": "setBadgeCountAsync",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "expo-sqlite",
+      "symbol": "deepEqual",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-updates",
+      "symbol": "ExpoUpdatesModule",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "expo-video",
+      "symbol": "createVideoPlayer",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "expo-video",
+      "symbol": "useVideoPlayer",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 2 arg(s) but React/Next allows 3"
+    },
+    {
+      "specifier": "expo",
+      "symbol": "installOnUIRuntime",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 0 arg(s) but React/Next allows 1"
+    },
+    {
       "specifier": "react-native",
       "symbol": "ActionSheetIOS",
       "category": "MISSING_VALUE",

@@ -5,129 +5,144 @@ it is a credible replacement. The bar is concrete: T3 Code's React Native app (`
 in pingdotgg/t3code), whose dependencies were audited on 2026-09-24. The comparison target is
 T3's Capacitor shell (`apps/capacitor`, branch `denext-2.x`), which wraps T3's existing web UI.
 
-Most items were "an official Capacitor plugin exists; denext should wrap it in a typed hook",
-and those are now wrapped. The real gaps below are closed on the denext side except Android
-native feel (gap 5), which needs a real-device measurement. Not audited: which T3 screens use
-which dependency, so the ranking was by expected day-one impact, not measured usage.
+**Where it stands (denext 2.10.0).** Every gap below is shipped on the denext side except
+Android native feel (gap 5), which is open. Not audited: which T3 screens use which
+dependency, so the ranking was by expected day-one impact, not measured usage.
 
 This is about matching what React Native / Expo **apps** get, not about rendering natively:
 per [POLICIES.md](./POLICIES.md#engineering-guardrails), React Native / native rendering is
-out of scope and Capacitor/WebView stays the mobile story. The actionable items are tracked in
+out of scope and Capacitor/WebView stays the mobile story. Open items are tracked in
 [ROADMAP.md](./ROADMAP.md) under "Mobile (Capacitor) parity".
+
+**How each item was verified.** Two levels, and nothing is claimed beyond them:
+
+- **iPhone:** run on a physical iPhone 16e (iOS 26.x) on 2026-09-25, in
+  [`examples/mobile`](./examples/mobile) (one screen per `denext/mobile` capability) unless
+  another app is named.
+- **Built:** unit-tested and compiled (iOS `xcodebuild` and Android Gradle), not run on a
+  device.
+
+**Android has not been run on a device or an emulator yet.** Every Android claim in this file
+is "built".
 
 ## Real gaps (denext work)
 
 1. **Push notifications.** T3 uses `expo-notifications` plus its own relay (APNs/FCM through
    `/v1/mobile/devices`) and a custom `t3-agent-notifications` module. A coding-agent app
-   depends on "your agent finished" pushes. Capacitor has a push plugin; denext needed:
-   - a `denext/mobile` registration + permission API;
-   - notification-tap → deep-link routing;
-   - T3's relay wiring as thin glue in t3code.
+   depends on "your agent finished" pushes.
 
-   **Done on the denext side:** `denext mobile add push`, `requestPushPermission` /
+   **Shipped (2.10.0-rc.1):** `denext mobile add push`, `requestPushPermission` /
    `registerForPush` / `onPushReceived` / `onPushTapped` (and the hooks), and the
-   `expo-notifications` shim over them. T3's relay wiring is t3code's own glue.
+   `expo-notifications` shim over them. **iPhone:** permission, the APNs token, delivery
+   through the APNs sandbox, and tap routing both warm (to `/detail/7`) and from a cold start
+   (to `/detail/9`). **Android:** built; FCM needs the app's `google-services.json`. T3's
+   relay wiring is t3code's own glue.
 
 2. **OTA runtime-version gate.** `expo-updates` refuses an update built for a newer native layer
-   (`runtimeVersion`). In 2.8.3 denext's OTA did not check this: an OTA UI whose JS calls a
-   native plugin the installed binary lacks would boot and then fail, and the 15 s watchdog only
-   catches a UI that never boots. denext 2.9.0 shipped the fix: the manifest carries `minNative`
-   (`denext ota manifest --min-native`), and the native plugin refuses with code `native_too_old`
-   when the installed binary is older; a signed `sequence` makes native refuse a lower one with
-   code `downgrade`. Both live inside the v2 signed payload. The fingerprint check of the native
-   layer (Expo's `mobile-fingerprint-check` equivalent) followed: `denext mobile fingerprint`
-   hashes it (`--diff` explains a change, `--write` embeds it in the binary), and
-   `denext ota manifest --native-fingerprint` stamps it into the signed payload (v3), so the
-   native plugin refuses a UI built for another native layer (code `native_mismatch`).
+   (`runtimeVersion`). denext 2.8.3's OTA did not check this: an OTA UI whose JS calls a native
+   plugin the installed binary lacks would boot and then fail.
+
+   **Shipped:** in 2.9.0, the manifest's `minNative` (`denext ota manifest --min-native`,
+   refused as `native_too_old`) and a signed `sequence` (a lower one is refused as
+   `downgrade`), both in the v2 signed payload. In 2.10.0-rc.3, the native-layer fingerprint
+   (Expo's `@expo/fingerprint` equivalent): `denext mobile fingerprint` hashes it (`--diff`
+   explains a change, `--write` embeds it in the binary), and
+   `denext ota manifest --native-fingerprint` stamps it into a v3 signed payload, so the native
+   plugin refuses a UI built for another native layer (`native_mismatch`). **iPhone:** a signed
+   manifest over LAN `http`, then prepare, apply and a reload into the new UI. The three refusal
+   codes are built (unit-tested), not exercised on the phone.
 
 3. **Auth sessions + deep links.** T3 signs in with Clerk via `expo-auth-session` /
    `expo-web-browser`: OAuth in a system browser sheet that returns to the app through a URL
-   scheme or universal link. `expo-linking` also carries pairing links. Needed in
-   `denext/mobile`:
-   - `openAuthSession()` (ASWebAuthenticationSession on iOS, Custom Tabs on Android);
-   - an `onDeepLink` hook (app URL open events, cold and warm start).
+   scheme or universal link. `expo-linking` also carries pairing links.
 
-   **Done:** `denext mobile add auth-session` / `deep-links`, `openAuthSession` /
-   `completeAuthSession` and `onDeepLink` / `useDeepLink`, with the `expo-auth-session`,
-   `expo-web-browser` and `expo-linking` shims over them.
+   **Shipped (2.10.0-rc.1):** `denext mobile add auth-session` / `deep-links`,
+   `openAuthSession` / `completeAuthSession` and `onDeepLink` / `useDeepLink`, with the
+   `expo-auth-session`, `expo-web-browser` and `expo-linking` shims over them. In 2.10.0,
+   `openAuthSession` also works in a Deno Desktop window (the system browser plus a one-shot
+   loopback redirect, RFC 8252; built). **iPhone:** the auth session and deep links in
+   `examples/mobile`; in T3 Code's Capacitor app, deep links from a cold and a warm start, and
+   the pairing link ignored as intended.
 
 4. **App extensions.** T3 ships a share extension, home-screen widgets (`expo-widgets`,
    `t3-subscription-widget`) and Live Activities. These are native targets in either stack;
-   Expo wires them in with config plugins. denext now has generators for all three, in the
-   style of `add-ota`: `denext mobile add share-extension` (an iOS Share Extension target plus
-   Android SEND intent filters, behind `onShareReceived` / `useShareReceived`),
-   `denext mobile add widget --name <Name>` (a WidgetKit extension target plus an Android
-   `AppWidgetProvider`, behind `setWidgetData` / `reloadWidgets`) and
-   `denext mobile add live-activity --name <Name>` (ActivityKit UI in the same extension, iOS
-   16.1+ behind `#available`, behind `startLiveActivity` / `updateLiveActivity` /
-   `endLiveActivity` / `liveActivityPushToken`). They create the Xcode targets (embedded in the
-   app, built before it) and share an App Group (`--app-group`, default `group.<bundle id>`) with
-   the app. Also done: configurable widgets (`--configurable <param:enum=a|b,…>`, an App
-   Intents `WidgetConfigurationIntent` on iOS 17+ whose provider reads the snapshot
-   `setWidgetData(kind, data, { params })` stored for the chosen values; static on iOS 14–16 and
-   on Android), ActivityKit push-to-start tokens (`liveActivityPushToStartToken` /
-   `onLiveActivityPushToStartToken`, iOS 17.2+, which T3's relay registration sends), per-activity
-   token events (`onLiveActivityPushToken`), `listLiveActivities`, and the `expo-widgets` shim
-   over all of it. A T3 Capacitor copy with every extension (a configurable widget included)
-   builds for device (`xcodebuild`, every target) and for Android (`assembleDebug`). What
-   remains is device-only verification: running them signed on a device (the App Group must be
-   registered in the developer account), a configurable widget's edit sheet, and a real
-   push-to-start push. T3's own widget and Live Activity layouts are app work: the generated
-   SwiftUI views are templates to edit.
+   Expo wires them in with config plugins.
 
-5. **Native feel on Android.** The honest weak spot. React Native brings `react-native-screens`,
+   **Shipped (2.10.0-rc.3):** generators in the style of `add-ota`, each creating its Xcode
+   target (embedded in the app, built before it) and sharing an App Group with the app
+   (`--app-group`, default `group.<bundle id>`):
+   - `denext mobile add share-extension`: an iOS Share Extension plus Android `SEND` intent
+     filters, behind `onShareReceived` / `useShareReceived`;
+   - `denext mobile add widget --name <Name> [--configurable <param:enum=a|b,…>]`: a WidgetKit
+     extension plus an Android `AppWidgetProvider`, behind `setWidgetData` / `reloadWidgets`;
+     configurable widgets use an App Intents `WidgetConfigurationIntent` (iOS 17+);
+   - `denext mobile add live-activity --name <Name>`: ActivityKit UI in the same extension (iOS
+     16.1+), behind `startLiveActivity` / `updateLiveActivity` / `endLiveActivity`, the push
+     token events, push-to-start tokens (iOS 17.2+) and `listLiveActivities`.
+
+   The `expo-widgets` shim drives all of it. **iPhone:** the share extension, a configurable
+   widget and a Live Activity. **Built only:** a Live Activity started by a real push-to-start
+   push, and every Android half (Android widgets are static). T3's own widget and Live Activity
+   layouts are app work: the generated SwiftUI views are templates to edit.
+
+5. **Native feel on Android. Open.** React Native brings `react-native-screens`,
    `gesture-handler`, `reanimated`, native menus (`@react-native-menu/menu`), blur/glass
    (`expo-blur`, `expo-glass-effect`) and SF Symbols (`expo-symbols`). A WebView approximates
-   these with CSS, View Transitions and `useBackSwipe`. iOS WKWebView holds up well. The
-   Android emulator numbers (a software-rendered emulator on a build host without a GPU) showed
-   heavy jank and are not representative. A real Android device measurement is needed before claiming parity
-   either way.
+   these with CSS, View Transitions, `useBackSwipe` and `showContextMenu`. iOS WKWebView holds
+   up well. On Android there is no measurement yet: the only numbers so far came from a
+   software-rendered emulator on a build host without a GPU, which are not representative.
+   **Next step:** an Android emulator comparison of the same screens, then a real device. No
+   parity claim either way until then.
 
 ## Covered by official Capacitor plugins (wrapped)
 
-| T3 uses (Expo / RN)                         | Capacitor equivalent                                          |
-| ------------------------------------------- | ------------------------------------------------------------- |
-| `expo-haptics`                              | `@capacitor/haptics`                                          |
-| `expo-clipboard`, `expo-paste-input`        | `@capacitor/clipboard`                                        |
-| `expo-sharing`                              | `@capacitor/share`                                            |
-| `expo-file-system`                          | `@capacitor/filesystem`                                       |
-| `expo-device`, `expo-constants`             | `@capacitor/device`, `@capacitor/app`                         |
-| `expo-network`                              | `@capacitor/network`                                          |
-| `expo-splash-screen`                        | `@capacitor/splash-screen`                                    |
-| `expo-image-picker`, `expo-document-picker` | `@capacitor/camera`, file-picker plugin                       |
-| `expo-camera` (pairing QR scan)             | barcode-scanner plugin                                        |
-| `expo-keep-awake`                           | keep-awake plugin                                             |
-| `expo-quick-actions`                        | app-shortcuts plugin (community)                              |
-| `expo-secure-store`                         | secure-storage plugin                                         |
-| `expo-audio`, `expo-video`                  | Web Audio / `<video>` in the WebView; native plugin if needed |
-| `expo-image-manipulator`                    | Canvas / OffscreenCanvas in the WebView                       |
+The pattern, applied to every row: `denext mobile add <capability>` installs the plugin and
+registers it natively, and a typed function in `denext/mobile` wraps it. That keeps "no
+`@capacitor/*` imports in app code" true, and each function gets a web / Deno Desktop fallback.
 
-The pattern, now applied to every row:
+| T3 uses (Expo / RN)                         | Capacitor equivalent                                          | Shipped          | Verified                                 |
+| ------------------------------------------- | ------------------------------------------------------------- | ---------------- | ---------------------------------------- |
+| `expo-haptics`                              | `@capacitor/haptics`                                          | 2.10.0-rc.1      | iPhone                                   |
+| `expo-clipboard`, `expo-paste-input`        | `@capacitor/clipboard`                                        | 2.10.0-rc.1      | iPhone (clipboard)                       |
+| `expo-sharing`                              | `@capacitor/share`                                            | 2.10.0-rc.1      | iPhone                                   |
+| `expo-file-system`                          | `@capacitor/filesystem`                                       | 2.10.0-rc.2      | iPhone                                   |
+| `expo-device`, `expo-constants`             | `@capacitor/device`, `@capacitor/app`                         | 2.10.0-rc.1      | iPhone (device)                          |
+| `expo-network`                              | `@capacitor/network`                                          | 2.10.0-rc.1      | iPhone                                   |
+| `expo-splash-screen`                        | `@capacitor/splash-screen`                                    | 2.10.0-rc.1      | iPhone                                   |
+| `expo-image-picker`, `expo-document-picker` | `@capacitor/camera`, `@capawesome/capacitor-file-picker`      | 2.10.0-rc.2      | iPhone (camera, photos, document picker) |
+| `expo-camera` (pairing QR scan)             | `@capacitor/barcode-scanner`                                  | 2.10.0-rc.2      | iPhone                                   |
+| `expo-keep-awake`                           | `@capacitor-community/keep-awake`                             | 2.10.0-rc.1      | iPhone                                   |
+| `expo-quick-actions`                        | `@capawesome/capacitor-app-shortcuts`                         | 2.10.0-rc.2      | iPhone                                   |
+| `expo-secure-store`                         | `@aparajita/capacitor-secure-storage`                         | 2.10.0-rc.1      | iPhone                                   |
+| `expo-sqlite`                               | `@capacitor-community/sqlite`                                 | 2.10.0-rc.3      | iPhone                                   |
+| `expo-audio`, `expo-video`                  | Web Audio / `<video>` in the WebView; native plugin if needed | 2.10.0-rc.3 shim | Built                                    |
+| `expo-image-manipulator`                    | Canvas / OffscreenCanvas in the WebView                       | 2.10.0-rc.3 shim | Built                                    |
 
-- `denext mobile add <capability>` installs the plugin and registers it natively;
-- a typed hook in `denext/mobile` wraps it.
-
-That keeps "no `@capacitor/*` imports in app code" true, and each hook gets a web / Deno Desktop
-fallback for free. **Done:** `haptic`, `readClipboard` / `writeClipboard`, `share`,
-`readFile` / `writeFile` (and the rest of the file API), `deviceInfo`, `networkStatus`,
-`hideSplash`, `pickImage` / `pickDocument`, `scanBarcode`, `useKeepAwake`,
-`setQuickActions` / `onQuickAction` and `secureStore` (the general form of what T3's shell did
-with its own Keychain code); audio, video and image manipulation use the WebView's own APIs
-through the `denext/expo/*` shims.
+The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile` / `writeFile`
+(and the rest of the file API), `deviceInfo`, `networkStatus`, `hideSplash`, `pickImage` /
+`pickDocument`, `scanBarcode`, `useKeepAwake`, `setQuickActions` / `onQuickAction`,
+`secureStore` (the general form of what T3's shell did with its own Keychain code) and
+`openSqlite`. Audio, video and image manipulation use the WebView's own APIs through the
+`denext/expo/*` shims. Every Android row is built, not run.
 
 ## Already covered, or better, on the denext side
 
-- **OTA updates** (`expo-updates`): done in denext 2.7–2.8, with an app-driven update prompt
-  and signed manifests (ECDSA P-256, public key in the binary). The native-version gate and
-  downgrade protection (gap 2) shipped in 2.9.0.
+- **OTA updates** (`expo-updates`): shipped in 2.7–2.8, with an app-driven update prompt and
+  signed manifests (ECDSA P-256, public key in the binary); the gates from gap 2 followed.
+  **iPhone:** end to end (gap 2). Deno Desktop gained a signed UI self-updater in 2.10.0
+  (`denext/desktop/updater`, the same manifest and signature; built).
 - **Momentum scrolling in virtualized lists** (what `FlashList` / `FlatList` get natively):
-  denext 2.8.3 keeps iOS WebKit's momentum fling alive while a virtualized list (LegendList,
-  react-virtuoso, TanStack Virtual) corrects its scroll offset — on by default, in Capacitor and
-  iOS Safari alike (`momentumSafeScroll: false` opts out).
+  since 2.8.3 denext keeps iOS WebKit's momentum fling alive while a virtualized list
+  (LegendList, react-virtuoso, TanStack Virtual) corrects its scroll offset, on by default, in
+  Capacitor and iOS Safari alike (`momentumSafeScroll: false` opts out).
 - **Local database** (`expo-sqlite`): `openSqlite` in `denext/mobile` and the
-  `denext/expo/sqlite` shim over it: a file through `@capacitor-community/sqlite` in the shell
-  (`denext mobile add sqlite`), and on the web the app's own `@sqlite.org/sqlite-wasm` in a
-  worker, persisted to OPFS through the `opfs-sahpool` VFS (no cross-origin isolation needed).
+  `denext/expo/sqlite` shim over it (2.10.0-rc.3): a file through
+  `@capacitor-community/sqlite` in the shell (`denext mobile add sqlite`; **iPhone**), and on
+  the web the app's own `@sqlite.org/sqlite-wasm` in a worker, persisted to OPFS through the
+  `opfs-sahpool` VFS (no cross-origin isolation needed).
+- **Context menus** (`@react-native-menu/menu`): `showContextMenu` (2.10.0) opens an accessible
+  in-page menu that lists every item, or an app-registered `DenextContextMenu` native plugin
+  (denext ships none). Built.
 - **Keyboard + safe areas**: `useKeyboardInset`, `SAFE_AREA_CSS`, `useBackSwipe`, `useAppResume`.
 - **Terminal, composer editor, markdown, diff review, syntax highlighting.** T3 wrote native
   modules for these:
@@ -144,77 +159,77 @@ through the `denext/expo/*` shims.
 
 ## Developer-experience gaps
 
-- **Live reload on device** (`expo-dev-client` + Metro): **done.** `denext mobile dev` points
-  the Capacitor shell at `denext dev` for the session (`--lan` for a physical device, restored
-  on exit), and `allowedDevOrigins` / `denext dev --lan` let the phone in. The desktop half of
-  dev-server attach is tracked in ROADMAP.
-- **Build + CI** (EAS Build / Submit, preview builds, `mobile-fingerprint-check`): covered by
-  `examples/capacitor-ci`, a GitHub Actions recipe that runs the fingerprint check from gap 2 and
-  either ships a signed OTA manifest or builds signed binaries (`xcodebuild archive` with an App
-  Store Connect API key, a keystore-signed `bundleRelease`). Store submission and preview builds
-  stay the app's own steps.
+- **Live reload on device** (`expo-dev-client` + Metro): **shipped (2.10.0-rc.3).**
+  `denext mobile dev` points the Capacitor shell at `denext dev` for the session (`--lan` for a
+  physical device, restored on exit), and `allowedDevOrigins` / `denext dev --lan` let the
+  phone in. Running it on the iPhone found two bugs, both fixed for 2.10.0: iOS needs
+  `NSAllowsLocalNetworking` and a local-network usage string in `Info.plist` (now added for the
+  session), and the restore now scrubs the dev URL from the native config copies itself. The
+  desktop half of dev-server attach is open (ROADMAP).
+- **Build + CI** (EAS Build / Submit, preview builds, `mobile-fingerprint-check`): **shipped
+  (2.10.0-rc.3)** as `examples/capacitor-ci`, a GitHub Actions recipe that runs the fingerprint
+  check from gap 2 and either ships a signed OTA manifest or builds signed binaries
+  (`xcodebuild archive` with an App Store Connect API key, a keystore-signed `bundleRelease`).
+  A recipe, not run in this repository's CI. Store submission and preview builds stay the
+  app's own steps.
+- **Surface parity gate:** `deno task parity:native` (2.10.0) diffs react-native-web's runtime
+  exports against React Native's declared ones, failing on any deviation not waived or already
+  in the known-gaps ledger; it runs on PRs to `main`. Its `expo` half diffs each
+  `denext/expo/*` shim against the pinned `expo-*` package's types (a committed baseline,
+  refreshed with `deno task parity:native:refresh -- expo`) minus the shim's `omitted` list.
 
 ## Compatibility layer: running Expo / React Native apps
 
 Everything above is about denext/Capacitor apps consuming Capacitor plugins the way Expo apps
 consume `expo-*` packages. A different, larger question: could an existing Expo / React Native
 app's source run on denext mostly unchanged, the way a Next.js app does? That's a compatibility
-layer, in three parts.
+layer, in three parts. **Final state:** T3's Expo app builds with zero `expo` / `expo-*`
+aliases, all 41 swept routes render, and pairing persists across reloads through the
+`expo-sqlite` shim (in headless Chromium; see Integration below).
 
 1. **Components** (`<View>`, `<Text>`, `StyleSheet`, `FlatList`, `Pressable`, `Animated`,
-   `Platform`, `Linking` …).
-   - react-native-web already implements the React Native primitives on the DOM, on top of
-     React/ReactDOM, which denext's compat stands in for.
-   - T3's 5,121 vitest tests pass against denext's React compat, which shows the alias approach
-     works.
-   - denext work:
-     - run react-native-web on denext compat and fix what breaks;
-     - a bundler "react-native" resolve mode: `react-native` → `react-native-web`, `.web.tsx`
-       before `.tsx`, the `__DEV__`/`global` defines, and Metro-style `require("./img.png")`
-       with `@2x`/`@3x`. **Done (B2.1):** `reactNative: true` in `denext.config.ts` (SPA mode;
-       [guide](https://denext.dev/docs/react-native)). It covers every item of the resolve-mode
-       spec below except uniwind (a documented recipe) and the web entry, which stays the app's.
-       `require("./img.png")` works through the file loader; `@2x`/`@3x` variants are not
-       picked by pixel ratio (documented). T3's `apps/mobile` builds with it and no denext patch;
-       all 41 swept deep-link routes render the same text as the patched build;
-     - `denext migrate --from expo`. **Done:** writes `deno.json`, a `reactNative`
-       `denext.config.ts` with the app's own entry and a `capacitor.config.ts`; reads the app
-       config statically (never runs it); reports each `expo-*` package's shim status, the
-       native-only packages and Metro-only modules, and the `denext mobile add` command.
-       expo-router works: React Native mode generates its `require.context` route context
-       from `app/`. On a fresh copy of T3's `apps/mobile` the migrated app builds once the
-       flagged packages get the app's stubs, and all 41 routes render clean;
-2. **`expo-*` API shims**, aliased the same way `react` → denext is. **Done:** `denext/expo/*`,
-   one module per package (35, every `expo-*` dependency of T3's `apps/mobile`), listed with status and omissions in `src/expo/manifest.ts` (`EXPO_SHIMS`,
-   the contract `scripts/parity` checks). React Native mode aliases each listed package (and
-   `expo/fetch`) to its shim unless `reactNative: { expoShims: false }`; the shims are prebuilt
-   into the shared denext runtime, so their hooks share the app's one instance.
-   ([guide](https://denext.dev/docs/react-native#expo-apis); per-package table below.)
-   - Each `expo-*` import maps to a `denext/expo/*` module with the same API: a thin layer over
-     the `denext/mobile` capability functions, each backed by a Capacitor plugin or a web API.
-     Example: `expo-haptics` → `@capacitor/haptics`.
-   - The work is finite: T3 uses about 35 `expo-*` packages, and `scripts/parity` can check
-     signature parity against each package's types.
-   - The limit: some Expo/RN APIs are synchronous because they run over JSI (the sync
-     `expo-sqlite` API, MMKV). The Capacitor bridge is async, so those shims are async-only
-     unless a web API backs them (localStorage, OPFS sync handles in a worker).
+   `Platform`, `Linking` …). react-native-web implements the React Native primitives on the
+   DOM, on top of React/ReactDOM, which denext's compat stands in for; T3's 5,121 vitest tests
+   pass against denext's React compat. **Shipped:**
+   - **`reactNative: true`** (2.10.0-rc.2; SPA mode;
+     [guide](https://denext.dev/docs/react-native)): the resolve mode from the spike, covering
+     every item of the spec below except uniwind (a documented recipe).
+     `require("./img.png")` works through the file loader; `@2x`/`@3x` variants are not picked
+     by pixel ratio (documented). rc.3 added `Appearance.setColorScheme`, the codegen /
+     TurboModule entry points and expo-router's route context;
+   - **`denext migrate --from expo`** (2.10.0-rc.3): writes `deno.json`, a `reactNative`
+     `denext.config.ts` with the app's own entry and a `capacitor.config.ts`; reads the app
+     config statically (never runs it); reports each `expo-*` package's shim status, the
+     native-only packages and Metro-only modules, and the `denext mobile add` command. On a
+     fresh copy of T3's `apps/mobile` the migrated app builds once the flagged packages get
+     the app's stubs, and all 41 routes render clean.
+2. **`expo-*` API shims**, aliased the way `react` → denext is. **Shipped (2.10.0-rc.3):**
+   `denext/expo/*`, one module per package (35 including `expo` itself: every `expo-*`
+   dependency of T3's `apps/mobile`), listed with status and omissions in `src/expo/manifest.ts`
+   (`EXPO_SHIMS`). React Native mode aliases each listed package (and `expo/fetch`) to its shim
+   unless `reactNative: { expoShims: false }`; the shims are prebuilt into the shared denext
+   runtime, so their hooks share the app's one instance
+   ([guide](https://denext.dev/docs/react-native#expo-apis); per-package table below). The
+   limit: some Expo/RN APIs are synchronous because they run over JSI (the sync `expo-sqlite`
+   API, MMKV). The Capacitor bridge is async, so those are omitted or answered from an index
+   the shim keeps.
 3. **Third-party React Native packages**, in three buckets:
-   - **pure JS on RN primitives:** these work once layer 1 works;
+   - **pure JS on RN primitives:** work once layer 1 works;
    - **packages with a web implementation** (reanimated, gesture-handler, react-native-svg,
-     safe-area-context, screens, `@legendapp/list`): these work through `.web.*` resolution with
+     safe-area-context, screens, `@legendapp/list`): work through `.web.*` resolution with
      reduced features, e.g. reanimated worklets run on the main thread;
    - **native-only** (TurboModules, Nitro, JSI: vision-camera frame processors,
-     `react-native-nitro-*`, T3's `t3-terminal`): these can't run in a WebView. Each needs a
-     Capacitor-backed shim or stays unsupported. It's the same boundary Expo web has.
+     `react-native-nitro-*`, T3's `t3-terminal`): can't run in a WebView. Each needs a
+     Capacitor-backed shim or a web replacement of the app's own. It's the same boundary Expo
+     web has. Codegen packages now load and fail only when their native module is used.
 
 **Caveat:** the risk is performance, not feasibility. UI-thread animations, native navigation
-stacks and native lists become DOM equivalents. That's fine on iOS WKWebView; Android needs a
-real-device measurement.
+stacks and native lists become DOM equivalents. That's fine on iOS WKWebView; Android is gap 5.
 
-**First step, a measured spike:** alias `react-native` → `react-native-web` and `expo-*` →
-stubs, build T3's `apps/mobile/src` with denext, and count the failures by bucket (resolver,
-missing shim, native-only, denext compat bug). Results: [Spike results](#spike-results-2026-09-24)
-below.
+**Shim status** (Expo SDK 57, versions from T3's `apps/mobile/package.json`). Every row shipped
+in 2.10.0-rc.3 (`expo-widgets` was an inert stub until rc.3 backed it). Verified: unit tests,
+plus the T3 integration below; each row's native half is only as verified as the capability
+it wraps (the tables above).
 
 **Shim status** (Expo SDK 57, versions from T3's `apps/mobile/package.json`):
 
@@ -256,18 +271,18 @@ below.
 | `expo-web-browser`       | partial | openExternal, openAuthSession, completeAuthSession                                                           | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `expo-widgets`           | partial | setWidgetData / reloadWidgets, the Live Activity functions and their token events                            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
-Integration (T3's `apps/mobile`, a copy of the spike, `reactNative: true`, every `expo`/`expo-*`
-alias to the spike's web-shims/web-stubs removed): the app builds with `index.ts` (its
-`registerRootComponent`) as the SPA entry, and all 41 swept routes render clean, with the same
-text as the spike's hand-shimmed build. Pairing with a T3 server now succeeds and the home
-screen loads the environment (`expo-secure-store` had blocked it). Since then the
-`expo-sqlite` stub and the hand `Appearance.setColorScheme` polyfill are gone too: with no
-`expo-*` alias left, 41/41 routes render clean, and after pairing and a reload the app's
-SQLite database (schema v1, the server-config and shell-snapshot caches) is in OPFS through
-`opfs-sahpool` on a page that is not cross-origin isolated (`SharedArrayBuffer` absent, so the
-engine's `"opfs"` VFS is unavailable, as expo-sqlite's own web build found). What remains are
-the app's stubs for non-Expo native modules (Nitro, T3's native terminal/markdown/review-diff,
-`@expo/ui`) and for the two modules its Metro config generates.
+**Integration** (T3's `apps/mobile`, `reactNative: true`, measured in headless Chromium): with
+every `expo` / `expo-*` alias to the spike's hand shims and stubs removed, the app builds with
+its own `index.ts` (`registerRootComponent`) as the SPA entry and all 41 swept routes render
+clean, with the same text as the spike's hand-shimmed build. Pairing with a T3 server succeeds
+and the home screen loads the environment (`expo-secure-store` had blocked it). The
+`expo-sqlite` stub and the hand `Appearance.setColorScheme` polyfill are gone too: after pairing
+and a reload, the app's SQLite database (schema v1, the server-config and shell-snapshot
+caches) is in OPFS through `opfs-sahpool` on a page that is not cross-origin isolated
+(`SharedArrayBuffer` absent, so the engine's `"opfs"` VFS is unavailable, as expo-sqlite's own
+web build found), and pairing persists. What remains are the app's stubs for non-Expo native
+modules (Nitro, T3's native terminal/markdown/review-diff, `@expo/ui`) and for the two modules
+its Metro config generates.
 
 **Scope:** rendering stays WebView/DOM. This is API compatibility, not native rendering, so
 it's consistent with POLICIES.md.
@@ -295,8 +310,8 @@ hand-written web shims, bundler workarounds applied through `denext patch`.
 | native-only       | 0 hit at runtime | Stubbed without being exercised: `expo-widgets`, `@react-native-ai/apple`, `react-native-nitro-*`, `react-native-shiki-engine`, T3's native terminal/review-diff/markdown modules                                                                                            |
 | denext compat bug | 1                | Client booleanish attributes                                                                                                                                                                                                                                                 |
 
-**Resolve-mode spec** (the workarounds that were needed; all but uniwind and the web entry are
-now built in as `reactNative: true`):
+**Resolve-mode spec** (the workarounds that were needed; all but uniwind are now built in as
+`reactNative: true`, and the web entry is retired):
 
 - `react-native` wins over an installed real RN for every importer. A plain import-map key
   loses: the node_modules resolver finds real RN's Flow source.
@@ -315,9 +330,12 @@ now built in as `reactNative: true`):
   `AppRegistry`, so the app's own `index.ts` is the entry.
 - Not needed: a Flow transform (Flow only arrived through wrong resolution) or an image-require
   shim (the existing file loader works).
-- Open: `denext dev` fails. The npm prebundle can't resolve react-native-web's own deps through
-  the alias (`styleq`, `fbjs`, `@babel/runtime`, `@react-native/normalize-colors`), and a
-  `global.css` with `@import "tailwindcss"` gets a 500.
+- Open at the time: `denext dev` failed. The npm prebundle couldn't resolve react-native-web's
+  own deps through the alias (`styleq`, `fbjs`, `@babel/runtime`,
+  `@react-native/normalize-colors`), and a `global.css` with `@import "tailwindcss"` got a 500.
+  **Since addressed:** React Native mode runs `denext dev` on the bundled loop (2.10.0-rc.2),
+  so the per-module prebundle is not involved; a root-entry rebuild loop was fixed in rc.3; and
+  the Tailwind input goes through the uniwind recipe's `tailwind` config.
 
 **Third-party packages through web builds:**
 
@@ -335,14 +353,17 @@ is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `ex
 `expo-file-system`, `expo-font` and `expo-linking`/`expo-notifications`. The last two map onto
 `denext/mobile`'s deep-link and push functions (since shipped, with their shims).
 
-## Suggested order
+## Status and next steps
 
 1. ~~Push notifications, the OTA runtime-version gate, auth sessions + deep links, and the
-   `mobile add <capability>` wrapper pattern.~~ Done.
-2. ~~App extensions (share, widgets, Live Activities) and dev-server attach.~~ Done: every
-   generator, configurable widgets and push-to-start included, and `denext mobile dev`. Left:
-   the device-only checks under gap 4, and the desktop half of dev-server attach (ROADMAP).
-3. Android native feel: measure on a real device first, then decide what to build. **Open.**
-4. ~~The compatibility layer: the measured spike, the `react-native` resolve mode, the
-   `denext/expo/*` shims, and `migrate --from expo`.~~ Done. Left: the app's own stubs for
-   non-Expo native modules (see Integration above).
+   `mobile add <capability>` wrapper pattern.~~ Shipped (2.9.0, 2.10.0-rc.1–rc.3); verified on
+   the iPhone.
+2. ~~App extensions (share, widgets, Live Activities) and dev-server attach for phones.~~
+   Shipped (2.10.0-rc.3); verified on the iPhone except a real push-to-start push. Left: the
+   desktop half of dev-server attach (ROADMAP).
+3. ~~The compatibility layer: the measured spike, the `react-native` resolve mode, the
+   `denext/expo/*` shims, and `migrate --from expo`.~~ Shipped (2.10.0-rc.2–rc.3). Left: the
+   app's own stubs for non-Expo native modules (see Integration above).
+4. **Android. Open.** Nothing Android has run on a device or an emulator yet. Next: an emulator
+   comparison (gap 5), which also exercises the Android halves of every capability above; then
+   a real device. No Android parity claim before that.

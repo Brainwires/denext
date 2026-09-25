@@ -374,11 +374,50 @@ four documented bounds of the opt-in:
 - **Desktop dev attach is not supported yet.** A packaged `denext desktop` window cannot load
   `denext dev` (tracked in [ROADMAP.md](./ROADMAP.md) as `denext desktop dev`); `denext desktop
   run` serves a static export over loopback. The Capacitor half works (`denext mobile dev`).
-- **`denext mobile dev` edits `capacitor.config.*` for the session.** It is restored on every
-  exit path Deno can observe; a `SIGKILL` or power loss leaves the edit and a backup in
-  `.denext/`, restored by the next `mobile dev` or `mobile dev --restore`, so check before a
-  release build after a crash. A config whose exported object is built by a function call it
-  cannot see into (`export default makeConfig()`) is refused.
+- **`denext mobile dev` edits `capacitor.config.*` (and, for iOS, `ios/App/App/Info.plist`)
+  for the session.** Both are restored on every exit path Deno can observe; a `SIGKILL` or power
+  loss leaves the edits and a backup in `.denext/`, restored by the next `mobile dev` or
+  `mobile dev --restore`, so check before a release build after a crash. A config whose exported
+  object is built by a function call it cannot see into (`export default makeConfig()`) is
+  refused. The Info.plist keys are a native change, so the first session needs a rebuild from
+  Xcode.
+- **`denext mobile dev` on Android relies on `usesCleartextTraffic`.** An app that declares its
+  own `android:networkSecurityConfig` overrides it on Android 7+ (API 24+), and the device may
+  refuse the dev server's plain `http`; `mobile dev` warns, and the fix is a
+  `<domain-config cleartextTrafficPermitted="true">` for the dev host (or an `https` dev
+  server). The Android half of `mobile dev` has not been run on a device.
+- **Android is compiled, not device-tested.** Every Android half of `denext/mobile` and the
+  `denext mobile add` generators is unit-tested and builds with Gradle, but none has run on an
+  Android device or emulator yet (the iOS halves were run on an iPhone; see
+  [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md)).
+- **Android push needs `google-services.json`.** `@capacitor/push-notifications` registers with
+  FCM through Firebase, so without `android/app/google-services.json` (from your Firebase
+  project) registration fails; `denext mobile add push` only warns that it is missing. There is
+  no web push fallback, and denext ships no push relay: your server sends through APNs / FCM.
+- **App extensions need a paid Apple Developer team and some Xcode steps.** The App Group the
+  share extension, widgets and Live Activities share (`--app-group`) must exist in the developer
+  account, and a Personal Team cannot sign App Groups or push. When a capability writes a new
+  `App.entitlements` and the App target does not yet point at one, selecting it in Xcode is a
+  printed manual step.
+- **Live Activities are iOS only.** `startLiveActivity` and the other Live Activity functions
+  reject with code `unsupported` on Android and the web; push-to-start tokens need iOS 17.2+ and
+  resolve `null` below it.
+- **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell and
+  a plain IndexedDB database in a browser or Deno Desktop window.
+- **Passkeys (WebAuthn) do not run in the iOS Capacitor WebView.** The page's origin is
+  `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
+  `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's
+  own `https` page through `openAuthSession`.
+- **The Deno Desktop auth session sees a cancel only as a timeout.** `openAuthSession` in a
+  desktop window opens the system browser and waits on a one-shot loopback listener; closing
+  the browser tab sends nothing back, so it rejects `timeout` when `timeoutMs` (default 5
+  minutes) runs out, not `cancelled`.
+- **The Deno Desktop self-updater replaces the UI, not the app.** `denext/desktop/updater`
+  verifies and overlays a signed UI export in the app-support directory; the executable and
+  the runtime are updated only by shipping a new build. Every manifest must be signed.
+- **`showContextMenu` is an in-page menu.** denext ships no native context-menu plugin: the
+  menu is an accessible popover in the WebView unless the app registers its own
+  `DenextContextMenu` Capacitor plugin.
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
@@ -432,6 +471,29 @@ four documented bounds of the opt-in:
   `packages` / `catalog` into the root `package.json` as `workspaces` / `catalog`. denext cannot
   intercept either (both happen while Deno loads the module graph), so pass
   `--node-modules-dir=none` (or `--no-config`) there.
+
+### React Native mode & Expo shims (`reactNative`, `denext/expo/*`)
+
+- **Rendering stays DOM.** `reactNative` builds an app's source for the web through
+  react-native-web; native-only packages (TurboModules, Nitro, JSI modules such as
+  vision-camera frame processors) load but have no implementation, and need a web replacement
+  of the app's own (`.web.ts` beside the importer, or a `deno.json` `imports` entry).
+- **The synchronous JSI Expo APIs are omitted.** The Capacitor bridge is asynchronous, so
+  `expo-sqlite`'s `*Sync` API, `expo-secure-store`'s `getItem` / `setItem` and similar are not
+  provided (use the `…Async` forms); `expo-file-system`'s sync calls act on an index the shim
+  keeps and reach the files in the background. Each shim's omissions are listed in
+  `denext/expo/manifest`.
+- **`expo-sqlite` on the web needs `@sqlite.org/sqlite-wasm` installed by the app.** denext
+  ships no npm runtime dependency; without the package, opening a database fails with an error
+  naming it. Where OPFS is unavailable, or another tab of the origin holds the `opfs-sahpool`
+  pool, the database is in memory for the session.
+- **Resolution variants are not picked by pixel ratio.** `require("./logo.png")` gets that file;
+  `logo@2x.png` / `logo@3x.png` are not chosen as Metro does.
+- **`reactNative` refuses `unbundled` dev** (the resolution lives in bundler plugins the
+  per-module loop does not run), and is valid only with `mode: "spa"`.
+- **uniwind needs importer-sensitive aliases denext's config cannot express yet**; the
+  [recipe](https://denext.dev/docs/react-native#recipe-uniwind-and-tailwind) applies them with
+  `denext patch`.
 
 ### Testing helpers (`denext doctor`, `probeApp`)
 

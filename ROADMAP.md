@@ -7,16 +7,15 @@
 > pillars in [MISSION.md](./MISSION.md); the standing engineering guardrails and
 > the security policy in [POLICIES.md](./POLICIES.md).
 >
-> `development` is closing out **2.5** (the version line `deno task bump`
-> rewrites). The line carried `denext ui` (the config editor, Cron and Desktop
-> pages, the wizard, the compose editor), the auth flexibility cut + database
-> adapter + bearer tokens, the emailed auth flows and TOTP two-factor, the
-> DevTools completeness pass, the compiled `denext` binary and task run history,
-> then six release candidates of hardening — all in
-> [CHANGELOG.md](./CHANGELOG.md). What remains is the 2.6 candidates, the last
-> build-time-purity item, the TanStack Start depth of the router plugins, and
-> the unscheduled candidates. Items target the next minor unless marked
-> otherwise; this file is rewritten each cycle.
+> `development` is closing out **2.10** (the version line `deno task bump`
+> rewrites): the Capacitor capability set, app extensions, the native
+> fingerprint, dev-server attach for phones and the Expo / React Native
+> compatibility layer — all in [CHANGELOG.md](./CHANGELOG.md) and
+> [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md). What remains is the
+> next-minor candidates (carried since 2.5), Android native feel and desktop
+> dev attach, the last build-time-purity item, the TanStack Start depth of the
+> router plugins, and the unscheduled candidates. Items target the next minor
+> unless marked otherwise; this file is rewritten each cycle.
 
 ---
 
@@ -129,7 +128,7 @@ touches the zero-npm **runtime** guardrail; both are build-time.
   compat e2es (`tests/e2e/next-compat-*`, `spa-compat`, `unbundled-*`) are the
   gate.
 
-## After 2.5 (2.6 candidates)
+## Next-minor candidates (carried since 2.5)
 
 **Auth:**
 
@@ -228,11 +227,13 @@ sessions, the `denext mobile add <capability>` pattern (haptics, clipboard, shar
 filesystem, device, network, splash, camera / pickers, barcode, quick actions, secure
 storage, keep-awake, SQLite), app extensions (share extension, widgets, Live Activities),
 the native fingerprint + CI recipe, dev-server attach for phones, and the Expo / React
-Native compatibility layer (`reactNative` mode, `denext/expo/*`, `migrate --from expo`).
-Still open:
+Native compatibility layer (`reactNative` mode, `denext/expo/*`, `migrate --from expo`),
+`showContextMenu`, the React Native surface-parity gate, and for Deno Desktop the OAuth
+loopback sheet and a signed UI self-updater. Still open:
 
-- **Android "native feel" on real hardware** — the measurement so far is an emulator
-  comparison; a real-device run is still needed before claiming parity either way.
+- **Android "native feel"** — nothing Android has run on a device or an emulator yet
+  (every Android half is compiled and unit-tested only). Next step: an emulator comparison
+  of the same screens, then a real device, before claiming parity either way.
 - **Desktop dev-server attach** — tracked under "Dev server attach" below.
 
 ## Candidate features (from the framework-gap survey)

@@ -8,8 +8,48 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`showContextMenu(items, options)` in `denext/mobile`.** Opens a context menu and resolves
+  with the chosen item's `id` (or `null`): an app-registered `DenextContextMenu` Capacitor
+  plugin when there is one (denext ships none), else an accessible in-page popover that lists
+  every item, with keyboard navigation. Items take `disabled`, `destructive` and `icon`; the menu
+  opens at `x` / `y` or under an `anchor` rect. Nothing runs at import, and it is SSR-safe.
+- **`openAuthSession` in a Deno Desktop window.** When `runtimePlatform()` is `"desktop"` it
+  runs the RFC 8252 loopback flow: the desktop runtime opens the system browser and a one-shot
+  `127.0.0.1` listener for the redirect (the authorization URL's loopback `redirect_uri` gets
+  its port), then resolves with the callback URL. The runtime's local endpoint takes a POST with
+  a per-launch token (compared in constant time) from a loopback origin only, and never logs the
+  URL. Same result and error codes as on mobile; the default timeout is 5 minutes.
+- **A signed UI self-updater for Deno Desktop: `denext/desktop/updater`.**
+  `checkForDesktopUpdate` / `prepareDesktopUpdate` / `applyDesktopUpdate` (plus
+  `desktopUpdateStatus` / `desktopUpdateReset`) fetch the mobile OTA manifest format from a
+  `feedUrl`, verify its ECDSA P-256 signature, sequence and every file's SHA-256 before
+  anything is swapped, and install the UI as an overlay in the app-support directory (the
+  signed bundle is never modified), with an atomic pointer swap. `runDesktop({ updater })`
+  serves the overlay; a boot beacon from the loaded page confirms it, and a version that never
+  confirms is rolled back and refused. A signature is always required. The module re-exports
+  the `OtaManifest` / `OtaManifestFile` types its results carry.
+- **React Native surface-parity gate: `deno task parity:native`.** Diffs react-native-web's
+  runtime exports against React Native 0.86's declared ones and fails on a deviation that is
+  neither waived nor in the known-gaps ledger (`parity:native:refresh`, `parity:native:gaps`);
+  a CI job runs it on PRs to `main`. Its `expo` target skips until the `expo-*` baselines are
+  captured.
+- **`examples/mobile`**: every `denext/mobile` capability on one screen of a Capacitor 8 app,
+  set up with the real `denext mobile add` commands (recorded in its README), including deep
+  links, push, auth sessions, the share extension, a configurable widget, a Live Activity and
+  signed OTA.
+
 ### Fixed
 
+- **`denext mobile add` no longer prints a stale "point the App target at App.entitlements"
+  step** when an app-group capability in the same run (or an earlier one) already wired the
+  entitlements file, and a URL scheme shared by `deep-links`, `auth-session` and
+  `share-extension` is one plan line, not three.
+- **Spurious SPA dev rebuilds on Linux.** `Deno.writeTextFile` truncates before writing, and
+  inotify reports the truncate as its own change; a watcher that read the file in that window
+  saw an empty file and took denext's own write for an edit. Writes in progress now count as
+  self-writes.
 - **`denext mobile dev` on a physical iPhone hung on the splash screen.** `server.cleartext` is
   Android-only; on iOS the WebView never reached `http://<LAN IP>:3000` because App Transport
   Security blocked it and, without `NSLocalNetworkUsageDescription`, iOS 14+ silently denied the
@@ -45,10 +85,20 @@ and this project adheres to
   verified against (the range's minimum, e.g. `@capacitor/app@8.1.1`), with the package manager's
   exact flag (`npm install --save-exact`, `pnpm add --save-exact`, `yarn add --exact`,
   `bun add --exact`) so it is saved without a caret. Any range among them keeps caret ranges.
-
-## [2.10.0-rc.3] - 2026-09-25
-
-### Added
+- **An Android `MainActivity` denext composed stopped being recognised once its text changed.**
+  denext knew its own `MainActivity` only by an exact match against the current release's
+  source, so any change to that source would have turned an earlier release's unedited activity
+  into a manual step. It is now written under a `// denext-main-activity-template: <n>
+  sha256=<hex>` marker line (like the iOS bridge view controller), and any activity whose marker
+  still matches its body is upgraded in place. Activities written before the marker (the OTA-only
+  one of 2.7.0 … 2.9.0 and every feature combination of 2.10.0-rc.1 … rc.3) are recognised by
+  their SHA-256, with the package line normalised, and upgraded too, including when the feature
+  being added is already registered. An edited activity is still kept, as is a marked one that
+  registers a plugin this release does not know. No native template is downgraded any more: a
+  `MainActivity`, `DenextBridgeViewController` or OTA / auth-session / app-extension template file
+  whose marker generation is newer than this release writes is left as it is. A shared file that
+  already registers the feature is unchanged; anything else is kept with a manual step to upgrade
+  denext (`--force` still replaces the template files and the bridge view controller).
 
 - **App extensions: `denext mobile add share-extension | widget | live-activity`.** Three
   generators, in the style of `add-ota`, add native app extensions to a Capacitor project and

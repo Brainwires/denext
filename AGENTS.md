@@ -281,25 +281,32 @@ including verb discovery (`denext commands --json`), is a `deno` subprocess.
 discovery child. `--offline` keeps the UI and every process it starts off the network.
 Docs: https://denext.dev/docs/ui
 
-**A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `useAppResume`,
-`openExternal`, `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`,
-`installMomentumSafeScroll` / `useMomentumSafeScroll`. It talks to Capacitor
-through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling survives
-virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit;
-`momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
+**A Capacitor shell:** `denext/mobile` (client-only) — `isNativeShell()`, `runtimePlatform()`
+(`"ios" | "android" | "desktop" | "web"`), `useAppResume`, `openExternal`, `useKeyboardInset`,
+`useBackSwipe`, `SAFE_AREA_CSS`, `installMomentumSafeScroll` / `useMomentumSafeScroll`. It talks
+to Capacitor through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling
+survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS
+WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
 `useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickDocument`/`scanBarcode` (`null`
-when cancelled) and `setQuickActions`/`useQuickAction` (home-screen shortcuts); `denext mobile add
-<capability...> [--dry-run] [--list]` installs their plugins, and `deep-links --scheme/--domain`
-/ `push` add `onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
+when cancelled), `setQuickActions`/`useQuickAction` (home-screen shortcuts), `openSqlite` (the
+app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` (an in-page menu
+unless the app registers a native one); `denext mobile add <capability...> [--dry-run] [--list]`
+installs their plugins, and `deep-links --scheme/--domain` / `push` add
+`onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
 `requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via
-APNs/FCM). `auth-session --scheme myapp` adds `openAuthSession(url, { callbackScheme })` (OAuth
-in an iOS ASWebAuthenticationSession / Android Custom Tab / web popup finished by
-`completeAuthSession()`; resolves the callback URL, PKCE + `state` are yours). Live reload on
-a device: `denext mobile dev --lan` points the app's `server.url` at `denext dev` for the
-session (restored on exit); a non-loopback host loads the dev assets only when opted in
-(`denext dev --lan`, `--host`, `allowedDevOrigins`). Docs:
+APNs/FCM; Android needs `google-services.json`). `auth-session --scheme myapp` adds
+`openAuthSession(url, { callbackScheme })` (OAuth in an iOS ASWebAuthenticationSession / Android
+Custom Tab / web popup finished by `completeAuthSession()`, and in a Deno Desktop window the
+system browser with a loopback redirect; resolves the callback URL, PKCE + `state` are yours).
+App extensions: `denext mobile add share-extension | widget --name <N> [--configurable
+<param:enum=a|b>] | live-activity --name <N>` generate the native targets behind
+`onShareReceived`, `setWidgetData`/`reloadWidgets` and
+`startLiveActivity`/`updateLiveActivity`/`endLiveActivity` (iOS only; they share an App Group).
+Live reload on a device: `denext mobile dev --lan` points the app's `server.url` at
+`denext dev` for the session (restored on exit); a non-loopback host loads the dev assets only
+when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`). Docs:
 https://denext.dev/docs/desktop
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
@@ -310,7 +317,19 @@ Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <d
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. An unsigned manifest over
-plain `http` is refused beyond loopback.
+plain `http` is refused beyond loopback. Whether a change can ship over the air:
+`denext mobile fingerprint [--diff old.json] [--write]` hashes the native layer, and
+`denext ota manifest --native-fingerprint auto` makes a binary with another fingerprint refuse
+the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
+`denext/desktop/updater` (`checkForDesktopUpdate` / `prepareDesktopUpdate` /
+`applyDesktopUpdate`).
+
+**An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
+app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
+expo-router's routes), and every `expo-*` import resolves to a `denext/expo/*` shim over
+`denext/mobile` (`denext/expo/manifest` lists what each omits; the synchronous JSI APIs are not
+provided). `denext migrate --from expo` writes the `deno.json`, the config and a
+`capacitor.config.ts`, and reports native-only packages. Docs: https://denext.dev/docs/react-native
 
 **A database (zero-npm, server-only module):**
 

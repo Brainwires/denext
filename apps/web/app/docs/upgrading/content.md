@@ -24,6 +24,62 @@ links back to the release that introduced it.
   generated file changed shape.** Migrate writes config by default and is
   non-destructive to your source; see [Migrating from Next.js](/docs/migrating).
 
+## Upgrading to 2.10
+
+2.10 shipped through three release candidates; this section covers every change that needs
+action since 2.9, whichever rc introduced it.
+
+- **Over-the-air UI updates (Capacitor): re-run `denext mobile add-ota` and ship a new
+  binary.** The native OTA templates move to generation 4, which checks the native fingerprint
+  (unedited earlier templates upgrade in place). A manifest stamped with
+  `denext ota manifest --native-fingerprint` is signed as payload v3, and a binary with an
+  older template and an embedded public key refuses it with code `signature` (it verifies the v2
+  payload). Keep publishing manifests without `--native-fingerprint` (still signed as v2) until
+  every installed binary runs the generation-4 template; manifests without it keep working for
+  both. ([2.10.0-rc.3](/docs/changelog#2100-rc3---2026-09-25))
+- **Client-rendered booleanish attributes now match react-dom.** A boolean on `aria-*`,
+  `data-*`, `draggable`, `spellCheck`, `contentEditable` (and React 19's other booleanish-string
+  props) is written as `"true"` / `"false"`. Before, the client dropped the attribute for
+  `false` and wrote `""` for `true`, so the DOM after hydration or a client render changes:
+  `aria-hidden={false}` now stays as `aria-hidden="false"`, and `data-open={false}` renders
+  `data-open="false"`, which a presence selector such as `[data-open]` now matches. Match on the
+  value (`[data-open="true"]`) or omit the prop instead of passing `false`, and regenerate DOM
+  snapshots. SSR already rendered these values.
+  ([2.10.0-rc.1](/docs/changelog#2100-rc1---2026-09-24))
+- **An explicit `denext dev --host` allows the host it binds** through the dev origin gate
+  (`0.0.0.0` / `::` allow this machine's own addresses), and the SPA dev server now applies
+  `allowedDevOrigins` too. `.denext/dev.json` records the bind as given in `hostname` and the
+  allowed hosts in a new `devOrigins`; a local tool that read `hostname` as a loopback address
+  should read `origin`. ([2.10.0-rc.3](/docs/changelog#2100-rc3---2026-09-25))
+- **`denext mobile dev` edits `ios/App/App/Info.plist` for the session** (App Transport
+  Security's `NSAllowsLocalNetworking` and a local-network usage string), which a physical
+  iPhone needs to reach the LAN dev server. A changed plist is a native change: rebuild and run
+  the app from Xcode once (it prints so); both are restored on exit. ([2.10.0](/docs/changelog))
+- **`reactNative` refuses an explicit `unbundled: true` dev server option.** The resolution
+  lives in bundler plugins the per-module loop does not run; drop the option (React Native
+  mode already defaulted to the bundled loop).
+  ([2.10.0-rc.3](/docs/changelog#2100-rc3---2026-09-25))
+- **`denext mobile add` pins exactly when the project does.** When every `@capacitor/*` package
+  in `package.json` is an exact version, capability packages are added at the version the
+  capability table was verified against, with the package manager's exact flag; a project with
+  any caret range still gets caret ranges. It also picks the package manager from the nearest
+  lockfile up to the repository root, so a pnpm workspace member no longer gets
+  `npm install`.
+  ([2.10.0](/docs/changelog), [2.10.0-rc.2](/docs/changelog#2100-rc2---2026-09-25))
+- **`denext mobile add barcode` raises `minSdkVersion` to 26** in `android/variables.gradle`
+  (the scanner's Android library requires it; Capacitor 8 defaults to 24).
+  ([2.10.0-rc.2](/docs/changelog#2100-rc2---2026-09-25))
+- **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace**
+  (`deno run -A --node-modules-dir=none jsr:@denext/denext/cli …`). Without it Deno resolves
+  denext's `npm:` imports from the workspace's `node_modules` and fails, and next to a
+  `pnpm-workspace.yaml` Deno 2.9.7 rewrites the root `package.json`.
+  ([2.10.0-rc.2](/docs/changelog#2100-rc2---2026-09-25))
+- **From 2.10.0-rc.3: run `denext mobile dev --restore` once** if a `mobile dev` session ran
+  under the rc. Its restore could leave the dev server URL in
+  `ios/App/App/capacitor.config.json` and `android/app/src/main/assets/capacitor.config.json`
+  (a native build would then load the dev server); `--restore` now scrubs both.
+  ([2.10.0](/docs/changelog))
+
 ## Upgrading to 2.9
 
 - **Over-the-air UI updates (Capacitor): re-run `denext mobile add-ota --force` and ship a new

@@ -309,19 +309,9 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   editor** — honoring `DENEXT_EDITOR` / `VISUAL` / `EDITOR` (VS Code, JetBrains,
   Sublime, and terminal editors; default `code`).
 - **`dynamic()`** with `ssr: false` code-split islands.
-- **`denext/mobile`** — a client runtime for apps shipped in a Capacitor
-  iOS/Android shell: `isNativeShell` / `nativePlatform`, `useAppResume`,
-  `openExternal`, `useKeyboardInset`, `useBackSwipe` and `SAFE_AREA_CSS`, talking
-  to Capacitor only through the `window.Capacitor` global (no `@capacitor/*`
-  dependency). **Over-the-air UI updates**: `spa.ota` / `denext ota manifest`
-  stamp a SHA-256 manifest, `denext ota keygen` + `--sign` sign it (ECDSA P-256,
-  public key embedded by `denext mobile add-ota --public-key`), and
-  `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` drive
-  the native plugin, which verifies every file and rolls back a UI that never
-  boots (`createOtaHandler` in `denext/server` serves the export). **Momentum-safe
-  scrolling** on iOS WebKit (Capacitor and Safari): programmatic scroll writes
-  from virtualized lists are deferred during a fling instead of killing it — on
-  by default, `momentumSafeScroll: false` opts out.
+- **`denext/mobile`** and **`denext/desktop`** — the client runtimes for apps
+  shipped in a Capacitor shell or a Deno Desktop window; see
+  [Mobile & desktop apps](#mobile--desktop-apps).
 - **First-party DevTools** (`denext/devtools`, dev-only): a native in-page
   glass-box panel (auto-mounted in dev — App Router **and** SPA; toggle
   Ctrl+Shift+D) at React-DevTools-quality, in **six tabs** (`Alt+1`…`6`,
@@ -358,6 +348,108 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
   reconciler. Its hooks view and Profiler rely on React-internal introspection a
   non-React fiber can't provide — the first-party panel above is the
   full-fidelity surface for those.
+
+## Mobile & desktop apps
+
+Nothing Android below has run on a device or emulator yet (compiled and
+unit-tested); the iOS halves were run on an iPhone — per-item status in
+[REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md).
+
+- **`denext/mobile`** — a client runtime for a Capacitor iOS/Android shell that
+  talks to Capacitor only through the `window.Capacitor` global (no
+  `@capacitor/*` import; importing it runs no code and each export tree-shakes on
+  its own): `isNativeShell` / `nativePlatform` / `runtimePlatform` (`ios`,
+  `android`, `desktop`, `web`), `useAppResume`, `openExternal`,
+  `useKeyboardInset`, `useBackSwipe`, `SAFE_AREA_CSS`, and **momentum-safe
+  scrolling** on iOS WebKit (Capacitor and Safari; `momentumSafeScroll: false`
+  opts out). — `src/mobile/mod.ts`.
+- **Native capabilities with web fallbacks** — `haptic`, `readClipboard` /
+  `writeClipboard`, `share`, `deviceInfo`, `networkStatus` /
+  `useNetworkStatus`, `useKeepAwake`, `hideSplash`, `secureStore` (Keychain /
+  Keystore; IndexedDB, not secret, on the web), the file API (`readFile` /
+  `writeFile` / `deleteFile` / `listDir` / `downloadToFile`; OPFS on the web),
+  `pickImage` / `pickDocument`, `scanBarcode` (`BarcodeDetector` on the web),
+  `setQuickActions` / `onQuickAction`, `openSqlite` / `deleteSqlite`
+  (`@capacitor-community/sqlite`; the app's `@sqlite.org/sqlite-wasm` on OPFS on
+  the web), and `showContextMenu` (an accessible in-page menu, or an
+  app-registered native plugin). Each calls its official Capacitor plugin in the
+  shell.
+- **Deep links, push and OAuth sheets** — `onDeepLink` / `useDeepLink` (cold and
+  warm start, filtered by `accept`, routed once); `requestPushPermission` /
+  `registerForPush` / `onPushReceived` / `onPushTapped` (a tapped
+  notification's `data.path` is navigated, cold start included; no web push);
+  `openAuthSession` / `completeAuthSession` — an `ASWebAuthenticationSession`
+  sheet on iOS, a Custom Tab on Android, a popup on the web, and in a Deno
+  Desktop window the system browser with an RFC 8252 one-shot loopback redirect
+  behind a per-launch token. — `src/mobile/auth-session.ts`,
+  `src/desktop/auth-session.ts`.
+- **`denext mobile add <capability...>`** — installs and registers the plugins
+  behind those functions in a Capacitor 8 project (`haptics`, `clipboard`,
+  `share`, `device`, `network`, `keep-awake`, `splash`, `secure-store`,
+  `browser`, `filesystem`, `camera`, `document-picker`, `barcode`,
+  `quick-actions`, `sqlite`, `deep-links --scheme/--domain`, `push`,
+  `auth-session --scheme`): usage strings, entitlements, Android permissions and
+  `minSdkVersion`, `AppDelegate` / `SceneDelegate` forwarding, the workspace's
+  package manager (exact pins when the project pins Capacitor exactly), then
+  `npx cap sync`; `--dry-run`, `--list`. — `src/build/mobile-capabilities.ts`.
+- **App extensions** — `denext mobile add share-extension | widget [--configurable]
+  | live-activity` create real Xcode targets sharing an App Group with the app,
+  plus Android `SEND` filters and an `AppWidgetProvider`, behind
+  `onShareReceived`, `setWidgetData` / `reloadWidgets` (per-parameter snapshots
+  for App Intents configurable widgets, iOS 17+) and `startLiveActivity` /
+  `updateLiveActivity` / `endLiveActivity` / `listLiveActivities` with push and
+  push-to-start (iOS 17.2+) token events. Generated views are templates the app
+  owns.
+- **Over-the-air UI updates** — `spa.ota` / `denext ota manifest` stamp a
+  SHA-256 manifest, `denext ota keygen` + `--sign` sign it (ECDSA P-256, public
+  key embedded by `denext mobile add-ota --public-key`), and
+  `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` drive
+  the native plugin, which verifies every file, refuses downgrades
+  (`sequence`), a UI that needs a newer binary (`--min-native`) or one built for
+  another native layer (`--native-fingerprint`, signed payload v3), and rolls
+  back a UI that never boots (`createOtaHandler` in `denext/server` serves the
+  export).
+- **`denext mobile fingerprint`** — a SHA-256 of the native layer (`ios/`,
+  `android/`, `capacitor.config.*` minus `server`, installed Capacitor plugin
+  versions): `--json`, `--diff <old.json>` (what changed, OTA-safe or not),
+  `--write` (embed it in Info.plist / AndroidManifest). The Expo
+  `@expo/fingerprint` equivalent. **`examples/capacitor-ci`** is a GitHub
+  Actions recipe that routes each push to a signed OTA manifest or signed store
+  binaries on it. — `src/build/mobile-fingerprint.ts`.
+- **Dev-server attach (the Metro model)** — `denext mobile dev [--lan]` points
+  the Capacitor app at `denext dev` for the session (config, iOS local-network
+  Info.plist keys and the native config copies all restored on exit or with
+  `--restore`); `denext dev --lan` binds the LAN IPv4 and prints a QR code;
+  `allowedDevOrigins` / `--allowed-dev-origin` and an explicit `--host` open
+  the dev origin gate to a named host only.
+- **Deno Desktop self-updater** — `denext/desktop/updater`
+  (`checkForDesktopUpdate` / `prepareDesktopUpdate` / `applyDesktopUpdate`,
+  enabled by `runDesktop({ updater })`): the mobile OTA manifest and signature,
+  verified in-process before anything is swapped, into a UI overlay outside the
+  signed bundle, with an atomic pointer swap, downgrade refusal and a rollback
+  when the page never confirms its boot. — `src/desktop/updater.ts`.
+- **React Native / Expo apps on the web** ⚑ — `reactNative: true` (SPA mode)
+  builds an Expo / React Native app's own source through react-native-web:
+  `react-native` (and deep `Libraries/…` paths) resolves to react-native-web for
+  every importer, `.web.*` files win, `.js` parses as JSX, `__DEV__` / `global`
+  / `EXPO_OS` are defined, the codegen / TurboModule entry points load as
+  stand-ins, `Appearance.setColorScheme` is added, expo-router's route context is
+  generated from `app/`, and the shell gets Expo web's root style. —
+  `src/build/react-native.ts`.
+- **`denext/expo/*`** — 35 drop-in `expo-*` shims (Expo SDK 57) over
+  `denext/mobile` and web APIs (haptics, secure-store, file-system, sqlite,
+  notifications, auth-session, web-browser, widgets, …), aliased automatically
+  in `reactNative` mode; `denext/expo/manifest` lists each one's status and
+  omissions. `registerRootComponent` mounts through `AppRegistry`, so the app's
+  own entry is the web entry. — `src/expo/manifest.ts`.
+- **`denext migrate --from expo`** — writes `deno.json`, a `reactNative`
+  `denext.config.ts` and a `capacitor.config.ts`; reads `app.json` /
+  `app.config.*` statically (never runs it) and reports shim status,
+  native-only packages, Metro-only modules and the `denext mobile add` command.
+- **React Native surface-parity gate** — `deno task parity:native` diffs
+  react-native-web's runtime exports against React Native's declared ones and
+  fails on a deviation not waived or ledgered (a PR-to-`main` CI job). —
+  `scripts/parity/native/check.ts`.
 
 ## Styling
 
@@ -594,7 +686,8 @@ cache uses Deno's built-in `node:sqlite`.)
   route's conformance result, and the last build's client bundle by chunk and
   role, read from `.denext/client` without building — and `--json` emits the same
   data structurally), `audit` (dependency inventory + zero-npm proof + CycloneDX
-  SBOM), `desktop run|build|package`, `migrate`, `codemod`, `mcp` (the agent
+  SBOM), `desktop run|build|package`, `mobile add|add-ota|dev|fingerprint`, `ota
+  keygen|manifest`, `migrate`, `codemod`, `mcp` (the agent
   server below), `version`. **A project can add its own verbs two ways**: a
   `commands: [{ name, summary, usage?, flags?, positionals?, run }]` array in
   `denext.config.ts` (no plugin needed) or a plugin's `addCommand` seam. Both are

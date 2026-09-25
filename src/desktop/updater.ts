@@ -42,6 +42,9 @@ import {
 } from "../mobile/ota-manifest.ts";
 import { parseOtaPublicKey } from "../build/ota-signing.ts";
 
+/** The signed manifest format the feed serves, shared with mobile OTA (`denext/mobile`). */
+export type { OtaManifest, OtaManifestFile } from "../mobile/ota-manifest.ts";
+
 /** ECDSA P-256 / SHA-256 — the same primitive the manifest is signed with. */
 const KEY_ALGORITHM = { name: "ECDSA", namedCurve: "P-256" } as const;
 const VERIFY_ALGORITHM = { name: "ECDSA", hash: "SHA-256" } as const;
@@ -80,7 +83,14 @@ export type DesktopUpdateErrorCode =
 
 /** A refusal from the updater, carrying a machine-readable {@linkcode DesktopUpdateErrorCode}. */
 export class DesktopUpdateError extends Error {
+  /** Always `"DesktopUpdateError"`. */
   override readonly name = "DesktopUpdateError";
+  /**
+   * Create a refusal.
+   *
+   * @param code The machine-readable reason, one of {@linkcode DesktopUpdateErrorCode}.
+   * @param message A human-readable description.
+   */
   constructor(readonly code: DesktopUpdateErrorCode, message: string) {
     super(message);
   }
@@ -722,16 +732,6 @@ async function rollback(dir: string, pointer: Pointer): Promise<void> {
   }
 }
 
-/**
- * The directory the desktop runtime should serve: the active verified overlay, or `bundledOut`.
- *
- * This is also the BOOT WATCHDOG. If the pointer is PENDING and a boot marker for the same
- * version already exists, the previous launch applied that version and never confirmed it (it
- * failed to boot), so it is ROLLED BACK — its sequence refused so it is not retried in a loop —
- * and the previous good version (or the bundle) is served. A pending version on its FIRST launch
- * is served with a fresh marker armed; {@linkcode desktopBooted} clears it. A confirmed pointer
- * whose files exist is served directly; anything missing falls back to `bundledOut`.
- */
 /** Roll `pointer` back and serve the resulting good overlay (or the bundle). */
 async function rollbackAndServe(
   dir: string,
@@ -743,6 +743,16 @@ async function rollbackAndServe(
   return rolled ? (await versionDirIfGood(dir, rolled.version)) ?? bundledOut : bundledOut;
 }
 
+/**
+ * The directory the desktop runtime should serve: the active verified overlay, or `bundledOut`.
+ *
+ * This is also the BOOT WATCHDOG. If the pointer is PENDING and a boot marker for the same
+ * version already exists, the previous launch applied that version and never confirmed it (it
+ * failed to boot), so it is ROLLED BACK — its sequence refused so it is not retried in a loop —
+ * and the previous good version (or the bundle) is served. A pending version on its FIRST launch
+ * is served with a fresh marker armed; {@linkcode desktopBooted} clears it. A confirmed pointer
+ * whose files exist is served directly; anything missing falls back to `bundledOut`.
+ */
 export async function resolveDesktopUiDir(
   bundledOut: string,
   config: DesktopUpdaterConfig,

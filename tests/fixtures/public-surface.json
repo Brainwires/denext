@@ -1098,6 +1098,8 @@
     "DesktopUpdatePrepared:interface",
     "DesktopUpdateStatus:interface",
     "DesktopUpdaterConfig:interface",
+    "OtaManifest:interface",
+    "OtaManifestFile:interface",
     "applyDesktopUpdate:function",
     "checkForDesktopUpdate:function",
     "desktopBooted:function",
