@@ -266,6 +266,12 @@ scheduled.
 
 ## Later (unscheduled)
 
+- **Windows desktop installers + signing** — an installer (`setup.exe`) and Authenticode
+  signing for `deno desktop` bundles, so Smart App Control trusts them. denext apps ship no
+  node-gyp / native deps, so signing the one executable (and the installer) is enough. The
+  packaging scripts in `examples/native/scripts` need their scaffold regeneration kept
+  byte-identical first.
+
 - Generated clients for **non-denext consumers** in **other languages** from the
   OpenAPI/GraphQL documents. TypeScript consumers are served:
   `denext openapi types` emits an import-free `ApiSchema` that
