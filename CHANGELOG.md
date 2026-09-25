@@ -33,6 +33,18 @@ and this project adheres to
   `cap copy` is now a note: run your export and `npx cap copy` before a release build.
   `--restore` now runs `cap copy` too (same note on failure) and prints one line per file it
   changed (`restored …`, `scrubbed the dev server URL from …`), or "nothing to restore".
+- **`denext mobile add-ota --dry-run` wrote the files.** The flag was ignored and the templates,
+  the Xcode project, the storyboard, SceneDelegate, MainActivity and the public key were all
+  written. It now changes nothing: it prints `--dry-run (nothing changed)` and what a real run
+  would write, upgrade, leave unchanged or keep (with the steps left by hand); the report,
+  including `--json` (which adds `"dryRun": true`), is the one a real run would produce, and
+  `--public-key` still exits non-zero when a real run would.
+- **`denext mobile add` added caret ranges to a project that pins Capacitor exactly.** When every
+  `@capacitor/*` package in `package.json` (dependencies and devDependencies) is an exact version,
+  the capability packages are now added exactly as well: the version the capability table was
+  verified against (the range's minimum, e.g. `@capacitor/app@8.1.1`), with the package manager's
+  exact flag (`npm install --save-exact`, `pnpm add --save-exact`, `yarn add --exact`,
+  `bun add --exact`) so it is saved without a caret. Any range among them keeps caret ranges.
 
 ## [2.10.0-rc.3] - 2026-09-25
 

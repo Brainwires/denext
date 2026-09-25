@@ -94,7 +94,10 @@ export interface CapabilityConfig {
 export interface MobileCapability {
   /** The npm package that provides the native plugin (none: denext's own plugin). */
   readonly npm?: string;
-  /** The version range added (`<npm>@<version>`), pinned to the plugin's Capacitor major. */
+  /**
+   * The version range added (`<npm>@<version>`), pinned to the plugin's Capacitor major. A
+   * project that pins its `@capacitor/*` packages exactly gets the range's minimum, exactly.
+   */
   readonly version?: string;
   /** The `@capacitor/core` major the pinned plugin (or denext's plugin template) targets. */
   readonly capacitorMajor: number;
@@ -806,9 +809,49 @@ async function detectPackageManager(root: string): Promise<DetectedPackageManage
 }
 
 /** `manager`'s command to add `specs` as dependencies. */
-function addCommand(manager: PackageManager, specs: string[], cwd: string): PlannedCommand {
+function addCommand(
+  manager: PackageManager,
+  specs: string[],
+  cwd: string,
+  exact: boolean,
+): PlannedCommand {
   const verb = manager === "npm" ? "install" : "add";
-  return { cmd: manager, args: [verb, ...specs], cwd };
+  const flag = !exact
+    ? []
+    : manager === "npm" || manager === "pnpm"
+    ? ["--save-exact"]
+    : ["--exact"];
+  return { cmd: manager, args: [verb, ...flag, ...specs], cwd };
+}
+
+/** A plain version (`8.5.2`, `8.0.0-rc.1`): what an exactly pinned dependency holds. */
+const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * Whether `root/package.json` pins its `@capacitor/*` packages exactly: it declares at least
+ * one, and every one (dependencies and devDependencies) is a plain version, not a range.
+ */
+async function pinsCapacitorExactly(root: string): Promise<boolean> {
+  const pkg = JSON.parse(await Deno.readTextFile(join(root, "package.json"))) as Record<
+    string,
+    unknown
+  >;
+  const versions = [pkg.dependencies, pkg.devDependencies].flatMap((deps) =>
+    deps !== null && typeof deps === "object"
+      ? Object.entries(deps).filter(([name]) => name.startsWith("@capacitor/")).map(([, v]) => v)
+      : []
+  );
+  return versions.length > 0 &&
+    versions.every((v) => typeof v === "string" && EXACT_VERSION.test(v.trim()));
+}
+
+/**
+ * The spec added for `cap`: its caret range, or with `exact` the range's minimum (`^8.1.2` →
+ * `8.1.2`), the version the table was verified against. A range that is not a caret is kept.
+ */
+function packageSpec(cap: MobileCapability, exact: boolean): string {
+  const version = exact ? cap.version!.replace(/^\^(?=\d)/, "") : cap.version!;
+  return `${cap.npm}@${version}`;
 }
 
 /** The capability names, deduplicated, refusing unknown ones. */
@@ -1043,7 +1086,8 @@ export async function planMobileCapabilities(
   }
   const { manager, lockfile, packageManagerField } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
-  const specs = caps.flatMap((c) => c.npm ? [`${c.npm}@${c.version}`] : []);
+  const exact = await pinsCapacitorExactly(root);
+  const specs = caps.flatMap((c) => c.npm ? [packageSpec(c, exact)] : []);
   const target = await entitlementsTarget(root);
   return {
     root,
@@ -1053,7 +1097,7 @@ export async function planMobileCapabilities(
     packageManagerField,
     capacitorMajor: core.major,
     capacitorSource: core.source,
-    install: specs.length > 0 ? addCommand(manager, specs, root) : undefined,
+    install: specs.length > 0 ? addCommand(manager, specs, root, exact) : undefined,
     sync: specs.length > 0 ? { cmd: "npx", args: ["cap", "sync"], cwd: root } : undefined,
     plist: uniquePlistKeys(caps),
     permissions: [...new Set(caps.flatMap((c) => c.androidPermissions ?? []))],

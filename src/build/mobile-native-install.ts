@@ -127,10 +127,30 @@ export const APP_EXTENSION_TEMPLATES: TemplateKind = {
 
 /** Accumulates the report while an installer runs. */
 export class NativeInstaller<O extends NativeInstallOptions, R extends NativeInstallReport> {
-  constructor(readonly opts: O, readonly report: R) {}
+  /** What a dry run would have written, by absolute path (read back by {@linkcode read}). */
+  readonly #pending = new Map<string, string>();
+
+  /**
+   * @param opts The installer's options.
+   * @param report The report to fill.
+   * @param dryRun Plan only: record every write and edit in the report, change no file.
+   */
+  constructor(readonly opts: O, readonly report: R, readonly dryRun = false) {}
 
   rel(path: string): string {
     return relative(this.opts.dir, path);
+  }
+
+  /** The contents of `path` as this run left it (a dry run's pending write first). */
+  async read(path: string): Promise<string | undefined> {
+    return this.#pending.get(path) ?? await readText(path);
+  }
+
+  /** Write `content` to `path` (creating its folder), or only remember it in a dry run. */
+  async #store(path: string, content: string): Promise<void> {
+    if (this.dryRun) return void this.#pending.set(path, content);
+    await Deno.mkdir(join(path, ".."), { recursive: true });
+    await Deno.writeTextFile(path, content);
   }
 
   /**
@@ -143,7 +163,7 @@ export class NativeInstaller<O extends NativeInstallOptions, R extends NativeIns
     content: string,
     isPristine: (existing: string) => Promise<boolean>,
   ): Promise<boolean> {
-    const existing = await readText(path);
+    const existing = await this.read(path);
     const rel = this.rel(path);
     if (existing === content) {
       this.report.unchanged.push(rel);
@@ -159,19 +179,18 @@ export class NativeInstaller<O extends NativeInstallOptions, R extends NativeIns
       }
       this.report.upgraded.push(rel);
     }
-    await Deno.mkdir(join(path, ".."), { recursive: true });
-    await Deno.writeTextFile(path, content);
+    await this.#store(path, content);
     this.report.written.push(rel);
     return true;
   }
 
   /** Rewrite `path` with `edit(text)`, recording it when the text changed. */
   async edit(path: string, edit: (text: string) => string): Promise<void> {
-    const text = await readText(path);
+    const text = await this.read(path);
     if (text === undefined) return;
     const next = edit(text);
     if (next === text) return void this.report.unchanged.push(this.rel(path));
-    await Deno.writeTextFile(path, next);
+    await this.#store(path, next);
     this.report.written.push(this.rel(path));
   }
 }
@@ -292,7 +311,7 @@ export async function installBridgeViewController(
   const root = inst.opts.dir;
   const path = join(root, IOS_APP, BRIDGE_VC_FILE);
   const features = await iosFeatures(root, including);
-  const existing = await readText(path);
+  const existing = await inst.read(path);
   // An OTA bridge from an earlier denext goes with that release's OTA files: only `add-ota`
   // upgrades them together, so another installer leaves it (the current OTA bridge may call
   // what the older OTA files lack).
@@ -309,7 +328,7 @@ export async function installBridgeViewController(
   }
   const content = await bridgeViewControllerSource(features);
   if (await inst.write(path, content, isPristineBridge)) return;
-  if (!((await readText(path)) ?? "").includes(registration.needle)) {
+  if (!((await inst.read(path)) ?? "").includes(registration.needle)) {
     inst.report.manual.push(`${inst.rel(path)}: ${registration.step}`);
   }
 }

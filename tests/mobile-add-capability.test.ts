@@ -130,6 +130,77 @@ Deno.test("mobile add: the package manager comes from the lockfile (npm without 
   }
 });
 
+Deno.test("mobile add: exact @capacitor/* pins get exact versions, with each manager's flag", async () => {
+  const exactPkg = JSON.stringify({
+    dependencies: { "@capacitor/core": "8.5.2", "@capacitor/app": "8.1.1" },
+    devDependencies: { "@capacitor/cli": "8.5.2" },
+  });
+  const cases: Array<[string | null, string, string, string]> = [
+    ["pnpm-lock.yaml", "pnpm", "add", "--save-exact"],
+    ["package-lock.json", "npm", "install", "--save-exact"],
+    ["bun.lock", "bun", "add", "--exact"],
+    ["yarn.lock", "yarn", "add", "--exact"],
+  ];
+  for (const [lockfile, cmd, verb, flag] of cases) {
+    await inProject({ "package.json": exactPkg, [lockfile!]: "" }, async (dir) => {
+      const plan = await planMobileCapabilities({ capabilities: ["haptics", "barcode"], cwd: dir });
+      assertEquals(plan.install, {
+        cmd,
+        args: [verb, flag, "@capacitor/haptics@8.0.2", "@capacitor/barcode-scanner@3.1.2"],
+        cwd: dir,
+      }, String(lockfile));
+      assertStringIncludes(
+        formatCapabilityPlan(plan),
+        `install        ${cmd} ${verb} ${flag} @capacitor/haptics@8.0.2`,
+      );
+    });
+  }
+  // A real run hands the exact specs to the runner.
+  await inProject({ "package.json": exactPkg }, async (dir) => {
+    const { run, calls } = fakeRunner();
+    await addMobileCapabilities({ capabilities: ["share"], cwd: dir, run });
+    assertEquals(calls[0].args, ["install", "--save-exact", "@capacitor/share@8.0.2"]);
+  });
+});
+
+Deno.test("mobile add: any @capacitor/* range (or none declared) keeps caret ranges", async () => {
+  const mixed = [
+    { "@capacitor/core": "8.5.2", "@capacitor/app": "^8.1.1" },
+    { "@capacitor/core": "~8.5.2" },
+    { "@capacitor/core": ">=8.0.0" },
+    { "@capacitor/core": "8.x" },
+  ];
+  for (const dependencies of mixed) {
+    await inProject({ "package.json": JSON.stringify({ dependencies }) }, async (dir) => {
+      const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
+      assertEquals(
+        plan.install?.args,
+        ["install", "@capacitor/haptics@^8.0.2"],
+        JSON.stringify(dependencies),
+      );
+    });
+  }
+  // Exact only in devDependencies but a range in dependencies: still carets.
+  await inProject({
+    "package.json": JSON.stringify({
+      dependencies: { "@capacitor/core": "^8.5.2" },
+      devDependencies: { "@capacitor/cli": "8.5.2" },
+    }),
+  }, async (dir) => {
+    const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
+    assertEquals(plan.install?.args, ["install", "@capacitor/haptics@^8.0.2"]);
+  });
+  // Exact non-Capacitor dependencies say nothing about the Capacitor style.
+  await inProject({
+    "package.json": JSON.stringify({
+      dependencies: { "@capacitor/core": "^8.5.2", "left-pad": "1.3.0" },
+    }),
+  }, async (dir) => {
+    const plan = await planMobileCapabilities({ capabilities: ["haptics"], cwd: dir });
+    assertEquals(plan.install?.args, ["install", "@capacitor/haptics@^8.0.2"]);
+  });
+});
+
 /**
  * A workspace in a temp dir: `files` at its root (null leaves a file out), with the fake
  * Capacitor project under `app` (`apps/capacitor` by default). Runs `fn` with the project

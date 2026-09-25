@@ -30,7 +30,6 @@ import {
   type NativeInstallReport,
   OTA_TEMPLATES,
   PBXPROJ,
-  readText,
   registerInMainActivity,
   wireBridgeViewController,
   writeTemplates,
@@ -44,6 +43,8 @@ export interface AddOtaOptions extends NativeInstallOptions {
    * earlier value; left out, neither file is touched.
    */
   publicKey?: string;
+  /** Plan only: fill the report with what would be written, and change no file. */
+  dryRun?: boolean;
 }
 
 /** What {@linkcode addOtaToProject} did, as project-relative paths and one-line notes. */
@@ -105,7 +106,7 @@ async function embedPublicKey(
 ): Promise<void> {
   const key = inst.opts.publicKey;
   if (key !== undefined) {
-    const text = await readText(path);
+    const text = await inst.read(path);
     const next = text === undefined ? null : keyFile.inject(text, key);
     if (next === null) {
       inst.report.keyNotEmbedded.push(inst.rel(path));
@@ -114,7 +115,7 @@ async function embedPublicKey(
       await inst.edit(path, () => next);
     }
   }
-  const final = await readText(path);
+  const final = await inst.read(path);
   if (final === undefined || !keyFile.has(final)) inst.report.unsignedPlatforms.push(platform);
 }
 
@@ -179,7 +180,7 @@ export async function addOtaToProject(opts: AddOtaOptions): Promise<AddOtaReport
     unchanged: [],
     manual: [],
     skipped: [],
-  });
+  }, opts.dryRun === true);
   await installIos(inst);
   await installAndroid(inst);
   return inst.report;

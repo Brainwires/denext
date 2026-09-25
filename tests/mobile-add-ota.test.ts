@@ -1100,3 +1100,130 @@ Deno.test("native templates: path, cap, release and trial rules (Android)", () =
   assertStringIncludes(plugin, `result.put("switched", false);`);
   assertStringIncludes(plugin, `result.put("staged", false);`);
 });
+
+// ---------------------------------------------------------------------------------------------
+// --dry-run: the same report as a real run, and not one byte changed.
+
+/** Every file under `dir` (relative path → content), for proving a run changed nothing. */
+async function snapshot(dir: string, sub = ""): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for await (const entry of Deno.readDir(join(dir, sub))) {
+    const rel = sub === "" ? entry.name : `${sub}/${entry.name}`;
+    if (entry.isDirectory) Object.assign(out, await snapshot(dir, rel));
+    else out[rel] = await Deno.readTextFile(join(dir, rel));
+  }
+  return out;
+}
+
+/** A deterministic pbxproj id generator, so two runs add the same objects. */
+function ids(): () => string {
+  let n = 0;
+  return () => (0xA0000000 + n++).toString(16).toUpperCase().padStart(24, "0");
+}
+
+Deno.test("add-ota: dryRun reports exactly what a real run does and writes nothing", async () => {
+  const { publicKey } = await generateOtaKeyPair();
+  const dir = await keyedProject();
+  try {
+    const before = await snapshot(dir);
+    const planned = await addOtaToProject({ dir, publicKey, dryRun: true, randomId: ids() });
+    assertEquals(await snapshot(dir), before);
+    assert(planned.written.includes("ios/App/App/DenextOtaPlugin.swift"), planned.written.join());
+    assert(planned.written.includes(INFO_PLIST));
+    // The key's pending edit is seen by the unsigned check: nothing reported unsigned.
+    assertEquals(planned.unsignedPlatforms, []);
+    const done = await addOtaToProject({ dir, publicKey, randomId: ids() });
+    assertEquals(planned, done);
+    // Installed: a dry run now reports every file unchanged, and still writes nothing.
+    const installed = await snapshot(dir);
+    const again = await addOtaToProject({ dir, publicKey, dryRun: true });
+    assertEquals(again.written, []);
+    assertEquals(again.kept, []);
+    assertEquals(await snapshot(dir), installed);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("add-ota: dryRun over an earlier template and an edited one: upgrade and keep, no write", async () => {
+  const dir = await project();
+  try {
+    await addOtaToProject({ dir });
+    const older = "// denext-ota-template: 2 sha256=" +
+      (await renderOtaTemplate("// an older template\n")).split("sha256=")[1];
+    await Deno.writeTextFile(join(dir, IOS_STORE), older);
+    const plugin = "ios/App/App/DenextOtaPlugin.swift";
+    await Deno.writeTextFile(join(dir, plugin), "// mine\n");
+    const before = await snapshot(dir);
+    const report = await addOtaToProject({ dir, dryRun: true });
+    assertEquals(report.upgraded, [IOS_STORE]);
+    assertEquals(report.kept, [plugin]);
+    assertEquals(await snapshot(dir), before);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext mobile add-ota --dry-run prints the plan and changes nothing (text, --json, --public-key)", async () => {
+  const dir = await keyedProject();
+  try {
+    const before = await snapshot(dir);
+    const lines = await addOtaVerb(dir, { "dry-run": true });
+    assert(lines.some((l) => l.includes("--dry-run (nothing changed)")), lines.join("\n"));
+    assert(
+      lines.some((l) => l.includes("would write") && l.includes("DenextOtaPlugin.swift")),
+      lines.join("\n"),
+    );
+    assert(!lines.some((l) => /\b(wrote|upgraded)\b/.test(l)), lines.join("\n"));
+    assertEquals(await snapshot(dir), before);
+
+    const { publicKey } = await generateOtaKeyPair();
+    await Deno.writeTextFile(join(dir, "ota.key.pub"), publicKey + "\n");
+    const withKey = await snapshot(dir);
+    const keyed = await addOtaVerb(dir, {
+      "dry-run": true,
+      "public-key": join(dir, "ota.key.pub"),
+    });
+    assert(keyed.some((l) => l.includes("would write") && l.includes("Info.plist")));
+    assertEquals(await snapshot(dir), withKey);
+
+    const log = console.log;
+    const out: string[] = [];
+    console.log = (...a: unknown[]) => void out.push(a.join(" "));
+    try {
+      await buildRegistry().get("mobile")!.run({
+        positionals: ["add-ota", dir],
+        flags: { "dry-run": true },
+        global: { json: true, verbose: false, quiet: false },
+        rest: [],
+      });
+    } finally {
+      console.log = log;
+    }
+    const json = JSON.parse(out.join("\n"));
+    assertEquals(json.dryRun, true);
+    assert(json.written.includes("ios/App/App/DenextOtaPlugin.swift"));
+    assertEquals(await snapshot(dir), withKey);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denext mobile add-ota --dry-run --public-key still fails over a kept template, writing nothing", async () => {
+  const { publicKey } = await generateOtaKeyPair();
+  const dir = await keyedProject();
+  try {
+    await addOtaToProject({ dir });
+    await Deno.writeTextFile(join(dir, IOS_STORE), "// mine\n");
+    await Deno.writeTextFile(join(dir, "ota.key.pub"), publicKey + "\n");
+    const before = await snapshot(dir);
+    const { errors } = await addOtaVerbFails(dir, {
+      "dry-run": true,
+      "public-key": join(dir, "ota.key.pub"),
+    });
+    assert(errors.some((e) => e.includes("edited template that was kept")), errors.join("\n"));
+    assertEquals(await snapshot(dir), before);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

@@ -7,7 +7,8 @@
 //                                 stamping a sequence)
 //   denext ota keygen <out>       write a P-256 signing key (<out>) and its public key (<out>.pub)
 //   denext mobile add-ota [dir]   install the native DenextOta plugin into ios/ + android/
-//                                 (--public-key <file> embeds the verifying key)
+//                                 (--public-key <file> embeds the verifying key,
+//                                 --dry-run lists the changes and makes none)
 //   denext mobile add <cap...>    add the Capacitor plugins behind denext/mobile's capability
 //                                 functions (haptics, share, secure-store, deep-links, push,
 //                                 …), their native config, and `cap sync` (--dry-run plans,
@@ -334,18 +335,20 @@ export const otaCommand: CommandSpec = {
   },
 };
 
-/** Print an add-ota report. */
-function printReport(report: AddOtaReport): void {
+/** Print an add-ota report; a dry run's lists say what a real run would do, and stop there. */
+function printReport(report: AddOtaReport, dryRun: boolean): void {
   const upgraded = new Set(report.upgraded);
+  const [upgrade, write] = dryRun ? ["would upgrade", "would write  "] : ["upgraded", "wrote   "];
   for (const path of report.written) {
-    console.log(`  ${upgraded.has(path) ? "upgraded" : "wrote   "}   ${path}`);
+    console.log(`  ${upgraded.has(path) ? upgrade : write}   ${path}`);
   }
   for (const path of report.unchanged) console.log(`  unchanged  ${path}`);
   for (const note of report.skipped) console.log(`  skipped    ${note}`);
   if (report.manual.length > 0) {
-    console.log("\n  Still to do by hand:");
+    console.log(dryRun ? "\n  By hand:" : "\n  Still to do by hand:");
     for (const note of report.manual) console.log(`    - ${note}`);
   }
+  if (dryRun) return;
   console.log(
     "\n  Next: stamp the bundled UI (`spa.ota: true`, or `denext ota manifest out` before\n" +
       "  `cap sync`), serve the export (see createOtaHandler in denext/server), and call\n" +
@@ -399,16 +402,21 @@ async function publicKeyFlag(ctx: CommandContext): Promise<string | undefined> {
 async function addOta(ctx: CommandContext): Promise<void> {
   const dir = resolve(ctx.global.cwd ?? ".", ctx.positionals[1] ?? ".");
   const publicKey = await publicKeyFlag(ctx);
+  const dryRun = ctx.flags["dry-run"] === true;
   let report: AddOtaReport;
   try {
-    report = await addOtaToProject({ dir, force: ctx.flags.force === true, publicKey });
+    report = await addOtaToProject({ dir, force: ctx.flags.force === true, publicKey, dryRun });
   } catch (err) {
     fail(`denext mobile add-ota: ${err instanceof Error ? err.message : String(err)}`);
   }
-  if (ctx.global.json) console.log(JSON.stringify(report));
+  if (ctx.global.json) console.log(JSON.stringify(dryRun ? { ...report, dryRun } : report));
   else {
-    console.log(`\n  denext mobile add-ota  ▸  ${dir}\n`);
-    printReport(report);
+    console.log(
+      dryRun
+        ? `\n  denext mobile add-ota --dry-run (nothing changed)  ▸  ${dir}\n`
+        : `\n  denext mobile add-ota  ▸  ${dir}\n`,
+    );
+    printReport(report, dryRun);
   }
   if (report.skipped.length === 2) {
     fail("\n  denext mobile add-ota: no ios/ or android/ project found.");
@@ -739,10 +747,11 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  with no fallback, else the current directory), refuses when its @capacitor/core major\n" +
     "  is not the one the pinned plugins target, adds the packages with the package manager\n" +
     "  the nearest lockfile names (pnpm, npm, bun or yarn, looking up to the repository root\n" +
-    "  for a workspace's; else a packageManager field; else npm), adds any Info.plist keys\n" +
-    "  (never replacing yours) and Android permissions the capability needs, and runs\n" +
-    "  `npx cap sync`. --dry-run prints the plan and changes nothing. Ship a new app binary\n" +
-    "  afterwards.\n" +
+    "  for a workspace's; else a packageManager field; else npm) as caret ranges, or as exact\n" +
+    "  versions (the range's minimum) when package.json pins every @capacitor/* package\n" +
+    "  exactly, adds any Info.plist keys (never replacing yours) and Android permissions the\n" +
+    "  capability needs, and runs `npx cap sync`. --dry-run prints the plan and changes\n" +
+    "  nothing. Ship a new app binary afterwards.\n" +
     "\n" +
     "  deep-links takes --scheme (CFBundleURLTypes + a VIEW intent filter) and --domain\n" +
     "  (applinks: in the entitlements + an autoVerify https intent filter); give several as\n" +
@@ -790,7 +799,8 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  DenextOtaPublicKey and the dev.denext.ota.PUBLIC_KEY meta-data in AndroidManifest.xml\n" +
     "  (replacing an earlier one); the app then refuses any manifest not signed with its key.\n" +
     "  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n" +
-    "  template was kept.",
+    "  template was kept. --dry-run lists what it would write, upgrade or keep and changes\n" +
+    "  nothing.",
   positionals: [
     { name: "action", help: "add | add-ota | dev | fingerprint", required: true },
     {
@@ -861,7 +871,8 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     {
       name: "dry-run",
       type: "boolean",
-      help: "add: print the plan (packages, native config, commands) and change nothing",
+      help:
+        "add, add-ota: print the plan (packages, native files, config, commands) and change nothing",
     },
     {
       name: "list",
