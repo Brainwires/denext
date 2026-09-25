@@ -31,14 +31,14 @@ const SECRET = "test-secret-value-at-least-32-chars-long";
 
 /** Run `fn` under the production signal, restoring the environment however it ends. */
 async function inProduction(fn: () => void | Promise<void>): Promise<void> {
-  const prev = Deno.env.get("DENEXT_ENV");
-  Deno.env.set("DENEXT_ENV", "production");
+  const flags = globalThis as Record<symbol, unknown>;
+  // Per isolate, unlike DENEXT_ENV (shared by every --parallel test module).
+  flags[Symbol.for("denext.testing.forceProduction")] = true;
   try {
     assert(isProductionEnv());
     await fn();
   } finally {
-    if (prev === undefined) Deno.env.delete("DENEXT_ENV");
-    else Deno.env.set("DENEXT_ENV", prev);
+    delete flags[Symbol.for("denext.testing.forceProduction")];
   }
   assert(!isProductionEnv(), "signal restored");
 }

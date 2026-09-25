@@ -45,7 +45,7 @@ action since 2.9, whichever rc introduced it.
   `data-open="false"`, which a presence selector such as `[data-open]` now matches. Match on the
   value (`[data-open="true"]`) or omit the prop instead of passing `false`, and regenerate DOM
   snapshots. SSR already rendered these values.
-  ([2.10.0-rc.1](/docs/changelog#2100-rc1---2026-09-24))
+  ([2.10.0-rc.1](/docs/changelog#2100---2026-09-25))
 - **An explicit `denext dev --host` allows the host it binds** through the dev origin gate
   (`0.0.0.0` / `::` allow this machine's own addresses), and the SPA dev server now applies
   `allowedDevOrigins` too. `.denext/dev.json` records the bind as given in `hostname` and the
@@ -65,15 +65,15 @@ action since 2.9, whichever rc introduced it.
   any caret range still gets caret ranges. It also picks the package manager from the nearest
   lockfile up to the repository root, so a pnpm workspace member no longer gets
   `npm install`.
-  ([2.10.0](/docs/changelog), [2.10.0-rc.2](/docs/changelog#2100-rc2---2026-09-25))
+  ([2.10.0](/docs/changelog), [2.10.0-rc.2](/docs/changelog#2100---2026-09-25))
 - **`denext mobile add barcode` raises `minSdkVersion` to 26** in `android/variables.gradle`
   (the scanner's Android library requires it; Capacitor 8 defaults to 24).
-  ([2.10.0-rc.2](/docs/changelog#2100-rc2---2026-09-25))
+  ([2.10.0-rc.2](/docs/changelog#2100---2026-09-25))
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace**
   (`deno run -A --node-modules-dir=none jsr:@denext/denext/cli …`). Without it Deno resolves
   denext's `npm:` imports from the workspace's `node_modules` and fails, and next to a
   `pnpm-workspace.yaml` Deno 2.9.7 rewrites the root `package.json`.
-  ([2.10.0-rc.2](/docs/changelog#2100-rc2---2026-09-25))
+  ([2.10.0-rc.2](/docs/changelog#2100---2026-09-25))
 - **From 2.10.0-rc.3: run `denext mobile dev --restore` once** if a `mobile dev` session ran
   under the rc. Its restore could leave the dev server URL in
   `ios/App/App/capacitor.config.json` and `android/app/src/main/assets/capacitor.config.json`
