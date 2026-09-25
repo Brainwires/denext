@@ -331,6 +331,41 @@ export function withPlistUrlScheme(plist: string, scheme: string): string | null
   return insertAbove(plist, close, urlTypeLines(scheme), "\t\t");
 }
 
+/**
+ * `plist` with the boolean `key` set to `<true/>` inside the top-level dict `dictKey`, merging
+ * into that dict (its other keys stay) and adding it when absent. Unchanged when the key is
+ * already `<true/>`; null without a top-level dict, or when `dictKey` is not a dict.
+ */
+export function withPlistDictTrue(plist: string, dictKey: string, key: string): string | null {
+  const at = topLevelKey(plist, dictKey);
+  if (!at) return null;
+  const { top, found } = at;
+  const entry = [`<key>${key}</key>`, "<true/>"];
+  if (!found) {
+    return withTopLevelKey(plist, top, dictKey, [
+      "<dict>",
+      ...entry.map((l) => `\t${l}`),
+      "</dict>",
+    ]);
+  }
+  const span = plistValueSpan(plist, found.end);
+  if (!span || span.name !== "dict") return null;
+  if (span.empty) {
+    const lines = ["<dict>", ...entry.map((l) => `\t${l}`), "</dict>"];
+    return plist.slice(0, span.start) + lines.join("\n\t") + plist.slice(span.end);
+  }
+  // The dict's own keys, found the way the top-level ones are: as if it were a plist's dict.
+  const shift = span.start - "<plist>".length;
+  const inner = plistTopDict("<plist>" + plist.slice(span.start, span.end));
+  if (!inner) return null;
+  const own = inner.keys.find((k) => k.name === key);
+  if (!own) return insertAbove(plist, inner.close + shift, entry, "\t\t");
+  const value = plistValueSpan(plist, own.end + shift);
+  if (!value) return null;
+  if (value.name === "true" && value.empty) return plist;
+  return plist.slice(0, value.start) + "<true/>" + plist.slice(value.end);
+}
+
 /** An empty entitlements plist, for an app that has none yet. */
 export const EMPTY_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -299,6 +299,23 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         <code>webDir</code> built once.
       </p>
       <p>
+        On iOS, <code>cleartext</code> does nothing (it is Android's{" "}
+        <code>usesCleartextTraffic</code>, which <code>cap copy</code>{" "}
+        writes for you). A WebView reaches a LAN dev server only when{" "}
+        <code>ios/App/App/Info.plist</code> has <code>NSAppTransportSecurity</code> →{" "}
+        <code>NSAllowsLocalNetworking</code> (App Transport Security) and a{" "}
+        <code>NSLocalNetworkUsageDescription</code>{" "}
+        (without one, iOS 14+ silently denies local-network requests and the app hangs on its splash
+        screen). <code>mobile dev</code>{" "}
+        adds both for the session, merging into an existing ATS dict and keeping an existing
+        description, and puts the plist back with the config. A changed Info.plist is a native
+        change: rebuild and run the app from Xcode (it prints so). Xcode opens{" "}
+        <code>ios/App/App.xcworkspace</code> for a CocoaPods project and{" "}
+        <code>ios/App/App.xcodeproj</code>{" "}
+        for a Swift Package Manager one (Capacitor 8's default), and the printed steps name
+        whichever exists.
+      </p>
+      <p>
         Without the helper, <code>denext dev --lan</code>{" "}
         binds the machine's LAN IPv4, allows it through the dev origin gate, and prints its URL with
         a QR code to scan. By default the dev assets (<code>/_denext/*</code>) answer only a

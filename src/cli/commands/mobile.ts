@@ -723,8 +723,11 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  Capacitor project's capacitor.config.* (--dir, else the current directory) and runs\n" +
     "  `npx cap copy`, so the app loads the dev server and reloads on every edit. --lan binds\n" +
     "  the LAN IPv4 (a physical device on the same network); without it the URL is\n" +
-    "  localhost (the iOS simulator, or Android behind `adb reverse`). The config edit is\n" +
-    "  temporary: Ctrl-C, SIGTERM or an error puts the original bytes back and runs\n" +
+    "  localhost (the iOS simulator, or Android behind `adb reverse`). On iOS it also adds\n" +
+    "  NSAppTransportSecurity > NSAllowsLocalNetworking and (when absent) an\n" +
+    "  NSLocalNetworkUsageDescription to ios/App/App/Info.plist, without which the WebView\n" +
+    "  never reaches a LAN server; a changed Info.plist needs a rebuild from Xcode. The edits\n" +
+    "  are temporary: Ctrl-C, SIGTERM or an error puts the original bytes back and runs\n" +
     "  `cap copy` again. A killed run leaves a backup in .denext/; the next `mobile dev`, or\n" +
     "  `mobile dev --restore`, restores it first. `cap copy` needs the webDir built once.\n" +
     "\n" +
@@ -847,7 +850,8 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     {
       name: "restore",
       type: "boolean",
-      help: "dev: only put back a capacitor.config an interrupted session left edited",
+      help:
+        "dev: only put back a capacitor.config (and Info.plist) an interrupted session left edited",
     },
     {
       name: "dry-run",

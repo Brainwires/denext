@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`denext mobile dev` on a physical iPhone hung on the splash screen.** `server.cleartext` is
+  Android-only; on iOS the WebView never reached `http://<LAN IP>:3000` because App Transport
+  Security blocked it and, without `NSLocalNetworkUsageDescription`, iOS 14+ silently denied the
+  local-network request. `mobile dev` now adds `NSAppTransportSecurity` →
+  `NSAllowsLocalNetworking` (merged into an existing ATS dict) and a default
+  `NSLocalNetworkUsageDescription` (an existing one is kept) to `ios/App/App/Info.plist` for the
+  session, backs up its original bytes with the config in `.denext/mobile-dev-backup.json`, and
+  restores them on exit and with `--restore` (a planted backup can only restore that plist). An
+  unchanged plist is never rewritten; a changed one prints "Info.plist changed: rebuild and run
+  the app from Xcode". The printed steps now name `ios/App/App.xcworkspace` only when it exists,
+  else `ios/App/App.xcodeproj` (Capacitor 8 Swift Package Manager projects have no workspace).
+
 ## [2.10.0-rc.3] - 2026-09-25
 
 ### Added

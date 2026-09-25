@@ -6,11 +6,13 @@ import { join } from "@std/path";
 import type { PlannedCommand } from "../src/build/mobile-capabilities.ts";
 import {
   capacitorConfigFile,
+  LOCAL_NETWORK_USAGE,
   type MobileDevDeps,
   type MobileDevServer,
   restoreCapacitorConfig,
   runMobileDev,
   withDevServerUrl,
+  withLocalNetworkAccess,
 } from "../src/build/mobile-dev.ts";
 
 const URL_ = "http://192.168.1.5:3000";
@@ -219,5 +221,263 @@ Deno.test("capacitorConfigFile follows Capacitor's lookup order; none is an erro
     );
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+// ---- iOS: the Info.plist keys a WebView needs to reach a LAN dev server ----------------------
+
+/** Capacitor's stock Info.plist, trimmed (no ATS, no local-network usage description). */
+const STOCK_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Example</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+</dict>
+</plist>
+`;
+
+/** The plist with both keys, as `mobile dev` needs them. */
+const READY_PLIST = STOCK_PLIST.replace(
+  "</dict>\n</plist>",
+  "\t<key>NSAppTransportSecurity</key>\n\t<dict>\n\t\t<key>NSAllowsLocalNetworking</key>\n" +
+    "\t\t<true/>\n\t</dict>\n\t<key>NSLocalNetworkUsageDescription</key>\n" +
+    "\t<string>Talks to the dev box.</string>\n</dict>\n</plist>",
+);
+
+/** The top-level `NSAppTransportSecurity` dict's text. */
+function atsDict(plist: string): string {
+  const m = /<key>NSAppTransportSecurity<\/key>\s*(<dict>[\s\S]*?<\/dict>)/.exec(plist);
+  assert(m, "an NSAppTransportSecurity dict");
+  return m[1];
+}
+
+Deno.test("withLocalNetworkAccess adds ATS local networking and a usage description to a stock plist", () => {
+  const out = withLocalNetworkAccess(STOCK_PLIST);
+  assert(out);
+  assertStringIncludes(atsDict(out), "<key>NSAllowsLocalNetworking</key>\n\t\t<true/>");
+  assertStringIncludes(
+    out,
+    `<key>NSLocalNetworkUsageDescription</key>\n\t<string>${LOCAL_NETWORK_USAGE}</string>`,
+  );
+  assertStringIncludes(out, "<key>UIApplicationSupportsMultipleScenes</key>\n\t\t<false/>");
+  assert(out.endsWith("</dict>\n</plist>\n"));
+  assertEquals(withLocalNetworkAccess(out), out, "idempotent");
+});
+
+Deno.test("withLocalNetworkAccess merges into an existing ATS dict without losing its keys", () => {
+  const plist = STOCK_PLIST.replace(
+    "</dict>\n</plist>",
+    "\t<key>NSAppTransportSecurity</key>\n\t<dict>\n\t\t<key>NSAllowsArbitraryLoads</key>\n" +
+      "\t\t<true/>\n\t\t<key>NSExceptionDomains</key>\n\t\t<dict>\n" +
+      "\t\t\t<key>example.com</key>\n\t\t\t<dict>\n" +
+      "\t\t\t\t<key>NSAllowsLocalNetworking</key>\n\t\t\t\t<false/>\n" +
+      "\t\t\t</dict>\n\t\t</dict>\n\t</dict>\n</dict>\n</plist>",
+  );
+  const out = withLocalNetworkAccess(plist);
+  assert(out);
+  const ats = /<key>NSAppTransportSecurity<\/key>\s*<dict>([\s\S]*)<\/dict>\s*<key>NSLocal/
+    .exec(out)?.[1] ?? "";
+  assertStringIncludes(ats, "<key>NSAllowsArbitraryLoads</key>\n\t\t<true/>");
+  assertStringIncludes(ats, "<key>example.com</key>");
+  assertStringIncludes(ats, "\t\t\t\t<key>NSAllowsLocalNetworking</key>\n\t\t\t\t<false/>");
+  assertStringIncludes(ats, "\t\t</dict>\n\t\t<key>NSAllowsLocalNetworking</key>\n\t\t<true/>\n\t");
+  assertEquals(out.match(/<key>NSAppTransportSecurity<\/key>/g)?.length, 1);
+
+  // A direct `false` is flipped in place, and an empty `<dict/>` filled.
+  const off = READY_PLIST.replace("<true/>\n\t</dict>", "<false/>\n\t</dict>");
+  assertEquals(withLocalNetworkAccess(off), READY_PLIST);
+  const empty = withLocalNetworkAccess(
+    STOCK_PLIST.replace(
+      "</dict>\n</plist>",
+      "\t<key>NSAppTransportSecurity</key>\n\t<dict/>\n</dict>\n</plist>",
+    ),
+  );
+  assert(empty);
+  assertStringIncludes(atsDict(empty), "<key>NSAllowsLocalNetworking</key>");
+
+  // An ATS value that is not a dict is left for the developer.
+  assertEquals(
+    withLocalNetworkAccess(
+      STOCK_PLIST.replace(
+        "</dict>\n</plist>",
+        "\t<key>NSAppTransportSecurity</key>\n\t<string/>\n</dict>\n</plist>",
+      ),
+    ),
+    null,
+  );
+});
+
+Deno.test("withLocalNetworkAccess keeps an app's own usage description", () => {
+  const plist = STOCK_PLIST.replace(
+    "</dict>\n</plist>",
+    "\t<key>NSLocalNetworkUsageDescription</key>\n\t<string>Finds printers.</string>\n</dict>\n</plist>",
+  );
+  const out = withLocalNetworkAccess(plist);
+  assert(out);
+  assertStringIncludes(out, "<string>Finds printers.</string>");
+  assert(!out.includes(LOCAL_NETWORK_USAGE));
+  assertEquals(withLocalNetworkAccess(READY_PLIST), READY_PLIST, "both present: unchanged");
+});
+
+/** A project with an iOS app: its Info.plist (and, optionally, a CocoaPods workspace). */
+async function iosProject(
+  plist: string,
+  workspace = false,
+): Promise<{ root: string; file: string; plistFile: string }> {
+  const { root, file } = await project();
+  const plistFile = join(root, "ios", "App", "App", "Info.plist");
+  await Deno.mkdir(join(root, "ios", "App", "App"), { recursive: true });
+  await Deno.mkdir(join(root, "ios", "App", "App.xcodeproj"));
+  if (workspace) await Deno.mkdir(join(root, "ios", "App", "App.xcworkspace"));
+  await Deno.writeTextFile(plistFile, plist);
+  return { root, file, plistFile };
+}
+
+/** One session through the fakes: the log, and the Info.plist `cap copy` saw mid-session. */
+async function session(root: string, file: string, plistFile: string) {
+  const lines: string[] = [];
+  const f = fakes(root, file);
+  const during: string[] = [];
+  const deps: MobileDevDeps = {
+    ...f.deps,
+    run: async (command) => {
+      during.push(await Deno.readTextFile(plistFile));
+      return await f.deps.run(command);
+    },
+    log: (l) => lines.push(l),
+  };
+  await runMobileDev({ cwd: root }, deps);
+  return { log: lines.join("\n"), during };
+}
+
+Deno.test("mobile dev adds the Info.plist keys for the session and restores the plist byte-for-byte", async () => {
+  // A BOM and CRLFs, so a text round trip that normalised either would show.
+  const original = "\uFEFF" + STOCK_PLIST.replaceAll("\n", "\r\n");
+  const { root, file, plistFile } = await iosProject(original);
+  try {
+    const before = await Deno.readFile(plistFile);
+    const { log, during } = await session(root, file, plistFile);
+    assertStringIncludes(during[0], "<key>NSAllowsLocalNetworking</key>");
+    assertStringIncludes(during[0], "<key>NSLocalNetworkUsageDescription</key>");
+    assertEquals(await Deno.readFile(plistFile), before, "byte-identical afterwards");
+    assertEquals(await Deno.readTextFile(file), TS_TEMPLATE);
+    assertStringIncludes(log, "Info.plist changed: rebuild and run the app from Xcode");
+    assertStringIncludes(log, "restores capacitor.config and Info.plist,");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("mobile dev --restore puts a killed session's Info.plist back byte-for-byte", async () => {
+  const { root, file, plistFile } = await iosProject(STOCK_PLIST);
+  try {
+    await Deno.mkdir(join(root, ".denext"));
+    await Deno.writeTextFile(
+      join(root, ".denext", "mobile-dev-backup.json"),
+      JSON.stringify({
+        file: "capacitor.config.ts",
+        original: TS_TEMPLATE,
+        plist: { file: "ios/App/App/Info.plist", original: STOCK_PLIST },
+      }),
+    );
+    await Deno.writeTextFile(file, await withDevServerUrl(file, TS_TEMPLATE, URL_));
+    await Deno.writeTextFile(plistFile, withLocalNetworkAccess(STOCK_PLIST)!);
+    assertEquals(await restoreCapacitorConfig(root), file);
+    assertEquals(await Deno.readTextFile(plistFile), STOCK_PLIST);
+    assertEquals(await Deno.readTextFile(file), TS_TEMPLATE);
+    assertEquals(await restoreCapacitorConfig(root), null, "the backup is gone");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("mobile dev leaves a ready Info.plist unwritten and prints no rebuild note", async () => {
+  const { root, file, plistFile } = await iosProject(READY_PLIST);
+  try {
+    const mtime = (await Deno.stat(plistFile)).mtime;
+    await new Promise((done) => setTimeout(done, 20));
+    const { log, during } = await session(root, file, plistFile);
+    assertEquals(during[0], READY_PLIST);
+    assertEquals(await Deno.readTextFile(plistFile), READY_PLIST);
+    assertEquals((await Deno.stat(plistFile)).mtime, mtime, "never rewritten");
+    assert(!log.includes("Info.plist changed"));
+    assertStringIncludes(log, "restores capacitor.config and runs `cap copy` again");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("mobile dev names the .xcworkspace when there is one, else the .xcodeproj", async () => {
+  for (const workspace of [false, true]) {
+    const { root, file, plistFile } = await iosProject(READY_PLIST, workspace);
+    try {
+      const { log } = await session(root, file, plistFile);
+      const expected = workspace ? "ios/App/App.xcworkspace" : "ios/App/App.xcodeproj";
+      assertStringIncludes(log, `open ${expected} in Xcode`);
+      assert(!log.includes(workspace ? "App.xcodeproj" : "App.xcworkspace"));
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+});
+
+Deno.test("a planted backup cannot redirect the Info.plist restore outside the project", async () => {
+  for (const plistPath of ["../Info.plist", "ios/App/Other/Info.plist", "capacitor.config.ts"]) {
+    const { root, file } = await iosProject(STOCK_PLIST);
+    try {
+      await Deno.mkdir(join(root, ".denext"));
+      await Deno.writeTextFile(
+        join(root, ".denext", "mobile-dev-backup.json"),
+        JSON.stringify({
+          file: "capacitor.config.ts",
+          original: "config-bytes",
+          plist: { file: plistPath, original: "pwned" },
+        }),
+      );
+      await assertRejects(() => restoreCapacitorConfig(root), Error, "not a mobile dev backup");
+      assertEquals(await Deno.readTextFile(file), TS_TEMPLATE, "nothing written before the check");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+});
+
+Deno.test("mobile dev warns when the Android app declares its own network security config", async () => {
+  const manifest = (attrs: string) =>
+    `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="Example"${attrs}>
+    </application>
+</manifest>
+`;
+  for (const declared of [false, true]) {
+    const { root, file, plistFile } = await iosProject(READY_PLIST);
+    try {
+      const path = join(root, "android", "app", "src", "main", "AndroidManifest.xml");
+      await Deno.mkdir(join(root, "android", "app", "src", "main"), { recursive: true });
+      const text = manifest(
+        declared ? '\n        android:networkSecurityConfig="@xml/network_security_config"' : "",
+      );
+      await Deno.writeTextFile(path, text);
+      const { log } = await session(root, file, plistFile);
+      if (declared) {
+        assertStringIncludes(log, "declares android:networkSecurityConfig");
+        assertStringIncludes(log, "overrides usesCleartextTraffic");
+        assertStringIncludes(log, `refuse ${URL_}`);
+        assertStringIncludes(log, "Allow cleartext for 192.168.1.5");
+        assertStringIncludes(log, "https");
+      } else {
+        assert(!log.includes("networkSecurityConfig"));
+      }
+      assertEquals(await Deno.readTextFile(path), text, "their manifest is never edited");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
   }
 });
