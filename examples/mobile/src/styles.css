@@ -1,0 +1,94 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+}
+
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  /* SAFE_AREA_CSS (from denext/mobile) defines the --denext-safe-* insets. */
+  padding: calc(var(--denext-safe-top, 0px) + 12px)
+    calc(var(--denext-safe-right, 0px) + 12px)
+    calc(var(--denext-safe-bottom, 0px) + 24px) calc(var(--denext-safe-left,
+    0px) + 12px);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.card {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+  border-radius: 12px;
+}
+
+.note,
+.label {
+  margin: 4px 0 8px;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+input:not([type="checkbox"]) {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.row > input {
+  width: auto;
+  flex: 1;
+}
+
+.toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.out {
+  margin: 8px 0 0;
+  padding: 8px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.8rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, CanvasText 8%, transparent);
+}
+
+.preview {
+  max-width: 100%;
+  max-height: 240px;
+  margin-top: 8px;
+  border-radius: 8px;
+}

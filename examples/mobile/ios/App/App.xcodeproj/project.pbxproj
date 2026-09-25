@@ -1,0 +1,722 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
+		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
+		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
+		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
+		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
+		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
+		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
+		5990BD472A428677B712A6CC /* DenextBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B8D7AA5244D27576EE558E9 /* DenextBridgeViewController.swift */; };
+		8A6FF64A7D21AD99EF21FB0B /* DenextAuthSessionPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 243967F923DC732289F6F11C /* DenextAuthSessionPlugin.swift */; };
+		CDAB42865206F77DA7A5BA5B /* DenextShareReceivePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = E33A270BBDC8C9325B35772E /* DenextShareReceivePlugin.swift */; };
+		850CBDCC4238133C1E97B556 /* DenextShareInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FA7A85668010288D11EA272 /* DenextShareInbox.swift */; };
+		50656ECC331879A5135A8A90 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8E5C7745787637D93C55F65 /* ShareViewController.swift */; };
+		7BC01B8280762469CDB664F8 /* DenextShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 48E20894F8F95A07A62F6E66 /* DenextShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		31402DF094D0E59BB5E5BE98 /* DenextShareInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FA7A85668010288D11EA272 /* DenextShareInbox.swift */; };
+		13047D550923C8AC000325BE /* DenextWidgetsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E4561290A06FF6E569481B5 /* DenextWidgetsPlugin.swift */; };
+		B67F0E9E271D942808D8E4AD /* DenextWidgetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B60C97CD633889C1217521E /* DenextWidgetStore.swift */; };
+		0CC08FAC568FCB27E641F823 /* DenextWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 976418041FF32592DFBE6868 /* DenextWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5D4EF141C5EFE01973CC01FB /* StatusWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 339F29835834E1A33CCFCEC9 /* StatusWidget.swift */; };
+		20A2D21E4D8E49C46B3F6C66 /* DenextWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3005DF7B1E1236477A52C8D2 /* DenextWidgetsBundle.swift */; };
+		3A1AD214229CAEDAA6547ABA /* DenextLiveActivityPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AEF75715E71E3485AC4B55 /* DenextLiveActivityPlugin.swift */; };
+		5125E1B809DDDFF7ACD53D24 /* DenextActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA847E4E463922863C526AD /* DenextActivityAttributes.swift */; };
+		124DDD3A7C0FD3C07A0899AF /* DenextLiveActivities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553CA0B7781F9B391CA16428 /* DenextLiveActivities.swift */; };
+		9A730E9BD2F9BF8BC21701D6 /* BuildLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5305D90137C984DC4671882C /* BuildLiveActivity.swift */; };
+		5E2EE75BD3EFBB82F34E057D /* DenextActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA847E4E463922863C526AD /* DenextActivityAttributes.swift */; };
+		F29DCD8E9151CC1500719953 /* DenextOtaPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3317075A6081BEF1DAE46FA9 /* DenextOtaPlugin.swift */; };
+		8EE01B0186736C80F683B9B5 /* DenextOtaStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEC8CC7183EC316339850275 /* DenextOtaStore.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		59D610050943284075658D1E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 79B9D52BD4DD583A3F643AAB;
+			remoteInfo = DenextShareExtension;
+		};
+		055F6E7B49D682D20DA96F99 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EFD856A0F302E66DB1BDF16E;
+			remoteInfo = DenextWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A1D9E55868863E8CBFD26154 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7BC01B8280762469CDB664F8 /* DenextShareExtension.appex in Embed Foundation Extensions */,
+				0CC08FAC568FCB27E641F823 /* DenextWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
+		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
+		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		5B8D7AA5244D27576EE558E9 /* DenextBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextBridgeViewController.swift; sourceTree = "<group>"; };
+		243967F923DC732289F6F11C /* DenextAuthSessionPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextAuthSessionPlugin.swift; sourceTree = "<group>"; };
+		E33A270BBDC8C9325B35772E /* DenextShareReceivePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextShareReceivePlugin.swift; sourceTree = "<group>"; };
+		48E20894F8F95A07A62F6E66 /* DenextShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = DenextShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		35C7EAF2FAE76558B5F47460 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B6AED5BF7421260F97150749 /* DenextShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DenextShareExtension.entitlements; sourceTree = "<group>"; };
+		2FA7A85668010288D11EA272 /* DenextShareInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextShareInbox.swift; sourceTree = "<group>"; };
+		A8E5C7745787637D93C55F65 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		1E4561290A06FF6E569481B5 /* DenextWidgetsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextWidgetsPlugin.swift; sourceTree = "<group>"; };
+		976418041FF32592DFBE6868 /* DenextWidgets.appex */ = {isa = PBXFileReference; explicitFileType = wrapper.app-extension; includeInIndex = 0; path = DenextWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A584F27F0070F0AF8893E60 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F3275CB93F570F6105134BEA /* DenextWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = DenextWidgets.entitlements; sourceTree = "<group>"; };
+		8B60C97CD633889C1217521E /* DenextWidgetStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextWidgetStore.swift; sourceTree = "<group>"; };
+		339F29835834E1A33CCFCEC9 /* StatusWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusWidget.swift; sourceTree = "<group>"; };
+		3005DF7B1E1236477A52C8D2 /* DenextWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextWidgetsBundle.swift; sourceTree = "<group>"; };
+		C1AEF75715E71E3485AC4B55 /* DenextLiveActivityPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextLiveActivityPlugin.swift; sourceTree = "<group>"; };
+		EAA847E4E463922863C526AD /* DenextActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextActivityAttributes.swift; sourceTree = "<group>"; };
+		553CA0B7781F9B391CA16428 /* DenextLiveActivities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextLiveActivities.swift; sourceTree = "<group>"; };
+		5305D90137C984DC4671882C /* BuildLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildLiveActivity.swift; sourceTree = "<group>"; };
+		3317075A6081BEF1DAE46FA9 /* DenextOtaPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextOtaPlugin.swift; sourceTree = "<group>"; };
+		CEC8CC7183EC316339850275 /* DenextOtaStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextOtaStore.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		504EC3011FED79650016851F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3DCB620268E4D3D64B3605DA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7B737B660598194613B30BF7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		504EC2FB1FED79650016851F = {
+			isa = PBXGroup;
+			children = (
+				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
+				504EC3061FED79650016851F /* App */,
+				504EC3051FED79650016851F /* Products */,
+				2A2BC006D1C2A87A4EA30F72 /* DenextShareExtension */,
+				41871A4DD5B8A20AA16D768E /* DenextWidgets */,
+			);
+			sourceTree = "<group>";
+		};
+		504EC3051FED79650016851F /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				504EC3041FED79650016851F /* App.app */,
+				48E20894F8F95A07A62F6E66 /* DenextShareExtension.appex */,
+				976418041FF32592DFBE6868 /* DenextWidgets.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		504EC3061FED79650016851F /* App */ = {
+			isa = PBXGroup;
+			children = (
+				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
+				50379B222058CBB4000EE86E /* capacitor.config.json */,
+				504EC3071FED79650016851F /* AppDelegate.swift */,
+				504EC30B1FED79650016851F /* Main.storyboard */,
+				504EC30E1FED79650016851F /* Assets.xcassets */,
+				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
+				504EC3131FED79650016851F /* Info.plist */,
+				2FAD9762203C412B000D30F8 /* config.xml */,
+				50B271D01FEDC1A000F3C39B /* public */,
+				5B8D7AA5244D27576EE558E9 /* DenextBridgeViewController.swift */,
+				243967F923DC732289F6F11C /* DenextAuthSessionPlugin.swift */,
+				E33A270BBDC8C9325B35772E /* DenextShareReceivePlugin.swift */,
+				1E4561290A06FF6E569481B5 /* DenextWidgetsPlugin.swift */,
+				C1AEF75715E71E3485AC4B55 /* DenextLiveActivityPlugin.swift */,
+				3317075A6081BEF1DAE46FA9 /* DenextOtaPlugin.swift */,
+				CEC8CC7183EC316339850275 /* DenextOtaStore.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		2A2BC006D1C2A87A4EA30F72 /* DenextShareExtension */ = {
+			isa = PBXGroup;
+			children = (
+				35C7EAF2FAE76558B5F47460 /* Info.plist */,
+				B6AED5BF7421260F97150749 /* DenextShareExtension.entitlements */,
+				2FA7A85668010288D11EA272 /* DenextShareInbox.swift */,
+				A8E5C7745787637D93C55F65 /* ShareViewController.swift */,
+			);
+			path = DenextShareExtension;
+			sourceTree = "<group>";
+		};
+		41871A4DD5B8A20AA16D768E /* DenextWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				5A584F27F0070F0AF8893E60 /* Info.plist */,
+				F3275CB93F570F6105134BEA /* DenextWidgets.entitlements */,
+				8B60C97CD633889C1217521E /* DenextWidgetStore.swift */,
+				339F29835834E1A33CCFCEC9 /* StatusWidget.swift */,
+				3005DF7B1E1236477A52C8D2 /* DenextWidgetsBundle.swift */,
+				EAA847E4E463922863C526AD /* DenextActivityAttributes.swift */,
+				553CA0B7781F9B391CA16428 /* DenextLiveActivities.swift */,
+				5305D90137C984DC4671882C /* BuildLiveActivity.swift */,
+			);
+			path = DenextWidgets;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		504EC3031FED79650016851F /* App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
+			buildPhases = (
+				504EC3001FED79650016851F /* Sources */,
+				504EC3011FED79650016851F /* Frameworks */,
+				504EC3021FED79650016851F /* Resources */,
+				A1D9E55868863E8CBFD26154 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9865BA03AE47A9180C642C08 /* PBXTargetDependency */,
+				F724F7D54947A828A7117824 /* PBXTargetDependency */,
+			);
+			name = App;
+			packageProductDependencies = (
+				4D22ABE82AF431CB00220026 /* CapApp-SPM */,
+			);
+			productName = App;
+			productReference = 504EC3041FED79650016851F /* App.app */;
+			productType = "com.apple.product-type.application";
+		};
+		79B9D52BD4DD583A3F643AAB /* DenextShareExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7ED1BBD692E36324BDA49FD5 /* Build configuration list for PBXNativeTarget "DenextShareExtension" */;
+			buildPhases = (
+				7C1918A516309004B2091E60 /* Sources */,
+				3DCB620268E4D3D64B3605DA /* Frameworks */,
+				38A938C9C40723707F1F90E2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DenextShareExtension;
+			productName = DenextShareExtension;
+			productReference = 48E20894F8F95A07A62F6E66 /* DenextShareExtension.appex */;
+			productType = com.apple.product-type.app-extension;
+		};
+		EFD856A0F302E66DB1BDF16E /* DenextWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D844ECAE454258A5822F99F7 /* Build configuration list for PBXNativeTarget "DenextWidgets" */;
+			buildPhases = (
+				A14EAE3DCCD635C0D19DC2F8 /* Sources */,
+				7B737B660598194613B30BF7 /* Frameworks */,
+				E29801C063831FE4E020AEE7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DenextWidgets;
+			productName = DenextWidgets;
+			productReference = 976418041FF32592DFBE6868 /* DenextWidgets.appex */;
+			productType = com.apple.product-type.app-extension;
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		504EC2FC1FED79650016851F /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastSwiftUpdateCheck = 0920;
+				LastUpgradeCheck = 0920;
+				TargetAttributes = {
+					504EC3031FED79650016851F = {
+						CreatedOnToolsVersion = 9.2;
+						LastSwiftMigration = 1100;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 504EC2FF1FED79650016851F /* Build configuration list for PBXProject "App" */;
+			compatibilityVersion = "Xcode 8.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 504EC2FB1FED79650016851F;
+			packageReferences = (
+				D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */,
+			);
+			productRefGroup = 504EC3051FED79650016851F /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				504EC3031FED79650016851F /* App */,
+				79B9D52BD4DD583A3F643AAB /* DenextShareExtension */,
+				EFD856A0F302E66DB1BDF16E /* DenextWidgets */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		504EC3021FED79650016851F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */,
+				50B271D11FEDC1A000F3C39B /* public in Resources */,
+				504EC30F1FED79650016851F /* Assets.xcassets in Resources */,
+				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
+				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
+				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		38A938C9C40723707F1F90E2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E29801C063831FE4E020AEE7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		504EC3001FED79650016851F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
+				5990BD472A428677B712A6CC /* DenextBridgeViewController.swift in Sources */,
+				8A6FF64A7D21AD99EF21FB0B /* DenextAuthSessionPlugin.swift in Sources */,
+				CDAB42865206F77DA7A5BA5B /* DenextShareReceivePlugin.swift in Sources */,
+				31402DF094D0E59BB5E5BE98 /* DenextShareInbox.swift in Sources */,
+				13047D550923C8AC000325BE /* DenextWidgetsPlugin.swift in Sources */,
+				3A1AD214229CAEDAA6547ABA /* DenextLiveActivityPlugin.swift in Sources */,
+				5E2EE75BD3EFBB82F34E057D /* DenextActivityAttributes.swift in Sources */,
+				F29DCD8E9151CC1500719953 /* DenextOtaPlugin.swift in Sources */,
+				8EE01B0186736C80F683B9B5 /* DenextOtaStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7C1918A516309004B2091E60 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				850CBDCC4238133C1E97B556 /* DenextShareInbox.swift in Sources */,
+				50656ECC331879A5135A8A90 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A14EAE3DCCD635C0D19DC2F8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B67F0E9E271D942808D8E4AD /* DenextWidgetStore.swift in Sources */,
+				5D4EF141C5EFE01973CC01FB /* StatusWidget.swift in Sources */,
+				20A2D21E4D8E49C46B3F6C66 /* DenextWidgetsBundle.swift in Sources */,
+				5125E1B809DDDFF7ACD53D24 /* DenextActivityAttributes.swift in Sources */,
+				124DDD3A7C0FD3C07A0899AF /* DenextLiveActivities.swift in Sources */,
+				9A730E9BD2F9BF8BC21701D6 /* BuildLiveActivity.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		9865BA03AE47A9180C642C08 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 79B9D52BD4DD583A3F643AAB /* DenextShareExtension */;
+			targetProxy = 59D610050943284075658D1E /* PBXContainerItemProxy */;
+		};
+		F724F7D54947A828A7117824 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EFD856A0F302E66DB1BDF16E /* DenextWidgets */;
+			targetProxy = 055F6E7B49D682D20DA96F99 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		504EC30B1FED79650016851F /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				504EC30C1FED79650016851F /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+		504EC3101FED79650016851F /* LaunchScreen.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				504EC3111FED79650016851F /* Base */,
+			);
+			name = LaunchScreen.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		504EC3141FED79650016851F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		504EC3151FED79650016851F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		504EC3171FED79650016851F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = App/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
+				PRODUCT_BUNDLE_IDENTIFIER = com.brainwires.denext.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		504EC3181FED79650016851F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = App/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brainwires.denext.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A9F9005A03202DB54BFBC575 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = DenextShareExtension/DenextShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DenextShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brainwires.denext.mobile.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA62C81454258155BFFEC4B3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = DenextShareExtension/DenextShareExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DenextShareExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brainwires.denext.mobile.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B58E9B18E943638FFE02DBE1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = DenextWidgets/DenextWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DenextWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brainwires.denext.mobile.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		777C419884D4A6AD57EBEB24 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = DenextWidgets/DenextWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = DenextWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.brainwires.denext.mobile.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		504EC2FF1FED79650016851F /* Build configuration list for PBXProject "App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				504EC3141FED79650016851F /* Debug */,
+				504EC3151FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				504EC3171FED79650016851F /* Debug */,
+				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7ED1BBD692E36324BDA49FD5 /* Build configuration list for PBXNativeTarget "DenextShareExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A9F9005A03202DB54BFBC575 /* Debug */,
+				AA62C81454258155BFFEC4B3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D844ECAE454258A5822F99F7 /* Build configuration list for PBXNativeTarget "DenextWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B58E9B18E943638FFE02DBE1 /* Debug */,
+				777C419884D4A6AD57EBEB24 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "CapApp-SPM";
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4D22ABE82AF431CB00220026 /* CapApp-SPM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */;
+			productName = "CapApp-SPM";
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 504EC2FC1FED79650016851F /* Project object */;
+}

@@ -209,6 +209,16 @@
       "hasReadme": true
     },
     {
+      "name": "mobile",
+      "title": "Mobile kitchen sink (Capacitor)",
+      "blurb": "A denext SPA in a Capacitor 8 shell that exercises every denext/mobile capability on one scrollable page: haptics, clipboard, share, device info, network, keep-awake, the splash screen, the secure…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/mobile",
+      "tags": [
+        "spa"
+      ],
+      "hasReadme": true
+    },
+    {
       "name": "native",
       "title": "denext native example — desktop + mobile",
       "blurb": "One denext app packaged three ways: the web, a native desktop app via deno desktop, and iOS / Android via Capacitor. All three serve the same static export (deno task export → out/).",

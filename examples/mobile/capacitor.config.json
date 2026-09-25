@@ -1,0 +1,10 @@
+{
+  "appId": "com.brainwires.denext.mobile",
+  "appName": "denext mobile",
+  "webDir": "out",
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false
+    }
+  }
+}
