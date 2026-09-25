@@ -21,6 +21,18 @@ and this project adheres to
   unchanged plist is never rewritten; a changed one prints "Info.plist changed: rebuild and run
   the app from Xcode". The printed steps now name `ios/App/App.xcworkspace` only when it exists,
   else `ios/App/App.xcodeproj` (Capacitor 8 Swift Package Manager projects have no workspace).
+- **`denext mobile dev` could leave the dev URL in the native projects.** The exit restore relied
+  on `npx cap copy` to rewrite `ios/App/App/capacitor.config.json` and
+  `android/app/src/main/assets/capacitor.config.json`, but that copy fails when the `webDir`
+  export is missing (the usual state during a dev session), so both git-ignored copies kept
+  `server.url` and the next native build shipped an app that loaded the dev server. The restore
+  (on exit and with `--restore`) now scrubs them itself: each gets back the `server` block it had
+  at session start (recorded in `.denext/mobile-dev-backup.json`; a planted backup can only name
+  those two paths), and a copy with no record (an older backup, or none) loses a `server.url`
+  that is a LAN or loopback `http` origin. A clean copy is never rewritten. A failed closing
+  `cap copy` is now a note: run your export and `npx cap copy` before a release build.
+  `--restore` now runs `cap copy` too (same note on failure) and prints one line per file it
+  changed (`restored …`, `scrubbed the dev server URL from …`), or "nothing to restore".
 
 ## [2.10.0-rc.3] - 2026-09-25
 

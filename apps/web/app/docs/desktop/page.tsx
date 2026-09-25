@@ -296,7 +296,12 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         {" "}
         <code>.denext/</code>; the next <code>mobile dev</code> (or{" "}
         <code>mobile dev --restore</code>) restores it first. <code>cap copy</code> needs the{" "}
-        <code>webDir</code> built once.
+        <code>webDir</code>{" "}
+        built once. The restore does not depend on it: it takes the dev URL out of the native config
+        copies (<code>ios/App/App/capacitor.config.json</code>,{" "}
+        <code>android/app/src/main/assets/capacitor.config.json</code>) itself, so they stop
+        pointing at the dev server even when the closing <code>cap copy</code>{" "}
+        fails; then run your export and <code>npx cap copy</code> before a release build.
       </p>
       <p>
         On iOS, <code>cleartext</code> does nothing (it is Android's{" "}

@@ -55,7 +55,7 @@ import {
 } from "../../build/mobile-capabilities.ts";
 import {
   type MobileDevServer,
-  restoreCapacitorConfig,
+  restoreMobileDevSession,
   runMobileDev,
 } from "../../build/mobile-dev.ts";
 import { pickLanAddress } from "../../build/dev-server/lan.ts";
@@ -572,8 +572,10 @@ async function mobileDev(ctx: CommandContext, run: CommandRunner): Promise<void>
   const dir = typeof ctx.flags.dir === "string" ? ctx.flags.dir : undefined;
   try {
     if (ctx.flags.restore === true) {
-      const restored = await restoreCapacitorConfig(resolve(cwd, dir ?? "."));
-      console.log(restored ? `  restored ${restored}` : "  nothing to restore");
+      await restoreMobileDevSession(resolve(cwd, dir ?? "."), {
+        run,
+        log: (line) => console.log(line),
+      });
       return;
     }
     await runMobileDev({ cwd, dir }, {
@@ -729,7 +731,9 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  never reaches a LAN server; a changed Info.plist needs a rebuild from Xcode. The edits\n" +
     "  are temporary: Ctrl-C, SIGTERM or an error puts the original bytes back and runs\n" +
     "  `cap copy` again. A killed run leaves a backup in .denext/; the next `mobile dev`, or\n" +
-    "  `mobile dev --restore`, restores it first. `cap copy` needs the webDir built once.\n" +
+    "  `mobile dev --restore`, restores it first. The restore also takes the dev URL out of\n" +
+    "  the native config copies itself, so they are clean even when `cap copy` fails because\n" +
+    "  the webDir was never built (export and `npx cap copy` before a release build).\n" +
     "\n" +
     "  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n" +
     "  with no fallback, else the current directory), refuses when its @capacitor/core major\n" +
@@ -851,7 +855,8 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "restore",
       type: "boolean",
       help:
-        "dev: only put back a capacitor.config (and Info.plist) an interrupted session left edited",
+        "dev: only put back what an interrupted session left (capacitor.config, Info.plist, the " +
+        "dev URL in the native config copies), then run `cap copy`",
     },
     {
       name: "dry-run",

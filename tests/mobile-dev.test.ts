@@ -10,6 +10,7 @@ import {
   type MobileDevDeps,
   type MobileDevServer,
   restoreCapacitorConfig,
+  restoreMobileDevSession,
   runMobileDev,
   withDevServerUrl,
   withLocalNetworkAccess,
@@ -479,5 +480,201 @@ Deno.test("mobile dev warns when the Android app declares its own network securi
     } finally {
       await Deno.remove(root, { recursive: true });
     }
+  }
+});
+
+// ---- the native config copies `cap copy` writes (git-ignored, so a leftover would ship) -------
+
+const IOS_COPY = "ios/App/App/capacitor.config.json";
+const ANDROID_COPY = "android/app/src/main/assets/capacitor.config.json";
+
+/** A JSON-config project whose native copies are what `cap copy` last wrote from `config`. */
+async function nativeProject(
+  config: Record<string, unknown>,
+): Promise<{ root: string; file: string; copies: string[] }> {
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-mobile-dev-" }));
+  const file = join(root, "capacitor.config.json");
+  await Deno.writeTextFile(file, JSON.stringify(config, null, 2) + "\n");
+  const copies = [join(root, IOS_COPY), join(root, ANDROID_COPY)];
+  for (const copy of copies) {
+    await Deno.mkdir(join(copy, ".."), { recursive: true });
+    await Deno.writeTextFile(copy, JSON.stringify(config, null, "\t"));
+  }
+  return { root, file, copies };
+}
+
+/** Fakes whose `cap copy` writes the config into the native copies, or fails with `code`. */
+function copyingFakes(root: string, file: string, copies: string[], codes: number[]) {
+  const f = fakes(root, file, []);
+  const lines: string[] = [];
+  const deps: MobileDevDeps = {
+    ...f.deps,
+    run: async (command) => {
+      await f.deps.run(command);
+      const code = codes.shift() ?? 0;
+      if (code !== 0) return { code };
+      const config = JSON.parse(await Deno.readTextFile(file));
+      for (const copy of copies) await Deno.writeTextFile(copy, JSON.stringify(config, null, "\t"));
+      return { code: 0 };
+    },
+    log: (l) => lines.push(l),
+  };
+  return { deps, lines, calls: f.calls };
+}
+
+const serverOf = async (path: string) => JSON.parse(await Deno.readTextFile(path)).server;
+
+Deno.test("mobile dev scrubs the native copies itself when the closing cap copy fails", async () => {
+  const config = { appId: "a.b", appName: "A", webDir: "out" };
+  const { root, file, copies } = await nativeProject(config);
+  try {
+    const f = copyingFakes(root, file, copies, [0, 1]); // the exit copy: webDir missing
+    await runMobileDev({ cwd: root }, f.deps);
+    for (const copy of copies) {
+      const text = await Deno.readTextFile(copy);
+      assert(!text.includes("192.168.1.5"), `${copy} still points at the dev server`);
+      assertEquals(await serverOf(copy), undefined);
+      assertEquals(JSON.parse(text), config);
+      assert(text.includes('\n\t"appId"'), "keeps cap's tab indent");
+    }
+    const log = f.lines.join("\n");
+    assertStringIncludes(log, "no longer point at the dev server");
+    assertStringIncludes(log, "run your export and `npx cap copy` before a release build");
+    assertEquals(f.calls.length, 2);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("mobile dev puts back a native copy's own server block", async () => {
+  const server = { hostname: "app.example", androidScheme: "https" };
+  const { root, file, copies } = await nativeProject({ appId: "a.b", webDir: "out", server });
+  try {
+    const f = copyingFakes(root, file, copies, [0, 1]);
+    await runMobileDev({ cwd: root }, f.deps);
+    for (const copy of copies) assertEquals(await serverOf(copy), server);
+    assertEquals(JSON.parse(await Deno.readTextFile(file)).server, server);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("--restore with an old-format backup (or none) scrubs a LAN server.url from the copies", async () => {
+  const { root, file, copies } = await nativeProject({ appId: "a.b", webDir: "out" });
+  try {
+    const dirty = (server: Record<string, unknown>) =>
+      JSON.stringify({ appId: "a.b", webDir: "out", server }, null, "\t");
+    await Deno.writeTextFile(copies[0], dirty({ url: "http://172.20.10.2:3000", cleartext: true }));
+    await Deno.writeTextFile(
+      copies[1],
+      dirty({ url: "http://localhost:3000", cleartext: true, androidScheme: "https" }),
+    );
+    await Deno.mkdir(join(root, ".denext"));
+    await Deno.writeTextFile(
+      join(root, ".denext", "mobile-dev-backup.json"),
+      JSON.stringify({ file: "capacitor.config.json", original: '{ "appId": "a.b" }\n' }),
+    );
+    assertEquals(await restoreCapacitorConfig(root), file);
+    assertEquals(await serverOf(copies[0]), undefined);
+    assertEquals(await serverOf(copies[1]), { androidScheme: "https" });
+
+    // No backup at all: `--restore` still scrubs, and names what it fixed.
+    await Deno.writeTextFile(copies[0], dirty({ url: "http://10.0.0.9:3000", cleartext: true }));
+    assertEquals(await restoreCapacitorConfig(root), copies[0]);
+    assertEquals(await serverOf(copies[0]), undefined);
+    assertEquals(await restoreCapacitorConfig(root), null, "clean: nothing to restore");
+
+    // A production https URL (or a public http one) is never touched.
+    for (const url of ["https://app.example.com", "http://example.com"]) {
+      await Deno.writeTextFile(copies[0], dirty({ url }));
+      assertEquals(await restoreCapacitorConfig(root), null);
+      assertEquals(await serverOf(copies[0]), { url });
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a clean native copy is never rewritten by the restore", async () => {
+  const { root, copies } = await nativeProject({ appId: "a.b", webDir: "out" });
+  try {
+    const mtimes = await Promise.all(copies.map(async (c) => (await Deno.stat(c)).mtime));
+    await new Promise((done) => setTimeout(done, 20));
+    assertEquals(await restoreCapacitorConfig(root), null);
+    assertEquals(await Promise.all(copies.map(async (c) => (await Deno.stat(c)).mtime)), mtimes);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a planted backup cannot redirect the native-copy restore outside those two paths", async () => {
+  const planted = [
+    [{ file: "../capacitor.config.json", original: "{}" }],
+    [{ file: "ios/App/App/Info.plist", original: "{}" }],
+    [{ file: "capacitor.config.json", original: "{}" }],
+    { file: IOS_COPY, original: "{}" },
+    ["nope"],
+  ];
+  for (const native of planted) {
+    const { root, file, copies } = await nativeProject({ appId: "a.b", webDir: "out" });
+    try {
+      const before = await Deno.readTextFile(file);
+      await Deno.mkdir(join(root, ".denext"));
+      await Deno.writeTextFile(
+        join(root, ".denext", "mobile-dev-backup.json"),
+        JSON.stringify({ file: "capacitor.config.json", original: "config-bytes", native }),
+      );
+      await assertRejects(() => restoreCapacitorConfig(root), Error, "not a mobile dev backup");
+      assertEquals(await Deno.readTextFile(file), before, "nothing written before the check");
+      assertEquals(await serverOf(copies[0]), undefined);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+});
+
+Deno.test("--restore logs one line per file changed, re-copies, and notes a failed cap copy", async () => {
+  const { root, file, copies } = await nativeProject({ appId: "a.b", webDir: "out" });
+  try {
+    const clean = await Deno.readTextFile(copies[1]);
+    await Deno.writeTextFile(
+      copies[0],
+      JSON.stringify({ appId: "a.b", server: { url: URL_, cleartext: true } }, null, "\t"),
+    );
+    await Deno.mkdir(join(root, ".denext"));
+    const original = await Deno.readTextFile(file);
+    await Deno.writeTextFile(
+      join(root, ".denext", "mobile-dev-backup.json"),
+      JSON.stringify({ file: "capacitor.config.json", original }),
+    );
+    await Deno.writeTextFile(file, await withDevServerUrl(file, original, URL_));
+    const lines: string[] = [];
+    const calls: PlannedCommand[] = [];
+    const deps = {
+      run: (command: PlannedCommand) => {
+        calls.push(command);
+        return Promise.resolve({ code: 1 }); // webDir missing
+      },
+      log: (l: string) => lines.push(l),
+    };
+    await restoreMobileDevSession(root, deps);
+    assertEquals(lines.slice(0, 2), [
+      `  restored ${file}`,
+      `  scrubbed the dev server URL from ${copies[0]}`,
+    ]);
+    assertStringIncludes(lines[2], "note: `npx cap copy` exited with 1");
+    assertStringIncludes(lines[2], "run your export and `npx cap copy` before a release build");
+    assertEquals(lines.length, 3, "the clean Android copy is not reported");
+    assertEquals(calls.map((c) => [c.cmd, ...c.args, c.cwd]), [["npx", "cap", "copy", root]]);
+    assertEquals(await Deno.readTextFile(file), original);
+    assertEquals(await Deno.readTextFile(copies[1]), clean);
+
+    // Nothing left: one line, and no `cap copy`.
+    lines.length = 0;
+    await restoreMobileDevSession(root, deps);
+    assertEquals(lines, ["  nothing to restore"]);
+    assertEquals(calls.length, 1);
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });
