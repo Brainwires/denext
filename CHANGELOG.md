@@ -8,7 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [2.10.0-rc.6] - 2026-09-25
+## [2.10.0] - 2026-09-25
 
 ### Added
 
@@ -25,21 +25,6 @@ and this project adheres to
   attached one keeps running). The window needs net to the loopback dev port only — exactly what a
   packaged build's baked `--allow-net=127.0.0.1,localhost` already grants, so no permission is
   widened. This completes the desktop half of dev-server attach.
-
-## [2.10.0-rc.5] - 2026-09-25
-
-### Fixed
-
-- **The package publishes to JSR again.** `src/desktop/auth-session.ts` declared a global
-  (`declare global { var __denext … }`), which JSR refuses ("modifying global types is not
-  allowed"), so `2.10.0-rc.4` was tagged but never published; its changes ship in this release.
-  The desktop globals are now read through a cast, and a test fails on any `declare global` in
-  published source (`deno publish --dry-run` does not catch it).
-
-## [2.10.0-rc.4] - 2026-09-25 (tagged, not published)
-
-### Added
-
 - **`denext/expo/file-system/legacy`: the `expo-file-system/legacy` API in React Native mode.**
   An Expo app that imports `expo-file-system/legacy` now gets a shim instead of the real
   (native-only) package: `documentDirectory` / `cacheDirectory`, `getInfoAsync`,
@@ -79,15 +64,159 @@ and this project adheres to
   set up with the real `denext mobile add` commands (recorded in its README), including deep
   links, push, auth sessions, the share extension, a configurable widget, a Live Activity and
   signed OTA.
+- **`reactNative` — build a React Native / Expo app for the web.** `reactNative: true` in
+  `denext.config.ts` (SPA mode) builds the app's own source through `react-native-web`:
+  `react-native` and its subpaths resolve to react-native-web for every importer, even with a
+  real `react-native` installed (deep `react-native/Libraries/…` imports map to their web
+  equivalent, or to a stub that throws, naming the import, when called); `.web.tsx`/`.web.ts`/
+  `.web.jsx`/`.web.js` win for relative imports and package subpaths; `.js` parses as JSX;
+  `__DEV__`, `global` and `process.env.EXPO_OS` are defined; and the SPA shell gets Expo web's
+  root style (`reactNative: { rootStyle: false }` leaves it out). `denext dev` uses the bundled
+  loop for such an app. Measured on T3 Code's Expo app: it builds with no patches, and all 41
+  swept deep-link routes render as before. Guide: /docs/react-native.
+- **Files, pickers, barcodes and quick actions in `denext/mobile`.** `readFile` /
+  `writeFile` / `deleteFile` / `listDir` / `downloadToFile(url, path)` read and write the
+  app's files (`"data"`, `"documents"` or `"cache"`, as text or base64) through
+  `@capacitor/filesystem`, and the Origin Private File System on the web (one top-level folder
+  per directory, so `useFile("data/…")` sees the same file). `pickImage({ source })` takes or
+  picks a photo through `@capacitor/camera`; `pickDocument({ types })` opens the system
+  document picker through `@capawesome/capacitor-file-picker`; both fall back to a hidden file
+  input made for the call and resolve `null` when the user cancels. `scanBarcode({ formats })`
+  scans one code with the official `@capacitor/barcode-scanner`, or `BarcodeDetector` over the
+  camera on the web (the stream is stopped however the scan ends; no detector rejects with
+  code `unsupported`). `setQuickActions([...])` / `onQuickAction` / `useQuickAction` manage
+  home-screen shortcuts through `@capawesome/capacitor-app-shortcuts`, including the action
+  that cold-started the app; on the web they do nothing. Still no `@capacitor/*` import, and
+  a bundle that uses only `isNativeShell()` stays 389 bytes.
+- **`denext mobile add filesystem | camera | document-picker | barcode | quick-actions`.**
+  `camera` writes `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription` and
+  `NSPhotoLibraryAddUsageDescription`, `barcode` the camera string (each only when absent,
+  and a key two capabilities share is planned once); `barcode` also raises
+  `minSdkVersion` in `android/variables.gradle` to 26, which the scanner's Android library
+  declares (Capacitor 8 defaults to 24, and the manifest merge fails below it). `quick-actions` forwards the home-screen
+  action to the plugin from `SceneDelegate.swift` (`windowScene(_:performActionFor:)`, and the
+  launch item from `scene(_:willConnectTo:options:)` once the bridge has loaded), or from
+  `AppDelegate.swift` in an app without scenes; the plugin's own instructions cover only the
+  AppDelegate, which UIKit bypasses in Capacitor 8's scene template. `--list` widens its name
+  column for the longer names.
+- **Native capabilities in `denext/mobile`.** `haptic(kind)`, `readClipboard()` /
+  `writeClipboard(text)`, `share({ title, text, url })` (`"shared"` / `"copied"` /
+  `"cancelled"`), `deviceInfo()`, `networkStatus()` / `useNetworkStatus()`,
+  `useKeepAwake(active)`, `hideSplash()` and `secureStore.get` / `set` / `delete`. Inside a
+  Capacitor shell each one calls its official plugin through `window.Capacitor.Plugins`
+  (still no `@capacitor/*` import); on the web it falls back to the matching browser API
+  (Vibration, async Clipboard, Web Share then a clipboard copy, the user agent,
+  `navigator.onLine`, Screen Wake Lock) or does nothing. `secureStore` uses the Keychain /
+  Keystore natively and a plain IndexedDB database on the web, which is **not** secret.
+  Importing `denext/mobile` still runs no code, and each export tree-shakes on its own.
+- **`denext mobile add <capability...>`** installs the plugins behind those functions
+  (`haptics`, `clipboard`, `share`, `device`, `network`, `keep-awake`, `splash`,
+  `secure-store`, `browser`) into a Capacitor project. It refuses when the project's
+  `@capacitor/core` major is not 8, adds the packages with the package manager its lockfile
+  names, declares the Android permissions a capability needs, and runs `npx cap sync`.
+  `--dry-run` prints the plan without changing anything, `--list` lists the capabilities,
+  and `--dir` points at the project.
+- **Deep links in `denext/mobile`.** `onDeepLink(callback, { accept, route })` /
+  `useDeepLink` deliver the link that cold-started the app (once per page, `launch: true`)
+  and every link opened while it runs, through `@capacitor/app`. Only accepted links reach
+  the callback: by default the app's custom schemes and no `https` host (list your
+  universal / app link domains in `accept: { hosts }`, or pass a predicate). An accepted
+  link's in-app path (`myapp://threads/42` → `/threads/42`) is navigated once, through the
+  history (`popstate`) or a `route(path)` function. On the web it does nothing.
+- **Push notifications in `denext/mobile`.** `requestPushPermission()`, `registerForPush()`
+  (the APNs / FCM token for your server; concurrent calls share one registration, and it
+  times out), `onPushReceived` / `usePushReceived` and `onPushTapped` / `usePushTapped`,
+  which navigates to a tapped notification's `data.path` or accepted `data.url`. A tap that
+  cold-started the app still arrives (the shell keeps it for the first listener). There is
+  no web-push fallback, and denext ships no push relay: your server sends through APNs /
+  FCM.
+- **`denext mobile add deep-links --scheme <s> --domain <d>`** registers URL schemes
+  (`CFBundleURLTypes`, a VIEW intent filter) and universal / app link domains
+  (`applinks:` associated domains, an `autoVerify` https intent filter), merging with what is
+  there. **`denext mobile add push`** writes the `aps-environment` entitlement, forwards the
+  token callbacks in `AppDelegate.swift`, declares `POST_NOTIFICATIONS`, and warns when
+  `android/app/google-services.json` is missing. A new `App.entitlements` still has to be
+  selected in Xcode; that and the other manual steps are printed.
+- **OAuth sign-in sheets in `denext/mobile`.** `openAuthSession(url, { callbackScheme,
+  preferEphemeral, timeoutMs })` opens the provider's page in an `ASWebAuthenticationSession`
+  sheet on iOS or a Custom Tab on Android and resolves with the full callback URL; it rejects
+  with a `code` of `cancelled`, `busy` (one session at a time), `invalid`, `unsupported` or
+  `timeout`. On the web it opens a popup, and the callback page calls
+  `completeAuthSession()` to post its URL back (same origin only). PKCE and `state` stay the
+  app's job. While a session waits, `onDeepLink` leaves its callback alone.
+- **`denext mobile add auth-session --scheme <s>`** installs denext's own `DenextAuthSession`
+  native plugin (no npm package): the Swift and Java sources, the Xcode target entry, and its
+  registration in `DenextBridgeViewController` and `MainActivity`. It shares those two files
+  with `denext mobile add-ota`, and either one can run first. `--scheme` registers the
+  callback scheme the way `deep-links` does (Android needs it to receive the redirect).
+
+### Changed
+
+- **The `denext/expo/*` shims now match their pinned `expo-*` packages' export surface: the
+  expo half of `deno task parity:native` has no known gaps left (29 before).**
+  - `expo-camera`'s permission calls are on the `Camera` object only, as in expo-camera 57
+    (`getCameraPermissionsAsync` and the three others are no longer top-level exports), and
+    `Camera.scanFromURLAsync` is there too.
+  - The native-module classes (`CameraNativeModule`, `ImageNativeModule`, `ExpoUpdatesModule`,
+    `NativeAudioModule`) and expo-audio's `AudioPlaylist` / `AudioStream` are exported as
+    typed stand-ins that throw a clear "unavailable on the web" error when constructed.
+  - `expo-file-system` exports SDK 57's legacy top-level functions (`readAsStringAsync`,
+    `getInfoAsync`, …) as the same deprecation stubs Expo ships: each warns and throws Expo's
+    migration message.
+  - `expo-crypto` exports the `AESKeySize` enum, and `expo-sqlite` exports `deepEqual`.
+  - `installOnUIRuntime(holder)`, `setBadgeCountAsync(count, options)`,
+    `createVideoPlayer(source, playerBuilderOptions)` and
+    `useVideoPlayer(source, setup, playerBuilderOptions)` take Expo's extra parameter
+    (ignored: no worklets runtime, the Badging API only, Android-only builder options).
+  - The parity extractor resolves packages with TypeScript's `Bundler` resolution, so a package
+    that publishes its types only through `exports` (expo-quick-actions) is now compared
+    instead of skipped. The React / Next baseline is unaffected.
+- **An explicit `denext dev --host` allows the host it binds** through the dev origin gate
+  (`0.0.0.0` / `::` allow this machine's own addresses). `.denext/dev.json` now records the
+  bind as given in `hostname` and the allowed hosts in `devOrigins`; `origin` stays the
+  loopback address local tools (the MCP live tools, `denext ui`) use. The SPA dev server now
+  applies `allowedDevOrigins` too.
+- **`reactNative` refuses an explicit `unbundled: true` dev server option** with an error that
+  says why: the react-native-web resolution, `.web.*` probing, `.js` JSX loader and
+  `expo-*` → `denext/expo/*` aliases are bundler plugins the per-module loop does not run.
+  React Native mode already defaulted to the bundled loop.
+- **Configurable widgets: `denext mobile add widget --name <Name> --configurable
+  <param:enum=a|b,…>`.** The generated `<Name>Widget.swift` declares an App Intents
+  `WidgetConfigurationIntent` (iOS 17+) with one enum per parameter, the first value the
+  default, and a provider that reads the snapshot stored for the values the user chose, falling
+  back to the one stored without them; on iOS 14–16 a static configuration (kind
+  `<Name>.static`) shows the defaults' snapshot. The bundle lists the iOS 17 widget behind
+  `#available`. `setWidgetData(kind, data, { params })` stores a per-parameter snapshot (iOS and
+  Android plugins; Android widgets stay static). The parameters are recorded in the generated
+  file, so a re-run without `--configurable` keeps them.
+- **Live Activity push-to-start and token events in `denext/mobile`.**
+  `liveActivityPushToStartToken({ timeoutMs? })` resolves the app's ActivityKit push-to-start
+  token (`{ token }`, iOS 17.2+; `null` below it, on Android and on the web), and
+  `onLiveActivityPushToStartToken(cb)` reports it and each rotation; `onLiveActivityPushToken(cb)`
+  reports every push token ActivityKit issues a running activity (`{ id, token }`); tokens issued
+  before the first listener are kept for it. `listLiveActivities()` lists the running
+  activities, and `endLiveActivity`'s `dismissal` also takes a `Date`. The
+  `DenextLiveActivity` plugin gains `pushToStartToken` and `list` and posts the two events:
+  re-run `denext mobile add live-activity` and ship a new binary.
+- **`expo-widgets` shim (`denext/expo/widgets`) is backed now** (was an inert stub):
+  `Widget.updateSnapshot` / `updateTimeline` / `reload` drive `setWidgetData` / `reloadWidgets`,
+  `LiveActivityFactory.start` / `getInstances` and `LiveActivity.update` / `end` /
+  `getPushToken` / `addPushTokenListener` drive the Live Activity functions, and
+  `addPushToStartTokenListener` delivers push-to-start tokens. The UI is the generated SwiftUI;
+  the `"widget"` layout function is not rendered.
 
 ### Fixed
 
+- **The package publishes to JSR again.** `src/desktop/auth-session.ts` declared a global
+  (`declare global { var __denext … }`), which JSR refuses ("modifying global types is not
+  allowed"), so `2.10.0-rc.4` was tagged but never published; its changes ship in this release.
+  The desktop globals are now read through a cast, and a test fails on any `declare global` in
+  published source (`deno publish --dry-run` does not catch it).
 - **Unbundled dev no longer fails an SPA that imports its own stylesheet.** A first-party
   `import "./styles.css"` (or `.scss` / `.sass`) resolved to the file and reached the JS
   transform, which answered 500 and stopped the page (a Capacitor app under `denext mobile dev`
   stayed on its splash). Stylesheets now always map to the empty module; the CSS is linked
   separately, as before.
-
 - **`denext mobile add` no longer prints a stale "point the App target at App.entitlements"
   step** when an app-group capability in the same run (or an earlier one) already wired the
   entitlements file, and a URL scheme shared by `deep-links`, `auth-session` and
@@ -145,7 +274,6 @@ and this project adheres to
   whose marker generation is newer than this release writes is left as it is. A shared file that
   already registers the feature is unchanged; anything else is kept with a manual step to upgrade
   denext (`--force` still replaces the template files and the bridge view controller).
-
 - **App extensions: `denext mobile add share-extension | widget | live-activity`.** Three
   generators, in the style of `add-ota`, add native app extensions to a Capacitor project and
   the `denext/mobile` APIs behind them. `share-extension` adds an iOS Share Extension target
@@ -236,7 +364,6 @@ and this project adheres to
   `-exportArchive` with an App Store Connect API key (automatic signing with no Apple ID in
   Xcode) and a keystore-signed `bundleRelease`, recording each binary's fingerprint as a GitHub
   release asset. Guide: /docs/desktop#building-in-ci.
-
 - **Live reload on a device (the Metro model).** `denext mobile dev [project]` starts
   `denext dev` (or attaches to one already answering on `--port`), writes
   `server: { url, cleartext: true }` into the Capacitor project's `capacitor.config.*` (a
@@ -254,113 +381,11 @@ and this project adheres to
   boot; wildcards are refused. It was a programmatic `DevServerOptions` field only, so a phone
   pointed at `denext dev` rendered a dead page (every `/_denext/*` asset refused). A
   `repeatable` flag spec (`FlagSpec.repeatable`) keeps every value of a repeated flag.
-
-### Changed
-
-- **The `denext/expo/*` shims now match their pinned `expo-*` packages' export surface: the
-  expo half of `deno task parity:native` has no known gaps left (29 before).**
-  - `expo-camera`'s permission calls are on the `Camera` object only, as in expo-camera 57
-    (`getCameraPermissionsAsync` and the three others are no longer top-level exports), and
-    `Camera.scanFromURLAsync` is there too.
-  - The native-module classes (`CameraNativeModule`, `ImageNativeModule`, `ExpoUpdatesModule`,
-    `NativeAudioModule`) and expo-audio's `AudioPlaylist` / `AudioStream` are exported as
-    typed stand-ins that throw a clear "unavailable on the web" error when constructed.
-  - `expo-file-system` exports SDK 57's legacy top-level functions (`readAsStringAsync`,
-    `getInfoAsync`, …) as the same deprecation stubs Expo ships: each warns and throws Expo's
-    migration message.
-  - `expo-crypto` exports the `AESKeySize` enum, and `expo-sqlite` exports `deepEqual`.
-  - `installOnUIRuntime(holder)`, `setBadgeCountAsync(count, options)`,
-    `createVideoPlayer(source, playerBuilderOptions)` and
-    `useVideoPlayer(source, setup, playerBuilderOptions)` take Expo's extra parameter
-    (ignored: no worklets runtime, the Badging API only, Android-only builder options).
-  - The parity extractor resolves packages with TypeScript's `Bundler` resolution, so a package
-    that publishes its types only through `exports` (expo-quick-actions) is now compared
-    instead of skipped. The React / Next baseline is unaffected.
-- **An explicit `denext dev --host` allows the host it binds** through the dev origin gate
-  (`0.0.0.0` / `::` allow this machine's own addresses). `.denext/dev.json` now records the
-  bind as given in `hostname` and the allowed hosts in `devOrigins`; `origin` stays the
-  loopback address local tools (the MCP live tools, `denext ui`) use. The SPA dev server now
-  applies `allowedDevOrigins` too.
-- **`reactNative` refuses an explicit `unbundled: true` dev server option** with an error that
-  says why: the react-native-web resolution, `.web.*` probing, `.js` JSX loader and
-  `expo-*` → `denext/expo/*` aliases are bundler plugins the per-module loop does not run.
-  React Native mode already defaulted to the bundled loop.
-- **Configurable widgets: `denext mobile add widget --name <Name> --configurable
-  <param:enum=a|b,…>`.** The generated `<Name>Widget.swift` declares an App Intents
-  `WidgetConfigurationIntent` (iOS 17+) with one enum per parameter, the first value the
-  default, and a provider that reads the snapshot stored for the values the user chose, falling
-  back to the one stored without them; on iOS 14–16 a static configuration (kind
-  `<Name>.static`) shows the defaults' snapshot. The bundle lists the iOS 17 widget behind
-  `#available`. `setWidgetData(kind, data, { params })` stores a per-parameter snapshot (iOS and
-  Android plugins; Android widgets stay static). The parameters are recorded in the generated
-  file, so a re-run without `--configurable` keeps them.
-- **Live Activity push-to-start and token events in `denext/mobile`.**
-  `liveActivityPushToStartToken({ timeoutMs? })` resolves the app's ActivityKit push-to-start
-  token (`{ token }`, iOS 17.2+; `null` below it, on Android and on the web), and
-  `onLiveActivityPushToStartToken(cb)` reports it and each rotation; `onLiveActivityPushToken(cb)`
-  reports every push token ActivityKit issues a running activity (`{ id, token }`); tokens issued
-  before the first listener are kept for it. `listLiveActivities()` lists the running
-  activities, and `endLiveActivity`'s `dismissal` also takes a `Date`. The
-  `DenextLiveActivity` plugin gains `pushToStartToken` and `list` and posts the two events:
-  re-run `denext mobile add live-activity` and ship a new binary.
-- **`expo-widgets` shim (`denext/expo/widgets`) is backed now** (was an inert stub):
-  `Widget.updateSnapshot` / `updateTimeline` / `reload` drive `setWidgetData` / `reloadWidgets`,
-  `LiveActivityFactory.start` / `getInstances` and `LiveActivity.update` / `end` /
-  `getPushToken` / `addPushTokenListener` drive the Live Activity functions, and
-  `addPushToStartTokenListener` delivers push-to-start tokens. The UI is the generated SwiftUI;
-  the `"widget"` layout function is not rendered.
-
-### Fixed
-
 - **SPA dev rebuild loop with the entry at the project root** (an Expo app in `reactNative`
   mode). The CSS graph crawl's transient rewrite of the project's `deno.json` was taken for an
   edit by the dev watcher, so every build triggered the next and pages hit 404s on pruned
   chunks. denext's own writes are now recorded and ignored by the SPA watcher (an edit still
   rebuilds), and the restore skips the write when the file already holds the original.
-
-## [2.10.0-rc.2] - 2026-09-25
-
-### Added
-
-- **`reactNative` — build a React Native / Expo app for the web.** `reactNative: true` in
-  `denext.config.ts` (SPA mode) builds the app's own source through `react-native-web`:
-  `react-native` and its subpaths resolve to react-native-web for every importer, even with a
-  real `react-native` installed (deep `react-native/Libraries/…` imports map to their web
-  equivalent, or to a stub that throws, naming the import, when called); `.web.tsx`/`.web.ts`/
-  `.web.jsx`/`.web.js` win for relative imports and package subpaths; `.js` parses as JSX;
-  `__DEV__`, `global` and `process.env.EXPO_OS` are defined; and the SPA shell gets Expo web's
-  root style (`reactNative: { rootStyle: false }` leaves it out). `denext dev` uses the bundled
-  loop for such an app. Measured on T3 Code's Expo app: it builds with no patches, and all 41
-  swept deep-link routes render as before. Guide: /docs/react-native.
-
-- **Files, pickers, barcodes and quick actions in `denext/mobile`.** `readFile` /
-  `writeFile` / `deleteFile` / `listDir` / `downloadToFile(url, path)` read and write the
-  app's files (`"data"`, `"documents"` or `"cache"`, as text or base64) through
-  `@capacitor/filesystem`, and the Origin Private File System on the web (one top-level folder
-  per directory, so `useFile("data/…")` sees the same file). `pickImage({ source })` takes or
-  picks a photo through `@capacitor/camera`; `pickDocument({ types })` opens the system
-  document picker through `@capawesome/capacitor-file-picker`; both fall back to a hidden file
-  input made for the call and resolve `null` when the user cancels. `scanBarcode({ formats })`
-  scans one code with the official `@capacitor/barcode-scanner`, or `BarcodeDetector` over the
-  camera on the web (the stream is stopped however the scan ends; no detector rejects with
-  code `unsupported`). `setQuickActions([...])` / `onQuickAction` / `useQuickAction` manage
-  home-screen shortcuts through `@capawesome/capacitor-app-shortcuts`, including the action
-  that cold-started the app; on the web they do nothing. Still no `@capacitor/*` import, and
-  a bundle that uses only `isNativeShell()` stays 389 bytes.
-- **`denext mobile add filesystem | camera | document-picker | barcode | quick-actions`.**
-  `camera` writes `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription` and
-  `NSPhotoLibraryAddUsageDescription`, `barcode` the camera string (each only when absent,
-  and a key two capabilities share is planned once); `barcode` also raises
-  `minSdkVersion` in `android/variables.gradle` to 26, which the scanner's Android library
-  declares (Capacitor 8 defaults to 24, and the manifest merge fails below it). `quick-actions` forwards the home-screen
-  action to the plugin from `SceneDelegate.swift` (`windowScene(_:performActionFor:)`, and the
-  launch item from `scene(_:willConnectTo:options:)` once the bridge has loaded), or from
-  `AppDelegate.swift` in an app without scenes; the plugin's own instructions cover only the
-  AppDelegate, which UIKit bypasses in Capacitor 8's scene template. `--list` widens its name
-  column for the longer names.
-
-### Fixed
-
 - **`denext mobile add` picks a workspace's package manager.** It looked for a lockfile only
   in the Capacitor project folder, so a project inside a pnpm workspace (lockfile at the
   repository root) fell back to `npm install`, which breaks the workspace. It now walks up to
@@ -373,64 +398,6 @@ and this project adheres to
   it, Deno fails to resolve denext's `npm:` imports from the workspace's `node_modules`, and
   next to a `pnpm-workspace.yaml` Deno 2.9.7 rewrites the root `package.json`. denext cannot
   prevent this itself; the desktop guide and KNOWN-LIMITATIONS.md now say so.
-
-## [2.10.0-rc.1] - 2026-09-24
-
-### Added
-
-- **Native capabilities in `denext/mobile`.** `haptic(kind)`, `readClipboard()` /
-  `writeClipboard(text)`, `share({ title, text, url })` (`"shared"` / `"copied"` /
-  `"cancelled"`), `deviceInfo()`, `networkStatus()` / `useNetworkStatus()`,
-  `useKeepAwake(active)`, `hideSplash()` and `secureStore.get` / `set` / `delete`. Inside a
-  Capacitor shell each one calls its official plugin through `window.Capacitor.Plugins`
-  (still no `@capacitor/*` import); on the web it falls back to the matching browser API
-  (Vibration, async Clipboard, Web Share then a clipboard copy, the user agent,
-  `navigator.onLine`, Screen Wake Lock) or does nothing. `secureStore` uses the Keychain /
-  Keystore natively and a plain IndexedDB database on the web, which is **not** secret.
-  Importing `denext/mobile` still runs no code, and each export tree-shakes on its own.
-- **`denext mobile add <capability...>`** installs the plugins behind those functions
-  (`haptics`, `clipboard`, `share`, `device`, `network`, `keep-awake`, `splash`,
-  `secure-store`, `browser`) into a Capacitor project. It refuses when the project's
-  `@capacitor/core` major is not 8, adds the packages with the package manager its lockfile
-  names, declares the Android permissions a capability needs, and runs `npx cap sync`.
-  `--dry-run` prints the plan without changing anything, `--list` lists the capabilities,
-  and `--dir` points at the project.
-- **Deep links in `denext/mobile`.** `onDeepLink(callback, { accept, route })` /
-  `useDeepLink` deliver the link that cold-started the app (once per page, `launch: true`)
-  and every link opened while it runs, through `@capacitor/app`. Only accepted links reach
-  the callback: by default the app's custom schemes and no `https` host (list your
-  universal / app link domains in `accept: { hosts }`, or pass a predicate). An accepted
-  link's in-app path (`myapp://threads/42` → `/threads/42`) is navigated once, through the
-  history (`popstate`) or a `route(path)` function. On the web it does nothing.
-- **Push notifications in `denext/mobile`.** `requestPushPermission()`, `registerForPush()`
-  (the APNs / FCM token for your server; concurrent calls share one registration, and it
-  times out), `onPushReceived` / `usePushReceived` and `onPushTapped` / `usePushTapped`,
-  which navigates to a tapped notification's `data.path` or accepted `data.url`. A tap that
-  cold-started the app still arrives (the shell keeps it for the first listener). There is
-  no web-push fallback, and denext ships no push relay: your server sends through APNs /
-  FCM.
-- **`denext mobile add deep-links --scheme <s> --domain <d>`** registers URL schemes
-  (`CFBundleURLTypes`, a VIEW intent filter) and universal / app link domains
-  (`applinks:` associated domains, an `autoVerify` https intent filter), merging with what is
-  there. **`denext mobile add push`** writes the `aps-environment` entitlement, forwards the
-  token callbacks in `AppDelegate.swift`, declares `POST_NOTIFICATIONS`, and warns when
-  `android/app/google-services.json` is missing. A new `App.entitlements` still has to be
-  selected in Xcode; that and the other manual steps are printed.
-- **OAuth sign-in sheets in `denext/mobile`.** `openAuthSession(url, { callbackScheme,
-  preferEphemeral, timeoutMs })` opens the provider's page in an `ASWebAuthenticationSession`
-  sheet on iOS or a Custom Tab on Android and resolves with the full callback URL; it rejects
-  with a `code` of `cancelled`, `busy` (one session at a time), `invalid`, `unsupported` or
-  `timeout`. On the web it opens a popup, and the callback page calls
-  `completeAuthSession()` to post its URL back (same origin only). PKCE and `state` stay the
-  app's job. While a session waits, `onDeepLink` leaves its callback alone.
-- **`denext mobile add auth-session --scheme <s>`** installs denext's own `DenextAuthSession`
-  native plugin (no npm package): the Swift and Java sources, the Xcode target entry, and its
-  registration in `DenextBridgeViewController` and `MainActivity`. It shares those two files
-  with `denext mobile add-ota`, and either one can run first. `--scheme` registers the
-  callback scheme the way `deep-links` does (Android needs it to receive the redirect).
-
-### Fixed
-
 - **Booleanish attributes on the client.** A boolean on `aria-*`, `data-*`, `draggable`,
   `spellCheck`, `contentEditable` (and React 19's other booleanish-string props) is now
   written as `"true"` / `"false"`, as react-dom and denext's SSR already did. Before, the
@@ -8490,6 +8457,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.10.0]: https://jsr.io/@denext/denext@2.10.0
 [2.10.0-rc.6]: https://jsr.io/@denext/denext@2.10.0-rc.6
 [2.10.0-rc.5]: https://jsr.io/@denext/denext@2.10.0-rc.5
 [2.10.0-rc.4]: https://jsr.io/@denext/denext@2.10.0-rc.4
