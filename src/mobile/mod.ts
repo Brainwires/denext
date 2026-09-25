@@ -70,6 +70,7 @@
  */
 
 export { isNativeShell, type NativePlatform, nativePlatform, openExternal } from "./bridge.ts";
+export { type RuntimePlatform, runtimePlatform } from "./bridge.ts";
 export { onAppResume, useAppResume } from "./resume.ts";
 export { installKeyboardInset, type KeyboardInsetOptions, useKeyboardInset } from "./keyboard.ts";
 export { type BackSwipeOptions, isBackSwipe, useBackSwipe } from "./back-swipe.ts";

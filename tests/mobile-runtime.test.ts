@@ -16,6 +16,8 @@ import {
   nativePlatform,
   onAppResume,
   openExternal,
+  type RuntimePlatform,
+  runtimePlatform,
   SAFE_AREA_CSS,
   useAppResume,
   useBackSwipe,
@@ -132,6 +134,44 @@ Deno.test("isNativeShell/nativePlatform: a custom native platform (e.g. electron
     assertEquals(isNativeShell(), false);
     assertEquals(nativePlatform(), "web");
   });
+});
+
+// ---- runtimePlatform ---------------------------------------------------------
+
+Deno.test("runtimePlatform: the iOS and Android shells win regardless of __denext", async () => {
+  const shells: RuntimePlatform[] = ["ios", "android"];
+  for (const platform of shells) {
+    const cap = { isNativePlatform: () => true, getPlatform: () => platform, Plugins: {} };
+    await withGlobals({ Capacitor: cap, __denext: { desktop: true } }, () => {
+      assertEquals(runtimePlatform(), platform, "native shell wins over the desktop marker");
+    });
+  }
+});
+
+Deno.test("runtimePlatform: __denext.desktop === true is the desktop runtime", async () => {
+  await withGlobals({ __denext: { desktop: true } }, () => {
+    assertEquals(runtimePlatform(), "desktop");
+  });
+});
+
+Deno.test("runtimePlatform: a non-boolean-true marker is web, not desktop", async () => {
+  await withGlobals({ __denext: { desktop: "yes" } }, () => {
+    assertEquals(runtimePlatform(), "web");
+  });
+  await withGlobals({ __denext: { desktop: 1 } }, () => {
+    assertEquals(runtimePlatform(), "web");
+  });
+  await withGlobals({ __denext: null }, () => {
+    assertEquals(runtimePlatform(), "web");
+  });
+  await withGlobals({ __denext: "desktop" }, () => {
+    assertEquals(runtimePlatform(), "web");
+  });
+});
+
+Deno.test("runtimePlatform: web without either global (SSR)", () => {
+  assertEquals(typeof g.__denext, "undefined", "a Deno server has no __denext global (SSR)");
+  assertEquals(runtimePlatform(), "web");
 });
 
 // ---- openExternal ----------------------------------------------------------
