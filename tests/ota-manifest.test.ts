@@ -247,6 +247,8 @@ Deno.test("denext ota: --required and --notes are declared flags", () => {
       ["sign", "string"],
       ["sequence", "number"],
       ["min-native", "number"],
+      ["native-fingerprint", "string"],
+      ["dir", "string"],
       ["force", "boolean"],
     ],
   );
@@ -753,6 +755,176 @@ Deno.test("denext ota manifest --sequence / --min-native; --sign stamps a sequen
     });
   } finally {
     await Deno.remove(dir, { recursive: true });
+    await Deno.remove(keyFile).catch(() => {});
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Signature payload v3: nativeFingerprint (the native-layer gate), backward compatible with v2.
+
+const FINGERPRINT = "ab".repeat(32);
+
+Deno.test("ota signature v3: the exact bytes; without a fingerprint the payload stays v2", async () => {
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  const notesSha = await sha256Hex(encoder.encode("Fixes sign-in"));
+  assertEquals(
+    text(
+      await otaSignaturePayload({
+        version: FIXTURE_VERSION,
+        required: true,
+        notes: "Fixes sign-in",
+        sequence: 1758700000,
+        minNative: 42,
+        nativeFingerprint: FINGERPRINT,
+      }),
+    ),
+    `denext-ota-v3\n${FIXTURE_VERSION}\n1\n${notesSha}\n1758700000\n42\n${FINGERPRINT}`,
+  );
+  // No minNative: its line stays, empty (seven lines, no trailing newline).
+  const bare = text(
+    await otaSignaturePayload({
+      version: FIXTURE_VERSION,
+      sequence: 0,
+      nativeFingerprint: FINGERPRINT,
+    }),
+  );
+  assertEquals(bare, `denext-ota-v3\n${FIXTURE_VERSION}\n0\n${EMPTY_SHA}\n0\n\n${FINGERPRINT}`);
+  assertEquals(bare.split("\n").length, 7);
+  // No fingerprint: byte-for-byte the v2 payload 2.9 signs.
+  assertEquals(
+    text(await otaSignaturePayload({ version: FIXTURE_VERSION, sequence: 5, minNative: 1 })),
+    `denext-ota-v2\n${FIXTURE_VERSION}\n0\n${EMPTY_SHA}\n5\n1`,
+  );
+  // A fingerprint needs a sequence, and must be 64 lowercase hex digits.
+  await assertRejects(
+    () => otaSignaturePayload({ version: FIXTURE_VERSION, nativeFingerprint: FINGERPRINT }),
+    RangeError,
+    "sequence",
+  );
+  for (const bad of ["AB".repeat(32), "ab".repeat(31), `${"ab".repeat(31)}a\n`]) {
+    await assertRejects(
+      () => otaSignaturePayload({ version: FIXTURE_VERSION, sequence: 1, nativeFingerprint: bad }),
+      RangeError,
+      "nativeFingerprint",
+    );
+  }
+});
+
+Deno.test("ota signature v3: sign/verify binds nativeFingerprint; v2 manifests still verify", async () => {
+  const { publicKey, signingKey } = await keys();
+  const v3 = await signOtaManifest(
+    await makeOtaManifest(FILES, {
+      sequence: 1758700000,
+      minNative: 42,
+      nativeFingerprint: FINGERPRINT,
+    }),
+    signingKey,
+  );
+  assertEquals(v3.nativeFingerprint, FINGERPRINT);
+  assert(isOtaManifest(v3));
+  assert(await verifyOtaManifest(v3, publicKey));
+  const tampered: Array<[string, OtaManifest]> = [
+    ["fingerprint changed", { ...v3, nativeFingerprint: "cd".repeat(32) }],
+    ["fingerprint dropped (a v3 signature does not verify as v2)", {
+      ...v3,
+      nativeFingerprint: undefined,
+    }],
+    ["minNative changed", { ...v3, minNative: 41 }],
+    ["sequence changed", { ...v3, sequence: 1758700001 }],
+  ];
+  for (const [label, bad] of tampered) assert(!(await verifyOtaManifest(bad, publicKey)), label);
+  // A v2 manifest (signed before v3 existed) verifies unchanged, and cannot gain a fingerprint.
+  const v2 = await signOtaManifest(
+    await makeOtaManifest(FILES, { sequence: 1758700000, minNative: 42 }),
+    signingKey,
+  );
+  assertEquals(
+    new TextDecoder().decode(await otaSignaturePayload(v2)).split("\n")[0],
+    "denext-ota-v2",
+  );
+  assert(await verifyOtaManifest(v2, publicKey));
+  assert(!(await verifyOtaManifest({ ...v2, nativeFingerprint: FINGERPRINT }, publicKey)));
+  // Unsigned, a fingerprint may ride without a sequence; signing that is refused.
+  const unsigned = await makeOtaManifest(FILES, { nativeFingerprint: FINGERPRINT });
+  assertEquals(unsigned.nativeFingerprint, FINGERPRINT);
+  await assertRejects(() => signOtaManifest(unsigned, signingKey), RangeError);
+  await assertRejects(
+    () => makeOtaManifest(FILES, { nativeFingerprint: "nope" }),
+    RangeError,
+    "nativeFingerprint",
+  );
+});
+
+Deno.test("isOtaManifest: nativeFingerprint is 64 lowercase hex digits", () => {
+  const base = {
+    version: FIXTURE_VERSION,
+    files: [{ path: "index.html", sha256: INDEX_HTML_SHA, size: 13 }],
+  };
+  assert(isOtaManifest({ ...base, nativeFingerprint: FINGERPRINT }));
+  for (const bad of ["AB".repeat(32), "ab", 1, null, true]) {
+    assert(!isOtaManifest({ ...base, nativeFingerprint: bad }), `nativeFingerprint ${bad}`);
+  }
+});
+
+Deno.test("denext ota manifest --native-fingerprint <fp|auto> stamps the signed manifest", async () => {
+  const dir = await webRoot();
+  const project = await Deno.makeTempDir();
+  const { publicKey, privateKeyPem } = await keys();
+  const keyFile = `${dir}.key`;
+  const written = async () =>
+    JSON.parse(await Deno.readTextFile(join(dir, "_denext", "ota.json"))) as OtaManifest;
+  try {
+    await Deno.writeTextFile(keyFile, privateKeyPem);
+    await Deno.writeTextFile(join(project, "capacitor.config.json"), `{"appId":"a.b"}`);
+    await withSigningEnv(undefined, async () => {
+      // An explicit value is normalised to lowercase.
+      const [json] = await ota(
+        ["manifest", dir],
+        { sign: keyFile, "native-fingerprint": FINGERPRINT.toUpperCase() },
+        true,
+      );
+      assertEquals(JSON.parse(json).nativeFingerprint, FINGERPRINT);
+      assertEquals((await written()).nativeFingerprint, FINGERPRINT);
+      assert(await verifyOtaManifest(await written(), publicKey));
+      // auto: the fingerprint of the Capacitor project at --dir.
+      const { computeNativeFingerprint } = await import("../src/build/mobile-fingerprint.ts");
+      const expected = (await computeNativeFingerprint(project)).fingerprint;
+      const lines = await ota(["manifest", dir], {
+        sign: keyFile,
+        "native-fingerprint": "auto",
+        dir: project,
+      });
+      assertEquals((await written()).nativeFingerprint, expected);
+      assert(await verifyOtaManifest(await written(), publicKey));
+      assert(lines.some((l) => l.includes(`native ${expected.slice(0, 12)}`)), lines.join("\n"));
+      // Without the flag, no fingerprint.
+      await ota(["manifest", dir], { sign: keyFile });
+      assert(!("nativeFingerprint" in await written()));
+    });
+    // A malformed value, or auto without a Capacitor project, exits non-zero.
+    const failing: Array<Record<string, string>> = [
+      { "native-fingerprint": "xyz" },
+      { "native-fingerprint": "auto", dir },
+    ];
+    for (const flags of failing) {
+      const exit = Deno.exit;
+      const error = console.error;
+      const errors: string[] = [];
+      Deno.exit = ((code?: number) => {
+        throw new Error(`exit ${code}`);
+      }) as typeof Deno.exit;
+      console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+      try {
+        await assertRejects(() => ota(["manifest", dir], flags), Error, "exit 1");
+      } finally {
+        Deno.exit = exit;
+        console.error = error;
+      }
+      assert(errors.join("\n").includes("--native-fingerprint"), errors.join("\n"));
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(project, { recursive: true });
     await Deno.remove(keyFile).catch(() => {});
   }
 });

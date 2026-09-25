@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- An App Store / TestFlight build. Use release-testing for ad hoc, enterprise for in-house. -->
+	<key>method</key>
+	<string>app-store-connect</string>
+	<!-- export writes an .ipa; upload sends it to App Store Connect (TestFlight) instead. -->
+	<key>destination</key>
+	<string>export</string>
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<!-- The workflow sets this from the APPLE_TEAM_ID secret. -->
+	<key>teamID</key>
+	<string>TEAM_ID</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>

@@ -364,14 +364,21 @@ four documented bounds of the opt-in:
 
 ### Desktop & mobile (`denext desktop`, Capacitor)
 
-- **`denext dev --host 0.0.0.0` serves HTML but no assets to a non-loopback client.** Every
-  `/_denext/*` request (bundles, the module graph, the reload stream, the Live hub) is refused
-  for a host that is neither loopback nor in `allowedDevOrigins` — the CVE-2025-48068 defense —
-  and `allowedDevOrigins` has no config key, CLI flag or env var yet, only a programmatic
-  `DevServerOptions` field. So a phone or a packaged desktop window pointed at a LAN dev server
-  renders a dead page: **LAN / mobile dev attach is not supported yet** (tracked in
-  [ROADMAP.md](./ROADMAP.md)). `denext desktop run` serves a static export over loopback, which
-  is unaffected.
+- **The dev assets answer only hosts you opted in.** Every `/_denext/*` request (bundles, the
+  module graph, the reload stream, the Live hub) is refused for a `Host` that is neither
+  loopback nor in `allowedDevOrigins` — the CVE-2025-48068 defense. `denext dev --lan`, an
+  explicit `--host`, `--allowed-dev-origin` and the `allowedDevOrigins` config key opt a host
+  in; a device reaching the dev server by any other name (a second NIC's address, a DNS name
+  you did not list) still gets a dead page. `--lan` binds only the LAN address, so
+  `http://localhost` does not answer while it is on. Wildcard entries are not supported.
+- **Desktop dev attach is not supported yet.** A packaged `denext desktop` window cannot load
+  `denext dev` (tracked in [ROADMAP.md](./ROADMAP.md) as `denext desktop dev`); `denext desktop
+  run` serves a static export over loopback. The Capacitor half works (`denext mobile dev`).
+- **`denext mobile dev` edits `capacitor.config.*` for the session.** It is restored on every
+  exit path Deno can observe; a `SIGKILL` or power loss leaves the edit and a backup in
+  `.denext/`, restored by the next `mobile dev` or `mobile dev --restore`, so check before a
+  release build after a crash. A config whose exported object is built by a function call it
+  cannot see into (`export default makeConfig()`) is refused.
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
@@ -382,6 +389,18 @@ four documented bounds of the opt-in:
   rotating it (or recovering from a leaked private key) takes an app release. The Android
   template is compiled against Capacitor 8.5 by hand, not in CI; the iOS one is build-checked
   with `xcodebuild`.
+- **The native fingerprint gate needs both sides, and binaries from before it refuse with the
+  wrong code.** `denext mobile fingerprint --write` embeds the fingerprint and
+  `denext ota manifest --native-fingerprint` stamps it; the `native_mismatch` check runs only
+  when the binary and the manifest both carry one. A binary whose OTA plugin predates it
+  (template generation 3, denext ≤ 2.10.0-rc.2) refuses a signed manifest with a fingerprint as
+  `signature` (it verifies the v2 payload; v3 adds the fingerprint), and ignores the fingerprint
+  of an unsigned one. The fingerprint hashes the committed native sources, so a version or build
+  number committed there (`CURRENT_PROJECT_VERSION`, `versionCode`) counts as a native change: set
+  them on the build command line. It reads installed plugin versions from `node_modules`, so
+  fingerprint after installing packages. It cannot see native code that reaches the build from
+  outside `ios/`, `android/` and the Capacitor plugins `package.json` declares (a CocoaPods or
+  Gradle dependency pulled by a version range, an Xcode build setting passed by a script).
 - **Downloaded OTA files are verified once, when they arrive.** The native plugin does not re-hash
   a version's files at each launch (that would cost every cold start), so a file changed in the
   app's data directory afterwards (a jailbroken or rooted device, or a debug build) is served as
@@ -392,6 +411,19 @@ four documented bounds of the opt-in:
   Capacitor's `reload()` leaves the trial UI blank, the boot watchdog rolls it back. On Android a
   renderer crash ends the app process (Capacitor does not handle `onRenderProcessGone`), and the
   next launch counts it as one of the trial's two attempts.
+- **Configurable widgets are iOS 17+ only; Android widgets are static.** `denext mobile add widget
+  --configurable` generates an App Intents configuration, which WidgetKit offers from iOS 17. On
+  iOS 14–16 the same widget is a static one (kind `<Name>.static`) that shows the snapshot stored
+  for the parameters' defaults; it lists no family on iOS 17, so one placed before an OS upgrade
+  is not carried over to the configurable kind. Android has no configure activity: its widget
+  shows the snapshot `setWidgetData` stores without `params`. Only enum parameters are supported,
+  and a configured widget whose values have no snapshot of their own shows the unparameterised
+  one.
+- **The `expo-widgets` shim renders the generated SwiftUI, not the `"widget"` layout function.**
+  Props become the widget's JSON snapshot or the Live Activity's state; `updateTimeline` stores
+  only the entry that applies now; `LiveActivityFactory.start` returns before ActivityKit has an
+  id (`getId()` is `""` until then); a start URL, stale dates and widget interaction events are
+  not supported.
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so

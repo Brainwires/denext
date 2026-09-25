@@ -221,33 +221,19 @@ What a React Native / Expo app gets that `denext/mobile` + a Capacitor shell sti
 lacks — measured against T3 Code's React Native app. The full comparison (what is
 already covered, what official Capacitor plugins cover) is
 [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md); rendering stays WebView (see
-[POLICIES.md](./POLICIES.md#engineering-guardrails)). In day-one order:
+[POLICIES.md](./POLICIES.md#engineering-guardrails)).
 
-- **Push notifications** — a `denext/mobile` registration + permission API over
-  the Capacitor push plugin, and notification-tap → deep-link routing. The single
-  biggest gap.
-- **Auth sessions + deep links** — `openAuthSession()` (ASWebAuthenticationSession
-  on iOS, Custom Tabs on Android) and an `onDeepLink` hook (URL-open events, cold
-  and warm start), for OAuth in a system browser sheet and pairing links.
-- **The `denext mobile add <capability>` wrapper pattern** — install an official
-  Capacitor plugin, register it natively (as `add-ota` does), and expose it as a
-  typed `denext/mobile` hook with a web / desktop fallback: haptics, clipboard,
-  share, filesystem, device, network, splash screen, camera / pickers, secure
-  storage, keep-awake.
-- **CI signing + build recipe** — a GitHub Actions recipe that builds signed iOS /
-  Android artifacts (the EAS Build equivalent), plus a native-layer fingerprint
-  check so CI knows whether a change can ship over the air or needs a binary.
-- **Dev-server attach** — a phone running the app gets HMR from `denext dev` (the
-  Metro model); tracked in detail under "Dev server attach" below.
-- **Expo / React Native compatibility layer** — react-native-web running on denext's
-  React compat, a `react-native` bundler resolve mode, and `denext/expo/*` shims over
-  the `denext/mobile` capabilities, so an existing Expo/RN app's source can run mostly
-  unchanged (`migrate --from expo`). Starts with a measured spike (T3's `apps/mobile/src`
-  aliased onto denext, failures counted by bucket). Detail:
-  [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md#compatibility-layer-running-expo--react-native-apps).
-- Later: app extensions (share extension, widgets, Live Activities) as
-  `denext mobile add-<thing>` generators, and a real-device Android measurement
-  before any "native feel" work.
+Shipped in the 2.10 line (see CHANGELOG): push notifications, deep links, auth
+sessions, the `denext mobile add <capability>` pattern (haptics, clipboard, share,
+filesystem, device, network, splash, camera / pickers, barcode, quick actions, secure
+storage, keep-awake, SQLite), app extensions (share extension, widgets, Live Activities),
+the native fingerprint + CI recipe, dev-server attach for phones, and the Expo / React
+Native compatibility layer (`reactNative` mode, `denext/expo/*`, `migrate --from expo`).
+Still open:
+
+- **Android "native feel" on real hardware** — the measurement so far is an emulator
+  comparison; a real-device run is still needed before claiming parity either way.
+- **Desktop dev-server attach** — tracked under "Dev server attach" below.
 
 ## Candidate features (from the framework-gap survey)
 
@@ -256,22 +242,11 @@ Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack (the three picks that shipped
 CHANGELOG/FEATURES). The rest are kept here so they aren't lost; not yet
 scheduled.
 
-- **Dev server attach for desktop and Capacitor apps (the Metro model).** A
-  packaged desktop window or a phone running the app should be able to attach to
-  `denext dev` and get HMR, the way a React Native app attaches to Metro. Today
-  it cannot: every `/_denext/*` asset is refused for a non-loopback host (see
-  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)). The work, smallest first:
-  - **A user-facing `allowedDevOrigins`** — a `denext.config.ts` key plus
-    `denext dev --allowed-dev-origin`, in the generated config schema and
-    documented. It is a programmatic `DevServerOptions` field only today.
-  - **Auto-allow an explicitly bound `--host`**, and stop `.denext/dev.json`
-    rewriting `0.0.0.0` to `127.0.0.1` when the bind was deliberate.
-  - **`denext dev --lan`** — pick the LAN IPv4, bind it, allow it, print the URL
-    and an ASCII QR code (no dependency).
-  - **Capacitor live reload** — a `mobile:dev` task that writes `server.url`
-    into the Capacitor config so the phone's page origin _is_ the dev server
-    (which is what makes the existing SSE reload and the origin checks work
-    unchanged).
+- **Dev server attach for desktop apps (the Metro model).** A packaged desktop
+  window should be able to attach to `denext dev` and get HMR, the way a React
+  Native app attaches to Metro. The phone half shipped (`allowedDevOrigins`,
+  `denext dev --lan`, an explicit `--host` allowing what it binds, and
+  `denext mobile dev` for Capacitor live reload; see CHANGELOG). What is left:
   - **`denext desktop dev`** — a window over a loopback reverse proxy to the dev
     server (reusing `src/build/dev-proxy.ts`), so `location.origin` stays
     loopback and neither the CSP nor the origin gate has to be relaxed.

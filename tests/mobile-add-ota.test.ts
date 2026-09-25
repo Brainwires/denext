@@ -508,7 +508,8 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
   assertStringIncludes(init, `signature: manifest["signature"] as? String`);
   assertStringIncludes(store, "$0.path.utf16.lexicographicallyPrecedes($1.path.utf16)");
   assertStringIncludes(store, '.map { "\\($0.path)\\t\\($0.sha256)\\n" }');
-  // The signed bytes: v1 without a sequence, v2 with one (the same format as otaSignaturePayload).
+  // The signed bytes: v1 without a sequence, v2 with one, v3 with a nativeFingerprint too (the
+  // same format as otaSignaturePayload).
   assertStringIncludes(
     store,
     'let head = "\\(version)\\n\\(required ? "1" : "0")\\n\\(sha256Hex(Data(notes.utf8)))"',
@@ -516,7 +517,13 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
   assertStringIncludes(store, 'return Data("denext-ota-v1\\n\\(head)".utf8)');
   assertStringIncludes(
     store,
-    'return Data("denext-ota-v2\\n\\(head)\\n\\(sequence)\\n\\(minNative.map { String($0) } ?? "")".utf8)',
+    'let v2 = "\\(head)\\n\\(sequence)\\n\\(minNative.map { String($0) } ?? "")"',
+  );
+  assertStringIncludes(store, 'return Data("denext-ota-v2\\n\\(v2)".utf8)');
+  assertStringIncludes(store, 'return Data("denext-ota-v3\\n\\(v2)\\n\\(nativeFingerprint)".utf8)');
+  assertStringIncludes(
+    init,
+    "minNative: minNative,\n                    nativeFingerprint: nativeFingerprint\n                ),",
   );
   // The key comes from Info.plist only, through CryptoKit.
   assertStringIncludes(store, `static let publicKeyInfoKey = "DenextOtaPublicKey"`);
@@ -568,10 +575,18 @@ Deno.test("native templates: Android recomputes the version and enforces the sig
     store,
     `String head = version + "\\n" + (required ? "1" : "0") + "\\n" + sha256Hex(notes.getBytes(StandardCharsets.UTF_8));`,
   );
-  assertStringIncludes(store, `? "denext-ota-v1\\n" + head`);
+  assertStringIncludes(store, `text = "denext-ota-v1\\n" + head;`);
   assertStringIncludes(
     store,
-    `: "denext-ota-v2\\n" + head + "\\n" + sequence + "\\n" + (minNative == null ? "" : String.valueOf(minNative));`,
+    `String v2 = head + "\\n" + sequence + "\\n" + (minNative == null ? "" : String.valueOf(minNative));`,
+  );
+  assertStringIncludes(
+    store,
+    `text = nativeFingerprint == null ? "denext-ota-v2\\n" + v2 : "denext-ota-v3\\n" + v2 + "\\n" + nativeFingerprint;`,
+  );
+  assertStringIncludes(
+    parse,
+    "                minNative,\n                nativeFingerprint\n            ),",
   );
   // The key comes from the manifest meta-data only; raw r‖s becomes DER for SHA256withECDSA.
   assertStringIncludes(store, `PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY"`);
@@ -713,6 +728,70 @@ Deno.test({
       assertEquals(report.kept, []);
       // One changed character and it is the user's file again.
       assert(!(await isPristineOtaTemplate("DenextOta.java", old["DenextOta.java"] + " ")));
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+/**
+ * The OTA files exactly as `add-ota` wrote them at `tag` (a release with marker lines): the
+ * module at that tag, its marker import pointed at this checkout's (unchanged) marker module.
+ */
+async function writtenTemplatesAt(
+  tag: string,
+): Promise<{ generation: number; files: Record<string, string> }> {
+  const out = await new Deno.Command("git", {
+    args: ["show", `${tag}:src/build/ota-native-templates.ts`],
+  }).output();
+  const marker = new URL("../src/build/native-template-marker.ts", import.meta.url).href;
+  const source = new TextDecoder().decode(out.stdout)
+    .replace(`from "./native-template-marker.ts"`, `from "${marker}"`);
+  const file = await Deno.makeTempFile({ suffix: ".ts" });
+  try {
+    await Deno.writeTextFile(file, source);
+    const mod = await import(`file://${file}`);
+    const files: Record<string, string> = {};
+    for (const [name, text] of Object.entries({ ...mod.OTA_IOS_FILES, ...mod.OTA_ANDROID_FILES })) {
+      files[name] = await mod.renderOtaTemplate(text as string);
+    }
+    return { generation: mod.OTA_TEMPLATE_VERSION, files };
+  } finally {
+    await Deno.remove(file);
+  }
+}
+
+Deno.test({
+  name: "add-ota: generation-3 templates (2.9.0 … 2.10.0-rc.2) upgrade to the current one",
+  ignore: !(await hasTag("v2.10.0-rc.2")),
+  async fn() {
+    const { generation, files } = await writtenTemplatesAt("v2.10.0-rc.2");
+    assertEquals(generation, 3);
+    assert(OTA_TEMPLATE_VERSION > generation, "bump OTA_TEMPLATE_VERSION when templates change");
+    // The templates did change since (the native fingerprint gate, payload v3).
+    assert(!files["DenextOtaStore.swift"].includes("native_mismatch"));
+    const dir = await project();
+    try {
+      const otaDir = join(dir, "android/app/src/main/java/dev/denext/ota");
+      await Deno.mkdir(otaDir, { recursive: true });
+      for (const name of Object.keys(OTA_IOS_FILES)) {
+        assert(await isPristineOtaTemplate(name, files[name]), name);
+        await Deno.writeTextFile(join(dir, "ios/App/App", name), files[name]);
+      }
+      for (const name of Object.keys(OTA_ANDROID_FILES)) {
+        assert(await isPristineOtaTemplate(name, files[name]), name);
+        await Deno.writeTextFile(join(otaDir, name), files[name]);
+      }
+      const report = await addOtaToProject({ dir });
+      assertEquals(report.upgraded.length, 6, report.manual.join("\n"));
+      assertEquals(report.kept, []);
+      const store = await read(dir, IOS_STORE);
+      assert(store.startsWith(`// denext-ota-template: ${OTA_TEMPLATE_VERSION} sha256=`));
+      assertStringIncludes(store, `code: "native_mismatch"`);
+      assertStringIncludes(
+        await read(dir, "android/app/src/main/java/dev/denext/ota/DenextOtaStore.java"),
+        `"native_mismatch"`,
+      );
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
@@ -877,13 +956,30 @@ Deno.test("native templates: path, cap, release and trial rules (iOS)", () => {
   const init = body(store, "init(baseUrl: String?, headers: JSObject?, manifest: JSObject?)");
   assert(
     init.indexOf("checkTrust(") <
-      init.indexOf("checkRelease(sequence: sequence, minNative: minNative)"),
+      init.indexOf(
+        "checkRelease(sequence: sequence, minNative: minNative, nativeFingerprint: nativeFingerprint)",
+      ),
     init,
+  );
+  assertStringIncludes(
+    init,
+    `let nativeFingerprint = try DenextOtaStore.fingerprintField(manifest["nativeFingerprint"])`,
   );
   const release = body(store, "static func checkRelease(");
   assertStringIncludes(release, `code: "downgrade"`);
   assertStringIncludes(release, "guard sequence >= highest");
   assertStringIncludes(release, `code: "native_too_old"`);
+  // The native gate: only when both the manifest and the binary carry a fingerprint.
+  assertStringIncludes(
+    release,
+    "if let wanted = nativeFingerprint, let binary = binaryFingerprint, wanted != binary {",
+  );
+  assertStringIncludes(release, `code: "native_mismatch"`);
+  assertStringIncludes(store, `static let nativeFingerprintInfoKey = "DenextNativeFingerprint"`);
+  assertStringIncludes(
+    body(store, "static func fingerprintField("),
+    `guard let text = value as? String, isSha256(text) else {`,
+  );
   assertStringIncludes(store, `Bundle.main.infoDictionary?["CFBundleVersion"]`);
   // The accepted sequence is recorded when a version is staged and survives reset.
   assertStringIncludes(body(store, "func stage("), "forKey: Key.sequence");
@@ -933,13 +1029,33 @@ Deno.test("native templates: path, cap, release and trial rules (Android)", () =
     plugin.indexOf("private static DenextOtaStore.ApplyRequest parseApplyRequest("),
   );
   assert(
-    parse.indexOf("store.checkTrust(") < parse.indexOf("store.checkRelease(sequence, minNative);"),
+    parse.indexOf("store.checkTrust(") <
+      parse.indexOf("store.checkRelease(sequence, minNative, nativeFingerprint);"),
     parse,
+  );
+  assertStringIncludes(
+    parse,
+    `String nativeFingerprint = DenextOtaStore.fingerprintField(manifest.opt("nativeFingerprint"));`,
   );
   const release = body(store, "void checkRelease(");
   assertStringIncludes(release, `new OtaException("downgrade"`);
   assertStringIncludes(release, "if (sequence < highest)");
   assertStringIncludes(release, `new OtaException("native_too_old"`);
+  // The native gate: only when both the manifest and the binary carry a fingerprint.
+  assertStringIncludes(
+    release,
+    "if (nativeFingerprint != null && binary != null && !nativeFingerprint.equals(binary)) {",
+  );
+  assertStringIncludes(release, `"native_mismatch"`);
+  assertStringIncludes(store, `NATIVE_FINGERPRINT_META = "dev.denext.native.FINGERPRINT"`);
+  assertStringIncludes(
+    body(store, "String binaryFingerprint("),
+    "info.metaData.get(NATIVE_FINGERPRINT_META)",
+  );
+  assertStringIncludes(
+    body(store, "static String fingerprintField("),
+    "if (value instanceof String && isSha256((String) value)) {",
+  );
   assertStringIncludes(
     store,
     "PackageInfoCompat.getLongVersionCode(context.getPackageManager().getPackageInfo(",

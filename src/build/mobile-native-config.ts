@@ -144,6 +144,39 @@ export function withManifestPermission(manifest: string, permission: string): st
   return `${manifest.slice(0, lineStart)}${indent}${element}\n${manifest.slice(lineStart)}`;
 }
 
+/** A self-closing `<meta-data android:name="<name>" … />` element. */
+function metaDataElement(name: string): RegExp {
+  return new RegExp(`<meta-data\\b[^>]*android:name="${name.replaceAll(".", "\\.")}"[^>]*/>`);
+}
+
+/**
+ * The `android:value` of the `<meta-data android:name="<name>" … />` element in `manifest`, or
+ * undefined when there is no such element (an element without a value reads as `""`).
+ */
+export function manifestMetaDataValue(manifest: string, name: string): string | undefined {
+  const element = metaDataElement(name).exec(manifest)?.[0];
+  if (element === undefined) return undefined;
+  return /android:value="([^"]*)"/.exec(element)?.[1] ?? "";
+}
+
+/**
+ * `manifest` with `<meta-data android:name="<name>" android:value="<value>" />` set: an existing
+ * element with that name is replaced, else one is added on its own line above `</application>`
+ * (one indent step deeper than it). Null without `</application>`. `value` is written as given
+ * (it must not contain `"`, `<` or `&`).
+ */
+export function withManifestMetaData(manifest: string, name: string, value: string): string | null {
+  const element = `<meta-data android:name="${name}" android:value="${value}" />`;
+  const existing = metaDataElement(name);
+  if (existing.test(manifest)) return manifest.replace(existing, element);
+  const end = manifest.lastIndexOf("</application>");
+  if (end < 0) return null;
+  const lineStart = manifest.lastIndexOf("\n", end - 1) + 1;
+  const indent = manifest.slice(lineStart, end);
+  if (indent.trim() !== "") return `${manifest.slice(0, end)}${element}\n${manifest.slice(end)}`;
+  return `${manifest.slice(0, lineStart)}${indent}    ${element}\n${manifest.slice(lineStart)}`;
+}
+
 // ---- deep links, push: URL types, entitlements, intent filters, AppDelegate ------------------
 
 /** Where a plist value element starts and ends (just past its closing tag). */
@@ -195,6 +228,25 @@ function insertAbove(text: string, close: number, block: string[], indent: strin
   return `${text.slice(0, close)}\n${lines}${text.slice(close)}`;
 }
 
+/** The top-level dict of `plist` and its `key` entry (if any); null without a top-level dict. */
+function topLevelKey(
+  plist: string,
+  key: string,
+): { top: PlistTopDict; found?: { name: string; end: number } } | null {
+  const top = plistTopDict(plist);
+  return top && { top, found: top.keys.find((k) => k.name === key) };
+}
+
+/** `plist` with `<key>key</key>` and its value lines added last in the top-level dict. */
+function withTopLevelKey(
+  plist: string,
+  top: PlistTopDict,
+  key: string,
+  value: readonly string[],
+): string {
+  return insertAbove(plist, top.close, [`<key>${key}</key>`, ...value], "\t");
+}
+
 /** The `<string>` values directly inside an array's text. */
 function arrayStrings(arrayText: string): string[] {
   return [...arrayText.matchAll(/<string>([^<]*)<\/string>/g)].map((m) => m[1]);
@@ -215,12 +267,10 @@ export function withPlistStringArray(
   key: string,
   values: readonly string[],
 ): string | null {
-  const top = plistTopDict(plist);
-  if (!top) return null;
-  const found = top.keys.find((k) => k.name === key);
-  if (!found) {
-    return insertAbove(plist, top.close, [`<key>${key}</key>`, ...arrayLines(values)], "\t");
-  }
+  const at = topLevelKey(plist, key);
+  if (!at) return null;
+  const { top, found } = at;
+  if (!found) return withTopLevelKey(plist, top, key, arrayLines(values));
   const span = plistValueSpan(plist, found.end);
   if (!span || span.name !== "array") return null;
   const have = span.empty ? [] : arrayStrings(plist.slice(span.start, span.end));
@@ -349,17 +399,62 @@ export function withManifestIntentFilter(
   manifest: string,
   filter: ManifestLinkFilter,
 ): string | null {
-  const activity = mainActivity(manifest);
-  if (!activity) return null;
-  const body = manifest.slice(activity.start, activity.close);
   const attr = "host" in filter
     ? `android:host="${xmlText(filter.host)}"`
     : `android:scheme="${xmlText(filter.scheme)}"`;
-  if (body.includes(attr)) return manifest;
-  const lineStart = manifest.lastIndexOf("\n", activity.close - 1) + 1;
-  const closeIndent = manifest.slice(lineStart, activity.close);
+  return withManifestActivityBlock(manifest, attr, intentFilterLines(filter));
+}
+
+/**
+ * `manifest` with `lines` (unindented) added inside the launcher activity, above its
+ * `</activity>`, unless the activity already contains `needle`. Null when there is no launcher
+ * activity.
+ */
+export function withManifestActivityBlock(
+  manifest: string,
+  needle: string,
+  lines: readonly string[],
+): string | null {
+  const activity = mainActivity(manifest);
+  if (!activity) return null;
+  if (manifest.slice(activity.start, activity.close).includes(needle)) return manifest;
+  return insertNested(manifest, activity.close, lines);
+}
+
+/** `lines` above the closing tag at `close`, one indent step (4 spaces) deeper than it. */
+function insertNested(text: string, close: number, lines: readonly string[]): string {
+  const lineStart = text.lastIndexOf("\n", close - 1) + 1;
+  const closeIndent = text.slice(lineStart, close);
   const indent = closeIndent.trim() === "" ? `${closeIndent}    ` : "    ";
-  return insertAbove(manifest, activity.close, intentFilterLines(filter), indent);
+  return insertAbove(text, close, [...lines], indent);
+}
+
+/**
+ * `manifest` with `lines` (unindented) added above `</application>`, one indent step deeper
+ * than it, unless the manifest already contains `needle`. Null without `</application>`.
+ */
+export function withManifestApplicationBlock(
+  manifest: string,
+  needle: string,
+  lines: readonly string[],
+): string | null {
+  if (manifest.includes(needle)) return manifest;
+  const end = manifest.lastIndexOf("</application>");
+  return end < 0 ? null : insertNested(manifest, end, lines);
+}
+
+/**
+ * `plist` with the top-level boolean `key` set to `<true/>`: added when absent, a `<false/>`
+ * turned to `<true/>`. Null without a top-level dict, or when the key holds a non-boolean.
+ */
+export function withPlistTrue(plist: string, key: string): string | null {
+  const at = topLevelKey(plist, key);
+  if (!at) return null;
+  if (!at.found) return withTopLevelKey(plist, at.top, key, ["<true/>"]);
+  const span = plistValueSpan(plist, at.found.end);
+  if (span?.name === "true") return plist;
+  if (span?.name !== "false") return null;
+  return plist.slice(0, span.start) + "<true/>" + plist.slice(span.end);
 }
 
 /** The `didRegister…` / `didFail…` forwarding `@capacitor/push-notifications` needs, as lines. */

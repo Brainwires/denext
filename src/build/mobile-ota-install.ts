@@ -11,7 +11,13 @@
 
 import { join } from "@std/path";
 import { addSourceFiles } from "./pbxproj.ts";
-import { plistEntry, plistTopDict, withPlistString } from "./mobile-native-config.ts";
+import {
+  manifestMetaDataValue,
+  plistEntry,
+  plistTopDict,
+  withManifestMetaData,
+  withPlistString,
+} from "./mobile-native-config.ts";
 import { OTA_ANDROID_FILES, OTA_IOS_FILES } from "./ota-native-templates.ts";
 import {
   BRIDGE_VC_FILE,
@@ -76,26 +82,14 @@ function withPlistPublicKey(plist: string, key: string): string | null {
   return withPlistString(plist, IOS_PUBLIC_KEY_KEY, key, true);
 }
 
-const MANIFEST_PUBLIC_KEY = new RegExp(
-  `<meta-data\\b[^>]*android:name="${ANDROID_PUBLIC_KEY_META.replaceAll(".", "\\.")}"[^>]*/>`,
-);
-
 /** Whether `manifest` carries the public-key `<meta-data>` with a non-empty value. */
 function manifestHasPublicKey(manifest: string): boolean {
-  const element = MANIFEST_PUBLIC_KEY.exec(manifest)?.[0];
-  return /android:value="[^"\s]+"/.test(element ?? "");
+  return /^[^"\s]+$/.test(manifestMetaDataValue(manifest, ANDROID_PUBLIC_KEY_META) ?? "");
 }
 
 /** `manifest` with the public-key `<meta-data>` set to `key`, or null without `</application>`. */
 function withManifestPublicKey(manifest: string, key: string): string | null {
-  const element = `<meta-data android:name="${ANDROID_PUBLIC_KEY_META}" android:value="${key}" />`;
-  if (MANIFEST_PUBLIC_KEY.test(manifest)) return manifest.replace(MANIFEST_PUBLIC_KEY, element);
-  const end = manifest.lastIndexOf("</application>");
-  if (end < 0) return null;
-  const lineStart = manifest.lastIndexOf("\n", end - 1) + 1;
-  const indent = manifest.slice(lineStart, end);
-  if (indent.trim() !== "") return `${manifest.slice(0, end)}${element}\n${manifest.slice(end)}`;
-  return `${manifest.slice(0, lineStart)}${indent}    ${element}\n${manifest.slice(lineStart)}`;
+  return withManifestMetaData(manifest, ANDROID_PUBLIC_KEY_META, key);
 }
 
 /**

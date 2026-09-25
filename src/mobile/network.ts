@@ -85,8 +85,11 @@ export async function networkStatus(): Promise<NetworkStatus> {
   return plugin ? fromNative(await plugin.getStatus()) : webStatus();
 }
 
-/** Report the status now and on every change; returns a stop function. */
-function watchNetwork(onStatus: (status: NetworkStatus) => void): () => void {
+/**
+ * Report the status now and on every change; returns a stop function. Internal (the
+ * `denext/expo/network` shim listens through it); not re-exported from `denext/mobile`.
+ */
+export function watchNetwork(onStatus: (status: NetworkStatus) => void): () => void {
   const plugin = networkPlugin();
   if (plugin) {
     let active = true;

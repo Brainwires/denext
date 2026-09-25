@@ -36,8 +36,8 @@ async function listFiles(dir: string, prefix: string): Promise<string[]> {
  * {@linkcode OtaManifest}.
  *
  * @param dir The web root (e.g. `out/`).
- * @param meta Optional `required` / `notes` / `sequence` / `minNative` to carry (never part of
- *   the version).
+ * @param meta Optional `required` / `notes` / `sequence` / `minNative` / `nativeFingerprint` to
+ *   carry (never part of the version).
  * @returns The manifest, files sorted by path.
  * @throws RangeError when a file's path holds a control character (U+0000–U+001F, U+007F): such
  *   a path could forge the lines the version hashes, so no side of OTA accepts it.
@@ -75,9 +75,10 @@ export function defaultOtaSequence(now: number = Date.now()): number {
  * server's configured directory) once its manifest is written.
  *
  * @param dir The web root (e.g. `out/`); it must contain an `index.html`.
- * @param meta Optional `required` / `notes` / `sequence` / `minNative`; a key left out is left
- *   out of the manifest, except that a signed manifest without a `sequence` gets
- *   {@linkcode defaultOtaSequence} (so it is signed with the v2 payload).
+ * @param meta Optional `required` / `notes` / `sequence` / `minNative` / `nativeFingerprint`; a
+ *   key left out is left out of the manifest, except that a signed manifest without a `sequence`
+ *   gets {@linkcode defaultOtaSequence} (so it is signed with the v2 payload, or v3 with a
+ *   `nativeFingerprint`).
  * @param signingKey An ECDSA P-256 private key (`loadOtaSigningKey`): the manifest then carries
  *   a `signature` over its version and metadata.
  * @returns The manifest written.

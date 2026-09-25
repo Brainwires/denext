@@ -1,0 +1,335 @@
+# denext + Capacitor: ship each change the cheapest way it can go.
+#
+# A template: copy it to your app repository's .github/workflows/mobile.yml (with
+# ExportOptions.plist next to your ios/ folder) and adjust the env block. See the README for
+# the secrets it reads and the one-time project changes it expects.
+#
+# decide   computes `denext mobile fingerprint` of the native layer and compares it with the
+#          fingerprint of the last binary release (the native-fingerprint.json asset of the
+#          newest GitHub release tagged native-*).
+# ota      same fingerprint: export the web UI, sign an OTA manifest stamped with that
+#          fingerprint, and deploy it. Installed apps pick it up with checkForUiUpdate().
+# ios      new fingerprint: archive + export a signed .ipa (App Store Connect API key,
+# android  automatic signing) and a signed .aab, both with the fingerprint embedded.
+# release  records the new fingerprint (and attaches the binaries) as a native-<fp> release,
+#          which the next run compares against.
+
+name: mobile
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_binary:
+        description: Build store binaries even when the native fingerprint is unchanged
+        type: boolean
+        default: false
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # The denext app (where `denext export` runs) and the Capacitor project (the folder with
+  # capacitor.config.*, ios/ and android/). Often the same folder.
+  APP_DIR: .
+  CAP_DIR: .
+  # Where `denext export` writes the static UI (the Capacitor config's webDir should be it).
+  WEB_OUT: out
+  # The denext CLI. Pin it to the version your app uses (or use `deno task denext`).
+  # --node-modules-dir=none: next to a package.json (the Capacitor project's), Deno would
+  # otherwise resolve the CLI's own npm: imports from node_modules and fail.
+  DENEXT: deno run -A --node-modules-dir=none jsr:@denext/denext@^2.10.0/cli
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      path: ${{ steps.compare.outputs.path }}
+      fingerprint: ${{ steps.compare.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The fingerprint reads the installed plugin versions from node_modules.
+      - name: Install the Capacitor project's packages
+        working-directory: ${{ env.CAP_DIR }}
+        run: npm ci
+      - name: Fingerprint the native layer
+        run: $DENEXT mobile fingerprint --dir "$CAP_DIR" --json > native-fingerprint.json
+      - name: Fetch the last binary release's fingerprint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release list --limit 100 --json tagName \
+            --jq '[.[] | select(.tagName | startswith("native-"))][0].tagName // ""')
+          if [ -n "$tag" ]; then
+            gh release download "$tag" --pattern native-fingerprint.json --output previous.json
+            echo "Last binary release: $tag"
+          else
+            echo "No native-* release yet: the first run builds binaries."
+          fi
+      - name: Decide ota or binary
+        id: compare
+        env:
+          FORCE_BINARY: ${{ inputs.force_binary || false }}
+        run: |
+          fp=$(jq -r .fingerprint native-fingerprint.json)
+          echo "fingerprint=$fp" >> "$GITHUB_OUTPUT"
+          if [ -f previous.json ]; then
+            # Which native inputs changed, for the log and the run summary.
+            $DENEXT mobile fingerprint --dir "$CAP_DIR" --diff previous.json | tee diff.txt
+            { echo '```'; cat diff.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$FORCE_BINARY" = "true" ] || [ ! -f previous.json ] ||
+            [ "$(jq -r .fingerprint previous.json)" != "$fp" ]; then
+            echo "path=binary" >> "$GITHUB_OUTPUT"
+            echo "Native layer changed: building store binaries." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "path=ota" >> "$GITHUB_OUTPUT"
+            echo "Native layer unchanged: shipping over the air." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-fingerprint
+          path: native-fingerprint.json
+
+  ota:
+    needs: decide
+    if: needs.decide.outputs.path == 'ota'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Export the web UI
+        run: $DENEXT export "$APP_DIR"
+      # Signed with DENEXT_OTA_SIGNING_KEY (the PEM contents); a signed manifest also gets a
+      # sequence (the Unix time), so apps refuse an older one. The fingerprint is the one
+      # `decide` computed (`--native-fingerprint auto --dir "$CAP_DIR"` recomputes it, but
+      # then this job needs `npm ci` too): a binary embedding another refuses the UI.
+      - name: Stamp and sign the OTA manifest
+        env:
+          DENEXT_OTA_SIGNING_KEY: ${{ secrets.DENEXT_OTA_SIGNING_KEY }}
+          NATIVE_FINGERPRINT: ${{ needs.decide.outputs.fingerprint }}
+        run: |
+          test -n "$DENEXT_OTA_SIGNING_KEY" || { echo "DENEXT_OTA_SIGNING_KEY is not set"; exit 1; }
+          $DENEXT ota manifest "$APP_DIR/$WEB_OUT" --native-fingerprint "$NATIVE_FINGERPRINT"
+      # Placeholder: publish the export wherever your apps' checkForUiUpdate({ baseUrl }) points
+      # (a server running createOtaHandler, a bucket behind a CDN, …). Upload every file first
+      # and _denext/ota.json last, so a client never sees a manifest whose files are missing.
+      - name: Deploy the OTA UI
+        env:
+          OTA_DEPLOY_TARGET: ${{ secrets.OTA_DEPLOY_TARGET }}
+        run: |
+          echo "Deploy $APP_DIR/$WEB_OUT to your OTA origin here, e.g.:"
+          echo "  rsync -a --exclude _denext/ota.json $APP_DIR/$WEB_OUT/ \$OTA_DEPLOY_TARGET/"
+          echo "  rsync -a $APP_DIR/$WEB_OUT/_denext/ota.json \$OTA_DEPLOY_TARGET/_denext/"
+
+  ios:
+    needs: decide
+    if: needs.decide.outputs.path == 'binary'
+    runs-on: macos-15
+    env:
+      NATIVE_FINGERPRINT: ${{ needs.decide.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the Capacitor project's packages
+        working-directory: ${{ env.CAP_DIR }}
+        run: npm ci
+      - name: Export the web UI and sync it into ios/
+        run: |
+          $DENEXT export "$APP_DIR"
+          (cd "$CAP_DIR" && npx cap sync ios)
+      # Embeds the fingerprint as Info.plist DenextNativeFingerprint (never changing its value),
+      # then checks this job builds the native layer `decide` fingerprinted.
+      - name: Embed the native fingerprint
+        run: |
+          $DENEXT mobile fingerprint --dir "$CAP_DIR" --write
+          test "$($DENEXT mobile fingerprint --dir "$CAP_DIR")" = "$NATIVE_FINGERPRINT"
+      # The distribution certificate goes into a temporary keychain, so Xcode never creates a new
+      # one per run. The profile is optional with automatic signing (Xcode fetches it with the
+      # API key), but importing it avoids a portal round trip.
+      - name: Import the signing certificate and profile
+        env:
+          IOS_DIST_CERT_P12_BASE64: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo -n "$IOS_DIST_CERT_P12_BASE64" | base64 --decode -o "$RUNNER_TEMP/dist.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/dist.p12" -P "$IOS_DIST_CERT_PASSWORD" -A -t cert \
+            -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" \
+            "$KEYCHAIN_PATH"
+          # Keep the existing search list after the new keychain (word splitting intended).
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychains -d user | tr -d '"')
+          if [ -n "$IOS_PROVISIONING_PROFILE_BASE64" ]; then
+            for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" \
+              "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+              mkdir -p "$dir"
+              echo -n "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode -o "$dir/app.mobileprovision"
+            done
+          fi
+      - name: Write the App Store Connect API key
+        env:
+          ASC_API_KEY_P8_BASE64: ${{ secrets.ASC_API_KEY_P8_BASE64 }}
+        run: echo -n "$ASC_API_KEY_P8_BASE64" | base64 --decode -o "$RUNNER_TEMP/AuthKey.p8"
+      # The API key (-authenticationKeyPath) lets xcodebuild sign automatically and fetch
+      # profiles without an Apple ID signed in to Xcode, which a CI runner never has. The build
+      # number comes from the run, set on the command line so the sources (and so the
+      # fingerprint) stay the same. Capacitor 8 projects use Swift Package Manager; with
+      # CocoaPods, pass -workspace ios/App/App.xcworkspace instead of -project.
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcodebuild archive \
+            -project "$CAP_DIR/ios/App/App.xcodeproj" \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH"
+      - name: Export the .ipa
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cp "$CAP_DIR/ExportOptions.plist" "$RUNNER_TEMP/ExportOptions.plist"
+          /usr/libexec/PlistBuddy -c "Set :teamID $APPLE_TEAM_ID" "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: ${{ runner.temp }}/export/*.ipa
+      - name: Remove the keychain and keys
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/dist.p12"
+
+  android:
+    needs: decide
+    if: needs.decide.outputs.path == 'binary'
+    runs-on: ubuntu-latest
+    env:
+      NATIVE_FINGERPRINT: ${{ needs.decide.outputs.fingerprint }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Install the Capacitor project's packages
+        working-directory: ${{ env.CAP_DIR }}
+        run: npm ci
+      - name: Export the web UI and sync it into android/
+        run: |
+          $DENEXT export "$APP_DIR"
+          (cd "$CAP_DIR" && npx cap sync android)
+      # Embeds the fingerprint as the dev.denext.native.FINGERPRINT meta-data.
+      - name: Embed the native fingerprint
+        run: |
+          $DENEXT mobile fingerprint --dir "$CAP_DIR" --write
+          test "$($DENEXT mobile fingerprint --dir "$CAP_DIR")" = "$NATIVE_FINGERPRINT"
+      - name: Write the upload keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: echo -n "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+      # The android.injected.signing.* properties sign the bundle without a signingConfig in
+      # build.gradle (the way Android Studio's "Generate Signed Bundle" does). versionCode is
+      # read by build.gradle from -PversionCode (see the README), so the sources stay the same.
+      - name: Build the signed .aab
+        working-directory: ${{ env.CAP_DIR }}/android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon bundleRelease \
+            -PversionCode="${{ github.run_number }}" \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/upload.jks" \
+            -Pandroid.injected.signing.store.password="$ANDROID_KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: ${{ env.CAP_DIR }}/android/app/build/outputs/bundle/release/*.aab
+      - name: Remove the keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
+
+  release:
+    needs: [decide, ios, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      NATIVE_FINGERPRINT: ${{ needs.decide.outputs.fingerprint }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      # The native-fingerprint.json asset is what the next run's `decide` compares against.
+      # Submitting the binaries to the stores is left to you (fastlane, Transporter, the Play
+      # Developer API, or `destination: upload` in ExportOptions.plist for TestFlight).
+      - name: Record the binary release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short=$(echo "$NATIVE_FINGERPRINT" | cut -c1-12)
+          gh release create "native-$short-${{ github.run_number }}" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Native build $short (run ${{ github.run_number }})" \
+            --notes "Native fingerprint $NATIVE_FINGERPRINT" \
+            artifacts/native-fingerprint/native-fingerprint.json \
+            artifacts/ios/*.ipa \
+            artifacts/android/*.aab

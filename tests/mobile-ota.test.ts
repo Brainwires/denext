@@ -467,10 +467,18 @@ Deno.test("signed OTA: the manifest's signature crosses the bridge on apply and 
   });
 });
 
-Deno.test("signed OTA: native signature/insecure/downgrade/native_too_old refusals carry their code", async () => {
+Deno.test("signed OTA: native signature/insecure/downgrade/native_too_old/native_mismatch refusals carry their code", async () => {
   const reject = (code: string) => () =>
     Promise.reject(Object.assign(new Error(`refused (${code})`), { code }));
-  for (const code of ["signature", "insecure", "downgrade", "native_too_old"] as const) {
+  for (
+    const code of [
+      "signature",
+      "insecure",
+      "downgrade",
+      "native_too_old",
+      "native_mismatch",
+    ] as const
+  ) {
     const { plugin: p } = plugin({ bundled: BUNDLED }, reject(code));
     await withShell({ DenextOta: p }, async () => {
       const expected = { kind: "error" as const, reason: `refused (${code})`, code };

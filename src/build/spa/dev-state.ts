@@ -74,6 +74,24 @@ function unbundledByDefault(paths: SpaDevServerOptions["paths"]): boolean {
   return Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
 }
 
+/**
+ * The unbundled opt-in: the explicit option, else the default. React Native mode refuses an
+ * explicit `unbundled: true`: react-native → react-native-web, the `.web.*` probing, the
+ * `.js` JSX loader, the RN globals and the `expo-*` → `denext/expo/*` aliases are esbuild
+ * resolver plugins, and the per-module loop resolves imports without them (its npm
+ * prebundle would reach the real, Flow-typed `react-native`), so it cannot build the app.
+ */
+function unbundledOptIn(options: SpaDevServerOptions): boolean {
+  if (options.unbundled === true && reactNativeOptions(options.paths.config) !== null) {
+    throw new Error(
+      "`reactNative` apps develop on the bundled dev loop: the react-native-web resolution " +
+        "lives in the bundler, which the unbundled per-module loop does not run. Drop " +
+        "`unbundled: true` (React Native mode already defaults it off).",
+    );
+  }
+  return options.unbundled ?? unbundledByDefault(options.paths);
+}
+
 /** Create the dev state for `options.paths` (resolves + validates the SPA entry). */
 export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
   const { paths } = options;
@@ -88,7 +106,7 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
     hasStyles: false,
     building: null,
     reloadClients: new Set(),
-    unbundledOptIn: options.unbundled ?? unbundledByDefault(paths),
+    unbundledOptIn: unbundledOptIn(options),
     unbundled: null,
     unbundledReady: null,
     unbundledCss: null,

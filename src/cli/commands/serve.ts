@@ -12,6 +12,8 @@ import { startProdServer } from "../../build/prod-server.ts";
 import { build } from "../../build/build.ts";
 import { staticExport } from "../../build/export.ts";
 import { applyPatchesAtBoot } from "./patch.ts";
+import { lanBanner, pickLanAddress } from "../../build/dev-server/lan.ts";
+import { devOriginError } from "../../server/config-validate.ts";
 
 /** `--port`/`--host` shared by the two serving verbs. */
 const SERVE_FLAGS = [
@@ -53,15 +55,79 @@ async function appProject(ctx: CommandContext): Promise<{ dir: string; paths: Pr
   return { dir, paths };
 }
 
+/**
+ * `--allowed-dev-origin` values (repeated and/or comma-separated) as a list, each checked the
+ * way the `allowedDevOrigins` config key is.
+ *
+ * @param value The flag's value (repeats arrive joined with `,`).
+ * @returns The entries, or the usage error to print.
+ */
+export function allowedDevOriginFlag(
+  value: string | number | boolean | undefined,
+): { ok: true; origins: string[] } | { ok: false; error: string } {
+  if (typeof value !== "string") return { ok: true, origins: [] };
+  const origins = value.split(",").map((v) => v.trim()).filter(Boolean);
+  for (const origin of origins) {
+    const problem = devOriginError(origin);
+    if (problem) return { ok: false, error: `--allowed-dev-origin ${origin}: ${problem}` };
+  }
+  return { ok: true, origins };
+}
+
+/**
+ * The host `denext dev` binds and what it prints on listen: `--lan` binds the machine's LAN
+ * IPv4 and prints its URL plus a QR code; otherwise `--host` as given and the default banner.
+ */
+function devBind(
+  ctx: CommandContext,
+): { hostname?: string; onListen?: (info: { hostname: string; port: number }) => void } {
+  const host = ctx.flags.host as string | undefined;
+  if (ctx.flags.lan !== true) return { hostname: host };
+  if (host !== undefined) fail("denext dev: --lan picks the address itself; drop --host.");
+  const address = pickLanAddress();
+  if (!address) fail("denext dev --lan: this machine has no LAN IPv4 address (is Wi-Fi on?).");
+  return {
+    hostname: address,
+    onListen: ({ port }) => console.log(lanBanner(`http://${address}:${port}`)),
+  };
+}
+
+/** Print a usage error and exit 2. */
+function fail(message: string): never {
+  console.error(message);
+  Deno.exit(2);
+}
+
 export const devCommand: CommandSpec = {
   name: "dev",
   summary: "Start the dev server",
   loadsModules: true,
-  flags: SERVE_FLAGS,
+  flags: [
+    ...SERVE_FLAGS,
+    {
+      name: "lan",
+      type: "boolean",
+      help: "Bind the machine's LAN IPv4, allow it, and print its URL as a QR code",
+    },
+    {
+      name: "allowed-dev-origin",
+      type: "string",
+      repeatable: true,
+      valueName: "<origin>",
+      help: "Also let this origin or host load the dev assets (repeatable, or comma-separated)",
+    },
+  ],
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   usage: "Without --port, an open port is auto-selected starting at 3000.\n" +
-    "With --port, that exact port is required and the server errors if it is taken.",
+    "With --port, that exact port is required and the server errors if it is taken.\n" +
+    "The dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\n" +
+    "explicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\n" +
+    "binds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n" +
+    "--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.",
   run: async (ctx) => {
+    const allowed = allowedDevOriginFlag(ctx.flags["allowed-dev-origin"]);
+    if (!allowed.ok) fail(`denext dev: ${allowed.error}`);
+    const bind = devBind(ctx);
     const { paths } = await appProject(ctx);
     markDevelopment();
     const controller = new AbortController();
@@ -70,7 +136,9 @@ export const devCommand: CommandSpec = {
     startDevServer({
       paths,
       port: port ?? 3000,
-      hostname: ctx.flags.host as string | undefined,
+      hostname: bind.hostname,
+      onListen: bind.onListen,
+      allowedDevOrigins: allowed.origins,
       strictPort: port !== undefined,
       signal: controller.signal,
       // The real dev CLI owns this process (one dev server), so it can safely capture the

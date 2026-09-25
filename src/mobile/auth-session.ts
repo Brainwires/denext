@@ -125,8 +125,8 @@ let claimedScheme: string | undefined;
 let claimedUrl: string | undefined;
 let claimedUntil = 0;
 
-/** An {@linkcode AuthSessionError}. */
-function authError(code: AuthSessionErrorCode, message: string): AuthSessionError {
+/** Build an {@linkcode AuthSessionError}. */
+function authSessionError(code: AuthSessionErrorCode, message: string): AuthSessionError {
   const err = new Error(`openAuthSession: ${message}`) as Error & { code: AuthSessionErrorCode };
   err.name = "AuthSessionError";
   err.code = code;
@@ -142,7 +142,7 @@ function checkUrl(url: unknown): string {
     parsed = undefined;
   }
   if (parsed?.protocol !== "https:" || parsed.hostname === "") {
-    throw authError("invalid", "url must be an absolute https: URL");
+    throw authSessionError("invalid", "url must be an absolute https: URL");
   }
   return parsed.href;
 }
@@ -153,7 +153,7 @@ function checkScheme(scheme: unknown): string {
     typeof scheme !== "string" || !/^[a-z][a-z0-9+.-]*$/.test(scheme) ||
     RESERVED_SCHEMES.includes(scheme)
   ) {
-    throw authError(
+    throw authSessionError(
       "invalid",
       'callbackScheme must be a custom URL scheme without "://", such as "myapp"',
     );
@@ -165,7 +165,7 @@ function checkScheme(scheme: unknown): string {
 function checkTimeout(timeoutMs: unknown): number | undefined {
   if (timeoutMs === undefined) return undefined;
   if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw authError("invalid", "timeoutMs must be a positive number of milliseconds");
+    throw authSessionError("invalid", "timeoutMs must be a positive number of milliseconds");
   }
   return timeoutMs;
 }
@@ -181,7 +181,7 @@ function fromNative(err: unknown): AuthSessionError {
     ? (err as { code?: unknown }).code
     : undefined;
   const message = err instanceof Error ? err.message : String(err);
-  return authError(
+  return authSessionError(
     typeof code === "string" && ERROR_CODES.includes(code)
       ? code as AuthSessionErrorCode
       : "unsupported",
@@ -201,7 +201,7 @@ function releaseClaim(url: string | undefined): void {
 function startNative(url: string, scheme: string, ephemeral: boolean): RunningSession {
   const plugin = nativePlugin<DenextAuthSessionPlugin>(PLUGIN_NAME, ["start"]);
   if (!plugin) {
-    return failed(authError(
+    return failed(authSessionError(
       "unsupported",
       "the shell has no DenextAuthSession plugin (run `denext mobile add auth-session`)",
     ));
@@ -212,7 +212,7 @@ function startNative(url: string, scheme: string, ephemeral: boolean): RunningSe
     .then((answer) => {
       const callback = answer?.url;
       if (typeof callback !== "string" || !callback.toLowerCase().startsWith(`${scheme}:`)) {
-        throw authError("unsupported", "the shell answered without a callback URL");
+        throw authSessionError("unsupported", "the shell answered without a callback URL");
       }
       releaseClaim(callback);
       return callback;
@@ -238,10 +238,12 @@ function startWeb(url: string): RunningSession {
   const g = globalThis as PopupWindow;
   const location = g.location;
   if (typeof g.open !== "function" || typeof g.addEventListener !== "function" || !location) {
-    return failed(authError("unsupported", "no window to open the sign-in popup from (SSR?)"));
+    return failed(
+      authSessionError("unsupported", "no window to open the sign-in popup from (SSR?)"),
+    );
   }
   const popup = g.open(url, "denext-auth-session", "popup,width=520,height=720");
-  if (!popup) return failed(authError("unsupported", "the sign-in popup was blocked"));
+  if (!popup) return failed(authSessionError("unsupported", "the sign-in popup was blocked"));
   let finish: (outcome: { url: string } | { error: AuthSessionError }) => void = () => {};
   const result = new Promise<string>((resolve, reject) => {
     let grace: ReturnType<typeof setTimeout> | undefined;
@@ -253,7 +255,7 @@ function startWeb(url: string): RunningSession {
       if (!popup.closed || grace !== undefined) return;
       // The callback page posts and then closes: give its message a moment to land.
       grace = setTimeout(
-        () => finish({ error: authError("cancelled", "the sign-in popup was closed") }),
+        () => finish({ error: authSessionError("cancelled", "the sign-in popup was closed") }),
         CLOSE_GRACE_MS,
       );
     }, POPUP_POLL_MS);
@@ -272,7 +274,7 @@ function startWeb(url: string): RunningSession {
   return {
     result,
     stop: () => {
-      finish({ error: authError("timeout", "timed out") });
+      finish({ error: authSessionError("timeout", "timed out") });
       try {
         popup.close();
       } catch {
@@ -289,7 +291,7 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       session.stop();
-      reject(authError("timeout", `no callback within ${timeoutMs} ms`));
+      reject(authSessionError("timeout", `no callback within ${timeoutMs} ms`));
     }, timeoutMs);
   });
   try {
@@ -352,7 +354,7 @@ export async function openAuthSession(
   const target = checkUrl(url);
   const scheme = checkScheme(options?.callbackScheme);
   const timeoutMs = checkTimeout(options?.timeoutMs);
-  if (active) throw authError("busy", "another auth session is still open");
+  if (active) throw authSessionError("busy", "another auth session is still open");
   active = true;
   try {
     const session = isNativeShell()

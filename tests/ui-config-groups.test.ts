@@ -70,6 +70,10 @@ Deno.test("cache moved to Rendering when Data retired, beside cacheComponents", 
   assert(!(CONFIG_GROUPS as readonly string[]).includes("data"));
 });
 
+Deno.test("allowedDevOrigins sits on Security, beside the other origin trust switches", () => {
+  assertEquals(groupOf("allowedDevOrigins"), "security");
+});
+
 Deno.test("a key the schema does not describe still has a home", () => {
   // A config may declare anything; the editor shows unknown keys read-only rather than dropping
   // them, so they need a view. `advanced` is the catch-all, where the escape hatch lives too.

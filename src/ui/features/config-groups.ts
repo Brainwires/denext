@@ -59,6 +59,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "actionMaxBodyBytes",
     "canonicalOrigin",
     "trustForwardedHeaders",
+    // The dev server's origin gate (which non-loopback hosts may load the dev assets).
+    "allowedDevOrigins",
   ],
   // `features` (compile-time flags) sits with the other build-and-toolchain switches; `experimental`
   // is the superseded block every key graduated out of, kept here so a file that still sets it

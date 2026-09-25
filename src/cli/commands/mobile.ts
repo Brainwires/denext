@@ -2,8 +2,9 @@
 //
 //   denext ota manifest <dir>     (re)write <dir>/_denext/ota.json for a static export
 //                                 (--required / --notes <text> / --sequence <n> /
-//                                 --min-native <n> add release metadata, --sign <keyfile> or
-//                                 DENEXT_OTA_SIGNING_KEY signs it, stamping a sequence)
+//                                 --min-native <n> / --native-fingerprint <fp|auto> add release
+//                                 metadata, --sign <keyfile> or DENEXT_OTA_SIGNING_KEY signs it,
+//                                 stamping a sequence)
 //   denext ota keygen <out>       write a P-256 signing key (<out>) and its public key (<out>.pub)
 //   denext mobile add-ota [dir]   install the native DenextOta plugin into ios/ + android/
 //                                 (--public-key <file> embeds the verifying key)
@@ -11,7 +12,15 @@
 //                                 functions (haptics, share, secure-store, deep-links, push,
 //                                 …), their native config, and `cap sync` (--dry-run plans,
 //                                 --list lists, --scheme / --domain configure deep-links);
-//                                 auth-session installs denext's own DenextAuthSession plugin
+//                                 auth-session installs denext's own DenextAuthSession plugin;
+//                                 share-extension / widget / live-activity add app extension
+//                                 targets (--app-group, --name, --configurable)
+//   denext mobile dev [project]   live reload: start (or attach to) `denext dev`, point the
+//                                 Capacitor config's server.url at it for the session and
+//                                 `cap copy`; restored on exit (--lan for a physical device)
+//   denext mobile fingerprint     hash the native layer (ios/, android/, config, plugins) so CI
+//                                 can tell OTA-able changes from binary ones (--json, --diff
+//                                 <old.json> explains a change, --write embeds it in the app)
 //
 // Both are flat verbs whose first positional selects the action (as `desktop` does). Neither
 // loads the project's modules: `ota manifest` only hashes files, and `add-ota` only writes
@@ -30,12 +39,29 @@ import {
 } from "../../build/ota-signing.ts";
 import { type AddOtaReport, addOtaToProject } from "../../build/mobile-ota-install.ts";
 import {
+  computeNativeFingerprint,
+  diffNativeFingerprints,
+  type FingerprintInput,
+  formatFingerprintDiff,
+  isFingerprintDocument,
+  writeNativeFingerprint,
+} from "../../build/mobile-fingerprint.ts";
+import {
   type AddCapabilitiesReport,
   addMobileCapabilities,
   type CommandRunner,
   formatCapabilityPlan,
   formatCapabilityTable,
 } from "../../build/mobile-capabilities.ts";
+import {
+  type MobileDevServer,
+  restoreCapacitorConfig,
+  runMobileDev,
+} from "../../build/mobile-dev.ts";
+import { pickLanAddress } from "../../build/dev-server/lan.ts";
+import { denoExecutable } from "../../build/bundle.ts";
+import { cliInvocation } from "../../ui/proc.ts";
+import { SHUTDOWN_SIGNALS } from "../shared.ts";
 
 /** Print `message` to stderr and exit 1. */
 function fail(message: string): never {
@@ -55,6 +81,7 @@ function printManifest(ctx: CommandContext, dir: string, dirArg: string, m: OtaM
         notes: m.notes ?? null,
         sequence: m.sequence ?? null,
         minNative: m.minNative ?? null,
+        nativeFingerprint: m.nativeFingerprint ?? null,
         signed: m.signature !== undefined,
       }),
     );
@@ -63,10 +90,42 @@ function printManifest(ctx: CommandContext, dir: string, dirArg: string, m: OtaM
   const extra = (m.required ? ", required" : "") +
     (m.sequence !== undefined ? `, sequence ${m.sequence}` : "") +
     (m.minNative !== undefined ? `, min native ${m.minNative}` : "") +
+    (m.nativeFingerprint !== undefined ? `, native ${m.nativeFingerprint.slice(0, 12)}` : "") +
     (m.signature ? ", signed" : "");
   console.log(
     `  wrote ${dirArg}/_denext/ota.json — version ${m.version} (${m.files.length} files${extra})`,
   );
+}
+
+/**
+ * The `--native-fingerprint` value: the fingerprint as given (64 hex digits), or with `auto` the
+ * one computed for the Capacitor project at `--dir` (default: the current directory); undefined
+ * without the flag.
+ */
+async function nativeFingerprintFlag(ctx: CommandContext): Promise<string | undefined> {
+  const value = ctx.flags["native-fingerprint"];
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") fail("denext ota manifest: --native-fingerprint needs a value");
+  if (value !== "auto") {
+    const fp = value.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(fp)) {
+      fail(
+        "denext ota manifest: --native-fingerprint takes 64 hex digits (`denext mobile fingerprint`) or `auto`",
+      );
+    }
+    return fp;
+  }
+  const cwd = ctx.global.cwd ?? ".";
+  const dir = resolve(cwd, typeof ctx.flags.dir === "string" ? ctx.flags.dir : ".");
+  try {
+    return (await computeNativeFingerprint(dir)).fingerprint;
+  } catch (err) {
+    fail(
+      `denext ota manifest --native-fingerprint auto: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 /** `denext ota manifest <dir>`. */
@@ -85,13 +144,23 @@ async function otaManifest(ctx: CommandContext): Promise<void> {
     ...(typeof ctx.flags.sequence === "number" ? { sequence: ctx.flags.sequence } : {}),
     ...(typeof ctx.flags["min-native"] === "number" ? { minNative: ctx.flags["min-native"] } : {}),
   };
+  const nativeFingerprint = await nativeFingerprintFlag(ctx);
   const sign = ctx.flags.sign;
   try {
     // --sign wins; without it DENEXT_OTA_SIGNING_KEY (the PEM contents, for CI) signs.
     const signingKey = await loadOtaSigningKey(
       typeof sign === "string" ? resolve(cwd, sign) : undefined,
     );
-    printManifest(ctx, dir, dirArg, await writeOtaManifest(dir, meta, signingKey));
+    printManifest(
+      ctx,
+      dir,
+      dirArg,
+      await writeOtaManifest(
+        dir,
+        nativeFingerprint === undefined ? meta : { ...meta, nativeFingerprint },
+        signingKey,
+      ),
+    );
   } catch (err) {
     fail(`denext ota manifest: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -181,6 +250,10 @@ export const otaCommand: CommandSpec = {
     "                              signing stamps --sequence (default: the Unix time) so apps\n" +
     "                              refuse an older release, and --min-native <build> refuses\n" +
     "                              app binaries older than that build number\n" +
+    "  denext ota manifest out --native-fingerprint auto --dir .\n" +
+    "                              Also stamp the native fingerprint of the Capacitor project at\n" +
+    "                              --dir; a binary embedding another one (`denext mobile\n" +
+    "                              fingerprint --write`) refuses it (code native_mismatch)\n" +
     "  denext ota keygen ota.key   Write a P-256 signing key (0600) and ota.key.pub\n" +
     "\n" +
     "  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n" +
@@ -231,6 +304,20 @@ export const otaCommand: CommandSpec = {
       valueName: "<build>",
       help:
         "Refuse this UI on app binaries whose build number (CFBundleVersion / versionCode) is lower",
+    },
+    {
+      name: "native-fingerprint",
+      type: "string",
+      valueName: "<fp|auto>",
+      help:
+        "Stamp the native fingerprint this UI was built for (auto: compute it for --dir); binaries embedding another refuse it",
+    },
+    {
+      name: "dir",
+      type: "string",
+      valueName: "<dir>",
+      help:
+        "manifest --native-fingerprint auto: the Capacitor project (default: the current directory)",
     },
     {
       name: "force",
@@ -383,6 +470,9 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
       run,
       schemes: listFlag(ctx.flags.scheme),
       domains: listFlag(ctx.flags.domain),
+      appGroups: listFlag(ctx.flags["app-group"]),
+      names: listFlag(ctx.flags.name),
+      configurable: listFlag(ctx.flags.configurable),
       force: ctx.flags.force === true,
     });
   } catch (err) {
@@ -398,6 +488,171 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
   printAddReport(report);
 }
 
+/** Whether anything answers HTTP at `url` within a second. */
+async function answers(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(1000), redirect: "manual" });
+    await res.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The host `mobile dev` binds and the URL the device loads. `--lan` binds the LAN IPv4; else
+ * `--host` (a wildcard bind is advertised by the LAN IPv4); else loopback, which only the iOS
+ * simulator (or Android behind `adb reverse`) can reach.
+ */
+function mobileDevTarget(ctx: CommandContext): { host: string; url: string } {
+  const port = typeof ctx.flags.port === "number" ? ctx.flags.port : 3000;
+  const flagHost = typeof ctx.flags.host === "string" ? ctx.flags.host : undefined;
+  if (ctx.flags.lan === true && flagHost !== undefined) {
+    fail("denext mobile dev: --lan picks the address itself; drop --host.");
+  }
+  const lan = ctx.flags.lan === true || flagHost === "0.0.0.0" ? pickLanAddress() : null;
+  if (ctx.flags.lan === true && !lan) {
+    fail("denext mobile dev --lan: this machine has no LAN IPv4 address (is Wi-Fi on?).");
+  }
+  const host = ctx.flags.lan === true ? lan! : flagHost ?? "localhost";
+  const shown = host === "0.0.0.0" ? lan ?? "127.0.0.1" : host;
+  return { host, url: `http://${shown.includes(":") ? `[${shown}]` : shown}:${port}` };
+}
+
+/**
+ * Start `denext dev` for the project on the target host and port (strict, so the URL is
+ * known), or attach to a server already answering there. Polls until it answers.
+ */
+async function startOrAttachDev(ctx: CommandContext): Promise<MobileDevServer> {
+  const { host, url } = mobileDevTarget(ctx);
+  const port = new URL(url).port;
+  if (await answers(url)) {
+    return { url, attached: true, finished: new Promise(() => {}), stop: () => Promise.resolve() };
+  }
+  const project = resolve(ctx.global.cwd ?? ".", ctx.positionals[1] ?? ".");
+  const child = new Deno.Command(denoExecutable(), {
+    args: [...cliInvocation({ dir: project }), "dev", project, "--host", host, "--port", port],
+    cwd: project,
+    stdin: "null",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  let exited = false;
+  const finished = child.status.then(() => void (exited = true));
+  const stop = async () => {
+    try {
+      child.kill("SIGTERM");
+    } catch { /* already gone */ }
+    await child.status;
+  };
+  for (const deadline = Date.now() + 120_000; !(await answers(url));) {
+    if (exited || Date.now() > deadline) {
+      await stop();
+      throw new Error(`the dev server did not come up at ${url}`);
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return { url, attached: false, finished, stop };
+}
+
+/** Resolves on the first Ctrl-C / SIGTERM (and stops listening). */
+function waitForShutdownSignal(): Promise<void> {
+  return new Promise((done) => {
+    const handler = () => {
+      for (const signal of SHUTDOWN_SIGNALS) Deno.removeSignalListener(signal, handler);
+      done();
+    };
+    for (const signal of SHUTDOWN_SIGNALS) Deno.addSignalListener(signal, handler);
+  });
+}
+
+/** `denext mobile dev [project]` (and `--restore`). */
+async function mobileDev(ctx: CommandContext, run: CommandRunner): Promise<void> {
+  const cwd = resolve(ctx.global.cwd ?? ".");
+  const dir = typeof ctx.flags.dir === "string" ? ctx.flags.dir : undefined;
+  try {
+    if (ctx.flags.restore === true) {
+      const restored = await restoreCapacitorConfig(resolve(cwd, dir ?? "."));
+      console.log(restored ? `  restored ${restored}` : "  nothing to restore");
+      return;
+    }
+    await runMobileDev({ cwd, dir }, {
+      run,
+      startServer: () => startOrAttachDev(ctx),
+      waitForStop: waitForShutdownSignal,
+      log: (line) => console.log(line),
+    });
+  } catch (err) {
+    fail(`denext mobile dev: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** The Capacitor project `mobile fingerprint` reads: `--dir`, else the positional, else `.`. */
+function fingerprintRoot(ctx: CommandContext): string {
+  const dir = typeof ctx.flags.dir === "string" ? ctx.flags.dir : ctx.positionals[1] ?? ".";
+  return resolve(ctx.global.cwd ?? ".", dir);
+}
+
+/** The `--diff` file's earlier `--json` document. */
+async function previousFingerprint(
+  ctx: CommandContext,
+  file: string,
+): Promise<{ fingerprint: string; inputs: FingerprintInput[] }> {
+  const path = resolve(ctx.global.cwd ?? ".", file);
+  let doc: unknown;
+  try {
+    doc = JSON.parse(await Deno.readTextFile(path));
+  } catch (err) {
+    fail(`denext mobile fingerprint --diff: ${path}: ${err instanceof Error ? err.message : err}`);
+  }
+  if (!isFingerprintDocument(doc)) {
+    fail(
+      `denext mobile fingerprint --diff: ${path} is not a \`denext mobile fingerprint --json\` document`,
+    );
+  }
+  return doc;
+}
+
+/** Print each dependency warning to stderr. */
+function printWarnings(warnings: readonly string[]): void {
+  for (const warning of warnings) console.error(`  warning: ${warning}`);
+}
+
+/** `denext mobile fingerprint --write`: embed it, then report what changed. */
+async function writeFingerprint(ctx: CommandContext, root: string): Promise<void> {
+  const report = await writeNativeFingerprint(root);
+  printWarnings(report.warnings);
+  if (ctx.global.json) return console.log(JSON.stringify(report));
+  for (const path of report.written) console.log(`  wrote      ${path}`);
+  for (const path of report.unchanged) console.log(`  unchanged  ${path}`);
+  for (const note of report.skipped) console.log(`  skipped    ${note}`);
+  console.log(`\n  native fingerprint ${report.fingerprint}`);
+}
+
+/** `denext mobile fingerprint [--diff <old.json>]`: the fingerprint, its inputs, or a diff. */
+async function printFingerprint(ctx: CommandContext, root: string): Promise<void> {
+  const current = await computeNativeFingerprint(root);
+  printWarnings(current.warnings);
+  const doc = { fingerprint: current.fingerprint, inputs: current.inputs };
+  const diffFile = ctx.flags.diff;
+  if (typeof diffFile !== "string") {
+    return console.log(ctx.global.json ? JSON.stringify(doc) : current.fingerprint);
+  }
+  const diff = diffNativeFingerprints(await previousFingerprint(ctx, diffFile), doc);
+  console.log(ctx.global.json ? JSON.stringify(diff) : formatFingerprintDiff(diff));
+}
+
+/** `denext mobile fingerprint [--dir] [--json] [--diff <old.json>] [--write]`. */
+async function mobileFingerprint(ctx: CommandContext): Promise<void> {
+  const root = fingerprintRoot(ctx);
+  try {
+    if (ctx.flags.write === true) await writeFingerprint(ctx, root);
+    else await printFingerprint(ctx, root);
+  } catch (err) {
+    fail(`denext mobile fingerprint: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /**
  * Build the `mobile` verb with `run` as the subprocess runner for `add` (tests pass a fake).
  *
@@ -411,14 +666,21 @@ export function createMobileCommand(run: CommandRunner = runInherit): CommandSpe
       const action = ctx.positionals[0];
       if (action === "add-ota") return await addOta(ctx);
       if (action === "add") return await addCapabilities(ctx, run);
-      fail(`denext mobile: unknown action "${action ?? ""}" (expected: add, add-ota).`);
+      if (action === "dev") return await mobileDev(ctx, run);
+      if (action === "fingerprint") return await mobileFingerprint(ctx);
+      fail(
+        `denext mobile: unknown action "${
+          action ?? ""
+        }" (expected: add, add-ota, dev, fingerprint).`,
+      );
     },
   };
 }
 
 const mobileCommandSpec: Omit<CommandSpec, "run"> = {
   name: "mobile",
-  summary: "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates)",
+  summary:
+    "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates; dev: live reload; fingerprint: native-layer hash)",
   usage: "  denext mobile add <capability...>\n" +
     "                                Add the Capacitor plugins behind denext/mobile's\n" +
     "                                capability functions, then `npx cap sync`\n" +
@@ -427,8 +689,44 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  denext mobile add push        Push notifications (entitlement, AppDelegate, permission)\n" +
     "  denext mobile add auth-session --scheme myapp\n" +
     "                                OAuth in a system browser sheet (openAuthSession)\n" +
+    "  denext mobile add share-extension --app-group group.com.example.app\n" +
+    "                                Receive shared links, text and images (onShareReceived)\n" +
+    "  denext mobile add widget --name Status\n" +
+    "                                A home-screen widget fed by setWidgetData\n" +
+    "  denext mobile add widget --name Usage --configurable period:enum=session|weekly\n" +
+    "                                An iOS 17+ configurable widget (App Intents enum)\n" +
+    "  denext mobile add live-activity --name Delivery\n" +
+    "                                An iOS Live Activity (startLiveActivity)\n" +
     "  denext mobile add --list      List the capabilities and the plugins they install\n" +
     "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n" +
+    "  denext mobile dev [project] --lan\n" +
+    "                                Live reload on a device: point the app at `denext dev`\n" +
+    "  denext mobile fingerprint --json > native.json\n" +
+    "                                Hash the native layer (OTA-able vs needs a binary)\n" +
+    "  denext mobile fingerprint --diff native.json\n" +
+    "                                Explain which native inputs changed since native.json\n" +
+    "  denext mobile fingerprint --write\n" +
+    "                                Embed it in Info.plist + AndroidManifest (OTA gate)\n" +
+    "\n" +
+    "  fingerprint: SHA-256 over the ios/ and android/ sources (minus build output, Pods,\n" +
+    "  .gradle, xcuserdata, local.properties and what `cap sync` copies in; text with CRLF\n" +
+    "  normalised), capacitor.config.* without its server block, and the installed versions of\n" +
+    "  @capacitor/* and every Capacitor / Cordova plugin package.json declares. The same\n" +
+    "  fingerprint means the change can ship over the air; a different one needs a new binary.\n" +
+    "  --write stores it as Info.plist DenextNativeFingerprint and the\n" +
+    "  dev.denext.native.FINGERPRINT meta-data (never changing the value itself); a manifest\n" +
+    "  stamped with `denext ota manifest --native-fingerprint` is then refused by a binary with\n" +
+    "  another one (code native_mismatch).\n" +
+    "\n" +
+    "  dev: starts `denext dev` for [project] (default: .) on --port (default 3000), or attaches\n" +
+    "  to a server already answering there; writes server: { url, cleartext: true } into the\n" +
+    "  Capacitor project's capacitor.config.* (--dir, else the current directory) and runs\n" +
+    "  `npx cap copy`, so the app loads the dev server and reloads on every edit. --lan binds\n" +
+    "  the LAN IPv4 (a physical device on the same network); without it the URL is\n" +
+    "  localhost (the iOS simulator, or Android behind `adb reverse`). The config edit is\n" +
+    "  temporary: Ctrl-C, SIGTERM or an error puts the original bytes back and runs\n" +
+    "  `cap copy` again. A killed run leaves a backup in .denext/; the next `mobile dev`, or\n" +
+    "  `mobile dev --restore`, restores it first. `cap copy` needs the webDir built once.\n" +
     "\n" +
     "  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n" +
     "  with no fallback, else the current directory), refuses when its @capacitor/core major\n" +
@@ -455,6 +753,23 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  order works). --scheme registers the OAuth callback scheme as deep-links does; Android\n" +
     "  needs it to receive the redirect. No install or `cap sync` runs for it alone.\n" +
     "\n" +
+    "  share-extension, widget and live-activity add app extensions (no npm package either).\n" +
+    "  share-extension: an iOS Share Extension target (ios/App/DenextShareExtension, embedded in\n" +
+    "  the app) that queues shares in the App Group container and opens the app with its URL\n" +
+    "  scheme (--scheme, else the app's first CFBundleURLSchemes entry), and Android SEND /\n" +
+    "  SEND_MULTIPLE intent filters. widget --name <Name>: a WidgetKit extension target\n" +
+    "  (ios/App/DenextWidgets) with <Name>Widget.swift, and an Android AppWidgetProvider with its\n" +
+    "  layout and manifest receiver. --configurable <param:enum=a|b,...> makes it configurable on\n" +
+    "  iOS 17+ (an App Intents enum per parameter; static on 14-16 and on Android), and\n" +
+    "  setWidgetData(kind, data, { params }) stores the snapshot for the chosen values.\n" +
+    "  live-activity --name <Name> (iOS 16.1+, the app keeps its\n" +
+    "  deployment target): an ActivityKit UI in the same extension and NSSupportsLiveActivities.\n" +
+    "  Each writes a denext plugin into the app, and the App Group (--app-group, default\n" +
+    "  group.<bundle id>) into the app's and the extension's entitlements; the group must exist\n" +
+    "  in the Apple Developer portal (automatic signing usually registers it). Several names are\n" +
+    "  comma-separated. The widget and Live Activity views are yours to edit: an edited file is\n" +
+    "  kept on the next run.\n" +
+    "\n" +
     "  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n" +
     "  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n" +
     "  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n" +
@@ -470,10 +785,11 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n" +
     "  template was kept.",
   positionals: [
-    { name: "action", help: "add | add-ota", required: true },
+    { name: "action", help: "add | add-ota | dev | fingerprint", required: true },
     {
       name: "args",
-      help: "add: capability names (see --list); add-ota: the Capacitor project (default: .)",
+      help:
+        "add: capability names (see --list); add-ota, fingerprint: the Capacitor project (default: .); dev: the denext project (default: .)",
       variadic: true,
     },
   ],
@@ -482,7 +798,7 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "force",
       type: "boolean",
       help:
-        "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session)",
+        "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session / share-extension / widget / live-activity)",
     },
     {
       name: "public-key",
@@ -495,7 +811,43 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "dir",
       type: "string",
       valueName: "<dir>",
-      help: "add: the Capacitor project, with no fallback (default: the current directory)",
+      help:
+        "add, dev, fingerprint: the Capacitor project, with no fallback (default: the current directory)",
+    },
+    {
+      name: "diff",
+      type: "string",
+      valueName: "<old.json>",
+      help: "fingerprint: explain which inputs changed since an earlier `fingerprint --json`",
+    },
+    {
+      name: "write",
+      type: "boolean",
+      help:
+        "fingerprint: embed it in Info.plist (DenextNativeFingerprint) and AndroidManifest (dev.denext.native.FINGERPRINT)",
+    },
+    {
+      name: "lan",
+      type: "boolean",
+      help: "dev: serve on the LAN IPv4 so a physical device on the network can load it",
+    },
+    {
+      name: "port",
+      alias: "p",
+      type: "number",
+      valueName: "<port>",
+      help: "dev: the dev server port (default: 3000)",
+    },
+    {
+      name: "host",
+      type: "string",
+      valueName: "<host>",
+      help: "dev: the host to bind and load (default: localhost; --lan picks the LAN IPv4)",
+    },
+    {
+      name: "restore",
+      type: "boolean",
+      help: "dev: only put back a capacitor.config an interrupted session left edited",
     },
     {
       name: "dry-run",
@@ -511,13 +863,34 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "scheme",
       type: "string",
       valueName: "<scheme[,scheme]>",
-      help: "add deep-links / auth-session: custom URL schemes to register (comma-separated)",
+      help:
+        "add deep-links / auth-session / share-extension: custom URL schemes to register (comma-separated)",
     },
     {
       name: "domain",
       type: "string",
       valueName: "<host[,host]>",
       help: "add deep-links: universal link / app link domains (comma-separated)",
+    },
+    {
+      name: "app-group",
+      type: "string",
+      valueName: "<group>",
+      help:
+        "add share-extension / widget / live-activity: the App Group shared with the extension (default: group.<bundle id>)",
+    },
+    {
+      name: "name",
+      type: "string",
+      valueName: "<Name[,Name]>",
+      help: "add widget / live-activity: PascalCase names (comma-separated)",
+    },
+    {
+      name: "configurable",
+      type: "string",
+      valueName: "<param:enum=a|b[,…]>",
+      help:
+        "add widget: iOS 17+ configurable widget with these enum parameters (the first value is the default; re-runs keep them)",
     },
   ],
 };

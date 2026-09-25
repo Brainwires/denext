@@ -18,12 +18,14 @@
  * The optional `sequence` and `minNative` integers are signed release metadata too: the native
  * plugin refuses a manifest whose `sequence` is lower than the highest it has accepted (code
  * `downgrade`), and one whose `minNative` is above the app binary's build number (code
- * `native_too_old`).
+ * `native_too_old`). The optional `nativeFingerprint` (`denext mobile fingerprint`) names the
+ * native layer the UI was built for: a binary that embeds a different one refuses it (code
+ * `native_mismatch`); either side without one skips that check.
  *
  * The optional `signature` binds the release to a key the app binary embeds: an ECDSA P-256 /
  * SHA-256 signature over {@linkcode otaSignaturePayload} (the version, `required`, a hash of
- * `notes`, and `sequence` / `minNative` in the v2 format), so neither the files nor the metadata
- * can be swapped without the private key. The native plugin recomputes the version from the file
+ * `notes`, `sequence` / `minNative` in the v2 format, and `nativeFingerprint` too in the v3
+ * format), so neither the files nor the metadata can be swapped without the private key. The native plugin recomputes the version from the file
  * list and verifies the signature; the web side only forwards it.
  *
  * File paths may not contain control characters (U+0000–U+001F, U+007F): a path holding a tab or
@@ -78,6 +80,14 @@ export interface OtaManifest {
    */
   readonly minNative?: number;
   /**
+   * The native fingerprint of the app binary this UI was built for (`denext ota manifest
+   * --native-fingerprint <fp|auto>`, the value `denext mobile fingerprint` prints): 64 lowercase
+   * hex digits. A binary that embeds a fingerprint (`denext mobile fingerprint --write`) refuses
+   * a manifest carrying a different one before downloading (code `native_mismatch`); when either
+   * side has none, the check is skipped. Not part of the version; signed in the v3 payload.
+   */
+  readonly nativeFingerprint?: string;
+  /**
    * Standard (padded) base64 of the raw 64-byte `r‖s` ECDSA P-256 / SHA-256 signature over
    * {@linkcode otaSignaturePayload} (`denext ota manifest --sign <keyfile>`). An app whose binary
    * embeds a public key refuses a manifest without a valid one.
@@ -97,6 +107,8 @@ export interface OtaManifestMeta {
   readonly sequence?: number;
   /** See {@linkcode OtaManifest.minNative}. Omitted from the manifest unless a number. */
   readonly minNative?: number;
+  /** See {@linkcode OtaManifest.nativeFingerprint}. Omitted from the manifest unless a string. */
+  readonly nativeFingerprint?: string;
 }
 
 /** The longest `notes` a manifest may carry, in UTF-16 code units. */
@@ -159,8 +171,11 @@ export async function otaManifestVersion(
 
 /**
  * The bytes an OTA manifest signature covers, as UTF-8 with `\n` (0x0A) separators and no
- * trailing newline. A manifest with a `sequence` uses the v2 format, one without uses v1:
+ * trailing newline. A manifest with a `nativeFingerprint` (and a `sequence`) uses the v3 format,
+ * one with a `sequence` but no fingerprint v2, one without a `sequence` v1:
  *
+ * - v3: `"denext-ota-v3\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "") + "\n"
+ *   + sequence + "\n" + (minNative ?? "") + "\n" + nativeFingerprint`
  * - v2: `"denext-ota-v2\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "") + "\n"
  *   + sequence + "\n" + (minNative ?? "")`
  * - v1: `"denext-ota-v1\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "")`
@@ -168,14 +183,17 @@ export async function otaManifestVersion(
  * `"1"` is `required === true`, anything else `"0"`; `sha256hex` is lowercase hex of the SHA-256
  * of the notes' UTF-8 (the empty string when absent); `sequence` and `minNative` are plain
  * decimal integers (no sign, no leading zeros, no exponent), and an absent `minNative` is the
- * empty string. The version already covers every file, so the chain is files → version →
- * signature, and none of the metadata can change under a valid signature. The native
- * `DenextOta` plugin builds the same bytes (v2 when the manifest has a `sequence`, else v1).
+ * empty string; `nativeFingerprint` is 64 lowercase hex digits. The version already covers every
+ * file, so the chain is files → version → signature, and none of the metadata can change under a
+ * valid signature. The native `DenextOta` plugin builds the same bytes (v3 when the manifest has a
+ * `sequence` and a `nativeFingerprint`, v2 with a `sequence` alone, else v1). A v2 manifest
+ * (no fingerprint) is signed and verified exactly as before v3 existed.
  *
  * @param manifest The version and the signed metadata.
  * @returns The payload bytes.
- * @throws RangeError when `sequence` or `minNative` is not a non-negative safe integer, or when
- *   `minNative` is set without a `sequence` (v1 cannot carry it).
+ * @throws RangeError when `sequence` or `minNative` is not a non-negative safe integer, when
+ *   `nativeFingerprint` is not 64 lowercase hex digits, or when `minNative` /
+ *   `nativeFingerprint` is set without a `sequence` (v1 cannot carry them).
  * @example
  * ```ts
  * import { otaSignaturePayload } from "denext/mobile";
@@ -184,14 +202,19 @@ export async function otaManifestVersion(
  * ```
  */
 export async function otaSignaturePayload(
-  manifest: Pick<OtaManifest, "version" | "required" | "notes" | "sequence" | "minNative">,
+  manifest: Pick<
+    OtaManifest,
+    "version" | "required" | "notes" | "sequence" | "minNative" | "nativeFingerprint"
+  >,
 ): Promise<Uint8Array> {
   const notesHash = await sha256Hex(new TextEncoder().encode(manifest.notes ?? ""));
   const required = manifest.required === true ? "1" : "0";
-  const { sequence, minNative } = manifest;
+  const { sequence, minNative, nativeFingerprint } = manifest;
   if (sequence === undefined) {
-    if (minNative !== undefined) {
-      throw new RangeError("minNative is only signed together with a sequence (payload v2)");
+    if (minNative !== undefined || nativeFingerprint !== undefined) {
+      throw new RangeError(
+        "minNative and nativeFingerprint are only signed together with a sequence (payload v2/v3)",
+      );
     }
     return new TextEncoder().encode(
       `denext-ota-v1\n${manifest.version}\n${required}\n${notesHash}`,
@@ -200,20 +223,22 @@ export async function otaSignaturePayload(
   if (!isReleaseInteger(sequence) || (minNative !== undefined && !isReleaseInteger(minNative))) {
     throw new RangeError("sequence and minNative must be non-negative safe integers");
   }
-  return new TextEncoder().encode(
-    `denext-ota-v2\n${manifest.version}\n${required}\n${notesHash}\n${sequence}\n${
-      minNative ?? ""
-    }`,
-  );
+  const v2 = `${manifest.version}\n${required}\n${notesHash}\n${sequence}\n${minNative ?? ""}`;
+  if (nativeFingerprint === undefined) return new TextEncoder().encode(`denext-ota-v2\n${v2}`);
+  if (!isSha256Hex(nativeFingerprint)) {
+    throw new RangeError("nativeFingerprint must be 64 lowercase hex digits");
+  }
+  return new TextEncoder().encode(`denext-ota-v3\n${v2}\n${nativeFingerprint}`);
 }
 
 /**
  * Sort `files` by path and stamp the version over them, adding `meta`'s `required`, `notes`,
- * `sequence` and `minNative` when given (they never change the version).
+ * `sequence`, `minNative` and `nativeFingerprint` when given (they never change the version).
  *
  * @throws RangeError when `meta.notes` is longer than {@linkcode OTA_NOTES_MAX_LENGTH}, when
- *   `sequence` / `minNative` is not a non-negative safe integer, or when a file path is not a
- *   valid manifest path ({@linkcode isOtaManifestPath}).
+ *   `sequence` / `minNative` is not a non-negative safe integer, when `nativeFingerprint` is not
+ *   64 lowercase hex digits, or when a file path is not a valid manifest path
+ *   ({@linkcode isOtaManifestPath}).
  */
 export async function makeOtaManifest(
   files: ReadonlyArray<OtaManifestFile>,
@@ -230,6 +255,13 @@ export async function makeOtaManifest(
       throw new RangeError(`${key} must be a non-negative safe integer, not ${value}`);
     }
   }
+  if (meta.nativeFingerprint !== undefined && !isSha256Hex(meta.nativeFingerprint)) {
+    throw new RangeError(
+      `nativeFingerprint must be 64 lowercase hex digits, not ${
+        JSON.stringify(meta.nativeFingerprint)
+      }`,
+    );
+  }
   const bad = files.find((f) => !isOtaManifestPath(f.path));
   if (bad) {
     throw new RangeError(
@@ -245,6 +277,9 @@ export async function makeOtaManifest(
     ...(typeof meta.notes === "string" ? { notes: meta.notes } : {}),
     ...(typeof meta.sequence === "number" ? { sequence: meta.sequence } : {}),
     ...(typeof meta.minNative === "number" ? { minNative: meta.minNative } : {}),
+    ...(typeof meta.nativeFingerprint === "string"
+      ? { nativeFingerprint: meta.nativeFingerprint }
+      : {}),
     files: sorted,
   };
 }
@@ -264,21 +299,20 @@ function isManifestFile(file: unknown): file is OtaManifestFile {
  * Whether `value` has the manifest's shape: a 64-hex `version`, a non-empty `files` array of
  * `{ path, sha256, size }` (paths without control characters), and, when present, a boolean
  * `required`, a string `notes` of at most {@linkcode OTA_NOTES_MAX_LENGTH} characters,
- * non-negative safe-integer `sequence` / `minNative`, and a string `signature`. Other keys are
- * ignored. It checks the shape only; the native side re-checks every path, recomputes the
- * version and verifies the signature before it downloads anything.
+ * non-negative safe-integer `sequence` / `minNative`, a 64-hex `nativeFingerprint`, and a string
+ * `signature`. Other keys are ignored. It checks the shape only; the native side re-checks every
+ * path, recomputes the version and verifies the signature before it downloads anything.
  */
 export function isOtaManifest(value: unknown): value is OtaManifest {
   if (typeof value !== "object" || value === null) return false;
-  const { version, files, required, notes, signature, sequence, minNative } = value as Record<
-    string,
-    unknown
-  >;
+  const { version, files, required, notes, signature, sequence, minNative, nativeFingerprint } =
+    value as Record<string, unknown>;
   return isSha256Hex(version) && Array.isArray(files) && files.length > 0 &&
     files.every(isManifestFile) &&
     (required === undefined || typeof required === "boolean") &&
     (notes === undefined || (typeof notes === "string" && notes.length <= OTA_NOTES_MAX_LENGTH)) &&
     (sequence === undefined || isReleaseInteger(sequence)) &&
     (minNative === undefined || isReleaseInteger(minNative)) &&
+    (nativeFingerprint === undefined || isSha256Hex(nativeFingerprint)) &&
     (signature === undefined || typeof signature === "string");
 }

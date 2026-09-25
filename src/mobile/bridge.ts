@@ -29,6 +29,9 @@ interface BrowserPlugin {
 /** The platform a page runs on, as `denext/mobile` distinguishes them. */
 export type NativePlatform = "ios" | "android" | "web";
 
+/** The runtime a page runs in, as `denext/mobile` distinguishes them. */
+export type RuntimePlatform = "ios" | "android" | "desktop" | "web";
+
 /**
  * The page's `window.Capacitor` (read off `globalThis`, which is `window` in a browser), or
  * `undefined` during SSR and on a page without it.
@@ -79,6 +82,32 @@ export function nativePlatform(): NativePlatform {
  */
 export function isNativeShell(): boolean {
   return nativePlatform() !== "web";
+}
+
+/** Whether `globalThis.__denext` carries the Deno Desktop runtime's `desktop: true` marker. */
+function isDesktopRuntime(): boolean {
+  const marker = (globalThis as { __denext?: unknown }).__denext;
+  return typeof marker === "object" && marker !== null &&
+    (marker as { desktop?: unknown }).desktop === true;
+}
+
+/**
+ * The runtime the page runs in: `"ios"` or `"android"` inside a Capacitor native shell,
+ * `"desktop"` inside the Deno Desktop runtime, otherwise `"web"` (including SSR, where there
+ * is no `window`). The desktop case is read off `globalThis.__denext.desktop`, a marker the
+ * Deno Desktop runtime injects into the page before any script runs; it is a detection hint
+ * only, not a security boundary — treat it like any other client-reported value.
+ *
+ * @returns `"ios"`, `"android"`, `"desktop"` or `"web"`.
+ * @example
+ * ```ts
+ * import { runtimePlatform } from "denext/mobile";
+ * document.documentElement.dataset.runtime = runtimePlatform();
+ * ```
+ */
+export function runtimePlatform(): RuntimePlatform {
+  if (isNativeShell()) return nativePlatform();
+  return isDesktopRuntime() ? "desktop" : "web";
 }
 
 /** Whether `protocol` is one {@linkcode openExternal} may hand to the OS. */

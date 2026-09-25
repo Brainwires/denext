@@ -53,8 +53,11 @@ function dotted(version: string): string {
   return version.replaceAll("_", ".");
 }
 
-/** Best-effort `{ model, osVersion }` from `ua`; empty when nothing matches. */
-function parseUserAgent(ua: string): { model?: string; osVersion?: string } {
+/**
+ * Best-effort `{ model, osVersion }` from `ua`; empty when nothing matches. Internal (the
+ * `denext/expo/device` shim reads it synchronously); not re-exported from `denext/mobile`.
+ */
+export function parseUserAgent(ua: string): { model?: string; osVersion?: string } {
   for (const [re, pick] of UA_RULES) {
     const m = re.exec(ua);
     if (m) return pick(m);

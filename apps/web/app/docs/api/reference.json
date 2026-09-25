@@ -3797,7 +3797,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.10.0-rc.2",
+          "signature": "VERSION: 2.10.0-rc.3",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -14359,6 +14359,27 @@
           "denextOnly": true
         },
         {
+          "name": "deleteSqlite",
+          "slug": "deleteSqlite",
+          "kind": "function",
+          "signature": "deleteSqlite(name: string, options?: SqliteOptions): Promise<void>",
+          "doc": "Delete the database name (closing it first when open). A missing database is not an error.",
+          "docFull": "Delete the database `name` (closing it first when open). A missing database is not an\nerror.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The database name."
+            },
+            {
+              "name": "options",
+              "doc": "Where the web engine is, when the build does not provide it."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "deviceInfo",
           "slug": "deviceInfo-fn",
           "kind": "function",
@@ -14409,6 +14430,41 @@
           "examples": [
             "```ts\nimport { downloadToFile } from \"denext/mobile\";\n\nawait downloadToFile(\"https://example.com/manual.pdf\", \"manuals/manual.pdf\", {\n  directory: \"documents\",\n});\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "endLiveActivity",
+          "slug": "endLiveActivity",
+          "kind": "function",
+          "signature": "endLiveActivity(id: string, options?: EndLiveActivityOptions): Promise<void>",
+          "doc": "End a Live Activity.",
+          "docFull": "End a Live Activity.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The id startLiveActivity returned."
+            },
+            {
+              "name": "options",
+              "doc": "A final state, and how soon it leaves the Lock Screen (or when, as a Date)."
+            }
+          ],
+          "returns": "A promise that settles once it has ended.",
+          "examples": [
+            "```ts\nimport { endLiveActivity } from \"denext/mobile\";\n\nawait endLiveActivity(id, { state: { title: \"Delivered\" }, dismissal: \"default\" });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "EndLiveActivityOptions",
+          "slug": "EndLiveActivityOptions",
+          "kind": "interface",
+          "signature": "interface EndLiveActivityOptions",
+          "doc": "Options for endLiveActivity.",
+          "docFull": "Options for {@linkcode endLiveActivity}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -14667,6 +14723,134 @@
           "denextOnly": true
         },
         {
+          "name": "listLiveActivities",
+          "slug": "listLiveActivities",
+          "kind": "function",
+          "signature": "listLiveActivities(): Promise<RunningLiveActivity[]>",
+          "doc": "The running Live Activities of the app (started here, earlier, or by a push-to-start push).",
+          "docFull": "The running Live Activities of the app (started here, earlier, or by a push-to-start push).",
+          "params": [],
+          "returns": "Their ids and names; [] on Android, on the web, below iOS 16.1, and without the plugin (or with one installed before this function).",
+          "examples": [
+            "```ts\nimport { endLiveActivity, listLiveActivities } from \"denext/mobile\";\n\nfor (const { id } of await listLiveActivities()) await endLiveActivity(id);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveActivityError",
+          "slug": "LiveActivityError",
+          "kind": "interface",
+          "signature": "interface LiveActivityError",
+          "doc": "The Error a Live Activity function rejects with.",
+          "docFull": "The `Error` a Live Activity function rejects with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveActivityErrorCode",
+          "slug": "LiveActivityErrorCode",
+          "kind": "typeAlias",
+          "signature": "type LiveActivityErrorCode = unsupported | disabled | invalid | not_found | timeout | failed",
+          "doc": "The code on a Live Activity rejection:",
+          "docFull": "The `code` on a Live Activity rejection:\n\n- `unsupported`: not iOS 16.1+ with the `DenextLiveActivity` plugin (Android, the web, an\n  older iOS, or the plugin not installed);\n- `disabled`: the user turned Live Activities off for the app;\n- `invalid`: a bad name, attributes or state (not a JSON object);\n- `not_found`: no running Live Activity has that id;\n- `timeout`: {@linkcode liveActivityPushToken} or {@linkcode liveActivityPushToStartToken}\n  got no token in time;\n- `failed`: ActivityKit refused (too many activities, or no push entitlement for `push`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "liveActivityPushToken",
+          "slug": "liveActivityPushToken",
+          "kind": "function",
+          "signature": "liveActivityPushToken(id: string, options?: LiveActivityTokenOptions): Promise<string>",
+          "doc": "The ActivityKit push token of a Live Activity started with { push: true }, as hex, for a server to update it through APNs (apns-push-type: liveactivity, with a content-state in the shape of the state object). It waits for the token when ActivityKit has not issued it yet.",
+          "docFull": "The ActivityKit push token of a Live Activity started with `{ push: true }`, as hex, for a\nserver to update it through APNs (`apns-push-type: liveactivity`, with a `content-state` in\nthe shape of the state object). It waits for the token when ActivityKit has not issued it yet.\n\n{@linkcode onLiveActivityPushToken} reports it, and every later one, as an event instead.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The id startLiveActivity returned."
+            },
+            {
+              "name": "options",
+              "doc": "timeoutMs: how long to wait (default 10 000)."
+            }
+          ],
+          "returns": "The token.",
+          "examples": [
+            "```ts\nimport { liveActivityPushToken, startLiveActivity } from \"denext/mobile\";\n\nconst id = await startLiveActivity(\"Delivery\", {}, { title: \"Packing\" }, { push: true });\nawait fetch(\"/api/live-activity\", { method: \"POST\", body: await liveActivityPushToken(id) });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveActivityPushTokenEvent",
+          "slug": "LiveActivityPushTokenEvent",
+          "kind": "interface",
+          "signature": "interface LiveActivityPushTokenEvent",
+          "doc": "A push token ActivityKit issued a running Live Activity.",
+          "docFull": "A push token ActivityKit issued a running Live Activity.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "liveActivityPushToStartToken",
+          "slug": "liveActivityPushToStartToken-fn",
+          "kind": "function",
+          "signature": "liveActivityPushToStartToken(options?: LiveActivityTokenOptions): Promise<LiveActivityPushToStartToken | null>",
+          "doc": "The app's ActivityKit push-to-start token (iOS 17.2 and later), as hex: a server sends it an APNs push (apns-push-type: liveactivity, \"event\": \"start\", \"attributes-type\": \"DenextActivityAttributes\", \"attributes\": { \"name\": <Live Activity name>, \"values\": { … } } and a content-state in the shape of the state object) to start a Live Activity while the app is not running. It waits for the token when ActivityKit has not issued it yet; onLiveActivityPushToStartToken reports later ones. The app needs the push entitlement (denext mobile add push), without which no token comes (timeout).",
+          "docFull": "The app's ActivityKit push-to-start token (iOS 17.2 and later), as hex: a server sends it an\nAPNs push (`apns-push-type: liveactivity`, `\"event\": \"start\"`,\n`\"attributes-type\": \"DenextActivityAttributes\"`, `\"attributes\": { \"name\": <Live Activity\nname>, \"values\": { … } }` and a `content-state` in the shape of the state object) to start a\nLive Activity while the app is not running. It waits for the token when ActivityKit has not\nissued it yet; {@linkcode onLiveActivityPushToStartToken} reports later ones. The app needs\nthe push entitlement (`denext mobile add push`), without which no token comes (`timeout`).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "timeoutMs: how long to wait (default 10 000)."
+            }
+          ],
+          "returns": "{ token }, or null where push-to-start does not exist: below iOS 17.2, on Android, on the web, or without the plugin (or with one installed before push-to-start).",
+          "examples": [
+            "```ts\nimport { liveActivityPushToStartToken } from \"denext/mobile\";\n\nconst start = await liveActivityPushToStartToken();\nif (start) await fetch(\"/api/devices\", { method: \"POST\", body: JSON.stringify(start) });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveActivityPushToStartToken",
+          "slug": "LiveActivityPushToStartToken-iface",
+          "kind": "interface",
+          "signature": "interface LiveActivityPushToStartToken",
+          "doc": "A push-to-start token ActivityKit issued the app (iOS 17.2+).",
+          "docFull": "A push-to-start token ActivityKit issued the app (iOS 17.2+).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveActivityTokenOptions",
+          "slug": "LiveActivityTokenOptions",
+          "kind": "interface",
+          "signature": "interface LiveActivityTokenOptions",
+          "doc": "Options for liveActivityPushToken and liveActivityPushToStartToken.",
+          "docFull": "Options for {@linkcode liveActivityPushToken} and {@linkcode liveActivityPushToStartToken}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LiveActivityValues",
+          "slug": "LiveActivityValues",
+          "kind": "typeAlias",
+          "signature": "type LiveActivityValues = Readonly<Record<string, unknown>>",
+          "doc": "A JSON object: a Live Activity's attributes or state.",
+          "docFull": "A JSON object: a Live Activity's attributes or state.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "MomentumSafeScrollOptions",
           "slug": "MomentumSafeScrollOptions",
           "kind": "interface",
@@ -14785,6 +14969,44 @@
           "denextOnly": true
         },
         {
+          "name": "onLiveActivityPushToken",
+          "slug": "onLiveActivityPushToken",
+          "kind": "function",
+          "signature": "onLiveActivityPushToken(callback: (event: LiveActivityPushTokenEvent) => void): () => void",
+          "doc": "Call callback with each push token ActivityKit issues a running Live Activity: the first one of an activity started with { push: true } (or by a push-to-start push), and every rotation after it. Tokens issued before the first subscriber are kept for it. Elsewhere it is never called.",
+          "docFull": "Call `callback` with each push token ActivityKit issues a running Live Activity: the first\none of an activity started with `{ push: true }` (or by a push-to-start push), and every\nrotation after it. Tokens issued before the first subscriber are kept for it. Elsewhere it is\nnever called.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with { id, token } (the activity's id, the hex token)."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onLiveActivityPushToken } from \"denext/mobile\";\n\nconst stop = onLiveActivityPushToken(({ id, token }) => void sendActivityToken(id, token));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "onLiveActivityPushToStartToken",
+          "slug": "onLiveActivityPushToStartToken",
+          "kind": "function",
+          "signature": "onLiveActivityPushToStartToken(callback: (token: LiveActivityPushToStartToken) => void): () => void",
+          "doc": "Call callback with each push-to-start token ActivityKit issues the app (iOS 17.2 and later), including the current one: a token issued before the first subscriber is kept for it. Send each to your server, which replaces the one it had. Elsewhere it is never called.",
+          "docFull": "Call `callback` with each push-to-start token ActivityKit issues the app (iOS 17.2 and later),\nincluding the current one: a token issued before the first subscriber is kept for it. Send\neach to your server, which replaces the one it had. Elsewhere it is never called.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with { token } (hex)."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onLiveActivityPushToStartToken } from \"denext/mobile\";\n\nconst stop = onLiveActivityPushToStartToken(({ token }) => void registerDevice({ token }));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "onPushReceived",
           "slug": "onPushReceived",
           "kind": "function",
@@ -14846,6 +15068,25 @@
           "denextOnly": true
         },
         {
+          "name": "onShareReceived",
+          "slug": "onShareReceived",
+          "kind": "function",
+          "signature": "onShareReceived(callback: (content: SharedContent) => void): () => void",
+          "doc": "Call callback with each share other apps send to this one, including the one that opened the app: shares wait natively until the first subscriber arrives, so subscribe early (a root layout or the app shell); only the subscribers present when a share is handed over see it. Outside the native shell, or without the plugin, it does nothing.",
+          "docFull": "Call `callback` with each share other apps send to this one, including the one that opened\nthe app: shares wait natively until the first subscriber arrives, so subscribe early (a root\nlayout or the app shell); only the subscribers present when a share is handed over see it.\nOutside the native shell, or without the plugin, it does nothing.\n\n`denext mobile add share-extension` installs the native side: on iOS a Share Extension\n(queued through the App Group, then the app is opened with `<scheme>://denext-share`, which\n`onDeepLink` ignores), on Android SEND / SEND_MULTIPLE intent filters.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each share."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onShareReceived } from \"denext/mobile\";\n\nconst stop = onShareReceived(({ url, text, files }) => {\n  if (url) location.assign(`/new?link=${encodeURIComponent(url)}`);\n  else console.log(text, files?.length ?? 0);\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "openAuthSession",
           "slug": "openAuthSession",
           "kind": "function",
@@ -14884,6 +15125,29 @@
           "returns": "A promise that settles once the URL has been handed off. It rejects with a TypeError for a relative URL or a disallowed scheme, if the Browser plugin rejects, or when there is no window (SSR).",
           "examples": [
             "```tsx\n\"use client\";\nimport { openExternal } from \"denext/mobile\";\n\nexport function DocsLink() {\n  return <button type=\"button\" onClick={() => openExternal(\"https://denext.dev/docs\")}>Docs</button>;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "openSqlite",
+          "slug": "openSqlite",
+          "kind": "function",
+          "signature": "openSqlite(name: string, options?: SqliteOptions): Promise<SqliteDatabase>",
+          "doc": "Open (creating when missing) the SQLite database name.",
+          "docFull": "Open (creating when missing) the SQLite database `name`.\n\n- Inside the native shell with `@capacitor-community/sqlite` installed (`denext mobile add\n  sqlite`), it is a file in the app's storage, opened through the plugin.\n- In the browser it runs the app's own `@sqlite.org/sqlite-wasm` (`npm install",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The database name (a file name: no slashes)."
+            },
+            {
+              "name": "options",
+              "doc": "Where the web engine is, when the build does not provide it."
+            }
+          ],
+          "returns": "The open database.",
+          "examples": [
+            "```ts\nimport { openSqlite } from \"denext/mobile\";\n\nconst db = await openSqlite(\"app.db\");\nawait db.exec(\"CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT)\");\nawait db.run(\"INSERT INTO notes (body) VALUES (?)\", [\"hello\"]);\nconst notes = await db.query<{ id: number; body: string }>(\"SELECT * FROM notes\");\n```"
           ],
           "denextOnly": true
         },
@@ -14941,9 +15205,9 @@
           "name": "OtaErrorCode",
           "slug": "OtaErrorCode",
           "kind": "typeAlias",
-          "signature": "type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old",
+          "signature": "type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch",
           "doc": "The code of a native DenextOta refusal, carried on an error result:",
-          "docFull": "The `code` of a native `DenextOta` refusal, carried on an `error` result:\n\n- `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;\n- `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`\n  (the native side recomputes it from the file list), does not match;\n- `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;\n- `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the\n  manifest's `signature` is missing or does not verify;\n- `insecure`: the binary embeds no key and `baseUrl` is plain `http` to a host other than\n  loopback (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);\n- `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,\n  or it has none after a sequenced manifest was accepted;\n- `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS\n  `CFBundleVersion`, Android `versionCode`).\n\nThe trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`, and\n`invalid` for a malformed or oversized manifest) run before any file is downloaded, and a\nrefusal leaves the running UI and any staged one as they were.",
+          "docFull": "The `code` of a native `DenextOta` refusal, carried on an `error` result:\n\n- `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;\n- `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`\n  (the native side recomputes it from the file list), does not match;\n- `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;\n- `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the\n  manifest's `signature` is missing or does not verify;\n- `insecure`: the binary embeds no key and `baseUrl` is plain `http` to a host other than\n  loopback (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);\n- `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,\n  or it has none after a sequenced manifest was accepted;\n- `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS\n  `CFBundleVersion`, Android `versionCode`);\n- `native_mismatch`: the manifest's `nativeFingerprint` differs from the one the app binary\n  embeds (`denext mobile fingerprint --write`): the UI was built for another native layer.\n  Checked only when both carry one.\n\nThe trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,\n`native_mismatch`, and\n`invalid` for a malformed or oversized manifest) run before any file is downloaded, and a\nrefusal leaves the running UI and any staged one as they were.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15003,9 +15267,9 @@
           "name": "otaSignaturePayload",
           "slug": "otaSignaturePayload",
           "kind": "function",
-          "signature": "otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative>): Promise<Uint8Array>",
-          "doc": "The bytes an OTA manifest signature covers, as UTF-8 with \\n (0x0A) separators and no trailing newline. A manifest with a sequence uses the v2 format, one without uses v1:",
-          "docFull": "The bytes an OTA manifest signature covers, as UTF-8 with `\\n` (0x0A) separators and no\ntrailing newline. A manifest with a `sequence` uses the v2 format, one without uses v1:\n\n- v2: `\"denext-ota-v2\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\")`\n- v1: `\"denext-ota-v1\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\")`\n\n`\"1\"` is `required === true`, anything else `\"0\"`; `sha256hex` is lowercase hex of the SHA-256\nof the notes' UTF-8 (the empty string when absent); `sequence` and `minNative` are plain\ndecimal integers (no sign, no leading zeros, no exponent), and an absent `minNative` is the\nempty string. The version already covers every file, so the chain is files → version →\nsignature, and none of the metadata can change under a valid signature. The native\n`DenextOta` plugin builds the same bytes (v2 when the manifest has a `sequence`, else v1).",
+          "signature": "otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint>): Promise<Uint8Array>",
+          "doc": "The bytes an OTA manifest signature covers, as UTF-8 with \\n (0x0A) separators and no trailing newline. A manifest with a nativeFingerprint (and a sequence) uses the v3 format, one with a sequence but no fingerprint v2, one without a sequence v1:",
+          "docFull": "The bytes an OTA manifest signature covers, as UTF-8 with `\\n` (0x0A) separators and no\ntrailing newline. A manifest with a `nativeFingerprint` (and a `sequence`) uses the v3 format,\none with a `sequence` but no fingerprint v2, one without a `sequence` v1:\n\n- v3: `\"denext-ota-v3\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\") + \"\\n\" + nativeFingerprint`\n- v2: `\"denext-ota-v2\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\"\n  + sequence + \"\\n\" + (minNative ?? \"\")`\n- v1: `\"denext-ota-v1\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\")`\n\n`\"1\"` is `required === true`, anything else `\"0\"`; `sha256hex` is lowercase hex of the SHA-256\nof the notes' UTF-8 (the empty string when absent); `sequence` and `minNative` are plain\ndecimal integers (no sign, no leading zeros, no exponent), and an absent `minNative` is the\nempty string; `nativeFingerprint` is 64 lowercase hex digits. The version already covers every\nfile, so the chain is files → version → signature, and none of the metadata can change under a\nvalid signature. The native `DenextOta` plugin builds the same bytes (v3 when the manifest has a\n`sequence` and a `nativeFingerprint`, v2 with a `sequence` alone, else v1). A v2 manifest\n(no fingerprint) is signed and verified exactly as before v3 existed.",
           "params": [
             {
               "name": "manifest",
@@ -15302,6 +15566,25 @@
           "denextOnly": true
         },
         {
+          "name": "reloadWidgets",
+          "slug": "reloadWidgets",
+          "kind": "function",
+          "signature": "reloadWidgets(kind?: string): Promise<void>",
+          "doc": "Ask the OS to redraw widget kind (every kind when omitted) from its stored snapshot. Outside the native shell, or without the plugin, it does nothing.",
+          "docFull": "Ask the OS to redraw widget `kind` (every kind when omitted) from its stored snapshot.\nOutside the native shell, or without the plugin, it does nothing.",
+          "params": [
+            {
+              "name": "kind",
+              "doc": "The widget's name; omitted, every widget of the app."
+            }
+          ],
+          "returns": "A promise that settles once the reload is requested. It rejects with a TypeError for a bad kind.",
+          "examples": [
+            "```ts\nimport { reloadWidgets } from \"denext/mobile\";\n\nawait reloadWidgets(); // e.g. after the user signs out\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "requestPushPermission",
           "slug": "requestPushPermission",
           "kind": "function",
@@ -15313,6 +15596,44 @@
           "examples": [
             "```ts\nimport { registerForPush, requestPushPermission } from \"denext/mobile\";\n\nif ((await requestPushPermission()) === \"granted\") {\n  const { platform, token } = await registerForPush();\n  await fetch(\"/api/devices\", { method: \"POST\", body: JSON.stringify({ platform, token }) });\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "RunningLiveActivity",
+          "slug": "RunningLiveActivity",
+          "kind": "interface",
+          "signature": "interface RunningLiveActivity",
+          "doc": "A running Live Activity, as listLiveActivities reports it.",
+          "docFull": "A running Live Activity, as {@linkcode listLiveActivities} reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "runtimePlatform",
+          "slug": "runtimePlatform-fn",
+          "kind": "function",
+          "signature": "runtimePlatform(): RuntimePlatform",
+          "doc": "The runtime the page runs in: \"ios\" or \"android\" inside a Capacitor native shell, \"desktop\" inside the Deno Desktop runtime, otherwise \"web\" (including SSR, where there is no window). The desktop case is read off globalThis.__denext.desktop, a marker the Deno Desktop runtime injects into the page before any script runs; it is a detection hint only, not a security boundary — treat it like any other client-reported value.",
+          "docFull": "The runtime the page runs in: `\"ios\"` or `\"android\"` inside a Capacitor native shell,\n`\"desktop\"` inside the Deno Desktop runtime, otherwise `\"web\"` (including SSR, where there\nis no `window`). The desktop case is read off `globalThis.__denext.desktop`, a marker the\nDeno Desktop runtime injects into the page before any script runs; it is a detection hint\nonly, not a security boundary — treat it like any other client-reported value.",
+          "params": [],
+          "returns": "\"ios\", \"android\", \"desktop\" or \"web\".",
+          "examples": [
+            "```ts\nimport { runtimePlatform } from \"denext/mobile\";\ndocument.documentElement.dataset.runtime = runtimePlatform();\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "RuntimePlatform",
+          "slug": "RuntimePlatform-type",
+          "kind": "typeAlias",
+          "signature": "type RuntimePlatform = ios | android | desktop | web",
+          "doc": "The runtime a page runs in, as denext/mobile distinguishes them.",
+          "docFull": "The runtime a page runs in, as `denext/mobile` distinguishes them.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -15418,6 +15739,45 @@
           "denextOnly": true
         },
         {
+          "name": "setWidgetData",
+          "slug": "setWidgetData",
+          "kind": "function",
+          "signature": "setWidgetData(kind: string, data: unknown, options?: SetWidgetDataOptions): Promise<void>",
+          "doc": "Store data as the snapshot widget kind renders, and refresh that kind's widgets.",
+          "docFull": "Store `data` as the snapshot widget `kind` renders, and refresh that kind's widgets.\n\nInside the native shell with the plugin (`denext mobile add widget --name <kind>`): iOS keeps\nthe JSON in the App Group's shared defaults (`denext.widget.<kind>`) and reloads the kind's\nWidgetKit timelines; Android keeps it in the `denext_widgets` shared preferences and updates\nthe kind's placed widgets. The generated widget shows `title` and `body` strings; edit its\nview to show more. Elsewhere it does nothing.\n\nA configurable widget (iOS 17+) reads the snapshot stored for the values the user chose:\nstore one per combination you want to tailor with `options.params`, and one without `params`\nas the fallback (and for iOS 14–16 and Android, where widgets are static).",
+          "params": [
+            {
+              "name": "kind",
+              "doc": "The widget's name (its --name)."
+            },
+            {
+              "name": "data",
+              "doc": "Any JSON-serialisable value (an object for the generated widget)."
+            },
+            {
+              "name": "options",
+              "doc": "params: the configurable widget's parameter values this snapshot is for."
+            }
+          ],
+          "returns": "A promise that settles once the data is stored. It rejects with a TypeError for a bad kind or params or data JSON.stringify cannot serialise, and with the native error (code invalid, or unavailable when the iOS App Group is not set up) otherwise.",
+          "examples": [
+            "```ts\nimport { setWidgetData } from \"denext/mobile\";\n\nawait setWidgetData(\"Status\", { title: \"3 agents running\", body: \"Last update 12:04\" });\n// A widget added with --configurable period:enum=session|weekly:\nawait setWidgetData(\"Usage\", { title: \"Weekly\", body: \"41% left\" }, {\n  params: { period: \"weekly\" },\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SetWidgetDataOptions",
+          "slug": "SetWidgetDataOptions",
+          "kind": "interface",
+          "signature": "interface SetWidgetDataOptions",
+          "doc": "Options for setWidgetData.",
+          "docFull": "Options for {@linkcode setWidgetData}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "share",
           "slug": "share",
           "kind": "function",
@@ -15434,6 +15794,30 @@
           "examples": [
             "```tsx\n\"use client\";\nimport { share } from \"denext/mobile\";\n\nexport function ShareButton({ url }: { url: string }) {\n  return (\n    <button type=\"button\" onClick={async () => {\n      if ((await share({ title: \"Look\", url })) === \"copied\") alert(\"Link copied\");\n    }}>Share</button>\n  );\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "SharedContent",
+          "slug": "SharedContent",
+          "kind": "interface",
+          "signature": "interface SharedContent",
+          "doc": "One share: any of a web link, text and files.",
+          "docFull": "One share: any of a web link, text and files.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SharedFile",
+          "slug": "SharedFile",
+          "kind": "interface",
+          "signature": "interface SharedFile",
+          "doc": "A file shared to the app, copied where the app can read it.",
+          "docFull": "A file shared to the app, copied where the app can read it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -15458,6 +15842,192 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteBackend",
+          "slug": "SqliteBackend",
+          "kind": "typeAlias",
+          "signature": "type SqliteBackend = native | opfs | memory",
+          "doc": "Where a database lives: the native plugin, OPFS in the browser, or memory.",
+          "docFull": "Where a database lives: the native plugin, OPFS in the browser, or memory.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteBindValue",
+          "slug": "SqliteBindValue",
+          "kind": "typeAlias",
+          "signature": "type SqliteBindValue = string | number | boolean | null | Uint8Array | ArrayBuffer",
+          "doc": "A value a statement binds: booleans bind as 1/0, an ArrayBuffer as a blob.",
+          "docFull": "A value a statement binds: booleans bind as 1/0, an `ArrayBuffer` as a blob.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteDatabase",
+          "slug": "SqliteDatabase",
+          "kind": "interface",
+          "signature": "interface SqliteDatabase",
+          "doc": "An open database (openSqlite).",
+          "docFull": "An open database ({@linkcode openSqlite}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteOptions",
+          "slug": "SqliteOptions",
+          "kind": "interface",
+          "signature": "interface SqliteOptions",
+          "doc": "Options for openSqlite and deleteSqlite.",
+          "docFull": "Options for {@linkcode openSqlite} and {@linkcode deleteSqlite}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteParams",
+          "slug": "SqliteParams",
+          "kind": "typeAlias",
+          "signature": "type SqliteParams = typeOperator | Readonly<Record<string, SqliteBindValue>>",
+          "doc": "A statement's parameters: positional (?), or named by their placeholder, prefix included ({ $id: 1 } for $id, { \":id\": 1 } for :id).",
+          "docFull": "A statement's parameters: positional (`?`), or named by their placeholder, prefix included\n(`{ $id: 1 }` for `$id`, `{ \":id\": 1 }` for `:id`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteRow",
+          "slug": "SqliteRow",
+          "kind": "typeAlias",
+          "signature": "type SqliteRow = Record<string, SqliteValue>",
+          "doc": "A row as an object keyed by column name.",
+          "docFull": "A row as an object keyed by column name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteRows",
+          "slug": "SqliteRows",
+          "kind": "interface",
+          "signature": "interface SqliteRows",
+          "doc": "Rows as column names plus one value array per row, in column order.",
+          "docFull": "Rows as column names plus one value array per row, in column order.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteRunResult",
+          "slug": "SqliteRunResult",
+          "kind": "interface",
+          "signature": "interface SqliteRunResult",
+          "doc": "What a write reports.",
+          "docFull": "What a write reports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteValue",
+          "slug": "SqliteValue",
+          "kind": "typeAlias",
+          "signature": "type SqliteValue = string | number | null | Uint8Array",
+          "doc": "A value SQLite stores.",
+          "docFull": "A value SQLite stores.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SqliteWasmUrls",
+          "slug": "SqliteWasmUrls",
+          "kind": "interface",
+          "signature": "interface SqliteWasmUrls",
+          "doc": "The engine's two files.",
+          "docFull": "The engine's two files.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "startLiveActivity",
+          "slug": "startLiveActivity",
+          "kind": "function",
+          "signature": "startLiveActivity(name: string, attributes: LiveActivityValues, state: LiveActivityValues, options?: StartLiveActivityOptions): Promise<string>",
+          "doc": "Start a Live Activity rendered by the UI denext mobile add live-activity --name <name> generated (<name>LiveActivity.swift, which reads context.attributes and context.state).",
+          "docFull": "Start a Live Activity rendered by the UI `denext mobile add live-activity --name <name>`\ngenerated (`<name>LiveActivity.swift`, which reads `context.attributes` and `context.state`).",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The Live Activity name (its --name)."
+            },
+            {
+              "name": "attributes",
+              "doc": "Values fixed for the activity's life (a JSON object)."
+            },
+            {
+              "name": "state",
+              "doc": "The first dynamic state (a JSON object); an ActivityKit push's content-state is the same object."
+            },
+            {
+              "name": "options",
+              "doc": "push to get a push token."
+            }
+          ],
+          "returns": "The activity id, for the other functions.",
+          "examples": [
+            "```ts\nimport { startLiveActivity, updateLiveActivity } from \"denext/mobile\";\n\nconst id = await startLiveActivity(\"Delivery\", { order: \"A-42\" }, { title: \"Packing\", progress: 0.2 });\nawait updateLiveActivity(id, { title: \"On the way\", progress: 0.6 });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "StartLiveActivityOptions",
+          "slug": "StartLiveActivityOptions",
+          "kind": "interface",
+          "signature": "interface StartLiveActivityOptions",
+          "doc": "Options for startLiveActivity.",
+          "docFull": "Options for {@linkcode startLiveActivity}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "updateLiveActivity",
+          "slug": "updateLiveActivity",
+          "kind": "function",
+          "signature": "updateLiveActivity(id: string, state: LiveActivityValues): Promise<void>",
+          "doc": "Replace a running Live Activity's state.",
+          "docFull": "Replace a running Live Activity's state.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The id startLiveActivity returned."
+            },
+            {
+              "name": "state",
+              "doc": "The new state (a JSON object)."
+            }
+          ],
+          "returns": "A promise that settles once ActivityKit has it.",
+          "examples": [
+            "```ts\nimport { updateLiveActivity } from \"denext/mobile\";\n\nawait updateLiveActivity(id, { title: \"Delivered\", progress: 1 });\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -15654,6 +16224,25 @@
           "returns": "",
           "examples": [
             "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { useQuickAction } from \"denext/mobile\";\n\nexport function QuickActions() {\n  const router = useRouter();\n  useQuickAction((id) => router.push(id === \"search\" ? \"/search\" : \"/chat/new\"));\n  return null;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "useShareReceived",
+          "slug": "useShareReceived",
+          "kind": "function",
+          "signature": "useShareReceived(callback: (content: SharedContent) => void): void",
+          "doc": "Hook form of onShareReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.",
+          "docFull": "Hook form of {@linkcode onShareReceived}: subscribes on mount, unsubscribes on unmount, and\nalways calls the latest `callback`.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each share."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { useShareReceived } from \"denext/mobile\";\n\nexport function ShareTarget() {\n  const router = useRouter();\n  useShareReceived(({ url }) => url && router.push(`/new?link=${encodeURIComponent(url)}`));\n  return null;\n}\n```"
           ],
           "denextOnly": true
         },

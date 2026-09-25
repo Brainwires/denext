@@ -38,9 +38,13 @@ import { isOtaManifest, OTA_MANIFEST_PATH, type OtaManifest } from "./ota-manife
  * - `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,
  *   or it has none after a sequenced manifest was accepted;
  * - `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS
- *   `CFBundleVersion`, Android `versionCode`).
+ *   `CFBundleVersion`, Android `versionCode`);
+ * - `native_mismatch`: the manifest's `nativeFingerprint` differs from the one the app binary
+ *   embeds (`denext mobile fingerprint --write`): the UI was built for another native layer.
+ *   Checked only when both carry one.
  *
- * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`, and
+ * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,
+ * `native_mismatch`, and
  * `invalid` for a malformed or oversized manifest) run before any file is downloaded, and a
  * refusal leaves the running UI and any staged one as they were.
  */
@@ -54,7 +58,8 @@ export type OtaErrorCode =
   | "signature"
   | "insecure"
   | "downgrade"
-  | "native_too_old";
+  | "native_too_old"
+  | "native_mismatch";
 
 // An array literal, not a `new Set(...)`: bundlers keep a module-level constructor call,
 // which would pin this module into every bundle that imports `denext/mobile`.
@@ -69,6 +74,7 @@ const OTA_ERROR_CODES: readonly string[] = [
   "insecure",
   "downgrade",
   "native_too_old",
+  "native_mismatch",
 ] satisfies readonly OtaErrorCode[];
 
 /** The native plugin's name: `window.Capacitor.Plugins.DenextOta`. */

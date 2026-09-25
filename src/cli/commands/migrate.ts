@@ -201,9 +201,144 @@ function reportPrisma(p: NonNullable<MigrateResult["prisma"]>): void {
   );
 }
 
+/** The Expo app config's static reading: where from, what it could not read. */
+function reportExpoConfig(e: NonNullable<MigrateResult["expo"]>): void {
+  console.log(
+    `    app config: ${e.config.source ?? "none found"} (read statically — project code is ` +
+      "never run)",
+  );
+  if (e.config.unresolved.length) {
+    console.log(
+      `    ⚠️  not statically readable (computed in code): ${e.config.unresolved.join(", ")}`,
+    );
+  }
+  for (const note of e.config.notes) console.log(`    · ${note}`);
+  if (e.generatedEntry) {
+    console.log(
+      `    wrote ${e.generatedEntry.path}: ` +
+        (e.generatedEntry.kind === "expo-router"
+          ? "expo-router's web entry, without Metro's runtime"
+          : "Expo's default entry (expo/AppEntry) mounts ./App"),
+    );
+  }
+  if (e.metro.extraModules.length) {
+    console.log(
+      `    ⚠️  ${e.metro.file} maps modules Metro alone provides (extraNodeModules): ` +
+        `${e.metro.extraModules.join(", ")} — map each in deno.json "imports".`,
+    );
+  }
+  if (e.metro.resolveRequest) {
+    console.log(
+      `    ⚠️  ${e.metro.file} sets a custom resolveRequest, which the denext build does not ` +
+        'run: carry its redirects over as deno.json "imports".',
+    );
+  }
+  if (e.expoRouter) {
+    console.log(
+      "    expo-router: React Native mode generates its route context from app/ (Metro's " +
+        "require.context is not needed); routes, deep links and <Link> work as on Expo web.",
+    );
+  }
+}
+
+/** The `expo-*` shim status and the native-only packages. */
+function reportExpoDeps(d: NonNullable<MigrateResult["expo"]>["deps"]): void {
+  const shimmed = d.expo.filter((p) => p.status !== "none");
+  const plain = d.expo.filter((p) => p.status === "none");
+  console.log(
+    `  ▸ expo-* packages (${d.expo.length}): ${shimmed.length} resolve to denext/expo shims` +
+      (plain.length ? `; ${plain.length} resolve to the real package` : ""),
+  );
+  for (const p of shimmed) {
+    const omitted = p.omitted ? ` (${p.omitted} export(s) not provided)` : "";
+    console.log(`      ${p.name.padEnd(24)} ${p.status}${omitted}`);
+  }
+  for (const p of plain) {
+    console.log(
+      `      ${p.name.padEnd(24)} no shim (the real package, which must have a web build)`,
+    );
+  }
+  if (d.nativeOnly.length) {
+    console.log(`  ⚠️  native-only packages, no web build (${d.nativeOnly.length}):`);
+    for (const p of d.nativeOnly) console.log(`      ${p.name} — ${p.kind}`);
+    console.log(
+      "      Their native parts do not exist in a WebView: some load and do nothing (their JS " +
+        "tolerates the missing module), others throw when used. Give each importing module a " +
+        '.web.ts, or map the package to a web stub in deno.json "imports".',
+    );
+  }
+  if (d.notInstalled.length) {
+    console.log(`    not installed, so not classified: ${d.notInstalled.join(", ")}`);
+  }
+}
+
+/** The Capacitor shell and the next steps. */
+function reportExpoShell(e: NonNullable<MigrateResult["expo"]>): void {
+  const c = e.capacitor;
+  console.log(
+    `  ▸ Capacitor shell: ${c.configWritten ? "wrote" : "kept"} capacitor.config.ts — appId ` +
+      `${c.appId}${c.placeholderId ? " (placeholder: set it)" : ""} · appName ` +
+      JSON.stringify(c.appName),
+  );
+  if (e.prebuildFolders.length) {
+    console.log(
+      `    ⚠️  ${e.prebuildFolders.join("/ and ")}/ exist (Expo prebuild output): Capacitor ` +
+        "creates its own — move them aside before `npx cap add`.",
+    );
+  }
+  const steps = [
+    ...(e.missingPackages.length ? [`install ${e.missingPackages.join(" ")}`] : []),
+    "install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android (^8)",
+    "deno task export && npx cap add ios && npx cap add android",
+    ...(e.mobile.command ? [e.mobile.command] : []),
+  ];
+  console.log("    next steps:");
+  steps.forEach((step, i) => console.log(`      ${i + 1}. ${step}`));
+  for (const c2 of e.mobile.capabilities) console.log(`         · ${c2.capability}: ${c2.because}`);
+  const plist = Object.entries(e.mobile.manualPlist);
+  if (plist.length) {
+    console.log(
+      "    the app's iOS usage strings — copy them into ios/App/App/Info.plist (mobile add " +
+        "writes only defaults, and only when a key is absent):",
+    );
+    for (const [k, v] of plist) {
+      console.log(`      ${k} = ${v === null ? "(computed in code)" : JSON.stringify(v)}`);
+    }
+  }
+  if (e.mobile.manualPermissions.length) {
+    console.log(
+      "    declare in android/app/src/main/AndroidManifest.xml by hand: " +
+        e.mobile.manualPermissions.join(", "),
+    );
+  }
+  if (e.tailwindInput) {
+    console.log(
+      `    Tailwind (${e.tailwindInput}): uniwind / NativeWind styling needs the guide's ` +
+        "uniwind recipe; it is not wired automatically.",
+    );
+  }
+}
+
+/** What an Expo migration wrote and found. */
+function reportExpo(r: MigrateResult): void {
+  const s = r.spa!;
+  const e = r.expo!;
+  console.log(
+    '  ▸ Expo app detected — wrote denext.config.ts (mode: "spa", reactNative: true).',
+  );
+  console.log(
+    `    entry ${s.entry} · title ${JSON.stringify(s.title)} · nodeModulesDir ${s.nodeModulesDir}`,
+  );
+  reportExpoConfig(e);
+  reportExpoDeps(e.deps);
+  reportExpoShell(e);
+}
+
 /** The framework-specific section of the report, if any. */
 function reportFramework(r: MigrateResult, desktop: boolean): void {
-  if ((r.kind === "spa" || r.kind === "cra" || r.kind === "generic") && r.spa) {
+  if (r.kind === "expo" && r.expo) {
+    reportExpo(r);
+  } else if ((r.kind === "spa" || r.kind === "cra" || r.kind === "generic") && r.spa) {
     reportSpa(r, desktop);
   } else if (r.kind === "remix" && r.remix) {
     reportRemix(r.remix);
@@ -214,14 +349,14 @@ function reportFramework(r: MigrateResult, desktop: boolean): void {
 
 export const migrateCommand: CommandSpec = {
   name: "migrate",
-  summary: "Migrate a Next.js, Remix, Vite, CRA, or React app (config files)",
+  summary: "Migrate a Next.js, Remix, Vite, CRA, Expo, or React app (config files)",
   positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
   flags: [
     {
       name: "from",
       type: "string",
       valueName: "<framework>",
-      help: "Force source: next | remix | vite | cra | generic",
+      help: "Force source: next | remix | vite | cra | generic | expo",
     },
     { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
     {
