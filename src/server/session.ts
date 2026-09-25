@@ -204,8 +204,18 @@ function sessionCookieAttrs(
  * auth layers so every "fail fast in production" check agrees on the signal.
  */
 export function isProductionEnv(): boolean {
+  if ((globalThis as Record<symbol, unknown>)[FORCE_PRODUCTION] === true) return true;
   return envGet("NODE_ENV") === "production" || envGet("DENEXT_ENV") === "production";
 }
+
+/**
+ * A per-isolate production signal for tests. `deno test --parallel` runs test modules in
+ * workers of ONE process, so a test that set `DENEXT_ENV=production` flipped every module
+ * running beside it into production (the auth example's dev-only paths then failed). A
+ * `globalThis` flag belongs to one isolate. It can only turn production ON, never off, so it
+ * cannot loosen a guard.
+ */
+const FORCE_PRODUCTION = Symbol.for("denext.testing.forceProduction");
 
 /**
  * Whether any signing secret is shorter than the brute-force floor (32 chars). Shared by

@@ -122,8 +122,9 @@ Deno.test("__Host- pins Secure on set AND clear behind a proxy that omits x-forw
 });
 
 Deno.test("a weak secret THROWS under the production signal (warns only in dev)", async () => {
-  const prev = Deno.env.get("DENEXT_ENV");
-  Deno.env.set("DENEXT_ENV", "production");
+  const flags = globalThis as Record<symbol, unknown>;
+  // Per isolate, unlike DENEXT_ENV (shared by every --parallel test module).
+  flags[Symbol.for("denext.testing.forceProduction")] = true;
   try {
     assert(isProductionEnv());
     await assertRejects(
@@ -142,8 +143,7 @@ Deno.test("a weak secret THROWS under the production signal (warns only in dev)"
       await (await getSession({ secret: "a-strong-secret-of-at-least-32-characters!" })).set({});
     });
   } finally {
-    if (prev === undefined) Deno.env.delete("DENEXT_ENV");
-    else Deno.env.set("DENEXT_ENV", prev);
+    delete flags[Symbol.for("denext.testing.forceProduction")];
   }
   assert(!isProductionEnv(), "signal restored");
 });
@@ -357,4 +357,22 @@ Deno.test("cookies().set honors explicit overrides (client-readable cookie)", ()
   const sc = ctx.outgoingHeaders.get("set-cookie")!;
   assert(!/HttpOnly/i.test(sc), `explicit httpOnly:false honored: ${sc}`);
   assert(/SameSite=Strict/i.test(sc), `explicit sameSite honored: ${sc}`);
+});
+
+Deno.test("the deploy signal is read from NODE_ENV / DENEXT_ENV (a subprocess, so no other test sees it)", async () => {
+  const session = new URL("../src/server/session.ts", import.meta.url).href;
+  const probe = async (env: Record<string, string>) => {
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "eval",
+        `import { isProductionEnv } from "${session}"; console.log(isProductionEnv());`,
+      ],
+      env,
+      clearEnv: true,
+    }).output();
+    return new TextDecoder().decode(out.stdout).trim();
+  };
+  assertEquals(await probe({ DENEXT_ENV: "production" }), "true");
+  assertEquals(await probe({ NODE_ENV: "production" }), "true");
+  assertEquals(await probe({ NODE_ENV: "development" }), "false");
 });
