@@ -299,6 +299,13 @@ export interface BuildNextCompatClientOptions {
    * as `unknown[]` in the public API so it does not expose esbuild's third-party types.
    */
   extraPlugins?: unknown[];
+  /**
+   * Extensions probed ahead of the defaults for extensionless imports (React Native mode's
+   * `.web.tsx`, …). Forwarded to {@link BundleNextCompatModulesOptions.platformExtensions}.
+   */
+  platformExtensions?: readonly string[];
+  /** Parse `.js` as JSX. Forwarded to {@link BundleNextCompatModulesOptions.jsxInJs}. */
+  jsxInJs?: boolean;
 }
 
 /**
@@ -340,6 +347,8 @@ export async function buildNextCompatClientEntries(
     // Public type is `unknown[]` (to not expose esbuild's types); the bundler expects
     // real esbuild plugins, which is what callers pass.
     extraPlugins: options.extraPlugins as esbuild.Plugin[] | undefined,
+    platformExtensions: options.platformExtensions,
+    jsxInJs: options.jsxInJs,
   });
   await Deno.remove(entriesDir, { recursive: true }).catch(() => {});
 }

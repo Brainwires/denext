@@ -29,6 +29,13 @@
  *   {@linkcode share}, {@linkcode deviceInfo}, {@linkcode networkStatus} /
  *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
+ * - Files and media: {@linkcode readFile} / {@linkcode writeFile} / {@linkcode deleteFile} /
+ *   {@linkcode listDir} / {@linkcode downloadToFile} (app storage natively, OPFS on the web),
+ *   {@linkcode pickImage} (camera or photo library) and {@linkcode pickDocument} (the system
+ *   document picker; both a hidden file input on the web), and {@linkcode scanBarcode}
+ *   (`BarcodeDetector` over the camera on the web).
+ * - {@linkcode setQuickActions} / {@linkcode onQuickAction} / {@linkcode useQuickAction}:
+ *   home-screen quick actions (long-press on the app icon), cold-start action included.
  * - {@linkcode onDeepLink} / {@linkcode useDeepLink}: the custom-scheme and universal / app
  *   links that open the app, filtered and routed (`denext mobile add deep-links`).
  * - {@linkcode openAuthSession}: OAuth / OIDC sign-in in a system browser sheet
@@ -124,3 +131,39 @@ export {
   usePushReceived,
   usePushTapped,
 } from "./push.ts";
+export {
+  deleteFile,
+  downloadToFile,
+  type FileDirectory,
+  type FileEncoding,
+  type FileEntry,
+  type FileLocationOptions,
+  listDir,
+  readFile,
+  type ReadFileOptions,
+  writeFile,
+  type WriteFileOptions,
+} from "./filesystem.ts";
+export {
+  type ImageSource,
+  pickDocument,
+  type PickDocumentOptions,
+  type PickedDocument,
+  type PickedImage,
+  pickImage,
+  type PickImageOptions,
+} from "./pickers.ts";
+export {
+  type BarcodeFormat,
+  type BarcodeScanError,
+  type BarcodeScanErrorCode,
+  scanBarcode,
+  type ScanBarcodeOptions,
+  type ScannedBarcode,
+} from "./barcode.ts";
+export {
+  onQuickAction,
+  type QuickAction,
+  setQuickActions,
+  useQuickAction,
+} from "./quick-actions.ts";

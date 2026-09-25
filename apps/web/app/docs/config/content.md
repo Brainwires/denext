@@ -385,6 +385,13 @@ Build-time switches. All off by default except `nodeResolve`,
   sticky headers move with it until the fling settles. Set `false` to opt out
   (it holds in every build: App Router, Pages Router, SPA, dev and export). See
   [`denext/mobile`](/docs/desktop).
+- **`reactNative`** — `boolean | { rootStyle?: boolean }` (off; SPA mode only).
+  Builds a React Native / Expo app's source for the web through
+  `react-native-web`: `react-native` resolves to react-native-web for every
+  importer, `.web.*` files win, `.js` parses as JSX, `__DEV__` / `global` /
+  `process.env.EXPO_OS` are defined, and the SPA shell gets Expo web's root
+  style (`rootStyle: false` leaves it out). See
+  [React Native / Expo apps](/docs/react-native).
 
 > **`experimental` is superseded.** Everything denext shipped under it is
 > denext's own finished work, so every key graduated to a top-level field —

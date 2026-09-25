@@ -3,7 +3,12 @@
 
 import { ensureDir } from "@std/fs";
 import { join, resolve } from "@std/path";
-import { featureFlags, momentumSafeScrollEnabled, type SpaConfig } from "../../server/config.ts";
+import {
+  featureFlags,
+  momentumSafeScrollEnabled,
+  reactNativeOptions,
+  type SpaConfig,
+} from "../../server/config.ts";
 import { buildAppCss, concatCss } from "../css.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
@@ -59,6 +64,16 @@ export interface SpaDevState {
   unbundledCssGen: number;
 }
 
+/**
+ * The unbundled loop's default: on unless `DENEXT_DEV_UNBUNDLED=0`, or the app is in React
+ * Native mode — the react-native → react-native-web resolution, `.web.*` probing and `.js`
+ * JSX loader live in the bundled (esbuild) path, so an RN app develops on the bundled loop.
+ */
+function unbundledByDefault(paths: SpaDevServerOptions["paths"]): boolean {
+  if (reactNativeOptions(paths.config) !== null) return false;
+  return Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
+}
+
 /** Create the dev state for `options.paths` (resolves + validates the SPA entry). */
 export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
   const { paths } = options;
@@ -73,7 +88,7 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
     hasStyles: false,
     building: null,
     reloadClients: new Set(),
-    unbundledOptIn: options.unbundled ?? (Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0"),
+    unbundledOptIn: options.unbundled ?? unbundledByDefault(paths),
     unbundled: null,
     unbundledReady: null,
     unbundledCss: null,

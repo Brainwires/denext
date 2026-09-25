@@ -871,6 +871,24 @@
       "type": "boolean",
       "default": true
     },
+    "reactNative": {
+      "description": "Build a React Native / Expo app's source for the web through `react-native-web` — SPA mode only (`mode: \"spa\"`). `true` turns on the defaults; an object sets options.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rootStyle": {
+              "description": "Inject Expo web's root style into the SPA shell's `<head>`: `html,body,#root{height:100%;margin:0}` and `#root{display:flex}` (`#root` follows `spa.rootId`). React Native's root view is `flex: 1` and needs a sized flex parent; without it the app collapses to its content height and absolutely positioned overlays cover the page. It comes before `spa.head`, so a rule there overrides it.",
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      ]
+    },
     "experimental": {
       "description": "Deprecated. Every `experimental.*` key graduated to a top-level field by 2.5 (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The old spellings are still honored, with a dev warning, when the top-level field is absent; the top-level field wins when both are set. Removed in 3.0.",
       "deprecated": true,

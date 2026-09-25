@@ -288,7 +288,9 @@ through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling 
 virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit;
 `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
-`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web); `denext mobile add
+`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
+`listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickDocument`/`scanBarcode` (`null`
+when cancelled) and `setQuickActions`/`useQuickAction` (home-screen shortcuts); `denext mobile add
 <capability...> [--dry-run] [--list]` installs their plugins, and `deep-links --scheme/--domain`
 / `push` add `onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
 `requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via

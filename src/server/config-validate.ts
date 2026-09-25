@@ -448,6 +448,24 @@ function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   }
 }
 
+/**
+ * `reactNative`: `true`/`false` or an options object, and only in SPA mode — the resolve mode
+ * applies to the SPA bundle, so anywhere else it would be silently ignored.
+ */
+function validateReactNative(config: DenextConfig, fail: Fail): void {
+  const value: unknown = config.reactNative;
+  if (value === undefined || value === false) return;
+  const isObject = typeof value === "object" && value !== null && !Array.isArray(value);
+  if (value !== true && !isObject) fail("reactNative", "must be a boolean or an options object");
+  const rootStyle = isObject ? (value as { rootStyle?: unknown }).rootStyle : undefined;
+  if (rootStyle !== undefined && typeof rootStyle !== "boolean") {
+    fail("reactNative.rootStyle", "must be a boolean");
+  }
+  if (config.mode !== "spa") {
+    fail("reactNative", 'applies only in SPA mode — set `mode: "spa"` and `spa.entry`');
+  }
+}
+
 /** Nested fields whose absence would crash at request time rather than at boot. */
 /**
  * `features` (and its legacy alias `experimental.features`) must be a flat map of booleans —
@@ -540,6 +558,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
+  validateReactNative(config, fail);
   validateRouting(config, fail);
   validateImageAllowlists(config.images, fail);
   validateImageNumerics(config.images, fail);

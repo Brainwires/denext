@@ -416,14 +416,29 @@ export default function RootLayout({ children }: { children: unknown }) {
         installs the plugins: it finds the project (the folder with{" "}
         <code>capacitor.config.*</code>, or <code>--dir</code>), refuses a{" "}
         <code>@capacitor/core</code>{" "}
-        major other than 8, adds the packages with the package manager your lockfile names, declares
-        any Android permissions they need, and runs <code>npx cap sync</code>.
+        major other than 8, adds the packages with the package manager the nearest lockfile names
+        (looking up to the repository root, so a pnpm / yarn / bun workspace's lockfile counts; else
+        a <code>packageManager</code>{" "}
+        field; else npm), declares any Android permissions they need, and runs{" "}
+        <code>npx cap sync</code>. The install runs in the Capacitor project folder.
       </p>
       <Code lang="bash">
         {`denext mobile add --list                    # the capabilities and their plugins
 denext mobile add haptics share network --dry-run   # print the plan, change nothing
 denext mobile add haptics share network secure-store`}
       </Code>
+      <Callout kind="warn">
+        Running the CLI straight from JSR inside a Node workspace? Pass{" "}
+        <code>--node-modules-dir=none</code>: without it Deno reads the workspace's{" "}
+        <code>package.json</code>, fails to resolve denext's own <code>npm:</code> imports from its
+        {" "}
+        <code>node_modules</code>, and (with a <code>pnpm-workspace.yaml</code>) rewrites the root
+        {" "}
+        <code>package.json</code>.
+        <Code lang="bash">
+          {`deno run -A --node-modules-dir=none jsr:@denext/denext/cli mobile add haptics --dry-run`}
+        </Code>
+      </Callout>
       <ul>
         <li>
           <code>haptic(kind)</code>{" "}
@@ -463,7 +478,42 @@ denext mobile add haptics share network secure-store`}
           (<code>secure-store</code>): the iOS Keychain / Android Keystore. On the web it is a plain
           IndexedDB database, which is <strong>not</strong> secret.
         </li>
+        <li>
+          <code>readFile</code> / <code>writeFile</code> / <code>deleteFile</code> /{" "}
+          <code>listDir</code> / <code>downloadToFile(url, path)</code>{" "}
+          (<code>filesystem</code>): the app's files in <code>"data"</code>,{" "}
+          <code>"documents"</code> or{" "}
+          <code>"cache"</code>, as text or base64; the Origin Private File System on the web (a
+          top-level folder per directory).
+        </li>
+        <li>
+          <code>pickImage({"{ source }"})</code>{" "}
+          (<code>camera</code>, which also writes the camera and photo-library usage strings) and
+          {" "}
+          <code>pickDocument({"{ types }"})</code> (<code>document-picker</code>): resolve{" "}
+          <code>null</code> when the user cancels; a hidden file input on the web.
+        </li>
+        <li>
+          <code>scanBarcode({"{ formats }"})</code>{" "}
+          (<code>barcode</code>): the value and format of one code; <code>BarcodeDetector</code>
+          {" "}
+          over the camera on the web where the browser has it. The install raises Android's{" "}
+          <code>minSdkVersion</code> to 26, which the scanner needs.
+        </li>
+        <li>
+          <code>setQuickActions([...])</code> / <code>onQuickAction</code> /{" "}
+          <code>useQuickAction</code>{" "}
+          (<code>quick-actions</code>): home-screen shortcuts on a long press of the app icon, the
+          one that cold-started the app included (the install wires{" "}
+          <code>SceneDelegate.swift</code>); nothing on the web.
+        </li>
       </ul>
+      <p>
+        Audio, video and image editing need no plugin: Expo's <code>expo-audio</code> and{" "}
+        <code>expo-video</code> map to <code>&lt;audio&gt;</code>, <code>&lt;video&gt;</code>{" "}
+        and Web Audio in the WebView, and <code>expo-image-manipulator</code> to Canvas /{" "}
+        <code>OffscreenCanvas</code>.
+      </p>
       <p>
         <code>browser</code> installs the plugin <code>openExternal</code>{" "}
         uses for its in-app browser. A new plugin is native code: ship a new app binary afterwards.

@@ -433,7 +433,8 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n" +
     "  with no fallback, else the current directory), refuses when its @capacitor/core major\n" +
     "  is not the one the pinned plugins target, adds the packages with the package manager\n" +
-    "  its lockfile names (pnpm, npm, bun or yarn; npm without one), adds any Info.plist keys\n" +
+    "  the nearest lockfile names (pnpm, npm, bun or yarn, looking up to the repository root\n" +
+    "  for a workspace's; else a packageManager field; else npm), adds any Info.plist keys\n" +
     "  (never replacing yours) and Android permissions the capability needs, and runs\n" +
     "  `npx cap sync`. --dry-run prints the plan and changes nothing. Ship a new app binary\n" +
     "  afterwards.\n" +

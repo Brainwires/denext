@@ -313,6 +313,20 @@ export interface BundleNextCompatOptions {
 /** Extensions probed when resolving an extensionless relative/alias import. */
 const SOURCE_EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
 
+/**
+ * The extension list to probe with `platformExtensions` (React Native's `.web.tsx`, …) tried
+ * ahead of `defaults`. No platform extensions returns `defaults` itself, so the default path
+ * probes exactly what it always did.
+ */
+function withPlatformExtensions(
+  defaults: readonly string[],
+  platformExtensions: readonly string[] | undefined,
+): readonly string[] {
+  return platformExtensions && platformExtensions.length > 0
+    ? [...platformExtensions, ...defaults]
+    : defaults;
+}
+
 function isFile(p: string): boolean {
   try {
     return Deno.statSync(p).isFile;
@@ -324,11 +338,17 @@ function isFile(p: string): boolean {
 /**
  * Probe an extensionless base path for a real source file (exact, `+ext`, or
  * `/index+ext`). Shared with the unbundled dev resolver so both probe the same way.
+ *
+ * @param base The extensionless path.
+ * @param exts The extensions to try, in order (default: the source extensions).
  */
-export function probeSourceFile(base: string): string | null {
+export function probeSourceFile(
+  base: string,
+  exts: readonly string[] = SOURCE_EXTS,
+): string | null {
   if (isFile(base)) return base;
-  for (const e of SOURCE_EXTS) if (isFile(base + e)) return base + e;
-  for (const e of SOURCE_EXTS) {
+  for (const e of exts) if (isFile(base + e)) return base + e;
+  for (const e of exts) {
     const idx = join(base, "index" + e);
     if (isFile(idx)) return idx;
   }
@@ -366,8 +386,15 @@ function appImportBase(
  * hits a graph-reachability mismatch on them. npm/jsr/`.css` (which needs the
  * import-map shim redirect) are left to the deno-loader by returning null. Exported for
  * testing.
+ *
+ * @param configPath The app's `deno.json` (its path-alias prefixes).
+ * @param platformExtensions Extensions probed ahead of the defaults (React Native's `.web.tsx`).
  */
-export function appResolverPlugin(configPath: string): esbuild.Plugin {
+export function appResolverPlugin(
+  configPath: string,
+  platformExtensions?: readonly string[],
+): esbuild.Plugin {
+  const exts = withPlatformExtensions(SOURCE_EXTS, platformExtensions);
   // Path-alias prefixes (e.g. "~/" → "./src/"), loaded once from the app's deno.json — the
   // form `denext migrate` emits.
   let prefixes: Array<[string, string]> | null = null;
@@ -384,7 +411,7 @@ export function appResolverPlugin(configPath: string): esbuild.Plugin {
         if (/\.(css|scss|sass)$/i.test(p.replace(/[?#].*$/, ""))) return null;
         const base = appImportBase(p, args.importer, await ensure());
         if (base) {
-          const found = probeSourceFile(base);
+          const found = probeSourceFile(base, exts);
           return found ? await withPackageSideEffects(found) : null;
         }
         // tsconfig `baseUrl: "."` — Next resolves a bare, path-shaped specifier
@@ -395,7 +422,7 @@ export function appResolverPlugin(configPath: string): esbuild.Plugin {
         if (!isRelative && /\//.test(p) && !p.startsWith("@")) {
           // An absolute path lands here too (`resolve` keeps it) — e.g. the defining-module
           // imports `optimizePackageImports` writes — so mark a package file like any other.
-          const rootProbe = probeSourceFile(resolve(dirname(configPath), p));
+          const rootProbe = probeSourceFile(resolve(dirname(configPath), p), exts);
           if (rootProbe) return await withPackageSideEffects(rootProbe);
         }
         return null; // npm/jsr/bare → deno-loader
@@ -977,6 +1004,18 @@ export interface BundleNextCompatModulesOptions {
    * way denext's resolver does); omit or pass `[]` to leave every import as written.
    */
   optimizePackageImports?: readonly string[];
+  /**
+   * Extensions probed AHEAD of the defaults when an extensionless import is resolved — both
+   * relative/alias imports and package subpaths (with {@link resolveAllNodeModules}). React
+   * Native mode passes `[".web.tsx", ".web.ts", ".web.jsx", ".web.js"]` so a module's web
+   * variant wins over its native one. Omit to probe exactly the defaults.
+   */
+  platformExtensions?: readonly string[];
+  /**
+   * Parse every `.js` file with esbuild's `jsx` loader, for npm packages that ship JSX in
+   * `.js` (common in React Native libraries, which Metro's Babel preset parses as JSX).
+   */
+  jsxInJs?: boolean;
 }
 
 /**
@@ -1286,12 +1325,19 @@ function resolveWildcardExport(
   return null;
 }
 
+/** Extensions probed for a package subpath (`pkg/sub` → `sub.js`, `sub/index.js`, …). */
+const PACKAGE_EXTS = [".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"];
+
 /** Probe a resolved path for a real file, trying common JS/TS extensions + an index. */
-async function probePackageFile(base: string): Promise<string | null> {
+async function probePackageFile(
+  base: string,
+  platformExtensions?: readonly string[],
+): Promise<string | null> {
+  const exts = withPlatformExtensions(PACKAGE_EXTS, platformExtensions);
   const cands = [
     base,
-    ...[".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].map((e) => base + e),
-    ...[".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"].map((e) => join(base, "index" + e)),
+    ...exts.map((e) => base + e),
+    ...exts.map((e) => join(base, "index" + e)),
   ];
   for (const c of cands) {
     try {
@@ -1301,11 +1347,19 @@ async function probePackageFile(base: string): Promise<string | null> {
   return null;
 }
 
-/** Resolve `subpath` within a concrete package dir via its `exports`/`module`/`main`. */
+/**
+ * Resolve `subpath` within a concrete package dir via its `exports`/`module`/`main`.
+ *
+ * @param pkgDir The package directory.
+ * @param subpath `""` for the root, else `/sub`.
+ * @param conditions The export conditions, in priority order.
+ * @param platformExtensions Extensions probed ahead of the defaults (React Native's `.web.js`).
+ */
 export async function resolveInPackageDir(
   pkgDir: string,
   subpath: string,
   conditions: string[] = BROWSER_CONDITIONS,
+  platformExtensions?: readonly string[],
 ): Promise<string | null> {
   let pkg: { exports?: unknown; module?: string; main?: string };
   try {
@@ -1326,7 +1380,10 @@ export async function resolveInPackageDir(
         : (pkg.module ?? pkg.main ?? "index.js"))
       : "." + subpath;
   }
-  const file = await probePackageFile(join(pkgDir, rel.replace(/^\.\//, "")));
+  const file = await probePackageFile(
+    join(pkgDir, rel.replace(/^\.\//, "")),
+    platformExtensions,
+  );
   if (!file) return null;
   // Realpath through pnpm's symlink: a package's private deps live next to its REAL
   // location (`.pnpm/<parent>/node_modules/<dep>`), so the next importer-relative walk
@@ -1348,23 +1405,26 @@ export async function resolveInPackageDir(
  * (`@t3tools/client-runtime/media-source` from `packages/client-runtime/src/…`) resolves
  * through that package's `exports` — pnpm links a workspace package into its consumers'
  * `node_modules`, never into its own, so the walk alone can't find it.
+ * `platformExtensions` are probed ahead of the default extensions for a package subpath.
  */
 export async function resolveNodeFrom(
   fromDir: string,
   spec: string,
   conditions: string[] = BROWSER_CONDITIONS,
+  platformExtensions?: readonly string[],
 ): Promise<string | null> {
   const [name, subpath] = splitPackageSpecifier(spec);
   let dir = fromDir;
   for (;;) {
-    const r = await resolveInPackageDir(join(dir, "node_modules", name), subpath, conditions);
+    const pkgDir = join(dir, "node_modules", name);
+    const r = await resolveInPackageDir(pkgDir, subpath, conditions, platformExtensions);
     if (r) return r;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
   const self = await selfPackageDir(fromDir, name);
-  return self ? await resolveInPackageDir(self, subpath, conditions) : null;
+  return self ? await resolveInPackageDir(self, subpath, conditions, platformExtensions) : null;
 }
 
 /**
@@ -1462,7 +1522,7 @@ async function resolvedIsSideEffectFree(file: string): Promise<boolean> {
  * each icon "side-effectful" — kept (as an empty-import chunk under code splitting) even when
  * nothing uses it.
  */
-async function withPackageSideEffects(
+export async function withPackageSideEffects(
   path: string,
 ): Promise<{ path: string; sideEffects?: false }> {
   return path.includes("/node_modules/") && await resolvedIsSideEffectFree(path)
@@ -1474,6 +1534,7 @@ export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
   conditions: string[] = BROWSER_CONDITIONS,
+  platformExtensions?: readonly string[],
 ): esbuild.Plugin {
   const all = packages === "all";
   return {
@@ -1497,7 +1558,7 @@ export function catalogResolverPlugin(
           : (packages.has(name) && !inNodeModules) || !args.importer
           ? projectDir
           : dirname(args.importer);
-        const resolved = await resolveNodeFrom(fromDir, args.path, conditions);
+        const resolved = await resolveNodeFrom(fromDir, args.path, conditions, platformExtensions);
         if (!resolved) return null;
         // Mark modules of a `"sideEffects": false` package so esbuild can tree-shake unused
         // barrel re-exports (denext's own resolver otherwise hands esbuild a bare path, which
@@ -1648,13 +1709,13 @@ function viteAssetPlugin(
 function nodeModulesPlugins(options: BundleNextCompatModulesOptions): esbuild.Plugin[] {
   const conditions = options.platform === "deno" ? SSR_CONDITIONS : BROWSER_CONDITIONS;
   if (!options.absWorkingDir) return [];
+  const exts = options.platformExtensions;
   if (options.resolveAllNodeModules) {
-    return [catalogResolverPlugin(options.absWorkingDir, "all", conditions)];
+    return [catalogResolverPlugin(options.absWorkingDir, "all", conditions, exts)];
   }
   if (options.catalogPackages && options.catalogPackages.length > 0) {
-    return [
-      catalogResolverPlugin(options.absWorkingDir, new Set(options.catalogPackages), conditions),
-    ];
+    const packages = new Set(options.catalogPackages);
+    return [catalogResolverPlugin(options.absWorkingDir, packages, conditions, exts)];
   }
   return [];
 }
@@ -1753,7 +1814,7 @@ async function compatPlugins(
       ? await denextExternalPlugin()
       : denextRuntimePlugin(options.runtimeDir!),
     ...(await sourcePlugins(options, workerBuild)),
-    appResolverPlugin(options.configPath),
+    appResolverPlugin(options.configPath, options.platformExtensions),
     nodeModulesFileUrlPlugin(),
     ...(deno ? [nodeBuiltinResolvePlugin()] : []),
     ...nodeModulesPlugins(options),
@@ -1785,11 +1846,13 @@ function optimizeImports(
     return plugins;
   }
   const conditions = options.platform === "deno" ? SSR_CONDITIONS : BROWSER_CONDITIONS;
+  const platformExts = options.platformExtensions;
+  const exts = withPlatformExtensions(SOURCE_EXTS, platformExts);
   return withOptimizedPackageImports(plugins, {
     packages,
     resolvers: {
-      resolveBare: (fromDir, spec) => resolveNodeFrom(fromDir, spec, conditions),
-      probe: probeSourceFile,
+      resolveBare: (fromDir, spec) => resolveNodeFrom(fromDir, spec, conditions, platformExts),
+      probe: (base) => probeSourceFile(base, exts),
     },
   });
 }
@@ -1834,7 +1897,6 @@ async function sourcePlugins(
 export async function bundleNextCompatModules(
   options: BundleNextCompatModulesOptions,
 ): Promise<void> {
-  const assets = options.assets;
   // Build a worker module as its own entry into the same outdir (a nested pass, so a
   // `?worker` import bundles independently). Same runtime/config/define/loaders; no
   // extraPlugins (the worker isn't a Flight bundle). Caller memoizes per resolved path.
@@ -1881,21 +1943,36 @@ export async function bundleNextCompatModules(
           ),
         ],
       }),
-    // Vite-style asset emission: bare `.wasm`/`.woff2`/… + `new URL(…)` → files
-    // under `outdir`, URLs prefixed with `publicPath` (where they are served). With
-    // `emitDir` the plugin mints those URLs itself; esbuild's `publicPath` must then stay
-    // unset — it would also rewrite this bundle's code-split chunk imports to absolute
-    // URLs, which the SERVER bundle (loaded from disk) cannot import.
-    ...(assets && !assets.emitDir
-      ? {
-        loader: { ...DEFAULT_ASSET_LOADERS, ...assets.loaders },
-        assetNames: assets.assetNames ?? "assets/[name]-[hash]",
-        publicPath: assets.publicPath,
-      }
-      : {}),
+    ...assetBuildOptions(options),
     plugins: await compatPlugins(options, workerBuild),
   });
   if (analyze && result.metafile) await writeAnalyzeMeta(options.outdir, result.metafile);
+}
+
+/** `.js` parsed as JSX ({@link BundleNextCompatModulesOptions.jsxInJs}). */
+const JSX_IN_JS: Record<string, esbuild.Loader> = { ".js": "jsx" };
+
+/**
+ * The esbuild loader/asset options of a bundle. Vite-style asset emission: bare
+ * `.wasm`/`.woff2`/… + `new URL(…)` → files under `outdir`, URLs prefixed with `publicPath`
+ * (where they are served). With `emitDir` the plugin mints those URLs itself; esbuild's
+ * `publicPath` must then stay unset — it would also rewrite this bundle's code-split chunk
+ * imports to absolute URLs, which the SERVER bundle (loaded from disk) cannot import.
+ * `jsxInJs` adds the `.js` → `jsx` loader on top of whichever applies.
+ */
+function assetBuildOptions(
+  options: BundleNextCompatModulesOptions,
+): Pick<esbuild.BuildOptions, "loader" | "assetNames" | "publicPath"> {
+  const assets = options.assets;
+  const jsx = options.jsxInJs ? JSX_IN_JS : {};
+  if (assets && !assets.emitDir) {
+    return {
+      loader: { ...DEFAULT_ASSET_LOADERS, ...assets.loaders, ...jsx },
+      assetNames: assets.assetNames ?? "assets/[name]-[hash]",
+      publicPath: assets.publicPath,
+    };
+  }
+  return options.jsxInJs ? { loader: JSX_IN_JS } : {};
 }
 
 /**

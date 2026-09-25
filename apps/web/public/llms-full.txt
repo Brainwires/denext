@@ -292,7 +292,9 @@ through `window.Capacitor`, so no `@capacitor/*` import. iOS momentum scrolling 
 virtualized-list scroll corrections automatically (the runtime installs the shim on iOS WebKit;
 `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
-`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web); `denext mobile add
+`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
+`listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickDocument`/`scanBarcode` (`null`
+when cancelled) and `setQuickActions`/`useQuickAction` (home-screen shortcuts); `denext mobile add
 <capability...> [--dry-run] [--list]` installs their plugins, and `deep-links --scheme/--domain`
 / `push` add `onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
 `requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via
@@ -801,7 +803,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type (a returned Response carries no body type).
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 2.10.0-rc.1` — The denext framework version.
+- `VERSION: 2.10.0-rc.2` — The denext framework version.
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VNode` — A single virtual DOM node.
 - `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
@@ -1126,6 +1128,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RateLimitOptions` — Rate-limit settings on AuthConfig.rateLimit.
 - `interface RateLimitStore` — Where the per-key failure counts live. All methods may be sync or async.
 - `interface RateLimitWindow` — One key's open failure window.
+- `interface ReactNativeConfig` — React Native / Expo web build options (DenextConfig.reactNative).
 - `readCappedBody(request: Request, maxBytes: number, idleMs?: number): Promise<Uint8Array | TOO_LARGE | STALLED>` — Read a request body into memory, refusing anything over maxBytes (hard-caps even a chunked body with no Content-Length) and aborting a body that stalls for longer than idleMs. Returns the bytes, TOO_LARGE, or STALLED.
 - `readonlyHeaders(source: Headers): Headers` — A live, read-only view of source whose mutators throw (Next.js ReadonlyHeaders).
 - `redirect(location: string, status?: number): Response`
@@ -1596,15 +1599,25 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AuthSessionOptions` — Options for openAuthSession.
 - `interface AuthSessionResult` — What openAuthSession resolves with.
 - `interface BackSwipeOptions` — Options for useBackSwipe and isBackSwipe.
+- `type BarcodeFormat = qr_code | aztec | codabar | code_39 | code_93 | code_128 | data_matrix | ean_13 | ean_8 | itf | pdf417 | upc_a | upc_e` — A barcode format, by its BarcodeDetector name.
+- `interface BarcodeScanError` — The Error a scanBarcode promise rejects with for the codes above.
+- `type BarcodeScanErrorCode = unsupported | denied` — The code on a scanBarcode rejection: unsupported (no scanner here: no plugin, and no BarcodeDetector or camera in the browser, or none of the formats asked for) or denied (camera permission refused).
 - `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `completeAuthSession(): boolean` — Finish a web openAuthSession: call it on the callback page the provider redirects the popup to (an https page of the same origin). It posts this page's full URL (code, state and all) to the window that opened the popup, addressed to this origin only, then closes the popup. Not needed inside the native shell, where the callback never loads a page.
 - `interface DeepLinkEvent` — One link that opened the app.
 - `interface DeepLinkOptions` — Options for onDeepLink and useDeepLink.
+- `deleteFile(path: string, options?: FileLocationOptions): Promise<void>` — Delete a file.
 - `deviceInfo(): Promise<DeviceInfo>` — Facts about the device the page runs on.
 - `interface DeviceInfo` — What deviceInfo reports. Only platform is always known.
+- `downloadToFile(url: string, path: string, options?: FileLocationOptions): Promise<object>` — Download a URL straight into a file (missing parent folders are created).
+- `type FileDirectory = documents | data | cache` — Where a file lives:
+- `type FileEncoding = utf8 | base64` — How text is carried: "utf8" (plain text, the default) or "base64" (binary data).
+- `interface FileEntry` — One entry of a listDir listing.
+- `interface FileLocationOptions` — Options for deleteFile, listDir and downloadToFile.
 - `haptic(kind: HapticKind): Promise<void>` — Play a short haptic.
 - `type HapticKind = light | medium | heavy | success | warning | error | selection` — A haptic feedback kind haptic can play.
 - `hideSplash(): Promise<void>` — Hide the native launch splash screen, through @capacitor/splash-screen inside the shell (denext mobile add splash). Call it once the first screen has rendered, when the plugin is configured with launchAutoHide: false. On the web, and when the plugin is not installed, it does nothing.
+- `type ImageSource = camera | photos | prompt` — Where pickImage gets the picture: "camera" (take one), "photos" (the photo library) or "prompt" (ask the user which; the default).
 - `installKeyboardInset(opts?: KeyboardInsetOptions): () => void` — Keep a CSS custom property on document.documentElement (default --denext-keyboard-inset) equal to the on-screen keyboard's height in px, so layout can lift a composer or a bottom bar above it: padding-bottom: var(--denext-keyboard-inset).
 - `installMomentumSafeScroll(options?: MomentumSafeScrollOptions): () => void` — Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset.
 - `isBackSwipe(dx: number, dy: number, opts?: BackSwipeOptions): boolean` — The pure gesture test behind useBackSwipe: whether a movement of dx/dy CSS px from the touch start is a back swipe, i.e. rightward by at least minDistance and horizontal by at least ratio × the absolute vertical movement.
@@ -1613,6 +1626,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type LinkAccept = parenthesized | LinkAllowList` — Which incoming links to act on: a predicate over the parsed URL, or an allow-list.
 - `interface LinkAllowList` — An allow-list for incoming links.
 - `type LinkRoute = boolean | parenthesized` — How to navigate to an accepted link: true navigates with the page's router, false leaves it to the callback, and a function navigates itself (e.g. (path) => router.push(path)).
+- `listDir(path: string, options?: FileLocationOptions): Promise<FileEntry[]>` — List a folder's entries.
 - `interface MomentumSafeScrollOptions` — Options for installMomentumSafeScroll and useMomentumSafeScroll (denext/mobile).
 - `nativePlatform(): NativePlatform` — The platform the page runs on: "ios" or "android" inside a Capacitor native shell, otherwise "web". SSR-safe ("web" when there is no window). A Capacitor custom platform (e.g. Electron) also reads "web": only the iOS and Android shells count.
 - `type NativePlatform = ios | android | web` — The platform a page runs on, as denext/mobile distinguishes them.
@@ -1623,6 +1637,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): () => void` — Call callback for every link that opens the app, and (by default) navigate to it.
 - `onPushReceived(callback: (notification: PushNotification) => void): () => void` — Call callback for each notification that arrives while the app is in the foreground (one that arrives in the background shows in the tray; its tap reaches onPushTapped). Outside the native shell it does nothing.
 - `onPushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): () => void` — Call callback when the user taps a notification (or one of its actions), and by default navigate to its data.path / data.url (see PushTapOptions).
+- `onQuickAction(callback: (id: string) => void): () => void` — Call callback with the id of each quick action the user chooses, including the one that cold-started the app: the shell keeps that until the first listener, so subscribe early (a root layout or the app shell); only the subscribers present when it is handed over see it. Outside the native shell it does nothing.
 - `openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>` — Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.
 - `openExternal(url: string): Promise<void>` — Open a URL outside the app.
 - `type OtaApplyResult = object | object` — The outcome of applyUiUpdate when it settles. On success the webview reloads into the new UI, so the promise does not settle at all.
@@ -1637,19 +1652,32 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with a sequence uses the v2 format, one without uses v1:
 - `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.
 - `interface OtaStatus` — What the native side reports about the UI versions on this device.
+- `pickDocument(options?: PickDocumentOptions): Promise<PickedDocument | null>` — Pick a document (any file, or the types given) with the system document picker.
+- `interface PickDocumentOptions` — Options for pickDocument.
+- `interface PickedDocument` — A file from pickDocument.
+- `interface PickedImage` — A picture from pickImage: one of webPath / dataUrl, plus its format.
+- `pickImage(options?: PickImageOptions): Promise<PickedImage | null>` — Take a picture or pick one from the photo library.
+- `interface PickImageOptions` — Options for pickImage.
 - `prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult>` — Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first.
 - `interface PushNotification` — A push notification, as the shell reports it.
 - `type PushPermission = granted | denied | prompt | unsupported` — Whether the app may show notifications, or "unsupported" outside the native shell.
 - `interface PushRegistration` — A device's push registration: the token your server sends to, and where it is valid.
 - `interface PushTap` — A tap on (or an action of) a notification.
 - `interface PushTapOptions` — Options for onPushTapped and usePushTapped.
+- `interface QuickAction` — One home-screen quick action.
 - `readClipboard(): Promise<string>` — Read text from the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.readText(), which browsers gate behind a permission prompt or a user gesture.
+- `readFile(path: string, options?: ReadFileOptions): Promise<string>` — Read a file.
+- `interface ReadFileOptions` — Options for readFile.
 - `registerForPush(options?: RegisterForPushOptions): Promise<PushRegistration>` — Register the device for remote notifications and resolve its token, for your server to send to through APNs (iOS) or FCM (Android). denext ships no push relay: store the token on your server (with the user it belongs to) and send from there.
 - `interface RegisterForPushOptions` — Options for registerForPush.
 - `requestPushPermission(): Promise<PushPermission>` — Ask for permission to show notifications, when it has not been decided yet, and report the result: "granted", "denied" (the user said no; only the system settings can change it) or "prompt" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is "unsupported": there is no web-push fallback.
 - `SAFE_AREA_CSS: string` — A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables.
+- `scanBarcode(options?: ScanBarcodeOptions): Promise<ScannedBarcode | null>` — Scan one barcode or QR code with the camera.
+- `interface ScanBarcodeOptions` — Options for scanBarcode.
+- `interface ScannedBarcode` — What scanBarcode read.
 - `secureStore: SecureStore` — A string key-value store for secrets.
 - `interface SecureStore` — The store secureStore implements.
+- `setQuickActions(actions: typeOperator): Promise<void>` — Replace the app's home-screen quick actions (long-press on the icon).
 - `share(opts: ShareOptions): Promise<ShareResult>` — Open the share sheet.
 - `interface ShareOptions` — What share shares. At least one of text or url (or title) is needed.
 - `type ShareResult = shared | copied | cancelled` — How a share ended: "shared" (the sheet completed), "copied" (no share sheet, so the text was copied to the clipboard) or "cancelled" (the user dismissed it).
@@ -1662,7 +1690,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useNetworkStatus(): NetworkStatus` — Hook form of networkStatus: the current status, updated on every change until unmount. Before mount (and during SSR) it reads { connected: true, connectionType: "unknown" }, so an offline banner never flashes on first paint.
 - `usePushReceived(callback: (notification: PushNotification) => void): void` — Hook form of onPushReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.
 - `usePushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): void` — Hook form of onPushTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options.
+- `useQuickAction(callback: (id: string) => void): void` — Hook form of onQuickAction: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.
 - `writeClipboard(text: string): Promise<void>` — Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.writeText().
+- `writeFile(path: string, data: string, options?: WriteFileOptions): Promise<void>` — Write a file, replacing it when it exists.
+- `interface WriteFileOptions` — Options for writeFile.
 
 ### `denext/cli/command`
 

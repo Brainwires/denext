@@ -214,6 +214,18 @@ export async function collectSpaPreloads(clientDir: string, entryFile: string): 
   return out;
 }
 
+/**
+ * Expo web's root style (`reactNative` mode): React Native's root view is `flex: 1`, so the
+ * page and the mount node must be a full-height flex parent. Keyed on `rootId`; an id that is
+ * not a plain CSS identifier is matched with an attribute selector instead.
+ */
+function reactNativeRootStyleTag(rootId: string): string {
+  const root = /^[A-Za-z][\w-]*$/.test(rootId)
+    ? `#${rootId}`
+    : `[id="${rootId.replace(/["\\<>]/g, "")}"]`;
+  return `\n    <style>html,body,${root}{height:100%;margin:0}${root}{display:flex}</style>`;
+}
+
 export async function spaShellHtml(opts: {
   spa: SpaConfig;
   /** URL of the client entry bundle (e.g. `/_denext/client/index.js`). */
@@ -224,6 +236,8 @@ export async function spaShellHtml(opts: {
   devScriptSrc?: string;
   /** Client chunk URLs to `<link rel="modulepreload">` (the entry's static graph). */
   preload?: string[];
+  /** Inject Expo web's root style ahead of `spa.head` (`reactNative` mode). */
+  reactNativeRootStyle?: boolean;
 }): Promise<string> {
   const { spa } = opts;
   const lang = spa.lang ?? "en";
@@ -236,7 +250,8 @@ export async function spaShellHtml(opts: {
     .map((href) => `\n    <link rel="modulepreload" href="${escapeHtml(href)}" />`)
     .join("");
   if (spa.head) warnRawSpaHeadOnce();
-  const head = spa.head ? `\n    ${spa.head}` : "";
+  const rnStyle = opts.reactNativeRootStyle ? reactNativeRootStyleTag(rootId) : "";
+  const head = rnStyle + (spa.head ? `\n    ${spa.head}` : "");
   // An app-supplied viewport (`viewport-fit=cover` for iOS safe areas, `interactive-widget`)
   // replaces the default instead of competing with it.
   const viewport = /<meta\b[^>]*\bname=["']viewport["']/i.test(spa.head ?? "")

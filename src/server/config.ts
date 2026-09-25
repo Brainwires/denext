@@ -385,6 +385,20 @@ export interface TasksConfig {
   historyMaxRuns?: number;
 }
 
+/** React Native / Expo web build options ({@link DenextConfig.reactNative}). */
+export interface ReactNativeConfig {
+  /**
+   * Inject Expo web's root style into the SPA shell's `<head>`:
+   * `html,body,#root{height:100%;margin:0}` and `#root{display:flex}` (`#root` follows
+   * `spa.rootId`). React Native's root view is `flex: 1` and needs a sized flex parent;
+   * without it the app collapses to its content height and absolutely positioned overlays
+   * cover the page. It comes before `spa.head`, so a rule there overrides it.
+   *
+   * @default true
+   */
+  rootStyle?: boolean;
+}
+
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
 export interface ApiBatchConfig {
   /**
@@ -795,6 +809,26 @@ export interface DenextConfig {
    */
   momentumSafeScroll?: boolean;
   /**
+   * Build a React Native / Expo app's source for the web through `react-native-web` — SPA
+   * mode only (`mode: "spa"`). `true` turns on the defaults; an object sets options.
+   *
+   * - `react-native` (and every `react-native/…` subpath) resolves to the installed
+   *   `react-native-web`, for every importer, even when a real `react-native` is installed.
+   *   A deep `react-native/Libraries/…` import maps to react-native-web's equivalent where one
+   *   exists, else to a stub that throws, naming the import, when it is called.
+   * - Web platform files win: `.web.tsx`, `.web.ts`, `.web.jsx` and `.web.js` are probed
+   *   before the plain extensions, for relative and alias imports and for package subpaths.
+   * - `.js` files are parsed as JSX (React Native libraries ship JSX in `.js`).
+   * - `__DEV__` (true in dev, false in a production build), `global` → `globalThis` and
+   *   `process.env.EXPO_OS` → `"web"` are defined at build time.
+   * - The SPA shell gets Expo web's root style (see {@link ReactNativeConfig.rootStyle}).
+   *
+   * The build always takes the esbuild (compat) path, and `denext dev` defaults to the
+   * bundled loop, which applies the same resolution. Install `react-native-web` in the
+   * project; native-only modules still need web shims of your own.
+   */
+  reactNative?: boolean | ReactNativeConfig;
+  /**
    * @deprecated Every `experimental.*` key graduated to a top-level field by 2.5
    * (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The
    * old spellings are still honored, with a dev warning, when the top-level field is absent;
@@ -1041,6 +1075,23 @@ export interface ExperimentalConfig {
  */
 export function momentumSafeScrollEnabled(config: DenextConfig | null | undefined): boolean {
   return config?.momentumSafeScroll !== false;
+}
+
+/**
+ * The effective React Native options when `reactNative` is on (`true` → `{}`), else null.
+ */
+export function reactNativeOptions(
+  config: DenextConfig | null | undefined,
+): ReactNativeConfig | null {
+  const value = config?.reactNative;
+  if (value === true) return {};
+  return value && typeof value === "object" ? value : null;
+}
+
+/** Whether the SPA shell carries Expo web's root style (`reactNative` on, `rootStyle` not off). */
+export function reactNativeRootStyle(config: DenextConfig | null | undefined): boolean {
+  const options = reactNativeOptions(config);
+  return options !== null && options.rootStyle !== false;
 }
 
 /**

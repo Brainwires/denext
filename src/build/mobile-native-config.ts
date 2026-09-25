@@ -419,6 +419,35 @@ function swiftBlockEnd(source: string, open: number): number {
 }
 
 /**
+ * `source` with `lines` appended inside the Swift block whose `{` is at `open`, indented one
+ * level deeper than its closing `}`; null when the block is unbalanced. A leading `""` in
+ * `lines` is a blank separator line, dropped when the block already ends with one.
+ */
+function appendToSwiftBlock(source: string, open: number, lines: readonly string[]): string | null {
+  const end = swiftBlockEnd(source, open);
+  if (end < 0) return null;
+  const close = end - 1;
+  const lineStart = source.lastIndexOf("\n", close - 1) + 1;
+  const outer = source.slice(lineStart, close).trim() === "" ? source.slice(lineStart, close) : "";
+  const indented = lines.map((l) => l === "" ? "" : `${outer}    ${l}`);
+  const block = indented.map((l) => `${l}\n`).join("");
+  if (outer === "" && source.slice(lineStart, close).trim() !== "") {
+    return `${source.slice(0, close)}\n${block}${source.slice(close)}`;
+  }
+  // Drop the blank line the block starts with when the body already ends with one.
+  const trimmed = lines[0] === "" && /\n\s*\n$/.test(source.slice(0, lineStart))
+    ? block.slice(1)
+    : block;
+  return source.slice(0, lineStart) + trimmed + source.slice(lineStart);
+}
+
+/** `source` with `lines` appended to the body of `class <name>`; null when it is not found. */
+function appendToSwiftClass(source: string, name: string, lines: readonly string[]): string | null {
+  const decl = new RegExp(`\\bclass\\s+${name}\\b[^{]*\\{`).exec(source);
+  return decl ? appendToSwiftBlock(source, decl.index + decl[0].length - 1, lines) : null;
+}
+
+/**
  * `AppDelegate.swift` with the remote-notification callbacks forwarded to Capacitor (what the
  * push plugin's README asks for), appended to the `AppDelegate` class. Unchanged when it
  * already posts `.capacitorDidRegisterForRemoteNotifications`; null when the class cannot be
@@ -427,19 +456,97 @@ function swiftBlockEnd(source: string, open: number): number {
 export function withAppDelegatePushForwarding(source: string): string | null {
   if (source.includes(".capacitorDidRegisterForRemoteNotifications")) return source;
   if (source.includes("didRegisterForRemoteNotificationsWithDeviceToken")) return null;
-  const decl = /\bclass\s+AppDelegate\b[^{]*\{/.exec(source);
-  if (!decl) return null;
-  const end = swiftBlockEnd(source, decl.index + decl[0].length - 1);
-  if (end < 0) return null;
-  const close = end - 1;
-  const lineStart = source.lastIndexOf("\n", close - 1) + 1;
-  const outer = source.slice(lineStart, close).trim() === "" ? source.slice(lineStart, close) : "";
-  const lines = PUSH_FORWARDING.map((l) => l === "" ? "" : `${outer}    ${l}`);
-  const block = lines.map((l) => `${l}\n`).join("");
-  if (outer === "" && source.slice(lineStart, close).trim() !== "") {
-    return `${source.slice(0, close)}\n${block}${source.slice(close)}`;
-  }
-  // Drop the blank line the block starts with when the class body already ends with one.
-  const trimmed = /\n\s*\n$/.test(source.slice(0, lineStart)) ? block.slice(1) : block;
-  return source.slice(0, lineStart) + trimmed + source.slice(lineStart);
+  return appendToSwiftClass(source, "AppDelegate", PUSH_FORWARDING);
+}
+
+/** The notification `@capawesome/capacitor-app-shortcuts` listens for (its `notificationName`). */
+const QUICK_ACTION_NOTIFICATION = "handleAppShortcutNotification";
+
+/**
+ * The helper both quick-action forwarders call: post the item to the AppShortcuts plugin now
+ * when the Capacitor bridge (so the plugin) exists, else on the first `capacitorViewDidAppear`.
+ */
+const QUICK_ACTION_HELPER = [
+  "",
+  "/// denext mobile add quick-actions: hand a home-screen quick action to the AppShortcuts plugin,",
+  "/// after the Capacitor bridge (and so the plugin) has loaded when it cold-started the app.",
+  "private func denextForwardQuickAction(_ shortcutItem: UIApplicationShortcutItem?) {",
+  "    guard let shortcutItem else { return }",
+  "    let post = {",
+  `        NotificationCenter.default.post(name: NSNotification.Name("${QUICK_ACTION_NOTIFICATION}"), object: nil, userInfo: ["shortcutItem": shortcutItem])`,
+  "    }",
+  "    if (window?.rootViewController as? CAPBridgeViewController)?.bridge != nil { return post() }",
+  "    final class Observer: @unchecked Sendable { var token: NSObjectProtocol? }",
+  "    let observer = Observer()",
+  "    observer.token = NotificationCenter.default.addObserver(forName: .capacitorViewDidAppear, object: nil, queue: .main) { _ in",
+  "        guard let token = observer.token else { return }",
+  "        NotificationCenter.default.removeObserver(token)",
+  "        observer.token = nil",
+  "        post()",
+  "    }",
+  "}",
+];
+
+/** Whether a delegate can host the forwarding: it imports Capacitor and has a `window`. */
+function canForwardQuickActions(source: string): boolean {
+  return /^\s*import\s+Capacitor\s*$/m.test(source) && /\bvar\s+window\b/.test(source);
+}
+
+/**
+ * `SceneDelegate.swift` (Capacitor 8's scene-based template) forwarding home-screen quick
+ * actions to `@capawesome/capacitor-app-shortcuts`: `windowScene(_:performActionFor:…)` for
+ * a running app, and the launch item from `scene(_:willConnectTo:options:)` for a cold start.
+ * Unchanged when it already posts the plugin's notification; null when the class, its
+ * `willConnectTo` method, `import Capacitor` or `window` is missing, or it already implements
+ * `performActionFor` itself.
+ */
+export function withSceneDelegateQuickActions(source: string): string | null {
+  if (source.includes(QUICK_ACTION_NOTIFICATION)) return source;
+  if (source.includes("performActionFor") || !canForwardQuickActions(source)) return null;
+  const connect =
+    /func\s+scene\s*\(\s*_\s+\w+\s*:\s*UIScene\s*,\s*willConnectTo\b[^{]*?\boptions\s+(\w+)\s*:[^{]*\{/
+      .exec(source);
+  if (!connect) return null;
+  const withLaunch = appendToSwiftBlock(source, connect.index + connect[0].length - 1, [
+    `denextForwardQuickAction(${connect[1]}.shortcutItem)`,
+  ]);
+  return withLaunch && appendToSwiftClass(withLaunch, "SceneDelegate", [
+    "",
+    "func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {",
+    "    denextForwardQuickAction(shortcutItem)",
+    "    completionHandler(true)",
+    "}",
+    ...QUICK_ACTION_HELPER,
+  ]);
+}
+
+/**
+ * `AppDelegate.swift` of an app without scenes forwarding home-screen quick actions to
+ * `@capawesome/capacitor-app-shortcuts` through `application(_:performActionFor:…)`, which
+ * UIKit also calls for the action that launched the app. Unchanged when it already posts the
+ * plugin's notification; null when the class, `import Capacitor` or `window` is missing, or it
+ * already implements `performActionFor` itself.
+ */
+export function withAppDelegateQuickActions(source: string): string | null {
+  if (source.includes(QUICK_ACTION_NOTIFICATION)) return source;
+  if (source.includes("performActionFor") || !canForwardQuickActions(source)) return null;
+  return appendToSwiftClass(source, "AppDelegate", [
+    "",
+    "func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {",
+    "    denextForwardQuickAction(shortcutItem)",
+    "    completionHandler(true)",
+    "}",
+    ...QUICK_ACTION_HELPER,
+  ]);
+}
+
+/**
+ * `android/variables.gradle` with `minSdkVersion` raised to at least `min`. Unchanged when it
+ * is already that or higher; null when it declares no numeric `minSdkVersion`.
+ */
+export function withGradleMinSdk(gradle: string, min: number): string | null {
+  const m = /(\bminSdkVersion\s*=\s*)(\d+)/.exec(gradle);
+  if (!m) return null;
+  if (Number(m[2]) >= min) return gradle;
+  return gradle.slice(0, m.index) + m[1] + String(min) + gradle.slice(m.index + m[0].length);
 }

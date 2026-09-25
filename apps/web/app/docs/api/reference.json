@@ -3797,7 +3797,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.10.0-rc.1",
+          "signature": "VERSION: 2.10.0-rc.2",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -8097,6 +8097,18 @@
           "signature": "interface RateLimitWindow",
           "doc": "One key's open failure window.",
           "docFull": "One key's open failure window.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ReactNativeConfig",
+          "slug": "ReactNativeConfig",
+          "kind": "interface",
+          "signature": "interface ReactNativeConfig",
+          "doc": "React Native / Expo web build options (DenextConfig.reactNative).",
+          "docFull": "React Native / Expo web build options ({@link DenextConfig.reactNative}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14231,6 +14243,42 @@
           "denextOnly": true
         },
         {
+          "name": "BarcodeFormat",
+          "slug": "BarcodeFormat",
+          "kind": "typeAlias",
+          "signature": "type BarcodeFormat = qr_code | aztec | codabar | code_39 | code_93 | code_128 | data_matrix | ean_13 | ean_8 | itf | pdf417 | upc_a | upc_e",
+          "doc": "A barcode format, by its BarcodeDetector name.",
+          "docFull": "A barcode format, by its `BarcodeDetector` name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BarcodeScanError",
+          "slug": "BarcodeScanError",
+          "kind": "interface",
+          "signature": "interface BarcodeScanError",
+          "doc": "The Error a scanBarcode promise rejects with for the codes above.",
+          "docFull": "The `Error` a {@linkcode scanBarcode} promise rejects with for the codes above.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BarcodeScanErrorCode",
+          "slug": "BarcodeScanErrorCode",
+          "kind": "typeAlias",
+          "signature": "type BarcodeScanErrorCode = unsupported | denied",
+          "doc": "The code on a scanBarcode rejection: unsupported (no scanner here: no plugin, and no BarcodeDetector or camera in the browser, or none of the formats asked for) or denied (camera permission refused).",
+          "docFull": "The `code` on a {@linkcode scanBarcode} rejection: `unsupported` (no scanner here: no\nplugin, and no `BarcodeDetector` or camera in the browser, or none of the formats asked\nfor) or `denied` (camera permission refused).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "checkForUiUpdate",
           "slug": "checkForUiUpdate",
           "kind": "function",
@@ -14288,6 +14336,29 @@
           "denextOnly": true
         },
         {
+          "name": "deleteFile",
+          "slug": "deleteFile",
+          "kind": "function",
+          "signature": "deleteFile(path: string, options?: FileLocationOptions): Promise<void>",
+          "doc": "Delete a file.",
+          "docFull": "Delete a file.\n\n- Inside the native shell with `@capacitor/filesystem` installed (`denext mobile add\n  filesystem`), the app's own files on the device.\n- Otherwise the browser's Origin Private File System.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The file's path inside directory; no .. segments."
+            },
+            {
+              "name": "options",
+              "doc": "directory (default \"data\")."
+            }
+          ],
+          "returns": "A promise that settles once the file is gone. It rejects when it does not exist.",
+          "examples": [
+            "```ts\nimport { deleteFile } from \"denext/mobile\";\n\nawait deleteFile(\"drafts/post.md\");\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "deviceInfo",
           "slug": "deviceInfo-fn",
           "kind": "function",
@@ -14308,6 +14379,81 @@
           "signature": "interface DeviceInfo",
           "doc": "What deviceInfo reports. Only platform is always known.",
           "docFull": "What {@linkcode deviceInfo} reports. Only `platform` is always known.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "downloadToFile",
+          "slug": "downloadToFile",
+          "kind": "function",
+          "signature": "downloadToFile(url: string, path: string, options?: FileLocationOptions): Promise<object>",
+          "doc": "Download a URL straight into a file (missing parent folders are created).",
+          "docFull": "Download a URL straight into a file (missing parent folders are created).\n\n- Inside the native shell with `@capacitor/filesystem` installed (`denext mobile add\n  filesystem`), the plugin's native download (`downloadFile`), which does not pass the body\n  through the WebView and is not subject to CORS. (A plugin without `downloadFile`, which\n  it deprecates, gets `fetch(url)` and the plugin's `writeFile` instead.)\n- Otherwise `fetch(url)` (CORS applies), then a write to the Origin Private File System.",
+          "params": [
+            {
+              "name": "url",
+              "doc": "The http(s) URL to fetch."
+            },
+            {
+              "name": "path",
+              "doc": "The file's path inside directory; no .. segments."
+            },
+            {
+              "name": "options",
+              "doc": "directory (default \"data\")."
+            }
+          ],
+          "returns": "{ path }: the native file path in the shell, the OPFS path (data/…) on the web. It rejects on a non-2xx response or a network error.",
+          "examples": [
+            "```ts\nimport { downloadToFile } from \"denext/mobile\";\n\nawait downloadToFile(\"https://example.com/manual.pdf\", \"manuals/manual.pdf\", {\n  directory: \"documents\",\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "FileDirectory",
+          "slug": "FileDirectory",
+          "kind": "typeAlias",
+          "signature": "type FileDirectory = documents | data | cache",
+          "doc": "Where a file lives:",
+          "docFull": "Where a file lives:\n\n- `\"data\"` (the default): the app's own storage, kept until the app is removed (Android's\n  internal files folder; on iOS the plugin maps it to the app's Documents folder).\n- `\"documents\"`: the app's Documents folder on iOS; on Android the shared, user-visible\n  Documents folder, which needs storage permission on Android 10 and older.\n- `\"cache\"`: storage the OS may clear when space runs low.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileEncoding",
+          "slug": "FileEncoding",
+          "kind": "typeAlias",
+          "signature": "type FileEncoding = utf8 | base64",
+          "doc": "How text is carried: \"utf8\" (plain text, the default) or \"base64\" (binary data).",
+          "docFull": "How text is carried: `\"utf8\"` (plain text, the default) or `\"base64\"` (binary data).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileEntry",
+          "slug": "FileEntry",
+          "kind": "interface",
+          "signature": "interface FileEntry",
+          "doc": "One entry of a listDir listing.",
+          "docFull": "One entry of a {@linkcode listDir} listing.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FileLocationOptions",
+          "slug": "FileLocationOptions",
+          "kind": "interface",
+          "signature": "interface FileLocationOptions",
+          "doc": "Options for deleteFile, listDir and downloadToFile.",
+          "docFull": "Options for {@linkcode deleteFile}, {@linkcode listDir} and {@linkcode downloadToFile}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14356,6 +14502,18 @@
           "examples": [
             "```tsx\n\"use client\";\nimport { useEffect } from \"denext\";\nimport { hideSplash } from \"denext/mobile\";\n\nexport function AppReady() {\n  useEffect(() => void hideSplash(), []);\n  return null;\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "ImageSource",
+          "slug": "ImageSource",
+          "kind": "typeAlias",
+          "signature": "type ImageSource = camera | photos | prompt",
+          "doc": "Where pickImage gets the picture: \"camera\" (take one), \"photos\" (the photo library) or \"prompt\" (ask the user which; the default).",
+          "docFull": "Where {@linkcode pickImage} gets the picture: `\"camera\"` (take one), `\"photos\"` (the photo\nlibrary) or `\"prompt\"` (ask the user which; the default).",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -14483,6 +14641,29 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "listDir",
+          "slug": "listDir",
+          "kind": "function",
+          "signature": "listDir(path: string, options?: FileLocationOptions): Promise<FileEntry[]>",
+          "doc": "List a folder's entries.",
+          "docFull": "List a folder's entries.\n\n- Inside the native shell with `@capacitor/filesystem` installed (`denext mobile add\n  filesystem`), the app's own files on the device.\n- Otherwise the browser's Origin Private File System.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The folder's path inside directory (\"\" for the directory itself)."
+            },
+            {
+              "name": "options",
+              "doc": "directory (default \"data\")."
+            }
+          ],
+          "returns": "Its immediate entries, sorted by name. It rejects when the folder does not exist.",
+          "examples": [
+            "```ts\nimport { listDir } from \"denext/mobile\";\n\nconst drafts = (await listDir(\"drafts\")).filter((e) => e.type === \"file\");\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -14642,6 +14823,25 @@
           "returns": "A function that unsubscribes.",
           "examples": [
             "```ts\nimport { onPushTapped } from \"denext/mobile\";\n\n// The server sends { \"path\": \"/threads/42\" } in the notification's data.\nconst stop = onPushTapped(({ notification }) => markRead(notification.id));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "onQuickAction",
+          "slug": "onQuickAction",
+          "kind": "function",
+          "signature": "onQuickAction(callback: (id: string) => void): () => void",
+          "doc": "Call callback with the id of each quick action the user chooses, including the one that cold-started the app: the shell keeps that until the first listener, so subscribe early (a root layout or the app shell); only the subscribers present when it is handed over see it. Outside the native shell it does nothing.",
+          "docFull": "Call `callback` with the `id` of each quick action the user chooses, including the one that\ncold-started the app: the shell keeps that until the first listener, so subscribe early (a\nroot layout or the app shell); only the subscribers present when it is handed over see it.\nOutside the native shell it does nothing.\n\nOn iOS the action reaches the plugin through `SceneDelegate.swift` (or `AppDelegate.swift`\nin an app without scenes), which `denext mobile add quick-actions` wires.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with the chosen action's id."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onQuickAction } from \"denext/mobile\";\n\nconst stop = onQuickAction((id) => {\n  if (id === \"new-chat\") location.assign(\"/chat/new\");\n});\n```"
           ],
           "denextOnly": true
         },
@@ -14845,6 +15045,92 @@
           "denextOnly": true
         },
         {
+          "name": "pickDocument",
+          "slug": "pickDocument",
+          "kind": "function",
+          "signature": "pickDocument(options?: PickDocumentOptions): Promise<PickedDocument | null>",
+          "doc": "Pick a document (any file, or the types given) with the system document picker.",
+          "docFull": "Pick a document (any file, or the `types` given) with the system document picker.\n\n- Inside the native shell with `@capawesome/capacitor-file-picker` installed (`denext\n  mobile add document-picker`), the iOS document picker / Android's system file picker; the\n  result carries the picked copy's `path`, and `data` with `readData: true`.\n- Otherwise a file chooser, and the file's bytes as base64 `data`.\n\nA dismissed picker resolves `null` rather than rejecting.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "types (accepted MIME types; default any file) and readData (native: also read the contents)."
+            }
+          ],
+          "returns": "The picked file, or null when the user cancelled. It rejects during SSR.",
+          "examples": [
+            "```ts\nimport { pickDocument } from \"denext/mobile\";\n\nconst pdf = await pickDocument({ types: [\"application/pdf\"], readData: true });\nif (pdf) await upload(pdf.name, pdf.data!);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "PickDocumentOptions",
+          "slug": "PickDocumentOptions",
+          "kind": "interface",
+          "signature": "interface PickDocumentOptions",
+          "doc": "Options for pickDocument.",
+          "docFull": "Options for {@linkcode pickDocument}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PickedDocument",
+          "slug": "PickedDocument",
+          "kind": "interface",
+          "signature": "interface PickedDocument",
+          "doc": "A file from pickDocument.",
+          "docFull": "A file from {@linkcode pickDocument}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PickedImage",
+          "slug": "PickedImage",
+          "kind": "interface",
+          "signature": "interface PickedImage",
+          "doc": "A picture from pickImage: one of webPath / dataUrl, plus its format.",
+          "docFull": "A picture from {@linkcode pickImage}: one of `webPath` / `dataUrl`, plus its format.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "pickImage",
+          "slug": "pickImage",
+          "kind": "function",
+          "signature": "pickImage(options?: PickImageOptions): Promise<PickedImage | null>",
+          "doc": "Take a picture or pick one from the photo library.",
+          "docFull": "Take a picture or pick one from the photo library.\n\n- Inside the native shell with `@capacitor/camera` installed (`denext mobile add camera`,\n  which also writes the camera and photo-library usage strings), the system camera or photo\n  picker (`Camera.getPhoto`).\n- Otherwise a file chooser for images; `source: \"camera\"` asks mobile browsers to open the\n  rear camera (`capture`).\n\nA dismissed camera or picker resolves `null` rather than rejecting.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "source (\"camera\", \"photos\" or \"prompt\", the default), quality (0–100, native) and as (\"webPath\", the default, or \"dataUrl\")."
+            }
+          ],
+          "returns": "The picture, or null when the user cancelled. It rejects when permission is denied, or during SSR.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useState } from \"denext\";\nimport { pickImage } from \"denext/mobile\";\n\nexport function AvatarPicker() {\n  const [src, setSrc] = useState<string>();\n  return (\n    <button type=\"button\" onClick={async () => {\n      const photo = await pickImage({ source: \"photos\" });\n      if (photo) setSrc(photo.webPath);\n    }}>{src ? <img src={src} alt=\"\" /> : \"Choose a photo\"}</button>\n  );\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "PickImageOptions",
+          "slug": "PickImageOptions",
+          "kind": "interface",
+          "signature": "interface PickImageOptions",
+          "doc": "Options for pickImage.",
+          "docFull": "Options for {@linkcode pickImage}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "prepareUiUpdate",
           "slug": "prepareUiUpdate",
           "kind": "function",
@@ -14924,6 +15210,18 @@
           "denextOnly": true
         },
         {
+          "name": "QuickAction",
+          "slug": "QuickAction",
+          "kind": "interface",
+          "signature": "interface QuickAction",
+          "doc": "One home-screen quick action.",
+          "docFull": "One home-screen quick action.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "readClipboard",
           "slug": "readClipboard",
           "kind": "function",
@@ -14935,6 +15233,41 @@
           "examples": [
             "```tsx\n\"use client\";\nimport { readClipboard } from \"denext/mobile\";\n\nexport function PasteCode({ onCode }: { onCode: (code: string) => void }) {\n  return <button type=\"button\" onClick={async () => onCode(await readClipboard())}>Paste</button>;\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "readFile",
+          "slug": "readFile",
+          "kind": "function",
+          "signature": "readFile(path: string, options?: ReadFileOptions): Promise<string>",
+          "doc": "Read a file.",
+          "docFull": "Read a file.\n\n- Inside the native shell with `@capacitor/filesystem` installed (`denext mobile add\n  filesystem`), the app's own files on the device.\n- Otherwise the browser's Origin Private File System, where `directory` is a top-level\n  folder of that name.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The file's path inside directory (\"notes/today.md\"); no .. segments."
+            },
+            {
+              "name": "options",
+              "doc": "directory (default \"data\") and encoding: \"utf8\" (the default) for text, \"base64\" for binary data."
+            }
+          ],
+          "returns": "The contents, as text or base64. It rejects when the file does not exist.",
+          "examples": [
+            "```ts\nimport { readFile } from \"denext/mobile\";\n\nconst draft = await readFile(\"drafts/post.md\").catch(() => \"\");\nconst avatar = await readFile(\"avatar.png\", { encoding: \"base64\" });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "ReadFileOptions",
+          "slug": "ReadFileOptions",
+          "kind": "interface",
+          "signature": "interface ReadFileOptions",
+          "doc": "Options for readFile.",
+          "docFull": "Options for {@linkcode readFile}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -14997,6 +15330,49 @@
           "denextOnly": true
         },
         {
+          "name": "scanBarcode",
+          "slug": "scanBarcode",
+          "kind": "function",
+          "signature": "scanBarcode(options?: ScanBarcodeOptions): Promise<ScannedBarcode | null>",
+          "doc": "Scan one barcode or QR code with the camera.",
+          "docFull": "Scan one barcode or QR code with the camera.\n\n- Inside the native shell with `@capacitor/barcode-scanner` installed (`denext mobile add\n  barcode`, which also writes the camera usage string), the plugin's full-screen scanner.\n- Otherwise, where the browser has `BarcodeDetector` and a camera, a full-screen camera view\n  with a Cancel button; the camera stream is stopped however the scan ends. Elsewhere it\n  rejects with code `unsupported`.\n\nA cancelled scan resolves `null` rather than rejecting.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "formats to look for (default all)."
+            }
+          ],
+          "returns": "The value and format read, or null when the user cancelled. It rejects with a BarcodeScanError (unsupported, denied) or the platform's own error.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { scanBarcode } from \"denext/mobile\";\n\nexport function ScanTicket({ onTicket }: { onTicket: (id: string) => void }) {\n  return (\n    <button type=\"button\" onClick={async () => {\n      const code = await scanBarcode({ formats: [\"qr_code\"] });\n      if (code) onTicket(code.value);\n    }}>Scan ticket</button>\n  );\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "ScanBarcodeOptions",
+          "slug": "ScanBarcodeOptions",
+          "kind": "interface",
+          "signature": "interface ScanBarcodeOptions",
+          "doc": "Options for scanBarcode.",
+          "docFull": "Options for {@linkcode scanBarcode}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ScannedBarcode",
+          "slug": "ScannedBarcode",
+          "kind": "interface",
+          "signature": "interface ScannedBarcode",
+          "doc": "What scanBarcode read.",
+          "docFull": "What {@linkcode scanBarcode} read.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "secureStore",
           "slug": "secureStore-var",
           "kind": "variable",
@@ -15020,6 +15396,25 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setQuickActions",
+          "slug": "setQuickActions",
+          "kind": "function",
+          "signature": "setQuickActions(actions: typeOperator): Promise<void>",
+          "doc": "Replace the app's home-screen quick actions (long-press on the icon).",
+          "docFull": "Replace the app's home-screen quick actions (long-press on the icon).\n\nInside the native shell with `@capawesome/capacitor-app-shortcuts` installed (`denext mobile\nadd quick-actions`), the iOS Home Screen quick actions / Android app shortcuts; an empty list\nremoves them all. Outside the shell it does nothing. iOS shows at most four; Android's\nlauncher shows about four.",
+          "params": [
+            {
+              "name": "actions",
+              "doc": "The actions, in display order."
+            }
+          ],
+          "returns": "A promise that settles once the OS has them. It rejects with a TypeError for an action without an id or title (before anything changes).",
+          "examples": [
+            "```ts\nimport { setQuickActions } from \"denext/mobile\";\n\nawait setQuickActions([\n  { id: \"new-chat\", title: \"New chat\", subtitle: \"Start a thread\", icon: \"square.and.pencil\" },\n  { id: \"search\", title: \"Search\" },\n]);\n```"
+          ],
           "denextOnly": true
         },
         {
@@ -15244,6 +15639,25 @@
           "denextOnly": true
         },
         {
+          "name": "useQuickAction",
+          "slug": "useQuickAction",
+          "kind": "function",
+          "signature": "useQuickAction(callback: (id: string) => void): void",
+          "doc": "Hook form of onQuickAction: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.",
+          "docFull": "Hook form of {@linkcode onQuickAction}: subscribes on mount, unsubscribes on unmount, and\nalways calls the latest `callback`.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with the chosen action's id."
+            }
+          ],
+          "returns": "",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { useRouter } from \"denext\";\nimport { useQuickAction } from \"denext/mobile\";\n\nexport function QuickActions() {\n  const router = useRouter();\n  useQuickAction((id) => router.push(id === \"search\" ? \"/search\" : \"/chat/new\"));\n  return null;\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "writeClipboard",
           "slug": "writeClipboard",
           "kind": "function",
@@ -15260,6 +15674,45 @@
           "examples": [
             "```tsx\n\"use client\";\nimport { writeClipboard } from \"denext/mobile\";\n\nexport function CopyLink({ url }: { url: string }) {\n  return <button type=\"button\" onClick={() => writeClipboard(url)}>Copy link</button>;\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "writeFile",
+          "slug": "writeFile",
+          "kind": "function",
+          "signature": "writeFile(path: string, data: string, options?: WriteFileOptions): Promise<void>",
+          "doc": "Write a file, replacing it when it exists.",
+          "docFull": "Write a file, replacing it when it exists.\n\n- Inside the native shell with `@capacitor/filesystem` installed (`denext mobile add\n  filesystem`), the app's own files on the device.\n- Otherwise the browser's Origin Private File System, where `directory` is a top-level\n  folder of that name.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "The file's path inside directory; no .. segments."
+            },
+            {
+              "name": "data",
+              "doc": "The contents: text, or base64 with encoding: \"base64\"."
+            },
+            {
+              "name": "options",
+              "doc": "directory (default \"data\"), recursive (create missing parent folders; default false) and encoding (\"utf8\", the default, or \"base64\")."
+            }
+          ],
+          "returns": "A promise that settles once the file is written. It rejects when a parent folder is missing without recursive, or when there is no filesystem (SSR, an insecure context).",
+          "examples": [
+            "```ts\nimport { writeFile } from \"denext/mobile\";\n\nawait writeFile(\"drafts/post.md\", markdown, { recursive: true });\nawait writeFile(\"avatar.png\", pngBase64, { encoding: \"base64\" });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "WriteFileOptions",
+          "slug": "WriteFileOptions",
+          "kind": "interface",
+          "signature": "interface WriteFileOptions",
+          "doc": "Options for writeFile.",
+          "docFull": "Options for {@linkcode writeFile}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         }
       ]

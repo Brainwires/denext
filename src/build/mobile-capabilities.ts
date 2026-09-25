@@ -10,16 +10,19 @@
 // hook's `install` step; with no package to add, neither the install nor `cap sync` runs. Every
 // subprocess goes through a runner the caller passes in, so tests never spawn a real install.
 
-import { dirname, join, resolve } from "@std/path";
+import { dirname, join, relative, resolve } from "@std/path";
 import {
   EMPTY_ENTITLEMENTS,
   withAppDelegatePushForwarding,
+  withAppDelegateQuickActions,
+  withGradleMinSdk,
   withManifestIntentFilter,
   withManifestPermission,
   withPlistDefault,
   withPlistString,
   withPlistStringArray,
   withPlistUrlScheme,
+  withSceneDelegateQuickActions,
 } from "./mobile-native-config.ts";
 import { addAuthSessionToProject } from "./mobile-auth-session-install.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
@@ -60,6 +63,8 @@ export interface CapabilityConfig {
   readonly manifest?: readonly NativeEdit[];
   /** Edits to ios/App/App/AppDelegate.swift. */
   readonly appDelegate?: readonly NativeEdit[];
+  /** Edits to android/variables.gradle (the SDK levels). */
+  readonly variablesGradle?: readonly NativeEdit[];
   /** Project-relative files the capability needs at runtime, each with the warning printed when missing. */
   readonly requiredFiles?: Readonly<Record<string, string>>;
   /** Steps `denext mobile add` cannot do, printed after the run. */
@@ -237,9 +242,82 @@ function configurePush(): CapabilityConfig {
   };
 }
 
+/** Where the iOS delegates live, relative to the project root. */
+const IOS_SCENE_DELEGATE = "ios/App/App/SceneDelegate.swift";
+const IOS_APP_DELEGATE = "ios/App/App/AppDelegate.swift";
+
+/**
+ * `quick-actions`' native step: forward the home-screen quick action to the AppShortcuts
+ * plugin from `SceneDelegate.swift` (Capacitor 8's scene template), else from
+ * `AppDelegate.swift` (an app without scenes). The plugin's README covers only the latter,
+ * which UIKit bypasses once the app has a scene delegate.
+ */
+async function wireQuickActions({ dir }: NativeInstallOptions): Promise<NativeInstallReport> {
+  const report: NativeInstallReport = {
+    written: [],
+    upgraded: [],
+    kept: [],
+    unchanged: [],
+    manual: [],
+    skipped: [],
+  };
+  const scene = await readText(join(dir, IOS_SCENE_DELEGATE));
+  const rel = scene === undefined ? IOS_APP_DELEGATE : IOS_SCENE_DELEGATE;
+  const text = scene ?? await readText(join(dir, IOS_APP_DELEGATE));
+  if (text === undefined) {
+    const hint = await exists(join(dir, "ios")) ? "wire it by hand" : "run `npx cap add ios` first";
+    report.skipped.push(`iOS: no ${IOS_SCENE_DELEGATE} or ${IOS_APP_DELEGATE} (${hint}).`);
+    return report;
+  }
+  const next = scene === undefined
+    ? withAppDelegateQuickActions(text)
+    : withSceneDelegateQuickActions(text);
+  if (next === null) {
+    report.manual.push(
+      `${rel}: forward quick actions to the AppShortcuts plugin by hand (post ` +
+        `NSNotification.Name("handleAppShortcutNotification") with userInfo ["shortcutItem": item] ` +
+        "from performActionFor, and for the launch item once the bridge has loaded)",
+    );
+  } else if (next === text) {
+    report.unchanged.push(rel);
+  } else {
+    await Deno.writeTextFile(join(dir, rel), next);
+    report.written.push(rel);
+  }
+  return report;
+}
+
+/** `quick-actions`: the iOS delegate forwarding (Android needs none). */
+function configureQuickActions(): CapabilityConfig {
+  return {
+    install: {
+      label: "forward quick actions to AppShortcuts in SceneDelegate.swift (AppDelegate.swift " +
+        "without scenes), cold start included",
+      run: wireQuickActions,
+    },
+  };
+}
+
+/**
+ * `barcode`: `@capacitor/barcode-scanner`'s Android library (ionbarcode) declares minSdk 26,
+ * above Capacitor 8's default 24, so the manifest merge fails until variables.gradle is raised.
+ */
+function configureBarcode(): CapabilityConfig {
+  return {
+    variablesGradle: [{
+      label: "minSdkVersion 26 (the scanner's Android library needs it; a higher one is kept)",
+      apply: (text) => withGradleMinSdk(text, 26),
+    }],
+  };
+}
+
+/** The camera usage string `camera` and `barcode` share. */
+const CAMERA_USAGE = "Take photos and scan codes with the camera.";
+
 /**
  * Every capability `denext mobile add` knows, keyed by the name on its command line. Ranges
- * are the plugins' Capacitor 8 majors (each declares `@capacitor/core >=8.0.0`).
+ * are the plugins' Capacitor 8 releases (each declares `@capacitor/core >=8.0.0`); most follow
+ * Capacitor's major, `@capacitor/barcode-scanner` has its own numbering (3.x for Capacitor 8).
  */
 export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   haptics: {
@@ -320,6 +398,45 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     notes: "requestPushPermission / registerForPush / onPushReceived / onPushTapped",
     configure: configurePush,
   },
+  filesystem: {
+    npm: "@capacitor/filesystem",
+    version: "^8.1.3",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "readFile / writeFile / deleteFile / listDir / downloadToFile (OPFS on the web; " +
+      'Android\'s "documents" needs storage permission up to Android 10)',
+  },
+  camera: {
+    npm: "@capacitor/camera",
+    version: "^8.2.4",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: {
+      NSCameraUsageDescription: CAMERA_USAGE,
+      NSPhotoLibraryUsageDescription: "Choose photos from your library.",
+      NSPhotoLibraryAddUsageDescription: "Save photos to your library.",
+    },
+    notes: "pickImage({ source: camera | photos | prompt })",
+  },
+  "document-picker": {
+    npm: "@capawesome/capacitor-file-picker",
+    version: "^8.1.0",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "pickDocument({ types })",
+  },
+  barcode: {
+    npm: "@capacitor/barcode-scanner",
+    version: "^3.1.2",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: { NSCameraUsageDescription: CAMERA_USAGE },
+    notes: "scanBarcode({ formats }) (BarcodeDetector on the web; Android minSdk 26)",
+    configure: configureBarcode,
+  },
+  "quick-actions": {
+    npm: "@capawesome/capacitor-app-shortcuts",
+    version: "^8.0.2",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "setQuickActions([...]) / onQuickAction / useQuickAction",
+    configure: configureQuickActions,
+  },
 };
 
 /** A package manager `denext mobile add` can drive. */
@@ -341,9 +458,15 @@ export interface CapabilityPlan {
   readonly root: string;
   /** The capabilities, deduplicated, in command-line order. */
   readonly capabilities: readonly string[];
-  /** The detected package manager, and the lockfile it came from (none: npm by default). */
+  /**
+   * The detected package manager and where it came from: `lockfile` is the lockfile (or
+   * `pnpm-workspace.yaml`) relative to `root`, e.g. `../../pnpm-lock.yaml` in a workspace;
+   * `packageManagerField` the `package.json` whose `packageManager` field named it. Neither:
+   * npm by default.
+   */
   readonly packageManager: PackageManager;
   readonly lockfile?: string;
+  readonly packageManagerField?: string;
   /** The `@capacitor/core` major found, and where it was read. */
   readonly capacitorMajor: number;
   readonly capacitorSource: "installed" | "package.json";
@@ -372,6 +495,7 @@ export interface NativeEditPlan {
   readonly entitlements: readonly NativeEdit[];
   readonly manifest: readonly NativeEdit[];
   readonly appDelegate: readonly NativeEdit[];
+  readonly variablesGradle: readonly NativeEdit[];
   /** denext's own native plugins to install from their templates. */
   readonly installs: readonly NativeInstallStep[];
 }
@@ -423,6 +547,7 @@ const CAPACITOR_CONFIGS = [
 const INFO_PLIST = "ios/App/App/Info.plist";
 const ANDROID_MANIFEST = "android/app/src/main/AndroidManifest.xml";
 const APP_DELEGATE = "ios/App/App/AppDelegate.swift";
+const VARIABLES_GRADLE = "android/variables.gradle";
 const PBXPROJ = "ios/App/App.xcodeproj/project.pbxproj";
 /** The entitlements file written when the Xcode project names none (SRCROOT is ios/App). */
 const DEFAULT_ENTITLEMENTS = "App/App.entitlements";
@@ -509,12 +634,68 @@ async function capacitorCore(
   return { major: declaredMajor, source: "package.json" };
 }
 
-/** The package manager, from the first lockfile found; npm without one. */
-async function detectPackageManager(
-  root: string,
-): Promise<{ manager: PackageManager; lockfile?: string }> {
+/** Where the package manager was detected: a lockfile, or a `packageManager` field. */
+interface DetectedPackageManager {
+  manager: PackageManager;
+  lockfile?: string;
+  packageManagerField?: string;
+}
+
+/** The pnpm workspace marker, a pnpm signal checked after the lockfiles in each folder. */
+const PNPM_WORKSPACE = "pnpm-workspace.yaml";
+
+/** The folders from `root` up to the first holding `.git` (inclusive), else the filesystem root. */
+async function workspaceAncestors(root: string): Promise<string[]> {
+  const dirs: string[] = [];
+  for (let dir = root;; dir = dirname(dir)) {
+    dirs.push(dir);
+    if (dirname(dir) === dir || await exists(join(dir, ".git"))) return dirs;
+  }
+}
+
+/** The package manager `dir`'s lockfile (or pnpm-workspace.yaml) names, and that file. */
+async function lockfileIn(
+  dir: string,
+): Promise<{ manager: PackageManager; path: string } | undefined> {
   for (const [lockfile, manager] of LOCKFILES) {
-    if (await exists(join(root, lockfile))) return { manager, lockfile };
+    if (await exists(join(dir, lockfile))) return { manager, path: join(dir, lockfile) };
+  }
+  if (await exists(join(dir, PNPM_WORKSPACE))) {
+    return { manager: "pnpm", path: join(dir, PNPM_WORKSPACE) };
+  }
+  return undefined;
+}
+
+/** The manager `dir/package.json`'s `packageManager` field names (`"pnpm@11.10.0"`). */
+async function packageManagerFieldIn(dir: string): Promise<PackageManager | undefined> {
+  const text = await readText(join(dir, "package.json"));
+  if (text === undefined) return undefined;
+  let field: unknown;
+  try {
+    field = (JSON.parse(text) as { packageManager?: unknown }).packageManager;
+  } catch {
+    return undefined;
+  }
+  const m = typeof field === "string" ? /^(npm|pnpm|yarn|bun)@/.exec(field) : null;
+  return m ? m[1] as PackageManager : undefined;
+}
+
+/**
+ * The package manager, walking up from the Capacitor project `root` to the repository root
+ * (the first folder holding `.git`) or the filesystem root, so a project inside a workspace
+ * (pnpm, yarn, bun, npm) uses the workspace's manager. Precedence: the nearest lockfile
+ * (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder); then the
+ * nearest `package.json` `packageManager` field; then npm.
+ */
+async function detectPackageManager(root: string): Promise<DetectedPackageManager> {
+  const dirs = await workspaceAncestors(root);
+  for (const dir of dirs) {
+    const found = await lockfileIn(dir);
+    if (found) return { manager: found.manager, lockfile: relative(root, found.path) };
+  }
+  for (const dir of dirs) {
+    const manager = await packageManagerFieldIn(dir);
+    if (manager) return { manager, packageManagerField: relative(root, join(dir, "package.json")) };
   }
   return { manager: "npm" };
 }
@@ -581,6 +762,7 @@ function configureAll(
       entitlements: configs.flatMap((c) => c.entitlements ?? []),
       manifest: configs.flatMap((c) => c.manifest ?? []),
       appDelegate: configs.flatMap((c) => c.appDelegate ?? []),
+      variablesGradle: configs.flatMap((c) => c.variablesGradle ?? []),
       installs: configs.flatMap((c) => c.install ? [c.install] : []),
     },
     requiredFiles: Object.assign({}, ...configs.map((c) => c.requiredFiles ?? {})),
@@ -642,6 +824,17 @@ async function missingFiles(root: string, required: Record<string, string>): Pro
   return warnings;
 }
 
+/** The capabilities' Info.plist keys, each once (the first capability's value wins). */
+function uniquePlistKeys(caps: readonly MobileCapability[]): Array<{ key: string; value: string }> {
+  const seen = new Map<string, string>();
+  for (const cap of caps) {
+    for (const [key, value] of Object.entries(cap.iosPlist ?? {})) {
+      if (!seen.has(key)) seen.set(key, value);
+    }
+  }
+  return [...seen].map(([key, value]) => ({ key, value }));
+}
+
 /**
  * Work out what `denext mobile add` will do, without changing anything: the project root,
  * its package manager, the install and sync commands, and the native config edits. It throws
@@ -673,7 +866,7 @@ export async function planMobileCapabilities(
       } targets. Upgrade Capacitor, or install a matching plugin version by hand.`,
     );
   }
-  const { manager, lockfile } = await detectPackageManager(root);
+  const { manager, lockfile, packageManagerField } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
   const specs = caps.flatMap((c) => c.npm ? [`${c.npm}@${c.version}`] : []);
   const target = await entitlementsTarget(root);
@@ -682,13 +875,12 @@ export async function planMobileCapabilities(
     capabilities: names,
     packageManager: manager,
     lockfile,
+    packageManagerField,
     capacitorMajor: core.major,
     capacitorSource: core.source,
     install: specs.length > 0 ? addCommand(manager, specs, root) : undefined,
     sync: specs.length > 0 ? { cmd: "npx", args: ["cap", "sync"], cwd: root } : undefined,
-    plist: caps.flatMap((c) =>
-      Object.entries(c.iosPlist ?? {}).map(([key, value]) => ({ key, value }))
-    ),
+    plist: uniquePlistKeys(caps),
     permissions: [...new Set(caps.flatMap((c) => c.androidPermissions ?? []))],
     notes: names.flatMap((n) => table[n].notes ? [`${n}: ${table[n].notes}`] : []),
     native: configured.native,
@@ -706,6 +898,13 @@ function commandLine(command: PlannedCommand): string {
   return [command.cmd, ...command.args].join(" ");
 }
 
+/** Where the plan's package manager came from, for the dry-run line. */
+function packageManagerSource(plan: CapabilityPlan): string {
+  if (plan.lockfile) return plan.lockfile;
+  if (plan.packageManagerField) return `packageManager in ${plan.packageManagerField}`;
+  return "no lockfile";
+}
+
 /**
  * The plan as the lines `denext mobile add --dry-run` prints.
  *
@@ -716,9 +915,7 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
   const lines = [
     `  project        ${plan.root}`,
     `  capacitor      @capacitor/core ${plan.capacitorMajor} (${plan.capacitorSource})`,
-    `  package mgr    ${plan.packageManager}${
-      plan.lockfile ? ` (${plan.lockfile})` : " (no lockfile)"
-    }`,
+    `  package mgr    ${plan.packageManager} (${packageManagerSource(plan)})`,
     `  install        ${plan.install ? commandLine(plan.install) : "(no npm package)"}`,
     ...plan.native.installs.map((i) => `  native         ${i.label}`),
     ...plan.plist.map((p) => `  Info.plist     ${p.key} (when absent)`),
@@ -729,6 +926,7 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
     ...plan.native.appDelegate.map((e) => `  AppDelegate    ${e.label}`),
     ...plan.permissions.map((p) => `  manifest       <uses-permission ${p}>`),
     ...plan.native.manifest.map((e) => `  manifest       ${e.label}`),
+    ...plan.native.variablesGradle.map((e) => `  gradle         ${e.label}`),
     ...(plan.sync ? [`  sync           ${commandLine(plan.sync)}`] : []),
     ...plan.warnings.map((w) => `  WARNING        ${w}`),
   ];
@@ -751,7 +949,7 @@ export function formatCapabilityTable(
   table: Readonly<Record<string, MobileCapability>> = MOBILE_CAPABILITIES,
 ): string {
   return Object.entries(table).map(([name, c]) =>
-    `  ${name.padEnd(14)}${
+    `  ${name.padEnd(17)}${
       (c.npm ? `${c.npm}@${c.version}` : "(denext native plugin)").padEnd(46)
     }${c.notes ?? ""}`
   ).join("\n");
@@ -851,6 +1049,7 @@ export async function addMobileCapabilities(
     apply: (text) => withManifestPermission(text, p),
   }));
   await editNative(report, ANDROID_MANIFEST, [...permissions, ...plan.native.manifest]);
+  await editNative(report, VARIABLES_GRADLE, plan.native.variablesGradle);
   if (plan.sync) await runChecked(opts.run, plan.sync, report.ran);
   return report;
 }

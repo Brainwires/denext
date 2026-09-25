@@ -19,54 +19,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "../runtime/hooks.ts";
 import { useFileSystemObserver } from "./use-file-system-observer.ts";
+import { opfsSupported, resolveDir, resolveFile } from "./opfs-paths.ts";
 
 function toError(err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
-}
-
-/** Whether OPFS is reachable here (`navigator.storage.getDirectory`). */
-function opfsSupported(): boolean {
-  return typeof navigator !== "undefined" &&
-    typeof navigator.storage?.getDirectory === "function";
-}
-
-/** Split a `"a/b/c"` path into non-empty, trimmed segments. */
-function splitPath(path: string): string[] {
-  return path.split("/").map((s) => s.trim()).filter((s) => s.length > 0);
-}
-
-/** Walk a `"a/b"` path to a directory handle under `root`. Empty path → `root`. */
-async function resolveDir(
-  root: FileSystemDirectoryHandle,
-  path: string,
-  create: boolean,
-): Promise<FileSystemDirectoryHandle> {
-  let dir = root;
-  for (const segment of splitPath(path)) {
-    dir = await dir.getDirectoryHandle(segment, { create });
-  }
-  return dir;
-}
-
-/** A resolved file plus the parent needed to remove it. */
-interface ResolvedFile {
-  readonly handle: FileSystemFileHandle;
-  readonly parent: FileSystemDirectoryHandle;
-  readonly name: string;
-}
-
-/** Walk a `"a/b/file"` path to its file handle and parent directory under `root`. */
-async function resolveFile(
-  root: FileSystemDirectoryHandle,
-  path: string,
-  create: boolean,
-): Promise<ResolvedFile> {
-  const parts = splitPath(path);
-  const name = parts.at(-1);
-  if (name === undefined) throw new Error("useFile: a file path is required");
-  const parent = await resolveDir(root, parts.slice(0, -1).join("/"), create);
-  const handle = await parent.getFileHandle(name, { create });
-  return { handle, parent, name };
 }
 
 /** Read a directory's immediate entries, sorted by name. */

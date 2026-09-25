@@ -8,6 +8,62 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.10.0-rc.2] - 2026-09-25
+
+### Added
+
+- **`reactNative` — build a React Native / Expo app for the web.** `reactNative: true` in
+  `denext.config.ts` (SPA mode) builds the app's own source through `react-native-web`:
+  `react-native` and its subpaths resolve to react-native-web for every importer, even with a
+  real `react-native` installed (deep `react-native/Libraries/…` imports map to their web
+  equivalent, or to a stub that throws, naming the import, when called); `.web.tsx`/`.web.ts`/
+  `.web.jsx`/`.web.js` win for relative imports and package subpaths; `.js` parses as JSX;
+  `__DEV__`, `global` and `process.env.EXPO_OS` are defined; and the SPA shell gets Expo web's
+  root style (`reactNative: { rootStyle: false }` leaves it out). `denext dev` uses the bundled
+  loop for such an app. Measured on T3 Code's Expo app: it builds with no patches, and all 41
+  swept deep-link routes render as before. Guide: /docs/react-native.
+
+- **Files, pickers, barcodes and quick actions in `denext/mobile`.** `readFile` /
+  `writeFile` / `deleteFile` / `listDir` / `downloadToFile(url, path)` read and write the
+  app's files (`"data"`, `"documents"` or `"cache"`, as text or base64) through
+  `@capacitor/filesystem`, and the Origin Private File System on the web (one top-level folder
+  per directory, so `useFile("data/…")` sees the same file). `pickImage({ source })` takes or
+  picks a photo through `@capacitor/camera`; `pickDocument({ types })` opens the system
+  document picker through `@capawesome/capacitor-file-picker`; both fall back to a hidden file
+  input made for the call and resolve `null` when the user cancels. `scanBarcode({ formats })`
+  scans one code with the official `@capacitor/barcode-scanner`, or `BarcodeDetector` over the
+  camera on the web (the stream is stopped however the scan ends; no detector rejects with
+  code `unsupported`). `setQuickActions([...])` / `onQuickAction` / `useQuickAction` manage
+  home-screen shortcuts through `@capawesome/capacitor-app-shortcuts`, including the action
+  that cold-started the app; on the web they do nothing. Still no `@capacitor/*` import, and
+  a bundle that uses only `isNativeShell()` stays 389 bytes.
+- **`denext mobile add filesystem | camera | document-picker | barcode | quick-actions`.**
+  `camera` writes `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription` and
+  `NSPhotoLibraryAddUsageDescription`, `barcode` the camera string (each only when absent,
+  and a key two capabilities share is planned once); `barcode` also raises
+  `minSdkVersion` in `android/variables.gradle` to 26, which the scanner's Android library
+  declares (Capacitor 8 defaults to 24, and the manifest merge fails below it). `quick-actions` forwards the home-screen
+  action to the plugin from `SceneDelegate.swift` (`windowScene(_:performActionFor:)`, and the
+  launch item from `scene(_:willConnectTo:options:)` once the bridge has loaded), or from
+  `AppDelegate.swift` in an app without scenes; the plugin's own instructions cover only the
+  AppDelegate, which UIKit bypasses in Capacitor 8's scene template. `--list` widens its name
+  column for the longer names.
+
+### Fixed
+
+- **`denext mobile add` picks a workspace's package manager.** It looked for a lockfile only
+  in the Capacitor project folder, so a project inside a pnpm workspace (lockfile at the
+  repository root) fell back to `npm install`, which breaks the workspace. It now walks up to
+  the first folder holding `.git` (or the filesystem root): the nearest `pnpm-lock.yaml`,
+  `package-lock.json`, `bun.lock`, `bun.lockb` or `yarn.lock` wins (a `pnpm-workspace.yaml`
+  counts as pnpm), then the nearest `package.json` `packageManager` field (`"pnpm@11.10.0"`),
+  then npm. The install still runs in the Capacitor project folder, and `--dry-run` prints
+  where the manager came from (`pnpm (../../pnpm-lock.yaml)`).
+- **Docs: run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** Without
+  it, Deno fails to resolve denext's `npm:` imports from the workspace's `node_modules`, and
+  next to a `pnpm-workspace.yaml` Deno 2.9.7 rewrites the root `package.json`. denext cannot
+  prevent this itself; the desktop guide and KNOWN-LIMITATIONS.md now say so.
+
 ## [2.10.0-rc.1] - 2026-09-24
 
 ### Added
@@ -8124,6 +8180,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.10.0-rc.2]: https://jsr.io/@denext/denext@2.10.0-rc.2
 [2.10.0-rc.1]: https://jsr.io/@denext/denext@2.10.0-rc.1
 [2.9.0]: https://jsr.io/@denext/denext@2.9.0
 [2.8.3]: https://jsr.io/@denext/denext@2.8.3
