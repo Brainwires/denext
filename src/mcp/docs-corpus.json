@@ -2535,7 +2535,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.10.0-rc.1 The denext framework version.",
+      "text": "VERSION VERSION: 2.10.0-rc.2 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -5425,6 +5425,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/RateLimitWindow",
       "text": "RateLimitWindow interface RateLimitWindow One key's open failure window.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/ReactNativeConfig",
+      "kind": "interface",
+      "title": "ReactNativeConfig",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/ReactNativeConfig",
+      "text": "ReactNativeConfig interface ReactNativeConfig React Native / Expo web build options (DenextConfig.reactNative).",
       "denextOnly": true
     },
     {
@@ -9469,6 +9478,33 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/BarcodeFormat",
+      "kind": "typeAlias",
+      "title": "BarcodeFormat",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/BarcodeFormat",
+      "text": "BarcodeFormat type BarcodeFormat = qr_code | aztec | codabar | code_39 | code_93 | code_128 | data_matrix | ean_13 | ean_8 | itf | pdf417 | upc_a | upc_e A barcode format, by its BarcodeDetector name.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/BarcodeScanError",
+      "kind": "interface",
+      "title": "BarcodeScanError",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/BarcodeScanError",
+      "text": "BarcodeScanError interface BarcodeScanError The Error a scanBarcode promise rejects with for the codes above.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/BarcodeScanErrorCode",
+      "kind": "typeAlias",
+      "title": "BarcodeScanErrorCode",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/BarcodeScanErrorCode",
+      "text": "BarcodeScanErrorCode type BarcodeScanErrorCode = unsupported | denied The code on a scanBarcode rejection: unsupported (no scanner here: no plugin, and no BarcodeDetector or camera in the browser, or none of the formats asked for) or denied (camera permission refused).",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/checkForUiUpdate",
       "kind": "function",
       "title": "checkForUiUpdate",
@@ -9505,6 +9541,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/deleteFile",
+      "kind": "function",
+      "title": "deleteFile",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/deleteFile",
+      "text": "deleteFile deleteFile(path: string, options?: FileLocationOptions): Promise<void> Delete a file. - Inside the native shell with @capacitor/filesystem installed (denext mobile add filesystem), the app's own files on the device. - Otherwise the browser's Origin Private File System. The file's path inside directory; no .. segments. directory (default \"data\"). A promise that settles once the file is gone. It rejects when it does not exist.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/deviceInfo-fn",
       "kind": "function",
       "title": "deviceInfo",
@@ -9520,6 +9565,51 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/DeviceInfo-iface",
       "text": "DeviceInfo interface DeviceInfo What deviceInfo reports. Only platform is always known.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/downloadToFile",
+      "kind": "function",
+      "title": "downloadToFile",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/downloadToFile",
+      "text": "downloadToFile downloadToFile(url: string, path: string, options?: FileLocationOptions): Promise<object> Download a URL straight into a file (missing parent folders are created). - Inside the native shell with @capacitor/filesystem installed (denext mobile add filesystem), the plugin's native download (downloadFile), which does not pass the body through the WebView and is not subject to CORS. (A plugin without downloadFile, which it deprecates, gets fetch(url) and the plugin's writeFile instead.) - Otherwise fetch(url) (CORS applies), then a write to the Origin Private File System. The http(s) URL to fetch. The file's path inside directory; no .. segments. directory (default \"data\"). { path }: the native file path in the shell, the OPFS path (data/…) on the web. It rejects on a non-2xx response or a network error.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/FileDirectory",
+      "kind": "typeAlias",
+      "title": "FileDirectory",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/FileDirectory",
+      "text": "FileDirectory type FileDirectory = documents | data | cache Where a file lives: - \"data\" (the default): the app's own storage, kept until the app is removed (Android's internal files folder; on iOS the plugin maps it to the app's Documents folder). - \"documents\": the app's Documents folder on iOS; on Android the shared, user-visible Documents folder, which needs storage permission on Android 10 and older. - \"cache\": storage the OS may clear when space runs low.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/FileEncoding",
+      "kind": "typeAlias",
+      "title": "FileEncoding",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/FileEncoding",
+      "text": "FileEncoding type FileEncoding = utf8 | base64 How text is carried: \"utf8\" (plain text, the default) or \"base64\" (binary data).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/FileEntry",
+      "kind": "interface",
+      "title": "FileEntry",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/FileEntry",
+      "text": "FileEntry interface FileEntry One entry of a listDir listing.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/FileLocationOptions",
+      "kind": "interface",
+      "title": "FileLocationOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/FileLocationOptions",
+      "text": "FileLocationOptions interface FileLocationOptions Options for deleteFile, listDir and downloadToFile.",
       "denextOnly": true
     },
     {
@@ -9547,6 +9637,15 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/hideSplash",
       "text": "hideSplash hideSplash(): Promise<void> Hide the native launch splash screen, through @capacitor/splash-screen inside the shell (denext mobile add splash). Call it once the first screen has rendered, when the plugin is configured with launchAutoHide: false. On the web, and when the plugin is not installed, it does nothing. A promise that settles once the splash is hidden (at once off the shell).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/ImageSource",
+      "kind": "typeAlias",
+      "title": "ImageSource",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/ImageSource",
+      "text": "ImageSource type ImageSource = camera | photos | prompt Where pickImage gets the picture: \"camera\" (take one), \"photos\" (the photo library) or \"prompt\" (ask the user which; the default).",
       "denextOnly": true
     },
     {
@@ -9619,6 +9718,15 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/LinkRoute",
       "text": "LinkRoute type LinkRoute = boolean | parenthesized How to navigate to an accepted link: true navigates with the page's router, false leaves it to the callback, and a function navigates itself (e.g. (path) => router.push(path)).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/listDir",
+      "kind": "function",
+      "title": "listDir",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/listDir",
+      "text": "listDir listDir(path: string, options?: FileLocationOptions): Promise<FileEntry[]> List a folder's entries. - Inside the native shell with @capacitor/filesystem installed (denext mobile add filesystem), the app's own files on the device. - Otherwise the browser's Origin Private File System. The folder's path inside directory (\"\" for the directory itself). directory (default \"data\"). Its immediate entries, sorted by name. It rejects when the folder does not exist.",
       "denextOnly": true
     },
     {
@@ -9709,6 +9817,15 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/onPushTapped",
       "text": "onPushTapped onPushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): () => void Call callback when the user taps a notification (or one of its actions), and by default navigate to its data.path / data.url (see PushTapOptions). A tap that cold-started the app is kept by the shell until the first listener, so it still arrives when you subscribe shortly after boot: subscribe early (a root layout or the app shell), because only the subscribers present when it is handed over see it. Outside the native shell it does nothing. Called with each tap. Which links to accept, and how to navigate. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onQuickAction",
+      "kind": "function",
+      "title": "onQuickAction",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onQuickAction",
+      "text": "onQuickAction onQuickAction(callback: (id: string) => void): () => void Call callback with the id of each quick action the user chooses, including the one that cold-started the app: the shell keeps that until the first listener, so subscribe early (a root layout or the app shell); only the subscribers present when it is handed over see it. Outside the native shell it does nothing. On iOS the action reaches the plugin through SceneDelegate.swift (or AppDelegate.swift in an app without scenes), which denext mobile add quick-actions wires. Called with the chosen action's id. A function that unsubscribes.",
       "denextOnly": true
     },
     {
@@ -9838,6 +9955,60 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/pickDocument",
+      "kind": "function",
+      "title": "pickDocument",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/pickDocument",
+      "text": "pickDocument pickDocument(options?: PickDocumentOptions): Promise<PickedDocument | null> Pick a document (any file, or the types given) with the system document picker. - Inside the native shell with @capawesome/capacitor-file-picker installed (denext mobile add document-picker), the iOS document picker / Android's system file picker; the result carries the picked copy's path, and data with readData: true. - Otherwise a file chooser, and the file's bytes as base64 data. A dismissed picker resolves null rather than rejecting. types (accepted MIME types; default any file) and readData (native: also read the contents). The picked file, or null when the user cancelled. It rejects during SSR.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PickDocumentOptions",
+      "kind": "interface",
+      "title": "PickDocumentOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PickDocumentOptions",
+      "text": "PickDocumentOptions interface PickDocumentOptions Options for pickDocument.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PickedDocument",
+      "kind": "interface",
+      "title": "PickedDocument",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PickedDocument",
+      "text": "PickedDocument interface PickedDocument A file from pickDocument.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PickedImage",
+      "kind": "interface",
+      "title": "PickedImage",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PickedImage",
+      "text": "PickedImage interface PickedImage A picture from pickImage: one of webPath / dataUrl, plus its format.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/pickImage",
+      "kind": "function",
+      "title": "pickImage",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/pickImage",
+      "text": "pickImage pickImage(options?: PickImageOptions): Promise<PickedImage | null> Take a picture or pick one from the photo library. - Inside the native shell with @capacitor/camera installed (denext mobile add camera, which also writes the camera and photo-library usage strings), the system camera or photo picker (Camera.getPhoto). - Otherwise a file chooser for images; source: \"camera\" asks mobile browsers to open the rear camera (capture). A dismissed camera or picker resolves null rather than rejecting. source (\"camera\", \"photos\" or \"prompt\", the default), quality (0–100, native) and as (\"webPath\", the default, or \"dataUrl\"). The picture, or null when the user cancelled. It rejects when permission is denied, or during SSR.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/PickImageOptions",
+      "kind": "interface",
+      "title": "PickImageOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/PickImageOptions",
+      "text": "PickImageOptions interface PickImageOptions Options for pickImage.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/prepareUiUpdate",
       "kind": "function",
       "title": "prepareUiUpdate",
@@ -9892,12 +10063,39 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/QuickAction",
+      "kind": "interface",
+      "title": "QuickAction",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/QuickAction",
+      "text": "QuickAction interface QuickAction One home-screen quick action.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/readClipboard",
       "kind": "function",
       "title": "readClipboard",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/readClipboard",
       "text": "readClipboard readClipboard(): Promise<string> Read text from the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.readText(), which browsers gate behind a permission prompt or a user gesture. The clipboard's text (\"\" when it holds none).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/readFile",
+      "kind": "function",
+      "title": "readFile",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/readFile",
+      "text": "readFile readFile(path: string, options?: ReadFileOptions): Promise<string> Read a file. - Inside the native shell with @capacitor/filesystem installed (denext mobile add filesystem), the app's own files on the device. - Otherwise the browser's Origin Private File System, where directory is a top-level folder of that name. The file's path inside directory (\"notes/today.md\"); no .. segments. directory (default \"data\") and encoding: \"utf8\" (the default) for text, \"base64\" for binary data. The contents, as text or base64. It rejects when the file does not exist.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/ReadFileOptions",
+      "kind": "interface",
+      "title": "ReadFileOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/ReadFileOptions",
+      "text": "ReadFileOptions interface ReadFileOptions Options for readFile.",
       "denextOnly": true
     },
     {
@@ -9937,6 +10135,33 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/scanBarcode",
+      "kind": "function",
+      "title": "scanBarcode",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/scanBarcode",
+      "text": "scanBarcode scanBarcode(options?: ScanBarcodeOptions): Promise<ScannedBarcode | null> Scan one barcode or QR code with the camera. - Inside the native shell with @capacitor/barcode-scanner installed (denext mobile add barcode, which also writes the camera usage string), the plugin's full-screen scanner. - Otherwise, where the browser has BarcodeDetector and a camera, a full-screen camera view with a Cancel button; the camera stream is stopped however the scan ends. Elsewhere it rejects with code unsupported. A cancelled scan resolves null rather than rejecting. formats to look for (default all). The value and format read, or null when the user cancelled. It rejects with a BarcodeScanError (unsupported, denied) or the platform's own error.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/ScanBarcodeOptions",
+      "kind": "interface",
+      "title": "ScanBarcodeOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/ScanBarcodeOptions",
+      "text": "ScanBarcodeOptions interface ScanBarcodeOptions Options for scanBarcode.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/ScannedBarcode",
+      "kind": "interface",
+      "title": "ScannedBarcode",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/ScannedBarcode",
+      "text": "ScannedBarcode interface ScannedBarcode What scanBarcode read.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/secureStore-var",
       "kind": "variable",
       "title": "secureStore",
@@ -9952,6 +10177,15 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/SecureStore-iface",
       "text": "SecureStore interface SecureStore The store secureStore implements.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/setQuickActions",
+      "kind": "function",
+      "title": "setQuickActions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/setQuickActions",
+      "text": "setQuickActions setQuickActions(actions: typeOperator): Promise<void> Replace the app's home-screen quick actions (long-press on the icon). Inside the native shell with @capawesome/capacitor-app-shortcuts installed (denext mobile add quick-actions), the iOS Home Screen quick actions / Android app shortcuts; an empty list removes them all. Outside the shell it does nothing. iOS shows at most four; Android's launcher shows about four. The actions, in display order. A promise that settles once the OS has them. It rejects with a TypeError for an action without an id or title (before anything changes).",
       "denextOnly": true
     },
     {
@@ -10063,12 +10297,39 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/useQuickAction",
+      "kind": "function",
+      "title": "useQuickAction",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useQuickAction",
+      "text": "useQuickAction useQuickAction(callback: (id: string) => void): void Hook form of onQuickAction: subscribes on mount, unsubscribes on unmount, and always calls the latest callback. Called with the chosen action's id.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/writeClipboard",
       "kind": "function",
       "title": "writeClipboard",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/writeClipboard",
       "text": "writeClipboard writeClipboard(text: string): Promise<void> Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.writeText(). The text to copy. A promise that settles once the text is on the clipboard. It rejects where there is no clipboard (an insecure context, SSR) or when the platform refuses.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/writeFile",
+      "kind": "function",
+      "title": "writeFile",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/writeFile",
+      "text": "writeFile writeFile(path: string, data: string, options?: WriteFileOptions): Promise<void> Write a file, replacing it when it exists. - Inside the native shell with @capacitor/filesystem installed (denext mobile add filesystem), the app's own files on the device. - Otherwise the browser's Origin Private File System, where directory is a top-level folder of that name. The file's path inside directory; no .. segments. The contents: text, or base64 with encoding: \"base64\". directory (default \"data\"), recursive (create missing parent folders; default false) and encoding (\"utf8\", the default, or \"base64\"). A promise that settles once the file is written. It rejects when a parent folder is missing without recursive, or when there is no filesystem (SSR, an insecure context).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/WriteFileOptions",
+      "kind": "interface",
+      "title": "WriteFileOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/WriteFileOptions",
+      "text": "WriteFileOptions interface WriteFileOptions Options for writeFile.",
       "denextOnly": true
     },
     {
