@@ -84,3 +84,27 @@ Deno.test("writeManagedFile skips an unchanged file and records its writes", asy
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("isSelfWrite covers denext's own write while it is still in progress", async () => {
+  // A write truncates the file before the bytes land, and Linux inotify reports the truncate
+  // as its own `modify`. A watcher handling that event mid-write reads an empty or partial
+  // file, which denext never recorded. It must still count as denext's own write.
+  const dir = await Deno.makeTempDir();
+  try {
+    const file = join(dir, "big.json");
+    await writeManagedFile(file, "seed");
+    const content = "x".repeat(16 * 1024 * 1024);
+    let done = false;
+    const write = writeManagedFile(file, content).finally(() => done = true);
+    while (!done) {
+      assertEquals(isSelfWrite(file), true, "an in-progress self-write was taken for an edit");
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    assertEquals(await write, true);
+    assertEquals(isSelfWrite(file), true, "the finished write still holds recorded content");
+    await Deno.writeTextFile(file, "user edit");
+    assertEquals(isSelfWrite(file), false, "an edit after the write finished is an edit");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
