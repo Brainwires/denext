@@ -231,9 +231,11 @@ Native compatibility layer (`reactNative` mode, `denext/expo/*`, `migrate --from
 `showContextMenu`, the React Native surface-parity gate, and for Deno Desktop the OAuth
 loopback sheet and a signed UI self-updater. Still open:
 
-- **Android "native feel"** — nothing Android has run on a device or an emulator yet
-  (every Android half is compiled and unit-tested only). Next step: an emulator comparison
-  of the same screens, then a real device, before claiming parity either way.
+- **Android "native feel"** — the emulator comparison has run (2026-09-25, see
+  REACT-NATIVE-EXPO.md gap 5). Against the RN app, T3's Capacitor build starts in under half the
+  time and uses less memory, but misses vsync on 67–70% of fling frames against 25–28% for RN.
+  Next step: a real device. If the scroll gap holds there, profile the WebView list. The Android
+  capability halves are still built and unit-tested only.
 - **Desktop dev-server attach** — tracked under "Dev server attach" below.
 
 ## Candidate features (from the framework-gap survey)

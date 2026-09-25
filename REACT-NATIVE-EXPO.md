@@ -22,8 +22,8 @@ out of scope and Capacitor/WebView stays the mobile story. Open items are tracke
 - **Built:** unit-tested and compiled (iOS `xcodebuild` and Android Gradle), not run on a
   device.
 
-**Android has not been run on a device or an emulator yet.** Every Android claim in this file
-is "built".
+**Android has run on an emulator only (the T3 comparison in gap 5), not on a device.** Every
+Android capability claim in this file is "built".
 
 ## Real gaps (denext work)
 
@@ -85,14 +85,37 @@ is "built".
    push, and every Android half (Android widgets are static). T3's own widget and Live Activity
    layouts are app work: the generated SwiftUI views are templates to edit.
 
-5. **Native feel on Android. Open.** React Native brings `react-native-screens`,
-   `gesture-handler`, `reanimated`, native menus (`@react-native-menu/menu`), blur/glass
-   (`expo-blur`, `expo-glass-effect`) and SF Symbols (`expo-symbols`). A WebView approximates
-   these with CSS, View Transitions, `useBackSwipe` and `showContextMenu`. iOS WKWebView holds
-   up well. On Android there is no measurement yet: the only numbers so far came from a
-   software-rendered emulator on a build host without a GPU, which are not representative.
-   **Next step:** an Android emulator comparison of the same screens, then a real device. No
-   parity claim either way until then.
+5. **Native feel on Android. Open: measured on an emulator, scrolling is behind.** React Native
+   brings `react-native-screens`, `gesture-handler`, `reanimated`, native menus
+   (`@react-native-menu/menu`), blur/glass (`expo-blur`, `expo-glass-effect`) and SF Symbols
+   (`expo-symbols`). A WebView approximates these with CSS, View Transitions, `useBackSwipe` and
+   `showContextMenu`. iOS WKWebView holds up well.
+
+   **Android emulator comparison (2026-09-25).** T3's Capacitor release APK (19.1 MB) against its
+   RN/Expo release APK (96.3 MB), both opening the same 200-message thread. The emulator was API 35
+   `google_apis` x86_64, a Pixel 6 profile, `-gpu host` on a 2017 Intel Mac, with the image's built-in
+   WebView 124. Two runs, each with 5 interleaved cold starts and 10 flings per app:
+
+   |                                                      |        Capacitor |          RN/Expo |
+   | ---------------------------------------------------- | ---------------: | ---------------: |
+   | Cold start to first frame, median                    |      1.96–2.02 s |      4.38–4.87 s |
+   | PSS after launch (Capacitor: app + WebView renderer) |       221–229 MB |       247–248 MB |
+   | PSS after scrolling                                  |       267–274 MB |       303–328 MB |
+   | SurfaceFlinger frames missing vsync while flinging   |           67–70% |           25–28% |
+   | SurfaceFlinger frame time p50 / p95                  | 31–33 / 52–63 ms | 19–20 / 35–37 ms |
+
+   Only the comparison between the two apps means anything. On a real phone both apps would be
+   much faster, and the phone would have a newer WebView than this image's version 124. Cold start
+   ends at the first frame, which is the splash screen in both apps, not content. Neither measure
+   captures checkerboarding.
+
+   **Read:** Capacitor starts in less than half the time and uses less memory, but **scrolls a long
+   list clearly worse than RN on Android**: it misses vsync on more than twice as many frames.
+   That is the gap. It is real but not settled: the emulator composites on a weak host GPU, which
+   costs a WebView more than native views.
+   **Next:** a real Android device, which the user does not have yet. A device farm is an option.
+   Then, if the scroll gap holds, profile T3's virtualized list in Chrome's WebView (layer count,
+   `content-visibility`). No parity claim for Android scrolling until a device run.
 
 ## Covered by official Capacitor plugins (wrapped)
 
@@ -364,6 +387,6 @@ is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `ex
 3. ~~The compatibility layer: the measured spike, the `react-native` resolve mode, the
    `denext/expo/*` shims, and `migrate --from expo`.~~ Shipped (2.10.0-rc.2–rc.3). Left: the
    app's own stubs for non-Expo native modules (see Integration above).
-4. **Android. Open.** Nothing Android has run on a device or an emulator yet. Next: an emulator
-   comparison (gap 5), which also exercises the Android halves of every capability above; then
-   a real device. No Android parity claim before that.
+4. **Android. Open.** The emulator comparison has run (gap 5): Capacitor starts faster and uses
+   less memory, and RN scrolls smoother. The Android halves of the capabilities are still built,
+   not run. Next: a real device. No Android parity claim before that.
