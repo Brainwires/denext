@@ -27,6 +27,7 @@
     "./client": "./src/client/mod.ts",
     "./devtools": "./src/devtools.ts",
     "./desktop": "./src/build/desktop.ts",
+    "./desktop/updater": "./src/desktop/updater.ts",
     "./live": "./src/live.ts",
     "./lazy": "./src/lazy.ts",
     "./class-runtime": "./src/class-runtime.ts",

@@ -8,7 +8,7 @@
  * @module
  */
 
-import { isNativeShell } from "./bridge.ts";
+import { isNativeShell, runtimePlatform } from "./bridge.ts";
 import { nativePlugin } from "./plugin.ts";
 
 /**
@@ -352,8 +352,14 @@ export async function openAuthSession(
   options: AuthSessionOptions,
 ): Promise<AuthSessionResult> {
   const target = checkUrl(url);
-  const scheme = checkScheme(options?.callbackScheme);
   const timeoutMs = checkTimeout(options?.timeoutMs);
+  // Deno Desktop: hand off to the loopback system-browser flow (it ignores callbackScheme, so
+  // this runs before checkScheme). Dynamic import keeps the desktop client out of web/mobile bundles.
+  if (runtimePlatform() === "desktop") {
+    return await (await import("../desktop/auth-session.ts"))
+      .startDesktopAuthSession(target, { timeoutMs });
+  }
+  const scheme = checkScheme(options?.callbackScheme);
   if (active) throw authSessionError("busy", "another auth session is still open");
   active = true;
   try {

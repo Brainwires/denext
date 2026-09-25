@@ -25,7 +25,9 @@ declare global {
   var __denext: { desktop?: boolean; token?: string } | undefined;
 }
 
-// TODO: switch to authSessionError exported from mobile/auth-session.ts once available.
+// A local copy of the mobile module's error factory — intentionally NOT imported from
+// mobile/auth-session.ts: that module dynamic-imports THIS one for the desktop dispatch, so
+// importing back would form an initialization cycle. The shape is identical (verified by a test).
 /** An {@linkcode AuthSessionError} — the identical shape the mobile module produces. */
 function authSessionError(code: AuthSessionErrorCode, message: string): AuthSessionError {
   const err = new Error(`openAuthSession: ${message}`) as Error & { code: AuthSessionErrorCode };
