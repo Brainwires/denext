@@ -60,9 +60,7 @@ import {
   runMobileDev,
 } from "../../build/mobile-dev.ts";
 import { pickLanAddress } from "../../build/dev-server/lan.ts";
-import { denoExecutable } from "../../build/bundle.ts";
-import { cliInvocation } from "../../ui/proc.ts";
-import { SHUTDOWN_SIGNALS } from "../shared.ts";
+import { startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
 
 /** Print `message` to stderr and exit 1. */
 function fail(message: string): never {
@@ -496,17 +494,6 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
   printAddReport(report);
 }
 
-/** Whether anything answers HTTP at `url` within a second. */
-async function answers(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(1000), redirect: "manual" });
-    await res.body?.cancel();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * The host `mobile dev` binds and the URL the device loads. `--lan` binds the LAN IPv4; else
  * `--host` (a wildcard bind is advertised by the LAN IPv4); else loopback, which only the iOS
@@ -531,47 +518,10 @@ function mobileDevTarget(ctx: CommandContext): { host: string; url: string } {
  * Start `denext dev` for the project on the target host and port (strict, so the URL is
  * known), or attach to a server already answering there. Polls until it answers.
  */
-async function startOrAttachDev(ctx: CommandContext): Promise<MobileDevServer> {
+function startOrAttachDev(ctx: CommandContext): Promise<MobileDevServer> {
   const { host, url } = mobileDevTarget(ctx);
-  const port = new URL(url).port;
-  if (await answers(url)) {
-    return { url, attached: true, finished: new Promise(() => {}), stop: () => Promise.resolve() };
-  }
   const project = resolve(ctx.global.cwd ?? ".", ctx.positionals[1] ?? ".");
-  const child = new Deno.Command(denoExecutable(), {
-    args: [...cliInvocation({ dir: project }), "dev", project, "--host", host, "--port", port],
-    cwd: project,
-    stdin: "null",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  let exited = false;
-  const finished = child.status.then(() => void (exited = true));
-  const stop = async () => {
-    try {
-      child.kill("SIGTERM");
-    } catch { /* already gone */ }
-    await child.status;
-  };
-  for (const deadline = Date.now() + 120_000; !(await answers(url));) {
-    if (exited || Date.now() > deadline) {
-      await stop();
-      throw new Error(`the dev server did not come up at ${url}`);
-    }
-    await new Promise((r) => setTimeout(r, 300));
-  }
-  return { url, attached: false, finished, stop };
-}
-
-/** Resolves on the first Ctrl-C / SIGTERM (and stops listening). */
-function waitForShutdownSignal(): Promise<void> {
-  return new Promise((done) => {
-    const handler = () => {
-      for (const signal of SHUTDOWN_SIGNALS) Deno.removeSignalListener(signal, handler);
-      done();
-    };
-    for (const signal of SHUTDOWN_SIGNALS) Deno.addSignalListener(signal, handler);
-  });
+  return startOrAttachDevServer(project, host, url);
 }
 
 /** `denext mobile dev [project]` (and `--restore`). */

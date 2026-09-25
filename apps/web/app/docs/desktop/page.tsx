@@ -82,6 +82,62 @@ await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`
         <code>denext migrate --desktop</code> writes that task for you.
       </Callout>
 
+      <h2 id="desktop-dev">Live reload (the Metro model)</h2>
+      <p>
+        During development the window can load straight from <code>denext dev</code>{" "}
+        instead of the bundled export, the way a React Native app attaches to Metro: every edit
+        hot-reloads in the native window. <code>denext desktop dev</code>{" "}
+        starts the dev server (or attaches to one already answering on the port) and opens the
+        window with its runtime in <strong>proxy mode</strong>: the window reverse-proxies{" "}
+        <em>everything</em> — HTTP <em>and</em>{" "}
+        the HMR WebSocket — over loopback to the dev server, so <code>location.origin</code>{" "}
+        stays loopback and neither the CSP nor the dev origin gate has to be relaxed.
+      </p>
+      <Code lang="bash">
+        {`denext desktop dev                 # start (or attach to) denext dev on :3000, open the window
+denext desktop dev --port 4000     # a different dev server port
+denext desktop dev --lan           # attach to a dev server elsewhere on your network`}
+      </Code>
+      <p>
+        The proxy path is a <strong>dev-only</strong> seam: <code>denext desktop dev</code> sets the
+        {" "}
+        <code>DENEXT_DESKTOP_DEV_URL</code>{" "}
+        environment variable on the window process, and that is the only switch that turns proxy
+        mode on. A <code>denext desktop run</code>{" "}
+        or a packaged build never sets it, so those windows serve the static export exactly as
+        before. Ctrl-C stops the window; a dev server that <code>desktop dev</code>{" "}
+        started is stopped too, and one it merely attached to is left running.
+      </p>
+      <Callout kind="note">
+        The target is <strong>loopback-only</strong> (<code>127.0.0.1</code> / <code>[::1]</code> /
+        {" "}
+        <code>localhost</code>) unless you pass <code>--lan</code>{" "}
+        — the desktop window and its dev server normally run on the same machine. Attaching to a dev
+        server elsewhere on the network (with <code>--lan</code>, or a non-loopback{" "}
+        <code>--host</code>) exposes the app and its source to anyone who can reach that address, so
+        use it only on a network you trust. The token-gated <code>/_denext/desktop/*</code>{" "}
+        endpoints (the OAuth loopback sheet and the updater boot beacon) are always served locally
+        and are never proxied to the dev server, and the per-launch desktop token is stripped from a
+        request before it is forwarded.
+      </Callout>
+      <Callout kind="note">
+        <strong>No extra permissions.</strong> <code>denext desktop dev</code>{" "}
+        needs network access to the loopback dev port only — exactly what a packaged build's baked
+        {" "}
+        <code>--allow-net=127.0.0.1,localhost</code>{" "}
+        already grants. Nothing is widened versus a release build: the same permission story covers
+        both dev and packaged windows, because the window talks only to the local dev server.
+      </Callout>
+      <Callout kind="note">
+        Because the HTML is served straight from the dev server in proxy mode, the desktop runtime
+        does not inject its <code>globalThis.__denext</code> marker, so{" "}
+        <code>runtimePlatform()</code> reports <code>"web"</code> during{" "}
+        <code>denext desktop dev</code>: desktop-only paths — the <code>openAuthSession</code>{" "}
+        loopback sheet and the OTA boot beacon — stay inert (they fall back to their web behaviour).
+        Use <code>denext desktop run</code>{" "}
+        or a packaged build to exercise those. Live-reloading the UI itself is unaffected.
+      </Callout>
+
       <h2>Building for one or more architectures (macOS)</h2>
       <p>
         macOS runs on Apple Silicon (<code>arm64</code>) and Intel (<code>
