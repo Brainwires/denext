@@ -12,7 +12,8 @@
 //
 //   • expo — driven by `src/expo/manifest.ts` (`EXPO_SHIMS`). For each shim, denext's
 //     `denext/expo/<name>` file (`src/expo/<name>.ts`) is diffed against the pinned
-//     `npm:<key>@<pinned>` real surface, minus the shim's own `omitted` list. The manifest
+//     `npm:<key>@<pinned>` real surface, minus the shim's own `omitted` list. A subpath key
+//     (`expo-file-system/legacy`) installs its package and resolves the subpath. The manifest
 //     and `src/expo/*` are built by a peer and may be absent — the harness SKIPS the expo
 //     target (green) until they land, so shims can be shipped incrementally.
 
@@ -58,7 +59,10 @@ export interface ExpoShim {
   readonly notes?: string;
 }
 
-/** The expo shim registry, keyed by npm package name (e.g. `"expo-haptics"`). */
+/**
+ * The expo shim registry, keyed by npm package name (e.g. `"expo-haptics"`), or by package
+ * plus subpath for a subpath's own shim (`"expo-file-system/legacy"`).
+ */
 export type ExpoShims = Readonly<Record<string, ExpoShim>>;
 
 /** `src/expo/manifest.ts`, repo-root-relative. Read-only — a peer owns this file. */
@@ -86,7 +90,24 @@ export function expoDenextFile(shim: ExpoShim): string {
   return `src/expo/${shim.module.replace(/^\.\//, "")}`;
 }
 
-/** Real-side targets for the expo shims: `<key>` ↔ `npm:<key>` (version pinned at install). */
+/**
+ * The npm package a manifest key belongs to: the key itself, or the part before a subpath
+ * (`expo-file-system/legacy` → `expo-file-system`).
+ */
+export function expoPackageOf(key: string): string {
+  const parts = key.split("/");
+  return key.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+/** The npm packages the expo shims stand in for (a subpath shim's package once). */
+export function expoPackages(shims: ExpoShims): string[] {
+  return [...new Set(Object.keys(shims).map(expoPackageOf))];
+}
+
+/**
+ * Real-side targets for the expo shims: `<key>` ↔ `npm:<key>` (version pinned at install); a
+ * subpath key is resolved through its package's `exports` map.
+ */
 export function expoRealTargets(shims: ExpoShims): RealTarget[] {
   return Object.keys(shims).map((key) => ({ specifier: key, real: key }));
 }
@@ -99,9 +120,11 @@ export function expoDenextTargets(shims: ExpoShims): DenextTarget[] {
   }));
 }
 
-/** `<key>@<pinned>` install specs for the real-side npm install. */
+/** `<package>@<pinned>` install specs for the real-side npm install. */
 export function expoInstallDeps(shims: ExpoShims): Record<string, string> {
-  return Object.fromEntries(Object.entries(shims).map(([key, s]) => [key, s.pinned]));
+  return Object.fromEntries(
+    Object.entries(shims).map(([key, s]) => [expoPackageOf(key), s.pinned]),
+  );
 }
 
 // ── committed fixture locations (all under scripts/parity/native, per the edit scope) ──

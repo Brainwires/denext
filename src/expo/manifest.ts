@@ -35,7 +35,11 @@ export interface ExpoShim {
   readonly notes?: string;
 }
 
-/** Every `expo-*` package React Native mode aliases, by package name. */
+/**
+ * Every `expo-*` package React Native mode aliases, by package name. A key with a subpath
+ * (`expo-file-system/legacy`) is a shim for that subpath of the package; its entrypoint is
+ * the package's shim name plus the subpath (`denext/expo/file-system/legacy`).
+ */
 export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   "expo": {
     module: "./expo.ts",
@@ -173,11 +177,26 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "the Capacitor bridge and OPFS are not, so sync calls act on an index kept in " +
       "localStorage and reach the files in order in the background; async readers wait for " +
       "them, and the *Sync readers answer only for files written or read this session. Not " +
-      "provided: open()/file handles, streams, watch(), upload/download tasks, pickers " +
-      "(File.pickFileAsync, Directory.pickDirectoryAsync) and the legacy API " +
-      "(expo-file-system/legacy, which resolves to the real package). The legacy top-level " +
-      "functions (readAsStringAsync, getInfoAsync, …) are deprecation stubs in SDK 57 and " +
-      "here alike: each warns and throws Expo's migration error.",
+      "provided: open()/file handles, streams, watch(), upload/download tasks and pickers " +
+      "(File.pickFileAsync, Directory.pickDirectoryAsync). The legacy top-level functions " +
+      "(readAsStringAsync, getInfoAsync, …) are deprecation stubs in SDK 57's root and here " +
+      "alike: each warns and throws Expo's migration error. The legacy API itself " +
+      "(expo-file-system/legacy) is its own shim, below.",
+  },
+  "expo-file-system/legacy": {
+    module: "./file-system-legacy.ts",
+    pinned: "57.0.6",
+    status: "partial",
+    notes: "The pre-SDK-54 promise API (documentDirectory, cacheDirectory, getInfoAsync, " +
+      "readAsStringAsync, writeAsStringAsync, deleteAsync, moveAsync, copyAsync, " +
+      "makeDirectoryAsync, readDirectoryAsync, downloadAsync, uploadAsync over fetch) over the same files as the " +
+      "object API. getInfoAsync never reports md5, missing parent folders are created on " +
+      "write, move/copy replace the destination, and the disk-space calls report the " +
+      "origin's storage quota (navigator.storage.estimate()). Native-only exports are " +
+      "stand-ins that throw or reject naming denext: createDownloadResumable, " +
+      "DownloadResumable, createUploadTask, UploadTask, getContentUriAsync and " +
+      "the StorageAccessFramework calls (its readAsStringAsync/writeAsStringAsync/" +
+      "deleteAsync/moveAsync/copyAsync aliases work).",
   },
   "expo-font": {
     module: "./font.ts",

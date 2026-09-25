@@ -18,6 +18,7 @@ import { countSurfaceSymbols } from "./shared.ts";
 import {
   expoBaselinePath,
   expoInstallDeps,
+  expoPackages,
   expoRealTargets,
   loadExpoShims,
   REACT_NATIVE_EXPECTED_PACKAGES,
@@ -69,7 +70,7 @@ async function refreshExpo(): Promise<void> {
   console.error(
     `installing expo shims: ${Object.entries(deps).map(([k, v]) => `${k}@${v}`).join(", ")} …`,
   );
-  const captured = await captureReal(deps, expoRealTargets(shims), Object.keys(shims));
+  const captured = await captureReal(deps, expoRealTargets(shims), expoPackages(shims));
   const baseline: Baseline = {
     versions: captured.versions,
     capturedAt: new Date().toISOString(),

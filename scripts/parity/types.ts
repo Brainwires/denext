@@ -41,6 +41,15 @@ export interface SurfaceSymbol {
   members?: string[];
 }
 
+/**
+ * Whether a member name is TypeScript-internal: a symbol-keyed member (`[Symbol.iterator]`)
+ * is named `__@iterator@585`, with a checker-specific id. It is not an API name, and the id
+ * changes between TypeScript runs, so it is never extracted nor compared.
+ */
+export function isInternalName(name: string): boolean {
+  return name.startsWith("__@");
+}
+
 /** The full surface of one specifier. */
 export interface Surface {
   specifier: string;

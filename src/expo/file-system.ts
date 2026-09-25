@@ -15,9 +15,10 @@
  *
  * The index only knows files written through this shim. `Paths.document` is
  * `file:///documents/` and `Paths.cache` is `file:///cache/`; any other URI (a picker's
- * `blob:` URL, `http(s):`) can be read, not written. The legacy API
- * (`expo-file-system/legacy`), file handles, streams, watchers and upload/download tasks are
- * not provided (see the manifest).
+ * `blob:` URL, `http(s):`) can be read, not written. File handles, streams, watchers and
+ * upload/download tasks are not provided (see the manifest). The legacy API
+ * (`expo-file-system/legacy`) is its own shim, `denext/expo/file-system/legacy`, over the
+ * same files.
  *
  * @example
  * ```ts
@@ -33,10 +34,11 @@
  * @module
  */
 
-import { base64ToBytes, bytesToBase64 } from "../mobile/base64.ts";
+import { bytesToBase64 } from "../mobile/base64.ts";
 import {
   appendBytes,
   backing,
+  baseName,
   cached,
   children,
   copy,
@@ -47,6 +49,7 @@ import {
   readBytes,
   remove,
   stat,
+  toBytes,
   writeBytes,
 } from "./internal/fs.ts";
 
@@ -179,21 +182,9 @@ function joinUris(parts: readonly PathPart[]): string {
   return uri;
 }
 
-/** The last path segment of `uri`. */
-function baseName(uri: string): string {
-  const trimmed = uri.replace(/\/+$/, "");
-  return trimmed.slice(trimmed.lastIndexOf("/") + 1);
-}
-
 /** Refuse to replace `uri` unless `overwrite`. */
 function checkFree(uri: string, overwrite: boolean | undefined, what: string): void {
   if (stat(uri) && !overwrite) throw new Error(`${what} ${uri} already exists`);
-}
-
-/** `content` as bytes, decoding base64 when asked. */
-function toBytes(content: string | Uint8Array, encoding?: string): Uint8Array {
-  if (typeof content !== "string") return content;
-  return encoding === "base64" ? base64ToBytes(content) : new TextEncoder().encode(content);
 }
 
 /** The destination URI for relocating `source` into (or onto) `destination`. */

@@ -49,6 +49,7 @@ import {
 import { createVideoPlayer, useVideoPlayer, VideoPlayer } from "../src/expo/video.ts";
 import { ImageNativeModule } from "../src/expo/image.ts";
 import * as FileSystem from "../src/expo/file-system.ts";
+import * as Legacy from "../src/expo/file-system-legacy.ts";
 import { deepEqual } from "../src/expo/sqlite.ts";
 import { FlipType, manipulateAsync, SaveFormat } from "../src/expo/image-manipulator.ts";
 import { resetFileSystemForTesting, settled } from "../src/expo/internal/fs.ts";
@@ -501,6 +502,237 @@ Deno.test("expo-file-system: sync writes reach the plugin in order; the index su
     assertThrows(() => again.create(), Error, "parent folder");
   }, { localStorage: memoryStorage() });
   resetFileSystemForTesting();
+});
+
+// ---- file-system/legacy ----------------------------------------------------
+
+/** The legacy API end to end: folders, text + base64, info, copy/move/delete, a reload. */
+async function legacyScenario(persisted: () => string[]): Promise<void> {
+  const doc = Legacy.documentDirectory!;
+  const a = doc + "notes/a.txt";
+  const b = doc + "notes/b.bin";
+  assertEquals(await Legacy.getInfoAsync(a), { exists: false, uri: a, isDirectory: false });
+  await assertRejects(() => Legacy.makeDirectoryAsync(doc + "notes/deep"), Error, "parent");
+  await Legacy.makeDirectoryAsync(doc + "notes/deep", { intermediates: true });
+  await Legacy.makeDirectoryAsync(doc + "notes/deep/", { intermediates: true });
+  await assertRejects(() => Legacy.makeDirectoryAsync(doc + "notes/deep"), Error, "exists");
+
+  await Legacy.writeAsStringAsync(a, "héllo");
+  await Legacy.writeAsStringAsync(a, "!", { append: true });
+  assertEquals(await Legacy.readAsStringAsync(a), "héllo!");
+  await Legacy.writeAsStringAsync(b, "AAEC/w==", { encoding: Legacy.EncodingType.Base64 });
+  assertEquals(await Legacy.readAsStringAsync(b, { encoding: "base64" }), "AAEC/w==");
+  assertEquals(
+    await Legacy.readAsStringAsync(b, { encoding: "base64", position: 1, length: 2 }),
+    "AQI=",
+  );
+  const info = await Legacy.getInfoAsync(a, { md5: true });
+  assert(info.exists && info.modificationTime > 0 && info.modificationTime < Date.now());
+  assertEquals([info.size, info.isDirectory, "md5" in info], [7, false, false]);
+  const dirInfo = await Legacy.getInfoAsync(doc + "notes");
+  assertEquals([dirInfo.exists, dirInfo.isDirectory, dirInfo.exists && dirInfo.size], [
+    true,
+    true,
+    11,
+  ]);
+  assertEquals((await Legacy.readDirectoryAsync(doc + "notes")).sort(), [
+    "a.txt",
+    "b.bin",
+    "deep",
+  ]);
+  await assertRejects(() => Legacy.readDirectoryAsync(doc + "none"), Error, "could not be found");
+
+  await Legacy.copyAsync({ from: a, to: doc + "notes/deep/c.txt" });
+  assertEquals(await Legacy.readAsStringAsync(doc + "notes/deep/c.txt"), "héllo!");
+  await Legacy.moveAsync({ from: b, to: doc + "moved.bin" });
+  assertEquals((await Legacy.getInfoAsync(b)).exists, false);
+  assertEquals(
+    await Legacy.readAsStringAsync(doc + "moved.bin", { encoding: "base64" }),
+    "AAEC/w==",
+  );
+  await Legacy.moveAsync({ from: doc + "notes/deep", to: doc + "archive" });
+  assertEquals(await Legacy.readDirectoryAsync(doc + "archive"), ["c.txt"]);
+  await assertRejects(() => Legacy.moveAsync({ from: b, to: a }), Error, "could not be found");
+
+  await Legacy.deleteAsync(doc + "notes");
+  assertEquals((await Legacy.getInfoAsync(a)).exists, false);
+  await assertRejects(() => Legacy.deleteAsync(a), Error, "could not be found");
+  await Legacy.deleteAsync(a, { idempotent: true });
+  assertEquals(persisted().sort(), ["documents/archive/c.txt", "documents/moved.bin"]);
+
+  resetFileSystemForTesting(); // a reload: the bytes come back from the real files
+  assertEquals(await Legacy.readAsStringAsync(doc + "archive/c.txt"), "héllo!");
+}
+
+/** A fake OPFS over a path → bytes map (`documents/a.txt`). */
+function pathOpfs(files: Map<string, Uint8Array>, extra: Record<string, unknown> = {}) {
+  const dirAt = (prefix: string): Any => ({
+    getDirectoryHandle: (name: string) => Promise.resolve(dirAt(`${prefix}${name}/`)),
+    getFileHandle: (name: string, opts?: { create?: boolean }) => {
+      const path = prefix + name;
+      if (!files.has(path) && !opts?.create) {
+        return Promise.reject(new DOMException(path, "NotFoundError"));
+      }
+      return Promise.resolve({
+        getFile: () =>
+          Promise.resolve(
+            new Blob([(files.get(path) ?? new Uint8Array()) as Uint8Array<ArrayBuffer>]),
+          ),
+        createWritable: () =>
+          Promise.resolve({
+            write: (chunk: string | Uint8Array) =>
+              void files.set(
+                path,
+                typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk,
+              ),
+            close: () => Promise.resolve(),
+          }),
+      });
+    },
+    removeEntry: (name: string) => Promise.resolve(void files.delete(prefix + name)),
+  });
+  return { storage: { getDirectory: () => Promise.resolve(dirAt("")), ...extra } };
+}
+
+Deno.test("expo-file-system/legacy: the promise API over the Capacitor Filesystem plugin", async () => {
+  resetFileSystemForTesting();
+  const disk = new Map<string, string>();
+  const key = (o: Any) => `${o.directory}/${o.path}`;
+  const Filesystem = {
+    writeFile: (o: Any) => Promise.resolve(void disk.set(key(o), o.data)),
+    readFile: (o: Any) =>
+      disk.has(key(o))
+        ? Promise.resolve({ data: disk.get(key(o)) })
+        : Promise.reject(new Error("nope")),
+    deleteFile: (o: Any) => Promise.resolve(void disk.delete(key(o))),
+  };
+  await inShell({ Filesystem }, async () => {
+    await legacyScenario(() => [...disk.keys()].map((k) => k.replace("DOCUMENTS/", "documents/")));
+    assertEquals(disk.get("DOCUMENTS/moved.bin"), "AAEC/w==");
+  }, { localStorage: memoryStorage() });
+  resetFileSystemForTesting();
+});
+
+Deno.test("expo-file-system/legacy: the promise API over OPFS on the web; downloads and quota", async () => {
+  resetFileSystemForTesting();
+  const files = new Map<string, Uint8Array>();
+  const estimate = () => Promise.resolve({ quota: 1000, usage: 250 });
+  const fetch = (url: string) =>
+    Promise.resolve(
+      url.endsWith("404")
+        ? new Response("gone", { status: 404 })
+        : new Response("PDF", { headers: { "content-type": "application/pdf" } }),
+    );
+  await withGlobals({
+    navigator: pathOpfs(files, { estimate }),
+    localStorage: memoryStorage(),
+    fetch,
+  }, async () => {
+    await legacyScenario(() => [...files.keys()]);
+    const target = Legacy.cacheDirectory + "dl/m.pdf";
+    assertEquals(await Legacy.downloadAsync("https://x.test/m.pdf", target), {
+      uri: target,
+      status: 200,
+      headers: { "content-type": "application/pdf" },
+      mimeType: "application/pdf",
+    });
+    assertEquals(await Legacy.readAsStringAsync(target), "PDF");
+    assertEquals(new TextDecoder().decode(files.get("cache/dl/m.pdf")), "PDF");
+    assertEquals((await Legacy.downloadAsync("https://x.test/404", target)).status, 404);
+    await assertRejects(
+      () => Legacy.downloadAsync("https://x.test/m.pdf", "https://elsewhere/m.pdf"),
+      Error,
+      "cannot write",
+    );
+    // A picker's blob:/http URL is readable and copies into the app's files.
+    await Legacy.copyAsync({
+      from: "https://x.test/m.pdf",
+      to: Legacy.documentDirectory + "c.pdf",
+    });
+    assertEquals(await Legacy.readAsStringAsync(Legacy.documentDirectory + "c.pdf"), "PDF");
+    assertEquals((await Legacy.getInfoAsync("https://x.test/m.pdf")).exists, true);
+    assertEquals([
+      await Legacy.getFreeDiskStorageAsync(),
+      await Legacy.getTotalDiskCapacityAsync(),
+    ], [750, 1000]);
+  });
+  await withGlobals({ navigator: {} }, async () => {
+    await assertRejects(
+      () => Legacy.getFreeDiskStorageAsync(),
+      Error,
+      "getFreeDiskStorageAsync is not available in denext",
+    );
+  });
+  resetFileSystemForTesting();
+});
+
+Deno.test("expo-file-system/legacy: uploadAsync sends the bytes or a multipart form", async () => {
+  resetFileSystemForTesting();
+  const files = new Map<string, Uint8Array>();
+  const sent: Array<{ url: string; init: RequestInit }> = [];
+  const fetch = (url: string, init: RequestInit) => {
+    sent.push({ url, init });
+    return Promise.resolve(
+      new Response("stored", { status: 201, headers: { "content-type": "text/plain" } }),
+    );
+  };
+  await withGlobals(
+    { navigator: pathOpfs(files), localStorage: memoryStorage(), fetch },
+    async () => {
+      const file = Legacy.documentDirectory + "photo.png";
+      await Legacy.writeAsStringAsync(file, "PNG");
+      assertEquals(await Legacy.uploadAsync("https://x.test/raw", file, { headers: { a: "1" } }), {
+        status: 201,
+        headers: { "content-type": "text/plain" },
+        mimeType: "text/plain",
+        body: "stored",
+      });
+      assertEquals(sent[0].init.method, "POST");
+      assertEquals(sent[0].init.headers, { a: "1" });
+      assertEquals(new TextDecoder().decode(sent[0].init.body as Uint8Array), "PNG");
+
+      await Legacy.uploadAsync("https://x.test/form", file, {
+        uploadType: Legacy.FileSystemUploadType.MULTIPART,
+        httpMethod: "PUT",
+        fieldName: "avatar",
+        parameters: { user: "7" },
+      });
+      const form = sent[1].init.body as FormData;
+      assertEquals(sent[1].init.method, "PUT");
+      assertEquals(form.get("user"), "7");
+      const part = form.get("avatar") as globalThis.File;
+      assertEquals([part.name, part.type, await part.text()], ["photo.png", "image/png", "PNG"]);
+      await assertRejects(() =>
+        Legacy.uploadAsync("https://x.test/raw", Legacy.documentDirectory + "none")
+      );
+    },
+  );
+  resetFileSystemForTesting();
+});
+
+Deno.test("expo-file-system/legacy: native-only exports throw or reject naming denext", async () => {
+  assertEquals(Legacy.documentDirectory, "file:///documents/");
+  assertEquals(Legacy.cacheDirectory, "file:///cache/");
+  assertEquals(Legacy.EncodingType, FileSystem.EncodingType);
+  assertThrows(
+    () => Legacy.createDownloadResumable("https://x/f", "file:///documents/f"),
+    Error,
+    "createDownloadResumable is not available in denext",
+  );
+  assertThrows(
+    () => Legacy.createUploadTask("https://x/u", "file:///documents/f"),
+    Error,
+    "createUploadTask is not available in denext",
+  );
+  assertThrows(() => new Legacy.UploadTask("https://x/u", "f"), Error, "UploadTask is not");
+  assertThrows(() => new Legacy.DownloadResumable("https://x/u", "f"), Error, "DownloadResumable");
+  await assertRejects(() => Legacy.getContentUriAsync("f"), Error, "Android-only");
+  const SAF = Legacy.StorageAccessFramework;
+  assertThrows(() => SAF.getUriForDirectoryInRoot("x"), Error, "not available in denext");
+  await assertRejects(() => SAF.requestDirectoryPermissionsAsync(), Error, "Android-only");
+  await assertRejects(() => SAF.createFileAsync("p", "n", "text/plain"), Error, "Android-only");
+  assertEquals(SAF.readAsStringAsync, Legacy.readAsStringAsync);
+  await Legacy.deleteLegacyDocumentDirectoryAndroid();
 });
 
 // ---- pickers / camera ------------------------------------------------------

@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- **`denext/expo/file-system/legacy`: the `expo-file-system/legacy` API in React Native mode.**
+  An Expo app that imports `expo-file-system/legacy` now gets a shim instead of the real
+  (native-only) package: `documentDirectory` / `cacheDirectory`, `getInfoAsync`,
+  `readAsStringAsync` / `writeAsStringAsync` (UTF-8 or base64, append, byte ranges),
+  `deleteAsync` (`idempotent`), `moveAsync`, `copyAsync`, `makeDirectoryAsync`
+  (`intermediates`), `readDirectoryAsync`, `downloadAsync`, `uploadAsync` (binary or multipart, over `fetch`) and the disk-space calls (the
+  origin's storage quota), over the same files as the SDK 57 object API
+  (`@capacitor/filesystem` in the shell, OPFS on the web). Resumable downloads, upload tasks,
+  the Storage Access Framework and content URIs throw an error naming denext. A manifest key can now
+  be a package subpath (`EXPO_SHIMS["expo-file-system/legacy"]`).
 - **`showContextMenu(items, options)` in `denext/mobile`.** Opens a context menu and resolves
   with the chosen item's `id` (or `null`): an app-registered `DenextContextMenu` Capacitor
   plugin when there is one (denext ships none), else an accessible in-page popover that lists

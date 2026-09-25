@@ -14,7 +14,7 @@
 // deno-lint-ignore no-import-prefix
 import ts from "npm:typescript@5";
 import { CATALOG, REAL_PACKAGES } from "./spec.ts";
-import type { CallSig, Surface, SurfaceSymbol } from "./types.ts";
+import { type CallSig, isInternalName, type Surface, type SurfaceSymbol } from "./types.ts";
 
 /** Minimal entry shape the real-side extractor needs: the public specifier + npm import. */
 export interface RealTarget {
@@ -89,8 +89,29 @@ function kindOf(flags: number, callable: boolean): SurfaceSymbol["kind"] {
  */
 function membersOf(type: ts.Type, callable: boolean): string[] | undefined {
   if (callable) return undefined;
-  const props = type.getProperties();
-  return props.length ? props.map((p) => p.getName()).sort() : undefined;
+  const names = type.getProperties().map((p) => p.getName()).filter((n) => !isInternalName(n));
+  return names.length ? names.sort() : undefined;
+}
+
+/** Whether an export alias is type-only: `export type { X } from …` or `export { type X }`. */
+function isTypeOnlyAlias(sym: ts.Symbol): boolean {
+  return (sym.declarations ?? []).some((d) =>
+    ts.isExportSpecifier(d) && (d.isTypeOnly || d.parent.parent.isTypeOnly)
+  );
+}
+
+/**
+ * The flags that classify an export, and whether it is type-only. A re-export
+ * (`export { X } from …`) is an alias whose own flags say nothing about what it names, so it
+ * takes its target's.
+ */
+function exportFlags(
+  checker: ts.TypeChecker,
+  sym: ts.Symbol,
+): { flags: number; typeOnly: boolean } {
+  const flags = sym.getFlags();
+  if (!(flags & ts.SymbolFlags.Alias)) return { flags, typeOnly: false };
+  return { flags: checker.getAliasedSymbol(sym).getFlags(), typeOnly: isTypeOnlyAlias(sym) };
 }
 
 /** The first call signature's type-parameter count; undefined for a non-callable. */
@@ -101,18 +122,20 @@ function typeParamCountOf(cs: readonly ts.Signature[]): number | undefined {
 
 /** Normalize one exported member symbol. */
 function normalize(checker: ts.TypeChecker, sym: ts.Symbol): SurfaceSymbol {
-  const flags = sym.getFlags();
+  const { flags, typeOnly } = exportFlags(checker, sym);
+  // A type-only export is not importable at runtime: its value side (calls, members) is moot.
+  const isValue = !typeOnly && !!(flags & ts.SymbolFlags.Value);
   const type = checker.getTypeOfSymbol(sym);
-  const cs = type.getCallSignatures();
+  const cs = isValue ? type.getCallSignatures() : [];
   const callable = cs.length > 0;
   return {
     name: sym.getName(),
     kind: kindOf(flags, callable),
-    isValue: !!(flags & (ts.SymbolFlags.Value | ts.SymbolFlags.Alias)),
-    isType: TYPE_FLAGS.some((f) => flags & f),
+    isValue,
+    isType: typeOnly || TYPE_FLAGS.some((f) => flags & f),
     callSignatures: callable ? cs.map(callSig) : undefined,
     typeParamCount: typeParamCountOf(cs),
-    members: membersOf(type, callable),
+    members: isValue ? membersOf(type, callable) : undefined,
   };
 }
 

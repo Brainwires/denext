@@ -151,6 +151,53 @@ function normalize(sym: Json, byName: Map<string, Json>): SurfaceSymbol {
   return { name: sym.name, kind, ...shape(sym, decls, dec.def ?? {}, byName) };
 }
 
+/**
+ * The names a module exports type-only: every name of an `export type { … }` statement and each
+ * `type`-marked name of an `export { type X, … }` one (the exported name: `X as Y` → `Y`).
+ * `deno doc` documents such a re-export as the declaration it names (a class, a function), so
+ * without this a type-only export would pass for a runtime value.
+ *
+ * @param source The module's source text.
+ */
+export function typeOnlyExports(source: string): Set<string> {
+  // Local names bound only as types: `import type { X }` / `import { type X }`.
+  const importedTypes = new Set<string>();
+  for (const spec of typedSpecifiers(source, /\bimport\s+(type\s+)?\{([^}]*)\}\s*from/g)) {
+    if (spec.typed) importedTypes.add(spec.exported);
+  }
+  const names = new Set<string>();
+  for (const spec of typedSpecifiers(source, /\bexport\s+(type\s+)?\{([^}]*)\}/g)) {
+    if (spec.typed || importedTypes.has(spec.local)) names.add(spec.exported);
+  }
+  return names;
+}
+
+/**
+ * Every specifier of the `{ … }` clauses `clause` matches, with its local and outward names
+ * and whether a `type` keyword (on the clause or the specifier) makes it type-only.
+ */
+function typedSpecifiers(
+  source: string,
+  clause: RegExp,
+): Array<{ local: string; exported: string; typed: boolean }> {
+  const specs: Array<{ local: string; exported: string; typed: boolean }> = [];
+  for (const [, whole, list] of source.matchAll(clause)) {
+    for (const raw of list.split(",")) {
+      const spec = raw.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "").trim();
+      if (!spec) continue;
+      const [local, exported = local] = spec.replace(/^type\s+/, "").split(/\s+as\s+/)
+        .map((part) => part.trim());
+      if (exported) specs.push({ local, exported, typed: Boolean(whole) || /^type\s/.test(spec) });
+    }
+  }
+  return specs;
+}
+
+/** `sym` as a type-only export: no runtime value, so no calls or members to compare. */
+function asTypeOnly(sym: SurfaceSymbol): SurfaceSymbol {
+  return { name: sym.name, kind: sym.kind, isValue: false, isType: true };
+}
+
 /** A public, non-default, non-dunder export. */
 function isPublicSymbol(s: Json): boolean {
   const dec = s.declarations?.[0];
@@ -205,13 +252,16 @@ export async function extractDenextSurfacesFor(
       }
     }
     const syms = await docFor(`${root}/${rel}`);
+    const typeOnly = typeOnlyExports(await Deno.readTextFile(`${root}/${rel}`));
     const byName = new Map<string, Json>();
     for (const s of syms) {
       if (!byName.has(s.name)) byName.set(s.name, s);
     }
     const out: Record<string, SurfaceSymbol> = {};
     for (const s of syms) {
-      if (isPublicSymbol(s) && !out[s.name]) out[s.name] = normalize(s, byName);
+      if (!isPublicSymbol(s) || out[s.name]) continue;
+      const sym = normalize(s, byName);
+      out[s.name] = typeOnly.has(s.name) ? asTypeOnly(sym) : sym;
     }
     cache.set(rel, out);
     return out;

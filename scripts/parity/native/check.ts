@@ -1,22 +1,28 @@
-// The native signature-parity GATE: denext's react-native / expo compat surface must not
-// deviate from the real react-native-web / expo-* surface, beyond the intentional waivers
-// (`waivers.ts`) and the tracked known-gaps ledger (`baselines/known-gaps.json`).
+// The native signature-parity GATE (`deno task parity:native`): denext's React Native and Expo
+// compat surface against the pinned real packages, failing only on a deviation that is neither
+// an intentional waiver (`waivers.ts`) nor in the known-gaps ledger (`baselines/known-gaps.json`).
 //
 //   deno task parity:native                    # both targets
 //   deno task parity:native -- react-native    # react-native target only
 //   deno task parity:native -- expo            # expo target only
-//   deno task parity:native -- --offline       # skip the react-native LIVE install
+//   deno task parity:native -- --offline       # skip the react-native runtime import
 //
-// BASELINE-GATED: like the React gate, it fails only on a NEW deviation — one that is
-// neither waived nor already in the ledger — so expo shims can land incrementally.
+// Two targets:
 //
-//   • react-native diffs a LIVE `react-native-web` extraction (the alias target) against
-//     the committed baseline; needs npm/network (or `--offline` to skip it).
-//   • expo diffs each denext shim (`deno doc` over `src/expo/<name>.ts`, offline) against
-//     the frozen `expo-*` baseline minus the shim's `omitted` list. SKIPPED (green) when
-//     `src/expo/manifest.ts` is absent, so CI stays green until the peer's commit lands.
+//   • react-native — NAME-LEVEL. EXPECTED: the export names of the pinned `react-native`
+//     package's own `.d.ts`, frozen in `baselines/react-native.baseline.json`. ACTUAL: the
+//     RUNTIME export keys of the pinned `react-native-web` (what React Native mode aliases
+//     `react-native` to), imported live (`runtime.ts`; needs npm/network, or `--offline` to
+//     skip). A runtime value react-native declares that react-native-web does not export is
+//     an error; a missing type-only export is a warning. No signature diff: react-native-web
+//     ships no types.
+//   • expo — each `denext/expo/*` shim in `src/expo/manifest.ts` (`deno doc` over its source,
+//     offline) against its package's pinned `.d.ts` surface, frozen in
+//     `baselines/expo.baseline.json`, minus the shim's `omitted` list: names, value-ness,
+//     arity and object members. A shim whose pin differs from the captured version is skipped
+//     until `deno task parity:native:refresh -- expo` recaptures it.
 //
-// Exit code: 0 on pass/skip, 1 on any unexplained deviation.
+// Exit code: 0 on pass, 1 on any unexplained deviation.
 
 import { type Category, diffSurfaces, findingKey, formatReport } from "../diff.ts";
 import type { Baseline, Surface } from "../types.ts";
@@ -25,6 +31,7 @@ import { expoParitySetup, parseNativeArgs } from "./shared.ts";
 import { NATIVE_WAIVERS } from "./waivers.ts";
 import {
   expoBaselinePath,
+  expoPackageOf,
   type ExpoShims,
   knownGapsPath,
   loadExpoShims,
@@ -133,11 +140,11 @@ async function checkExpo(knownGaps: Set<string>): Promise<boolean> {
       );
       continue;
     }
-    if (baseline.versions[key] && baseline.versions[key] !== shim.pinned) {
+    const captured = baseline.versions[expoPackageOf(key)];
+    if (captured && captured !== shim.pinned) {
       console.log(
-        `expo ${key}: manifest pins ${shim.pinned} but baseline captured ${
-          baseline.versions[key]
-        }; run \`parity:native:refresh -- expo\`. Skipped.`,
+        `expo ${key}: manifest pins ${shim.pinned} but baseline captured ${captured}; ` +
+          "run `parity:native:refresh -- expo`. Skipped.",
       );
       continue;
     }
