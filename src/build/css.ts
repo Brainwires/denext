@@ -23,6 +23,7 @@ import {
   readFrameworkJson,
 } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
+import { writeManagedFile } from "./self-writes.ts";
 
 /** Result of transforming one CSS file. */
 export interface CssTransform {
@@ -229,9 +230,12 @@ async function stripCssShims(configPath: string): Promise<() => Promise<void>> {
   }
   cfg.imports = kept;
   // Written as plain JSON for the crawl window; the restore rewrites the ORIGINAL
-  // text verbatim, so any comments/formatting in a JSONC config are preserved.
-  await Deno.writeTextFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
-  return () => Deno.writeTextFile(configPath, original);
+  // text verbatim, so any comments/formatting in a JSONC config are preserved. Both writes
+  // are recorded as denext's own (and skipped when the file already holds that content), so
+  // the SPA dev watcher — which watches the project root when the entry lives there — does
+  // not take them for edits and rebuild in a loop.
+  await writeManagedFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
+  return async () => void await writeManagedFile(configPath, original);
 }
 
 /** The generated CSS assets for a set of source files. */
@@ -604,7 +608,7 @@ export async function restoreAppConfig(configPath: string, outDir: string): Prom
   const bak = appConfigBackupPath(outDir);
   const original = await Deno.readTextFile(bak).catch(() => null);
   if (original === null) return;
-  await Deno.writeTextFile(configPath, original);
+  await writeManagedFile(configPath, original); // no write when it already holds the original
   await Deno.remove(bak).catch(() => {});
 }
 

@@ -537,7 +537,8 @@ export interface AddCapabilitiesOptions {
   readonly force?: boolean;
 }
 
-const CAPACITOR_CONFIGS = [
+/** The Capacitor config file names, in the order the Capacitor CLI looks for them. */
+export const CAPACITOR_CONFIGS: readonly string[] = [
   "capacitor.config.ts",
   "capacitor.config.js",
   "capacitor.config.mjs",

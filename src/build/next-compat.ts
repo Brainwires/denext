@@ -22,6 +22,12 @@
 
 import { denoPlugins } from "@luca/esbuild-deno-loader";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
+import {
+  EXPO_RN_BRIDGE,
+  expoRuntimeEntries,
+  expoRuntimeFiles,
+  isExpoBridgeImport,
+} from "./expo-shims.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import * as esbuild from "esbuild";
@@ -52,6 +58,10 @@ import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
+/** The esbuild namespace of the empty stand-in for the expo shims' react-native-web bridge. */
+const EXPO_RN_FALLBACK_NS = "denext-expo-rn-fallback";
+/** Matches exactly {@link EXPO_RN_BRIDGE}. */
+const EXPO_RN_BRIDGE_FILTER = new RegExp(`^${EXPO_RN_BRIDGE}$`);
 
 /**
  * The react-family specifiers rewritten to denext, mapped to the prebuilt entry
@@ -172,6 +182,9 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // The Remix compat runtime (`denext/remix`) — prebuilt into the same graph so a
     // migrated Remix app's client components share the one denext instance.
     "remix": u("src/compat/remix/mod.ts"),
+    // The `denext/expo/*` shims (`expo-<name>`): React Native mode aliases `expo-*` to them,
+    // and their hooks must share the one denext instance, as `denext/mobile`'s do.
+    ...expoRuntimeEntries(u),
   };
 }
 
@@ -254,6 +267,7 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
       external: CODEC_EXTERNALS,
       define: classDefine(options.classComponents),
       plugins: [
+        expoBridgeExternalPlugin(),
         ...(await frameworkPatchPlugins(options.projectDir, rootUrl)),
         ...denoPlugins({ configPath: tmpConfig }),
       ],
@@ -262,6 +276,26 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
     await Deno.remove(tmpConfig).catch(() => {});
   }
   return outDir;
+}
+
+/**
+ * Keep the `denext/expo/*` shims' react-native-web bridge out of the prebuilt runtime: the
+ * import stays external as the bare {@link EXPO_RN_BRIDGE}, which the app build resolves
+ * (react-native-web in React Native mode, an empty module otherwise).
+ */
+function expoBridgeExternalPlugin(): esbuild.Plugin {
+  return {
+    name: "denext-expo-bridge-external",
+    setup(build) {
+      build.onResolve(
+        { filter: /react-native\.ts$/ },
+        (args) =>
+          isExpoBridgeImport(args.path, args.importer)
+            ? { path: EXPO_RN_BRIDGE, external: true }
+            : null,
+      );
+    },
+  };
 }
 
 /** The project's denext patch as an esbuild plugin (none when the project has no patch). */
@@ -524,6 +558,8 @@ const DENEXT_RUNTIME_FILES: Record<string, string> = {
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
   "denext/remix": "remix.js",
+  // The `denext/expo/*` shims (see expo-shims.ts).
+  ...expoRuntimeFiles(),
 };
 
 /**
@@ -594,6 +630,16 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         const file = DENEXT_RUNTIME_FILES[args.path];
         return file ? runtimeFile(file) : null;
       });
+      // The expo shims' react-native-web bridge, when React Native mode has not claimed it: an
+      // empty module, so the shims render plain DOM elements.
+      build.onResolve({ filter: EXPO_RN_BRIDGE_FILTER }, () => ({
+        path: EXPO_RN_BRIDGE,
+        namespace: EXPO_RN_FALLBACK_NS,
+      }));
+      build.onLoad({ filter: /.*/, namespace: EXPO_RN_FALLBACK_NS }, () => ({
+        contents: "export {};\n",
+        loader: "js",
+      }));
       build.onResolve({ filter: /.*/, namespace: DENEXT_NS }, resolveWithinRuntime);
       // Load prebuilt runtime files from disk as plain JS.
       build.onLoad({ filter: /.*/, namespace: DENEXT_NS }, async (args) => ({

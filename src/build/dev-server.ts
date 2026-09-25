@@ -18,6 +18,7 @@ import { createDevLoader } from "./dev-server/loaders.ts";
 import { getManifest } from "./dev-server/manifest.ts";
 import { createDevState, type DevServerOptions, type DevState } from "./dev-server/state.ts";
 import { watch } from "./dev-server/watch.ts";
+import { effectiveDevOrigins } from "./dev-server/lan.ts";
 
 export type { DevServerOptions } from "./dev-server/state.ts";
 export { DEV_RELOAD_SCRIPT } from "./dev-server/reload-script.ts";
@@ -26,9 +27,16 @@ export { devOriginAllowed, editorCommand } from "./dev-server/dev-endpoints.ts";
 /**
  * Publish the running dev server's address to `.denext/dev.json` so the MCP live tools
  * (and any localhost reader) can discover it and read /_denext/dev-state. Removed on drain.
+ *
+ * `origin` is the address a reader on THIS machine uses: a wildcard bind (`0.0.0.0`, `::`)
+ * listens on loopback too, so it is published as `127.0.0.1` — the MCP tools and `denext ui`
+ * accept only a loopback origin from this file. `hostname` is the bind exactly as given, so a
+ * deliberate `--host 0.0.0.0` is not reported as a loopback-only server, and `devOrigins`
+ * lists the other hosts the origin gate lets in (what a device on the LAN can use).
  */
 function writeDevInfo(st: DevState, info: { hostname: string; port: number }): void {
-  const host = info.hostname === "0.0.0.0" || info.hostname === "::" ? "127.0.0.1" : info.hostname;
+  const wildcard = info.hostname === "0.0.0.0" || info.hostname === "::";
+  const host = wildcard ? "127.0.0.1" : info.hostname;
   try {
     Deno.mkdirSync(st.paths.outDir, { recursive: true });
     Deno.writeTextFileSync(
@@ -36,7 +44,8 @@ function writeDevInfo(st: DevState, info: { hostname: string; port: number }): v
       JSON.stringify({
         origin: `http://${host}:${info.port}`,
         port: info.port,
-        hostname: host,
+        hostname: info.hostname,
+        devOrigins: st.allowedDevOrigins,
         pid: Deno.pid,
         startedAt: Date.now(),
       }),
@@ -86,8 +95,17 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
 }
 
 /** Start the development server for the project described by `options.paths`. */
-export function startDevServer(options: DevServerOptions): Deno.HttpServer {
-  const { paths } = options;
+export function startDevServer(given: DevServerOptions): Deno.HttpServer {
+  const { paths } = given;
+  // The config's `allowedDevOrigins`, the programmatic / `--allowed-dev-origin` ones, and the
+  // host an explicit `--host` / `--lan` bind names: one list both dev servers gate on.
+  const options: DevServerOptions = {
+    ...given,
+    allowedDevOrigins: effectiveDevOrigins(
+      [paths.config?.allowedDevOrigins, given.allowedDevOrigins],
+      given.hostname,
+    ),
+  };
   // Configure the `<Image>` runtime from `images` config (see prod-server for details).
   setImageRuntimeConfig({
     unoptimized: paths.config?.images?.unoptimized ?? false,
@@ -104,6 +122,7 @@ export function startDevServer(options: DevServerOptions): Deno.HttpServer {
       signal: options.signal,
       onListen: options.onListen,
       strictPort: options.strictPort,
+      allowedDevOrigins: options.allowedDevOrigins,
     });
   }
   // Mark this (dev) process as a dev build so server-side render passes emit the same

@@ -267,7 +267,7 @@
       "name": "dev",
       "summary": "Start the dev server",
       "usage": "denext dev [dir] [options]",
-      "description": "Without --port, an open port is auto-selected starting at 3000.\nWith --port, that exact port is required and the server errors if it is taken.",
+      "description": "Without --port, an open port is auto-selected starting at 3000.\nWith --port, that exact port is required and the server errors if it is taken.\nThe dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\nexplicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\nbinds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.",
       "flags": [
         {
           "name": "port",
@@ -284,6 +284,17 @@
           "type": "string",
           "valueName": "<host>",
           "description": "Hostname"
+        },
+        {
+          "name": "lan",
+          "type": "boolean",
+          "description": "Bind the machine's LAN IPv4, allow it, and print its URL as a QR code"
+        },
+        {
+          "name": "allowed-dev-origin",
+          "type": "string",
+          "valueName": "<origin>",
+          "description": "Also let this origin or host load the dev assets (repeatable, or comma-separated)"
         }
       ],
       "positionals": [
@@ -539,9 +550,9 @@
     },
     {
       "name": "mobile",
-      "summary": "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates)",
+      "summary": "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates; dev: live reload)",
       "usage": "denext mobile <action> [args...] [options]",
-      "description": "  denext mobile add <capability...>\n                                Add the Capacitor plugins behind denext/mobile's\n                                capability functions, then `npx cap sync`\n  denext mobile add deep-links --scheme myapp --domain app.example.com\n                                Register a URL scheme and universal / app link domains\n  denext mobile add push        Push notifications (entitlement, AppDelegate, permission)\n  denext mobile add auth-session --scheme myapp\n                                OAuth in a system browser sheet (openAuthSession)\n  denext mobile add --list      List the capabilities and the plugins they install\n  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n\n  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n  with no fallback, else the current directory), refuses when its @capacitor/core major\n  is not the one the pinned plugins target, adds the packages with the package manager\n  the nearest lockfile names (pnpm, npm, bun or yarn, looking up to the repository root\n  for a workspace's; else a packageManager field; else npm), adds any Info.plist keys\n  (never replacing yours) and Android permissions the capability needs, and runs\n  `npx cap sync`. --dry-run prints the plan and changes nothing. Ship a new app binary\n  afterwards.\n\n  deep-links takes --scheme (CFBundleURLTypes + a VIEW intent filter) and --domain\n  (applinks: in the entitlements + an autoVerify https intent filter); give several as\n  a comma-separated list. The domains must also serve apple-app-site-association and\n  assetlinks.json. push writes aps-environment (development) into the entitlements, the\n  token forwarding into AppDelegate.swift and POST_NOTIFICATIONS into the manifest, and\n  warns when android/app/google-services.json (FCM) is missing. A new entitlements file\n  (ios/App/App/App.entitlements) must be selected in Xcode (Code Signing Entitlements);\n  the steps left to do by hand are printed.\n\n  auth-session has no npm package: it writes denext's DenextAuthSession plugin\n  (ios/App/App/DenextAuthSessionPlugin.swift, an ASWebAuthenticationSession sheet, added to\n  the App target; android dev/denext/authsession/*.java, a Custom Tab) and registers it\n  through DenextBridgeViewController and MainActivity, which it shares with add-ota (either\n  order works). --scheme registers the OAuth callback scheme as deep-links does; Android\n  needs it to receive the redirect. No install or `cap sync` runs for it alone.\n\n  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n  left alone and listed as one-line manual steps. Safe to run again, and run it after every\n  denext upgrade: unedited templates from an earlier denext are upgraded in place (ship a\n  new app binary afterwards).\n\n  --public-key ota.key.pub (from `denext ota keygen`) embeds the verifying key as Info.plist\n  DenextOtaPublicKey and the dev.denext.ota.PUBLIC_KEY meta-data in AndroidManifest.xml\n  (replacing an earlier one); the app then refuses any manifest not signed with its key.\n  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n  template was kept.",
+      "description": "  denext mobile add <capability...>\n                                Add the Capacitor plugins behind denext/mobile's\n                                capability functions, then `npx cap sync`\n  denext mobile add deep-links --scheme myapp --domain app.example.com\n                                Register a URL scheme and universal / app link domains\n  denext mobile add push        Push notifications (entitlement, AppDelegate, permission)\n  denext mobile add auth-session --scheme myapp\n                                OAuth in a system browser sheet (openAuthSession)\n  denext mobile add --list      List the capabilities and the plugins they install\n  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n  denext mobile dev [project] --lan\n                                Live reload on a device: point the app at `denext dev`\n\n  dev: starts `denext dev` for [project] (default: .) on --port (default 3000), or attaches\n  to a server already answering there; writes server: { url, cleartext: true } into the\n  Capacitor project's capacitor.config.* (--dir, else the current directory) and runs\n  `npx cap copy`, so the app loads the dev server and reloads on every edit. --lan binds\n  the LAN IPv4 (a physical device on the same network); without it the URL is\n  localhost (the iOS simulator, or Android behind `adb reverse`). The config edit is\n  temporary: Ctrl-C, SIGTERM or an error puts the original bytes back and runs\n  `cap copy` again. A killed run leaves a backup in .denext/; the next `mobile dev`, or\n  `mobile dev --restore`, restores it first. `cap copy` needs the webDir built once.\n\n  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n  with no fallback, else the current directory), refuses when its @capacitor/core major\n  is not the one the pinned plugins target, adds the packages with the package manager\n  the nearest lockfile names (pnpm, npm, bun or yarn, looking up to the repository root\n  for a workspace's; else a packageManager field; else npm), adds any Info.plist keys\n  (never replacing yours) and Android permissions the capability needs, and runs\n  `npx cap sync`. --dry-run prints the plan and changes nothing. Ship a new app binary\n  afterwards.\n\n  deep-links takes --scheme (CFBundleURLTypes + a VIEW intent filter) and --domain\n  (applinks: in the entitlements + an autoVerify https intent filter); give several as\n  a comma-separated list. The domains must also serve apple-app-site-association and\n  assetlinks.json. push writes aps-environment (development) into the entitlements, the\n  token forwarding into AppDelegate.swift and POST_NOTIFICATIONS into the manifest, and\n  warns when android/app/google-services.json (FCM) is missing. A new entitlements file\n  (ios/App/App/App.entitlements) must be selected in Xcode (Code Signing Entitlements);\n  the steps left to do by hand are printed.\n\n  auth-session has no npm package: it writes denext's DenextAuthSession plugin\n  (ios/App/App/DenextAuthSessionPlugin.swift, an ASWebAuthenticationSession sheet, added to\n  the App target; android dev/denext/authsession/*.java, a Custom Tab) and registers it\n  through DenextBridgeViewController and MainActivity, which it shares with add-ota (either\n  order works). --scheme registers the OAuth callback scheme as deep-links does; Android\n  needs it to receive the redirect. No install or `cap sync` runs for it alone.\n\n  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n  left alone and listed as one-line manual steps. Safe to run again, and run it after every\n  denext upgrade: unedited templates from an earlier denext are upgraded in place (ship a\n  new app binary afterwards).\n\n  --public-key ota.key.pub (from `denext ota keygen`) embeds the verifying key as Info.plist\n  DenextOtaPublicKey and the dev.denext.ota.PUBLIC_KEY meta-data in AndroidManifest.xml\n  (replacing an earlier one); the app then refuses any manifest not signed with its key.\n  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n  template was kept.",
       "flags": [
         {
           "name": "force",
@@ -558,7 +569,30 @@
           "name": "dir",
           "type": "string",
           "valueName": "<dir>",
-          "description": "add: the Capacitor project, with no fallback (default: the current directory)"
+          "description": "add, dev: the Capacitor project, with no fallback (default: the current directory)"
+        },
+        {
+          "name": "lan",
+          "type": "boolean",
+          "description": "dev: serve on the LAN IPv4 so a physical device on the network can load it"
+        },
+        {
+          "name": "port",
+          "alias": "p",
+          "type": "number",
+          "valueName": "<port>",
+          "description": "dev: the dev server port (default: 3000)"
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "valueName": "<host>",
+          "description": "dev: the host to bind and load (default: localhost; --lan picks the LAN IPv4)"
+        },
+        {
+          "name": "restore",
+          "type": "boolean",
+          "description": "dev: only put back a capacitor.config an interrupted session left edited"
         },
         {
           "name": "dry-run",
@@ -588,13 +622,13 @@
           "name": "action",
           "required": true,
           "variadic": false,
-          "description": "add | add-ota"
+          "description": "add | add-ota | dev"
         },
         {
           "name": "args",
           "required": false,
           "variadic": true,
-          "description": "add: capability names (see --list); add-ota: the Capacitor project (default: .)"
+          "description": "add: capability names (see --list); add-ota: the Capacitor project (default: .); dev: the denext project (default: .)"
         }
       ]
     },

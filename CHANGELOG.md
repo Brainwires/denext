@@ -8,6 +8,52 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext/expo/*` — drop-in `expo-*` API shims** over `denext/mobile` and web APIs: 34 packages
+  matched to Expo SDK 57 (haptics, clipboard, secure-store, file-system with the
+  `File`/`Directory`/`Paths` API, notifications, linking, web-browser, auth-session, image, camera,
+  audio, video, …). `denext/expo/manifest` lists each shim's status and what it omits. In
+  `reactNative` mode every listed `expo-*` package (and `expo/fetch`) resolves to its shim, from
+  the app's single denext instance; `reactNative: { expoShims: false }` opts out.
+  `registerRootComponent` mounts through react-native-web's `AppRegistry`, so an Expo app's own
+  `index.ts` is the web entry.
+- **`runtimePlatform()`** in `denext/mobile`: `"ios"`, `"android"`, `"desktop"` or `"web"`.
+
+- **Live reload on a device (the Metro model).** `denext mobile dev [project]` starts
+  `denext dev` (or attaches to one already answering on `--port`), writes
+  `server: { url, cleartext: true }` into the Capacitor project's `capacitor.config.*` (a
+  comment-preserving splice for `.ts`/`.js`, including the stock `export default config` form)
+  and runs `npx cap copy`, so the app loads the dev server and reloads on every edit. The edit
+  is temporary: Ctrl-C, `SIGTERM` or an error restores the original bytes and runs `cap copy`
+  again; a run killed outright leaves a backup in `.denext/` that the next run (or
+  `mobile dev --restore`) puts back first. `--lan` targets a physical device; without it the
+  URL is localhost (the iOS simulator). Guide: /docs/desktop#live-reload-on-a-device.
+- **`denext dev --lan`** binds the machine's LAN IPv4 (the primary interface first; loopback
+  and link-local skipped), allows it through the dev origin gate, and prints the URL with a
+  terminal QR code (a dependency-free encoder).
+- **`allowedDevOrigins` config key and `denext dev --allowed-dev-origin <origin>`**
+  (repeatable, or comma-separated). Each entry is an origin or a bare host, validated at
+  boot; wildcards are refused. It was a programmatic `DevServerOptions` field only, so a phone
+  pointed at `denext dev` rendered a dead page (every `/_denext/*` asset refused). A
+  `repeatable` flag spec (`FlagSpec.repeatable`) keeps every value of a repeated flag.
+
+### Changed
+
+- **An explicit `denext dev --host` allows the host it binds** through the dev origin gate
+  (`0.0.0.0` / `::` allow this machine's own addresses). `.denext/dev.json` now records the
+  bind as given in `hostname` and the allowed hosts in `devOrigins`; `origin` stays the
+  loopback address local tools (the MCP live tools, `denext ui`) use. The SPA dev server now
+  applies `allowedDevOrigins` too.
+
+### Fixed
+
+- **SPA dev rebuild loop with the entry at the project root** (an Expo app in `reactNative`
+  mode). The CSS graph crawl's transient rewrite of the project's `deno.json` was taken for an
+  edit by the dev watcher, so every build triggered the next and pages hit 404s on pruned
+  chunks. denext's own writes are now recorded and ignored by the SPA watcher (an edit still
+  rebuilds), and the restore skips the write when the file already holds the original.
+
 ## [2.10.0-rc.2] - 2026-09-25
 
 ### Added

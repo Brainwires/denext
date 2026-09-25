@@ -142,6 +142,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     actionMaxBodyBytes: "number",
     canonicalOrigin: "text",
     trustForwardedHeaders: "toggle",
+    allowedDevOrigins: "chips",
     requestTimeout: "number",
     maxConcurrency: "number",
     slotBackstop: "number",
@@ -187,6 +188,7 @@ Deno.test("every row property of the eight list fields gets a typed control", ()
     default: "union",
     help: "text",
     valueName: "text",
+    repeatable: "toggle",
   });
   assertRowKinds(["commands", "0", "positionals"], {
     name: "text",

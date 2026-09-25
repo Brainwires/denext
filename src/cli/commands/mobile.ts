@@ -12,6 +12,9 @@
 //                                 …), their native config, and `cap sync` (--dry-run plans,
 //                                 --list lists, --scheme / --domain configure deep-links);
 //                                 auth-session installs denext's own DenextAuthSession plugin
+//   denext mobile dev [project]   live reload: start (or attach to) `denext dev`, point the
+//                                 Capacitor config's server.url at it for the session and
+//                                 `cap copy`; restored on exit (--lan for a physical device)
 //
 // Both are flat verbs whose first positional selects the action (as `desktop` does). Neither
 // loads the project's modules: `ota manifest` only hashes files, and `add-ota` only writes
@@ -36,6 +39,15 @@ import {
   formatCapabilityPlan,
   formatCapabilityTable,
 } from "../../build/mobile-capabilities.ts";
+import {
+  type MobileDevServer,
+  restoreCapacitorConfig,
+  runMobileDev,
+} from "../../build/mobile-dev.ts";
+import { pickLanAddress } from "../../build/dev-server/lan.ts";
+import { denoExecutable } from "../../build/bundle.ts";
+import { cliInvocation } from "../../ui/proc.ts";
+import { SHUTDOWN_SIGNALS } from "../shared.ts";
 
 /** Print `message` to stderr and exit 1. */
 function fail(message: string): never {
@@ -398,6 +410,105 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
   printAddReport(report);
 }
 
+/** Whether anything answers HTTP at `url` within a second. */
+async function answers(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(1000), redirect: "manual" });
+    await res.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The host `mobile dev` binds and the URL the device loads. `--lan` binds the LAN IPv4; else
+ * `--host` (a wildcard bind is advertised by the LAN IPv4); else loopback, which only the iOS
+ * simulator (or Android behind `adb reverse`) can reach.
+ */
+function mobileDevTarget(ctx: CommandContext): { host: string; url: string } {
+  const port = typeof ctx.flags.port === "number" ? ctx.flags.port : 3000;
+  const flagHost = typeof ctx.flags.host === "string" ? ctx.flags.host : undefined;
+  if (ctx.flags.lan === true && flagHost !== undefined) {
+    fail("denext mobile dev: --lan picks the address itself; drop --host.");
+  }
+  const lan = ctx.flags.lan === true || flagHost === "0.0.0.0" ? pickLanAddress() : null;
+  if (ctx.flags.lan === true && !lan) {
+    fail("denext mobile dev --lan: this machine has no LAN IPv4 address (is Wi-Fi on?).");
+  }
+  const host = ctx.flags.lan === true ? lan! : flagHost ?? "localhost";
+  const shown = host === "0.0.0.0" ? lan ?? "127.0.0.1" : host;
+  return { host, url: `http://${shown.includes(":") ? `[${shown}]` : shown}:${port}` };
+}
+
+/**
+ * Start `denext dev` for the project on the target host and port (strict, so the URL is
+ * known), or attach to a server already answering there. Polls until it answers.
+ */
+async function startOrAttachDev(ctx: CommandContext): Promise<MobileDevServer> {
+  const { host, url } = mobileDevTarget(ctx);
+  const port = new URL(url).port;
+  if (await answers(url)) {
+    return { url, attached: true, finished: new Promise(() => {}), stop: () => Promise.resolve() };
+  }
+  const project = resolve(ctx.global.cwd ?? ".", ctx.positionals[1] ?? ".");
+  const child = new Deno.Command(denoExecutable(), {
+    args: [...cliInvocation({ dir: project }), "dev", project, "--host", host, "--port", port],
+    cwd: project,
+    stdin: "null",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  let exited = false;
+  const finished = child.status.then(() => void (exited = true));
+  const stop = async () => {
+    try {
+      child.kill("SIGTERM");
+    } catch { /* already gone */ }
+    await child.status;
+  };
+  for (const deadline = Date.now() + 120_000; !(await answers(url));) {
+    if (exited || Date.now() > deadline) {
+      await stop();
+      throw new Error(`the dev server did not come up at ${url}`);
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return { url, attached: false, finished, stop };
+}
+
+/** Resolves on the first Ctrl-C / SIGTERM (and stops listening). */
+function waitForShutdownSignal(): Promise<void> {
+  return new Promise((done) => {
+    const handler = () => {
+      for (const signal of SHUTDOWN_SIGNALS) Deno.removeSignalListener(signal, handler);
+      done();
+    };
+    for (const signal of SHUTDOWN_SIGNALS) Deno.addSignalListener(signal, handler);
+  });
+}
+
+/** `denext mobile dev [project]` (and `--restore`). */
+async function mobileDev(ctx: CommandContext, run: CommandRunner): Promise<void> {
+  const cwd = resolve(ctx.global.cwd ?? ".");
+  const dir = typeof ctx.flags.dir === "string" ? ctx.flags.dir : undefined;
+  try {
+    if (ctx.flags.restore === true) {
+      const restored = await restoreCapacitorConfig(resolve(cwd, dir ?? "."));
+      console.log(restored ? `  restored ${restored}` : "  nothing to restore");
+      return;
+    }
+    await runMobileDev({ cwd, dir }, {
+      run,
+      startServer: () => startOrAttachDev(ctx),
+      waitForStop: waitForShutdownSignal,
+      log: (line) => console.log(line),
+    });
+  } catch (err) {
+    fail(`denext mobile dev: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 /**
  * Build the `mobile` verb with `run` as the subprocess runner for `add` (tests pass a fake).
  *
@@ -411,14 +522,16 @@ export function createMobileCommand(run: CommandRunner = runInherit): CommandSpe
       const action = ctx.positionals[0];
       if (action === "add-ota") return await addOta(ctx);
       if (action === "add") return await addCapabilities(ctx, run);
-      fail(`denext mobile: unknown action "${action ?? ""}" (expected: add, add-ota).`);
+      if (action === "dev") return await mobileDev(ctx, run);
+      fail(`denext mobile: unknown action "${action ?? ""}" (expected: add, add-ota, dev).`);
     },
   };
 }
 
 const mobileCommandSpec: Omit<CommandSpec, "run"> = {
   name: "mobile",
-  summary: "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates)",
+  summary:
+    "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates; dev: live reload)",
   usage: "  denext mobile add <capability...>\n" +
     "                                Add the Capacitor plugins behind denext/mobile's\n" +
     "                                capability functions, then `npx cap sync`\n" +
@@ -429,6 +542,18 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "                                OAuth in a system browser sheet (openAuthSession)\n" +
     "  denext mobile add --list      List the capabilities and the plugins they install\n" +
     "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n" +
+    "  denext mobile dev [project] --lan\n" +
+    "                                Live reload on a device: point the app at `denext dev`\n" +
+    "\n" +
+    "  dev: starts `denext dev` for [project] (default: .) on --port (default 3000), or attaches\n" +
+    "  to a server already answering there; writes server: { url, cleartext: true } into the\n" +
+    "  Capacitor project's capacitor.config.* (--dir, else the current directory) and runs\n" +
+    "  `npx cap copy`, so the app loads the dev server and reloads on every edit. --lan binds\n" +
+    "  the LAN IPv4 (a physical device on the same network); without it the URL is\n" +
+    "  localhost (the iOS simulator, or Android behind `adb reverse`). The config edit is\n" +
+    "  temporary: Ctrl-C, SIGTERM or an error puts the original bytes back and runs\n" +
+    "  `cap copy` again. A killed run leaves a backup in .denext/; the next `mobile dev`, or\n" +
+    "  `mobile dev --restore`, restores it first. `cap copy` needs the webDir built once.\n" +
     "\n" +
     "  add: finds the Capacitor project (the folder with capacitor.config.*: --dir when given,\n" +
     "  with no fallback, else the current directory), refuses when its @capacitor/core major\n" +
@@ -470,10 +595,11 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n" +
     "  template was kept.",
   positionals: [
-    { name: "action", help: "add | add-ota", required: true },
+    { name: "action", help: "add | add-ota | dev", required: true },
     {
       name: "args",
-      help: "add: capability names (see --list); add-ota: the Capacitor project (default: .)",
+      help:
+        "add: capability names (see --list); add-ota: the Capacitor project (default: .); dev: the denext project (default: .)",
       variadic: true,
     },
   ],
@@ -495,7 +621,30 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "dir",
       type: "string",
       valueName: "<dir>",
-      help: "add: the Capacitor project, with no fallback (default: the current directory)",
+      help: "add, dev: the Capacitor project, with no fallback (default: the current directory)",
+    },
+    {
+      name: "lan",
+      type: "boolean",
+      help: "dev: serve on the LAN IPv4 so a physical device on the network can load it",
+    },
+    {
+      name: "port",
+      alias: "p",
+      type: "number",
+      valueName: "<port>",
+      help: "dev: the dev server port (default: 3000)",
+    },
+    {
+      name: "host",
+      type: "string",
+      valueName: "<host>",
+      help: "dev: the host to bind and load (default: localhost; --lan picks the LAN IPv4)",
+    },
+    {
+      name: "restore",
+      type: "boolean",
+      help: "dev: only put back a capacitor.config an interrupted session left edited",
     },
     {
       name: "dry-run",

@@ -300,7 +300,10 @@ when cancelled) and `setQuickActions`/`useQuickAction` (home-screen shortcuts); 
 `requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via
 APNs/FCM). `auth-session --scheme myapp` adds `openAuthSession(url, { callbackScheme })` (OAuth
 in an iOS ASWebAuthenticationSession / Android Custom Tab / web popup finished by
-`completeAuthSession()`; resolves the callback URL, PKCE + `state` are yours). Docs:
+`completeAuthSession()`; resolves the callback URL, PKCE + `state` are yours). Live reload on
+a device: `denext mobile dev --lan` points the app's `server.url` at `denext dev` for the
+session (restored on exit); a non-loopback host loads the dev assets only when opted in
+(`denext dev --lan`, `--host`, `allowedDevOrigins`). Docs:
 https://denext.dev/docs/desktop
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,

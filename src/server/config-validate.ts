@@ -441,6 +441,55 @@ function validateI18n(i18n: unknown, fail: Fail): void {
   }
 }
 
+/**
+ * Why `entry` is not a usable `allowedDevOrigins` entry, or `null` when it is one: an origin
+ * (`http(s)://host[:port]`, nothing after it) or a bare host (`host` or `host:port`, a raw
+ * IPv6 address included). The dev origin gate matches entries exactly, so a wildcard is
+ * refused rather than silently never matching. Shared by the config validator and
+ * `denext dev --allowed-dev-origin`.
+ *
+ * @param entry One entry, as given.
+ * @returns The problem, ready to append to the entry, or `null`.
+ */
+export function devOriginError(entry: unknown): string | null {
+  if (typeof entry !== "string" || entry.trim() === "") return "must be a non-empty string";
+  if (entry.includes("*")) return "has a wildcard, which is not supported: list each host";
+  if (/\s/.test(entry)) return "must not contain whitespace";
+  return entry.includes("://") ? originEntryError(entry) : hostEntryError(entry);
+}
+
+/** An `allowedDevOrigins` entry written as an origin: `http(s)://host[:port]`, exactly. */
+function originEntryError(entry: string): string | null {
+  if (!URL.canParse(entry)) return "is not a valid origin";
+  const url = new URL(entry);
+  if (url.protocol !== "http:" && url.protocol !== "https:") return "must be an http(s) origin";
+  return url.origin === entry
+    ? null
+    : "must be an origin like http://192.168.1.5:3000 (lowercase, no path, no trailing /)";
+}
+
+/** An `allowedDevOrigins` entry written as a bare host: `host[:port]`, or a raw IPv6 address. */
+function hostEntryError(entry: string): string | null {
+  // A raw IPv6 address (the gate compares it to the bracket-stripped Host hostname).
+  if ((entry.match(/:/g) ?? []).length > 1) {
+    return URL.canParse(`http://[${entry}]`) ? null : "is not a valid IPv6 address";
+  }
+  const ok = URL.canParse(`http://${entry}`) && new URL(`http://${entry}`).host === entry;
+  return ok
+    ? null
+    : "must be a host like 192.168.1.5, mac.local or mac.local:3000 (lowercase, no path)";
+}
+
+/** `allowedDevOrigins` is a list of origins or bare hosts, no wildcards. */
+function validateAllowedDevOrigins(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) return fail("allowedDevOrigins", "must be an array of origins");
+  value.forEach((entry, i) => {
+    const problem = devOriginError(entry);
+    if (problem) fail(`allowedDevOrigins[${i}]`, problem);
+  });
+}
+
 /** `momentumSafeScroll` is an on/off switch; absent keeps the iOS scroll shim on. */
 function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   if (value !== undefined && typeof value !== "boolean") {
@@ -457,9 +506,11 @@ function validateReactNative(config: DenextConfig, fail: Fail): void {
   if (value === undefined || value === false) return;
   const isObject = typeof value === "object" && value !== null && !Array.isArray(value);
   if (value !== true && !isObject) fail("reactNative", "must be a boolean or an options object");
-  const rootStyle = isObject ? (value as { rootStyle?: unknown }).rootStyle : undefined;
-  if (rootStyle !== undefined && typeof rootStyle !== "boolean") {
-    fail("reactNative.rootStyle", "must be a boolean");
+  for (const key of ["rootStyle", "expoShims"] as const) {
+    const option = isObject ? (value as Record<string, unknown>)[key] : undefined;
+    if (option !== undefined && typeof option !== "boolean") {
+      fail(`reactNative.${key}`, "must be a boolean");
+    }
   }
   if (config.mode !== "spa") {
     fail("reactNative", 'applies only in SPA mode — set `mode: "spa"` and `spa.entry`');
@@ -558,6 +609,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
+  validateAllowedDevOrigins(config.allowedDevOrigins, fail);
   validateReactNative(config, fail);
   validateRouting(config, fail);
   validateImageAllowlists(config.images, fail);

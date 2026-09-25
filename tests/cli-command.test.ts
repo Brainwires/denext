@@ -17,6 +17,7 @@ function registry(): CommandRegistry {
       { name: "port", alias: "p", type: "number", valueName: "<port>", help: "Port" },
       { name: "host", type: "string", help: "Hostname" },
       { name: "open", type: "boolean", default: false, help: "Open browser" },
+      { name: "origin", alias: "o", type: "string", repeatable: true, help: "Repeatable" },
     ],
     positionals: [{ name: "dir", help: "Project dir" }],
     run: noop,
@@ -40,6 +41,16 @@ Deno.test("parses positionals, valued flags, and aliases", () => {
   assertEquals(out.ctx.positionals, ["./app"]);
   assertEquals(out.ctx.flags.port, 4000);
   assertEquals(out.ctx.flags.host, "0.0.0.0");
+});
+
+Deno.test("a repeatable string flag keeps every value, joined with commas", () => {
+  const out = registry().parse(["dev", "--origin", "a", "--origin=b,c", "-o", "d"]);
+  assert(out.kind === "run");
+  assertEquals(out.ctx.flags.origin, "a,b,c,d");
+  // A plain string flag still keeps only its last value.
+  const host = registry().parse(["dev", "--host", "x", "--host", "y"]);
+  assert(host.kind === "run");
+  assertEquals(host.ctx.flags.host, "y");
 });
 
 Deno.test("short alias and boolean presence", () => {

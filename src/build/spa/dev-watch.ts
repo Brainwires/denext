@@ -11,6 +11,7 @@ import {
   type SpaDevState,
 } from "./dev-state.ts";
 import { classifySpaChange } from "./shared.ts";
+import { isSelfWrite } from "../self-writes.ts";
 
 function existingPaths(candidates: string[]): string[] {
   return candidates.filter((p) => {
@@ -93,8 +94,10 @@ async function flushBatch(st: SpaDevState, batch: string[]): Promise<void> {
  * Watch the entry's source tree + public/. Events under the build's own output
  * (`.denext/…`), node_modules, or .git are not source edits — ignoring them stops a
  * self-triggered rebuild→reload→rebuild loop when `spa.entry` sits at the project root
- * (so its dir contains outDir). Changed paths accumulate across a 60 ms debounce window
- * so the flush can decide Fast Refresh vs a full reload for the whole batch.
+ * (so its dir contains outDir). So is a write denext itself made in the tree (the CSS
+ * crawl's transient `deno.json` rewrite — see `self-writes.ts`): the file still holds what
+ * denext wrote, so it is dropped too. Changed paths accumulate across a 60 ms debounce
+ * window so the flush can decide Fast Refresh vs a full reload for the whole batch.
  */
 export function watch(st: SpaDevState): void {
   const { paths } = st;
@@ -103,7 +106,8 @@ export function watch(st: SpaDevState): void {
   const watcher = Deno.watchFs(watched, { recursive: true });
   installShutdown(st, watcher);
   const ignored = (p: string): boolean =>
-    p.startsWith(paths.outDir) || p.includes("/node_modules/") || p.includes("/.git/");
+    p.startsWith(paths.outDir) || p.includes("/node_modules/") || p.includes("/.git/") ||
+    isSelfWrite(p);
   let debounce: ReturnType<typeof setTimeout> | undefined;
   const pending = new Set<string>();
   (async () => {

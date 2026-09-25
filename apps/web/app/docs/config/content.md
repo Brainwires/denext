@@ -213,6 +213,30 @@ Per-request observability is code, not config: export `onRequest(info)` from
 `instrumentation.ts` (beside `register` / `onRequestError`) — see
 [Deployment › Observability](/docs/deploy#14-observability).
 
+## Dev server
+
+- **`allowedDevOrigins`** — `string[]` (`denext dev` only). Extra hosts allowed
+  to load the dev server's `/_denext/*` assets (the bundles, the module graph,
+  the reload stream, the Live hub). Without an entry, those assets answer only
+  a loopback `Host` — the DNS-rebinding defense (cf. CVE-2025-48068) — so a
+  phone or another machine pointed at the dev server gets HTML and nothing else.
+  Each entry is an origin (`"http://192.168.1.5:3000"`) or a bare host
+  (`"192.168.1.5"`, `"mac.local"`, `"mac.local:3000"`); matching is on the
+  hostname. Wildcards are refused at boot: list each host. You rarely set it by
+  hand — `denext dev --lan` and an explicit `--host` allow the address they
+  bind (`--host 0.0.0.0` allows this machine's own addresses), and
+  `--allowed-dev-origin <origin>` (repeatable, or comma-separated) adds entries
+  for one run. A listed host is trusted like loopback: a device that can reach
+  it can read the app's transformed source. Cross-site pages are still refused
+  (`Sec-Fetch-Site` / `Origin`). See
+  [Live reload on a device](/docs/desktop#live-reload-on-a-device).
+
+```ts
+export default {
+  allowedDevOrigins: ["192.168.1.5", "http://mac.local:3000"],
+} satisfies DenextConfig;
+```
+
 ## Compatibility
 
 - **`compatibilityMode`** — `boolean | "auto"` (default `"auto"`). Run the app

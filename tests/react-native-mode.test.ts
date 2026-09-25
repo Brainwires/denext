@@ -13,6 +13,7 @@ import {
   catalogResolverPlugin,
 } from "../src/build/next-compat.ts";
 import {
+  expoShimPlugin,
   findReactNativeWeb,
   reactNativeBundleOptions,
   reactNativeDefines,
@@ -186,7 +187,102 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(on.define.__DEV__, "true");
   assertEquals(on.platformExtensions, [".web.tsx", ".web.ts", ".web.jsx", ".web.js"]);
   assertEquals(on.jsxInJs, true);
-  assertEquals(on.plugins.map((p) => p.name), ["denext-react-native-web"]);
+  assertEquals(on.plugins.map((p) => p.name), ["denext-react-native-web", "denext-expo-shims"]);
+  const off = reactNativeBundleOptions({ reactNative: { expoShims: false } }, "/p", false)!;
+  assertEquals(off.plugins.map((p) => p.name), ["denext-react-native-web"], "expoShims: false");
+});
+
+/**
+ * The expo fixture: real `expo-haptics` and `expo` packages (which must NOT win), an
+ * unshimmed `expo-sqlite` (which must resolve normally), and react-native-web for the shims'
+ * bridge. `denext/expo/*` is stood in for by a plugin, as the prebuilt runtime is in a build.
+ */
+const EXPO_FIXTURE: Record<string, string> = {
+  "node_modules/react-native-web/package.json": JSON.stringify({
+    name: "react-native-web",
+    module: "dist/index.js",
+  }),
+  "node_modules/react-native-web/dist/index.js": 'export const View = "RNW_VIEW";\n',
+  "node_modules/expo-haptics/package.json": JSON.stringify({ name: "expo-haptics", main: "i.js" }),
+  "node_modules/expo-haptics/i.js": 'export const impactAsync = "REAL_EXPO_HAPTICS";\n',
+  "node_modules/expo/package.json": JSON.stringify({ name: "expo", main: "i.js" }),
+  "node_modules/expo/i.js": 'export const registerRootComponent = "REAL_EXPO";\n',
+  "node_modules/expo/config.js": 'export const config = "REAL_EXPO_CONFIG";\n',
+  "node_modules/expo/fetch.js": 'export const fetch = "REAL_EXPO_FETCH";\n',
+  "node_modules/expo-sqlite/package.json": JSON.stringify({ name: "expo-sqlite", main: "i.js" }),
+  "node_modules/expo-sqlite/i.js": 'export const openDatabaseAsync = "REAL_EXPO_SQLITE";\n',
+  "entry.js": `import { impactAsync } from "expo-haptics";
+import { registerRootComponent } from "expo";
+import { fetch } from "expo/fetch";
+import { config } from "expo/config.js";
+import { openDatabaseAsync } from "expo-sqlite";
+import { View } from "denext-expo-react-native";
+export const result = { impactAsync, registerRootComponent, fetch, config, openDatabaseAsync, View };
+`,
+};
+
+/** Bundle the expo fixture with React Native mode's plugins (`expoShims` on or off). */
+async function bundleExpoFixture(expoShims: boolean): Promise<Record<string, unknown>> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_rn_expo_" });
+  try {
+    await writeTree(dir, EXPO_FIXTURE);
+    const options = reactNativeBundleOptions(
+      { reactNative: { expoShims } },
+      dir,
+      false,
+    )!;
+    const standIn: esbuild.Plugin = {
+      name: "denext-expo-stand-in",
+      setup(build) {
+        build.onResolve({ filter: /^denext\/expo\// }, (args) => ({
+          path: args.path,
+          namespace: "stand-in",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "stand-in" }, (args) => ({
+          contents: `const shim = ${JSON.stringify(args.path)};
+export { shim as impactAsync, shim as registerRootComponent, shim as fetch };`,
+          loader: "js",
+        }));
+      },
+    };
+    const result = await esbuild.build({
+      entryPoints: [join(dir, "entry.js")],
+      bundle: true,
+      write: false,
+      format: "esm",
+      logLevel: "silent",
+      absWorkingDir: dir,
+      plugins: [...options.plugins, standIn],
+    });
+    const code = new TextDecoder().decode(result.outputFiles![0].contents);
+    const url = `data:text/javascript;base64,${btoa(unescape(encodeURIComponent(code)))}`;
+    return (await import(url)).result;
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("reactNative bundle: expo-* resolves to its denext/expo shim; unshimmed ones resolve normally", async () => {
+  const r = await bundleExpoFixture(true);
+  assertEquals(r.impactAsync, "denext/expo/haptics", "expo-haptics → the shim, not the package");
+  assertEquals(r.registerRootComponent, "denext/expo/expo", "expo → denext/expo/expo");
+  assertEquals(r.fetch, "denext/expo/expo", "the known subpath expo/fetch → the same shim");
+  assertEquals(r.config, "REAL_EXPO_CONFIG", "an unknown subpath resolves normally");
+  assertEquals(
+    r.openDatabaseAsync,
+    "REAL_EXPO_SQLITE",
+    "a package without a shim resolves normally",
+  );
+  assertEquals(r.View, "RNW_VIEW", "the shims' bridge → react-native-web");
+  assertEquals(expoShimPlugin().name, "denext-expo-shims");
+});
+
+Deno.test("reactNative bundle: expoShims: false resolves every expo-* package normally", async () => {
+  const r = await bundleExpoFixture(false);
+  assertEquals(r.impactAsync, "REAL_EXPO_HAPTICS");
+  assertEquals(r.registerRootComponent, "REAL_EXPO");
+  assertEquals(r.fetch, "REAL_EXPO_FETCH");
 });
 
 const SPA = { entry: "./src/main.tsx" };
@@ -220,6 +316,12 @@ Deno.test("reactNative config: options, root-style switch, validation", () => {
   const spa: DenextConfig = { mode: "spa", spa: SPA };
   validateDenextConfig({ ...spa, reactNative: true });
   validateDenextConfig({ ...spa, reactNative: { rootStyle: false } });
+  validateDenextConfig({ ...spa, reactNative: { expoShims: false } });
+  assertThrows(
+    () => validateDenextConfig({ ...spa, reactNative: { expoShims: 1 as unknown as boolean } }),
+    Error,
+    "`reactNative.expoShims` must be a boolean",
+  );
   validateDenextConfig({ reactNative: false });
   assertThrows(
     () => validateDenextConfig({ ...spa, reactNative: "yes" as unknown as boolean }),

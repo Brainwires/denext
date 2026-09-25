@@ -397,6 +397,15 @@ export interface ReactNativeConfig {
    * @default true
    */
   rootStyle?: boolean;
+  /**
+   * Alias each `expo-*` package that has a `denext/expo/*` shim (`expo-haptics` →
+   * `denext/expo/haptics`, …: the list is `denext/expo/manifest`'s `EXPO_SHIMS`) to that
+   * shim, which implements the package's API over `denext/mobile` and web APIs. A package
+   * without a shim resolves normally. `false` resolves every `expo-*` package normally.
+   *
+   * @default true
+   */
+  expoShims?: boolean;
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
@@ -652,6 +661,21 @@ export interface DenextConfig {
    * (config > env > `false`).
    */
   trustForwardedHeaders?: boolean;
+  /**
+   * `denext dev` only: extra hosts allowed to reach the dev server's `/_denext/*` assets (the
+   * bundles, the module graph, the reload stream, the Live hub), beyond loopback. Each entry is
+   * an origin (`"http://192.168.1.5:3000"`) or a bare host (`"192.168.1.5"`, `"mac.local"`,
+   * `"mac.local:3000"`); matching is on the hostname. Wildcards are not supported: list each
+   * host. Mirrors Next.js's `allowedDevOrigins`.
+   *
+   * Without it the dev server refuses those assets to any non-loopback `Host` (the DNS-rebinding
+   * defense, cf. CVE-2025-48068), so a phone or another machine gets a dead page. You rarely
+   * need to set it by hand: `denext dev --lan` and an explicit `--host` allow the address they
+   * bind, and `--allowed-dev-origin <origin>` adds entries for one run. A listed host is
+   * trusted as a dev client: anything on the network that can reach it (and send that `Host`)
+   * can read the app's transformed source, as a loopback client can. Ignored by `denext start`.
+   */
+  allowedDevOrigins?: string[];
   /**
    * Per-request deadline in milliseconds — default 30 000. A request still running past it
    * is aborted and answered `503`; the per-request `AbortSignal` fires so cooperative work

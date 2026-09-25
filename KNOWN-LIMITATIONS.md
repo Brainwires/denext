@@ -364,14 +364,21 @@ four documented bounds of the opt-in:
 
 ### Desktop & mobile (`denext desktop`, Capacitor)
 
-- **`denext dev --host 0.0.0.0` serves HTML but no assets to a non-loopback client.** Every
-  `/_denext/*` request (bundles, the module graph, the reload stream, the Live hub) is refused
-  for a host that is neither loopback nor in `allowedDevOrigins` — the CVE-2025-48068 defense —
-  and `allowedDevOrigins` has no config key, CLI flag or env var yet, only a programmatic
-  `DevServerOptions` field. So a phone or a packaged desktop window pointed at a LAN dev server
-  renders a dead page: **LAN / mobile dev attach is not supported yet** (tracked in
-  [ROADMAP.md](./ROADMAP.md)). `denext desktop run` serves a static export over loopback, which
-  is unaffected.
+- **The dev assets answer only hosts you opted in.** Every `/_denext/*` request (bundles, the
+  module graph, the reload stream, the Live hub) is refused for a `Host` that is neither
+  loopback nor in `allowedDevOrigins` — the CVE-2025-48068 defense. `denext dev --lan`, an
+  explicit `--host`, `--allowed-dev-origin` and the `allowedDevOrigins` config key opt a host
+  in; a device reaching the dev server by any other name (a second NIC's address, a DNS name
+  you did not list) still gets a dead page. `--lan` binds only the LAN address, so
+  `http://localhost` does not answer while it is on. Wildcard entries are not supported.
+- **Desktop dev attach is not supported yet.** A packaged `denext desktop` window cannot load
+  `denext dev` (tracked in [ROADMAP.md](./ROADMAP.md) as `denext desktop dev`); `denext desktop
+  run` serves a static export over loopback. The Capacitor half works (`denext mobile dev`).
+- **`denext mobile dev` edits `capacitor.config.*` for the session.** It is restored on every
+  exit path Deno can observe; a `SIGKILL` or power loss leaves the edit and a backup in
+  `.denext/`, restored by the next `mobile dev` or `mobile dev --restore`, so check before a
+  release build after a crash. A config whose exported object is built by a function call it
+  cannot see into (`export default makeConfig()`) is refused.
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build

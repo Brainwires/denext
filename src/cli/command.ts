@@ -62,6 +62,12 @@ export interface FlagSpec {
   readonly help: string;
   /** Value placeholder for help/usage of a valued flag (e.g. `"<port>"`). */
   readonly valueName?: string;
+  /**
+   * A `string` flag that may be given more than once: every value is kept, joined with `,`
+   * (`--x a --x b` reads as `"a,b"`), so a repeated flag and a comma-separated one read the
+   * same. Without it the last value wins.
+   */
+  readonly repeatable?: boolean;
 }
 
 /** A declarative positional argument on a {@linkcode CommandSpec}. */
@@ -539,7 +545,7 @@ function parseLongFlag(
   }
   const val = inline ?? rest[i + 1];
   if (val === undefined) throw new Error(`--${name} needs a value`);
-  out.flags[spec.name] = coerce(spec, val);
+  assignValue(out, spec, val);
   return inline === undefined ? 1 : 0;
 }
 
@@ -570,8 +576,17 @@ function parseShortFlag(
   }
   const val = rest[i + 1];
   if (val === undefined) throw new Error(`-${alias} needs a value`);
-  out.flags[spec.name] = coerce(spec, val);
+  assignValue(out, spec, val);
   return 1;
+}
+
+/** Store a valued flag: the last value wins, or a {@linkcode FlagSpec.repeatable} one appends. */
+function assignValue(out: ParsedArgv, spec: FlagSpec, raw: string): void {
+  const value = coerce(spec, raw);
+  const prior = out.flags[spec.name];
+  out.flags[spec.name] = spec.repeatable && typeof prior === "string" && typeof value === "string"
+    ? `${prior},${value}`
+    : value;
 }
 
 /**

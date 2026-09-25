@@ -237,8 +237,9 @@ already covered, what official Capacitor plugins cover) is
 - **CI signing + build recipe** — a GitHub Actions recipe that builds signed iOS /
   Android artifacts (the EAS Build equivalent), plus a native-layer fingerprint
   check so CI knows whether a change can ship over the air or needs a binary.
-- **Dev-server attach** — a phone running the app gets HMR from `denext dev` (the
-  Metro model); tracked in detail under "Dev server attach" below.
+- **Dev-server attach** — a phone attaches to `denext dev` today (`denext mobile dev`,
+  `denext dev --lan`; see CHANGELOG). The desktop half is tracked under "Dev server
+  attach" below.
 - **Expo / React Native compatibility layer** — react-native-web running on denext's
   React compat, a `react-native` bundler resolve mode, and `denext/expo/*` shims over
   the `denext/mobile` capabilities, so an existing Expo/RN app's source can run mostly
@@ -256,22 +257,11 @@ Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack (the three picks that shipped
 CHANGELOG/FEATURES). The rest are kept here so they aren't lost; not yet
 scheduled.
 
-- **Dev server attach for desktop and Capacitor apps (the Metro model).** A
-  packaged desktop window or a phone running the app should be able to attach to
-  `denext dev` and get HMR, the way a React Native app attaches to Metro. Today
-  it cannot: every `/_denext/*` asset is refused for a non-loopback host (see
-  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md)). The work, smallest first:
-  - **A user-facing `allowedDevOrigins`** — a `denext.config.ts` key plus
-    `denext dev --allowed-dev-origin`, in the generated config schema and
-    documented. It is a programmatic `DevServerOptions` field only today.
-  - **Auto-allow an explicitly bound `--host`**, and stop `.denext/dev.json`
-    rewriting `0.0.0.0` to `127.0.0.1` when the bind was deliberate.
-  - **`denext dev --lan`** — pick the LAN IPv4, bind it, allow it, print the URL
-    and an ASCII QR code (no dependency).
-  - **Capacitor live reload** — a `mobile:dev` task that writes `server.url`
-    into the Capacitor config so the phone's page origin _is_ the dev server
-    (which is what makes the existing SSE reload and the origin checks work
-    unchanged).
+- **Dev server attach for desktop apps (the Metro model).** A packaged desktop
+  window should be able to attach to `denext dev` and get HMR, the way a React
+  Native app attaches to Metro. The phone half shipped (`allowedDevOrigins`,
+  `denext dev --lan`, an explicit `--host` allowing what it binds, and
+  `denext mobile dev` for Capacitor live reload; see CHANGELOG). What is left:
   - **`denext desktop dev`** — a window over a loopback reverse proxy to the dev
     server (reusing `src/build/dev-proxy.ts`), so `location.origin` stays
     loopback and neither the CSP nor the origin gate has to be relaxed.

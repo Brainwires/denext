@@ -272,6 +272,50 @@ deno task mobile:android    # open in Android Studio`}
         installed (Xcode for iOS, Android Studio for Android).
       </Callout>
 
+      <h3>Live reload on a device</h3>
+      <p>
+        During development the app can load straight from <code>denext dev</code>{" "}
+        instead of the bundled export, the way a React Native app attaches to Metro: every edit
+        reloads on the phone. <code>denext mobile dev</code>{" "}
+        starts the dev server (or attaches to one already answering on the port), writes{" "}
+        <code>{"server: { url, cleartext: true }"}</code> into <code>capacitor.config.*</code>{" "}
+        and runs <code>npx cap copy</code>:
+      </p>
+      <Code lang="bash">
+        {`denext mobile dev --lan            # a physical device on the same Wi-Fi
+denext mobile dev                  # localhost: the iOS simulator (or Android + adb reverse)
+denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mobile/`}
+      </Code>
+      <p>
+        Then run the app from Xcode (or{" "}
+        <code>npx cap run ios</code>/<code>android</code>). The page origin <em>is</em>{" "}
+        the dev server, so the reload stream and the dev origin check work unchanged. The config
+        edit is temporary: Ctrl-C, <code>SIGTERM</code>{" "}
+        or an error writes the original bytes back and runs <code>cap copy</code>{" "}
+        again, so a release build never ships the dev URL. A run killed outright leaves a backup in
+        {" "}
+        <code>.denext/</code>; the next <code>mobile dev</code> (or{" "}
+        <code>mobile dev --restore</code>) restores it first. <code>cap copy</code> needs the{" "}
+        <code>webDir</code> built once.
+      </p>
+      <p>
+        Without the helper, <code>denext dev --lan</code>{" "}
+        binds the machine's LAN IPv4, allows it through the dev origin gate, and prints its URL with
+        a QR code to scan. By default the dev assets (<code>/_denext/*</code>) answer only a
+        loopback{" "}
+        <code>Host</code>: that is the DNS-rebinding defense, and it is why a phone pointed at{" "}
+        <code>--host 0.0.0.0</code> used to render a dead page. An explicit <code>--host</code>{" "}
+        now allows the host it binds (<code>0.0.0.0</code> allows this machine's own addresses), and
+        {" "}
+        <a href="/docs/config#dev-server">
+          <code>allowedDevOrigins</code>
+        </a>{" "}
+        (or{" "}
+        <code>--allowed-dev-origin</code>) lists any other host. Anything on the network that can
+        reach an allowed address can load the dev app and its source, so use <code>--lan</code>{" "}
+        on a network you trust.
+      </p>
+
       <h3>
         The <code>denext/mobile</code> runtime
       </h3>

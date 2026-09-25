@@ -14,6 +14,9 @@
 //     `platformExtensions`), for relative/alias imports and package subpaths.
 //   - `.js` parses as JSX (the bundler's `jsxInJs`).
 //   - `__DEV__`, `global` and `process.env.EXPO_OS` are defined at build time.
+//   - Each `expo-*` package in the `denext/expo` manifest (and its known subpaths) resolves
+//     to its `denext/expo/<name>` shim, unless `reactNative: { expoShims: false }`; the
+//     shims' react-native-web bridge resolves to the app's react-native-web.
 //
 // The SPA shell's root style lives with the shell (spa/shared.ts).
 
@@ -21,6 +24,7 @@ import { basename, dirname, join } from "@std/path";
 import type * as esbuild from "esbuild";
 import { type DenextConfig, reactNativeOptions } from "../server/config.ts";
 import { BROWSER_CONDITIONS, resolveInPackageDir, withPackageSideEffects } from "./next-compat.ts";
+import { EXPO_FILTER, EXPO_RN_BRIDGE, expoShimSpecifier } from "./expo-shims.ts";
 
 /** The web platform extensions React Native mode probes ahead of the plain ones. */
 export const WEB_PLATFORM_EXTENSIONS: readonly string[] = [
@@ -36,8 +40,11 @@ const WEB_PACKAGE = "react-native-web";
 /** The esbuild namespace of the throwing stub for a native-only deep import. */
 const STUB_NAMESPACE = "denext-react-native-stub";
 
-/** `react-native` itself or any `react-native/…` subpath (not `react-native-web`, etc.). */
-const REACT_NATIVE_FILTER = /^react-native(?:\/.*)?$/;
+/**
+ * `react-native` itself or any `react-native/…` subpath (not `react-native-web`, etc.), and
+ * the `denext/expo/*` shims' bridge to react-native-web's primitives.
+ */
+const REACT_NATIVE_FILTER = new RegExp(`^(?:react-native(?:/.*)?|${EXPO_RN_BRIDGE})$`);
 
 /**
  * The build-time globals React Native code expects: `__DEV__` (Metro's dev flag; true in dev,
@@ -177,7 +184,8 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
             }],
           };
         }
-        const file = await resolveReactNativeSpecifier(dir, args.path);
+        const spec = args.path === EXPO_RN_BRIDGE ? "react-native" : args.path;
+        const file = await resolveReactNativeSpecifier(dir, spec);
         return file
           ? await withPackageSideEffects(file)
           : { path: args.path, namespace: STUB_NAMESPACE };
@@ -190,11 +198,40 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
   };
 }
 
+/**
+ * The esbuild plugin that sends each `expo-*` package in the `denext/expo` manifest (and its
+ * known subpaths, such as `expo/fetch`) to its `denext/expo/<name>` shim. It re-resolves
+ * that specifier through the build, so the shim comes from the prebuilt denext runtime and
+ * shares the app's one denext instance. A package that is not in the manifest (or an
+ * unknown subpath of one) resolves normally.
+ */
+export function expoShimPlugin(): esbuild.Plugin {
+  return {
+    name: "denext-expo-shims",
+    setup(build) {
+      build.onResolve({ filter: EXPO_FILTER }, async (args) => {
+        const shim = expoShimSpecifier(args.path);
+        if (!shim) return null;
+        const result = await build.resolve(shim, {
+          kind: args.kind,
+          importer: args.importer,
+          resolveDir: args.resolveDir,
+        });
+        if (result.errors.length > 0) return { errors: result.errors };
+        return { path: result.path, namespace: result.namespace, external: result.external };
+      });
+    },
+  };
+}
+
 /** What React Native mode adds to the SPA's compat bundle. */
 export interface ReactNativeBundleOptions {
   /** The `define` entries ({@linkcode reactNativeDefines}). */
   define: Record<string, string>;
-  /** The react-native → react-native-web resolver, ahead of the built-in resolvers. */
+  /**
+   * The react-native → react-native-web resolver and (unless `expoShims: false`) the
+   * `expo-*` → `denext/expo/*` resolver, ahead of the built-in resolvers.
+   */
   plugins: esbuild.Plugin[];
   /** The `.web.*` extensions, probed first. */
   platformExtensions: readonly string[];
@@ -214,10 +251,14 @@ export function reactNativeBundleOptions(
   projectDir: string,
   dev: boolean,
 ): ReactNativeBundleOptions | null {
-  if (!reactNativeOptions(config)) return null;
+  const options = reactNativeOptions(config);
+  if (!options) return null;
   return {
     define: reactNativeDefines(dev),
-    plugins: [reactNativeWebPlugin(projectDir)],
+    plugins: [
+      reactNativeWebPlugin(projectDir),
+      ...(options.expoShims === false ? [] : [expoShimPlugin()]),
+    ],
     platformExtensions: WEB_PLATFORM_EXTENSIONS,
     jsxInJs: true,
   };

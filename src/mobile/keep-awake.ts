@@ -72,8 +72,11 @@ function holdWakeLock(wakeLock: WakeLockLike): () => void {
   };
 }
 
-/** Start keeping the screen on with whatever the platform offers; returns the release. */
-function holdAwake(): () => void {
+/**
+ * Start keeping the screen on with whatever the platform offers; returns the release.
+ * Internal (the `denext/expo/keep-awake` shim holds it imperatively); not re-exported.
+ */
+export function holdAwake(): () => void {
   const plugin = nativePlugin<KeepAwakePlugin>("KeepAwake", ["keepAwake", "allowSleep"]);
   if (plugin) return holdNative(plugin);
   const wakeLock = (globalThis as { navigator?: { wakeLock?: Partial<WakeLockLike> } })
