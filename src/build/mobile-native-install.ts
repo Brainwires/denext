@@ -6,18 +6,31 @@
 // subclass, `DenextBridgeViewController.swift`, which the storyboard and SceneDelegate are
 // pointed at. Android: from `MainActivity.onCreate`, before `super.onCreate` builds the bridge.
 // Both files are shared by every denext native feature, so their content is composed from the
-// features installed (whichever installer runs, and in whichever order): the OTA-only
-// versions are byte-for-byte what `add-ota` always wrote, and an unedited composed file (any
-// combination) is rewritten when a feature is added. An edited one is kept and reported.
+// features installed (whichever installer runs, and in whichever order), under a marker line
+// (see native-template-marker.ts), and an unedited composed file (any combination, this
+// release's or an earlier one's) is rewritten when a feature is added. An edited one is kept
+// and reported.
 
 import { join, relative } from "@std/path";
-import { isPristineOtaTemplate, OTA_IOS_FILES, renderOtaTemplate } from "./ota-native-templates.ts";
+import {
+  markedTemplateIntact,
+  renderMarkedTemplate,
+  sha256Text,
+} from "./native-template-marker.ts";
+import {
+  isPristineOtaTemplate,
+  OTA_IOS_FILES,
+  OTA_TEMPLATE_VERSION,
+  renderOtaTemplate,
+} from "./ota-native-templates.ts";
 import {
   AUTH_SESSION_BRIDGE_VIEW_CONTROLLER,
+  AUTH_SESSION_TEMPLATE_VERSION,
   isPristineAuthSessionTemplate,
   renderAuthSessionTemplate,
 } from "./auth-session-native-templates.ts";
 import {
+  APP_EXTENSION_TEMPLATE_VERSION,
   genericBridgeViewController,
   isPristineAppExtensionTemplate,
   renderAppExtensionTemplate,
@@ -101,6 +114,40 @@ async function isFile(path: string): Promise<boolean> {
   }
 }
 
+/** The generation in `text`'s leading `family` marker line, or undefined without one. */
+function markerGeneration(family: string, text: string): number | undefined {
+  const m = new RegExp(`^(?://|<!--) denext-${family}-template: (\\d+) `).exec(text);
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * The marker generation of `text` when a newer denext wrote it (above what this release writes
+ * for its family in `generations`), else undefined. Such a file is never rewritten: that would
+ * downgrade it.
+ */
+function newerGeneration(
+  text: string,
+  generations: Readonly<Record<string, number>>,
+): number | undefined {
+  for (const [family, current] of Object.entries(generations)) {
+    const found = markerGeneration(family, text);
+    if (found !== undefined && found > current) return found;
+  }
+  return undefined;
+}
+
+/** The template marker families, with the generation this release writes for each. */
+const TEMPLATE_GENERATIONS: Readonly<Record<string, number>> = {
+  ota: OTA_TEMPLATE_VERSION,
+  "auth-session": AUTH_SESSION_TEMPLATE_VERSION,
+  "app-extension": APP_EXTENSION_TEMPLATE_VERSION,
+};
+
+/** The manual step for a shared file a newer denext wrote that lacks `step`'s registration. */
+function newerDenextStep(rel: string, step: string): string {
+  return `${rel} was written by a newer denext: upgrade denext and run this again, or ${step}`;
+}
+
 /** How a family of templates is rendered (marker line) and recognised as unedited. */
 export interface TemplateKind {
   render(template: string): Promise<string>;
@@ -155,8 +202,9 @@ export class NativeInstaller<O extends NativeInstallOptions, R extends NativeIns
 
   /**
    * Write `content` to `path` unless it is already there. An existing file is replaced when
-   * `force` is on or `isPristine` says it is an unedited denext file; an edited one is kept and
-   * reported. Returns whether the file now holds `content`.
+   * `force` is on or `isPristine` says it is an unedited denext file; an edited one, or one whose
+   * template marker a newer denext wrote (never downgraded), is kept and reported. Returns
+   * whether the file now holds `content`.
    */
   async write(
     path: string,
@@ -170,6 +218,14 @@ export class NativeInstaller<O extends NativeInstallOptions, R extends NativeIns
       return true;
     }
     if (existing !== undefined && !this.opts.force) {
+      if (newerGeneration(existing, TEMPLATE_GENERATIONS) !== undefined) {
+        this.report.kept.push(rel);
+        this.report.manual.push(
+          `${rel} was written by a newer denext: kept it (upgrade denext, or re-run with --force ` +
+            "to replace it).",
+        );
+        return false;
+      }
       if (!(await isPristine(existing))) {
         this.report.kept.push(rel);
         this.report.manual.push(
@@ -312,6 +368,17 @@ export async function installBridgeViewController(
   const path = join(root, IOS_APP, BRIDGE_VC_FILE);
   const features = await iosFeatures(root, including);
   const existing = await inst.read(path);
+  // A bridge a newer denext wrote is never downgraded (as if edited; --force still replaces it).
+  if (
+    existing !== undefined && !inst.opts.force &&
+    newerGeneration(existing, TEMPLATE_GENERATIONS) !== undefined
+  ) {
+    const rel = inst.rel(path);
+    if (existing.includes(registration.needle)) return void inst.report.unchanged.push(rel);
+    inst.report.kept.push(rel);
+    inst.report.manual.push(newerDenextStep(rel, registration.step));
+    return;
+  }
   // An OTA bridge from an earlier denext goes with that release's OTA files: only `add-ota`
   // upgrades them together, so another installer leaves it (the current OTA bridge may call
   // what the older OTA files lack).
@@ -480,8 +547,8 @@ const ANDROID_REGISTRATIONS: Readonly<
 
 /**
  * The features in their MainActivity import order; onCreate registers them in reverse, so OTA's
- * `prepare` stays first thing. The newer features come first, which keeps what earlier
- * releases wrote for OTA and auth sessions byte-for-byte the same.
+ * `prepare` stays first thing. The newer features come first, which keeps the body of what
+ * earlier releases wrote for OTA and auth sessions the same.
  */
 const FEATURE_ORDER: readonly AndroidFeature[] = [
   "share-receive",
@@ -490,19 +557,62 @@ const FEATURE_ORDER: readonly AndroidFeature[] = [
   "ota",
 ];
 
+/** The marker family of a MainActivity denext composed: `// denext-main-activity-template:`. */
+const MAIN_ACTIVITY_FAMILY = "main-activity";
+/** The generation of {@linkcode mainActivitySource}'s text, stamped into its marker line. */
+const MAIN_ACTIVITY_TEMPLATE_VERSION = 1;
+
+/**
+ * SHA-256 of every MainActivity denext wrote before the marker line existed, with the package
+ * line normalised to `package PKG;` (see {@linkcode normalizedPackage}): the OTA-only activity
+ * of v2.7.0 … v2.9.0 (`preparedMainActivity` in mobile-ota-install.ts), and
+ * `mainActivitySource` for every feature combination of v2.10.0-rc.1 / rc.2 (OTA, auth
+ * sessions) and v2.10.0-rc.3 (plus share-receive and widgets). The text never changed between
+ * those tags, so each combination has one hash. A file equal to one of them is unedited.
+ */
+const SHIPPED_MAIN_ACTIVITY_SHA256: readonly string[] = [
+  "2d3341402b008db857d0ad376dad06dcb50464ec3f2cb8f9eace3f96338bec37", // ota
+  "a31a00132ce0134fca1e5e654956567e6f7d2cc401c1386fd8b741ce1c3b380c", // auth-session
+  "83c0722f6b0e921d65965848ec6a7c5d79cfada73b88293e0f723c451b145083", // auth-session+ota
+  "221f4cfe7f8e5663e833dfa306010550572ddf745ae4b918d76892fc0c82613a", // share-receive
+  "2454f88c67da50bda67aa003e9142959feffd6ab9b1a53c21caadbd5c626b980", // widgets
+  "af2709906b97f27f3fa23467f07f823c6dc2cb26561fad456e24e177c3e8d09a", // share-receive+widgets
+  "7c41a59cb2d6907f065507050ec8ce88aefff0027e4b928703d225f6fdf11ec3", // share-receive+auth-session
+  "3fb7afa42eccddfb7470f2c5fab1e606916529c20d3e8b1d33a2d99b0f9e1c5b", // widgets+auth-session
+  "40f11d4532cbe208715c48932d9fe05ec23a71dd419c500822ef07d59aa8025c", // share+widgets+auth
+  "75b84fb0cd554c43dfefaa3ea1cb5b74ec064c54b570a7e2ee45c40a205c46fe", // share-receive+ota
+  "821f931afa5b88adc0a792c0d738ee999ad304d72cec5333aa03e9a59cab85b1", // widgets+ota
+  "a114f08eb13e92205187e2cd140e2db080bbbb5aff0e8ce3499e5873b74c155d", // share+widgets+ota
+  "c2733f54637ec2a8cba871e77179563ec576241d2085eb8d4b8bf08991c7d5e7", // share+auth+ota
+  "6f06a5fbdb1ed9459e774665fe81301b3dd0e6237bedc9b3ce4b70139f76ed0c", // widgets+auth+ota
+  "24b5ef26fcd8d7d70ac6f3e188ca4f3bce2b1dced99a6ff1326cfbe5cd06a04f", // all four
+];
+
+/** `text` with its leading `package <name>;` replaced by `package PKG;`, for hashing. */
+function normalizedPackage(text: string): string {
+  return text.replace(/^package\s+[\w.]+\s*;/, "package PKG;");
+}
+
 /**
  * A `MainActivity` that registers `features` before the bridge is built (OTA first in onCreate,
- * so its `prepare` still runs first thing). OTA alone is exactly what `add-ota` always wrote.
+ * so its `prepare` still runs first thing), under a `// denext-main-activity-template:` marker
+ * line, so a later release still recognises it as unedited after the text changes.
  *
  * @param pkg The activity's Java package.
  * @param features The features to register (at least one).
- * @returns The Java source.
+ * @returns The Java source, marker line included.
  */
-export function mainActivitySource(pkg: string, features: ReadonlySet<AndroidFeature>): string {
+export function mainActivitySource(
+  pkg: string,
+  features: ReadonlySet<AndroidFeature>,
+): Promise<string> {
   const chosen = FEATURE_ORDER.filter((f) => features.has(f));
   const imports = chosen.map((f) => ANDROID_REGISTRATIONS[f].import).join("");
   const lines = [...chosen].reverse().map((f) => ANDROID_REGISTRATIONS[f].lines).join("");
-  return `package ${pkg};
+  return renderMarkedTemplate(
+    MAIN_ACTIVITY_FAMILY,
+    MAIN_ACTIVITY_TEMPLATE_VERSION,
+    `package ${pkg};
 
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
@@ -514,22 +624,43 @@ public class MainActivity extends BridgeActivity {
 ${lines}        super.onCreate(savedInstanceState);
     }
 }
-`;
+`,
+  );
+}
+
+/** Whether `text` is a MainActivity denext composed and nobody edited (marker or shipped hash). */
+async function isPristineMainActivity(text: string): Promise<boolean> {
+  const marked = await markedTemplateIntact(MAIN_ACTIVITY_FAMILY, text);
+  if (marked !== undefined) return marked;
+  return SHIPPED_MAIN_ACTIVITY_SHA256.includes(await sha256Text(normalizedPackage(text)));
+}
+
+/**
+ * The features an unedited denext MainActivity registers, or undefined when it also registers a
+ * plugin this release does not know (a newer release's feature, which a rewrite would drop).
+ */
+function registeredFeatures(text: string): AndroidFeature[] | undefined {
+  const known = new Set(FEATURE_ORDER.map((f) => ANDROID_REGISTRATIONS[f].call));
+  for (const m of text.matchAll(/registerPlugin\(\s*(\w+)\.class\s*\)/g)) {
+    if (!known.has(`${m[1]}.class`)) return undefined;
+  }
+  return FEATURE_ORDER.filter((f) => text.includes(ANDROID_REGISTRATIONS[f].call));
 }
 
 /**
  * The package and registered features of a MainActivity denext can rewrite: the stock one (no
- * features), or one written by {@linkcode mainActivitySource}. Undefined for anything else.
+ * features), or an unedited one denext composed (this release or an earlier one). Undefined
+ * for anything else.
  */
-function recognizeMainActivity(
+async function recognizeMainActivity(
   text: string,
-): { pkg: string; features: AndroidFeature[] } | undefined {
+): Promise<{ pkg: string; features: AndroidFeature[] } | undefined> {
   const stock = STOCK_MAIN_ACTIVITY.exec(text);
   if (stock) return { pkg: stock[1], features: [] };
-  const pkg = /^package\s+([\w.]+)\s*;/.exec(text)?.[1];
-  if (pkg === undefined) return undefined;
-  const set = featureSets(FEATURE_ORDER).find((s) => mainActivitySource(pkg, new Set(s)) === text);
-  return set ? { pkg, features: [...set] } : undefined;
+  const pkg = /^package\s+([\w.]+)\s*;/m.exec(text)?.[1];
+  if (pkg === undefined || !(await isPristineMainActivity(text))) return undefined;
+  const features = registeredFeatures(text);
+  return features ? { pkg, features } : undefined;
 }
 
 /** Every `MainActivity.java`/`.kt` under `dir`, as absolute paths. */
@@ -550,8 +681,10 @@ async function findMainActivities(dir: string): Promise<string[]> {
 }
 
 /**
- * Make `MainActivity` register `feature`'s plugin. A stock activity, or one denext wrote for
- * other features, is rewritten to register them all; anything else becomes a manual step.
+ * Make `MainActivity` register `feature`'s plugin. A stock activity, or an unedited one denext
+ * wrote (this release or an earlier one), is rewritten to the current source registering them
+ * all; an edited one that already registers `feature` is left alone, and any other becomes a
+ * manual step.
  */
 export async function registerInMainActivity(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
@@ -565,14 +698,26 @@ export async function registerInMainActivity(
     return;
   }
   const path = activities[0];
-  const text = await Deno.readTextFile(path);
-  if (text.includes(call)) return void inst.report.unchanged.push(inst.rel(path));
-  const known = path.endsWith(".java") ? recognizeMainActivity(text) : undefined;
+  const text = (await inst.read(path)) ?? "";
+  // One a newer denext wrote is never downgraded: it is treated like an edited one.
+  if (
+    newerGeneration(text, { [MAIN_ACTIVITY_FAMILY]: MAIN_ACTIVITY_TEMPLATE_VERSION }) !== undefined
+  ) {
+    if (text.includes(call)) return void inst.report.unchanged.push(inst.rel(path));
+    inst.report.manual.push(newerDenextStep(inst.rel(path), step));
+    return;
+  }
+  const known = path.endsWith(".java") ? await recognizeMainActivity(text) : undefined;
   if (!known) {
+    if (text.includes(call)) return void inst.report.unchanged.push(inst.rel(path));
     inst.report.manual.push(`${inst.rel(path)}: ${step}`);
     return;
   }
-  await inst.edit(path, () => mainActivitySource(known.pkg, new Set([...known.features, feature])));
+  const current = await mainActivitySource(known.pkg, new Set(known.features));
+  // An unedited activity from an earlier release (the text or the marker generation changed).
+  if (known.features.length > 0 && text !== current) inst.report.upgraded.push(inst.rel(path));
+  const next = await mainActivitySource(known.pkg, new Set([...known.features, feature]));
+  await inst.edit(path, () => next);
 }
 
 /** Whether the project has `android/app/src/main`; records the skip when it does not. */

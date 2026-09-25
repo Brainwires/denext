@@ -15,6 +15,7 @@ import {
   SHIPPED_OTA_TEMPLATE_SHA256,
 } from "../src/build/ota-native-templates.ts";
 import { generateOtaKeyPair } from "../src/build/ota-signing.ts";
+import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 
 const PBXPROJ = await Deno.readTextFile(
@@ -1223,6 +1224,38 @@ Deno.test("denext mobile add-ota --dry-run --public-key still fails over a kept 
     });
     assert(errors.some((e) => e.includes("edited template that was kept")), errors.join("\n"));
     assertEquals(await snapshot(dir), before);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("add-ota: a template a newer denext wrote is kept, never downgraded; --force replaces", async () => {
+  const dir = await project();
+  try {
+    await addOtaToProject({ dir });
+    const files = {
+      "ios/App/App/DenextOtaPlugin.swift": OTA_IOS_FILES["DenextOtaPlugin.swift"],
+      "android/app/src/main/java/dev/denext/ota/DenextOtaStore.java":
+        OTA_ANDROID_FILES["DenextOtaStore.java"],
+    };
+    const newer = await renderMarkedTemplate("ota", OTA_TEMPLATE_VERSION + 1, "// newer\n");
+    for (const path of Object.keys(files)) await Deno.writeTextFile(join(dir, path), newer);
+    const report = await addOtaToProject({ dir });
+    for (const path of Object.keys(files)) {
+      assert(report.kept.includes(path), path);
+      assert(!report.written.includes(path), path);
+      assert(
+        report.manual.includes(
+          `${path} was written by a newer denext: kept it (upgrade denext, or re-run with --force to replace it).`,
+        ),
+        path,
+      );
+      assertEquals(await read(dir, path), newer);
+    }
+    await addOtaToProject({ dir, force: true });
+    for (const [path, template] of Object.entries(files)) {
+      assertEquals(await read(dir, path), await renderOtaTemplate(template));
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

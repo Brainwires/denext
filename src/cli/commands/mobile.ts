@@ -790,10 +790,12 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n" +
     "  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n" +
     "  CAPBridgeViewController. Android: writes dev/denext/ota/*.java and calls\n" +
-    "  DenextOta.prepare(this, bridgeBuilder) from a stock MainActivity. Customised files are\n" +
-    "  left alone and listed as one-line manual steps. Safe to run again, and run it after every\n" +
-    "  denext upgrade: unedited templates from an earlier denext are upgraded in place (ship a\n" +
-    "  new app binary afterwards).\n" +
+    "  DenextOta.prepare(this, bridgeBuilder) from MainActivity, when it is the stock one or one\n" +
+    "  denext generated (recognised by its marker line, or as a shape an earlier denext shipped).\n" +
+    "  Customised files are left alone and listed as one-line manual steps, as are a MainActivity\n" +
+    "  or bridge view controller a newer denext wrote (never downgraded). Safe to run again, and\n" +
+    "  run it after every denext upgrade: unedited templates from an earlier denext are upgraded\n" +
+    "  in place (ship a new app binary afterwards).\n" +
     "\n" +
     "  --public-key ota.key.pub (from `denext ota keygen`) embeds the verifying key as Info.plist\n" +
     "  DenextOtaPublicKey and the dev.denext.ota.PUBLIC_KEY meta-data in AndroidManifest.xml\n" +
