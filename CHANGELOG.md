@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [2.10.0-rc.4] - 2026-09-25
+
 ### Added
 
 - **`denext/expo/file-system/legacy`: the `expo-file-system/legacy` API in React Native mode.**
@@ -8460,6 +8462,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[2.10.0-rc.4]: https://jsr.io/@denext/denext@2.10.0-rc.4
 [2.10.0-rc.3]: https://jsr.io/@denext/denext@2.10.0-rc.3
 [2.10.0-rc.2]: https://jsr.io/@denext/denext@2.10.0-rc.2
 [2.10.0-rc.1]: https://jsr.io/@denext/denext@2.10.0-rc.1
