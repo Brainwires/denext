@@ -478,7 +478,42 @@ denext mobile add haptics share network secure-store`}
           (<code>secure-store</code>): the iOS Keychain / Android Keystore. On the web it is a plain
           IndexedDB database, which is <strong>not</strong> secret.
         </li>
+        <li>
+          <code>readFile</code> / <code>writeFile</code> / <code>deleteFile</code> /{" "}
+          <code>listDir</code> / <code>downloadToFile(url, path)</code>{" "}
+          (<code>filesystem</code>): the app's files in <code>"data"</code>,{" "}
+          <code>"documents"</code> or{" "}
+          <code>"cache"</code>, as text or base64; the Origin Private File System on the web (a
+          top-level folder per directory).
+        </li>
+        <li>
+          <code>pickImage({"{ source }"})</code>{" "}
+          (<code>camera</code>, which also writes the camera and photo-library usage strings) and
+          {" "}
+          <code>pickDocument({"{ types }"})</code> (<code>document-picker</code>): resolve{" "}
+          <code>null</code> when the user cancels; a hidden file input on the web.
+        </li>
+        <li>
+          <code>scanBarcode({"{ formats }"})</code>{" "}
+          (<code>barcode</code>): the value and format of one code; <code>BarcodeDetector</code>
+          {" "}
+          over the camera on the web where the browser has it. The install raises Android's{" "}
+          <code>minSdkVersion</code> to 26, which the scanner needs.
+        </li>
+        <li>
+          <code>setQuickActions([...])</code> / <code>onQuickAction</code> /{" "}
+          <code>useQuickAction</code>{" "}
+          (<code>quick-actions</code>): home-screen shortcuts on a long press of the app icon, the
+          one that cold-started the app included (the install wires{" "}
+          <code>SceneDelegate.swift</code>); nothing on the web.
+        </li>
       </ul>
+      <p>
+        Audio, video and image editing need no plugin: Expo's <code>expo-audio</code> and{" "}
+        <code>expo-video</code> map to <code>&lt;audio&gt;</code>, <code>&lt;video&gt;</code>{" "}
+        and Web Audio in the WebView, and <code>expo-image-manipulator</code> to Canvas /{" "}
+        <code>OffscreenCanvas</code>.
+      </p>
       <p>
         <code>browser</code> installs the plugin <code>openExternal</code>{" "}
         uses for its in-app browser. A new plugin is native code: ship a new app binary afterwards.

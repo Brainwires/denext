@@ -20,11 +20,14 @@ import {
 import {
   EMPTY_ENTITLEMENTS,
   withAppDelegatePushForwarding,
+  withAppDelegateQuickActions,
+  withGradleMinSdk,
   withManifestIntentFilter,
   withManifestPermission,
   withPlistDefault,
   withPlistStringArray,
   withPlistUrlScheme,
+  withSceneDelegateQuickActions,
 } from "../src/build/mobile-native-config.ts";
 import { createMobileCommand } from "../src/cli/commands/mobile.ts";
 
@@ -426,9 +429,9 @@ Deno.test("mobile add: finds the project in --dir, else cwd; unknown capabilitie
       await Deno.remove(outer, { recursive: true });
     }
     await assertRejects(
-      () => planMobileCapabilities({ capabilities: ["camera", "haptics"], cwd: dir }),
+      () => planMobileCapabilities({ capabilities: ["lidar", "haptics"], cwd: dir }),
       Error,
-      'unknown capability "camera"',
+      'unknown capability "lidar"',
     );
     await assertRejects(
       () => planMobileCapabilities({ capabilities: [], cwd: dir }),
@@ -499,18 +502,27 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "deep-links",
     "auth-session",
     "push",
+    "filesystem",
+    "camera",
+    "document-picker",
+    "barcode",
+    "quick-actions",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
     // auth-session is denext's own native plugin: no npm package to pin.
     if (cap.npm === undefined) continue;
-    assert(cap.version?.startsWith("^8."), name);
+    // @capacitor/barcode-scanner numbers its own releases: 3.x targets Capacitor 8.
+    assert(cap.version?.startsWith(name === "barcode" ? "^3." : "^8."), name);
   }
   assertEquals(
     Object.keys(MOBILE_CAPABILITIES).filter((n) => MOBILE_CAPABILITIES[n].npm === undefined),
     ["auth-session"],
   );
-  assertStringIncludes(formatCapabilityTable(), "keep-awake    @capacitor-community/keep-awake@^8");
+  assertStringIncludes(
+    formatCapabilityTable(),
+    "keep-awake       @capacitor-community/keep-awake@^8",
+  );
 });
 
 /** Run the `mobile` verb with a fake runner, capturing console.log. */
@@ -538,7 +550,7 @@ async function runVerb(
 Deno.test("denext mobile add: --list, --dry-run and a real run through the verb", async () => {
   const { run, calls } = fakeRunner();
   const listed = await runVerb(["add"], { list: true }, run);
-  assertStringIncludes(listed.join("\n"), "secure-store  @aparajita/capacitor-secure-storage");
+  assertStringIncludes(listed.join("\n"), "secure-store     @aparajita/capacitor-secure-storage");
 
   await inProject({ "bun.lockb": "" }, async (dir) => {
     const planned = await runVerb(["add", "haptics"], { "dry-run": true, dir }, run);
@@ -885,4 +897,184 @@ Deno.test("denext mobile add: --scheme / --domain are comma-separated lists", as
     const pushed = await runVerb(["add", "push"], { dir }, run);
     assertStringIncludes(pushed.join("\n"), "WARNING: no android/app/google-services.json");
   });
+});
+
+// ---- filesystem / camera / document-picker / barcode / quick-actions ---------------------
+
+const SCENE_DELEGATE_PATH = "ios/App/App/SceneDelegate.swift";
+
+/** Capacitor 8's scene-template SceneDelegate. */
+const SCENE_DELEGATE = `import UIKit
+import Capacitor
+
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+
+        window = UIWindow(windowScene: windowScene)
+        window?.rootViewController = CAPBridgeViewController()
+        window?.makeKeyAndVisible()
+
+        SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
+    }
+
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        SceneDelegateProxy.shared.scene(scene, openURLContexts: URLContexts)
+    }
+}
+`;
+
+Deno.test("mobile add: the new capabilities install their pinned plugins; plist keys once", async () => {
+  await inProject(nativeProject({ [PLIST_PATH]: INFO_PLIST }), async (dir) => {
+    const { run, calls } = fakeRunner();
+    const report = await addMobileCapabilities({
+      capabilities: ["filesystem", "camera", "document-picker", "barcode"],
+      cwd: dir,
+      run,
+    });
+    assertEquals(calls[0].args, [
+      "install",
+      "@capacitor/filesystem@^8.1.3",
+      "@capacitor/camera@^8.2.4",
+      "@capawesome/capacitor-file-picker@^8.1.0",
+      "@capacitor/barcode-scanner@^3.1.2",
+    ]);
+    // camera and barcode share NSCameraUsageDescription: planned and written once.
+    assertEquals(report.plan.plist.map((p) => p.key), [
+      "NSCameraUsageDescription",
+      "NSPhotoLibraryUsageDescription",
+      "NSPhotoLibraryAddUsageDescription",
+    ]);
+    assertEquals(report.plan.permissions, [], "none needs an Android permission");
+    const plist = await read(dir, PLIST_PATH);
+    assertEquals(
+      plist.split("<key>NSCameraUsageDescription</key>").length,
+      3,
+      "top level + nested",
+    );
+    assertStringIncludes(plist, "<key>NSPhotoLibraryAddUsageDescription</key>");
+    assertEquals(report.written, [PLIST_PATH]);
+    assertStringIncludes(report.skipped.join("\n"), "no android/variables.gradle");
+    assertStringIncludes(report.plan.notes.join("\n"), "pickDocument({ types })");
+    assertStringIncludes(
+      formatCapabilityTable(),
+      "document-picker  @capawesome/capacitor-file-picker@^8.1.0",
+    );
+  });
+});
+
+Deno.test("mobile add quick-actions: SceneDelegate forwarding (warm + cold start), idempotent", async () => {
+  await inProject(nativeProject({ [SCENE_DELEGATE_PATH]: SCENE_DELEGATE }), async (dir) => {
+    const { run, calls } = fakeRunner();
+    const report = await addMobileCapabilities({ capabilities: ["quick-actions"], cwd: dir, run });
+    assertEquals(calls[0].args, ["install", "@capawesome/capacitor-app-shortcuts@^8.0.2"]);
+    assertEquals(report.written, [SCENE_DELEGATE_PATH]);
+    assertStringIncludes(formatCapabilityPlan(report.plan), "native         forward quick actions");
+    const scene = await read(dir, SCENE_DELEGATE_PATH);
+    assertStringIncludes(
+      scene,
+      "options: connectionOptions)\n        denextForwardQuickAction(connectionOptions.shortcutItem)\n    }\n",
+    );
+    assertStringIncludes(
+      scene,
+      "    func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {\n" +
+        "        denextForwardQuickAction(shortcutItem)\n        completionHandler(true)\n    }\n",
+    );
+    assertStringIncludes(scene, 'NSNotification.Name("handleAppShortcutNotification")');
+    assertStringIncludes(scene, "forName: .capacitorViewDidAppear");
+    assert(scene.endsWith("            post()\n        }\n    }\n}\n"), scene);
+    assertEquals(await read(dir, APP_DELEGATE_PATH), APP_DELEGATE, "AppDelegate untouched");
+
+    const again = await addMobileCapabilities({ capabilities: ["quick-actions"], cwd: dir, run });
+    assertEquals(again.written, []);
+    assertEquals(again.unchanged, [SCENE_DELEGATE_PATH]);
+    assertEquals(await read(dir, SCENE_DELEGATE_PATH), scene);
+  });
+});
+
+Deno.test("mobile add quick-actions: AppDelegate without scenes; hand-wired and missing iOS", async () => {
+  await inProject(nativeProject(), async (dir) => {
+    const report = await addMobileCapabilities({
+      capabilities: ["quick-actions"],
+      cwd: dir,
+      run: fakeRunner().run,
+    });
+    assertEquals(report.written, [APP_DELEGATE_PATH]);
+    const delegate = await read(dir, APP_DELEGATE_PATH);
+    assertStringIncludes(
+      delegate,
+      "    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem",
+    );
+    assertStringIncludes(delegate, "private func denextForwardQuickAction(");
+  });
+  // A delegate that already handles performActionFor is left for the user.
+  const own = SCENE_DELEGATE.replace(
+    "    var window",
+    "    func windowScene(_ w: UIWindowScene, performActionFor s: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {}\n    var window",
+  );
+  await inProject(nativeProject({ [SCENE_DELEGATE_PATH]: own }), async (dir) => {
+    const report = await addMobileCapabilities({
+      capabilities: ["quick-actions"],
+      cwd: dir,
+      run: fakeRunner().run,
+    });
+    assertEquals(report.written, []);
+    assertStringIncludes(report.manual.join("\n"), "handleAppShortcutNotification");
+    assertEquals(await read(dir, SCENE_DELEGATE_PATH), own);
+  });
+  await inProject({ [PLIST_PATH]: null }, async (dir) => {
+    const report = await addMobileCapabilities({
+      capabilities: ["quick-actions"],
+      cwd: dir,
+      run: fakeRunner().run,
+    });
+    assertStringIncludes(report.skipped.join("\n"), "npx cap add ios");
+  });
+});
+
+Deno.test("native config: quick-action forwarding edge cases", () => {
+  assertEquals(
+    withSceneDelegateQuickActions(SCENE_DELEGATE.replace("import Capacitor\n", "")),
+    null,
+  );
+  assertEquals(
+    withSceneDelegateQuickActions(SCENE_DELEGATE.replace("var window", "let win")),
+    null,
+  );
+  assertEquals(
+    withSceneDelegateQuickActions(SCENE_DELEGATE.replace("willConnectTo", "willConnectLater")),
+    null,
+    "no willConnectTo method",
+  );
+  assertEquals(
+    withAppDelegateQuickActions("import Capacitor\nvar window\nstruct Other {}\n"),
+    null,
+  );
+  // Any options parameter name works.
+  const renamed = withSceneDelegateQuickActions(
+    SCENE_DELEGATE.replaceAll("connectionOptions", "opts"),
+  );
+  assertStringIncludes(renamed!, "denextForwardQuickAction(opts.shortcutItem)");
+});
+
+const VARIABLES_GRADLE_PATH = "android/variables.gradle";
+const VARIABLES_GRADLE = "ext {\n    minSdkVersion = 24\n    compileSdkVersion = 36\n}\n";
+
+Deno.test("mobile add barcode: raises Android minSdkVersion to 26, never lowers it", async () => {
+  await inProject(nativeProject({ [VARIABLES_GRADLE_PATH]: VARIABLES_GRADLE }), async (dir) => {
+    const { run } = fakeRunner();
+    const report = await addMobileCapabilities({ capabilities: ["barcode"], cwd: dir, run });
+    assertStringIncludes(formatCapabilityPlan(report.plan), "gradle         minSdkVersion 26");
+    assert(report.written.includes(VARIABLES_GRADLE_PATH), report.written.join());
+    assertEquals(
+      await read(dir, VARIABLES_GRADLE_PATH),
+      "ext {\n    minSdkVersion = 26\n    compileSdkVersion = 36\n}\n",
+    );
+    const again = await addMobileCapabilities({ capabilities: ["barcode"], cwd: dir, run });
+    assert(again.unchanged.includes(VARIABLES_GRADLE_PATH));
+  });
+  assertEquals(withGradleMinSdk("minSdkVersion = 28\n", 26), "minSdkVersion = 28\n");
+  assertEquals(withGradleMinSdk("ext { }\n", 26), null);
 });
