@@ -8,7 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [2.10.0-rc.4] - 2026-09-25
+### Fixed
+
+- **The package publishes to JSR again.** `src/desktop/auth-session.ts` declared a global
+  (`declare global { var __denext … }`), which JSR refuses ("modifying global types is not
+  allowed"), so `2.10.0-rc.4` was tagged but never published; its changes ship in this release.
+  The desktop globals are now read through a cast, and a test fails on any `declare global` in
+  published source (`deno publish --dry-run` does not catch it).
+
+## [2.10.0-rc.4] - 2026-09-25 (tagged, not published)
 
 ### Added
 

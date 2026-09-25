@@ -19,10 +19,14 @@ import type { AuthSessionError, AuthSessionErrorCode } from "../mobile/auth-sess
 /** The path the desktop runtime serves the loopback auth-session endpoint at. */
 const AUTH_SESSION_PATH = "/_denext/desktop/auth-session";
 
-declare global {
-  // The per-launch desktop globals the runtime injects into the served shell (see
-  // `injectDesktopGlobal` in `src/build/desktop.ts`). `token` gates the local endpoint.
-  var __denext: { desktop?: boolean; token?: string } | undefined;
+/**
+ * The per-launch desktop globals the runtime injects into the served shell (see
+ * `injectDesktopGlobal` in `src/build/desktop.ts`); `token` gates the local endpoint. Read
+ * through a cast, not a `declare global`: JSR refuses a published module that changes the
+ * global types.
+ */
+function desktopGlobals(): { desktop?: boolean; token?: string } | undefined {
+  return (globalThis as { __denext?: { desktop?: boolean; token?: string } }).__denext;
 }
 
 // A local copy of the mobile module's error factory — intentionally NOT imported from
@@ -56,7 +60,7 @@ export async function startDesktopAuthSession(
   url: string,
   opts: { timeoutMs?: number },
 ): Promise<{ url: string }> {
-  const token = globalThis.__denext?.token;
+  const token = desktopGlobals()?.token;
   if (typeof token !== "string" || token === "") {
     throw authSessionError("unsupported", "not running under Deno Desktop");
   }

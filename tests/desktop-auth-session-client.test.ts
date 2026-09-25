@@ -13,15 +13,16 @@ async function withDesktop(
   fetchImpl: typeof fetch,
   fn: () => Promise<void>,
 ): Promise<void> {
+  const g = globalThis as { __denext?: { desktop?: boolean; token?: string } };
   const origFetch = globalThis.fetch;
-  const origDenext = globalThis.__denext;
-  globalThis.__denext = token === undefined ? undefined : { desktop: true, token };
+  const origDenext = g.__denext;
+  g.__denext = token === undefined ? undefined : { desktop: true, token };
   globalThis.fetch = fetchImpl;
   try {
     await fn();
   } finally {
     globalThis.fetch = origFetch;
-    globalThis.__denext = origDenext;
+    g.__denext = origDenext;
   }
 }
 

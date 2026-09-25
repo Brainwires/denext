@@ -6,6 +6,10 @@
 // `/** @jsxImportSource npm:preact@… */`). denext's own source is `"denext"` → `./mod.ts`, so a
 // published `.tsx` would resolve `<mod.ts>/jsx-runtime` — `denext ui` run from
 // `jsr:@denext/denext/cli` would break. Framework views are built with `h()` in `.ts` files.
+//
+// It also carries no `declare global`: JSR refuses a package whose module changes the global
+// types ("modifying global types is not allowed"), and `deno publish --dry-run` does not catch it
+// (2.10.0-rc.4's first publish failed on it). Read an injected global through a cast instead.
 
 import { assertEquals } from "@std/assert";
 import { globToRegExp, join } from "@std/path";
@@ -39,8 +43,8 @@ function excluder(exclude: readonly string[] = []): (rel: string) => boolean {
     globs.some((glob) => glob.test(rel));
 }
 
-/** Every JSX file at or under `rel` (relative to `base`) that the package would publish. */
-async function jsxUnder(
+/** Every file at or under `rel` (relative to `base`) that the package would publish. */
+async function filesUnder(
   base: string,
   rel: string,
   excluded: (rel: string) => boolean,
@@ -53,10 +57,10 @@ async function jsxUnder(
   } catch {
     return []; // an `include` entry that does not exist (yet) publishes nothing
   }
-  if (!info.isDirectory) return JSX_FILE.test(rel) ? [rel] : [];
+  if (!info.isDirectory) return [rel];
   const found: string[] = [];
   for await (const entry of Deno.readDir(join(base, rel))) {
-    found.push(...await jsxUnder(base, `${rel}/${entry.name}`, excluded));
+    found.push(...await filesUnder(base, `${rel}/${entry.name}`, excluded));
   }
   return found;
 }
@@ -68,16 +72,16 @@ async function publishConfig(dir: string): Promise<PublishConfig> {
 }
 
 /** The root package: `src/` and every file beside `mod.ts`/`cli.ts`. */
-async function rootOffenders(): Promise<string[]> {
+async function rootFiles(): Promise<string[]> {
   const excluded = excluder((await publishConfig(ROOT)).exclude);
   const roots = ["src"];
   for await (const entry of Deno.readDir(ROOT)) if (entry.isFile) roots.push(entry.name);
-  const found = await Promise.all(roots.map((rel) => jsxUnder(ROOT, rel, excluded)));
+  const found = await Promise.all(roots.map((rel) => filesUnder(ROOT, rel, excluded)));
   return found.flat();
 }
 
 /** Every workspace package's published paths (its `publish.include`, else the whole package). */
-async function packageOffenders(): Promise<string[]> {
+async function packageFiles(): Promise<string[]> {
   const found: string[] = [];
   for await (const entry of Deno.readDir(join(ROOT, "packages"))) {
     const dir = join(ROOT, "packages", entry.name);
@@ -86,16 +90,35 @@ async function packageOffenders(): Promise<string[]> {
     const excluded = excluder(publish.exclude);
     for (const rel of publish.include ?? ["."]) {
       const clean = rel.replace(/^\.\//, "").replace(/\/+$/, "") || ".";
-      const files = await jsxUnder(dir, clean, excluded);
+      const files = await filesUnder(dir, clean, excluded);
       found.push(...files.map((file) => `packages/${entry.name}/${file.replace(/^\.\//, "")}`));
     }
   }
   return found;
 }
 
+/** Every published file of the root package and the workspace packages, repo-relative. */
+async function publishedFiles(): Promise<string[]> {
+  return [...await rootFiles(), ...await packageFiles()].sort();
+}
+
 Deno.test("published framework source has no .tsx/.jsx files", async () => {
-  const offenders = [...await rootOffenders(), ...await packageOffenders()].sort();
+  const offenders = (await publishedFiles()).filter((file) => JSX_FILE.test(file));
   assertEquals(offenders, [], `${WHY}\n  ${offenders.join("\n  ")}`);
+});
+
+Deno.test("published framework source never declares global types", async () => {
+  const offenders: string[] = [];
+  for (const file of (await publishedFiles()).filter((f) => /\.[cm]?[jt]s$/.test(f))) {
+    const text = await Deno.readTextFile(join(ROOT, file));
+    if (/^\s*declare\s+global\b/m.test(text)) offenders.push(file);
+  }
+  assertEquals(
+    offenders,
+    [],
+    "JSR refuses a published module that modifies the global types (`declare global`); " +
+      `read the global through a cast instead:\n  ${offenders.join("\n  ")}`,
+  );
 });
 
 Deno.test("the publish-set walk honours publish.exclude and never-published directories", () => {
