@@ -25,6 +25,24 @@ import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import { isRemix, type RemixMigrateInfo, transformRemixApp } from "./remix-migrate.ts";
 import {
+  capacitorConfigSource,
+  capacitorIdentity,
+  capacitorTasks,
+  type ExpoAppConfig,
+  expoConfigScript,
+  type ExpoDependencyReport,
+  expoDependencyReport,
+  expoMobilePlan,
+  expoWebEntry,
+  type MetroResolution,
+  type MobilePlan,
+  prebuildFolders,
+  readExpoAppConfig,
+  readMetroResolution,
+} from "./expo-migrate.ts";
+import { findReactNativeWeb } from "./react-native.ts";
+import { findSqliteWasm } from "./sqlite-wasm.ts";
+import {
   detectPrismaWiring,
   isPrismaDep,
   type PrismaMigrateInfo,
@@ -260,7 +278,8 @@ export interface MigrateOptions {
   proxyPrefixes?: string[];
   /**
    * Force the source framework instead of auto-detecting (`next` | `remix` | `vite` |
-   * `cra` | `generic`). Reserved for ambiguous cases; auto-detection is used when omitted.
+   * `cra` | `generic` | `expo`). Reserved for ambiguous cases; auto-detection is used when
+   * omitted.
    */
   from?: string;
   /**
@@ -295,7 +314,7 @@ export interface SpaMigrateInfo {
 
 /** Result of a migration run (for the CLI to print). */
 export interface MigrateResult {
-  kind: "next" | "spa" | "cra" | "generic" | "remix";
+  kind: "next" | "spa" | "cra" | "generic" | "remix" | "expo";
   /** Files written by this run (deno.json, and for SPA the config/desktop entries). */
   wrote: string[];
   aliased: string[];
@@ -324,6 +343,32 @@ export interface MigrateResult {
   remix?: RemixMigrateInfo;
   /** Present when the app uses Prisma — the Deno-client/adapter wiring report. */
   prisma?: PrismaMigrateInfo;
+  /** Present when {@link kind} is `"expo"` — the React Native mode + Capacitor report. */
+  expo?: ExpoMigrateInfo;
+}
+
+/** What `denext migrate --from expo` found and wrote, beyond the SPA facts. */
+export interface ExpoMigrateInfo {
+  /** The app config's static reading (where from, what it could not read, notes). */
+  config: Pick<ExpoAppConfig, "source" | "unresolved" | "notes">;
+  /** A web entry migrate wrote, and for what (Expo's default `App` entry, or expo-router). */
+  generatedEntry?: { path: string; kind: "app" | "expo-router" };
+  /** The app uses expo-router. */
+  expoRouter: boolean;
+  /** The Capacitor shell: its identity and whether `capacitor.config.ts` was written. */
+  capacitor: { appId: string; appName: string; placeholderId: boolean; configWritten: boolean };
+  /** The `denext mobile add` plan and what it cannot carry over. */
+  mobile: MobilePlan;
+  /** The `expo-*` shim status and the native-only packages. */
+  deps: ExpoDependencyReport;
+  /** `ios/` / `android/` folders from an Expo prebuild, which the Capacitor shell also claims. */
+  prebuildFolders: string[];
+  /** The Tailwind stylesheet the app compiles through uniwind / NativeWind, when detected. */
+  tailwindInput?: string;
+  /** npm packages the web build needs that the app has not installed. */
+  missingPackages: string[];
+  /** Module resolution the app's Metro config adds (the denext build does not run it). */
+  metro: MetroResolution;
 }
 
 async function readJson(path: string): Promise<Record<string, unknown> | null> {
@@ -864,6 +909,9 @@ async function migrateNonNextProject(
 ): Promise<MigrateResult | null> {
   const from = options.from;
   if (from === "next") return null;
+  if (from === "expo" || (!from && await isExpoApp(dir, deps))) {
+    return await migrateExpoProject(dir, deps, options);
+  }
   return (await migrateRemixFamily(dir, deps, options)) ??
     (await migrateSpaFamily(dir, deps, options));
 }
@@ -1718,6 +1766,10 @@ function spaConfigSource(o: {
   loading?: string;
   /** The mount element id when it is not the shell's default `root`. */
   rootId?: string;
+  /** React Native mode (`reactNative: true`: an Expo / React Native app). */
+  reactNative?: boolean;
+  /** Write `spa.precompress: false` (a Capacitor shell never loads `.gz` siblings). */
+  noPrecompress?: boolean;
 }): string {
   const needsPkg = o.envKeys.includes("APP_VERSION");
   const envLines = o.envKeys
@@ -1742,6 +1794,7 @@ function spaConfigSource(o: {
     `export default {\n` +
     `  mode: "spa",\n` +
     `  compatibilityMode: true,\n` +
+    (o.reactNative ? `  reactNative: true,\n` : "") +
     // The Vite app ran React Compiler (auto-memoization); enable denext's own auto-memo
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
@@ -1754,6 +1807,9 @@ function spaConfigSource(o: {
     // (themed background + splash) instead of a blank screen while the bundle loads.
     (o.head ? `    head: ${JSON.stringify(o.head)},\n` : "") +
     (o.loading ? `    loading: ${JSON.stringify(o.loading)},\n` : "") +
+    (o.noPrecompress
+      ? `    // The Capacitor shell loads files as they are: no .gz siblings.\n    precompress: false,\n`
+      : "") +
     (envLines ? `    env: {\n${envLines}\n    },\n` : "") +
     proxyBlock +
     // Show the desktop-icon override so it's discoverable (commented → auto-detection
@@ -2309,5 +2365,129 @@ function spaMigrateResult(
     pagesConfigExists: false,
     denoJsonExists,
     spa,
+  };
+}
+
+// ── Expo / React Native migration (React Native mode + a Capacitor shell) ─────
+
+/** An Expo app: `expo` is a dependency, with an app config or React Native beside it. */
+async function isExpoApp(dir: string, deps: Record<string, string>): Promise<boolean> {
+  if (!("expo" in deps)) return false;
+  if ("react-native" in deps) return true;
+  return await anyExists(dir, ["app.json", "app.config.ts", "app.config.js"]);
+}
+
+/**
+ * Generate denext files for an Expo / React Native app: `deno.json` (the React family aliased,
+ * `nodeModulesDir` as the SPA path sets it, the dev/build/export/start tasks plus the
+ * Capacitor `mobile:*` tasks), a `denext.config.ts` in SPA + React Native mode whose entry is
+ * the app's own, and a `capacitor.config.ts` from the app config. The app config is read
+ * statically (never executed); see expo-migrate.ts for what is carried over.
+ */
+async function migrateExpoProject(
+  dir: string,
+  deps: Record<string, string>,
+  options: MigrateOptions,
+): Promise<MigrateResult> {
+  const R = await denextResolver(await denextVersion(), options.denextLocalPath);
+  const { pm, pnp } = await detectPackageManager(dir);
+  if (pnp) throw pnpUnsupported(dir);
+  const manual = pm !== null;
+  const pkg = await readJson(join(dir, "package.json")) ?? {};
+  const entry = await expoWebEntry(dir, pkg, deps);
+  if (!entry) {
+    throw new Error(
+      `no web entry found in ${dir}: package.json "main" names no file of the app, and there ` +
+        "is no App.tsx / App.js for Expo's default entry.",
+    );
+  }
+  const imports = await spaImportMap(dir, deps, R, false);
+  const classified = classifyDeps(deps, imports, { pin: !manual });
+  const config = await readExpoAppConfig(dir);
+  const title = config.name ?? config.slug ?? (typeof pkg.name === "string" ? pkg.name : "App");
+  const identity = capacitorIdentity(config, title);
+  const nodeModulesDir = manual ? "manual" : "auto";
+  const written: string[] = [];
+  if (entry.generated) {
+    await writeIfWritable(
+      join(dir, entry.generated.path),
+      () => GEN_MARKER + "\n" + entry.generated!.source,
+      written,
+    );
+  }
+  const facts = {
+    entry: entry.entry,
+    title,
+    envKeys: [],
+    tailwind: null,
+    head: expoConfigScript(config.runtimeConfig),
+    reactNative: true,
+    noPrecompress: true,
+  };
+  const configWritten = await writeIfWritable(
+    join(dir, "denext.config.ts"),
+    () => spaConfigSource(facts),
+    written,
+  );
+  const capWritten = await writeIfWritable(
+    join(dir, "capacitor.config.ts"),
+    () => capacitorConfigSource(GEN_MARKER, identity),
+    written,
+  );
+  const tasks = {
+    ...spaTasks(false, R.cli, false, nodeModulesDir, desktopAppName(title)),
+    ...capacitorTasks(R.cli),
+  };
+  const denoJsonExists = await finishSpaProjectFiles(
+    dir,
+    spaDenoJson(imports, nodeModulesDir, tasks),
+    null,
+    false,
+    written,
+  );
+  // Expo keeps the Tailwind input (uniwind / NativeWind) at the root as global.css.
+  const tailwindInput = "tailwindcss" in deps
+    ? await findTailwindInput(dir, ["global.css", "app/global.css"]) ??
+      await findSpaTailwindInput(dir)
+    : null;
+  const missingPackages = [
+    ...(await findReactNativeWeb(dir) ? [] : ["react-native-web"]),
+    ...("expo-sqlite" in deps && !(await findSqliteWasm(dir)) ? ["@sqlite.org/sqlite-wasm"] : []),
+  ];
+  return {
+    kind: "expo",
+    wrote: written,
+    ...classified,
+    pagesRouter: false,
+    effect: false,
+    pagesConfigWritten: false,
+    pagesConfigExists: false,
+    denoJsonExists,
+    spa: {
+      entry: entry.entry,
+      title,
+      envKeys: [],
+      tailwind: false,
+      configWritten,
+      desktopWritten: false,
+      nodeModulesDir,
+    },
+    expo: {
+      config: { source: config.source, unresolved: config.unresolved, notes: config.notes },
+      generatedEntry: entry.generated &&
+        { path: entry.generated.path, kind: entry.generated.kind },
+      expoRouter: entry.expoRouter,
+      capacitor: { ...identity, configWritten: capWritten },
+      mobile: expoMobilePlan(deps, config),
+      // Runtime dependencies only: the dev toolchain never reaches the bundle.
+      deps: await expoDependencyReport(
+        dir,
+        (pkg.dependencies ?? {}) as Record<string, string>,
+      ),
+      prebuildFolders: await prebuildFolders(dir),
+      tailwindInput: tailwindInput ?? undefined,
+      missingPackages,
+      metro: await readMetroResolution(dir, deps),
+    },
   };
 }

@@ -168,3 +168,20 @@ export {
   setQuickActions,
   useQuickAction,
 } from "./quick-actions.ts";
+export {
+  deleteSqlite,
+  openSqlite,
+  type SqliteBackend,
+  type SqliteBindValue,
+  type SqliteDatabase,
+  type SqliteOptions,
+  type SqliteParams,
+  type SqliteRow,
+  type SqliteRows,
+  type SqliteRunResult,
+  type SqliteValue,
+  type SqliteWasmUrls,
+} from "./sqlite.ts";
+export * from "./share-receive.ts";
+export * from "./widgets.ts";
+export * from "./live-activity.ts";

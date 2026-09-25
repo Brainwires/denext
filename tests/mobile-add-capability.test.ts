@@ -507,17 +507,21 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "document-picker",
     "barcode",
     "quick-actions",
+    "sqlite",
+    "share-extension",
+    "widget",
+    "live-activity",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
-    // auth-session is denext's own native plugin: no npm package to pin.
+    // auth-session and the app extensions are denext's own native code: no npm package to pin.
     if (cap.npm === undefined) continue;
     // @capacitor/barcode-scanner numbers its own releases: 3.x targets Capacitor 8.
     assert(cap.version?.startsWith(name === "barcode" ? "^3." : "^8."), name);
   }
   assertEquals(
     Object.keys(MOBILE_CAPABILITIES).filter((n) => MOBILE_CAPABILITIES[n].npm === undefined),
-    ["auth-session"],
+    ["auth-session", "share-extension", "widget", "live-activity"],
   );
   assertStringIncludes(
     formatCapabilityTable(),

@@ -6,7 +6,8 @@
 // capability needs, and runs `npx cap sync`. A capability that takes options (deep-links:
 // --scheme / --domain) or needs more than plist keys and permissions (push: entitlements and
 // AppDelegate forwarding) computes its edits in a `configure` hook. A capability with no npm
-// package (auth-session) installs denext's own native plugin templates instead, through the
+// package (auth-session, and the app extensions share-extension / widget / live-activity)
+// installs denext's own native plugin templates instead, through the
 // hook's `install` step; with no package to add, neither the install nor `cap sync` runs. Every
 // subprocess goes through a runner the caller passes in, so tests never spawn a real install.
 
@@ -26,6 +27,15 @@ import {
 } from "./mobile-native-config.ts";
 import { addAuthSessionToProject } from "./mobile-auth-session-install.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
+import {
+  addLiveActivitiesToProject,
+  addShareExtensionToProject,
+  addWidgetsToProject,
+  checkExtensionNames,
+} from "./mobile-app-extensions.ts";
+import { parseWidgetParams } from "./widget-native-templates.ts";
+import { checkAppGroup } from "./mobile-app-group.ts";
+import { applicationTargetName, targetBuildSetting } from "./pbxproj.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -33,6 +43,12 @@ export interface CapabilityOptions {
   readonly schemes: readonly string[];
   /** `--domain`: universal link / app link domains (deep-links). */
   readonly domains: readonly string[];
+  /** `--app-group`: the App Group app extensions share with the app (at most one). */
+  readonly appGroups: readonly string[];
+  /** `--name`: widget / Live Activity names. */
+  readonly names: readonly string[];
+  /** `--configurable`: a widget's enum parameters (`param:enum=a|b`). */
+  readonly configurable: readonly string[];
 }
 
 /** One text edit to a native file, with the line the plan prints for it. */
@@ -214,6 +230,60 @@ function configureAuthSession(options: CapabilityOptions): CapabilityConfig {
       "--scheme <scheme> (or `denext mobile add deep-links --scheme <scheme>`). Android hands " +
       "the redirect to the app only through that scheme's intent filter; iOS needs no registration",
     ],
+  };
+}
+
+/** The one `--app-group`, checked, if given. */
+function appGroupOption(options: CapabilityOptions): string | undefined {
+  if (options.appGroups.length > 1) throw new Error("--app-group takes one App Group.");
+  const group = options.appGroups[0];
+  return group === undefined ? undefined : checkAppGroup(group);
+}
+
+/**
+ * `share-extension`: an iOS Share Extension + Android share target handing shares to
+ * onShareReceived. `--scheme` (the first) is the URL scheme the extension opens the app with,
+ * registered as deep-links does on iOS; without it the app's own first scheme is used.
+ */
+function configureShareExtension(options: CapabilityOptions): CapabilityConfig {
+  const schemes = options.schemes.map(checkScheme);
+  const appGroup = appGroupOption(options);
+  return {
+    infoPlist: schemeEdits(schemes).infoPlist,
+    install: {
+      label: "Share Extension target (DenextShareExtension, App Group) + Android SEND intent " +
+        "filters + the DenextShareReceive plugin",
+      run: (opts) => addShareExtensionToProject({ ...opts, appGroup, scheme: schemes[0] }),
+    },
+  };
+}
+
+/** `widget`: a home-screen widget per `--name` (WidgetKit extension / AppWidgetProvider). */
+function configureWidget(options: CapabilityOptions): CapabilityConfig {
+  const names = checkExtensionNames(options.names, "widget");
+  const appGroup = appGroupOption(options);
+  const params = parseWidgetParams(options.configurable);
+  const configurable = params.length > 0 ? params : undefined;
+  return {
+    install: {
+      label: `${configurable ? "configurable " : ""}widget${names.length > 1 ? "s" : ""} ` +
+        `${names.join(", ")} (iOS WidgetKit extension DenextWidgets, Android ` +
+        "AppWidgetProvider) + the DenextWidgets plugin",
+      run: (opts) => addWidgetsToProject({ ...opts, appGroup, names, configurable }),
+    },
+  };
+}
+
+/** `live-activity`: an ActivityKit Live Activity UI per `--name` (iOS only). */
+function configureLiveActivity(options: CapabilityOptions): CapabilityConfig {
+  const names = checkExtensionNames(options.names, "live-activity");
+  const appGroup = appGroupOption(options);
+  return {
+    install: {
+      label: `Live Activit${names.length > 1 ? "ies" : "y"} ${names.join(", ")} (iOS 16.1+, in ` +
+        "the DenextWidgets extension) + NSSupportsLiveActivities + the DenextLiveActivity plugin",
+      run: (opts) => addLiveActivitiesToProject({ ...opts, appGroup, names }),
+    },
   };
 }
 
@@ -437,6 +507,34 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     notes: "setQuickActions([...]) / onQuickAction / useQuickAction",
     configure: configureQuickActions,
   },
+  sqlite: {
+    npm: "@capacitor-community/sqlite",
+    version: "^8.1.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "openSqlite(name) / deleteSqlite(name), and expo-sqlite's async API (the web " +
+      "build uses the app's own @sqlite.org/sqlite-wasm)",
+  },
+  "share-extension": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "onShareReceived(cb) / useShareReceived(cb) (iOS Share Extension, Android share " +
+      "target; --app-group, --scheme)",
+    options: ["schemes", "appGroups"],
+    configure: configureShareExtension,
+  },
+  widget: {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "setWidgetData(kind, data, { params? }) / reloadWidgets(kind?) (--name <Name>, " +
+      "--configurable <param:enum=a|b>, --app-group)",
+    options: ["names", "appGroups", "configurable"],
+    configure: configureWidget,
+  },
+  "live-activity": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "startLiveActivity / updateLiveActivity / endLiveActivity / liveActivityPushToken / " +
+      "liveActivityPushToStartToken (iOS 16.1+, push-to-start 17.2+; --name <Name>)",
+    options: ["names", "appGroups"],
+    configure: configureLiveActivity,
+  },
 };
 
 /** A package manager `denext mobile add` can drive. */
@@ -529,10 +627,16 @@ export interface AddCapabilitiesOptions {
   readonly run?: CommandRunner;
   /** The capability table (tests); defaults to {@linkcode MOBILE_CAPABILITIES}. */
   readonly table?: Readonly<Record<string, MobileCapability>>;
-  /** `--scheme`: custom URL schemes (deep-links). */
+  /** `--scheme`: custom URL schemes (deep-links, auth-session, share-extension). */
   readonly schemes?: readonly string[];
   /** `--domain`: universal link / app link domains (deep-links). */
   readonly domains?: readonly string[];
+  /** `--app-group`: the App Group (share-extension, widget, live-activity). */
+  readonly appGroups?: readonly string[];
+  /** `--name`: widget / Live Activity names. */
+  readonly names?: readonly string[];
+  /** `--configurable`: a widget's enum parameters (`param:enum=a|b`, one per item). */
+  readonly configurable?: readonly string[];
   /** `--force`: replace denext plugin templates that were edited (auth-session). */
   readonly force?: boolean;
 }
@@ -741,8 +845,17 @@ function capabilityOptions(
   const options: CapabilityOptions = {
     schemes: [...new Set(opts.schemes ?? [])],
     domains: [...new Set(opts.domains ?? [])],
+    appGroups: [...new Set(opts.appGroups ?? [])],
+    names: [...new Set(opts.names ?? [])],
+    configurable: [...new Set(opts.configurable ?? [])],
   };
-  const flags = [["schemes", "--scheme"], ["domains", "--domain"]] as const;
+  const flags = [
+    ["schemes", "--scheme"],
+    ["domains", "--domain"],
+    ["appGroups", "--app-group"],
+    ["names", "--name"],
+    ["configurable", "--configurable"],
+  ] as const;
   for (const [key, flag] of flags) {
     if (options[key].length === 0) continue;
     if (names.some((n) => table[n].options?.includes(key))) continue;
@@ -780,16 +893,32 @@ async function entitlementsTarget(
   root: string,
 ): Promise<{ files: string[]; wired: boolean; unresolved: string[] }> {
   const pbxproj = await readText(join(root, PBXPROJ)) ?? "";
-  const setting = /\bCODE_SIGN_ENTITLEMENTS\s*=\s*("?)([^";\n]+)\1\s*;/g;
   const values = [
-    ...new Set(
-      [...pbxproj.matchAll(setting)].map((m) => m[2].trim().replace(/^\$\(SRCROOT\)\//, "")),
-    ),
+    ...new Set(appEntitlementValues(pbxproj).map((v) => v.trim().replace(/^\$\(SRCROOT\)\//, ""))),
   ];
   const unresolved = values.filter((v) => v.includes("$(") || v.startsWith("/"));
   const files = values.filter((v) => !unresolved.includes(v)).map((v) => `ios/App/${v}`);
   if (files.length > 0) return { files, wired: true, unresolved };
   return { files: [`ios/App/${DEFAULT_ENTITLEMENTS}`], wired: false, unresolved };
+}
+
+/**
+ * The App target's CODE_SIGN_ENTITLEMENTS values (an app extension's entitlements are its own).
+ * A project the pbxproj editor cannot read falls back to every CODE_SIGN_ENTITLEMENTS in it.
+ */
+function appEntitlementValues(pbxproj: string): string[] {
+  try {
+    const values = targetBuildSetting(
+      pbxproj,
+      applicationTargetName(pbxproj),
+      "CODE_SIGN_ENTITLEMENTS",
+    )
+      .values();
+    return [...values].filter((v): v is string => v !== undefined);
+  } catch {
+    const setting = /\bCODE_SIGN_ENTITLEMENTS\s*=\s*("?)([^";\n]+)\1\s*;/g;
+    return [...pbxproj.matchAll(setting)].map((m) => m[2]);
+  }
 }
 
 /** The manual steps entitlement edits need: wiring a new file, or editing an unresolved one. */
@@ -992,6 +1121,22 @@ async function editNative(
   report.written.push(rel);
 }
 
+/** Push each of `items` onto `list` unless it is already there. */
+function pushNew(list: string[], items: readonly string[]): void {
+  for (const item of items) if (!list.includes(item)) list.push(item);
+}
+
+/**
+ * Merge a native install's report into `report`. Several installers touch the same files (the
+ * Xcode project, the bridge, Info.plist) and print the same notes: each is listed once.
+ */
+function mergeInstall(report: AddCapabilitiesReport, done: NativeInstallReport): void {
+  pushNew(report.written, done.written);
+  pushNew(report.unchanged, done.unchanged);
+  report.skipped.push(...done.skipped);
+  pushNew(report.manual, done.manual);
+}
+
 /** Run `command`, throwing when it exits non-zero. */
 async function runChecked(
   run: CommandRunner,
@@ -1030,12 +1175,10 @@ export async function addMobileCapabilities(
   if (!opts.run) throw new Error("addMobileCapabilities: a command runner is required.");
   if (plan.install) await runChecked(opts.run, plan.install, report.ran);
   for (const step of plan.native.installs) {
-    const done = await step.run({ dir: plan.root, force: opts.force });
-    report.written.push(...done.written);
-    report.unchanged.push(...done.unchanged);
-    report.skipped.push(...done.skipped);
-    report.manual.push(...done.manual);
+    mergeInstall(report, await step.run({ dir: plan.root, force: opts.force }));
   }
+  const stale = report.unchanged.filter((path) => report.written.includes(path));
+  for (const path of stale) report.unchanged.splice(report.unchanged.indexOf(path), 1);
   const plistDefaults = plan.plist.map((p): NativeEdit => ({
     label: p.key,
     apply: (text) => withPlistDefault(text, p.key, p.value),

@@ -19,6 +19,7 @@ import {
 } from "./link-routing.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 import { isAuthSessionCallback } from "./auth-session.ts";
+import { isShareHandoff } from "./share-handoff.ts";
 
 /** One link that opened the app. */
 export interface DeepLinkEvent {
@@ -196,6 +197,8 @@ function deliver(
 ): void {
   // An auth session's OAuth callback (Android delivers it here too) is openAuthSession's.
   if (isAuthSessionCallback(link.url)) return;
+  // The share extension's hand-off (<scheme>://denext-share) is onShareReceived's.
+  if (isShareHandoff(link.url)) return;
   let url: URL;
   try {
     url = new URL(link.url);

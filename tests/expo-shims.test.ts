@@ -589,7 +589,7 @@ Deno.test("expo core, widgets, dev-client and build-properties answer as Expo's 
 
   const live = Widgets.createLiveActivity("Agent", () => null);
   assertEquals(live.getInstances(), []);
-  assertThrows(() => live.start({}), Error, "native iOS only");
+  assertThrows(() => live.start({}), Error, "DenextLiveActivity plugin");
   Widgets.createWidget("W", () => null).reload();
   await DevClient.registerDevMenuItems([]);
   const config = { name: "x" };

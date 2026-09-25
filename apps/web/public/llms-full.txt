@@ -1610,9 +1610,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DeepLinkEvent` — One link that opened the app.
 - `interface DeepLinkOptions` — Options for onDeepLink and useDeepLink.
 - `deleteFile(path: string, options?: FileLocationOptions): Promise<void>` — Delete a file.
+- `deleteSqlite(name: string, options?: SqliteOptions): Promise<void>` — Delete the database name (closing it first when open). A missing database is not an error.
 - `deviceInfo(): Promise<DeviceInfo>` — Facts about the device the page runs on.
 - `interface DeviceInfo` — What deviceInfo reports. Only platform is always known.
 - `downloadToFile(url: string, path: string, options?: FileLocationOptions): Promise<object>` — Download a URL straight into a file (missing parent folders are created).
+- `endLiveActivity(id: string, options?: EndLiveActivityOptions): Promise<void>` — End a Live Activity.
+- `interface EndLiveActivityOptions` — Options for endLiveActivity.
 - `type FileDirectory = documents | data | cache` — Where a file lives:
 - `type FileEncoding = utf8 | base64` — How text is carried: "utf8" (plain text, the default) or "base64" (binary data).
 - `interface FileEntry` — One entry of a listDir listing.
@@ -1630,6 +1633,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface LinkAllowList` — An allow-list for incoming links.
 - `type LinkRoute = boolean | parenthesized` — How to navigate to an accepted link: true navigates with the page's router, false leaves it to the callback, and a function navigates itself (e.g. (path) => router.push(path)).
 - `listDir(path: string, options?: FileLocationOptions): Promise<FileEntry[]>` — List a folder's entries.
+- `listLiveActivities(): Promise<RunningLiveActivity[]>` — The running Live Activities of the app (started here, earlier, or by a push-to-start push).
+- `interface LiveActivityError` — The Error a Live Activity function rejects with.
+- `type LiveActivityErrorCode = unsupported | disabled | invalid | not_found | timeout | failed` — The code on a Live Activity rejection:
+- `liveActivityPushToken(id: string, options?: LiveActivityTokenOptions): Promise<string>` — The ActivityKit push token of a Live Activity started with { push: true }, as hex, for a server to update it through APNs (apns-push-type: liveactivity, with a content-state in the shape of the state object). It waits for the token when ActivityKit has not issued it yet.
+- `interface LiveActivityPushTokenEvent` — A push token ActivityKit issued a running Live Activity.
+- `liveActivityPushToStartToken(options?: LiveActivityTokenOptions): Promise<LiveActivityPushToStartToken | null>` — The app's ActivityKit push-to-start token (iOS 17.2 and later), as hex: a server sends it an APNs push (apns-push-type: liveactivity, "event": "start", "attributes-type": "DenextActivityAttributes", "attributes": { "name": <Live Activity name>, "values": { … } } and a content-state in the shape of the state object) to start a Live Activity while the app is not running. It waits for the token when ActivityKit has not issued it yet; onLiveActivityPushToStartToken reports later ones. The app needs the push entitlement (denext mobile add push), without which no token comes (timeout).
+- `interface LiveActivityPushToStartToken` — A push-to-start token ActivityKit issued the app (iOS 17.2+).
+- `interface LiveActivityTokenOptions` — Options for liveActivityPushToken and liveActivityPushToStartToken.
+- `type LiveActivityValues = Readonly<Record<string, unknown>>` — A JSON object: a Live Activity's attributes or state.
 - `interface MomentumSafeScrollOptions` — Options for installMomentumSafeScroll and useMomentumSafeScroll (denext/mobile).
 - `nativePlatform(): NativePlatform` — The platform the page runs on: "ios" or "android" inside a Capacitor native shell, otherwise "web". SSR-safe ("web" when there is no window). A Capacitor custom platform (e.g. Electron) also reads "web": only the iOS and Android shells count.
 - `type NativePlatform = ios | android | web` — The platform a page runs on, as denext/mobile distinguishes them.
@@ -1638,21 +1650,25 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface NetworkStatus` — Whether the device is online, and over what.
 - `onAppResume(cb: (awayMs: number) => void): () => void` — Call cb each time the page returns to the foreground, with how long it was away in milliseconds.
 - `onDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): () => void` — Call callback for every link that opens the app, and (by default) navigate to it.
+- `onLiveActivityPushToken(callback: (event: LiveActivityPushTokenEvent) => void): () => void` — Call callback with each push token ActivityKit issues a running Live Activity: the first one of an activity started with { push: true } (or by a push-to-start push), and every rotation after it. Tokens issued before the first subscriber are kept for it. Elsewhere it is never called.
+- `onLiveActivityPushToStartToken(callback: (token: LiveActivityPushToStartToken) => void): () => void` — Call callback with each push-to-start token ActivityKit issues the app (iOS 17.2 and later), including the current one: a token issued before the first subscriber is kept for it. Send each to your server, which replaces the one it had. Elsewhere it is never called.
 - `onPushReceived(callback: (notification: PushNotification) => void): () => void` — Call callback for each notification that arrives while the app is in the foreground (one that arrives in the background shows in the tray; its tap reaches onPushTapped). Outside the native shell it does nothing.
 - `onPushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): () => void` — Call callback when the user taps a notification (or one of its actions), and by default navigate to its data.path / data.url (see PushTapOptions).
 - `onQuickAction(callback: (id: string) => void): () => void` — Call callback with the id of each quick action the user chooses, including the one that cold-started the app: the shell keeps that until the first listener, so subscribe early (a root layout or the app shell); only the subscribers present when it is handed over see it. Outside the native shell it does nothing.
+- `onShareReceived(callback: (content: SharedContent) => void): () => void` — Call callback with each share other apps send to this one, including the one that opened the app: shares wait natively until the first subscriber arrives, so subscribe early (a root layout or the app shell); only the subscribers present when a share is handed over see it. Outside the native shell, or without the plugin, it does nothing.
 - `openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>` — Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.
 - `openExternal(url: string): Promise<void>` — Open a URL outside the app.
+- `openSqlite(name: string, options?: SqliteOptions): Promise<SqliteDatabase>` — Open (creating when missing) the SQLite database name.
 - `type OtaApplyResult = object | object` — The outcome of applyUiUpdate when it settles. On success the webview reloads into the new UI, so the promise does not settle at all.
 - `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.
 - `interface OtaCheckOptions` — Options for checkForUiUpdate and prepareUiUpdate.
 - `type OtaCheckResult = object | object | object | object | object` — The outcome of checkForUiUpdate. It never throws; every failure is a value.
-- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old` — The code of a native DenextOta refusal, carried on an error result:
+- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch` — The code of a native DenextOta refusal, carried on an error result:
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.
 - `type OtaPrepareResult = object | object | object | object | object` — The outcome of prepareUiUpdate. It never throws; every failure is a value.
 - `otaReset(): Promise<void>` — Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web.
-- `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with a sequence uses the v2 format, one without uses v1:
+- `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with a nativeFingerprint (and a sequence) uses the v3 format, one with a sequence but no fingerprint v2, one without a sequence v1:
 - `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.
 - `interface OtaStatus` — What the native side reports about the UI versions on this device.
 - `pickDocument(options?: PickDocumentOptions): Promise<PickedDocument | null>` — Pick a document (any file, or the types given) with the system document picker.
@@ -1673,7 +1689,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ReadFileOptions` — Options for readFile.
 - `registerForPush(options?: RegisterForPushOptions): Promise<PushRegistration>` — Register the device for remote notifications and resolve its token, for your server to send to through APNs (iOS) or FCM (Android). denext ships no push relay: store the token on your server (with the user it belongs to) and send from there.
 - `interface RegisterForPushOptions` — Options for registerForPush.
+- `reloadWidgets(kind?: string): Promise<void>` — Ask the OS to redraw widget kind (every kind when omitted) from its stored snapshot. Outside the native shell, or without the plugin, it does nothing.
 - `requestPushPermission(): Promise<PushPermission>` — Ask for permission to show notifications, when it has not been decided yet, and report the result: "granted", "denied" (the user said no; only the system settings can change it) or "prompt" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is "unsupported": there is no web-push fallback.
+- `interface RunningLiveActivity` — A running Live Activity, as listLiveActivities reports it.
+- `runtimePlatform(): RuntimePlatform` — The runtime the page runs in: "ios" or "android" inside a Capacitor native shell, "desktop" inside the Deno Desktop runtime, otherwise "web" (including SSR, where there is no window). The desktop case is read off globalThis.__denext.desktop, a marker the Deno Desktop runtime injects into the page before any script runs; it is a detection hint only, not a security boundary — treat it like any other client-reported value.
+- `type RuntimePlatform = ios | android | desktop | web` — The runtime a page runs in, as denext/mobile distinguishes them.
 - `SAFE_AREA_CSS: string` — A stylesheet fragment that defines --denext-safe-top, --denext-safe-right, --denext-safe-bottom and --denext-safe-left on :root as the device's safe-area insets (env(safe-area-inset-*, 0px): the notch, status bar and home indicator), 0px where there are none. Drop it into a stylesheet or a <style> tag, then pad with the variables.
 - `scanBarcode(options?: ScanBarcodeOptions): Promise<ScannedBarcode | null>` — Scan one barcode or QR code with the camera.
 - `interface ScanBarcodeOptions` — Options for scanBarcode.
@@ -1681,9 +1701,26 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `secureStore: SecureStore` — A string key-value store for secrets.
 - `interface SecureStore` — The store secureStore implements.
 - `setQuickActions(actions: typeOperator): Promise<void>` — Replace the app's home-screen quick actions (long-press on the icon).
+- `setWidgetData(kind: string, data: unknown, options?: SetWidgetDataOptions): Promise<void>` — Store data as the snapshot widget kind renders, and refresh that kind's widgets.
+- `interface SetWidgetDataOptions` — Options for setWidgetData.
 - `share(opts: ShareOptions): Promise<ShareResult>` — Open the share sheet.
+- `interface SharedContent` — One share: any of a web link, text and files.
+- `interface SharedFile` — A file shared to the app, copied where the app can read it.
 - `interface ShareOptions` — What share shares. At least one of text or url (or title) is needed.
 - `type ShareResult = shared | copied | cancelled` — How a share ended: "shared" (the sheet completed), "copied" (no share sheet, so the text was copied to the clipboard) or "cancelled" (the user dismissed it).
+- `type SqliteBackend = native | opfs | memory` — Where a database lives: the native plugin, OPFS in the browser, or memory.
+- `type SqliteBindValue = string | number | boolean | null | Uint8Array | ArrayBuffer` — A value a statement binds: booleans bind as 1/0, an ArrayBuffer as a blob.
+- `interface SqliteDatabase` — An open database (openSqlite).
+- `interface SqliteOptions` — Options for openSqlite and deleteSqlite.
+- `type SqliteParams = typeOperator | Readonly<Record<string, SqliteBindValue>>` — A statement's parameters: positional (?), or named by their placeholder, prefix included ({ $id: 1 } for $id, { ":id": 1 } for :id).
+- `type SqliteRow = Record<string, SqliteValue>` — A row as an object keyed by column name.
+- `interface SqliteRows` — Rows as column names plus one value array per row, in column order.
+- `interface SqliteRunResult` — What a write reports.
+- `type SqliteValue = string | number | null | Uint8Array` — A value SQLite stores.
+- `interface SqliteWasmUrls` — The engine's two files.
+- `startLiveActivity(name: string, attributes: LiveActivityValues, state: LiveActivityValues, options?: StartLiveActivityOptions): Promise<string>` — Start a Live Activity rendered by the UI denext mobile add live-activity --name <name> generated (<name>LiveActivity.swift, which reads context.attributes and context.state).
+- `interface StartLiveActivityOptions` — Options for startLiveActivity.
+- `updateLiveActivity(id: string, state: LiveActivityValues): Promise<void>` — Replace a running Live Activity's state.
 - `useAppResume(cb: (awayMs: number) => void): void` — Hook form of onAppResume: subscribes on mount, unsubscribes on unmount. The latest cb is always called (it is held in a ref), so passing a fresh closure each render never re-subscribes.
 - `useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void` — Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies.
 - `useDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): void` — Hook form of onDeepLink: subscribes on mount, unsubscribes on unmount. The latest callback and options are used for each link (they are held in refs), so fresh closures each render never re-subscribe.
@@ -1694,6 +1731,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `usePushReceived(callback: (notification: PushNotification) => void): void` — Hook form of onPushReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.
 - `usePushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): void` — Hook form of onPushTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options.
 - `useQuickAction(callback: (id: string) => void): void` — Hook form of onQuickAction: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.
+- `useShareReceived(callback: (content: SharedContent) => void): void` — Hook form of onShareReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.
 - `writeClipboard(text: string): Promise<void>` — Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.writeText().
 - `writeFile(path: string, data: string, options?: WriteFileOptions): Promise<void>` — Write a file, replacing it when it exists.
 - `interface WriteFileOptions` — Options for writeFile.

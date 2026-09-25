@@ -23,7 +23,7 @@ import {
 } from "./native-template-marker.ts";
 
 /** The generation of the templates below, stamped into every file `add-ota` writes. */
-export const OTA_TEMPLATE_VERSION = 3;
+export const OTA_TEMPLATE_VERSION = 4;
 
 /**
  * SHA-256 of every template file denext shipped before the marker line existed, by file name:
@@ -144,8 +144,9 @@ import UIKit
 /// - \`download({ baseUrl, headers, manifest }) → { version, downloaded, copied, staged }\`: downloads
 ///   and verifies the version and records it as staged, WITHOUT switching to it (\`staged: false\`
 ///   when the version is already running); rejects with code \`invalid\`, \`busy\`, \`rejected\`,
-///   \`download\`, \`integrity\`, \`signature\`, \`insecure\`, \`downgrade\` or \`native_too_old\` (all but
-///   \`busy\`, \`rejected\`, \`download\` and a file's \`integrity\` before any download: see
+///   \`download\`, \`integrity\`, \`signature\`, \`insecure\`, \`downgrade\`, \`native_too_old\` or
+///   \`native_mismatch\` (all but \`busy\`, \`rejected\`, \`download\` and a file's \`integrity\` before
+///   any download: see
 ///   \`DenextOtaStore.ApplyRequest\`)
 /// - \`activate({ version }) → { version }\`: switches to the staged version (its trial launch);
 ///   rejects with code \`invalid\`, \`busy\`, \`not_staged\` or \`rejected\`
@@ -599,8 +600,8 @@ final class DenextOtaStore: @unchecked Sendable {
     /// before anything is downloaded or any state changes: the manifest must be well formed and
     /// within the caps (code \`invalid\`), the file list must hash to its \`version\` (code
     /// \`integrity\`), \`checkTrust\` must accept the signature or the transport (codes \`signature\` /
-    /// \`insecure\`), and \`checkRelease\` its \`sequence\` and \`minNative\` (codes \`downgrade\` /
-    /// \`native_too_old\`).
+    /// \`insecure\`), and \`checkRelease\` its \`sequence\`, \`minNative\` and \`nativeFingerprint\` (codes
+    /// \`downgrade\` / \`native_too_old\` / \`native_mismatch\`).
     struct ApplyRequest: Sendable {
         let baseUrl: URL
         let headers: [String: String]
@@ -626,6 +627,7 @@ final class DenextOtaStore: @unchecked Sendable {
             let files = try DenextOtaStore.parseFiles(rawFiles)
             let sequence = try DenextOtaStore.releaseInteger(manifest["sequence"], name: "sequence")
             let minNative = try DenextOtaStore.releaseInteger(manifest["minNative"], name: "minNative")
+            let nativeFingerprint = try DenextOtaStore.fingerprintField(manifest["nativeFingerprint"])
             // The version is recomputed from the files, never trusted: files → version → signature.
             guard DenextOtaStore.manifestVersion(files) == version else {
                 throw OtaError(code: "integrity", message: "The manifest version does not match its files.")
@@ -637,11 +639,12 @@ final class DenextOtaStore: @unchecked Sendable {
                     required: (manifest["required"] as? Bool) ?? false,
                     notes: (manifest["notes"] as? String) ?? "",
                     sequence: sequence,
-                    minNative: minNative
+                    minNative: minNative,
+                    nativeFingerprint: nativeFingerprint
                 ),
                 signature: manifest["signature"] as? String
             )
-            try DenextOtaStore.checkRelease(sequence: sequence, minNative: minNative)
+            try DenextOtaStore.checkRelease(sequence: sequence, minNative: minNative, nativeFingerprint: nativeFingerprint)
             self.baseUrl = baseUrl
             self.headers = headerFields
             self.version = version
@@ -776,6 +779,16 @@ final class DenextOtaStore: @unchecked Sendable {
         return number.int64Value
     }
 
+    /// The manifest's \`nativeFingerprint\`: nil when absent, else it must be 64 lowercase hex
+    /// digits (anything else is \`invalid\`).
+    static func fingerprintField(_ value: Any?) throws -> String? {
+        guard let value = value, !(value is NSNull) else { return nil }
+        guard let text = value as? String, isSha256(text) else {
+            throw OtaError(code: "invalid", message: "The manifest's nativeFingerprint is not 64 lowercase hex digits.")
+        }
+        return text
+    }
+
     static func hex<D: Sequence>(_ digest: D) -> String where D.Element == UInt8 {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -821,6 +834,21 @@ final class DenextOtaStore: @unchecked Sendable {
         return Int64(text) ?? text.split(separator: ".").first.flatMap { Int64($0) } ?? 0
     }()
 
+    /// The Info.plist string key holding this binary's native fingerprint (written by
+    /// \`denext mobile fingerprint --write\`).
+    static let nativeFingerprintInfoKey = "DenextNativeFingerprint"
+
+    /// This binary's native fingerprint (Info.plist \`DenextNativeFingerprint\`), which a manifest's
+    /// \`nativeFingerprint\` must equal; nil when the key is absent or not 64 hex digits, which
+    /// skips the check (as a manifest without one does).
+    static let binaryFingerprint: String? = {
+        guard let text = (Bundle.main.object(forInfoDictionaryKey: nativeFingerprintInfoKey) as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), isSha256(text) else {
+            return nil
+        }
+        return text
+    }()
+
     /// The manifest version of \`files\`: SHA-256 over the \`"<path>\\t<sha256>\\n"\` lines sorted by
     /// path in UTF-16 code-unit order, exactly as \`otaManifestVersion\` in denext computes it.
     static func manifestVersion(_ files: [ManifestFile]) -> String {
@@ -832,16 +860,22 @@ final class DenextOtaStore: @unchecked Sendable {
     }
 
     /// The bytes a manifest signature covers (denext's \`otaSignaturePayload\`), UTF-8 with \`\\n\`
-    /// separators and no trailing newline. With a \`sequence\` (v2):
-    /// \`"denext-ota-v2\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
+    /// separators and no trailing newline. With a \`sequence\` and a \`nativeFingerprint\` (v3):
+    /// \`"denext-ota-v3\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
+    /// sequence + "\\n" + (minNative or "") + "\\n" + nativeFingerprint\`; with a \`sequence\` alone
+    /// (v2): \`"denext-ota-v2\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
     /// sequence + "\\n" + (minNative or "")\`; without one (v1):
     /// \`"denext-ota-v1\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes)\`.
-    static func signaturePayload(version: String, required: Bool, notes: String, sequence: Int64?, minNative: Int64?) -> Data {
+    static func signaturePayload(version: String, required: Bool, notes: String, sequence: Int64?, minNative: Int64?, nativeFingerprint: String?) -> Data {
         let head = "\\(version)\\n\\(required ? "1" : "0")\\n\\(sha256Hex(Data(notes.utf8)))"
         guard let sequence = sequence else {
             return Data("denext-ota-v1\\n\\(head)".utf8)
         }
-        return Data("denext-ota-v2\\n\\(head)\\n\\(sequence)\\n\\(minNative.map { String($0) } ?? "")".utf8)
+        let v2 = "\\(head)\\n\\(sequence)\\n\\(minNative.map { String($0) } ?? "")"
+        guard let nativeFingerprint = nativeFingerprint else {
+            return Data("denext-ota-v2\\n\\(v2)".utf8)
+        }
+        return Data("denext-ota-v3\\n\\(v2)\\n\\(nativeFingerprint)".utf8)
     }
 
     /// The download policy, checked before any file is fetched. With a public key embedded, the
@@ -874,8 +908,9 @@ final class DenextOtaStore: @unchecked Sendable {
     /// The release policy, checked after \`checkTrust\` (so a signed manifest's values are
     /// authentic) and before any file is fetched: no \`sequence\` below the highest this device
     /// accepted, and none missing once one was (code \`downgrade\`); no \`minNative\` above this
-    /// binary's build number (code \`native_too_old\`).
-    static func checkRelease(sequence: Int64?, minNative: Int64?) throws {
+    /// binary's build number (code \`native_too_old\`); no \`nativeFingerprint\` other than this
+    /// binary's (code \`native_mismatch\`), checked only when both carry one.
+    static func checkRelease(sequence: Int64?, minNative: Int64?, nativeFingerprint: String?) throws {
         if let highest = shared.highestSequence {
             guard let sequence = sequence else {
                 throw OtaError(code: "downgrade", message: "The manifest has no sequence, but this device accepted sequence \\(highest).")
@@ -888,6 +923,12 @@ final class DenextOtaStore: @unchecked Sendable {
             throw OtaError(
                 code: "native_too_old",
                 message: "This UI needs app build \\(minNative) or later; this is build \\(nativeBuild)."
+            )
+        }
+        if let wanted = nativeFingerprint, let binary = binaryFingerprint, wanted != binary {
+            throw OtaError(
+                code: "native_mismatch",
+                message: "This UI was built for native fingerprint \\(wanted.prefix(12)); this app binary is \\(binary.prefix(12))."
             )
         }
     }
@@ -1520,8 +1561,9 @@ import org.json.JSONObject;
  *       downloads and verifies the version and records it as staged, WITHOUT switching to it
  *       ({@code staged: false} when the version is already running); rejects with code
  *       {@code invalid}, {@code busy}, {@code rejected}, {@code download}, {@code integrity},
- *       {@code signature}, {@code insecure}, {@code downgrade} or {@code native_too_old} (the trust
- *       and release checks before any download: see {@link #parseApplyRequest})
+ *       {@code signature}, {@code insecure}, {@code downgrade}, {@code native_too_old} or
+ *       {@code native_mismatch} (the trust and release checks before any download: see
+ *       {@link #parseApplyRequest})
  *   <li>{@code activate({ version }) → { version }}: switches to the staged version (its trial
  *       launch); rejects with code {@code invalid}, {@code busy}, {@code not_staged} or
  *       {@code rejected}
@@ -1909,8 +1951,8 @@ public class DenextOtaPlugin extends Plugin {
      * anything is downloaded or any state changes: the manifest must be well formed and within the
      * caps (code invalid), the file list must hash to its version (code integrity),
      * {@link DenextOtaStore#checkTrust} must accept the signature or the transport (codes
-     * signature / insecure), and {@link DenextOtaStore#checkRelease} its sequence and minNative
-     * (codes downgrade / native_too_old).
+     * signature / insecure), and {@link DenextOtaStore#checkRelease} its sequence, minNative and
+     * nativeFingerprint (codes downgrade / native_too_old / native_mismatch).
      */
     private static DenextOtaStore.ApplyRequest parseApplyRequest(PluginCall call, DenextOtaStore store)
         throws DenextOtaStore.OtaException {
@@ -1943,6 +1985,7 @@ public class DenextOtaPlugin extends Plugin {
         List<DenextOtaStore.ManifestFile> files = DenextOtaStore.parseFiles(manifest.optJSONArray("files"));
         Long sequence = DenextOtaStore.releaseInteger(manifest.opt("sequence"), "sequence");
         Long minNative = DenextOtaStore.releaseInteger(manifest.opt("minNative"), "minNative");
+        String nativeFingerprint = DenextOtaStore.fingerprintField(manifest.opt("nativeFingerprint"));
         // The version is recomputed from the files, never trusted: files → version → signature.
         if (!DenextOtaStore.manifestVersion(files).equals(version)) {
             throw new DenextOtaStore.OtaException("integrity", "The manifest version does not match its files.");
@@ -1956,11 +1999,12 @@ public class DenextOtaPlugin extends Plugin {
                 Boolean.TRUE.equals(manifest.opt("required")),
                 notes instanceof String ? (String) notes : "",
                 sequence,
-                minNative
+                minNative,
+                nativeFingerprint
             ),
             signature instanceof String ? (String) signature : null
         );
-        store.checkRelease(sequence, minNative);
+        store.checkRelease(sequence, minNative, nativeFingerprint);
         return new DenextOtaStore.ApplyRequest(baseUrl, headers, version, files, sequence);
     }
 }
@@ -2088,6 +2132,11 @@ final class DenextOtaStore {
      * Read from the app binary only.
      */
     static final String PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY";
+    /**
+     * The {@code <meta-data>} (inside {@code <application>}) holding this binary's native
+     * fingerprint ({@code denext mobile fingerprint --write}).
+     */
+    static final String NATIVE_FINGERPRINT_META = "dev.denext.native.FINGERPRINT";
     /** The group order n of NIST P-256 (secp256r1), which identifies the curve of a parsed key. */
     private static final BigInteger P256_ORDER = new BigInteger(
         "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
@@ -2326,18 +2375,44 @@ final class DenextOtaStore {
         throw new OtaException("invalid", "The manifest's " + name + " is not a non-negative integer.");
     }
 
+    /** The manifest's nativeFingerprint: null when absent, else 64 lowercase hex digits (else invalid). */
+    @Nullable
+    static String fingerprintField(@Nullable Object value) throws OtaException {
+        if (value == null || value == JSONObject.NULL) {
+            return null;
+        }
+        if (value instanceof String && isSha256((String) value)) {
+            return (String) value;
+        }
+        throw new OtaException("invalid", "The manifest's nativeFingerprint is not 64 lowercase hex digits.");
+    }
+
     /**
      * The bytes a manifest signature covers (denext's {@code otaSignaturePayload}), UTF-8 with
-     * {@code \\n} separators and no trailing newline. With a {@code sequence} (v2):
+     * {@code \\n} separators and no trailing newline. With a {@code sequence} and a
+     * {@code nativeFingerprint} (v3): {@code "denext-ota-v3\\n" + version + "\\n" + ("1" | "0") +
+     * "\\n" + sha256hex(notes) + "\\n" + sequence + "\\n" + (minNative or "") + "\\n" +
+     * nativeFingerprint}; with a {@code sequence} alone (v2):
      * {@code "denext-ota-v2\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
      * sequence + "\\n" + (minNative or "")}; without one (v1):
      * {@code "denext-ota-v1\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes)}.
      */
-    static byte[] signaturePayload(String version, boolean required, String notes, @Nullable Long sequence, @Nullable Long minNative) {
+    static byte[] signaturePayload(
+        String version,
+        boolean required,
+        String notes,
+        @Nullable Long sequence,
+        @Nullable Long minNative,
+        @Nullable String nativeFingerprint
+    ) {
         String head = version + "\\n" + (required ? "1" : "0") + "\\n" + sha256Hex(notes.getBytes(StandardCharsets.UTF_8));
-        String text = sequence == null
-            ? "denext-ota-v1\\n" + head
-            : "denext-ota-v2\\n" + head + "\\n" + sequence + "\\n" + (minNative == null ? "" : String.valueOf(minNative));
+        String text;
+        if (sequence == null) {
+            text = "denext-ota-v1\\n" + head;
+        } else {
+            String v2 = head + "\\n" + sequence + "\\n" + (minNative == null ? "" : String.valueOf(minNative));
+            text = nativeFingerprint == null ? "denext-ota-v2\\n" + v2 : "denext-ota-v3\\n" + v2 + "\\n" + nativeFingerprint;
+        }
         return text.getBytes(StandardCharsets.UTF_8);
     }
 
@@ -2376,9 +2451,10 @@ final class DenextOtaStore {
      * The release policy, checked after {@link #checkTrust} (so a signed manifest's values are
      * authentic) and before any file is fetched: no {@code sequence} below the highest this device
      * accepted, and none missing once one was (code downgrade); no {@code minNative} above this
-     * binary's {@code versionCode} (code native_too_old).
+     * binary's {@code versionCode} (code native_too_old); no {@code nativeFingerprint} other than
+     * this binary's (code native_mismatch), checked only when both carry one.
      */
-    void checkRelease(@Nullable Long sequence, @Nullable Long minNative) throws OtaException {
+    void checkRelease(@Nullable Long sequence, @Nullable Long minNative, @Nullable String nativeFingerprint) throws OtaException {
         Long highest = highestSequence();
         if (highest != null) {
             if (sequence == null) {
@@ -2391,6 +2467,31 @@ final class DenextOtaStore {
         long build = nativeBuild();
         if (minNative != null && minNative > build) {
             throw new OtaException("native_too_old", "This UI needs app build " + minNative + " or later; this is build " + build + ".");
+        }
+        String binary = binaryFingerprint();
+        if (nativeFingerprint != null && binary != null && !nativeFingerprint.equals(binary)) {
+            throw new OtaException(
+                "native_mismatch",
+                "This UI was built for native fingerprint " + nativeFingerprint.substring(0, 12) +
+                    "; this app binary is " + binary.substring(0, 12) + "."
+            );
+        }
+    }
+
+    /**
+     * This binary's native fingerprint (the {@link #NATIVE_FINGERPRINT_META} meta-data), which a
+     * manifest's nativeFingerprint must equal; null when absent or not 64 hex digits, which skips
+     * the check (as a manifest without one does).
+     */
+    @Nullable
+    String binaryFingerprint() {
+        try {
+            ApplicationInfo info = context.getPackageManager().getApplicationInfo(context.getPackageName(), PackageManager.GET_META_DATA);
+            Object value = info.metaData == null ? null : info.metaData.get(NATIVE_FINGERPRINT_META);
+            String text = value == null ? "" : String.valueOf(value).trim().toLowerCase(Locale.ROOT);
+            return isSha256(text) ? text : null;
+        } catch (PackageManager.NameNotFoundException ex) {
+            return null;
         }
     }
 

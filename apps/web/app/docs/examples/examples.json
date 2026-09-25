@@ -53,6 +53,14 @@
       "hasReadme": true
     },
     {
+      "name": "capacitor-ci",
+      "title": "examples/capacitor-ci",
+      "blurb": "A GitHub Actions recipe for a denext app wrapped in Capacitor: every push is fingerprinted with denext mobile fingerprint, and ships over the air when the native layer is unchanged, or as signed…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/capacitor-ci",
+      "tags": [],
+      "hasReadme": true
+    },
+    {
       "name": "concurrency",
       "title": "denext × concurrent rendering",
       "blurb": "A runnable demo of denext's fiber concurrency — the things the earlier cooperative scheduler could not do: time-slicing and mid-flight interruption.",

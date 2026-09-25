@@ -389,6 +389,18 @@ four documented bounds of the opt-in:
   rotating it (or recovering from a leaked private key) takes an app release. The Android
   template is compiled against Capacitor 8.5 by hand, not in CI; the iOS one is build-checked
   with `xcodebuild`.
+- **The native fingerprint gate needs both sides, and binaries from before it refuse with the
+  wrong code.** `denext mobile fingerprint --write` embeds the fingerprint and
+  `denext ota manifest --native-fingerprint` stamps it; the `native_mismatch` check runs only
+  when the binary and the manifest both carry one. A binary whose OTA plugin predates it
+  (template generation 3, denext ≤ 2.10.0-rc.2) refuses a signed manifest with a fingerprint as
+  `signature` (it verifies the v2 payload; v3 adds the fingerprint), and ignores the fingerprint
+  of an unsigned one. The fingerprint hashes the committed native sources, so a version or build
+  number committed there (`CURRENT_PROJECT_VERSION`, `versionCode`) counts as a native change: set
+  them on the build command line. It reads installed plugin versions from `node_modules`, so
+  fingerprint after installing packages. It cannot see native code that reaches the build from
+  outside `ios/`, `android/` and the Capacitor plugins `package.json` declares (a CocoaPods or
+  Gradle dependency pulled by a version range, an Xcode build setting passed by a script).
 - **Downloaded OTA files are verified once, when they arrive.** The native plugin does not re-hash
   a version's files at each launch (that would cost every cold start), so a file changed in the
   app's data directory afterwards (a jailbroken or rooted device, or a debug build) is served as
@@ -399,6 +411,19 @@ four documented bounds of the opt-in:
   Capacitor's `reload()` leaves the trial UI blank, the boot watchdog rolls it back. On Android a
   renderer crash ends the app process (Capacitor does not handle `onRenderProcessGone`), and the
   next launch counts it as one of the trial's two attempts.
+- **Configurable widgets are iOS 17+ only; Android widgets are static.** `denext mobile add widget
+  --configurable` generates an App Intents configuration, which WidgetKit offers from iOS 17. On
+  iOS 14–16 the same widget is a static one (kind `<Name>.static`) that shows the snapshot stored
+  for the parameters' defaults; it lists no family on iOS 17, so one placed before an OS upgrade
+  is not carried over to the configurable kind. Android has no configure activity: its widget
+  shows the snapshot `setWidgetData` stores without `params`. Only enum parameters are supported,
+  and a configured widget whose values have no snapshot of their own shows the unparameterised
+  one.
+- **The `expo-widgets` shim renders the generated SwiftUI, not the `"widget"` layout function.**
+  Props become the widget's JSON snapshot or the Live Activity's state; `updateTimeline` stores
+  only the entry that applies now; `LiveActivityFactory.start` returns before ActivityKit has an
+  id (`getId()` is `""` until then); a start URL, stale dates and widget interaction events are
+  not supported.
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so

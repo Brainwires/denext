@@ -724,6 +724,207 @@ export function PushRouting() {
         on every launch, since the token can change. There is no web-push fallback.
       </p>
 
+      <h3 id="app-extensions">App extensions</h3>
+      <p>
+        Three generators add native app extensions to a Capacitor project, each with a{" "}
+        <code>denext/mobile</code>{" "}
+        API behind it. None installs an npm package: they write denext's own Swift and Java sources,
+        add the Xcode targets, and register the plugins through{" "}
+        <code>DenextBridgeViewController</code> and <code>MainActivity</code> (which they share with
+        {" "}
+        <code>add-ota</code> and{" "}
+        <code>auth-session</code>, in any order). Run them again after a denext upgrade: unedited
+        templates are upgraded, and a file you edited is kept and listed as a manual step (<code>
+          --force
+        </code>{" "}
+        replaces it).
+      </p>
+      <Code lang="bash">
+        {`denext mobile add share-extension --app-group group.com.example.app
+denext mobile add widget --name Status --app-group group.com.example.app
+denext mobile add widget --name Usage --configurable period:enum=auto|session|weekly
+denext mobile add live-activity --name Delivery`}
+      </Code>
+      <ul>
+        <li>
+          <strong>
+            <code>share-extension</code>
+          </strong>: iOS gets a Share Extension target (<code>ios/App/DenextShareExtension/</code>:
+          {" "}
+          <code>ShareViewController.swift</code>, <code>DenextShareInbox.swift</code>, its{" "}
+          <code>Info.plist</code>{" "}
+          with an activation rule for one web URL, text and up to ten images, and its entitlements),
+          embedded in the app's <code>PlugIns</code>{" "}
+          and built before it. The extension copies what was shared into the App Group container,
+          queues it, and opens the app with <code>&lt;scheme&gt;://denext-share</code>{" "}
+          (the scheme is <code>--scheme</code>, else the app's first <code>CFBundleURLSchemes</code>
+          {" "}
+          entry; with neither it stops before changing anything). Android gets <code>SEND</code> and
+          {" "}
+          <code>SEND_MULTIPLE</code> intent filters (<code>text/plain</code>,{" "}
+          <code>image/*</code>) on the launcher activity. Both get the{" "}
+          <code>DenextShareReceive</code> plugin.
+        </li>
+        <li>
+          <strong>
+            <code>widget --name &lt;Name&gt;</code>
+          </strong>: iOS gets a WidgetKit extension target (<code>ios/App/DenextWidgets/</code>,
+          created once) with <code>&lt;Name&gt;Widget.swift</code>{" "}
+          (a static widget whose timeline reads the JSON snapshot the app stored) and{" "}
+          <code>DenextWidgetsBundle.swift</code> listing every widget. Android gets{" "}
+          <code>&lt;Name&gt;Widget.java</code> (an{" "}
+          <code>AppWidgetProvider</code>), its RemoteViews layout, its{" "}
+          <code>appwidget-provider</code> XML and the manifest receiver. Both get the{" "}
+          <code>DenextWidgets</code> plugin.
+        </li>
+        <li>
+          <strong>
+            <code>widget --name &lt;Name&gt; --configurable &lt;param:enum=a|b,…&gt;</code>
+          </strong>: on iOS 17 and later the widget is configurable. The generated{" "}
+          <code>&lt;Name&gt;Widget.swift</code> declares an App Intents{" "}
+          <code>WidgetConfigurationIntent</code>{" "}
+          with one enum per parameter (the first value is the default) and a provider that reads the
+          snapshot stored for the values the user chose, falling back to the one stored without
+          parameters. On iOS 14–16 the same file's static configuration (kind{" "}
+          <code>&lt;Name&gt;.static</code>) shows the defaults' snapshot, and hides itself on iOS
+          17. The parameters are recorded in the file, so re-running without{" "}
+          <code>--configurable</code>{" "}
+          keeps them; delete the file to make the widget static again. Android widgets stay static
+          and show the snapshot stored without parameters.
+        </li>
+        <li>
+          <strong>
+            <code>live-activity --name &lt;Name&gt;</code>
+          </strong>{" "}
+          (iOS only): the ActivityKit attributes (<code>DenextActivityAttributes.swift</code>,
+          compiled into the app and the widget extension),{" "}
+          <code>&lt;Name&gt;LiveActivity.swift</code>{" "}
+          (the Lock Screen and Dynamic Island UI) in the widget extension, which is created when
+          absent, <code>NSSupportsLiveActivities</code> in the app's Info.plist, and the{" "}
+          <code>DenextLiveActivity</code> plugin. ActivityKit needs iOS 16.1: everything is behind
+          {" "}
+          <code>#available</code>{" "}
+          and ActivityKit is weak-linked, so the app keeps its iOS 15 deployment target. On iOS 17.2
+          and later the plugin also hands out the app's push-to-start token, so a server can start
+          an activity while the app is not running.
+        </li>
+      </ul>
+      <Code lang="tsx">
+        {`"use client";
+import { useRouter } from "denext";
+import {
+  liveActivityPushToken,
+  liveActivityPushToStartToken,
+  onLiveActivityPushToStartToken,
+  setWidgetData,
+  startLiveActivity,
+  updateLiveActivity,
+  useShareReceived,
+} from "denext/mobile";
+
+export function ShareTarget() {
+  const router = useRouter();
+  // Includes the share that opened the app: mount it early (the root layout).
+  useShareReceived(({ url, text, files }) => {
+    router.push(\`/new?link=\${encodeURIComponent(url ?? text ?? "")}&files=\${files?.length ?? 0}\`);
+  });
+  return null;
+}
+
+export async function publish(running: number) {
+  // The generated widget shows title and body; edit its view to show more.
+  await setWidgetData("Status", { title: \`\${running} agents running\`, body: "Updated just now" });
+  // A configurable widget: one snapshot per value you tailor, plus the fallback.
+  await setWidgetData("Usage", { title: "Weekly", body: "41% left" }, { params: { period: "weekly" } });
+  await setWidgetData("Usage", { title: "Usage", body: "41% weekly, 80% session" });
+}
+
+export async function registerDevice() {
+  // iOS 17.2+: null below it and off iOS. Later rotations arrive as events.
+  const start = await liveActivityPushToStartToken();
+  if (start) await fetch("/api/devices", { method: "POST", body: start.token });
+  onLiveActivityPushToStartToken(({ token }) => void fetch("/api/devices", { method: "POST", body: token }));
+}
+
+export async function track(order: string) {
+  const id = await startLiveActivity("Delivery", { order }, { title: "Packing", progress: 0.1 }, {
+    push: true, // needs the push entitlement: denext mobile add push
+  });
+  await fetch("/api/live-activity", { method: "POST", body: await liveActivityPushToken(id) });
+  await updateLiveActivity(id, { title: "On the way", progress: 0.6 });
+}`}
+      </Code>
+      <p>
+        <code>onShareReceived</code> / <code>useShareReceived</code> deliver{" "}
+        <code>{"{ text?, url?, files?: [{ path, mimeType }] }"}</code>{" "}
+        for a cold start and a warm one; shares wait natively for the first subscriber.{" "}
+        <code>onDeepLink</code> leaves the <code>denext-share</code> hand-off URL alone. A file's
+        {" "}
+        <code>path</code>{" "}
+        is on the device (the App Group container on iOS, kept seven days; the app's cache on
+        Android), readable through{" "}
+        <code>Capacitor.convertFileSrc</code>; copy what you keep. Android copies only{" "}
+        <code>content:</code> streams, never a <code>file:</code> path another app names.{" "}
+        <code>setWidgetData(kind, data, {"{ params? }"})</code>{" "}
+        stores the JSON (iOS: the App Group's shared defaults; Android: shared preferences) and
+        refreshes that kind; <code>params</code> (a configurable widget's values, such as{" "}
+        <code>{'{ period: "weekly" }'}</code>) stores it for exactly those values.{" "}
+        <code>reloadWidgets(kind?)</code> only refreshes. The Live Activity functions reject with a
+        {" "}
+        <code>code</code>: <code>unsupported</code>, <code>disabled</code>, <code>invalid</code>,
+        {" "}
+        <code>not_found</code>, <code>timeout</code> or <code>failed</code>.{" "}
+        <code>endLiveActivity</code> also takes a <code>Date</code> as its{" "}
+        <code>dismissal</code>, and <code>listLiveActivities()</code>{" "}
+        returns the running activities, including those started in an earlier session or by a push.
+      </p>
+      <p>
+        <strong>Live Activity pushes.</strong> Both kinds need the push entitlement (<code>
+          denext mobile add push
+        </code>) and an APNs push with <code>apns-push-type: liveactivity</code> (topic{" "}
+        <code>&lt;bundle id&gt;.push-type.liveactivity</code>). To update a running activity, start
+        it with <code>{"{ push: true }"}</code>{" "}
+        and push to its token (<code>liveActivityPushToken(id)</code>, or{" "}
+        <code>onLiveActivityPushToken</code> for each token and rotation) with{" "}
+        <code>"event": "update"</code> and a <code>content-state</code> that is the same object{" "}
+        <code>updateLiveActivity</code>{" "}
+        takes. To start one remotely (iOS 17.2 and later), push to the app's push-to-start token (
+        <code>liveActivityPushToStartToken()</code>, which resolves <code>null</code>{" "}
+        below 17.2 and off iOS, or <code>onLiveActivityPushToStartToken</code>) with{" "}
+        <code>"event": "start"</code>, <code>"attributes-type": "DenextActivityAttributes"</code>,
+        {" "}
+        <code>{'"attributes": { "name": "Delivery", "values": { … } }'}</code> and a{" "}
+        <code>content-state</code>. Tokens issued before your first listener are kept for it.
+      </p>
+      <p>
+        <strong>On the web</strong>{" "}
+        (and in a shell without the plugin) the share listener never fires and the widget functions
+        resolve doing nothing, so shared code can call them; the Live Activity functions reject with
+        {" "}
+        <code>unsupported</code>, as they do on Android, except{" "}
+        <code>liveActivityPushToStartToken</code> (<code>null</code>),{" "}
+        <code>listLiveActivities</code> (<code>[]</code>) and the <code>on…</code>{" "}
+        listeners (never called). React Native mode's <code>expo-widgets</code>{" "}
+        shim runs on these same functions.
+      </p>
+      <p>
+        <strong>App Groups.</strong>{" "}
+        The share extension and the widgets exchange data with the app through an App Group:{" "}
+        <code>--app-group</code>, by default{" "}
+        <code>group.&lt;the app's bundle id&gt;</code>. denext writes{" "}
+        <code>com.apple.security.application-groups</code>{" "}
+        into the app's entitlements (setting the App target's Code Signing Entitlements to{" "}
+        <code>App/App.entitlements</code> when it has none) and into each extension's, and{" "}
+        <code>DenextAppGroup</code>{" "}
+        into each Info.plist, where the native code reads it. The group must also exist in your
+        Apple Developer account (Identifiers → App Groups) and be enabled on the app's App ID and
+        the extensions' (<code>&lt;bundle id&gt;.share</code>,{" "}
+        <code>&lt;bundle id&gt;.widgets</code>). Xcode's automatic signing, in the Signing &amp;
+        Capabilities tab or with{" "}
+        <code>xcodebuild -allowProvisioningUpdates</code>, usually registers the group and the
+        extension App IDs for you. A Personal Team cannot sign App Groups or these extensions.
+      </p>
+
       <h3>Over-the-air UI updates</h3>
       <p>
         A Capacitor app can pull a newer web UI from a server without a new app build: the shell
@@ -960,7 +1161,10 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         on: an app whose build number (iOS{" "}
         <code>CFBundleVersion</code>, as an integer or its first dot-separated part; Android{" "}
         <code>versionCode</code>) is lower refuses it before downloading (code{" "}
-        <code>native_too_old</code>).
+        <code>native_too_old</code>). <code>--native-fingerprint &lt;fp|auto&gt;</code>{" "}
+        goes further: it names the exact native layer the UI was built for, and a binary that embeds
+        a different one refuses it (code <code>native_mismatch</code>); see{" "}
+        <a href="#native-fingerprint">Native fingerprint</a>.
       </p>
       <Code lang="bash">
         {`denext ota manifest out --sign ota.key --min-native 42   # sequence = now
@@ -969,11 +1173,15 @@ denext ota manifest out --sign ota.key --sequence 1758700000`}
       <p>
         The signature is ECDSA P-256 / SHA-256, as standard base64 of the raw 64-byte{" "}
         <code>r‖s</code>, over these UTF-8 bytes (<code>\n</code>{" "}
-        is one 0x0A byte, with no trailing newline). A manifest with a <code>sequence</code>{" "}
-        is signed as v2, one without as v1 (what denext 2.8 signed, still accepted):
+        is one 0x0A byte, with no trailing newline). A manifest with a <code>sequence</code> and a
+        {" "}
+        <code>nativeFingerprint</code> is signed as v3, one with a <code>sequence</code>{" "}
+        alone as v2 (byte-for-byte what denext 2.9 signed), one without as v1 (what denext 2.8
+        signed); all three are accepted:
       </p>
       <Code lang="text">
-        {`v2: denext-ota-v2\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>
+        {`v3: denext-ota-v3\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>\\n<nativeFingerprint>
+v2: denext-ota-v2\\n<version>\\n<1|0>\\n<sha256hex(notes)>\\n<sequence>\\n<minNative or empty>
 v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
       </Code>
       <p>
@@ -1007,8 +1215,10 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           in a debuggable Android build. Unsigned updates over <code>https</code> still work;
         </li>
         <li>
-          refuses an older <code>sequence</code> (code <code>downgrade</code>) and a{" "}
-          <code>minNative</code> above its build (code <code>native_too_old</code>).
+          refuses an older <code>sequence</code> (code <code>downgrade</code>), a{" "}
+          <code>minNative</code> above its build (code <code>native_too_old</code>), and a{" "}
+          <code>nativeFingerprint</code> other than the one the binary embeds (code{" "}
+          <code>native_mismatch</code>; only when both carry one).
         </li>
       </ul>
       <p>
@@ -1068,7 +1278,11 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           <code>downgrade</code>: an older <code>sequence</code>, or none after a sequenced release;
         </li>
         <li>
-          <code>native_too_old</code>: the app build is below the manifest's <code>minNative</code>.
+          <code>native_too_old</code>: the app build is below the manifest's <code>minNative</code>;
+        </li>
+        <li>
+          <code>native_mismatch</code>: the manifest's <code>nativeFingerprint</code>{" "}
+          differs from the one the app binary embeds: the UI was built for another native layer.
         </li>
       </ul>
       <p>
@@ -1121,6 +1335,146 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         blank, the watchdog rolls it back. On Android, a renderer crash takes the app down, and the
         next launch counts it as a failed trial attempt.
       </Callout>
+
+      <h3 id="native-fingerprint">Native fingerprint</h3>
+      <p>
+        Whether a change can ship over the air depends on whether it touched the native layer.{" "}
+        <code>denext mobile fingerprint</code> answers that with one hash (the Expo equivalent is
+        {" "}
+        <code>@expo/fingerprint</code>): the same value means the installed binaries can run the new
+        UI; a different one means a new app build.
+      </p>
+      <Code lang="bash">
+        {`denext mobile fingerprint                         # the SHA-256, one line
+denext mobile fingerprint --json > native.json    # { fingerprint, inputs: [...] }
+denext mobile fingerprint --diff native.json      # which inputs changed since, and the verdict
+denext mobile fingerprint --write                 # embed it in the native projects`}
+      </Code>
+      <p>
+        It reads the Capacitor project at <code>--dir</code>{" "}
+        (default: the current directory) and hashes:
+      </p>
+      <ul>
+        <li>
+          every file under <code>ios/</code> and{" "}
+          <code>android/</code>, except build output and caches (<code>build/</code>,{" "}
+          <code>DerivedData</code>, <code>Pods</code>, <code>.gradle</code>,{" "}
+          <code>.cxx</code>, SwiftPM&apos;s{" "}
+          <code>.build</code>), per-user and machine-local files (<code>xcuserdata</code>,{" "}
+          <code>*.xcuserstate</code>, <code>local.properties</code>, <code>.idea</code>,{" "}
+          <code>*.iml</code>,{" "}
+          <code>.DS_Store</code>), signing material and build products (<code>*.jks</code>,{" "}
+          <code>*.keystore</code>, <code>*.p12</code>, <code>*.mobileprovision</code>,{" "}
+          <code>*.apk</code>, <code>*.aab</code>, <code>*.ipa</code>), and what{" "}
+          <code>cap sync</code> copies in (the web UI in <code>App/public</code> and{" "}
+          <code>assets/public</code>, the copied <code>capacitor.config.json</code>,{" "}
+          <code>capacitor.plugins.json</code>,{" "}
+          <code>config.xml</code>, and the generated Cordova plugin projects). Text files (no NUL
+          byte in their first 8000 bytes) are hashed with CRLF turned into LF, so git&apos;s{" "}
+          <code>autocrlf</code> on Windows does not change the result;
+        </li>
+        <li>
+          <code>capacitor.config.*</code> without its <code>server</code> block, which{" "}
+          <code>denext mobile dev</code>{" "}
+          edits (a JSON config is compared by content, whatever its formatting);
+        </li>
+        <li>
+          the installed version of <code>@capacitor/core</code>, <code>ios</code>,{" "}
+          <code>android</code>, <code>cli</code>, and of every dependency or dev dependency in{" "}
+          <code>package.json</code> that is a Capacitor plugin (a <code>@capacitor/</code>{" "}
+          package, a <code>capacitor</code> field in its <code>package.json</code>, or a Cordova
+          {" "}
+          <code>plugin.xml</code>), resolved in <code>node_modules</code>{" "}
+          from the project upwards as Node does. Other dependencies never count. Install packages
+          first: a missing one prints a warning (and a missing <code>@capacitor/</code>{" "}
+          package counts as <code>not installed</code>).
+        </li>
+      </ul>
+      <p>
+        The fingerprint is lowercase hex SHA-256 over the line{" "}
+        <code>denext-native-fingerprint-v1</code> followed by one{" "}
+        <code>&lt;key&gt;&lt;TAB&gt;&lt;sha256&gt;</code>{" "}
+        line per input, sorted by key as the OTA version is: a file&apos;s key is its
+        project-relative path, a package&apos;s is <code>npm:&lt;name&gt;</code>{" "}
+        with the SHA-256 of its version. The same checkout gives the same value on any machine and
+        in any directory.
+      </p>
+      <p>
+        <strong>The gate.</strong> <code>--write</code>{" "}
+        stores the fingerprint as the Info.plist string <code>DenextNativeFingerprint</code>{" "}
+        and the AndroidManifest{" "}
+        <code>
+          {'<meta-data android:name="dev.denext.native.FINGERPRINT" android:value="…" />'}
+        </code>, replacing an earlier value. Those two entries are left out of the hash, so writing
+        them never changes it and a second run changes nothing. Stamp the matching manifest with
+        {" "}
+        <code>--native-fingerprint</code>, either the value itself or <code>auto</code>{" "}
+        (computed for <code>--dir</code>):
+      </p>
+      <Code lang="bash">
+        {`denext mobile fingerprint --write          # before building the binary
+denext ota manifest out --sign ota.key --native-fingerprint auto --dir .`}
+      </Code>
+      <p>
+        A binary whose embedded fingerprint differs from the manifest&apos;s refuses the UI before
+        downloading (code <code>native_mismatch</code>, returned by <code>checkForUiUpdate</code>
+        {" "}
+        and{" "}
+        <code>prepareUiUpdate</code>). When either side has no fingerprint, the check is skipped, so
+        apps and manifests from before it keep working. In a signed manifest the fingerprint is part
+        of the signed payload (v3), so it cannot be stripped or swapped.
+      </p>
+      <Callout kind="warn">
+        <strong>Binaries built before the gate.</strong>{" "}
+        An app binary whose OTA plugin predates the gate (template generation 3 or older, as written
+        by denext 2.10.0-rc.2 and earlier) does not know the v3 payload: with a key embedded, it
+        refuses a signed manifest that carries a fingerprint as <code>signature</code> (not{" "}
+        <code>native_mismatch</code>), and it ignores the fingerprint of an unsigned one. Refusing
+        is right (re-running <code>add-ota</code>{" "}
+        to get the gate changes the native sources, so such a binary is on another native layer
+        anyway); only the code differs. A version or build number committed to the native sources
+        counts as a native change: set them on the build command line instead (see{" "}
+        <a href="#building-in-ci">Building in CI</a>).
+      </Callout>
+
+      <h3 id="building-in-ci">Building in CI</h3>
+      <p>
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/capacitor-ci">
+          <code>examples/capacitor-ci</code>
+        </a>{" "}
+        is a GitHub Actions template built on the fingerprint. A <code>decide</code> job compares
+        {" "}
+        <code>denext mobile fingerprint</code>{" "}
+        with the one recorded for the last binary release (the <code>native-fingerprint.json</code>
+        {" "}
+        asset of the newest <code>native-*</code> GitHub release) and picks one path:
+      </p>
+      <ul>
+        <li>
+          <strong>ota</strong> (unchanged): <code>denext export</code>, then{" "}
+          <code>denext ota manifest --native-fingerprint &lt;fp&gt;</code> signed with the{" "}
+          <code>DENEXT_OTA_SIGNING_KEY</code> secret, then your deploy step;
+        </li>
+        <li>
+          <strong>binary</strong>{" "}
+          (changed, or the first run): a macOS job imports the distribution certificate into a
+          temporary keychain and runs <code>xcodebuild archive</code> and{" "}
+          <code>-exportArchive</code>{" "}
+          with an App Store Connect API key (<code>-authenticationKeyPath</code>), so automatic
+          signing works without an Apple ID signed in to Xcode; an Ubuntu job runs{" "}
+          <code>./gradlew bundleRelease</code>{" "}
+          signed from a keystore secret. Both embed the fingerprint with{" "}
+          <code>--write</code>, set the build number from the run on the command line, and a last
+          job records the new fingerprint (with the <code>.ipa</code> and{" "}
+          <code>.aab</code>) as a release.
+        </li>
+      </ul>
+      <p>
+        The example&apos;s README lists every secret and the one-time project changes. The run
+        summary includes{" "}
+        <code>denext mobile fingerprint --diff</code>, so a &quot;binary&quot; verdict shows which
+        native input caused it.
+      </p>
 
       <h2>Environment variables</h2>
       <ul>

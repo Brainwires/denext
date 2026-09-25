@@ -11,6 +11,7 @@ import {
   isExpoBridgeImport,
 } from "../src/build/expo-shims.ts";
 import { runtimeEntryPoints } from "../src/build/next-compat.ts";
+import { isSqliteWasmBridgeImport } from "../src/build/sqlite-wasm.ts";
 
 const EXPO_DIR = new URL("../src/expo/", import.meta.url);
 
@@ -55,7 +56,8 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   assertEquals(expoShimSpecifier("expo/fetch"), "denext/expo/expo");
   assertEquals(expoShimSpecifier("expo/config"), null);
   assertEquals(expoShimSpecifier("expo-haptics/build/Haptics"), null);
-  assertEquals(expoShimSpecifier("expo-sqlite"), null);
+  assertEquals(expoShimSpecifier("expo-sqlite"), "denext/expo/sqlite");
+  assertEquals(expoShimSpecifier("expo-sqlite/kv-store"), null);
   assertEquals(expoShimSpecifier("react-native"), null);
 });
 
@@ -73,12 +75,26 @@ Deno.test("expo bridge: only the shims' import of internal/react-native.ts is ex
   }
 });
 
+Deno.test("sqlite bridge: only denext/mobile's import of sqlite-wasm.ts is externalized", () => {
+  const cases: Array<[string, string, boolean]> = [
+    ["./sqlite-wasm.ts", "file:///fw/src/mobile/sqlite.ts", true],
+    ["./sqlite-wasm.ts", "https://jsr.io/@denext/denext/2.10.0/src/mobile/sqlite.ts", true],
+    ["./sqlite-wasm.ts", "/fw/src/mobile/sqlite.ts", true],
+    ["./sqlite-wasm.ts", "file:///fw/src/expo/sqlite.ts", false],
+    ["../mobile/sqlite-wasm.ts", "file:///app/src/mobile/x.ts", true],
+    ["./other.ts", "file:///fw/src/mobile/sqlite.ts", false],
+  ];
+  for (const [path, importer, expected] of cases) {
+    assertEquals(isSqliteWasmBridgeImport(path, importer), expected, `${path} from ${importer}`);
+  }
+});
+
 /** T3 Code's apps/mobile package.json: `$T3_MOBILE_PACKAGE_JSON`, else the sibling checkout. */
 const T3_PACKAGE_JSON = Deno.env.get("T3_MOBILE_PACKAGE_JSON") ??
   new URL("../../t3code/apps/mobile/package.json", import.meta.url).pathname;
 
 /** The expo-* dependencies of T3's app that deliberately have no shim. */
-const NOT_SHIMMED = ["expo-sqlite"];
+const NOT_SHIMMED: string[] = [];
 
 let t3Present = false;
 try {

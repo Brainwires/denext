@@ -28,6 +28,11 @@ import {
   expoRuntimeFiles,
   isExpoBridgeImport,
 } from "./expo-shims.ts";
+import {
+  isSqliteWasmBridgeImport,
+  registerSqliteWasmBridge,
+  SQLITE_WASM_BRIDGE,
+} from "./sqlite-wasm.ts";
 import { transformUseCache } from "./use-cache-transform.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import * as esbuild from "esbuild";
@@ -279,9 +284,10 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
 }
 
 /**
- * Keep the `denext/expo/*` shims' react-native-web bridge out of the prebuilt runtime: the
- * import stays external as the bare {@link EXPO_RN_BRIDGE}, which the app build resolves
- * (react-native-web in React Native mode, an empty module otherwise).
+ * Keep the app-resolved bridges out of the prebuilt runtime: the `denext/expo/*` shims'
+ * react-native-web bridge stays external as the bare {@link EXPO_RN_BRIDGE} (react-native-web
+ * in React Native mode, an empty module otherwise), and `denext/mobile`'s web SQLite engine
+ * as {@link SQLITE_WASM_BRIDGE} (the app's own `@sqlite.org/sqlite-wasm`, see sqlite-wasm.ts).
  */
 function expoBridgeExternalPlugin(): esbuild.Plugin {
   return {
@@ -292,6 +298,13 @@ function expoBridgeExternalPlugin(): esbuild.Plugin {
         (args) =>
           isExpoBridgeImport(args.path, args.importer)
             ? { path: EXPO_RN_BRIDGE, external: true }
+            : null,
+      );
+      build.onResolve(
+        { filter: /sqlite-wasm\.ts$/ },
+        (args) =>
+          isSqliteWasmBridgeImport(args.path, args.importer)
+            ? { path: SQLITE_WASM_BRIDGE, external: true }
             : null,
       );
     },
@@ -640,6 +653,8 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
         contents: "export {};\n",
         loader: "js",
       }));
+      // `denext/mobile`'s web SQLite engine: the app's `@sqlite.org/sqlite-wasm`, when installed.
+      registerSqliteWasmBridge(build);
       build.onResolve({ filter: /.*/, namespace: DENEXT_NS }, resolveWithinRuntime);
       // Load prebuilt runtime files from disk as plain JS.
       build.onLoad({ filter: /.*/, namespace: DENEXT_NS }, async (args) => ({

@@ -221,34 +221,19 @@ What a React Native / Expo app gets that `denext/mobile` + a Capacitor shell sti
 lacks — measured against T3 Code's React Native app. The full comparison (what is
 already covered, what official Capacitor plugins cover) is
 [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md); rendering stays WebView (see
-[POLICIES.md](./POLICIES.md#engineering-guardrails)). In day-one order:
+[POLICIES.md](./POLICIES.md#engineering-guardrails)).
 
-- **Push notifications** — a `denext/mobile` registration + permission API over
-  the Capacitor push plugin, and notification-tap → deep-link routing. The single
-  biggest gap.
-- **Auth sessions + deep links** — `openAuthSession()` (ASWebAuthenticationSession
-  on iOS, Custom Tabs on Android) and an `onDeepLink` hook (URL-open events, cold
-  and warm start), for OAuth in a system browser sheet and pairing links.
-- **The `denext mobile add <capability>` wrapper pattern** — install an official
-  Capacitor plugin, register it natively (as `add-ota` does), and expose it as a
-  typed `denext/mobile` hook with a web / desktop fallback: haptics, clipboard,
-  share, filesystem, device, network, splash screen, camera / pickers, secure
-  storage, keep-awake.
-- **CI signing + build recipe** — a GitHub Actions recipe that builds signed iOS /
-  Android artifacts (the EAS Build equivalent), plus a native-layer fingerprint
-  check so CI knows whether a change can ship over the air or needs a binary.
-- **Dev-server attach** — a phone attaches to `denext dev` today (`denext mobile dev`,
-  `denext dev --lan`; see CHANGELOG). The desktop half is tracked under "Dev server
-  attach" below.
-- **Expo / React Native compatibility layer** — react-native-web running on denext's
-  React compat, a `react-native` bundler resolve mode, and `denext/expo/*` shims over
-  the `denext/mobile` capabilities, so an existing Expo/RN app's source can run mostly
-  unchanged (`migrate --from expo`). Starts with a measured spike (T3's `apps/mobile/src`
-  aliased onto denext, failures counted by bucket). Detail:
-  [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md#compatibility-layer-running-expo--react-native-apps).
-- Later: app extensions (share extension, widgets, Live Activities) as
-  `denext mobile add-<thing>` generators, and a real-device Android measurement
-  before any "native feel" work.
+Shipped in the 2.10 line (see CHANGELOG): push notifications, deep links, auth
+sessions, the `denext mobile add <capability>` pattern (haptics, clipboard, share,
+filesystem, device, network, splash, camera / pickers, barcode, quick actions, secure
+storage, keep-awake, SQLite), app extensions (share extension, widgets, Live Activities),
+the native fingerprint + CI recipe, dev-server attach for phones, and the Expo / React
+Native compatibility layer (`reactNative` mode, `denext/expo/*`, `migrate --from expo`).
+Still open:
+
+- **Android "native feel" on real hardware** — the measurement so far is an emulator
+  comparison; a real-device run is still needed before claiming parity either way.
+- **Desktop dev-server attach** — tracked under "Dev server attach" below.
 
 ## Candidate features (from the framework-gap survey)
 

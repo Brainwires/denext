@@ -10,6 +10,26 @@ and this project adheres to
 
 ### Added
 
+- **App extensions: `denext mobile add share-extension | widget | live-activity`.** Three
+  generators, in the style of `add-ota`, add native app extensions to a Capacitor project and
+  the `denext/mobile` APIs behind them. `share-extension` adds an iOS Share Extension target
+  (URL, text and images; queued through the App Group, then the app is opened with
+  `<scheme>://denext-share`, which `onDeepLink` ignores) and Android `SEND` / `SEND_MULTIPLE`
+  intent filters, delivered by `onShareReceived` / `useShareReceived` as
+  `{ text?, url?, files?: [{ path, mimeType }] }` on a cold and a warm start. `widget --name
+  <Name>` adds a WidgetKit extension target and an Android `AppWidgetProvider` (layout, provider
+  XML, manifest receiver) that render the JSON `setWidgetData(kind, data)` stores;
+  `reloadWidgets(kind?)` refreshes them. `live-activity --name <Name>` (iOS 16.1+, behind
+  `#available` with ActivityKit weak-linked, so the app keeps its deployment target) adds the
+  Lock Screen / Dynamic Island UI to the same extension, `NSSupportsLiveActivities`, and
+  `startLiveActivity` / `updateLiveActivity` / `endLiveActivity` / `liveActivityPushToken`
+  (rejecting with code `unsupported` on Android and the web). All three share an App Group
+  (`--app-group`, default `group.<bundle id>`), written into the app's and each extension's
+  entitlements and Info.plist; the group must exist in the Apple Developer account. The Xcode
+  project editor gained target creation (`addNativeTarget`, `addEmbedPhase`,
+  `addTargetDependency`, target build settings). Generated views are templates the app owns: an
+  edited one is kept on the next run. On the web the share listener never fires and the widget
+  functions do nothing.
 - **`denext/expo/*` — drop-in `expo-*` API shims** over `denext/mobile` and web APIs: 34 packages
   matched to Expo SDK 57 (haptics, clipboard, secure-store, file-system with the
   `File`/`Directory`/`Paths` API, notifications, linking, web-browser, auth-session, image, camera,
@@ -18,7 +38,68 @@ and this project adheres to
   the app's single denext instance; `reactNative: { expoShims: false }` opts out.
   `registerRootComponent` mounts through react-native-web's `AppRegistry`, so an Expo app's own
   `index.ts` is the web entry.
+- **`expo-sqlite` shim (`denext/expo/sqlite`) and `openSqlite` / `deleteSqlite` in
+  `denext/mobile`.** SDK 57's async API (`openDatabaseAsync`, `execAsync`, `runAsync`,
+  `getFirstAsync`, `getAllAsync`, `getEachAsync`, `prepareAsync`, `withTransactionAsync`,
+  `withExclusiveTransactionAsync`, the `sql` tag, `SQLiteProvider` / `useSQLiteContext`); the
+  JSI-only sync API is not provided. In the Capacitor shell the database is a file through
+  `@capacitor-community/sqlite` (`denext mobile add sqlite`, a new capability). On the web it
+  runs the app's own `@sqlite.org/sqlite-wasm` (the official build; denext ships no npm runtime
+  dependency) in a worker, persisted to OPFS through the `opfs-sahpool` VFS, which needs no
+  COOP/COEP headers, and in memory where OPFS is unavailable. The esbuild pipeline finds the
+  installed package and emits its module and `sqlite3.wasm` as assets; a missing package is a
+  clear error naming it. T3 Code's SQLite caches (schema, server config, shell snapshots) now
+  persist across reloads with no `expo-sqlite` stub.
+- **`Appearance.setColorScheme` in `reactNative` mode.** react-native-web lacks it (React
+  Native 0.72+); the resolver adds it to react-native-web's `Appearance`: an override that
+  `getColorScheme()`, the change listeners (so `useColorScheme()`) and the root element's
+  `color-scheme` honour; `"unspecified"` / `null` restores the system scheme. Apps no longer
+  need a hand polyfill.
+- **Codegen / TurboModule entry points in `reactNative` mode.** `TurboModuleRegistry`,
+  `codegenNativeComponent` and `codegenNativeCommands`, which react-native-web lacks, now import
+  from `react-native` and from their `Libraries/…` deep paths, so a TurboModule / Fabric package
+  no longer fails the build on the named import. `get(name)` returns `null`; `getEnforcing(name)`
+  returns a stand-in that loads harmlessly (codegen specs call it at module top level) and throws
+  naming the module on first use; a codegen component renders nothing (warning once per name in
+  dev), and its commands do nothing.
+- **expo-router in `reactNative` mode.** `expo-router/_ctx` (Metro's `require.context` over
+  the route directory) resolves to a context generated at build time from `app/` (or
+  `src/app/`), so an expo-router app's routes, deep links and `<Link>` work in the denext
+  bundle.
+- **`denext migrate --from expo`** (auto-detected when `expo` is a dependency). Writes
+  `deno.json` (the React family aliased to denext, `nodeModulesDir` as for a Vite SPA, the
+  dev/build/export/start tasks plus `mobile:sync` / `mobile:ios` / `mobile:android`), a
+  `denext.config.ts` in SPA + `reactNative` mode with the app's own entry (`main`, Expo's
+  default `App` via a generated `index.web.ts`, or expo-router's entry without Metro's runtime)
+  and `__DENEXT_EXPO_CONFIG__` in `spa.head`, and a `capacitor.config.ts`. The app config
+  (`app.json`, `app.config.*`) is read statically and never executed; what depends on code is
+  listed and `app.json` is the fallback. The report gives each `expo-*` package's shim status,
+  flags native-only packages (Nitro, TurboModule / Fabric codegen, Expo native modules,
+  iOS/Android-only files) and the modules only Metro's `extraNodeModules` provides, and prints
+  the `denext mobile add` command derived from the packages, config plugins, usage strings,
+  permissions, scheme and associated domains.
 - **`runtimePlatform()`** in `denext/mobile`: `"ios"`, `"android"`, `"desktop"` or `"web"`.
+- **`denext mobile fingerprint`: know whether a change can ship over the air.** A SHA-256 of
+  the native layer (the Expo equivalent is `@expo/fingerprint`): the `ios/` and `android/`
+  sources minus build output, caches, machine-local files and what `cap sync` copies in (text
+  with CRLF normalised), `capacitor.config.*` without its `server` block, and the installed
+  versions of `@capacitor/*` and every Capacitor / Cordova plugin in `package.json`. `--json`
+  prints `{ fingerprint, inputs }`; `--diff <old.json>` lists the inputs that changed and the
+  verdict; `--write` embeds it as Info.plist `DenextNativeFingerprint` and the AndroidManifest
+  meta-data `dev.denext.native.FINGERPRINT` (idempotent; the embedded values are not hashed).
+- **OTA native gate: `denext ota manifest --native-fingerprint <fp|auto>`** (`auto` computes it
+  for `--dir`). The manifest's `nativeFingerprint` is signed in a new v3 payload
+  (`denext-ota-v3\n<version>\n<1|0>\n<sha256hex(notes)>\n<sequence>\n<minNative or empty>\n<nativeFingerprint>`;
+  a manifest without one is still signed and verified as v2), and the native `DenextOta` plugin
+  refuses a UI whose fingerprint differs from the binary's with the new code `native_mismatch`
+  (surfaced by `checkForUiUpdate` / `prepareUiUpdate`), only when both carry one. The OTA
+  templates move to generation 4: re-run `denext mobile add-ota` (unedited earlier templates
+  upgrade in place) and ship a new binary. Guide: /docs/desktop#native-fingerprint.
+- **`examples/capacitor-ci`: a GitHub Actions recipe** that fingerprints each push and either
+  ships a signed OTA manifest or builds signed store binaries: `xcodebuild archive` +
+  `-exportArchive` with an App Store Connect API key (automatic signing with no Apple ID in
+  Xcode) and a keystore-signed `bundleRelease`, recording each binary's fingerprint as a GitHub
+  release asset. Guide: /docs/desktop#building-in-ci.
 
 - **Live reload on a device (the Metro model).** `denext mobile dev [project]` starts
   `denext dev` (or attaches to one already answering on `--port`), writes
@@ -45,6 +126,34 @@ and this project adheres to
   bind as given in `hostname` and the allowed hosts in `devOrigins`; `origin` stays the
   loopback address local tools (the MCP live tools, `denext ui`) use. The SPA dev server now
   applies `allowedDevOrigins` too.
+- **`reactNative` refuses an explicit `unbundled: true` dev server option** with an error that
+  says why: the react-native-web resolution, `.web.*` probing, `.js` JSX loader and
+  `expo-*` → `denext/expo/*` aliases are bundler plugins the per-module loop does not run.
+  React Native mode already defaulted to the bundled loop.
+- **Configurable widgets: `denext mobile add widget --name <Name> --configurable
+  <param:enum=a|b,…>`.** The generated `<Name>Widget.swift` declares an App Intents
+  `WidgetConfigurationIntent` (iOS 17+) with one enum per parameter, the first value the
+  default, and a provider that reads the snapshot stored for the values the user chose, falling
+  back to the one stored without them; on iOS 14–16 a static configuration (kind
+  `<Name>.static`) shows the defaults' snapshot. The bundle lists the iOS 17 widget behind
+  `#available`. `setWidgetData(kind, data, { params })` stores a per-parameter snapshot (iOS and
+  Android plugins; Android widgets stay static). The parameters are recorded in the generated
+  file, so a re-run without `--configurable` keeps them.
+- **Live Activity push-to-start and token events in `denext/mobile`.**
+  `liveActivityPushToStartToken({ timeoutMs? })` resolves the app's ActivityKit push-to-start
+  token (`{ token }`, iOS 17.2+; `null` below it, on Android and on the web), and
+  `onLiveActivityPushToStartToken(cb)` reports it and each rotation; `onLiveActivityPushToken(cb)`
+  reports every push token ActivityKit issues a running activity (`{ id, token }`); tokens issued
+  before the first listener are kept for it. `listLiveActivities()` lists the running
+  activities, and `endLiveActivity`'s `dismissal` also takes a `Date`. The
+  `DenextLiveActivity` plugin gains `pushToStartToken` and `list` and posts the two events:
+  re-run `denext mobile add live-activity` and ship a new binary.
+- **`expo-widgets` shim (`denext/expo/widgets`) is backed now** (was an inert stub):
+  `Widget.updateSnapshot` / `updateTimeline` / `reload` drive `setWidgetData` / `reloadWidgets`,
+  `LiveActivityFactory.start` / `getInstances` and `LiveActivity.update` / `end` /
+  `getPushToken` / `addPushTokenListener` drive the Live Activity functions, and
+  `addPushToStartTokenListener` delivers push-to-start tokens. The UI is the generated SwiftUI;
+  the `"widget"` layout function is not rendered.
 
 ### Fixed
 

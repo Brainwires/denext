@@ -12,7 +12,7 @@
 // `mobile dev --restore`) puts the config back before doing anything else.
 
 import { join, resolve } from "@std/path";
-import { commit, objectSetEdits, unwrap } from "./config-edit.ts";
+import { commit, objectDeleteEdits, objectSetEdits, unwrap } from "./config-edit.ts";
 import { type Node, parseModule } from "./swc-ast.ts";
 import { CAPACITOR_CONFIGS, type CommandRunner } from "./mobile-capabilities.ts";
 
@@ -138,6 +138,46 @@ export async function withDevServerUrl(file: string, source: string, url: string
   }
   const withUrl = await spliceModule(source, ["server", "url"], url);
   return await spliceModule(withUrl, ["server", "cleartext"], true);
+}
+
+/** `value` with every object's keys sorted, recursively (arrays keep their order). */
+function sortedKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.keys(value).sort().map((k) => [k, sortedKeys((value as Record<string, unknown>)[k])]),
+  );
+}
+
+/**
+ * The config source without its top-level `server` block, the part `mobile dev` edits (and that
+ * `denext mobile fingerprint` leaves out). JSON is re-serialised canonically (keys sorted,
+ * two-space indent) without the key, so its formatting never matters; a JS/TS module has just
+ * that property spliced out. A module with no `server` key, and a source this cannot parse, comes
+ * back unchanged.
+ *
+ * @param file The config file's path (its extension picks JSON or module editing).
+ * @param source Its content.
+ * @returns The source without `server`.
+ */
+export async function withoutServerBlock(file: string, source: string): Promise<string> {
+  if (file.endsWith(".json")) {
+    try {
+      const config = JSON.parse(source) as unknown;
+      if (typeof config !== "object" || config === null || Array.isArray(config)) return source;
+      const { server: _server, ...rest } = config as Record<string, unknown>;
+      return JSON.stringify(sortedKeys(rest), null, 2) + "\n";
+    } catch {
+      return source;
+    }
+  }
+  const parsed = await parseModule(source);
+  const obj = parsed ? exportedObject(parsed.body) : null;
+  if (!parsed || !obj) return source;
+  const edits = objectDeleteEdits(parsed.ctx, obj, ["server"]);
+  if (!edits.ok) return source;
+  const result = await commit(source, parsed.ctx, edits.edits, "capacitor.config");
+  return result.ok ? result.source : source;
 }
 
 /**

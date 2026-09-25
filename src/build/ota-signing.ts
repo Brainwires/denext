@@ -101,11 +101,12 @@ export async function parseOtaPublicKey(text: string): Promise<string> {
 
 /**
  * `manifest` with its `signature` set (replacing any earlier one). A manifest with a `sequence`
- * is signed over the v2 payload (which also covers `sequence` and `minNative`), one without over
- * v1; see {@linkcode otaSignaturePayload}. `writeOtaManifest` stamps a `sequence` before signing
- * unless one is given, so only a manifest built by hand gets v1.
+ * is signed over the v2 payload (which also covers `sequence` and `minNative`), or over v3 when it
+ * also carries a `nativeFingerprint`; one without a `sequence` over v1; see
+ * {@linkcode otaSignaturePayload}. `writeOtaManifest` stamps a `sequence` before signing unless
+ * one is given, so only a manifest built by hand gets v1.
  *
- * @throws RangeError when `minNative` is set without a `sequence`.
+ * @throws RangeError when `minNative` or `nativeFingerprint` is set without a `sequence`.
  */
 export async function signOtaManifest(
   manifest: OtaManifest,

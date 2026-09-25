@@ -303,6 +303,31 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "shareAsync shares web links and (through the Web Share API) files; incoming " +
       "shares need a native share extension, so the payload lists are always empty.",
   },
+  "expo-sqlite": {
+    module: "./sqlite.ts",
+    pinned: "57.0.2",
+    status: "partial",
+    omitted: [
+      "openDatabaseSync",
+      "deleteDatabaseSync",
+      "deserializeDatabaseAsync",
+      "deserializeDatabaseSync",
+      "backupDatabaseAsync",
+      "backupDatabaseSync",
+      "addDatabaseChangeListener",
+      "importDatabaseFromAssetAsync",
+      "SQLiteSession",
+    ],
+    notes: "The async API (openDatabaseAsync, execAsync, runAsync, getFirstAsync, " +
+      "getAllAsync, getEachAsync, prepareAsync, withTransactionAsync, " +
+      "withExclusiveTransactionAsync, the sql tag, SQLiteProvider) over denext/mobile's " +
+      "openSqlite: @capacitor-community/sqlite in the Capacitor shell (`denext mobile add " +
+      "sqlite`), and on the web the app's own @sqlite.org/sqlite-wasm in a worker, persisted " +
+      "to OPFS through the opfs-sahpool VFS (no cross-origin isolation needed; in memory " +
+      "where OPFS is unavailable). The sync API runs over JSI in Expo and is not provided " +
+      "(the *Sync methods included), nor are sessions, extensions, serializeAsync, libSQL " +
+      "sync or the kv-store / localStorage entry points.",
+  },
   "expo-splash-screen": {
     module: "./splash-screen.ts",
     pinned: "57.0.8",
@@ -354,8 +379,15 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   "expo-widgets": {
     module: "./widgets.ts",
     pinned: "57.0.15",
-    status: "stub",
-    notes: "Widgets and Live Activities are native iOS extensions: the factories are inert " +
-      "and starting a Live Activity throws.",
+    status: "partial",
+    notes: "Over denext/mobile's widgets and Live Activities (`denext mobile add widget` / " +
+      '`live-activity`): the UI is the generated SwiftUI, not the "widget" layout function, ' +
+      "which is never rendered. updateSnapshot → setWidgetData, reload → reloadWidgets; " +
+      "updateTimeline stores the entry that applies now (later entries are not scheduled). " +
+      "LiveActivityFactory.start → startLiveActivity with push (retried without), returning " +
+      "at once (getId() is empty until ActivityKit has started it); getInstances refreshes " +
+      "from ActivityKit in the background; push and push-to-start token listeners are live. " +
+      "The start url and stale dates are ignored, addUserInteractionListener never fires, and " +
+      "widgetsDirectory is empty. On the web the updates do nothing and start throws.",
   },
 };

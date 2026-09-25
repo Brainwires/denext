@@ -9550,6 +9550,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/deleteSqlite",
+      "kind": "function",
+      "title": "deleteSqlite",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/deleteSqlite",
+      "text": "deleteSqlite deleteSqlite(name: string, options?: SqliteOptions): Promise<void> Delete the database name (closing it first when open). A missing database is not an error. The database name. Where the web engine is, when the build does not provide it.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/deviceInfo-fn",
       "kind": "function",
       "title": "deviceInfo",
@@ -9574,6 +9583,24 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/downloadToFile",
       "text": "downloadToFile downloadToFile(url: string, path: string, options?: FileLocationOptions): Promise<object> Download a URL straight into a file (missing parent folders are created). - Inside the native shell with @capacitor/filesystem installed (denext mobile add filesystem), the plugin's native download (downloadFile), which does not pass the body through the WebView and is not subject to CORS. (A plugin without downloadFile, which it deprecates, gets fetch(url) and the plugin's writeFile instead.) - Otherwise fetch(url) (CORS applies), then a write to the Origin Private File System. The http(s) URL to fetch. The file's path inside directory; no .. segments. directory (default \"data\"). { path }: the native file path in the shell, the OPFS path (data/…) on the web. It rejects on a non-2xx response or a network error.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/endLiveActivity",
+      "kind": "function",
+      "title": "endLiveActivity",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/endLiveActivity",
+      "text": "endLiveActivity endLiveActivity(id: string, options?: EndLiveActivityOptions): Promise<void> End a Live Activity. The id startLiveActivity returned. A final state, and how soon it leaves the Lock Screen (or when, as a Date). A promise that settles once it has ended.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/EndLiveActivityOptions",
+      "kind": "interface",
+      "title": "EndLiveActivityOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/EndLiveActivityOptions",
+      "text": "EndLiveActivityOptions interface EndLiveActivityOptions Options for endLiveActivity.",
       "denextOnly": true
     },
     {
@@ -9730,6 +9757,87 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/listLiveActivities",
+      "kind": "function",
+      "title": "listLiveActivities",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/listLiveActivities",
+      "text": "listLiveActivities listLiveActivities(): Promise<RunningLiveActivity[]> The running Live Activities of the app (started here, earlier, or by a push-to-start push). Their ids and names; [] on Android, on the web, below iOS 16.1, and without the plugin (or with one installed before this function).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LiveActivityError",
+      "kind": "interface",
+      "title": "LiveActivityError",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LiveActivityError",
+      "text": "LiveActivityError interface LiveActivityError The Error a Live Activity function rejects with.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LiveActivityErrorCode",
+      "kind": "typeAlias",
+      "title": "LiveActivityErrorCode",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LiveActivityErrorCode",
+      "text": "LiveActivityErrorCode type LiveActivityErrorCode = unsupported | disabled | invalid | not_found | timeout | failed The code on a Live Activity rejection: - unsupported: not iOS 16.1+ with the DenextLiveActivity plugin (Android, the web, an older iOS, or the plugin not installed); - disabled: the user turned Live Activities off for the app; - invalid: a bad name, attributes or state (not a JSON object); - not_found: no running Live Activity has that id; - timeout: liveActivityPushToken or liveActivityPushToStartToken got no token in time; - failed: ActivityKit refused (too many activities, or no push entitlement for push).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/liveActivityPushToken",
+      "kind": "function",
+      "title": "liveActivityPushToken",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/liveActivityPushToken",
+      "text": "liveActivityPushToken liveActivityPushToken(id: string, options?: LiveActivityTokenOptions): Promise<string> The ActivityKit push token of a Live Activity started with { push: true }, as hex, for a server to update it through APNs (apns-push-type: liveactivity, with a content-state in the shape of the state object). It waits for the token when ActivityKit has not issued it yet. onLiveActivityPushToken reports it, and every later one, as an event instead. The id startLiveActivity returned. timeoutMs: how long to wait (default 10 000). The token.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LiveActivityPushTokenEvent",
+      "kind": "interface",
+      "title": "LiveActivityPushTokenEvent",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LiveActivityPushTokenEvent",
+      "text": "LiveActivityPushTokenEvent interface LiveActivityPushTokenEvent A push token ActivityKit issued a running Live Activity.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/liveActivityPushToStartToken-fn",
+      "kind": "function",
+      "title": "liveActivityPushToStartToken",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/liveActivityPushToStartToken-fn",
+      "text": "liveActivityPushToStartToken liveActivityPushToStartToken(options?: LiveActivityTokenOptions): Promise<LiveActivityPushToStartToken | null> The app's ActivityKit push-to-start token (iOS 17.2 and later), as hex: a server sends it an APNs push (apns-push-type: liveactivity, \"event\": \"start\", \"attributes-type\": \"DenextActivityAttributes\", \"attributes\": { \"name\": <Live Activity name>, \"values\": { … } } and a content-state in the shape of the state object) to start a Live Activity while the app is not running. It waits for the token when ActivityKit has not issued it yet; onLiveActivityPushToStartToken reports later ones. The app needs the push entitlement (denext mobile add push), without which no token comes (timeout). timeoutMs: how long to wait (default 10 000). { token }, or null where push-to-start does not exist: below iOS 17.2, on Android, on the web, or without the plugin (or with one installed before push-to-start).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LiveActivityPushToStartToken-iface",
+      "kind": "interface",
+      "title": "LiveActivityPushToStartToken",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LiveActivityPushToStartToken-iface",
+      "text": "LiveActivityPushToStartToken interface LiveActivityPushToStartToken A push-to-start token ActivityKit issued the app (iOS 17.2+).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LiveActivityTokenOptions",
+      "kind": "interface",
+      "title": "LiveActivityTokenOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LiveActivityTokenOptions",
+      "text": "LiveActivityTokenOptions interface LiveActivityTokenOptions Options for liveActivityPushToken and liveActivityPushToStartToken.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/LiveActivityValues",
+      "kind": "typeAlias",
+      "title": "LiveActivityValues",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/LiveActivityValues",
+      "text": "LiveActivityValues type LiveActivityValues = Readonly<Record<string, unknown>> A JSON object: a Live Activity's attributes or state.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/MomentumSafeScrollOptions",
       "kind": "interface",
       "title": "MomentumSafeScrollOptions",
@@ -9802,6 +9910,24 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/onLiveActivityPushToken",
+      "kind": "function",
+      "title": "onLiveActivityPushToken",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onLiveActivityPushToken",
+      "text": "onLiveActivityPushToken onLiveActivityPushToken(callback: (event: LiveActivityPushTokenEvent) => void): () => void Call callback with each push token ActivityKit issues a running Live Activity: the first one of an activity started with { push: true } (or by a push-to-start push), and every rotation after it. Tokens issued before the first subscriber are kept for it. Elsewhere it is never called. Called with { id, token } (the activity's id, the hex token). A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/onLiveActivityPushToStartToken",
+      "kind": "function",
+      "title": "onLiveActivityPushToStartToken",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onLiveActivityPushToStartToken",
+      "text": "onLiveActivityPushToStartToken onLiveActivityPushToStartToken(callback: (token: LiveActivityPushToStartToken) => void): () => void Call callback with each push-to-start token ActivityKit issues the app (iOS 17.2 and later), including the current one: a token issued before the first subscriber is kept for it. Send each to your server, which replaces the one it had. Elsewhere it is never called. Called with { token } (hex). A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/onPushReceived",
       "kind": "function",
       "title": "onPushReceived",
@@ -9829,6 +9955,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/onShareReceived",
+      "kind": "function",
+      "title": "onShareReceived",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/onShareReceived",
+      "text": "onShareReceived onShareReceived(callback: (content: SharedContent) => void): () => void Call callback with each share other apps send to this one, including the one that opened the app: shares wait natively until the first subscriber arrives, so subscribe early (a root layout or the app shell); only the subscribers present when a share is handed over see it. Outside the native shell, or without the plugin, it does nothing. denext mobile add share-extension installs the native side: on iOS a Share Extension (queued through the App Group, then the app is opened with <scheme>://denext-share, which onDeepLink ignores), on Android SEND / SEND_MULTIPLE intent filters. Called with each share. A function that unsubscribes.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/openAuthSession",
       "kind": "function",
       "title": "openAuthSession",
@@ -9844,6 +9979,15 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/openExternal",
       "text": "openExternal openExternal(url: string): Promise<void> Open a URL outside the app. - Inside the native shell, an http(s) URL opens in the in-app browser of the @capacitor/browser plugin when it is installed natively (read from Capacitor.Plugins.Browser; no JS import of the plugin is needed). - Otherwise, including mailto:/tel: and on the web, it calls window.open(url, \"_blank\", \"noopener,noreferrer\"). The iOS shell hands a window.open to the OS (Safari, Mail, Phone); Android routes it to an intent. Only http:, https:, mailto: and tel: URLs are accepted. Anything else, including javascript:, data:, file: and relative URLs, is refused before anything opens: the promise rejects with a TypeError. The vetted, normalized URL.href is what gets opened. An absolute http:, https:, mailto: or tel: URL. A promise that settles once the URL has been handed off. It rejects with a TypeError for a relative URL or a disallowed scheme, if the Browser plugin rejects, or when there is no window (SSR).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/openSqlite",
+      "kind": "function",
+      "title": "openSqlite",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/openSqlite",
+      "text": "openSqlite openSqlite(name: string, options?: SqliteOptions): Promise<SqliteDatabase> Open (creating when missing) the SQLite database name. - Inside the native shell with @capacitor-community/sqlite installed (denext mobile add sqlite), it is a file in the app's storage, opened through the plugin. - In the browser it runs the app's own @sqlite.org/sqlite-wasm (`npm install The database name (a file name: no slashes). Where the web engine is, when the build does not provide it. The open database.",
       "denextOnly": true
     },
     {
@@ -9888,7 +10032,7 @@
       "title": "OtaErrorCode",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/OtaErrorCode",
-      "text": "OtaErrorCode type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old The code of a native DenextOta refusal, carried on an error result: - invalid: a malformed request or manifest; busy, rejected: see the results; - download: a file could not be fetched; integrity: a file, or the manifest's version (the native side recomputes it from the file list), does not match; - not_staged: applyUiUpdate named a version that is not staged; - signature: the app binary embeds a public key (denext mobile add-ota --public-key) and the manifest's signature is missing or does not verify; - insecure: the binary embeds no key and baseUrl is plain http to a host other than loopback (localhost, 127.0.0.1, ::1, and 10.0.2.2 in a debuggable Android build); - downgrade: the manifest's sequence is lower than the highest this device has accepted, or it has none after a sequenced manifest was accepted; - native_too_old: the manifest's minNative is above the app binary's build number (iOS CFBundleVersion, Android versionCode). The trust checks (integrity, signature, insecure, downgrade, native_too_old, and invalid for a malformed or oversized manifest) run before any file is downloaded, and a refusal leaves the running UI and any staged one as they were.",
+      "text": "OtaErrorCode type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch The code of a native DenextOta refusal, carried on an error result: - invalid: a malformed request or manifest; busy, rejected: see the results; - download: a file could not be fetched; integrity: a file, or the manifest's version (the native side recomputes it from the file list), does not match; - not_staged: applyUiUpdate named a version that is not staged; - signature: the app binary embeds a public key (denext mobile add-ota --public-key) and the manifest's signature is missing or does not verify; - insecure: the binary embeds no key and baseUrl is plain http to a host other than loopback (localhost, 127.0.0.1, ::1, and 10.0.2.2 in a debuggable Android build); - downgrade: the manifest's sequence is lower than the highest this device has accepted, or it has none after a sequenced manifest was accepted; - native_too_old: the manifest's minNative is above the app binary's build number (iOS CFBundleVersion, Android versionCode); - native_mismatch: the manifest's nativeFingerprint differs from the one the app binary embeds (denext mobile fingerprint --write): the UI was built for another native layer. Checked only when both carry one. The trust checks (integrity, signature, insecure, downgrade, native_too_old, native_mismatch, and invalid for a malformed or oversized manifest) run before any file is downloaded, and a refusal leaves the running UI and any staged one as they were.",
       "denextOnly": true
     },
     {
@@ -9933,7 +10077,7 @@
       "title": "otaSignaturePayload",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/otaSignaturePayload",
-      "text": "otaSignaturePayload otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative>): Promise<Uint8Array> The bytes an OTA manifest signature covers, as UTF-8 with \\n (0x0A) separators and no trailing newline. A manifest with a sequence uses the v2 format, one without uses v1: - v2: \"denext-ota-v2\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\" + sequence + \"\\n\" + (minNative ?? \"\") - v1: \"denext-ota-v1\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") \"1\" is required === true, anything else \"0\"; sha256hex is lowercase hex of the SHA-256 of the notes' UTF-8 (the empty string when absent); sequence and minNative are plain decimal integers (no sign, no leading zeros, no exponent), and an absent minNative is the empty string. The version already covers every file, so the chain is files → version → signature, and none of the metadata can change under a valid signature. The native DenextOta plugin builds the same bytes (v2 when the manifest has a sequence, else v1). The version and the signed metadata. The payload bytes.",
+      "text": "otaSignaturePayload otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint>): Promise<Uint8Array> The bytes an OTA manifest signature covers, as UTF-8 with \\n (0x0A) separators and no trailing newline. A manifest with a nativeFingerprint (and a sequence) uses the v3 format, one with a sequence but no fingerprint v2, one without a sequence v1: - v3: \"denext-ota-v3\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\" + sequence + \"\\n\" + (minNative ?? \"\") + \"\\n\" + nativeFingerprint - v2: \"denext-ota-v2\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") + \"\\n\" + sequence + \"\\n\" + (minNative ?? \"\") - v1: \"denext-ota-v1\\n\" + version + \"\\n\" + (\"1\" | \"0\") + \"\\n\" + sha256hex(notes ?? \"\") \"1\" is required === true, anything else \"0\"; sha256hex is lowercase hex of the SHA-256 of the notes' UTF-8 (the empty string when absent); sequence and minNative are plain decimal integers (no sign, no leading zeros, no exponent), and an absent minNative is the empty string; nativeFingerprint is 64 lowercase hex digits. The version already covers every file, so the chain is files → version → signature, and none of the metadata can change under a valid signature. The native DenextOta plugin builds the same bytes (v3 when the manifest has a sequence and a nativeFingerprint, v2 with a sequence alone, else v1). A v2 manifest (no fingerprint) is signed and verified exactly as before v3 existed. The version and the signed metadata. The payload bytes.",
       "denextOnly": true
     },
     {
@@ -10117,12 +10261,48 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/reloadWidgets",
+      "kind": "function",
+      "title": "reloadWidgets",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/reloadWidgets",
+      "text": "reloadWidgets reloadWidgets(kind?: string): Promise<void> Ask the OS to redraw widget kind (every kind when omitted) from its stored snapshot. Outside the native shell, or without the plugin, it does nothing. The widget's name; omitted, every widget of the app. A promise that settles once the reload is requested. It rejects with a TypeError for a bad kind.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/requestPushPermission",
       "kind": "function",
       "title": "requestPushPermission",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/requestPushPermission",
       "text": "requestPushPermission requestPushPermission(): Promise<PushPermission> Ask for permission to show notifications, when it has not been decided yet, and report the result: \"granted\", \"denied\" (the user said no; only the system settings can change it) or \"prompt\" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is \"unsupported\": there is no web-push fallback. Android before 13 needs no permission and always reads \"granted\". The permission state.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/RunningLiveActivity",
+      "kind": "interface",
+      "title": "RunningLiveActivity",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/RunningLiveActivity",
+      "text": "RunningLiveActivity interface RunningLiveActivity A running Live Activity, as listLiveActivities reports it.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/runtimePlatform-fn",
+      "kind": "function",
+      "title": "runtimePlatform",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/runtimePlatform-fn",
+      "text": "runtimePlatform runtimePlatform(): RuntimePlatform The runtime the page runs in: \"ios\" or \"android\" inside a Capacitor native shell, \"desktop\" inside the Deno Desktop runtime, otherwise \"web\" (including SSR, where there is no window). The desktop case is read off globalThis.__denext.desktop, a marker the Deno Desktop runtime injects into the page before any script runs; it is a detection hint only, not a security boundary — treat it like any other client-reported value. \"ios\", \"android\", \"desktop\" or \"web\".",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/RuntimePlatform-type",
+      "kind": "typeAlias",
+      "title": "RuntimePlatform",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/RuntimePlatform-type",
+      "text": "RuntimePlatform type RuntimePlatform = ios | android | desktop | web The runtime a page runs in, as denext/mobile distinguishes them.",
       "denextOnly": true
     },
     {
@@ -10189,12 +10369,48 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-mobile/setWidgetData",
+      "kind": "function",
+      "title": "setWidgetData",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/setWidgetData",
+      "text": "setWidgetData setWidgetData(kind: string, data: unknown, options?: SetWidgetDataOptions): Promise<void> Store data as the snapshot widget kind renders, and refresh that kind's widgets. Inside the native shell with the plugin (denext mobile add widget --name <kind>): iOS keeps the JSON in the App Group's shared defaults (denext.widget.<kind>) and reloads the kind's WidgetKit timelines; Android keeps it in the denext_widgets shared preferences and updates the kind's placed widgets. The generated widget shows title and body strings; edit its view to show more. Elsewhere it does nothing. A configurable widget (iOS 17+) reads the snapshot stored for the values the user chose: store one per combination you want to tailor with options.params, and one without params as the fallback (and for iOS 14–16 and Android, where widgets are static). The widget's name (its --name). Any JSON-serialisable value (an object for the generated widget). params: the configurable widget's parameter values this snapshot is for. A promise that settles once the data is stored. It rejects with a TypeError for a bad kind or params or data JSON.stringify cannot serialise, and with the native error (code invalid, or unavailable when the iOS App Group is not set up) otherwise.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SetWidgetDataOptions",
+      "kind": "interface",
+      "title": "SetWidgetDataOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SetWidgetDataOptions",
+      "text": "SetWidgetDataOptions interface SetWidgetDataOptions Options for setWidgetData.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-mobile/share",
       "kind": "function",
       "title": "share",
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/share",
       "text": "share share(opts: ShareOptions): Promise<ShareResult> Open the share sheet. - Inside the native shell with @capacitor/share installed (denext mobile add share), the OS share sheet. - Otherwise navigator.share where the browser has it (and canShare accepts the data). - Otherwise the text and URL are copied to the clipboard (joined by a space), and the result is \"copied\" so the UI can say so. A dismissed sheet resolves \"cancelled\" rather than rejecting. The title, text and URL to share. \"shared\", \"copied\" or \"cancelled\". It rejects with a TypeError when there is nothing to share, and when sharing or copying fails for another reason.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SharedContent",
+      "kind": "interface",
+      "title": "SharedContent",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SharedContent",
+      "text": "SharedContent interface SharedContent One share: any of a web link, text and files.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SharedFile",
+      "kind": "interface",
+      "title": "SharedFile",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SharedFile",
+      "text": "SharedFile interface SharedFile A file shared to the app, copied where the app can read it.",
       "denextOnly": true
     },
     {
@@ -10213,6 +10429,123 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/ShareResult",
       "text": "ShareResult type ShareResult = shared | copied | cancelled How a share ended: \"shared\" (the sheet completed), \"copied\" (no share sheet, so the text was copied to the clipboard) or \"cancelled\" (the user dismissed it).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteBackend",
+      "kind": "typeAlias",
+      "title": "SqliteBackend",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteBackend",
+      "text": "SqliteBackend type SqliteBackend = native | opfs | memory Where a database lives: the native plugin, OPFS in the browser, or memory.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteBindValue",
+      "kind": "typeAlias",
+      "title": "SqliteBindValue",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteBindValue",
+      "text": "SqliteBindValue type SqliteBindValue = string | number | boolean | null | Uint8Array | ArrayBuffer A value a statement binds: booleans bind as 1/0, an ArrayBuffer as a blob.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteDatabase",
+      "kind": "interface",
+      "title": "SqliteDatabase",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteDatabase",
+      "text": "SqliteDatabase interface SqliteDatabase An open database (openSqlite).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteOptions",
+      "kind": "interface",
+      "title": "SqliteOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteOptions",
+      "text": "SqliteOptions interface SqliteOptions Options for openSqlite and deleteSqlite.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteParams",
+      "kind": "typeAlias",
+      "title": "SqliteParams",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteParams",
+      "text": "SqliteParams type SqliteParams = typeOperator | Readonly<Record<string, SqliteBindValue>> A statement's parameters: positional (?), or named by their placeholder, prefix included ({ $id: 1 } for $id, { \":id\": 1 } for :id).",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteRow",
+      "kind": "typeAlias",
+      "title": "SqliteRow",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteRow",
+      "text": "SqliteRow type SqliteRow = Record<string, SqliteValue> A row as an object keyed by column name.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteRows",
+      "kind": "interface",
+      "title": "SqliteRows",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteRows",
+      "text": "SqliteRows interface SqliteRows Rows as column names plus one value array per row, in column order.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteRunResult",
+      "kind": "interface",
+      "title": "SqliteRunResult",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteRunResult",
+      "text": "SqliteRunResult interface SqliteRunResult What a write reports.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteValue",
+      "kind": "typeAlias",
+      "title": "SqliteValue",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteValue",
+      "text": "SqliteValue type SqliteValue = string | number | null | Uint8Array A value SQLite stores.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/SqliteWasmUrls",
+      "kind": "interface",
+      "title": "SqliteWasmUrls",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/SqliteWasmUrls",
+      "text": "SqliteWasmUrls interface SqliteWasmUrls The engine's two files.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/startLiveActivity",
+      "kind": "function",
+      "title": "startLiveActivity",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/startLiveActivity",
+      "text": "startLiveActivity startLiveActivity(name: string, attributes: LiveActivityValues, state: LiveActivityValues, options?: StartLiveActivityOptions): Promise<string> Start a Live Activity rendered by the UI denext mobile add live-activity --name <name> generated (<name>LiveActivity.swift, which reads context.attributes and context.state). The Live Activity name (its --name). Values fixed for the activity's life (a JSON object). The first dynamic state (a JSON object); an ActivityKit push's content-state is the same object. push to get a push token. The activity id, for the other functions.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/StartLiveActivityOptions",
+      "kind": "interface",
+      "title": "StartLiveActivityOptions",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/StartLiveActivityOptions",
+      "text": "StartLiveActivityOptions interface StartLiveActivityOptions Options for startLiveActivity.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/updateLiveActivity",
+      "kind": "function",
+      "title": "updateLiveActivity",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/updateLiveActivity",
+      "text": "updateLiveActivity updateLiveActivity(id: string, state: LiveActivityValues): Promise<void> Replace a running Live Activity's state. The id startLiveActivity returned. The new state (a JSON object). A promise that settles once ActivityKit has it.",
       "denextOnly": true
     },
     {
@@ -10303,6 +10636,15 @@
       "module": "denext/mobile",
       "url": "/docs/api/denext-mobile/useQuickAction",
       "text": "useQuickAction useQuickAction(callback: (id: string) => void): void Hook form of onQuickAction: subscribes on mount, unsubscribes on unmount, and always calls the latest callback. Called with the chosen action's id.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-mobile/useShareReceived",
+      "kind": "function",
+      "title": "useShareReceived",
+      "module": "denext/mobile",
+      "url": "/docs/api/denext-mobile/useShareReceived",
+      "text": "useShareReceived useShareReceived(callback: (content: SharedContent) => void): void Hook form of onShareReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback. Called with each share.",
       "denextOnly": true
     },
     {

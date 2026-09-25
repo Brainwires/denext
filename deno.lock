@@ -57,6 +57,7 @@
     "jsr:@zip-js/zip-js@^2.7.52": "2.8.34",
     "npm:@cf-wasm/photon@0.4.0": "0.4.0",
     "npm:@mdx-js/mdx@3": "3.1.1",
+    "npm:@sqlite.org/sqlite-wasm@3.53.4-build1": "3.53.4-build1",
     "npm:effect@*": "3.22.1",
     "npm:effect@^3.22.0": "3.22.1",
     "npm:esbuild@0.24": "0.24.2",
@@ -600,6 +601,9 @@
     },
     "@repeaterjs/repeater@3.1.0": {
       "integrity": "sha512-TaoVksZRSx2KWYYpyLQtMQXXeS98VsgZImzW65xmiVgbYhXLk+aEsmzPLirqVuE4/XuUapH2iMtxUzaBNDzdSQ=="
+    },
+    "@sqlite.org/sqlite-wasm@3.53.4-build1": {
+      "integrity": "sha512-U8pvL0patYHMgieD8JxxYJTlh9m1LUX8+BDYb7MiKQzBI89f2qbdmdcG/PvnPaLm9wsBbv4VlVG453ixnxBOnA=="
     },
     "@standard-schema/spec@1.1.0": {
       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="

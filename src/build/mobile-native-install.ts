@@ -1,5 +1,5 @@
-// What denext's native-plugin installers share (`denext mobile add-ota` and
-// `denext mobile add auth-session`): writing template files that are upgraded in place while
+// What denext's native-plugin installers share (`denext mobile add-ota`, `denext mobile add
+// auth-session` and the app extensions: share-extension, widget, live-activity): writing template files that are upgraded in place while
 // unedited and kept once edited, and registering the plugins with Capacitor.
 //
 // Registration. iOS: an app-local plugin is registered from a `CAPBridgeViewController`
@@ -17,16 +17,32 @@ import {
   isPristineAuthSessionTemplate,
   renderAuthSessionTemplate,
 } from "./auth-session-native-templates.ts";
+import {
+  genericBridgeViewController,
+  isPristineAppExtensionTemplate,
+  renderAppExtensionTemplate,
+} from "./app-extension-native-templates.ts";
 
 /** A denext native feature that registers a plugin with the bridge. */
-export type NativeFeature = "ota" | "auth-session";
+export type NativeFeature = "ota" | "auth-session" | "share-receive" | "widgets" | "live-activity";
 
-/** Every non-empty feature combination, for recognising a file denext composed. */
-const FEATURE_SETS: readonly (readonly NativeFeature[])[] = [
-  ["ota"],
-  ["auth-session"],
-  ["ota", "auth-session"],
+/** Every feature, in the order the bridge view controller registers them after OTA. */
+const ALL_FEATURES: readonly NativeFeature[] = [
+  "ota",
+  "auth-session",
+  "share-receive",
+  "widgets",
+  "live-activity",
 ];
+
+/** Every non-empty combination of `features`, for recognising a file denext composed. */
+function featureSets<F extends NativeFeature>(features: readonly F[]): F[][] {
+  const sets: F[][] = [];
+  for (let mask = 1; mask < 1 << features.length; mask++) {
+    sets.push(features.filter((_, i) => mask & (1 << i)));
+  }
+  return sets;
+}
 
 /** The report fields every native installer fills, as project-relative paths and notes. */
 export interface NativeInstallReport {
@@ -101,6 +117,12 @@ export const OTA_TEMPLATES: TemplateKind = {
 export const AUTH_SESSION_TEMPLATES: TemplateKind = {
   render: renderAuthSessionTemplate,
   isPristine: (_name, text) => isPristineAuthSessionTemplate(text),
+};
+
+/** The app extension templates (share, widgets, Live Activities): `denext-app-extension-template:`. */
+export const APP_EXTENSION_TEMPLATES: TemplateKind = {
+  render: (template) => renderAppExtensionTemplate(template),
+  isPristine: (_name, text) => isPristineAppExtensionTemplate(text),
 };
 
 /** Accumulates the report while an installer runs. */
@@ -180,17 +202,38 @@ export async function writeTemplates(
 const IOS_FEATURE_FILES: Readonly<Record<NativeFeature, string>> = {
   ota: "DenextOtaPlugin.swift",
   "auth-session": "DenextAuthSessionPlugin.swift",
+  "share-receive": "DenextShareReceivePlugin.swift",
+  widgets: "DenextWidgetsPlugin.swift",
+  "live-activity": "DenextLiveActivityPlugin.swift",
 };
 
-/** Where the OTA bridge view controller registers its plugin; auth sessions go after it. */
+/** Where the OTA bridge view controller registers its plugin; the others go after it. */
 const OTA_REGISTRATION = "        bridge?.registerPluginInstance(plugin)\n";
-const AUTH_REGISTRATION = "        // denext auth sessions: openAuthSession() in denext/mobile.\n" +
-  "        bridge?.registerPluginInstance(DenextAuthSessionPlugin())\n";
+
+/** Each non-OTA feature's registration lines in `capacitorDidLoad()`. */
+const IOS_REGISTRATIONS: Readonly<Record<Exclude<NativeFeature, "ota">, string>> = {
+  "auth-session": "        // denext auth sessions: openAuthSession() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextAuthSessionPlugin())\n",
+  "share-receive": "        // denext share extension: onShareReceived() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextShareReceivePlugin())\n",
+  widgets: "        // denext widgets: setWidgetData() / reloadWidgets() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextWidgetsPlugin())\n",
+  "live-activity": "        // denext Live Activities: startLiveActivity() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextLiveActivityPlugin())\n",
+};
+
+/** The registration lines of the non-OTA features in `features`, in their fixed order. */
+function registrationLines(features: ReadonlySet<NativeFeature>): string {
+  return ALL_FEATURES.filter((f): f is Exclude<NativeFeature, "ota"> =>
+    f !== "ota" && features.has(f)
+  ).map((f) => IOS_REGISTRATIONS[f]).join("");
+}
 
 /**
  * `DenextBridgeViewController.swift` for `features`, marker line included: OTA alone is the OTA
- * template exactly; OTA with auth sessions is that template also registering
- * `DenextAuthSessionPlugin`; auth sessions alone is the small registering-only controller.
+ * template exactly; OTA with other features is that template also registering their plugins;
+ * auth sessions alone is the auth-session registering-only controller; any other set without
+ * OTA is the app-extension registering-only controller.
  *
  * @param features The installed features (at least one).
  * @returns The file content.
@@ -199,27 +242,29 @@ export async function bridgeViewControllerSource(
   features: ReadonlySet<NativeFeature>,
 ): Promise<string> {
   const ota = OTA_IOS_FILES[BRIDGE_VC_FILE];
+  const others = registrationLines(features);
   if (!features.has("ota")) {
-    return await renderAuthSessionTemplate(AUTH_SESSION_BRIDGE_VIEW_CONTROLLER);
+    if (features.size === 1 && features.has("auth-session")) {
+      return await renderAuthSessionTemplate(AUTH_SESSION_BRIDGE_VIEW_CONTROLLER);
+    }
+    return await renderAppExtensionTemplate(genericBridgeViewController(others));
   }
-  if (!features.has("auth-session")) return await renderOtaTemplate(ota);
+  if (others === "") return await renderOtaTemplate(ota);
   if (!ota.includes(OTA_REGISTRATION)) {
     throw new Error(`${BRIDGE_VC_FILE}: the OTA template has no plugin registration to extend`);
   }
-  return await renderOtaTemplate(
-    ota.replace(OTA_REGISTRATION, OTA_REGISTRATION + AUTH_REGISTRATION),
-  );
+  return await renderOtaTemplate(ota.replace(OTA_REGISTRATION, OTA_REGISTRATION + others));
 }
 
-/** Whether a bridge view controller is an unedited denext one (either marker family). */
+/** Whether a bridge view controller is an unedited denext one (any marker family). */
 async function isPristineBridge(text: string): Promise<boolean> {
   return await isPristineOtaTemplate(BRIDGE_VC_FILE, text) ||
-    await isPristineAuthSessionTemplate(text);
+    await isPristineAuthSessionTemplate(text) || await isPristineAppExtensionTemplate(text);
 }
 
 /** Whether `text` is this release's bridge view controller for some feature combination. */
 async function isCurrentBridge(text: string): Promise<boolean> {
-  for (const set of FEATURE_SETS) {
+  for (const set of featureSets(ALL_FEATURES)) {
     if (text === await bridgeViewControllerSource(new Set(set))) return true;
   }
   return false;
@@ -362,10 +407,36 @@ export async function wireBridgeViewController(
 const STOCK_MAIN_ACTIVITY =
   /^\s*package\s+([\w.]+)\s*;\s*import\s+com\.getcapacitor\.BridgeActivity\s*;\s*public\s+class\s+MainActivity\s+extends\s+BridgeActivity\s*\{\s*\}\s*$/;
 
+/** The features that register an Android plugin (Live Activities are iOS only). */
+export type AndroidFeature = Exclude<NativeFeature, "live-activity">;
+
+/** A plain `registerPlugin(<cls>.class)` registration of a plugin in package `pkg`. */
+function pluginRegistration(pkg: string, cls: string, what: string) {
+  return {
+    import: `import ${pkg}.${cls};\n`,
+    lines: `        // ${what}. It must run before super.onCreate, which builds the bridge.\n` +
+      `        registerPlugin(${cls}.class);\n`,
+    call: `${cls}.class`,
+    step: `call \`registerPlugin(${cls}.class);\` (import ${pkg}.${cls}) in ` +
+      "MainActivity.onCreate, before super.onCreate.",
+  };
+}
+
 /** What each feature adds to MainActivity: an import, the onCreate lines, and its call. */
 const ANDROID_REGISTRATIONS: Readonly<
-  Record<NativeFeature, { import: string; lines: string; call: string; step: string }>
+  Record<AndroidFeature, { import: string; lines: string; call: string; step: string }>
 > = {
+  "share-receive": pluginRegistration(
+    "dev.denext.sharereceive",
+    "DenextShareReceivePlugin",
+    "denext share target: registers the DenextShareReceive plugin (onShareReceived in\n" +
+      "        // denext/mobile)",
+  ),
+  widgets: pluginRegistration(
+    "dev.denext.widgets",
+    "DenextWidgetsPlugin",
+    "denext widgets: registers the DenextWidgets plugin (setWidgetData in denext/mobile)",
+  ),
   "auth-session": {
     import: "import dev.denext.authsession.DenextAuthSessionPlugin;\n",
     lines:
@@ -388,8 +459,17 @@ const ANDROID_REGISTRATIONS: Readonly<
   },
 };
 
-/** The features in their MainActivity order (imports sort the same way). */
-const FEATURE_ORDER: readonly NativeFeature[] = ["auth-session", "ota"];
+/**
+ * The features in their MainActivity import order; onCreate registers them in reverse, so OTA's
+ * `prepare` stays first thing. The newer features come first, which keeps what earlier
+ * releases wrote for OTA and auth sessions byte-for-byte the same.
+ */
+const FEATURE_ORDER: readonly AndroidFeature[] = [
+  "share-receive",
+  "widgets",
+  "auth-session",
+  "ota",
+];
 
 /**
  * A `MainActivity` that registers `features` before the bridge is built (OTA first in onCreate,
@@ -399,7 +479,7 @@ const FEATURE_ORDER: readonly NativeFeature[] = ["auth-session", "ota"];
  * @param features The features to register (at least one).
  * @returns The Java source.
  */
-export function mainActivitySource(pkg: string, features: ReadonlySet<NativeFeature>): string {
+export function mainActivitySource(pkg: string, features: ReadonlySet<AndroidFeature>): string {
   const chosen = FEATURE_ORDER.filter((f) => features.has(f));
   const imports = chosen.map((f) => ANDROID_REGISTRATIONS[f].import).join("");
   const lines = [...chosen].reverse().map((f) => ANDROID_REGISTRATIONS[f].lines).join("");
@@ -424,12 +504,12 @@ ${lines}        super.onCreate(savedInstanceState);
  */
 function recognizeMainActivity(
   text: string,
-): { pkg: string; features: NativeFeature[] } | undefined {
+): { pkg: string; features: AndroidFeature[] } | undefined {
   const stock = STOCK_MAIN_ACTIVITY.exec(text);
   if (stock) return { pkg: stock[1], features: [] };
   const pkg = /^package\s+([\w.]+)\s*;/.exec(text)?.[1];
   if (pkg === undefined) return undefined;
-  const set = FEATURE_SETS.find((s) => mainActivitySource(pkg, new Set(s)) === text);
+  const set = featureSets(FEATURE_ORDER).find((s) => mainActivitySource(pkg, new Set(s)) === text);
   return set ? { pkg, features: [...set] } : undefined;
 }
 
@@ -456,7 +536,7 @@ async function findMainActivities(dir: string): Promise<string[]> {
  */
 export async function registerInMainActivity(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
-  feature: NativeFeature,
+  feature: AndroidFeature,
 ): Promise<void> {
   const root = inst.opts.dir;
   const activities = await findMainActivities(join(root, ANDROID_JAVA_ROOT));
