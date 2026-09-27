@@ -31,8 +31,17 @@ export default function Mobile() {
         </a>{" "}
         exercises, push, deep links, auth sessions, the share extension, a configurable widget, a
         Live Activity (including one started by a push-to-start push) and a signed over-the-air
-        update. Android is compiled and unit-tested, not run on a device: its halves of{" "}
-        <code>denext/mobile</code>{" "}
+        update. The 2.11 surface ran on an iPhone 16e on 2026-09-27: the keyboard (a chat composer
+        and a form), system bars following the theme, the system and in-page dialogs,
+        pull-to-refresh, permissions and opening Settings, local notifications (actions and tap
+        routing), geolocation, orientation lock, the privacy screen, the tracking prompt, the review
+        sheet, saving to Photos, <code>VirtualList</code> (an exact <code>scrollToIndex</code>{" "}
+        on 100,000 rows, flings without blank frames, a chat list, sticky headers) and the stack,
+        tabs and sheet of{" "}
+        <a href="/docs/navigation-native">native-feel navigation</a>. Built and unit-tested but not
+        yet run on the phone: biometrics, native sign-in, in-app purchases, crash reporting,
+        background tasks and background location, and the bottom safe-area inset. Android is
+        compiled and unit-tested, not run on a device: its halves of <code>denext/mobile</code>{" "}
         and of the generators have not run on Android at all, and a whole-app comparison ran on an
         emulator only. The details, and every open limit, are in{" "}
         <a href="/docs/limitations">Known limitations</a> (Desktop &amp; mobile) and{" "}
@@ -487,7 +496,18 @@ denext mobile add haptics share network secure-store`}
       </p>
       <p>
         <code>browser</code> installs the plugin <code>openExternal</code>{" "}
-        uses for its in-app browser. A new plugin is native code: ship a new app binary afterwards.
+        uses for its in-app browser. Three capabilities install the plugins behind{" "}
+        <a href="/docs/react-native#react-native-apis">React Native mode</a>&apos;s system UI, each
+        with an in-page fallback when its plugin is missing: <code>dialog</code>{" "}
+        (<code>@capacitor/dialog</code>: <code>Alert.alert</code> and <code>Alert.prompt</code>),
+        {" "}
+        <code>toast</code> (<code>@capacitor/toast</code> ^8.0.1: <code>ToastAndroid.show</code>
+        {" "}
+        as the system toast on Android) and <code>action-sheet</code>{" "}
+        (<code>@capacitor/action-sheet</code> ^8.1.1:{" "}
+        <code>ActionSheetIOS.showActionSheetWithOptions</code>{" "}
+        as a native sheet). None needs a usage string, a permission or a privacy-manifest entry. A
+        new plugin is native code: ship a new app binary afterwards.
       </p>
 
       <h2 id="keyboard-back-system-bars">Keyboard, back, system bars and safe areas</h2>
@@ -702,6 +722,15 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
           <code>{"{ top, right, bottom, left }"}</code>{" "}
           in px, updated on rotation, resizes and when Capacitor updates its values (on Android the
           bottom inset drops to 0 while the keyboard is up).
+        </li>
+        <li>
+          Outside a component (a store, an imperative animation), <code>readSafeAreaInsets()</code>
+          {" "}
+          returns the same numbers once (zeros during server rendering), and{" "}
+          <code>watchSafeAreaInsets(cb)</code> calls <code>cb</code>{" "}
+          at once with the current insets, then on rotation, resizes, visual-viewport changes and
+          Capacitor&apos;s inset updates, at most once per frame and only when a value changed. It
+          returns a function that stops it.
         </li>
       </ul>
       <p>

@@ -75,7 +75,8 @@ await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`
         For a migrated SPA (Vite/CRA), package with the generated <code>deno task desktop</code>
         {" "}
         rather than a bare <code>deno desktop desktop.ts</code> — it bakes the required flags:{" "}
-        <code>--include out</code>, <code>--allow-net --allow-read --allow-env</code>,{" "}
+        <code>--include out</code>,{" "}
+        <code>--allow-net=127.0.0.1,localhost --allow-read --allow-env</code>,{" "}
         <code>--exclude-unused-npm</code>, and (for a pnpm/yarn app pinning{" "}
         <code>nodeModulesDir: "manual"</code>) <code>--node-modules-dir=none</code>{" "}
         so the runtime's own npm dep resolves from Deno's global cache.{" "}
@@ -125,11 +126,12 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
       </Callout>
       <Callout kind="note">
         <strong>No extra permissions.</strong> <code>denext desktop dev</code>{" "}
-        needs network access to the loopback dev port only — exactly what the baked{" "}
-        <code>--allow-net=127.0.0.1,localhost</code>{" "}
-        of a packaged build already grants. Nothing is widened versus a release build: the same
-        permission story covers both dev and packaged windows, because the window talks only to the
-        local dev server.
+        needs network access to the loopback dev port only — exactly what the{" "}
+        <code>--allow-net=127.0.0.1,localhost</code> a migrated SPA bakes into its{" "}
+        <code>deno task desktop</code>{" "}
+        already grants, because the window talks only to the local dev server. (The scaffolded
+        packaging scripts still build with <code>-A</code>; see{" "}
+        <a href="#desktop-capabilities">Native capabilities</a>.)
       </Callout>
       <Callout kind="note">
         In proxy mode the runtime injects its <code>globalThis.__denext</code>{" "}
@@ -489,8 +491,18 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         and prints the Deno permissions it adds per OS. That one object is both the runtime's
         allowlist (a call to a capability that is not listed is refused{" "}
         <code>unavailable</code>, and the function keeps its web path) and the source the package
-        scripts derive the app's <code>--allow-*</code> flags from.
+        scripts will derive the app's <code>--allow-*</code> flags from.
       </p>
+      <Callout kind="warn">
+        <strong>The desktop runtime lands in 2.11.</strong> The page side described here (the{" "}
+        <code>denext/mobile</code> desktop branches, <code>denext desktop add</code> and{" "}
+        <code>denext/desktop/client</code>) has shipped and is tested against a fake of the bridge.
+        The runtime that answers it is still being built. Until it ships, a real window answers{" "}
+        <code>unavailable</code>{" "}
+        and every function keeps its web path, so browser storage is still wiped on every relaunch,
+        and the scaffolded packaging scripts build with <code>-A</code>{" "}
+        instead of the permissions in the table below.
+      </Callout>
       <table class="table">
         <thead>
           <tr>
@@ -640,7 +652,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         Standard Schemas for its input and output; the runtime validates the page's arguments before
         the handler runs and strips the result after it. List it in{" "}
         <code>desktop.capabilities.extensions</code>, then call it from the page through{" "}
-        <code>denext/desktop/client</code>:
+        <code>denext/desktop/client</code>. The page half (<code>desktopExtension</code>,{" "}
+        <code>onDesktopEvent</code>) is available now; <code>defineDesktopExtension</code> ships in
+        {" "}
+        <code>denext/desktop</code> with the desktop runtime in 2.11:
       </p>
       <Code lang="tsx">
         {`// desktop/extensions/scanner.ts: runs in the Deno process only
@@ -729,8 +744,9 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         exports it (react-native-web renders it to the DOM) and opens it natively, and{" "}
         <code>denext desktop package</code> ships it. The platform APIs are the{" "}
         <code>denext/mobile</code>{" "}
-        ones above, so one component tree persists to the OS keychain on desktop, the iOS Keychain
-        in the Capacitor shell, and IndexedDB on the web. See{" "}
+        ones above, so one component tree persists to the OS keychain on desktop (with the desktop
+        runtime and the <code>secure-store</code>{" "}
+        capability), the iOS Keychain in the Capacitor shell, and IndexedDB on the web. See{" "}
         <a href="https://github.com/Brainwires/denext/tree/main/examples/rn-desktop">
           <code>examples/rn-desktop</code>
         </a>.
@@ -763,6 +779,18 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         (react-native-web with the shell overlay) plus what the package adds, so the real packages
         are never read or needed. A deep <code>Libraries/</code> import resolves as the same{" "}
         <code>react-native</code> path.
+      </p>
+      <p>
+        An app written for one desktop package usually imports <code>react-native</code>{" "}
+        and lets Metro swap in the desktop build. Do the same with{" "}
+        <code>reactNative: {"{"} desktopPackage: "react-native-macos" {"}"}</code> (or{" "}
+        <code>"react-native-windows"</code>): a bare <code>react-native</code>{" "}
+        import in your own source then resolves as that package, with its <code>View</code>{" "}
+        props and components, while <code>node_modules</code> keep plain <code>react-native</code>.
+        {" "}
+        <code>denext migrate --from expo</code>{" "}
+        writes it when the app depends on one of the two packages (on both, it leaves the choice
+        commented).
       </p>
       <table class="table">
         <thead>

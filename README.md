@@ -164,6 +164,31 @@ app needs from the page — safe areas, the keyboard inset, the back swipe, app 
 opening links in the system browser and over-the-air UI updates — with no `@capacitor/*`
 dependency.
 
+New in 2.11 (on `development`):
+
+- **React Native and Expo apps, unchanged.** `reactNative: true` builds an app's own source
+  through react-native-web and replaces its mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`,
+  `Alert`, `RefreshControl`, `Linking`, …) with shell-backed ones; the Expo SDK packages and
+  popular native libraries resolve to denext implementations, and Reanimated needs no Babel
+  plugin. Rendering stays DOM. See [React Native / Expo apps](https://denext.dev/docs/react-native)
+  and [Coming from React Native](https://denext.dev/docs/coming-from-react-native).
+- **`VirtualList`**: lists of up to 10M variable rows with exact `scrollToIndex`, chat
+  anchoring and iOS momentum intact; React Native's `FlatList`, `SectionList`, FlashList and
+  LegendList run on it ([Lists & scrolling](https://denext.dev/docs/lists)).
+- **`denext/navigation`**: stacks with kept screens, platform transitions and the iOS swipe
+  back, tabs that keep their state, and bottom sheets
+  ([Native-feel navigation](https://denext.dev/docs/navigation-native)).
+- **Platform capabilities** via `denext mobile add`: keyboard, Android back, system bars,
+  permissions, local notifications, biometrics, Sign in with Apple / Google, geolocation,
+  in-app purchases, app review and update, background tasks, crash reporting, and store
+  tooling (the iOS privacy manifest, `denext mobile doctor --store`). The iOS side of the new
+  surface ran on an iPhone; Android is built and unit-tested, not run on a device.
+- **An app backend**: `cors`, native auth sessions, native Sign in with Apple / Google, account
+  deletion and zero-npm push sending ([App backend](https://denext.dev/docs/app-backend)).
+- **Deno Desktop capabilities**: the same `denext/mobile` calls reach the OS keychain, files,
+  SQLite, native menus and dialogs through `denext desktop add`; the desktop runtime that
+  answers them lands in 2.11 ([Desktop apps](https://denext.dev/docs/desktop)).
+
 ## React & Next.js compatibility
 
 Compatibility is the **on-ramp**: your Next.js knowledge transfers directly, and much of the

@@ -401,13 +401,15 @@ four documented bounds of the opt-in:
   refuse the dev server's plain `http`; `mobile dev` warns, and the fix is a
   `<domain-config cleartextTrafficPermitted="true">` for the dev host (or an `https` dev
   server). The Android half of `mobile dev` has not been run on a device.
-- **Android is compiled, not device-tested.** Every Android half of `denext/mobile` and the
-  `denext mobile add` generators is unit-tested and builds with Gradle, but none has run on an
-  Android device or emulator yet (the iOS halves were run on an iPhone; see
-  [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md)). Android performance is measured on an
-  emulator only: a whole-app comparison (T3 Code's Capacitor build against its React Native
-  build, gap 5 there) found Capacitor starting faster and using less memory, and React Native
-  scrolling a long list more smoothly. There are no real-device Android numbers yet.
+- **Android is compiled, not device-tested.** Every Android half of `denext/mobile`, the
+  `denext mobile add` generators and React Native mode's shell-backed APIs is unit-tested and
+  builds with Gradle, but none has run on an Android device (the iOS halves were run on an
+  iPhone; see [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md) for exactly which). Android-only
+  features (the back button and predictive back, process-death restore, `ToastAndroid`'s system
+  toast, in-app updates) have not run anywhere. Android performance is measured on an emulator
+  only: a whole-app comparison (T3 Code's Capacitor build against its React Native build, gap 5
+  there) found Capacitor starting faster and using less memory, and React Native scrolling a
+  long list more smoothly. There are no real-device Android numbers yet.
 - **Android push needs `google-services.json`.** `@capacitor/push-notifications` registers with
   FCM through Firebase, so without `android/app/google-services.json` (from your Firebase
   project) registration fails; `denext mobile add push` only warns that it is missing. There is
@@ -421,9 +423,9 @@ four documented bounds of the opt-in:
   reject with code `unsupported` on Android and the web; push-to-start tokens need iOS 17.2+ and
   resolve `null` below it.
 - **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell, the
-  OS keychain in a Deno Desktop window with the `secureStore` capability (`denext desktop add
-  secure-store`), and a plain IndexedDB database in a browser (or a desktop window without that
-  capability, where it is also wiped on relaunch).
+  OS keychain in a Deno Desktop window with the `secure-store` capability (`denext desktop add
+  secure-store`, once the desktop runtime ships; see below), and a plain IndexedDB database in
+  a browser (or a desktop window without that capability, where it is also wiped on relaunch).
 - **Passkeys (WebAuthn) do not run in the iOS Capacitor WebView.** The page's origin is
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
   `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's
@@ -438,8 +440,8 @@ four documented bounds of the opt-in:
 - **`showContextMenu` is an in-page menu on mobile and the web.** denext ships no native
   context-menu plugin for Capacitor: the menu is an accessible popover in the WebView unless the
   app registers its own `DenextContextMenu` plugin. In a Deno Desktop window with the
-  `contextMenu` capability it is the OS menu, flat (no submenus) and without destructive
-  styling.
+  `context-menu` capability it is the OS menu (once the desktop runtime ships), flat (no
+  submenus) and without destructive styling.
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
@@ -485,6 +487,42 @@ four documented bounds of the opt-in:
   only the entry that applies now; `LiveActivityFactory.start` returns before ActivityKit has an
   id (`getId()` is `""` until then); a start URL, stale dates and widget interaction events are
   not supported.
+- **JavaScript does not run in the page in the background.** The OS suspends the WebView when
+  the app leaves the foreground: timers stop, and WebSockets and Live subscriptions drop and
+  reconnect on resume. `defineBackgroundTask` runs in Capacitor's Background Runner, a separate
+  runtime with no DOM and no app state (about 30 s on iOS, scheduled by the OS). There is no
+  background audio or lock-screen media control yet.
+- **A silent (data) push reaches your JavaScript only while the app is running.** iOS throttles
+  background pushes and does not wake the WebView for them; update a widget or Live Activity
+  with a push-to-start or Live Activity push instead.
+- **No native UI on watches, in cars or in App Clips.** watchOS / Wear OS UIs are native
+  (SwiftUI / Compose), CarPlay and Android Auto take template UIs only, and an App Clip has a
+  tight size budget; denext renders in a WebView.
+- **Certificate pinning does not cover the WebView's own `fetch` / XHR.** Neither WKWebView nor
+  Android WebView exposes a pinning hook for page requests; pinning plugins pin only requests
+  sent through `CapacitorHttp`.
+- **Service workers do not run on iOS's `capacitor://` origin.** Cache API data for offline use
+  in SQLite or Preferences, unless the app is served from `https` with `WKAppBoundDomains`.
+- **Interactive keyboard dismissal is limited.** The swipe-down dismiss that tracks the keyboard
+  (iMessage-style) is at best available to the WebView's outer scroller; inner scroll
+  containers cannot drive it.
+- **Screen readers follow the WebView's DOM accessibility tree.** Route changes are not
+  announced yet (no route announcer), and WKWebView may move VoiceOver focus to the top of the
+  page on a full load. Whether VoiceOver / TalkBack is on reaches the page only through
+  `denext mobile add accessibility`; Dynamic Type / text zoom does not reach it at all yet.
+- **No install attribution or deferred deep links.** Firebase Dynamic Links shut down on
+  2025-08-25; use an attribution SDK (Branch, AppsFlyer, Adjust).
+- **An OTA update cannot change what the app is.** Apple allows over-the-air updates to
+  interpreted code that keep the app's purpose (DPLA 3.3.1(B), guideline 2.5.2); new native
+  capabilities, permissions or payment flows need a store build. The `minNative` and fingerprint
+  gates enforce the native half, not the policy half.
+- **No hosted services.** There is no Expo Go-style prebuilt client, no hosted push service, no
+  hosted build or submit service and no hosted OTA CDN: denext provides the pieces
+  (`createPushSender`, the CI recipe, `createOtaHandler`) for your own infrastructure.
+- **An export is minified, not obfuscated, and client-side jailbreak or root detection is
+  advisory.** Anything in `out/` can be read from the app package; keep secrets and
+  authorization on the server.
+- **Enterprise MDM (managed app configuration) is not wrapped.** Use a community plugin.
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so
@@ -501,10 +539,15 @@ four documented bounds of the opt-in:
   `localStorage`, IndexedDB, OPFS and the Cache API start empty. `secureStore`, the file
   functions and `openSqlite` persist only with their desktop capability enabled (`secure-store`,
   `fs`, `sqlite`); without it they fall back to browser storage and warn once.
-- **The page side is tested against a fake runtime.** The `denext/mobile` desktop branches and
-  `denext/desktop/client` are unit-tested against a fake of the bridge's gate and wire contract;
-  until the desktop runtime's capability modules ship, a real window answers `unavailable` and
-  every function keeps its web path.
+- **The desktop runtime behind the capabilities is not in this build yet.** The `denext/mobile`
+  desktop branches, `denext desktop add` and `denext/desktop/client` shipped and are unit-tested
+  against a fake of the bridge's gate and wire contract; the runtime that answers them is still
+  being built for 2.11. Until it ships, a real window answers `unavailable` and every function
+  keeps its web path (so browser storage is still wiped on every relaunch).
+- **Packaged desktop apps are built with `-A`.** The scaffolded packaging scripts
+  (`scripts/package-macos.ts`, `-linux`, `-windows`) pass `-A` to `deno desktop`; deriving the
+  `--allow-*` flags from `desktop.capabilities` lands with the desktop runtime. A migrated SPA's
+  `deno task desktop` bakes `--allow-net=127.0.0.1,localhost --allow-read --allow-env`.
 - **The bridge token is readable by any script in the page.** The per-launch token lives in the
   top-level document (never in frames), so script injected into the page (an XSS) can use every
   capability the app enabled. Keep the strict CSP, enable only the capabilities you use, and
@@ -526,17 +569,57 @@ four documented bounds of the opt-in:
   relying party; use `openAuthSession`), fullscreen / maximize / minimum-size / screen APIs, a
   `hiddenInset` title bar or Mica, DevTools in the default WebView backend (use `--backend cef`),
   and deep links or open-file events reaching an already-running macOS app.
+- **Deno Desktop's own limits.** The UI is a web page in WKWebView, WebView2 or WebKitGTK, so it
+  renders per OS (unless built with `--backend cef`, about 150 MB larger); there is no Mac App
+  Store, Microsoft Store (MSIX), Flatpak or Snap build; the self-updater replaces the UI only.
+  Deno Desktop itself is experimental in Deno 2.9, and its bugs (menus on Linux / Windows CEF,
+  window placement, a tray-only app still opening its window) reach denext apps.
 - **`react-native-windows` / `react-native-macos` are not native here.** A `reactNative` app runs
   as react-native-web in the window; their C++ / C# / Objective-C native modules do not run
-  (write a desktop extension instead), `Platform.OS` stays `"web"`, and their extra components
-  (`Flyout`, `Popup`, `Glyph`, `DynamicColorMacOS`) and View props are not aliased yet.
+  (write a desktop extension instead), and `Platform.OS` stays `"web"`
+  (`Platform.constants.denextDesktop` and `.os` tell the window apart). Their extra components
+  (`Flyout`, `Popup`, `Glyph`, `AppTheme`, `DynamicColorMacOS`) are DOM stand-ins, not native
+  controls, and the window-level `View` props (`acceptsFirstMouse`,
+  `mouseDownCanMoveWindow`, `allowsVibrancy`, `draggedTypes`) are accepted and do nothing.
 
 ### React Native mode & Expo shims (`reactNative`, `denext/expo/*`)
 
 - **Rendering stays DOM.** `reactNative` builds an app's source for the web through
-  react-native-web; native-only packages (TurboModules, Nitro, JSI modules such as
-  vision-camera frame processors) load but have no implementation, and need a web replacement
-  of the app's own (`.web.ts` beside the importer, or a `deno.json` `imports` entry).
+  react-native-web. A TurboModule / Fabric codegen package, or a `requireNativeComponent` view,
+  loads and fails only when its native module is used; Nitro HybridObjects throw on use. Two
+  kinds fail earlier, at build time or import, unless an [Expo shim](https://denext.dev/docs/react-native#expo-apis)
+  or [community alias](https://denext.dev/docs/react-native#community-packages) covers them: a
+  package whose `main` is Flow source, and an Expo module that calls `requireNativeModule` at
+  the top level. Each needs a web replacement of the app's own (`.web.ts` beside the importer,
+  or a `deno.json` `imports` entry); `denext migrate --from expo` names the native-only
+  packages it finds.
+- **`Platform.OS` is `"web"` in the shells and in Deno Desktop.** react-native-web and libraries
+  pick their DOM code paths by it, so React Native code that branches on `ios` / `android` for
+  behaviour (not for a native module) takes its web path. `Platform.select` does pick the
+  shell's `ios` / `android` key when there is no `web` key; `Platform.constants.denextShell`
+  tells the shells apart.
+- **No UI-thread animation or gesture runtime.** Reanimated's worklets are stamped at build time
+  and run as plain JavaScript on the page's main thread, sharing it with React and layout; a
+  busy thread drops frames React Native would keep. Worklet classes and context objects are not
+  stamped, and `runOnUISync` throws on the web. Libraries built on Reanimated (bottom-sheet,
+  moti, Skia animations, victory-native) inherit this. CSS `transform` / `opacity` animations
+  run off the main thread.
+- **Native views have no WebView equivalent.** Apple Maps / Google Maps (`expo-maps` is a
+  stand-in; use MapLibre or Leaflet in a `.web.tsx` twin), SF Symbols / Material Symbols
+  (`expo-symbols` renders its fallback), Liquid Glass (`expo-glass-effect` reports it
+  unavailable), native tab bars and large-title headers, and `@expo/ui`'s SwiftUI / Compose
+  views (stand-ins that render their children). `react-native-webview` is an `<iframe>`:
+  script injection works only for inline HTML and same-origin pages.
+- **The parity ledger's open React Native gaps.** React Native's 32 `*Base` / `*Component`
+  type-alias exports, `DrawerLayoutAndroid`, `ProgressBarAndroid` and `Settings` are not
+  exported, and 10 exports miss members (`scripts/parity/native/baselines/known-gaps.json`).
+  `AppState`'s `memoryWarning` never fires, `Linking.sendIntent()` rejects,
+  `ActionSheetIOS.dismissActionSheet()` closes nothing, and `LayoutAnimation.configureNext`
+  animates nothing (react-native-web's).
+- **Lists keep a few React Native props unimplemented.** The FlatList / SectionList / FlashList /
+  LegendList adapters record their remaining gaps (such as `snapToInterval` / `snapToOffsets`
+  and `renderScrollComponent`) in `scripts/parity/native/baselines/lists.known-gaps.json`;
+  `reactNative: { lists: "library" }` restores the libraries' own engines.
 - **The synchronous JSI Expo APIs are omitted.** The Capacitor bridge is asynchronous, so
   `expo-sqlite`'s `*Sync` API, `expo-secure-store`'s `getItem` / `setItem` and similar are not
   provided (use the `…Async` forms); `expo-file-system`'s sync calls act on an index the shim
@@ -548,8 +631,13 @@ four documented bounds of the opt-in:
   pool, the database is in memory for the session.
 - **Resolution variants are not picked by pixel ratio.** `require("./logo.png")` gets that file;
   `logo@2x.png` / `logo@3x.png` are not chosen as Metro does.
-- **`reactNative` refuses `unbundled` dev** (the resolution lives in bundler plugins the
-  per-module loop does not run), and is valid only with `mode: "spa"`.
+- **`reactNative` has no Fast Refresh and refuses `unbundled` dev.** A change rebuilds and
+  reloads the page (state is lost), because the resolution lives in bundler plugins the
+  per-module loop does not run; the mode is valid only with `mode: "spa"`.
+- **expo-router's `+api` and `+middleware` routes are not built.** Write them as denext route
+  handlers.
+- **Expo services are not provided.** `getExpoPushTokenAsync` rejects (send through your own
+  APNs / FCM sender, `createPushSender`); `expo-updates` maps to denext's OTA.
 - **uniwind needs importer-sensitive aliases denext's config cannot express yet**; the
   [recipe](https://denext.dev/docs/react-native#recipe-uniwind-and-tailwind) applies them with
   `denext patch`.

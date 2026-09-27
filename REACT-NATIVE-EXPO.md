@@ -1,31 +1,205 @@
 # denext + Capacitor as a React Native / Expo replacement
 
 What React Native and Expo provide that `denext/mobile` + a Capacitor shell must match before
-it is a credible replacement. The bar is concrete: T3 Code's React Native app (`apps/mobile`
-in pingdotgg/t3code), whose dependencies were audited on 2026-09-24. The comparison target is
-T3's Capacitor shell (`apps/capacitor`, branch `denext-2.x`), which wraps T3's existing web UI.
+it is a credible replacement, and where denext stands against it. Two bars:
 
-**Where it stands (denext 2.10.0).** Every gap below is shipped on the denext side except
-Android native feel (gap 5), which is open. Not audited: which T3 screens use which
-dependency, so the ranking was by expected day-one impact, not measured usage.
+- **T3 Code's React Native app** (`apps/mobile` in pingdotgg/t3code), whose dependencies were
+  audited on 2026-09-24, compared with T3's Capacitor shell (`apps/capacitor`, branch
+  `denext-2.x`). The 2.10 line closed its gaps 1–4 (below).
+- **The React Native / Expo ecosystem at large**, measured by the 2026-09-27 gap audit: React
+  Native's core exports (0.86.3), the Expo SDK 57 packages, the most-downloaded third-party
+  libraries and the behaviour React Native developers expect. The 2.11 line is the answer.
 
-This is about matching what React Native / Expo **apps** get, not about rendering natively:
-per [POLICIES.md](./POLICIES.md#engineering-guardrails), React Native / native rendering is
-out of scope and Capacitor/WebView stays the mobile story. Open items are tracked in
-[ROADMAP.md](./ROADMAP.md) under "Mobile (Capacitor) parity".
+**Where it stands (denext 2.11, on `development`).** An existing React Native / Expo app's own
+source builds for the web in React Native mode (`reactNative: true`) and runs in the Capacitor
+shell, a browser or a Deno Desktop window. react-native-web stays pinned and unforked; denext
+replaces its mocked and browser-only modules with implementations over `denext/mobile`, runs
+the app's lists on `VirtualList` and its stacks and tabs on `denext/navigation`, stamps
+Reanimated's worklets at build time, and resolves the Expo packages and popular community
+libraries to denext implementations. The iOS half of the 2.11 mobile surface ran on an iPhone
+on 2026-09-27. Android has not run on a device, and Android scrolling is the one measured gap
+(gap 5).
 
-**How each item was verified.** Two levels, and nothing is claimed beyond them:
+**Scope.** Native rendering is out of scope; React Native APIs and apps are supported through
+react-native-web plus denext's overlay ([POLICIES.md](./POLICIES.md#engineering-guardrails)).
+Rendering stays WebView / DOM. Open items are in [ROADMAP.md](./ROADMAP.md) under "2.11:
+React Native / Expo replacement", and every honest limit is in
+[KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) ("Desktop & mobile", "Deno Desktop
+capabilities", "React Native mode & Expo shims").
 
-- **iPhone:** run on a physical iPhone 16e (iOS 26.x) on 2026-09-25, in
-  [`examples/mobile`](./examples/mobile) (one screen per `denext/mobile` capability) unless
-  another app is named.
-- **Built:** unit-tested and compiled (iOS `xcodebuild` and Android Gradle), not run on a
-  device.
+**How each item was verified.** Nothing is claimed beyond these levels:
 
-**Android has run on an emulator only (the T3 comparison in gap 5), not on a device.** Every
-Android capability claim in this file is "built".
+- **iPhone:** run on a physical iPhone 16e. The 2.10 set ran on 2026-09-25 (iOS 26.x) in
+  [`examples/mobile`](./examples/mobile) unless another app is named. The 2.11 set ran on
+  2026-09-27 (iOS 26.6.2) in the example's "denext 2.11" screens: an automatic self-test (27
+  of 27 checks passed) and a manual checklist walked by hand.
+- **Built:** unit- or DOM-tested and compiled (iOS `xcodebuild`, Android Gradle), not run on a
+  device. React Native mode itself is tested by building apps with it and rendering them in
+  headless Chromium.
+- **Emulator:** Android runs only on an emulator, and only the whole-app T3 comparison (gap 5).
 
-## Real gaps (denext work)
+**Android has not run on a device.** Every Android capability claim in this file is "built".
+
+## Shipped in 2.11
+
+### React Native mode
+
+Every item below is built and tested (unit, DOM, and app builds rendered in headless Chromium).
+React Native mode has not run on a phone as such; the iPhone run exercised a denext app that
+uses the same implementations the overlay binds (the dialog behind `Alert`, `PullToRefresh`
+behind `RefreshControl`, `VirtualList` behind the lists, `StackView` / `TabsView` behind the
+navigators).
+
+- **Shell-backed React Native APIs.** `Keyboard`, `KeyboardAvoidingView`, `BackHandler`,
+  `StatusBar`, `AccessibilityInfo`, `I18nManager`, `Alert`, `RefreshControl`, `Linking`,
+  `AppState`, `Vibration`, `Share`, `Clipboard`, `SafeAreaView` and `InputAccessoryView` are
+  replaced inside the pinned react-native-web for every importer.
+- **The core exports react-native-web lacks:** `requireNativeComponent`, `useAnimatedValue` /
+  `useAnimatedValueXY` / `useAnimatedColor`, `PermissionsAndroid`, `ToastAndroid`,
+  `ActionSheetIOS`, `DevSettings`, `PlatformColor` / `DynamicColorIOS`, `RootTagContext`,
+  `NativeAppEventEmitter`, `unstable_batchedUpdates`, and load-safe no-ops for React Native
+  internals (`CodegenTypes`, `DevMenu`, `NativeComponentRegistry`, `PushNotificationIOS`,
+  `registerCallableModule`, `Systrace`).
+- **`Platform`.** `Platform.OS` stays `"web"` (react-native-web and libraries choose their DOM
+  paths by it). `Platform.select` falls back to the shell's own `ios` / `android` key (the
+  host OS's `macos` / `windows` / `linux` key on Deno Desktop) when the spec has no `web` key;
+  `Platform.constants` carries `denextShell`, `denextDesktop`, `osVersion` and the rest.
+- **Safe areas.** A `viewport-fit=cover` default viewport, `SafeAreaView` and
+  react-native-safe-area-context's provider over `denext/mobile`'s insets.
+- **Reanimated without its Babel plugin.** An swc pass stamps each worklet's `__closure` and
+  `__workletHash`, so hooks need no dependency arrays. Worklets still run on the main thread.
+- **Lists on `VirtualList`.** `FlatList`, `SectionList`, `VirtualizedList`, FlashList v2 and
+  LegendList run on denext's engine (`reactNative: { lists: "library" }` keeps the libraries'
+  own).
+- **expo-router's `Stack` / `Tabs`** and React Navigation's native-stack and bottom-tabs
+  are drawn by `denext/navigation`. A real-browser test builds an expo-router 57.0.23 app and
+  drives its `Stack` and `Tabs`; it caught two bugs, both fixed: the generated navigator
+  module's own imports did not resolve in a real build, and the navigators must be built over
+  expo-router's bundled copy of React Navigation (55+), not `@react-navigation/native`.
+- **Community packages.** 26 aliases (`src/react-native-compat/manifest.ts`; 7 full, 19
+  partial): react-native-keyboard-controller, react-native-safe-area-context,
+  react-native-permissions, react-native-keychain, react-native-webview (an `<iframe>`),
+  react-native-pager-view, the date pickers, linear-gradient, blur, masked-view,
+  `@react-native-menu/menu`, NativeWind v4's JSX runtime, `.svg` components and more.
+- **Expo shims.** 53 manifest entries (7 full, 38 partial, 8 stub) covering 43 packages,
+  including the three that used to stop the bundle at import (expo-tracking-transparency,
+  expo-maps, `@expo/ui`). The generated table is at
+  [/docs/react-native#expo-apis](https://denext.dev/docs/react-native#expo-apis).
+- **Desktop packages.** `react-native-windows` and `react-native-macos` resolve to
+  `react-native` plus their additions (`Flyout`, `Popup`, `Glyph`, `AppTheme`,
+  `DynamicColorMacOS`, the desktop `View` props), and `reactNative.desktopPackage` builds the
+  app's own bare `react-native` imports as one of them, as Metro does (`migrate --from expo`
+  writes it).
+- **The parity gate** (`deno task parity:native`) builds the bundle apps actually get, checks
+  class statics and object members, and covers the lists and the desktop packages. Its ledger
+  holds 45 open React Native deviations: the 32 `*Base` / `*Component` type aliases,
+  `DrawerLayoutAndroid`, `ProgressBarAndroid`, `Settings`, and missing members on 10 exports.
+
+### Lists and navigation (denext apps and React Native mode alike)
+
+| Surface                                          | Verified                                                                                                                                                                       |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VirtualList` / `useVirtualList`                 | **iPhone:** `scrollToIndex` exact on a 100,000-row list, a fling with 0 of 60 blank frames, a chat list anchored to its end, sticky headers, and the feel of scrolling by hand |
+| `VirtualMasonry`, `useVirtualReorder`            | Built                                                                                                                                                                          |
+| `denext/navigation`: `StackLayout` / `StackView` | **iPhone:** kept screens' state and scroll, the swipe back that follows the finger                                                                                             |
+| `TabsLayout` / `TabsView`                        | **iPhone:** each tab keeps its state and scroll                                                                                                                                |
+| `Sheet`                                          | **iPhone:** detents                                                                                                                                                            |
+| Android predictive back in the stack             | Built                                                                                                                                                                          |
+
+The scroll-bench (`examples/scroll-bench`) compares `VirtualList` and React Native's
+`FlatList` API on denext's engine with react-native-web's own engine; the emulator and iPhone
+runs of the bench are still to be published in `/docs/lists`.
+
+### `denext/mobile` capabilities
+
+Each is `denext mobile add <capability>` plus typed functions in `denext/mobile`, with a web
+fallback where one exists.
+
+| Capability                                                                           | Verified                                                                            |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `keyboard` (`useKeyboard`, `KeyboardAvoidingView`, `KeyboardStickyView`)             | **iPhone:** a chat composer riding the keyboard, and a form                         |
+| `system-bars` (`setSystemBars`, `useSystemBarsFollowTheme`)                          | **iPhone:** style, hide and show, following the light / dark theme                  |
+| `dialog` (React Native mode's `Alert`)                                               | **iPhone:** the system alert and prompt; the in-page dialog for three buttons       |
+| `PullToRefresh` / `RefreshControl`                                                   | **iPhone**                                                                          |
+| `permissions` (`checkPermission`, `openAppSettings`)                                 | **iPhone:** statuses and opening Settings                                           |
+| `local-notifications`                                                                | **iPhone:** scheduling, action buttons, tap routing                                 |
+| `geolocation`                                                                        | **iPhone**                                                                          |
+| `screen-orientation`                                                                 | **iPhone:** lock and unlock                                                         |
+| `privacy-screen`                                                                     | **iPhone**                                                                          |
+| `tracking` (App Tracking Transparency)                                               | **iPhone:** the prompt                                                              |
+| `app-review`                                                                         | **iPhone:** the review sheet                                                        |
+| `media-library`                                                                      | **iPhone:** saving an image to Photos                                               |
+| Safe areas v2 (`useSafeAreaInsets`)                                                  | **iPhone:** the self-test's inset checks; the bottom inset is **not validated** yet |
+| `biometrics`                                                                         | Built (Face ID was not enrolled on the test phone)                                  |
+| `social-login` (Sign in with Apple / Google)                                         | Built                                                                               |
+| `purchases` (RevenueCat)                                                             | Built (no sandbox purchase run)                                                     |
+| `sentry` (`initCrashReporting`)                                                      | Built                                                                               |
+| `background` (`defineBackgroundTask`), `background-location`                         | Built                                                                               |
+| `back` (Android back and predictive back), `restore` (Android process death)         | Built (Android only)                                                                |
+| `app-update`, `accessibility` (screen reader state), `application`, `offline-screen` | Built                                                                               |
+| `toast`, `action-sheet` (the system UI behind `ToastAndroid` / `ActionSheetIOS`)     | Built                                                                               |
+| `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` (insets outside a component)      | Built                                                                               |
+
+Store and release tooling is built and tested, not device-run: the iOS privacy manifest
+(`denext mobile privacy`), `denext mobile doctor --store | --release`, `denext mobile inspect`,
+hidden source maps (`denext export --sourcemaps hidden`) and the `appLinks` association files.
+
+### The app's backend
+
+Built and tested (unit and integration), not run from a device: the `cors` config,
+`denextAuth({ native })` native sessions (PKCE code exchange, bearer plus rotating refresh,
+the absolute lifetime and the concurrent-refresh grace window), native Sign in with Apple /
+Google (`POST /auth/native/:provider`), account deletion (`POST /auth/account/delete`),
+`createApiClient({ base, auth })` with `nativeSession()`, `createPushSender` / `sendPush`
+(APNs and FCM with no npm package), OTA channels with staged rollouts, and
+`verifyRevenueCatWebhook`.
+
+### Deno Desktop
+
+The page side of the desktop capabilities shipped: `denext/mobile`'s storage, file, SQLite,
+context-menu, shell, dialog, notification, keep-awake, clipboard and device functions call the
+desktop runtime through a token-gated bridge, `denext desktop add` writes
+`desktop.capabilities`, and `denext/desktop/client` types your own extensions. It is tested
+against a fake of the bridge. **The desktop runtime that answers those calls is still being
+built for 2.11**; until it ships, a real window answers `unavailable` and every function keeps
+its web path, browser storage is wiped on every relaunch, and the packaging scripts build with
+`-A`. React Native apps run in a Deno Desktop window like any SPA (`examples/rn-desktop`).
+
+## Android
+
+**Android has run on an emulator only, and only the T3 comparison below.** Every Android half
+of `denext/mobile`, the `denext mobile add` generators and React Native mode's shell-backed
+APIs is built (unit-tested, Gradle-compiled), not run. Android scrolling is the one measured
+gap against React Native (gap 5). There is no Android parity claim until a real device run;
+the user has no Android device yet, and a device farm is an option.
+
+## Remaining gaps
+
+The honest ones, deduplicated; KNOWN-LIMITATIONS.md has the user-facing wording and ROADMAP.md
+the open work.
+
+- **No UI-thread animation or gesture runtime.** Reanimated's worklets run on the page's main
+  thread, sharing it with React and layout.
+- **No synchronous JSI APIs:** the sync `expo-sqlite` API, MMKV-class sync stores,
+  `expo-secure-store`'s `getItem` / `setItem`, Nitro HybridObjects, camera frame processors.
+- **Native views without a WebView equivalent:** Apple Maps / Google Maps (a stand-in; MapLibre
+  or Leaflet in a `.web.tsx` twin), SF Symbols, Liquid Glass, native tab bars and headers,
+  `@expo/ui` SwiftUI / Compose.
+- **Background execution.** JavaScript does not run in the page while the WebView is suspended;
+  background tasks run in Capacitor's Background Runner without the DOM.
+- **Dynamic Type / text zoom** reaches the page only through a native plugin denext does not ship
+  yet; bold text and grayscale always read false.
+- **No Fast Refresh in React Native mode** (a rebuild and reload per change), and no unbundled dev.
+- **Import-time failures** remain for unlisted packages whose `main` is Flow source or that call
+  `requireNativeModule` at the top level.
+- **Expo services:** no Expo Go-style client, no hosted push, build or update service.
+- **Android:** no device run; scrolling measured worse than React Native on an emulator.
+- **Desktop:** the runtime behind the desktop capabilities is still in progress (above).
+
+## The T3 Code bar (2.10)
+
+The 2.10 line was measured against T3 Code's app. Its gaps and the compatibility layer's first
+version are kept here as the record; the status above supersedes them where they differ.
 
 1. **Push notifications.** T3 uses `expo-notifications` plus its own relay (APNs/FCM through
    `/v1/mobile/devices`) and a custom `t3-agent-notifications` module. A coding-agent app
@@ -119,7 +293,7 @@ Android capability claim in this file is "built".
    Then, if the scroll gap holds, profile T3's virtualized list in Chrome's WebView (layer count,
    `content-visibility`). No parity claim for Android scrolling until a device run.
 
-## Covered by official Capacitor plugins (wrapped)
+### Covered by official Capacitor plugins (wrapped)
 
 The pattern, applied to every row: `denext mobile add <capability>` installs the plugin and
 registers it natively, and a typed function in `denext/mobile` wraps it. That keeps "no
@@ -150,7 +324,7 @@ The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile`
 `openSqlite`. Audio, video and image manipulation use the WebView's own APIs through the
 `denext/expo/*` shims. Every Android row is built, not run.
 
-## Already covered, or better, on the denext side
+### Already covered, or better, on the denext side
 
 - **OTA updates** (`expo-updates`): shipped in 2.7–2.8, with an app-driven update prompt and
   signed manifests (ECDSA P-256, public key in the binary); the gates from gap 2 followed.
@@ -168,7 +342,9 @@ The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile`
 - **Context menus** (`@react-native-menu/menu`): `showContextMenu` (2.10.0) opens an accessible
   in-page menu that lists every item, or an app-registered `DenextContextMenu` native plugin
   (denext ships none). Built.
-- **Keyboard + safe areas**: `useKeyboardInset`, `SAFE_AREA_CSS`, `useBackSwipe`, `useAppResume`.
+- **Keyboard + safe areas**: in 2.10, `useKeyboardInset`, `SAFE_AREA_CSS`, `useBackSwipe` and
+  `useAppResume`; 2.11 adds `useKeyboard`, `KeyboardAvoidingView`, `KeyboardStickyView`,
+  `useSafeAreaInsets` and Android back (see "Shipped in 2.11").
 - **Terminal, composer editor, markdown, diff review, syntax highlighting.** T3 wrote native
   modules for these:
   - `t3-terminal`
@@ -182,7 +358,7 @@ The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile`
   the pitch: roughly 150k lines of React Native reimplementation that is simply not needed.
 - **On-device Apple AI** (`@react-native-ai/apple`): niche; a native plugin if T3 needs it.
 
-## Developer-experience gaps
+### Developer-experience gaps
 
 - **Live reload on device** (`expo-dev-client` + Metro): **shipped (2.10.0-rc.3).**
   `denext mobile dev` points the Capacitor shell at `denext dev` for the session (`--lan` for a
@@ -200,13 +376,16 @@ The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile`
   (`xcodebuild archive` with an App Store Connect API key, a keystore-signed `bundleRelease`).
   A recipe, not run in this repository's CI. Store submission and preview builds stay the
   app's own steps.
-- **Surface parity gate:** `deno task parity:native` (2.10.0) diffs react-native-web's runtime
-  exports against React Native's declared ones, failing on any deviation not waived or already
-  in the known-gaps ledger; it runs on PRs to `main`. Its `expo` half diffs each
+- **Surface parity gate:** `deno task parity:native` (2.10.0) diffs the React Native surface
+  denext serves against React Native's declared one, failing on any deviation not waived or
+  already in the known-gaps ledger; it runs on PRs to `main`. Its `expo` half diffs each
   `denext/expo/*` shim against the pinned `expo-*` package's types (a committed baseline,
   refreshed with `deno task parity:native:refresh -- expo`) minus the shim's `omitted` list.
+  In 2.11 it builds the bundle React Native mode actually produces (overlay and added exports
+  included) instead of reading raw react-native-web, checks class statics and object members,
+  and gained the lists and the `react-native-windows` / `react-native-macos` halves.
 
-## Compatibility layer: running Expo / React Native apps
+### Compatibility layer: running Expo / React Native apps
 
 Everything above is about denext/Capacitor apps consuming Capacitor plugins the way Expo apps
 consume `expo-*` packages. A different, larger question: could an existing Expo / React Native
@@ -232,76 +411,44 @@ aliases, all 41 swept routes render, and pairing persists across reloads through
      fresh copy of T3's `apps/mobile` the migrated app builds once the flagged packages get
      the app's stubs, and all 41 routes render clean.
 2. **`expo-*` API shims**, aliased the way `react` → denext is. **Shipped (2.10.0-rc.3):**
-   `denext/expo/*`, one module per package (35 including `expo` itself: every `expo-*`
-   dependency of T3's `apps/mobile`), listed with status and omissions in `src/expo/manifest.ts`
-   (`EXPO_SHIMS`). React Native mode aliases each listed package (and `expo/fetch`) to its shim
+   `denext/expo/*`, one module per package (35 in 2.10.0-rc.3, including `expo` itself: every
+   `expo-*` dependency of T3's `apps/mobile`; 53 manifest entries in 2.11), listed with status
+   and omissions in `src/expo/manifest.ts` (`EXPO_SHIMS`). React Native mode aliases each listed package (and `expo/fetch`) to its shim
    unless `reactNative: { expoShims: false }`; the shims are prebuilt into the shared denext
    runtime, so their hooks share the app's one instance
-   ([guide](https://denext.dev/docs/react-native#expo-apis); per-package table below). The
+   ([guide](https://denext.dev/docs/react-native#expo-apis), with the per-package table). The
    limit: some Expo/RN APIs are synchronous because they run over JSI (the sync `expo-sqlite`
    API, MMKV). The Capacitor bridge is async, so those are omitted or answered from an index
    the shim keeps.
 3. **Third-party React Native packages**, in three buckets:
    - **pure JS on RN primitives:** work once layer 1 works;
    - **packages with a web implementation** (reanimated, gesture-handler, react-native-svg,
-     safe-area-context, screens, `@legendapp/list`): work through `.web.*` resolution with
-     reduced features, e.g. reanimated worklets run on the main thread. React Native mode
+     screens): work through `.web.*` resolution with reduced features, e.g. reanimated
+     worklets run on the main thread (safe-area-context and `@legendapp/list` were in this
+     bucket until 2.11 resolved them to denext implementations). React Native mode
      stamps each worklet's `__closure` / `__workletHash` at build time, as Reanimated's Babel
      plugin does, so hooks need no dependency arrays
      ([guide](https://denext.dev/docs/react-native#reanimated-and-worklets));
    - **native-only** (TurboModules, Nitro, JSI: vision-camera frame processors,
      `react-native-nitro-*`, T3's `t3-terminal`): can't run in a WebView. Each needs a
      Capacitor-backed shim or a web replacement of the app's own. It's the same boundary Expo
-     web has. Codegen packages now load and fail only when their native module is used.
+     web has. A TurboModule / Fabric codegen package (and, since 2.11, a
+     `requireNativeComponent` view) loads and fails only when its native module is used. Two
+     kinds still fail earlier: a package whose `main` is Flow source (a parse error at build
+     time) and an Expo module that calls `requireNativeModule` at the top level (it throws at
+     import). 2.11's community-package aliases and Expo shims cover the common ones
+     (datetimepicker, linear-gradient, expo-tracking-transparency, expo-maps, `@expo/ui`, …).
 
 **Caveat:** the risk is performance, not feasibility. UI-thread animations, native navigation
 stacks and native lists become DOM equivalents. That's fine on iOS WKWebView; Android is gap 5.
 
-**Shim status** (Expo SDK 57, versions from T3's `apps/mobile/package.json`). Every row shipped
-in 2.10.0-rc.3 (`expo-widgets` was an inert stub until rc.3 backed it). Verified: unit tests,
-plus the T3 integration below; each row's native half is only as verified as the capability
-it wraps (the tables above).
-
-**Shim status** (Expo SDK 57, versions from T3's `apps/mobile/package.json`):
-
-| Package                   | Status  | Backed by                                                                                                    | Not provided                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------- | ------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `expo`                    | partial | react-native-web AppRegistry; web-build native-module semantics                                              | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-asset`              | partial | bundled file URLs                                                                                            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-audio`              | partial | HTMLAudioElement, MediaRecorder                                                                              | `useAudioSampleListener`, `useAudioPlaylist`, `useAudioPlaylistStatus`, `createAudioPlaylist`, `useAudioStream`, `preload`, `clearPreloadedSource`, `clearAllPreloadedSources`, `getPreloadedSources`, `requestNotificationPermissionsAsync`, `AudioModule`, `IOSOutputFormat`                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `expo-auth-session`       | partial | openAuthSession (via expo-web-browser), WebCrypto PKCE                                                       | `AccessTokenRequest`, `RefreshTokenRequest`, `RevokeTokenRequest`, `TokenRequest`, `Request`, `ResponseError`, `TokenError`, `useLoadedAuthRequest`, `useAuthRequestResult`, `requestAsync`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `expo-blur`               | partial | CSS backdrop-filter                                                                                          | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-build-properties`   | stub    | config plugin: identity                                                                                      | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-camera`             | partial | scanBarcode (barcode plugin / BarcodeDetector), permissions                                                  | `PictureRef`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `expo-clipboard`          | partial | readClipboard / writeClipboard                                                                               | `getImageAsync`, `setImageAsync`, `ClipboardPasteButton`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `expo-constants`          | partial | globalThis.**DENEXT_EXPO_CONFIG**                                                                            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-crypto`             | partial | WebCrypto                                                                                                    | `aesEncryptAsync`, `aesDecryptAsync`, `AESEncryptionKey`, `AESSealedData`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `expo-dev-client`         | stub    | no-op                                                                                                        | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-device`             | partial | user agent + deviceInfo                                                                                      | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-document-picker`    | partial | pickDocument                                                                                                 | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-file-system`        | partial | readFile / writeFile / deleteFile + a localStorage index                                                     | `FileHandle`, `UploadTask`, `DownloadTask`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `expo-file-system/legacy` | partial | the same files as `expo-file-system` (readFile / writeFile / deleteFile + the index)                         | — (native-only calls are stand-ins that throw: resumable downloads, upload tasks, SAF, content URIs)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `expo-font`               | partial | FontFace                                                                                                     | `renderToImageAsync`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `expo-glass-effect`       | partial | CSS backdrop-filter; availability false                                                                      | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-haptics`            | full    | haptic                                                                                                       | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-image`              | partial | react-native-web Image / <img>                                                                               | `useImage`, `ImageRef`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `expo-image-manipulator`  | partial | canvas                                                                                                       | `useImageManipulator`, `ImageManipulator`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `expo-image-picker`       | partial | pickImage                                                                                                    | `VideoExportPreset`, `UIImagePickerControllerQualityType`, `UIImagePickerPresentationStyle`, `UIImagePickerPreferredAssetRepresentationMode`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `expo-keep-awake`         | full    | keep-awake hold (plugin / Wake Lock)                                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-linking`            | partial | onDeepLink, openExternal                                                                                     | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-network`            | partial | networkStatus                                                                                                | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-notifications`      | partial | push (permission, token, received, tapped)                                                                   | `getExpoPushTokenAsync`, `scheduleNotificationAsync`, `cancelScheduledNotificationAsync`, `cancelAllScheduledNotificationsAsync`, `getAllScheduledNotificationsAsync`, `getNextTriggerDateAsync`, `getNotificationCategoriesAsync`, `setNotificationCategoryAsync`, `deleteNotificationCategoryAsync`, `getNotificationChannelGroupsAsync`, `getNotificationChannelGroupAsync`, `setNotificationChannelGroupAsync`, `deleteNotificationChannelGroupAsync`, `subscribeToTopicAsync`, `unsubscribeFromTopicAsync`, `registerTaskAsync`, `unregisterTaskAsync`, `BackgroundNotificationTaskResult`, `setAutoServerRegistrationEnabledAsync`, `NotificationTimeoutError`, `AndroidAudioUsage`, `AndroidAudioContentType`, `IosAlertStyle`, `IosAllowsPreviews` |
-| `expo-paste-input`        | partial | DOM paste event                                                                                              | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-quick-actions`      | partial | setQuickActions / onQuickAction                                                                              | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-secure-store`       | partial | secureStore                                                                                                  | `getItem`, `setItem`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `expo-sharing`            | partial | share, Web Share files                                                                                       | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-splash-screen`      | full    | hideSplash                                                                                                   | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-sqlite`             | partial | openSqlite: @capacitor-community/sqlite; the app's @sqlite.org/sqlite-wasm on OPFS (opfs-sahpool) on the web | `openDatabaseSync`, `deleteDatabaseSync`, `deserializeDatabaseAsync`, `deserializeDatabaseSync`, `backupDatabaseAsync`, `backupDatabaseSync`, `addDatabaseChangeListener`, `importDatabaseFromAssetAsync`, `SQLiteSession`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `expo-symbols`            | stub    | fallback / empty box                                                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-updates`            | partial | prepareUiUpdate / applyUiUpdate (OTA)                                                                        | `setUpdateURLAndRequestHeadersOverride`, `setUpdateRequestHeadersOverride`, `showReloadScreen`, `hideReloadScreen`, `addUpdatesStateChangeListener`, `latestContext`, `emitTestStateChangeEvent`, `resetLatestContext`, `UpdateInfoType`, `UpdatesLogEntryCode`, `UpdatesLogEntryLevel`                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `expo-video`              | partial | HTMLVideoElement                                                                                             | `VideoAirPlayButton`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `expo-web-browser`        | partial | openExternal, openAuthSession, completeAuthSession                                                           | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `expo-widgets`            | partial | setWidgetData / reloadWidgets, the Live Activity functions and their token events                            | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+**Shim status.** The per-package table (status, the version matched, what each shim leaves
+out) is generated from `EXPO_SHIMS` into
+[/docs/react-native#expo-apis](https://denext.dev/docs/react-native#expo-apis)
+(`scripts/gen-expo-shim-docs.ts`; a test fails when it is stale), so it is not repeated here.
+The 2.10.0-rc.3 set was 35 shims for T3's `expo-*` dependencies; 2.11 has 53 manifest entries
+for 43 packages. Each row's native half is only as verified as the capability it wraps (the
+tables above).
 
 **Integration** (T3's `apps/mobile`, `reactNative: true`, measured in headless Chromium): with
 every `expo` / `expo-*` alias to the spike's hand shims and stubs removed, the app builds with
@@ -319,7 +466,7 @@ its Metro config generates.
 **Scope:** rendering stays WebView/DOM. This is API compatibility, not native rendering, so
 it's consistent with POLICIES.md.
 
-### Spike results (2026-09-24)
+#### Spike results (2026-09-24)
 
 **Setup:** T3's `apps/mobile` built as a denext 2.9.0 SPA, `react-native` → react-native-web
 0.21.2. 106 specifiers across 92 native/expo packages aliased to throwing stubs, 13
@@ -376,9 +523,13 @@ hand-written web shims, bundler workarounds applied through `denext patch`.
 | react-native-web: all 12 primitives, zero console errors                                     | react-native-webview (no web platform)    |
 | gesture-handler 2.32                                                                         | react-native-image-viewing (no web build) |
 | reanimated 4.5.5 (`withTiming` settled near its first frame, same as with real React)        |                                           |
-| react-native-svg + tabler icons; safe-area-context; keyboard-controller; uniwind             |                                           |
+| react-native-svg + tabler icons; safe-area-context\*; keyboard-controller\*; uniwind         |                                           |
 | react-native-screens + react-navigation native-stack: headers, back, navigate, URL linking   |                                           |
 | `@legendapp/list` (1000 items virtualized); `@react-native-menu/menu` (rendered, not opened) |                                           |
+
+\* They rendered, but keyboard-controller's web binding does nothing and safe-area-context's
+insets were 0 in the iOS shell (no `viewport-fit=cover`). Since 2.11 React Native mode resolves
+both to `denext/mobile` implementations and defaults the viewport to `viewport-fit=cover`.
 
 **What it means:** the component layer works today on denext compat. What decides B2's scope
 is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `expo-sqlite`,
@@ -390,13 +541,17 @@ is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `ex
 1. ~~Push notifications, the OTA runtime-version gate, auth sessions + deep links, and the
    `mobile add <capability>` wrapper pattern.~~ Shipped (2.9.0, 2.10.0-rc.1–rc.3); verified on
    the iPhone.
-2. ~~App extensions (share, widgets, Live Activities) and dev-server attach for phones, plus the
-   desktop half of dev-server attach (`denext desktop dev`).~~ Shipped (2.10.0-rc.3; desktop
-   attach in the following release); verified on the iPhone, including a real push-to-start
-   push.
-3. ~~The compatibility layer: the measured spike, the `react-native` resolve mode, the
-   `denext/expo/*` shims, and `migrate --from expo`.~~ Shipped (2.10.0-rc.2–rc.3). Left: the
-   app's own stubs for non-Expo native modules (see Integration above).
-4. **Android. Open.** The emulator comparison has run (gap 5): Capacitor starts faster and uses
-   less memory, and RN scrolls smoother. The Android halves of the capabilities are still built,
-   not run. Next: a real device. No Android parity claim before that.
+2. ~~App extensions (share, widgets, Live Activities) and dev-server attach for phones and
+   Deno Desktop.~~ Shipped (2.10); verified on the iPhone, including a real push-to-start push.
+3. ~~The compatibility layer: the resolve mode, the `denext/expo/*` shims and
+   `migrate --from expo`.~~ Shipped (2.10).
+4. ~~The 2.11 React Native / Expo replacement: the overlay, lists, navigation, the platform
+   capabilities, store tooling and the app backend.~~ Shipped on `development` for 2.11; the
+   iOS capabilities listed above verified on the iPhone on 2026-09-27.
+5. **Open for 2.11 final:** the desktop runtime behind the desktop capabilities (storage that
+   persists, capability-derived packaging permissions); the iPhone items still unvalidated (the
+   bottom safe-area inset, biometrics with Face ID enrolled, social login, a sandbox purchase,
+   Sentry, background tasks and location); the scroll-bench numbers in `/docs/lists`.
+6. **Android. Open.** The emulator comparison has run (gap 5): Capacitor starts faster and uses
+   less memory, and React Native scrolls smoother. Next: a real device. No Android parity claim
+   before that.

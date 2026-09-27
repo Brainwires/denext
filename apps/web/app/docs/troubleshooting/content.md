@@ -500,6 +500,60 @@ release the app, and stamp later UI releases with
 version or build number committed to the native sources counts, so set those on
 the build command line. See [Native fingerprint](/docs/mobile#native-fingerprint).
 
+## React Native mode
+
+The entries below are for an app built with `reactNative: true`. The full guide is
+[React Native / Expo apps](/docs/react-native).
+
+### The build fails on a package's Flow source, or the page is blank with `Cannot find native module`
+
+**Cause.** The package has no web build and no denext replacement. Two kinds fail before any
+of their code is used: a package whose `main` is Flow source (a parse error at build time),
+and an Expo module that calls `requireNativeModule` at the top level (it throws
+`Cannot find native module '…'` at import, which stops the whole bundle).
+
+**Fix.** Check the [Expo APIs](/docs/react-native#expo-apis) and
+[Community packages](/docs/react-native#community-packages) tables first: a listed package
+resolves to a denext implementation unless `reactNative.expoShims` or
+`reactNative.aliases` turned it off. Otherwise give it a web replacement of your own: a
+`.web.ts` beside the module that imports it, or a `deno.json` `imports` entry that maps the
+package to a shim. `denext migrate --from expo` names the native-only packages it finds. See
+[Other native-only packages](/docs/react-native#other-native-only-packages).
+
+### The build warns that a Reanimated hook's worklet is not a function it can see
+
+**Cause.** The build stamps Reanimated's worklets with the closure its web runtime re-runs them
+on, and it could not find the function a hook reads: the argument is the result of another
+call, such as `useAnimatedStyle(useCallback(…))`. Without the closure, `useAnimatedStyle`
+throws in dev and the hook never re-runs when a captured value changes.
+
+**Fix.** Pass the function inline, give it a `'worklet'` directive, or add an explicit
+dependency array: `useAnimatedStyle(fn, [dep1, dep2])`. See
+[Reanimated and worklets](/docs/react-native#reanimated-and-worklets).
+
+### Safe-area insets are 0 in the iOS shell
+
+**Cause.** The page does not cover the screen: a viewport meta of your own in `spa.head`
+without `viewport-fit=cover` replaces React Native mode's default, and
+`reactNative: { rootStyle: false }` drops that default too.
+
+**Fix.** Keep `viewport-fit=cover` in your viewport meta
+(`width=device-width, initial-scale=1, viewport-fit=cover`). `SafeAreaView` and
+react-native-safe-area-context then read the real insets. See
+[Safe areas](/docs/react-native#safe-areas).
+
+### A library takes its web path inside the iOS or Android shell
+
+**Cause.** `Platform.OS` is `"web"` in the shells, on purpose: react-native-web and libraries
+choose their DOM code paths by it, and the native modules the `"ios"` / `"android"` paths call
+do not exist in a WebView. Code that branches on `Platform.OS` for behaviour takes the web
+branch.
+
+**Fix.** Branch on `Platform.constants.denextShell` (`"ios"`, `"android"`, `"desktop"` or
+`"web"`) or `runtimePlatform()` from `denext/mobile`, or use `Platform.select`, which picks the
+shell's `ios` / `android` key when the spec has no `web` key. See
+[Platform.OS in the shell](/docs/react-native#platformos-in-the-shell).
+
 ## Still stuck?
 
 Run [`denext doctor`](/docs/doctor-audit) first — it checks your Deno version,

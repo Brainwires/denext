@@ -360,6 +360,14 @@
       "hasReadme": true
     },
     {
+      "name": "scroll-bench",
+      "title": "scroll-bench",
+      "blurb": "A scroll benchmark with two apps that draw the same data with the same row designs: a denext app in a Capacitor WebView (web/) and a bare React Native app (native/).",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/scroll-bench",
+      "tags": [],
+      "hasReadme": true
+    },
+    {
       "name": "spa",
       "title": "SPA example (mode: \"spa\")",
       "blurb": "A client-only React SPA on denext — \"React but not Next.\" There is no app/ directory: denext bundles a single entry (src/main.tsx), wraps it in an HTML shell, and serves that shell for every…",

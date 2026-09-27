@@ -289,8 +289,16 @@ state, so `router.push`, `<Link>`, `Stack.Screen` options and deep links behave 
   `expo-router/tabs`) are replaced at build time with navigators built on these views: kept
   screens, platform animations, the iOS swipe, Android predictive back, the header, and
   `modal` / `formSheet` / `transparentModal` presentations (`pageSheet` and `fitToContents`
-  map to a sheet).
-- With React Navigation directly, build the navigators from its core:
+  map to a sheet). They are built over expo-router's own copy of React Navigation
+  (`expo-router/build/react-navigation/native`, which expo-router 55 and later carry), falling
+  back to `@react-navigation/native`; a real-browser test runs them with expo-router 57.0.23.
+- React Navigation's `createNativeStackNavigator` (`@react-navigation/native-stack`) and
+  `createBottomTabNavigator` (`@react-navigation/bottom-tabs`) are replaced the same way, with
+  the app's imports unchanged, and `@react-navigation/drawer` resolves to a denext drawer
+  ([Community packages](/docs/react-native#community-packages); turn one off with
+  `reactNative: { aliases: { "@react-navigation/native-stack": false } }`).
+- Outside React Native mode, or with the alias turned off, build the navigators from React
+  Navigation's core yourself:
 
 ```ts
 import * as core from "@react-navigation/native";

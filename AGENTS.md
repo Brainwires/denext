@@ -312,6 +312,46 @@ https://denext.dev/docs/mobile
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
 Safari included, whenever `momentumSafeScroll` is on (the default).
 
+More `denext mobile add` capabilities (each a pinned Capacitor 8 plugin, web fallback where one
+exists): `keyboard` (`useKeyboard`, `<KeyboardAvoidingView>`, `<KeyboardStickyView>`), `back`
+(`onBack`/`useBackHandler`, `useBackProgress` for Android predictive back), `system-bars`
+(`setSystemBars`, `useSystemBarsFollowTheme`; `useSafeAreaInsets()` needs nothing),
+`permissions` (`checkPermission`/`requestPermission`/`usePermission` → granted | limited |
+prompt | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`),
+`biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
+`social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
+`background-location`, `purchases` (RevenueCat), `app-review`, `app-update`,
+`screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
+(`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
+`accessibility` (`useScreenReader`), `sentry` (`initCrashReporting`) and `offline-screen`.
+`dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy
+manifest), `denext mobile doctor --store | --release`, `denext mobile inspect`. App backend:
+`cors` in config, `denextAuth({ native })` sessions, `createApiClient({ base, auth:
+nativeSession(…) })`, `sendPush` from `denext/server`. Docs: https://denext.dev/docs/mobile,
+https://denext.dev/docs/app-backend
+
+**A long list:** `VirtualList` / `useVirtualList` from `denext` (rows measured as they render,
+10M rows, exact `scrollToIndex`, `anchor="end"` for chat, sticky headers, grids,
+`onEndReached`, React Native's viewability and scroll props); `VirtualMasonry` from
+`denext/virtual-masonry`, `useVirtualReorder` for drag-to-reorder. Docs:
+https://denext.dev/docs/lists
+
+**Native-feel navigation:** `denext/navigation` (client) — `StackLayout` in a `layout.tsx`
+keeps pushed screens mounted with platform animations and the iOS swipe back, `TabsLayout`
+keeps each tab's state, `Sheet` is a bottom sheet with detents; a page sets
+`export const screenOptions = { title, presentation }`; `useStackNavigation()` pushes and
+pops. Docs: https://denext.dev/docs/navigation-native
+
+**Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
+`runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
+(`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
+`keep-awake`, `clipboard`, `device`; written to `desktop.capabilities`), plus desktop-only
+`openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
+`desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
+The runtime that answers these calls (and `defineDesktopExtension` in `denext/desktop`) lands
+in 2.11; until then a window answers `unavailable` and the web path runs.
+Docs: https://denext.dev/docs/desktop#desktop-capabilities
+
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
 `_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it;
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
@@ -328,8 +368,15 @@ the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
 expo-router's routes), and every `expo-*` import resolves to a `denext/expo/*` shim over
 `denext/mobile` (`denext/expo/manifest` lists what each omits; the synchronous JSI APIs are not
-provided). `denext migrate --from expo` writes the `deno.json`, the config and a
-`capacitor.config.ts`, and reports native-only packages. Docs: https://denext.dev/docs/react-native
+provided). React Native's mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`, `Alert`,
+`RefreshControl`, `Linking`, …) are replaced with shell-backed ones, `FlatList` / `SectionList` /
+FlashList / LegendList run on `VirtualList`, expo-router's and React Navigation's stacks and
+tabs on `denext/navigation`, Reanimated needs no Babel plugin, and popular native libraries
+(react-native-webview, -keychain, -permissions, safe-area-context, …) resolve to denext
+implementations (`reactNative: { aliases: { "<pkg>": false } }` restores one).
+`Platform.OS` stays `"web"`; read `Platform.constants.denextShell`. `reactNative.desktopPackage: "react-native-macos" | "react-native-windows"` builds the app's own `react-native` imports as that desktop package. `denext migrate --from expo`
+writes the `deno.json`, the config and a `capacitor.config.ts`, and reports native-only packages.
+Docs: https://denext.dev/docs/react-native
 
 **A database (zero-npm, server-only module):**
 
