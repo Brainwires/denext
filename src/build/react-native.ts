@@ -36,7 +36,13 @@
 //     "web" in the shell: react-native-web and the libraries on top of it pick their DOM code
 //     paths by it (see src/react-native/platform.ts).
 //   - `expo-router/_ctx` (Metro's `require.context` over the route directory) resolves to a
-//     module generated from the app's `app/` (or `src/app/`) files (expo-router.ts).
+//     module generated from the app's `app/` (or `src/app/`) files (expo-router.ts), and the
+//     app's `expo-router` / `expo-router/stack` / `expo-router/tabs` imports get `Stack` /
+//     `Tabs` drawn by `denext/navigation` (expo-router-navigators.ts; the bundle then includes
+//     the `Activity` runtime, which hidden stack screens need).
+//   - React Native's FlatList / SectionList / VirtualizedList and the FlashList / LegendList
+//     packages run on denext's VirtualList unless `reactNative: { lists: "library" }`
+//     (react-native-lists.ts).
 //   - Each `expo-*` package in the `denext/expo` manifest (and its known subpaths) resolves
 //     to its `denext/expo/<name>` shim, unless `reactNative: { expoShims: false }`; the
 //     shims' react-native-web bridge resolves to the app's react-native-web.
@@ -49,6 +55,9 @@ import { type DenextConfig, reactNativeOptions } from "../server/config.ts";
 import { BROWSER_CONDITIONS, resolveInPackageDir, withPackageSideEffects } from "./next-compat.ts";
 import { EXPO_FILTER, EXPO_RN_BRIDGE, expoShimSpecifier } from "./expo-shims.ts";
 import { expoRouterContextPlugin } from "./expo-router.ts";
+import { expoRouterNavigatorsPlugin } from "./expo-router-navigators.ts";
+import { listAdaptersPlugin } from "./react-native-lists.ts";
+import { reanimatedWorkletsPlugin } from "./reanimated.ts";
 
 /** The web platform extensions React Native mode probes ahead of the plain ones. */
 export const WEB_PLATFORM_EXTENSIONS: readonly string[] = [
@@ -521,15 +530,21 @@ export interface ReactNativeBundleOptions {
   /** The `define` entries ({@linkcode reactNativeDefines}). */
   define: Record<string, string>;
   /**
-   * The react-native → react-native-web resolver, expo-router's route context and (unless
-   * `expoShims: false`) the `expo-*` → `denext/expo/*` resolver, ahead of the built-in
-   * resolvers.
+   * The react-native → react-native-web resolver, expo-router's route context and its
+   * `Stack` / `Tabs` drawn by `denext/navigation`, (unless
+   * `expoShims: false`) the `expo-*` → `denext/expo/*` resolver and (unless
+   * `lists: "library"`) the list adapters, ahead of the built-in resolvers.
    */
   plugins: esbuild.Plugin[];
   /** The `.web.*` extensions, probed first. */
   platformExtensions: readonly string[];
   /** Parse `.js` as JSX. */
   jsxInJs: true;
+  /**
+   * Include the `Activity` runtime: the Expo Router navigators keep hidden stack screens in an
+   * `Activity`, which must tear their effects down.
+   */
+  usesActivity: true;
 }
 
 /**
@@ -551,9 +566,13 @@ export function reactNativeBundleOptions(
     plugins: [
       reactNativeWebPlugin(projectDir),
       expoRouterContextPlugin(projectDir),
+      expoRouterNavigatorsPlugin(),
       ...(options.expoShims === false ? [] : [expoShimPlugin()]),
+      ...(options.lists === "library" ? [] : [listAdaptersPlugin(projectDir)]),
+      reanimatedWorkletsPlugin(projectDir, { dev }),
     ],
     platformExtensions: WEB_PLATFORM_EXTENSIONS,
     jsxInJs: true,
+    usesActivity: true,
   };
 }

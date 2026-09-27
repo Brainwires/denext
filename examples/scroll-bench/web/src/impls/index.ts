@@ -12,7 +12,8 @@ const LOADERS: Record<string, Loader> = {
   legend: () => import("./legend.tsx"),
   tanstack: () => import("./tanstack.tsx"),
   virtua: () => import("./virtua.tsx"),
-  "rnw-flatlist": () => import("./rnw-flatlist.tsx"),
+  "rnw-flatlist-denext": () => import("./rnw-flatlist.tsx"),
+  "rnw-flatlist-rnw": () => import("./rnw-flatlist-rnw.tsx"),
   denext: () => import("./placeholder.tsx"),
 };
 

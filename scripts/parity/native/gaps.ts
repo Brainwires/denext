@@ -17,6 +17,7 @@ import type { Baseline, Surface } from "../types.ts";
 import { rnwRuntimeSurface } from "./runtime.ts";
 import { expoParitySetup, parseNativeArgs } from "./shared.ts";
 import { NATIVE_WAIVERS } from "./waivers.ts";
+import { writeListGaps } from "./lists.ts";
 import {
   expoBaselinePath,
   knownGapsPath,
@@ -95,6 +96,7 @@ async function expoGaps(): Promise<Gap[]> {
 // fallow-ignore-next-line complexity -- CLI entrypoint; not unit-tested, CRAP is coverage-estimated
 async function main() {
   const { offline, only } = parseNativeArgs();
+  if (only.includes("lists")) return await writeListGaps(ROOT);
   const doRn = !offline && (only.length === 0 || only.includes("react-native"));
   const doExpo = only.length === 0 || only.includes("expo");
 

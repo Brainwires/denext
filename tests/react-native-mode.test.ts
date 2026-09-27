@@ -330,12 +330,22 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(on.plugins.map((p) => p.name), [
     "denext-react-native-web",
     "denext-expo-router-ctx",
+    "denext-expo-router-navigators",
     "denext-expo-shims",
+    "denext-react-native-lists",
+    "denext-reanimated-worklets",
   ]);
+  assertEquals(on.usesActivity, true, "the navigators need the Activity runtime");
   const off = reactNativeBundleOptions({ reactNative: { expoShims: false } }, "/p", false)!;
   assertEquals(
     off.plugins.map((p) => p.name),
-    ["denext-react-native-web", "denext-expo-router-ctx"],
+    [
+      "denext-react-native-web",
+      "denext-expo-router-ctx",
+      "denext-expo-router-navigators",
+      "denext-react-native-lists",
+      "denext-reanimated-worklets",
+    ],
     "expoShims: false",
   );
 });

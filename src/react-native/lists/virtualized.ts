@@ -275,7 +275,7 @@ function Cell(props: CellProps): VNode {
 }
 
 /** A slot as an element: an element as is, a component rendered with no props. */
-function slotElement(slot: RNSlot): VNode | null {
+export function slotElement(slot: RNSlot): VNode | null {
   if (slot === null || slot === undefined) return null;
   if (typeof slot === "object" && "props" in slot && "type" in slot) return slot as VNode;
   return h(slot as VNodeType, null);
@@ -753,7 +753,7 @@ function sizingProps(
  */
 export function CoreList(props: CoreListProps): VNode {
   const { list, prim } = props;
-  const engine = props.engine ?? NO_ENGINE;
+  const engine = withRNDefaults(list, props.engine ?? NO_ENGINE);
   const model = useModel(list);
   const vl = useRef<VirtualListHandle | null>(null);
   const state = useRef<HandleState>({ list, model, vl: null });
@@ -766,6 +766,7 @@ export function CoreList(props: CoreListProps): VNode {
   useAutoscroll(list.data, model.count, engine, model.inverted, vl);
   useHiddenScrollbarRule(list);
   useMountCallback(engine, handle);
+  useOnLayout(list, handle);
   const control = refreshElement(list, prim);
   const engineRef = (h: VirtualListHandle | null): void => {
     vl.current = h;
@@ -800,6 +801,42 @@ function useModel(list: VirtualizedListProps<unknown>): Model {
   );
 }
 
+/** The slice of an element `onLayout` reads. */
+interface LayoutBox {
+  offsetLeft?: number;
+  offsetTop?: number;
+  clientWidth?: number;
+  clientHeight?: number;
+}
+
+/** Hook: React Native's `onLayout`, from a `ResizeObserver` on the scroll element. */
+function useOnLayout(list: VirtualizedListProps<unknown>, handle: CoreHandle): void {
+  const latest = useRef(list.onLayout);
+  latest.current = list.onLayout;
+  const wanted = !!list.onLayout;
+  useLayoutEffect(() => {
+    const node = handle.getScrollableNode() as (LayoutBox & Element) | null;
+    if (!wanted || !node) return;
+    const report = (): void =>
+      latest.current?.({
+        nativeEvent: {
+          layout: {
+            x: node.offsetLeft ?? 0,
+            y: node.offsetTop ?? 0,
+            width: node.clientWidth ?? 0,
+            height: node.clientHeight ?? 0,
+          },
+        },
+      });
+    report();
+    const RO = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+    if (!RO) return;
+    const ro = new RO(report);
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, [wanted, handle]);
+}
+
 /** Hook: the adapter's `onMount`, once, after the engine's first commit. */
 function useMountCallback(engine: EngineOptions, handle: CoreHandle): void {
   const done = useRef(false);
@@ -829,7 +866,7 @@ function layoutProps(
   return {
     horizontal: !!list.horizontal,
     anchor: model.inverted || engine.anchorEnd ? "end" : "start",
-    maintainVisibleContentPosition: engine.mvcp ?? !!list.maintainVisibleContentPosition,
+    maintainVisibleContentPosition: engine.mvcp ?? true,
     overscan: list.disableVirtualization ? 1e9 : engine.overscan,
     recycle: engine.recycle === true,
     initialScrollIndex: initial >= 0 && initial < model.count ? model.flip(initial) : undefined,
@@ -843,6 +880,21 @@ function layoutProps(
 }
 
 const NO_ENGINE: EngineOptions = {};
+
+/**
+ * React Native's `maintainVisibleContentPosition` on the engine. The engine always keeps the
+ * visible items in place when items above them are inserted or resized — measuring rows above
+ * the viewport must never move what the user sees, and it is what makes `scrollToIndex` exact.
+ * Without the prop, React Native leaves a view at the very top showing the new first items, so
+ * the core scrolls back to the start after a change made there (`autoscrollStart: 0`); with it,
+ * `autoscrollToTopThreshold` sets that distance. An adapter's own `mvcp` is left as it is.
+ */
+function withRNDefaults(list: VirtualizedListProps<unknown>, engine: EngineOptions): EngineOptions {
+  if (engine.mvcp !== undefined) return engine;
+  const mvcp = list.maintainVisibleContentPosition;
+  const threshold = mvcp ? mvcp.autoscrollToTopThreshold ?? undefined : 0;
+  return { ...engine, mvcp: true, autoscrollStart: engine.autoscrollStart ?? threshold };
+}
 
 /**
  * React Native's `VirtualizedList` on denext's `VirtualList`, rendering with react-native-web's

@@ -3,8 +3,8 @@ import { cellSteps, DEFAULT_CONFIG, expandMatrix, loadConfig, renderMarkdown } f
 
 Deno.test("expandMatrix: every app × impl × kind × size, with catalogue skips", () => {
   const cells = expandMatrix(DEFAULT_CONFIG);
-  // denext: 7 impls, rn: 4 impls; 4 kinds; 5 sizes
-  assertEquals(cells.length, (7 + 4) * 4 * 5);
+  // denext: 8 impls, rn: 4 impls; 4 kinds; 5 sizes
+  assertEquals(cells.length, (8 + 4) * 4 * 5);
   const byId = new Map(cells.map((c) => [c.id, c]));
   assertEquals(byId.get("denext-dom-fixed-10k")?.plan.run, true);
   assertEquals(byId.get("denext-dom-fixed-100k")?.plan.run, false);
@@ -12,7 +12,8 @@ Deno.test("expandMatrix: every app × impl × kind × size, with catalogue skips
   assertEquals(byId.get("denext-cv-chat-1M")?.plan.run, false);
   assertEquals(byId.get("denext-legend-fixed-10M")?.plan.run, true);
   assertEquals(byId.get("denext-legend-chat-10M")?.plan.run, false); // 10M is fixed-only
-  assertEquals(byId.get("denext-denext-fixed-1k")?.plan.run, false); // placeholder
+  assertEquals(byId.get("denext-denext-fixed-1k")?.plan.run, true); // denext's VirtualList
+  assertEquals(byId.get("denext-rnw-flatlist-rnw-fixed-1k")?.plan.run, true);
   assertEquals(byId.get("rn-sectionlist-sections-1M")?.plan.run, true);
   assertEquals(byId.get("rn-sectionlist-chat-1k")?.plan.run, false);
 });

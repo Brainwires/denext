@@ -15,6 +15,7 @@ import { useImperativeHandle, useMemo, useRef } from "../../runtime/hooks.ts";
 import type { ViewToken } from "../../client/virtual/types.ts";
 import { nativePlatform } from "../../mobile/bridge.ts";
 import { type CoreHandle, CoreList, defaultRNKey, type EngineOptions } from "./virtualized.ts";
+import { afterFrames } from "./kit.ts";
 import type {
   ListPrimitives,
   ListRenderItemInfo,
@@ -165,18 +166,33 @@ function sectionHandle(
       const handle = c();
       if (!handle) return;
       const index = locationIndex(latest.current.sections, params.sectionIndex, params.itemIndex);
-      let viewOffset = params.viewOffset ?? 0;
-      if (params.itemIndex > 0 && sticky.current) {
-        const header = handle.engine()?.getItemLayout(handle.visual(index - params.itemIndex));
-        viewOffset += header?.size ?? 0;
+      const under = params.itemIndex > 0 && sticky.current;
+      const go = () => {
+        const size = under ? headerSize(handle, index - params.itemIndex) : 0;
+        handle.scrollToIndex({ ...params, index, viewOffset: (params.viewOffset ?? 0) + size });
+        return size;
+      };
+      const first = go();
+      // The header may not have been measured yet (its size was an estimate): once the scroll
+      // has rendered it, land again under its real size.
+      if (under) {
+        void afterFrames().then(() => {
+          if (Math.abs(headerSize(handle, index - params.itemIndex) - first) >= 0.5) {
+            go();
+          }
+        });
       }
-      handle.scrollToIndex({ ...params, index, viewOffset });
     },
     recordInteraction: () => c()?.recordInteraction(),
     flashScrollIndicators() {},
     getScrollResponder: () => c()?.getScrollResponder() ?? null,
     getScrollableNode: () => c()?.getScrollableNode() ?? null,
   };
+}
+
+/** A flattened row's current size (measured, else estimated). */
+function headerSize(handle: CoreHandle, row: number): number {
+  return handle.engine()?.getItemLayout(handle.visual(row))?.size ?? 0;
 }
 
 /** The sticky header rows (`+ 1` for a list header, as the core expects React Native's). */

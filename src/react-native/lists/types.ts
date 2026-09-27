@@ -97,6 +97,14 @@ export interface MaintainVisibleContentPosition {
   readonly autoscrollToTopThreshold?: number | null;
 }
 
+/** What `onLayout` receives (React Native's `LayoutChangeEvent`). */
+export interface LayoutEvent {
+  /** The frame, in px relative to the offset parent. */
+  readonly nativeEvent: {
+    readonly layout: { x: number; y: number; width: number; height: number };
+  };
+}
+
 /** The scroll-view props every list adapter honours (React Native's `ScrollView` subset). */
 export interface ListScrollProps {
   /** Scroll horizontally. */
@@ -136,7 +144,11 @@ export interface ListScrollProps {
   readonly stickyHeaderIndices?: readonly number[];
   /** Accepted: sticky items always stick to the visible top (also when `inverted`). */
   readonly invertStickyHeaders?: boolean;
-  /** Keep the visible items in place when items are added or resized above them. */
+  /**
+   * denext always keeps the visible items in place when items are added or resized above them
+   * (so `scrollToIndex` lands exactly); a view at the very top still shows items added there,
+   * as in React Native. With this prop, `autoscrollToTopThreshold` widens that distance.
+   */
   readonly maintainVisibleContentPosition?: MaintainVisibleContentPosition | null;
   /** Snap each item to the viewport's start (CSS scroll snap). */
   readonly pagingEnabled?: boolean;
@@ -144,6 +156,8 @@ export interface ListScrollProps {
   readonly snapToAlignment?: "start" | "center" | "end";
   /** Accepted: nested scrolling works on the web without it (Android-only in RN). */
   readonly nestedScrollEnabled?: boolean;
+  /** Called with the list's frame on mount and whenever it resizes. */
+  readonly onLayout?: (event: LayoutEvent) => void;
 }
 
 /** `VirtualizedList`'s props (React Native's), as the adapter takes them. */

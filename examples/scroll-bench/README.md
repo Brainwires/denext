@@ -30,25 +30,31 @@ a `data` array get `list.indexArray()` (virtual indices), built only when that l
 
 ## Lists
 
-| app    | id             | library                                | data                 | notes                                                |
-| ------ | -------------- | -------------------------------------- | -------------------- | ---------------------------------------------------- |
-| denext | `dom`          | every row in the DOM                   | all                  | n ≤ 10k                                              |
-| denext | `cv`           | every row + `content-visibility: auto` | all                  | n ≤ 100k                                             |
-| denext | `legend`       | `@legendapp/list/react` 3.4            | index array          | `recycleItems`, `getFixedItemSize` for fixed layouts |
-| denext | `tanstack`     | `@tanstack/react-virtual` 3.14         | count                | sticky via `rangeExtractor`                          |
-| denext | `virtua`       | `virtua` 0.52 `VList`                  | count (`{ length }`) | no sticky headers                                    |
-| denext | `rnw-flatlist` | react-native-web 0.21 `FlatList`       | index array          | `reactNative: true` mode; see the persist shim below |
-| denext | `denext`       | denext VirtualList                     | —                    | Phase 2 slot: reports "not yet implemented"          |
-| rn     | `flatlist`     | `FlatList`                             | index array          | `getItemLayout` for fixed layouts                    |
-| rn     | `flash`        | `@shopify/flash-list` 2.3              | index array          |                                                      |
-| rn     | `legend`       | `@legendapp/list/react-native` 3.4     | index array          |                                                      |
-| rn     | `sectionlist`  | `SectionList`                          | sections             | `sections` only                                      |
+| app    | id                    | library                                         | data                 | notes                                                                                            |
+| ------ | --------------------- | ----------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------ |
+| denext | `dom`                 | every row in the DOM                            | all                  | n ≤ 10k                                                                                          |
+| denext | `cv`                  | every row + `content-visibility: auto`          | all                  | n ≤ 100k                                                                                         |
+| denext | `legend`              | `@legendapp/list/react` 3.4                     | index array          | `recycleItems`, `getFixedItemSize` for fixed layouts                                             |
+| denext | `tanstack`            | `@tanstack/react-virtual` 3.14                  | count                | sticky via `rangeExtractor`                                                                      |
+| denext | `virtua`              | `virtua` 0.52 `VList`                           | count (`{ length }`) | no sticky headers                                                                                |
+| denext | `rnw-flatlist-denext` | RN `FlatList` API → denext `VirtualList` engine | index array          | `import { FlatList } from "react-native"` in `reactNative` mode (`lists: "denext"`, the default) |
+| denext | `rnw-flatlist-rnw`    | react-native-web 0.21's own `FlatList` engine   | index array          | the vendored original (`react-native-web/dist/vendor/react-native/FlatList`), same app           |
+| denext | `denext`              | denext `VirtualList`                            | count                | `count` + `getItem`; `anchor="end"` for chat; sticky headers                                     |
+| rn     | `flatlist`            | `FlatList`                                      | index array          | `getItemLayout` for fixed layouts                                                                |
+| rn     | `flash`               | `@shopify/flash-list` 2.3                       | index array          |                                                                                                  |
+| rn     | `legend`              | `@legendapp/list/react-native` 3.4              | index array          |                                                                                                  |
+| rn     | `sectionlist`         | `SectionList`                                   | sections             | `sections` only                                                                                  |
 
 **react-native-web on denext:** denext passes event handlers the native DOM event, and
 react-native-web's `ScrollViewBase` calls `e.persist()` on every scroll, so the list throws
-on its first scroll. `web/src/impls/rnw-flatlist.tsx` installs a no-op
-`Event.prototype.persist` (only when that impl loads) and every ready marker of the impl says
-so in its notes.
+on its first scroll; denext's events now carry `persist()`, so no shim is installed.
+
+**Which FlatList engine runs:** in `reactNative` mode denext replaces react-native-web's
+`FlatList`, `SectionList` and `VirtualizedList` with adapters over its own `VirtualList`
+(`reactNative.lists: "denext"`, the default), so `rnw-flatlist-denext` measures the RN API on
+denext's engine. `rnw-flatlist-rnw` imports react-native-web's vendored original, the per-list
+escape hatch, so both engines run in one app. `reactNative: { lists: "library" }` in
+`web/denext.config.ts` would switch every list back app-wide.
 
 ## Running a cell
 

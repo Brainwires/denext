@@ -81,15 +81,20 @@ export const IMPLS: readonly ImplDef[] = [
   { app: "denext", id: "virtua", label: "virtua", data: "index-array" },
   {
     app: "denext",
-    id: "rnw-flatlist",
-    label: "react-native-web FlatList",
+    id: "rnw-flatlist-denext",
+    label: "RN FlatList API on denext's engine (react-native, reactNative.lists: denext)",
+    data: "index-array",
+  },
+  {
+    app: "denext",
+    id: "rnw-flatlist-rnw",
+    label: "react-native-web's own FlatList engine (vendored original)",
     data: "index-array",
   },
   {
     app: "denext",
     id: "denext",
-    label: "denext VirtualList (Phase 2)",
-    placeholder: true,
+    label: "denext VirtualList",
     data: "count",
   },
   // React Native (native Android views)

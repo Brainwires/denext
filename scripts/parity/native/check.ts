@@ -5,6 +5,7 @@
 //   deno task parity:native                    # both targets
 //   deno task parity:native -- react-native    # react-native target only
 //   deno task parity:native -- expo            # expo target only
+//   deno task parity:native -- lists           # the list adapters only (offline; see lists.ts)
 //   deno task parity:native -- --offline       # skip the react-native runtime import
 //
 // Two targets:
@@ -45,6 +46,7 @@ import {
   rnBaselinePath,
 } from "./spec.ts";
 import { RN_OVERLAY_EXPORTS } from "../../../src/build/react-native.ts";
+import { checkLists } from "./lists.ts";
 
 const ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -210,6 +212,7 @@ async function main() {
   if (doRn) ok = (await checkReactNative(offline, knownGaps)) && ok;
   if (doRn) ok = (await checkShellOverlay()) && ok;
   if (doExpo) ok = (await checkExpo(knownGaps)) && ok;
+  if (only.length === 0 || only.includes("lists")) ok = (await checkLists(ROOT)) && ok;
 
   if (!ok) {
     console.error(
