@@ -52,6 +52,8 @@ ignoreDependencies = [
   # tests/e2e/fixtures/rn-desktop installs these itself (the desktop RN alias smoke).
   "react-native-macos",
   "react-native-windows",
+  # tests/e2e/fixtures/rn-expo-router installs it itself (the Expo Router navigators e2e).
+  "expo-router",
   # per-directory package.json / test-written import maps — see the note below the list
   "@radix-ui/react-dialog",
   "@radix-ui/react-collapsible",
@@ -136,6 +138,10 @@ entry = [
   # SPA mode: the entry (and worker) named by `spa.entry` in denext.config.ts.
   "**/src/main.tsx",
   "**/src/worker.ts",
+  # The Expo Router e2e fixture: its `spa.entry` and the routes React Native mode's generated
+  # `expo-router/_ctx` imports from app/ (Metro's require.context, which fallow cannot see).
+  "tests/e2e/fixtures/rn-expo-router/index.web.ts",
+  "tests/e2e/fixtures/rn-expo-router/app/**",
   # Static assets served verbatim from public/ (fallow analyzes the .css files there), and
   # the Tailwind source stylesheet named by `tailwind.input` in denext.config.ts.
   "**/public/**",

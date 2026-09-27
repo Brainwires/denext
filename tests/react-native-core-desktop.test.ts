@@ -3,12 +3,14 @@
 // (src/react-native/desktop.ts): the desktop View props, Flyout / Popup, Glyph, AppTheme,
 // the macOS colors, and Platform's desktop constants / select keys.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { dirname, join } from "@std/path";
 import * as esbuild from "esbuild";
 import { flushSync } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { reactNativeBundleOptions } from "../src/build/react-native.ts";
+import type { DenextConfig } from "../src/server/config.ts";
+import { validateDenextConfig } from "../src/server/config-validate.ts";
 import { desktopEntrySource } from "../src/build/react-native-desktop.ts";
 import { DESKTOP_ALIASES } from "../src/react-native/desktop-manifest.ts";
 import {
@@ -73,6 +75,17 @@ export { Thing };
 `,
   "mac.js": 'import * as Mac from "react-native-macos";\nexport const M = Mac;\n',
   "only-text.js": 'import { Text } from "react-native-windows";\nexport const T = Text;\n',
+  // An RN desktop app's own source imports `react-native`; a library in node_modules too.
+  "app.js": `import { Text, View } from "react-native";
+import * as RN from "react-native";
+import { LibView } from "some-lib";
+export { LibView, Text, View };
+export const Flyout = RN.Flyout;
+export const names = Object.keys(RN);
+`,
+  "node_modules/some-lib/package.json": JSON.stringify({ name: "some-lib", module: "index.js" }),
+  "node_modules/some-lib/index.js":
+    'import { View } from "react-native";\nexport const LibView = View;\n',
 };
 
 /** The overlay stand-in: each desktop factory returns a marker naming what it got. */
@@ -93,11 +106,14 @@ const STAND_IN = [
 ].join("\n");
 
 /** Bundle `entry` of the fixture with React Native mode's plugins and the stand-in overlay. */
-async function bundle(entry: string): Promise<{ code: string; mod: Record<string, Any> }> {
+async function bundle(
+  entry: string,
+  reactNative: DenextConfig["reactNative"] = true,
+): Promise<{ code: string; mod: Record<string, Any> }> {
   const dir = await Deno.makeTempDir({ prefix: "denext_rn_desktop_" });
   try {
     await writeTree(dir, FIXTURE);
-    const options = reactNativeBundleOptions({ reactNative: true }, dir, false)!;
+    const options = reactNativeBundleOptions({ reactNative }, dir, false)!;
     const standIn: esbuild.Plugin = {
       name: "stand-in",
       setup(build) {
@@ -155,6 +171,37 @@ Deno.test("react-native-macos: the macOS additions; unused additions tree-shake 
   for (const marker of ["FLYOUT(", "GLYPH(", "DESKTOP_VIEW(", "DENEXT_"]) {
     assert(!code.includes(marker), `${marker} is not in a bundle that never uses it`);
   }
+});
+
+Deno.test("reactNative.desktopPackage: the app's own react-native imports resolve as the desktop package", async () => {
+  const win = await bundle("app.js", { desktopPackage: "react-native-windows" });
+  assertEquals(win.mod.View, "DESKTOP_VIEW(RNW_VIEW,windows)", "the app gets the desktop View");
+  assertEquals(win.mod.Flyout, "FLYOUT(RNW_MODAL,RNW_VIEW)");
+  assertEquals(win.mod.Text, "RNW_TEXT");
+  assert(win.mod.names.includes("Popup"), "a namespace import sees the additions too");
+  assertEquals(win.mod.LibView, "RNW_VIEW", "node_modules keep react-native (react-native-web)");
+  const mac = await bundle("app.js", { desktopPackage: "react-native-macos" });
+  assertEquals(mac.mod.View, "DESKTOP_VIEW(RNW_VIEW,macos)");
+  assertEquals(mac.mod.Flyout, undefined, "Flyout is Windows-only");
+  // Unset: react-native is react-native-web, with no desktop additions.
+  const plain = await bundle("app.js");
+  assertEquals(plain.mod.View, "RNW_VIEW");
+  assertEquals(plain.mod.Flyout, undefined);
+});
+
+Deno.test("reactNative.desktopPackage: validated", () => {
+  const spa: DenextConfig = { mode: "spa", spa: { entry: "./src/main.tsx" } };
+  validateDenextConfig({ ...spa, reactNative: { desktopPackage: "react-native-macos" } });
+  validateDenextConfig({ ...spa, reactNative: { desktopPackage: "react-native-windows" } });
+  assertThrows(
+    () =>
+      validateDenextConfig({
+        ...spa,
+        reactNative: { desktopPackage: "react-native-tvos" as "react-native-macos" },
+      }),
+    Error,
+    '`reactNative.desktopPackage` must be "react-native-macos" or "react-native-windows"',
+  );
 });
 
 Deno.test("desktopEntrySource: re-exports react-native and binds the overlay through a namespace", () => {

@@ -931,7 +931,12 @@ Deno.test("expoRouterNavigatorsPlugin: app imports get the adapter; expo-router'
     resolve: (
       path: string,
       opts: Any,
-    ) => (resolved.push({ path, opts }), Promise.resolve({ path: `/nm/${path}` })),
+    ) => {
+      resolved.push({ path, opts });
+      // expo-router 55+'s own React Navigation copy is absent here: the core falls back.
+      const missing = path === "expo-router/build/react-navigation/native";
+      return Promise.resolve({ path: `/nm/${path}`, errors: missing ? [{ text: "no" }] : [] });
+    },
   };
   expoRouterNavigatorsPlugin().setup(build as Any);
   const resolve = (path: string, importer: string, pluginData?: unknown) => {
@@ -950,6 +955,21 @@ Deno.test("expoRouterNavigatorsPlugin: app imports get the adapter; expo-router'
   const real = await resolve("expo-router/stack?denext-real", "/app/gen.js") as Any;
   assertEquals(real.path, "/nm/expo-router/stack");
   assertEquals(resolved[0].opts.pluginData, { "denext-real": true });
+  // A generated module's imports resolve as from a file in the app's folder.
+  assertEquals(resolved[0].opts.namespace, "file");
+  const core = await resolvers.find((x) => x.filter.test("denext-expo-router-core"))!.fn({
+    path: "denext-expo-router-core",
+    importer: "expo-router",
+    namespace: "denext-expo-router-navigators",
+    resolveDir: "/app",
+    kind: "import-statement",
+  }) as Any;
+  assertEquals(core.path, "/nm/@react-navigation/native");
+  assertEquals(resolved.slice(1).map((r) => r.path), [
+    "expo-router/build/react-navigation/native",
+    "@react-navigation/native",
+  ]);
+  assertEquals(resolved[1].opts.importer, "/app/denext-generated.js");
   const loaded = loader!({ path: "expo-router/tabs", pluginData: { resolveDir: "/app" } });
   assertEquals(loaded.resolveDir, "/app");
   assertStringIncludes(loaded.contents, "export default Tabs;");

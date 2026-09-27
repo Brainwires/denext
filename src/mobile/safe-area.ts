@@ -1,6 +1,7 @@
 /**
- * Safe-area insets for `denext/mobile`: CSS custom properties ({@linkcode SAFE_AREA_CSS}) and a
- * live hook ({@linkcode useSafeAreaInsets}).
+ * Safe-area insets for `denext/mobile`: CSS custom properties ({@linkcode SAFE_AREA_CSS}), a
+ * live hook ({@linkcode useSafeAreaInsets}), and the same measurement outside a component
+ * ({@linkcode readSafeAreaInsets}, {@linkcode watchSafeAreaInsets}).
  *
  * Both prefer the `--safe-area-inset-*` custom properties Capacitor 8's `SystemBars` plugin
  * injects on Android (its default `insetsHandling: "css"`), because Android WebView before 140
@@ -127,22 +128,69 @@ export function listenAll(target: unknown, types: readonly string[], fn: () => v
   };
 }
 
+/** Whether a probe can be measured here (a DOM with `getComputedStyle`; not SSR). */
+function canMeasure(): boolean {
+  return typeof document !== "undefined" && typeof getComputedStyle === "function";
+}
+
 /**
- * Report the insets now and whenever they may have changed (resize, rotation, the visual
- * viewport, and Capacitor rewriting its injected properties on `<html>`), at most once per
- * animation frame and only when they differ. Returns a stop function.
+ * The device's safe-area insets in CSS px, measured once now: the same values
+ * {@linkcode useSafeAreaInsets} reports, for code outside a component (a store, a canvas
+ * setup, a one-off layout calculation). All zero during SSR and where there is no DOM. It adds
+ * and removes a hidden element, so it forces a style calculation; to follow changes, use
+ * {@linkcode watchSafeAreaInsets}.
+ *
+ * @returns The current insets.
+ * @example
+ * ```ts
+ * import { readSafeAreaInsets } from "denext/mobile";
+ *
+ * const { top } = readSafeAreaInsets();
+ * canvas.style.marginTop = `${top}px`;
+ * ```
  */
-function watchSafeAreaInsets(onInsets: (insets: SafeAreaInsets) => void): () => void {
-  if (typeof document === "undefined" || typeof getComputedStyle !== "function") return () => {};
+export function readSafeAreaInsets(): SafeAreaInsets {
+  if (!canMeasure()) return NO_INSETS;
   const el = createProbe(document);
-  let last = NO_INSETS;
+  try {
+    return readInsets(el);
+  } finally {
+    el.remove();
+  }
+}
+
+/**
+ * Follow the device's safe-area insets outside a component: calls `onInsets` synchronously
+ * with the current insets, then again whenever they change (rotation, window and
+ * visual-viewport resizes, and Capacitor rewriting the `--safe-area-inset-*` it injects on
+ * `<html>`), at most once per animation frame and only when they differ. It is what
+ * {@linkcode useSafeAreaInsets} runs. During SSR (no DOM) it calls nothing and the returned
+ * stop function is a no-op.
+ *
+ * @param onInsets Called with the insets now and on every change.
+ * @returns A function that stops watching and removes the hidden probe element.
+ * @example
+ * ```ts
+ * import { watchSafeAreaInsets } from "denext/mobile";
+ *
+ * const stop = watchSafeAreaInsets(({ bottom }) => {
+ *   sheet.style.paddingBottom = `${bottom + 16}px`;
+ * });
+ * // later: stop();
+ * ```
+ */
+export function watchSafeAreaInsets(onInsets: (insets: SafeAreaInsets) => void): () => void {
+  if (!canMeasure()) return () => {};
+  const el = createProbe(document);
+  let last: SafeAreaInsets | null = null;
   let cancel: (() => void) | null = null;
   const measure = () => {
     cancel = null;
     const next = readInsets(el);
-    if (sameInsets(next, last)) return;
-    last = next;
-    onInsets(next);
+    if (last !== null && sameInsets(next, last)) return;
+    // The first report of "no insets" is the shared constant, so a state setter bails out.
+    last = last === null && sameInsets(next, NO_INSETS) ? NO_INSETS : next;
+    onInsets(last);
   };
   const schedule = () => {
     cancel ??= requestFrame(measure);

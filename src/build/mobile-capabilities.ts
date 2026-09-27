@@ -744,6 +744,20 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     notes: "React Native mode's Alert.alert / Alert.prompt as system dialogs (else an in-page " +
       "dialog)",
   },
+  toast: {
+    npm: "@capacitor/toast",
+    version: "^8.0.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "React Native mode's ToastAndroid.show as the system toast on Android (else an " +
+      "in-page toast)",
+  },
+  "action-sheet": {
+    npm: "@capacitor/action-sheet",
+    version: "^8.1.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "React Native mode's ActionSheetIOS.showActionSheetWithOptions as a native action " +
+      "sheet (else a dialog or an in-page menu)",
+  },
   permissions: {
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "checkPermission / requestPermission / usePermission (each capability's plugin " +

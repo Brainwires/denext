@@ -333,8 +333,8 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(on.platformExtensions, [".web.tsx", ".web.ts", ".web.jsx", ".web.js"]);
   assertEquals(on.jsxInJs, true);
   assertEquals(on.plugins.map((p) => p.name), [
-    "denext-react-native-web",
     "denext-react-native-desktop",
+    "denext-react-native-web",
     "denext-expo-router-ctx",
     "denext-expo-router-navigators",
     "denext-expo-shims",
@@ -347,8 +347,8 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(
     off.plugins.map((p) => p.name),
     [
-      "denext-react-native-web",
       "denext-react-native-desktop",
+      "denext-react-native-web",
       "denext-expo-router-ctx",
       "denext-expo-router-navigators",
       "denext-react-native-lists",

@@ -127,7 +127,13 @@ export { type RuntimePlatform, runtimePlatform } from "./bridge.ts";
 export { onAppResume, useAppResume } from "./resume.ts";
 export { installKeyboardInset, type KeyboardInsetOptions, useKeyboardInset } from "./keyboard.ts";
 export { type BackSwipeOptions, isBackSwipe, useBackSwipe } from "./back-swipe.ts";
-export { SAFE_AREA_CSS, type SafeAreaInsets, useSafeAreaInsets } from "./safe-area.ts";
+export {
+  readSafeAreaInsets,
+  SAFE_AREA_CSS,
+  type SafeAreaInsets,
+  useSafeAreaInsets,
+  watchSafeAreaInsets,
+} from "./safe-area.ts";
 export {
   hideKeyboard,
   type KeyboardResizeMode,

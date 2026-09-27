@@ -427,6 +427,16 @@ export interface ReactNativeConfig {
    * @default {}
    */
   aliases?: Readonly<Record<string, boolean>>;
+  /**
+   * Build a React Native macOS or Windows app's web version: a bare `react-native` import in
+   * the app's own source (not in node_modules) resolves as `react-native-macos` or
+   * `react-native-windows` does in React Native mode (react-native-web plus that package's
+   * additions: the desktop `View` props, `Flyout`, `Popup`, `DynamicColorMacOS`, …), as
+   * Metro's platform resolution does for a desktop build. The app's source stays unchanged.
+   * Unset, `react-native` is react-native-web and only an explicit
+   * `react-native-macos` / `react-native-windows` import gets the additions.
+   */
+  desktopPackage?: "react-native-macos" | "react-native-windows";
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */

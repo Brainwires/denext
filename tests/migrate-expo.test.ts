@@ -384,6 +384,60 @@ Deno.test("migrate --from expo: expo-router gets its web entry without Metro's r
   });
 });
 
+Deno.test("migrate --from expo: a React Native macOS / Windows app gets reactNative.desktopPackage", async () => {
+  const app = (extra: Record<string, string>) => ({
+    "package.json": {
+      name: "desk",
+      main: "index.js",
+      dependencies: { expo: "~57.0.18", "react-native": "0.81.0", ...extra },
+    },
+    "index.js": 'import { registerRootComponent } from "expo";\n',
+    "app.json": { expo: { name: "Desk", slug: "desk" } },
+  });
+  await withApp(app({ "react-native-macos": "0.81.9" }), async (dir) => {
+    const r = await migrateProject(dir, { denextLocalPath: Deno.cwd() });
+    assertEquals(r.expo!.desktopPackages, ["react-native-macos"]);
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assertStringIncludes(cfg, 'reactNative: { desktopPackage: "react-native-macos" },');
+    assert(!cfg.includes("reactNative: true"), cfg);
+    // The app's source is left as it is: Metro's resolution moves into the config.
+    assertEquals(
+      await Deno.readTextFile(join(dir, "index.js")),
+      'import { registerRootComponent } from "expo";\n',
+    );
+  });
+  await withApp(
+    app({ "react-native-macos": "0.81.9", "react-native-windows": "0.84.0" }),
+    async (dir) => {
+      const cap = capture();
+      try {
+        await migrateCommand.run(makeCtx({
+          positionals: [dir],
+          flags: { from: "expo", "denext-local-path": Deno.cwd() },
+        }));
+      } finally {
+        cap.restore();
+      }
+      const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+      assertStringIncludes(cfg, "  reactNative: true,\n");
+      assertStringIncludes(cfg, '// reactNative: { desktopPackage: "react-native-macos" },');
+      assertStringIncludes(cfg, '// reactNative: { desktopPackage: "react-native-windows" },');
+      assertStringIncludes(
+        cap.logs.join("\n"),
+        "react-native-macos and react-native-windows: pick one as reactNative.desktopPackage",
+      );
+    },
+  );
+  await withApp(app({}), async (dir) => {
+    const r = await migrateProject(dir, { denextLocalPath: Deno.cwd() });
+    assertEquals(r.expo!.desktopPackages, []);
+    assertStringIncludes(
+      await Deno.readTextFile(join(dir, "denext.config.ts")),
+      "  reactNative: true,\n",
+    );
+  });
+});
+
 Deno.test("expoMobilePlan: nothing to add → no command", () => {
   const plan = expoMobilePlan({ expo: "1" }, {
     source: null,

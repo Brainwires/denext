@@ -232,6 +232,8 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   back: [],
   "system-bars": [],
   dialog: [],
+  toast: [],
+  "action-sheet": [],
   permissions: [],
   "local-notifications": [],
   biometrics: [],

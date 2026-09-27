@@ -588,6 +588,8 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "back",
     "system-bars",
     "dialog",
+    "toast",
+    "action-sheet",
     "permissions",
     "local-notifications",
     "biometrics",

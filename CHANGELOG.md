@@ -16,7 +16,9 @@ and this project adheres to
   (`node:sqlite`), `showContextMenu` (the native menu), `openExternal` (the system browser),
   `pickDocument` (the native open panel, with a path), the local notifications (a click routes
   like a tap), `useKeepAwake`, the clipboard and `deviceInfo` call the desktop runtime through
-  its token-gated bridge, loading the desktop code lazily. New `openPath`,
+  its token-gated bridge, loading the desktop code lazily (this is the page side: until the
+  desktop runtime that answers the bridge ships, a window answers `unavailable` and each
+  function keeps its web path). New `openPath`,
   `revealInFileManager`, `moveToTrash`, `saveFile` and `pickFolder`. A capability that is not
   enabled keeps the web path (storage ones warn once: browser storage is wiped per launch).
 - **`denext desktop add <capability...>`** (`--list`, `--dry-run`) writes `desktop.capabilities`
@@ -216,8 +218,8 @@ and this project adheres to
   `useLocation` over `@capacitor/geolocation`, `navigator.geolocation` on the web; the install
   writes `NSLocationWhenInUseUsageDescription` and the Android location permissions. New
   `denext/expo/location` shim (permissions, current / last-known position, watch with
-  `distanceInterval`; geocoding through a pluggable `setGeocoder`). Background location is not
-  shipped: no Capacitor 8 background-location plugin was verified.
+  `distanceInterval`; geocoding through a pluggable `setGeocoder`). Background location is its
+  own capability (`denext mobile add background-location`, below).
 - **In-app purchases (`denext mobile add purchases`).** `configurePurchases`, `getOfferings`,
   `purchasePackage`, `restorePurchases`, `getCustomerInfo` and `useEntitlement(id)` over
   RevenueCat's `@revenuecat/purchases-capacitor` 13 (no web fallback), and
@@ -520,6 +522,18 @@ and this project adheres to
   `social-login`, `expo-tracking-transparency` → `tracking`, `expo-application` →
   `application`, `expo-camera` → `camera` + `barcode`, local `expo-notifications` scheduling →
   `local-notifications`, …).
+- **`denext mobile add toast` and `denext mobile add action-sheet`** install `@capacitor/toast`
+  ^8.0.1 and `@capacitor/action-sheet` ^8.1.1, which React Native mode's `ToastAndroid` (the
+  system toast on Android) and `ActionSheetIOS` (a native action sheet) already use when present.
+  Neither needs a usage string, a permission or a privacy-manifest entry.
+- **`readSafeAreaInsets()` and `watchSafeAreaInsets(cb)` in `denext/mobile`**: the safe-area
+  insets outside a component, from the same probe as `useSafeAreaInsets()`. `watchSafeAreaInsets`
+  reports synchronously, then on every change; it returns a stop function.
+- **`reactNative.desktopPackage: "react-native-macos" | "react-native-windows"`**: a bare
+  `react-native` import in the app's own source resolves as that desktop package (its `View`
+  props, `Flyout`, `Popup`, `DynamicColorMacOS`, …), as Metro does for a macOS / Windows build,
+  with the source unchanged; node_modules keep `react-native`. `denext migrate --from expo`
+  writes it when the app depends on one of the two packages (both: the choice is left commented).
 
 ### Changed
 
@@ -593,6 +607,15 @@ and this project adheres to
   Importing any `denext/mobile` function used to emit the sqlite-wasm bridge and its 1.5 MB of
   assets.
 - **`Key` accepts `bigint`**, as React's does.
+- **React Native mode's `NativeSafeAreaProvider` reports the real insets on mount.** Its first
+  `onInsetsChange` carried zeros for one render before the measured insets, so
+  `react-native-safe-area-context`'s children rendered once without insets.
+- **Expo Router's `Stack` / `Tabs` work with the real expo-router 57.** The navigators were built
+  over `@react-navigation/native`, but expo-router 55+ carries its own React Navigation copy with
+  its own contexts, so they found no navigation container; they now use expo-router's copy when
+  it has one. The generated module's own imports (`expo-router`, React Navigation) also failed
+  to resolve in a real build (only `file`-namespace importers reach the node_modules resolver).
+  Covered by a real-browser test with expo-router 57.0.23.
 
 ## [2.10.0] - 2026-09-25
 

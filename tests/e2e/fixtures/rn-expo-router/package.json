@@ -1,0 +1,15 @@
+{
+  "name": "denext-e2e-rn-expo-router",
+  "private": true,
+  "dependencies": {
+    "@react-navigation/native": "7.4.1",
+    "expo": "57.0.25",
+    "expo-constants": "57.0.19",
+    "expo-linking": "57.0.11",
+    "expo-router": "57.0.23",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native-safe-area-context": "5.10.0",
+    "react-native-web": "0.21.2"
+  }
+}

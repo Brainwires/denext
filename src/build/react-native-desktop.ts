@@ -6,6 +6,11 @@
 // `react-native-windows/Libraries/…` import resolves as the same `react-native/Libraries/…`
 // path. The real packages (Flow source, native projects) are never read, so neither needs to be
 // installed. What each provides is recorded in src/react-native/desktop-manifest.ts.
+//
+// With `reactNative.desktopPackage` set, a bare `react-native` import in the app's own source
+// (not node_modules, not a generated module) resolves as that package too: what Metro's
+// out-of-tree platform resolution does for a macOS / Windows build, so the app's unmodified
+// `import { View, Flyout } from "react-native"` gets the desktop View props and additions.
 
 import type * as esbuild from "esbuild";
 import { resolveInstead } from "./react-native-aliases.ts";
@@ -57,16 +62,41 @@ export function desktopEntrySource(flavor: "windows" | "macos"): string {
   ].join("\n");
 }
 
+/** Whether an import comes from the app's own source: a file outside node_modules. */
+function isAppSource(args: esbuild.OnResolveArgs): boolean {
+  return args.namespace === "file" && args.importer !== "" &&
+    !/[\\/]node_modules[\\/]/.test(args.importer);
+}
+
 /**
  * The esbuild plugin that resolves `react-native-windows` / `react-native-macos` (and their
- * subpaths) in React Native mode (see the module comment).
+ * subpaths) in React Native mode (see the module comment). It must run ahead of the
+ * `react-native` → react-native-web resolver when `desktopPackage` is set.
  *
+ * @param desktopPackage `reactNative.desktopPackage`: the package a bare `react-native` import
+ *   in the app's own source resolves as (unset: `react-native` is not redirected).
  * @returns The plugin.
  */
-export function desktopReactNativePlugin(): esbuild.Plugin {
+export function desktopReactNativePlugin(
+  desktopPackage?: "react-native-macos" | "react-native-windows",
+): esbuild.Plugin {
+  const aliased = desktopPackage === undefined
+    ? undefined
+    : desktopPackage === "react-native-windows"
+    ? "windows"
+    : "macos";
   return {
     name: "denext-react-native-desktop",
     setup(build) {
+      if (aliased) {
+        build.onResolve(
+          { filter: /^react-native$/ },
+          (args) =>
+            isAppSource(args)
+              ? { path: aliased, namespace: NAMESPACE, pluginData: args.resolveDir }
+              : null,
+        );
+      }
       build.onResolve({ filter: DESKTOP_FILTER }, (args) => {
         const [, flavor, sub] = DESKTOP_FILTER.exec(args.path)!;
         if (sub) return resolveInstead(build, `react-native${sub}`, args);

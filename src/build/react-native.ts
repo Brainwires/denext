@@ -837,8 +837,10 @@ export function reactNativeBundleOptions(
   return {
     define: reactNativeDefines(dev),
     plugins: [
+      // Ahead of the react-native-web resolver: `desktopPackage` claims app-source
+      // `react-native` imports first.
+      desktopReactNativePlugin(options.desktopPackage),
       reactNativeWebPlugin(projectDir),
-      desktopReactNativePlugin(),
       expoRouterContextPlugin(projectDir),
       expoRouterNavigatorsPlugin(),
       ...(options.expoShims === false ? [] : [expoShimPlugin()]),

@@ -6,11 +6,13 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { flushSync } from "../src/client/reconciler.ts";
 import {
+  readSafeAreaInsets,
   SAFE_AREA_CSS,
   type SafeAreaInsets,
   setSystemBars,
   useSafeAreaInsets,
   useSystemBarsFollowTheme,
+  watchSafeAreaInsets,
 } from "../src/mobile/mod.ts";
 import {
   type Any,
@@ -263,4 +265,49 @@ Deno.test("useSafeAreaInsets: all zero during SSR", () => {
   });
   assertEquals(out.v, { top: 0, right: 0, bottom: 0, left: 0 });
   root.unmount();
+});
+
+// ---- readSafeAreaInsets / watchSafeAreaInsets (outside a component) ----------
+
+Deno.test("readSafeAreaInsets: one measurement through a probe it removes; zero without a DOM", async () => {
+  assertEquals(readSafeAreaInsets(), { top: 0, right: 0, bottom: 0, left: 0 });
+  const env = insetsEnv();
+  await withGlobals(env.globals, () => {
+    assertEquals(readSafeAreaInsets(), { top: 47, right: 0, bottom: 34, left: 0 });
+    assertEquals(env.appended.length, 1);
+    assert(env.appended[0].removed, "probe removed right away");
+    assertEquals(env.observers.length, 0, "nothing watched");
+  });
+});
+
+Deno.test("watchSafeAreaInsets: reports now (zeros included), then each change; stop tears down", async () => {
+  const env = insetsEnv();
+  await withGlobals(env.globals, () => {
+    const seen: SafeAreaInsets[] = [];
+    const stop = watchSafeAreaInsets((i) => void seen.push(i));
+    assertEquals(seen, [{ top: 47, right: 0, bottom: 34, left: 0 }], "synchronous first report");
+
+    Object.assign(env.padding, { paddingTop: "0px", paddingBottom: "0px" });
+    globalThis.dispatchEvent(new Event("resize"));
+    env.frames.flush();
+    assertEquals(seen.at(-1), { top: 0, right: 0, bottom: 0, left: 0 });
+    globalThis.dispatchEvent(new Event("resize"));
+    env.frames.flush();
+    assertEquals(seen.length, 2, "unchanged: no report");
+
+    stop();
+    assert(env.appended[0].removed, "probe removed");
+    assertEquals(env.observers.filter((o) => o.on).length, 0, "observer disconnected");
+    globalThis.dispatchEvent(new Event("resize"));
+    assertEquals(env.frames.queue.size, 0, "window listener removed");
+
+    // A device with no insets still gets its first report.
+    const zeros: SafeAreaInsets[] = [];
+    watchSafeAreaInsets((i) => void zeros.push(i))();
+    assertEquals(zeros, [{ top: 0, right: 0, bottom: 0, left: 0 }]);
+  });
+  // SSR: nothing is called and the stop function is a no-op.
+  const calls: SafeAreaInsets[] = [];
+  watchSafeAreaInsets((i) => void calls.push(i))();
+  assertEquals(calls, []);
 });

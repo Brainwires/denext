@@ -61,15 +61,20 @@ export const result = {
 };
 
 /** `denext/navigation` stand-in: each factory returns a navigator named after it. */
-const NAVIGATION =
-  `export const createNativeStackNavigatorFactory = () => () => ({ Navigator: "DENEXT_STACK" });
+const NAVIGATION = `export const createNativeStackNavigatorFactory = (core) => {
+  globalThis.__denextNavCore = core.core;
+  return () => ({ Navigator: "DENEXT_STACK" });
+};
 export const createBottomTabNavigatorFactory = () => () => ({ Navigator: "DENEXT_TABS" });
 `;
 
-Deno.test("reactNative bundle: expo-router's Stack / Tabs resolve to denext/navigation's; the rest stays real", async () => {
+/** Bundle the fixture's entry (plus `extra` files) in React Native mode and import it. */
+async function bundleEntry(
+  extra: Record<string, string> = {},
+): Promise<{ result: Record<string, string>; core: unknown }> {
   const dir = await Deno.makeTempDir({ prefix: "denext_rn_nav_" });
   try {
-    await writeTree(dir, FIXTURE);
+    await writeTree(dir, { ...FIXTURE, ...extra });
     const options = reactNativeBundleOptions({ reactNative: true }, dir, false)!;
     assertEquals(options.usesActivity, true, "hidden stack screens need the Activity runtime");
     const standIn: esbuild.Plugin = {
@@ -96,7 +101,20 @@ Deno.test("reactNative bundle: expo-router's Stack / Tabs resolve to denext/navi
     });
     const code = new TextDecoder().decode(out.outputFiles![0].contents);
     const url = `data:text/javascript;base64,${btoa(unescape(encodeURIComponent(code)))}`;
+    const g = globalThis as { __denextNavCore?: unknown };
+    delete g.__denextNavCore;
     const { result } = await import(url);
+    return { result, core: g.__denextNavCore };
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test("reactNative bundle: expo-router's Stack / Tabs resolve to denext/navigation's; the rest stays real", async () => {
+  {
+    const { result, core } = await bundleEntry();
+    assertEquals(core, "CORE", "no bundled copy: the navigators use @react-navigation/native");
     assertEquals(result.Stack, "LAYOUT(DENEXT_STACK)");
     assertEquals(result.StackScreen, "REAL_STACK_SCREEN", "Stack.Screen is carried over");
     assertEquals(result.Tabs, "LAYOUT(DENEXT_TABS)");
@@ -107,8 +125,20 @@ Deno.test("reactNative bundle: expo-router's Stack / Tabs resolve to denext/navi
       "expo-router's own imports keep the real module",
     );
     assertEquals(result.StackOnly, "LAYOUT(DENEXT_STACK)", "expo-router/stack too");
-  } finally {
-    await esbuild.stop();
-    await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("reactNative bundle: expo-router 55+'s own React Navigation copy is the navigators' core", async () => {
+  // expo-router 57 has no `exports` map and ships React Navigation under build/: its contexts
+  // are not @react-navigation/native's, so the navigators must be built over that copy.
+  const { result, core } = await bundleEntry({
+    "node_modules/expo-router/package.json": JSON.stringify({
+      name: "expo-router",
+      main: "index.js",
+    }),
+    "node_modules/expo-router/build/react-navigation/native/index.js":
+      "export const core = 'EXPO_ROUTER_CORE';\n",
+  });
+  assertEquals(core, "EXPO_ROUTER_CORE");
+  assertEquals(result.Stack, "LAYOUT(DENEXT_STACK)");
 });

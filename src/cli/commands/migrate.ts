@@ -350,8 +350,24 @@ function reportExpo(r: MigrateResult): void {
     `    entry ${s.entry} · title ${JSON.stringify(s.title)} · nodeModulesDir ${s.nodeModulesDir}`,
   );
   reportExpoConfig(e);
+  reportExpoDesktop(e.desktopPackages);
   reportExpoDeps(e.deps);
   reportExpoShell(e);
+}
+
+/** The React Native desktop package(s) the app's `react-native` imports resolve as. */
+function reportExpoDesktop(packages: readonly string[]): void {
+  if (packages.length === 1) {
+    console.log(
+      `  ▸ ${packages[0]}: reactNative.desktopPackage resolves the app's \`react-native\` ` +
+        "imports as it (as Metro does), so its View props and additions resolve.",
+    );
+  } else if (packages.length > 1) {
+    console.log(
+      `  ▸ ${packages.join(" and ")}: pick one as reactNative.desktopPackage in ` +
+        "denext.config.ts (commented there) for the app's `react-native` imports.",
+    );
+  }
 }
 
 /** The framework-specific section of the report, if any. */

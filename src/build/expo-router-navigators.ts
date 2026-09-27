@@ -13,7 +13,14 @@
 // overrides `Stack` / `Tabs` with `withLayoutContext(<denext navigator>)`, carrying over
 // `Stack.Screen` / `Stack.Protected`. Imports from inside expo-router itself (and the generated
 // module's own import of it) resolve to the real package, so nothing recurses.
+//
+// The navigators are built over the React Navigation core expo-router itself uses: expo-router
+// 55+ carries its own copy (`expo-router/build/react-navigation/native`, which re-exports core
+// and routers), with its own contexts, so a navigator built over a separately installed
+// `@react-navigation/native` would find no navigation container. Older expo-router depends on
+// `@react-navigation/native`, which is used when the bundled copy is absent.
 
+import { join } from "@std/path";
 import type * as esbuild from "esbuild";
 
 /** The esbuild namespace of the generated modules. */
@@ -28,6 +35,12 @@ const INTERNAL_IMPORTER = /[\\/]node_modules[\\/](?:expo-router|@expo[\\/]router
 /** The marker the generated module's own imports carry, to reach the real package. */
 const REAL = "denext-real";
 
+/** The generated module's specifier for React Navigation's core (resolved by the plugin). */
+const CORE = "denext-expo-router-core";
+
+/** expo-router's own React Navigation copy (expo-router 55+), then the standalone package. */
+const CORE_CANDIDATES = ["expo-router/build/react-navigation/native", "@react-navigation/native"];
+
 /**
  * The generated module for `spec` (`expo-router`, `expo-router/stack` or `expo-router/tabs`):
  * the real module re-exported, with `Stack` and/or `Tabs` replaced.
@@ -41,7 +54,7 @@ export function expoRouterNavigatorsSource(spec: string): string {
   const wantsStack = spec !== "expo-router/tabs";
   const wantsTabs = spec !== "expo-router/stack";
   const lines = [
-    `import * as __core from "@react-navigation/native";`,
+    `import * as __core from ${JSON.stringify(CORE)};`,
     `import { withLayoutContext as __withLayoutContext } from ${expoRouter};`,
     `import * as __real from ${real};`,
     `import { createBottomTabNavigatorFactory as __tabs, createNativeStackNavigatorFactory as __stack } from "denext/navigation";`,
@@ -82,16 +95,35 @@ export function expoRouterNavigatorsPlugin(): esbuild.Plugin {
   return {
     name: "denext-expo-router-navigators",
     setup(build) {
-      build.onResolve(
-        { filter: /\?denext-real$/ },
-        (args) =>
-          build.resolve(args.path.slice(0, -(REAL.length + 1)), {
-            kind: args.kind,
-            importer: args.importer,
-            resolveDir: args.resolveDir,
-            pluginData: { [REAL]: true },
-          }),
-      );
+      // The generated module's imports resolve as if from a file in the app's importer's
+      // folder: the node_modules resolvers only answer `file`-namespace importers.
+      const fromFolder = (args: esbuild.OnResolveArgs, path: string, data?: object) =>
+        build.resolve(path, {
+          kind: args.kind,
+          importer: args.namespace === "file"
+            ? args.importer
+            : join(args.resolveDir, "denext-generated.js"),
+          namespace: "file",
+          resolveDir: args.resolveDir,
+          pluginData: data,
+        });
+      build.onResolve({ filter: /\?denext-real$/ }, async (args) => {
+        const result = await fromFolder(args, args.path.slice(0, -(REAL.length + 1)), {
+          [REAL]: true,
+        });
+        if (result.errors.length > 0) return { errors: result.errors };
+        const { path, namespace, external, sideEffects } = result;
+        return { path, namespace, external, sideEffects };
+      });
+      build.onResolve({ filter: new RegExp(`^${CORE}$`) }, async (args) => {
+        let result: esbuild.ResolveResult | null = null;
+        for (const spec of CORE_CANDIDATES) {
+          result = await fromFolder(args, spec);
+          if (result.errors.length === 0) break;
+        }
+        const { errors, path, namespace, external, sideEffects } = result!;
+        return errors.length > 0 ? { errors } : { path, namespace, external, sideEffects };
+      });
       build.onResolve({ filter: FILTER }, (args) => {
         if ((args.pluginData as Record<string, unknown> | undefined)?.[REAL]) return undefined;
         if (INTERNAL_IMPORTER.test(args.importer)) return undefined;

@@ -488,6 +488,9 @@ Deno.test("NativeSafeAreaProvider: reports useSafeAreaInsets() as safe-area-cont
     flushSync();
     assertEquals(events.at(-1).nativeEvent.insets, { top: 47, right: 0, bottom: 34, left: 0 });
     assert("frame" in events.at(-1).nativeEvent);
+    // The first report already carries the measured insets: no zero placeholder on mount.
+    assertEquals(events[0].nativeEvent.insets, { top: 47, right: 0, bottom: 34, left: 0 });
+    assertEquals(events.length, 1);
     root.unmount();
   });
 });

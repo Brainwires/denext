@@ -1514,6 +1514,7 @@
     "purchasePackage:function",
     "readClipboard:function",
     "readFile:function",
+    "readSafeAreaInsets:function",
     "registerForPush:function",
     "reloadWidgets:function",
     "requestPermission:function",
@@ -1572,6 +1573,7 @@
     "useSystemBarsFollowTheme:function",
     "watchPosition:function",
     "watchPositionInBackground:function",
+    "watchSafeAreaInsets:function",
     "writeClipboard:function",
     "writeFile:function"
   ],

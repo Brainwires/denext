@@ -529,10 +529,16 @@ function validateReactNative(config: DenextConfig, fail: Fail): void {
   }
 }
 
-/** `reactNative`'s object options: `lists` and `aliases`. */
+/** `reactNative`'s object options: `lists`, `desktopPackage` and `aliases`. */
 function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): void {
   if (value.lists !== undefined && value.lists !== "denext" && value.lists !== "library") {
     fail("reactNative.lists", 'must be "denext" or "library"');
+  }
+  const desktop = value.desktopPackage;
+  if (
+    desktop !== undefined && desktop !== "react-native-macos" && desktop !== "react-native-windows"
+  ) {
+    fail("reactNative.desktopPackage", 'must be "react-native-macos" or "react-native-windows"');
   }
   validateReactNativeAliases(value.aliases, fail);
 }

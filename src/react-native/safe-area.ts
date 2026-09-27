@@ -6,7 +6,7 @@
  * - {@linkcode createSafeAreaView}: React Native's `SafeAreaView` over react-native-web's
  *   `View` (react-native-web's pads with `env()` only);
  * - {@linkcode createNativeSafeAreaProvider}: `react-native-safe-area-context`'s web
- *   `NativeSafeAreaProvider`, reporting `denext/mobile`'s `useSafeAreaInsets()`.
+ *   `NativeSafeAreaProvider`, reporting `denext/mobile`'s `watchSafeAreaInsets()`.
  *
  * Both are 0 unless the viewport meta has `viewport-fit=cover`, which React Native mode's SPA
  * shell writes by default.
@@ -17,7 +17,7 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren, VNodeType } from "../jsx/types.ts";
 import { useEffect, useRef, useState } from "../runtime/hooks.ts";
-import { listenAll, type SafeAreaInsets, useSafeAreaInsets } from "../mobile/safe-area.ts";
+import { listenAll, type SafeAreaInsets, watchSafeAreaInsets } from "../mobile/safe-area.ts";
 
 /** A side's inset as CSS: Capacitor's injected value, else `env()`, else `0px`. */
 function inset(side: "top" | "right" | "bottom" | "left"): string {
@@ -143,11 +143,12 @@ function useResizeTick(view: { current: unknown }): number {
 
 /**
  * `react-native-safe-area-context`'s web `NativeSafeAreaProvider` over react-native-web's
- * `View`, reporting `denext/mobile`'s `useSafeAreaInsets()`: the package's own web provider
+ * `View`, reporting `denext/mobile`'s `watchSafeAreaInsets()`: the package's own web provider
  * reads `env(safe-area-inset-*)` only, which Android WebView before 140 gets wrong. It calls
  * `onInsetsChange({ nativeEvent: { insets, frame } })` with the insets clamped to the part of
  * the window edge the view overlaps and the view's frame, as the package's provider does, each
- * time the insets change or the view or window resizes; so the package's `SafeAreaProvider`,
+ * time the insets change or the view or window resizes (the first report, on mount, already
+ * carries the measured insets); so the package's `SafeAreaProvider`,
  * `useSafeAreaInsets`, `useSafeAreaFrame` and `SafeAreaView` all read denext's insets.
  * React Native mode swaps it in for the package's `NativeSafeAreaProvider.web.js`.
  *
@@ -159,14 +160,18 @@ export function createNativeSafeAreaProvider(
 ): (props: NativeSafeAreaProviderProps) => VNode {
   function NativeSafeAreaProvider(props: NativeSafeAreaProviderProps): VNode {
     const { children, style, onInsetsChange, ref, ...rest } = props;
-    const insets = useSafeAreaInsets();
+    // null until mounted: the watcher measures synchronously in its effect, so the first
+    // onInsetsChange carries the real insets (safe-area-context renders its children only
+    // after it), never a zero placeholder.
+    const [insets, setInsets] = useState<SafeAreaInsets | null>(null);
+    useEffect(() => watchSafeAreaInsets(setInsets), []);
     const view = useRef<unknown>(null);
     const tick = useResizeTick(view);
     const report = useRef(onInsetsChange);
     report.current = onInsetsChange;
     useEffect(() => {
-      report.current?.({ nativeEvent: measure(view.current, insets) });
-    }, [insets.top, insets.right, insets.bottom, insets.left, tick]);
+      if (insets) report.current?.({ nativeEvent: measure(view.current, insets) });
+    }, [insets, tick]);
     // The provider's own ref, then the caller's (a callback or an object ref).
     const setRef = (node: unknown) => {
       view.current = node;

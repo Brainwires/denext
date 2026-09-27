@@ -456,6 +456,30 @@ Deno.test("mobile add application: @capacitor/app + @capacitor/device, each pack
   });
 });
 
+Deno.test("mobile add toast + action-sheet: the plugins RN's overlays feature-detect, nothing native", async () => {
+  await inProject({}, async (dir) => {
+    const plistBefore = await read(dir, INFO_PLIST);
+    const manifestBefore = await read(dir, MANIFEST);
+    const { run, lines } = fakeRunner();
+    const report = await addMobileCapabilities({
+      capabilities: ["toast", "action-sheet"],
+      cwd: dir,
+      run,
+    });
+    assertEquals(lines(), [
+      "npm install @capacitor/toast@^8.0.1 @capacitor/action-sheet@^8.1.1",
+      "npx cap sync",
+    ]);
+    // Neither plugin needs a usage string, a permission or an entitlement.
+    assertEquals(await read(dir, INFO_PLIST), plistBefore);
+    assertEquals(await read(dir, MANIFEST), manifestBefore);
+    assertEquals(report.plan.manual, []);
+    const text = formatCapabilityPlan(report.plan);
+    assertStringIncludes(text, "ToastAndroid.show");
+    assertStringIncludes(text, "ActionSheetIOS.showActionSheetWithOptions");
+  });
+});
+
 Deno.test("mobile add camera: NSMicrophoneUsageDescription for in-page video recording", async () => {
   await inProject({}, async (dir) => {
     const { run } = fakeRunner();
