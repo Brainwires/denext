@@ -137,7 +137,9 @@ export async function createProdApp(
     redirects: rules.redirects,
     rewrites: rules.rewrites,
     headerRules: rules.headers,
-    pageCache: new PageCache(), // ISR for routes opting in via revalidate/dynamic
+    // ISR for routes opting in via revalidate/dynamic, keyed to this build (a redeploy's pages
+    // must not be served from the previous build's entries: their client chunks are gone).
+    pageCache: new PageCache(info.buildId),
     flight: flightRoutes.size > 0,
     appDir: paths.appDir,
     flightRoutes,

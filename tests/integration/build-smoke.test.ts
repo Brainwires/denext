@@ -231,6 +231,11 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // error boundary is interactive, so every route hydrates).
   assert(Array.isArray(manifest.staticRoutes), "manifest should list static routes");
   assertEquals(manifest.staticRoutes.length, 0, "examples/hello has no static routes");
+  // The build id that keys this build's cached pages (a redeploy never reads another's).
+  assert(
+    typeof manifest.buildId === "string" && manifest.buildId.length > 0,
+    "manifest records a build id",
+  );
 
   // The entry wires up hydration against the server-rendered root.
   const entry = await Deno.readTextFile(join(clientDir, "index.js"));

@@ -549,6 +549,14 @@ and this project adheres to
 
 ### Changed
 
+- **The ISR / PPR page cache is keyed per build.** `denext build` records a `buildId` in
+  `.denext/manifest.json` (random, or `DENEXT_BUILD_ID` for separately built replicas sharing
+  one store) and `denext start` keys cached pages as `v2:<buildId>:<path>`, so a redeploy never
+  serves a page from the previous build — whose HTML named client chunks the new build no longer
+  has (`force-static` pages previously stayed stale forever). The key also carries a format
+  version, so a framework upgrade that changes the cached shape starts cold. A custom
+  `CacheStore` that seeds or reads page keys by bare path must adopt the new key shape.
+
 - **React Native mode: `Platform.select` falls back to the shell's own key.** Inside the iOS or
   Android shell, a `spec` without `web` now picks `ios` / `android` (then `default`), as React
   Native on that device would, instead of `default` or `undefined`: `Platform.select({ ios: 44,

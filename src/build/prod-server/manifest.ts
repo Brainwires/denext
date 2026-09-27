@@ -41,6 +41,8 @@ export interface BuildInfo {
   publicEnvKeys: string[] | undefined;
   /** The build's Flight boundary (routes + module manifest), when the manifest recorded it. */
   boundary?: { routes: Set<string>; manifest: BoundaryManifest };
+  /** The build's id (keys its cached pages); absent for a build that predates it. */
+  buildId?: string;
 }
 
 /** Read the build manifest; a missing/invalid one means "nothing static, no compat". */
@@ -60,6 +62,7 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     // Install build-self-hosted Google fonts so renderFontStyles emits local CSS.
     if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
     info.nextCompat = bm.nextCompat === true;
+    if (typeof bm.buildId === "string" && bm.buildId) info.buildId = bm.buildId;
     if (bm.boundary && typeof bm.boundary === "object" && Array.isArray(bm.boundaryRoutes)) {
       info.boundary = {
         routes: new Set<string>(bm.boundaryRoutes),

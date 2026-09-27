@@ -35,6 +35,16 @@ links back to the release that introduced it.
   re-encoded, and a route opts out with `export const compress = false`. A test that calls a
   `createApp()` handler directly with an `Accept-Encoding` request header now gets an encoded
   body: drop the header or decode it. ([Configuration](/docs/config#production-server))
+- **The ISR page cache is keyed per build.** A cached page references its build's hashed client
+  chunks, so `denext start` now reads and writes only the entries of the build it runs: every
+  deploy starts with a cold page cache (including `force-static` pages), and the previous
+  build's entries age out through the store's eviction. `denext build` writes the id into
+  `.denext/manifest.json` — random per build, or `DENEXT_BUILD_ID` when set; set it (to the
+  commit sha, say) when replicas built separately should share one store. A custom
+  `CacheStore` is unaffected in its interface, but page keys it receives now start with the
+  cache format and build id (`v2:<buildId>:/path?query`), so a store or warm-up script that
+  reads or seeds page keys by bare path must use the new form. `new PageCache()` in your own
+  `createApp()` keeps path-only keys (`v2:/path`); pass a build id to key by build.
 
 ## Upgrading to 2.10
 

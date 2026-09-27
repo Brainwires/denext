@@ -66,6 +66,29 @@ function fontModuleLoader(ctx: BuildContext): ModuleLoader {
   return createNextCompatServerLoader(defaultLoader, { moduleMap });
 }
 
+/**
+ * This build's id, which keys its cached pages (see `PageCache`): `DENEXT_BUILD_ID` when the
+ * deploy sets one — replicas built separately from one commit then share a page cache (use the
+ * commit sha) — else a random one, so every build starts with a cold page cache. Random rather
+ * than a content hash: a cached page also bakes in server-rendered content, which a redeploy
+ * may change while the client output stays byte-identical.
+ *
+ * @param fromEnv The `DENEXT_BUILD_ID` value, if set.
+ * @returns The build id.
+ */
+export function resolveBuildId(fromEnv: string | undefined): string {
+  return fromEnv?.trim() || crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+}
+
+/** `DENEXT_BUILD_ID` from the environment, or undefined (unset, or no `--allow-env`). */
+function envBuildId(): string | undefined {
+  try {
+    return Deno.env.get("DENEXT_BUILD_ID");
+  } catch {
+    return undefined;
+  }
+}
+
 /** The `manifest.json` document the prod server reads. */
 function buildManifestFor(
   ctx: BuildContext,
@@ -74,6 +97,8 @@ function buildManifestFor(
 ) {
   return {
     version: 1,
+    // Keys this build's cached pages (the prod server passes it to `PageCache`).
+    buildId: resolveBuildId(envBuildId()),
     generatedRoutes: ctx.routes,
     flight: ctx.hasFlight,
     boundaryRoutes: ctx.boundaryRoutes.map((p) => p.routePath),
