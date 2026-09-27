@@ -95,7 +95,10 @@ export interface ApiTokenRecord {
   name?: string;
   /** SHA-256 (hex) of the presented `tok_…` string. */
   tokenHash: string;
-  /** Creation time, epoch seconds. */
+  /**
+   * Creation time — the sign-in the family came from — epoch seconds; the anchor of
+   * `native.refreshTokenMaxAge`.
+   */
   createdAt: number;
   /** Expiry, epoch seconds; `undefined` never expires. */
   expiresAt?: number;
@@ -143,6 +146,11 @@ export interface NativeSessionRecord {
   expiresAt: number;
   /** When the family was revoked (sign-out, reuse detected, account deleted), epoch seconds. */
   revokedAt?: number;
+  /**
+   * When the family last rotated, epoch seconds — the anchor of `native.refreshReuseInterval`.
+   * Absent until the first rotation.
+   */
+  rotatedAt?: number;
 }
 
 /**
@@ -447,17 +455,20 @@ export interface AuthAdapter {
    * **Atomically** advance a family from `fromGeneration` to `fromGeneration + 1` — a
    * compare-and-swap that succeeds only while the stored generation is still `fromGeneration`
    * and the family is not revoked. Two concurrent refreshes with one token yield exactly one
-   * `true`.
+   * `true`. The same write stores `rotation.rotatedAt` as
+   * {@linkcode NativeSessionRecord.rotatedAt}.
    *
    * @param id The family id.
    * @param fromGeneration The generation the presented refresh token carries.
    * @param expiresAt The family's new expiry, epoch seconds.
+   * @param rotation The rotation time.
    * @returns `true` when this call advanced the generation.
    */
   rotateNativeSession?(
     id: string,
     fromGeneration: number,
     expiresAt: number,
+    rotation?: { rotatedAt: number },
   ): MaybePromise<boolean>;
 
   /**

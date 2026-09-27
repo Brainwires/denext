@@ -103,12 +103,29 @@ export default {
         redirectUris: ["com.example.app://auth/callback"],
         // accessTokenTtl: 900,          seconds (60..3600)
         // refreshTokenTtl: 2_592_000,   seconds, slides on each refresh (1 hour..1 year)
+        // refreshTokenMaxAge: 7_776_000, absolute cap from sign-in (default: none)
+        // refreshReuseInterval: 0,      concurrent-refresh grace, seconds (0..60)
         // codeTtl: 60,                  seconds (10..600)
       },
     }),
   ],
 };
 ```
+
+Two refresh policies are off by default and worth deciding on:
+
+| Option                 | Default | What it does                                                                                                                                                                                                                                                                       |
+| ---------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refreshTokenMaxAge`   | none    | An absolute lifetime, in seconds from the original sign-in (1 hour..10 years). Each refresh still slides the expiry by `refreshTokenTtl`, but never past this cap; past it the refresh is `invalid_grant` like an expired one, the family is revoked, and the user signs in again. |
+| `refreshReuseInterval` | `0`     | A grace window, in seconds (0..60), for two refreshes racing with one refresh token. Within it, the immediately previous refresh token answers the same pair its rotation issued instead of revoking the family. See [Security](#security) for the tradeoff.                       |
+
+Without `refreshTokenMaxAge`, an app opened at least once every `refreshTokenTtl` stays
+signed in indefinitely. Set it when a session should end on a schedule however active it is
+(90 days is common). It counts from the family's creation, which is the sign-in.
+
+`refreshReuseInterval` is for an app with more than one refresher: a background task or a
+second process holding the same stored refresh token. `nativeSession()` is single-flight
+within one JavaScript context, so a single-process app doesn't need it.
 
 The flow, in the order it happens:
 
@@ -303,6 +320,22 @@ The checks, in one place:
   doesn't verify is refused without touching the family, so knowing a family id is not
   enough to sign someone out. Two concurrent refreshes with one token produce exactly one
   new pair (the loser is treated as a replay) — the client is single-flight for that reason.
+- **The reuse interval weakens replay detection, slightly.** With `refreshReuseInterval: N`,
+  the immediately previous refresh token is accepted for `N` seconds after its rotation and
+  answers the same pair that rotation issued (byte-identical; the family advances once).
+  The cost is that a stolen token replayed within those `N` seconds of the app's own refresh,
+  or used by a thief who refreshes first while the app follows within `N` seconds, is no
+  longer caught at that moment: both parties now hold the same pair. Detection returns at the
+  next rotation, because whichever party then presents a spent token outside the window
+  revokes the family. An older generation is a replay even inside the window, and the window
+  never revives a revoked, expired or capped family or a deleted user. Keep it as short as
+  your race needs (a few seconds), or leave it at `0`.
+- **Nothing is stored to answer the reuse interval.** The pair is re-derived, not kept: the
+  refresh token is an HMAC of the family, the generation and a server-only salt, and the
+  access token's issue time is the stored rotation time and its id an HMAC of the same
+  input. The only new state is one timestamp on the family (`rotatedAt`).
+- **The absolute cap ends access tokens too.** The family's expiry never slides past
+  `refreshTokenMaxAge`, and every access token is re-checked against it.
 - **Origin gate.** The native POSTs carry their credential in the body or the
   `Authorization` header, never a cookie, so a request with no `Origin` (a native HTTP
   client) passes; a present `Origin` must be this app or one `cors` allows, and `null` is

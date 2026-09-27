@@ -1204,6 +1204,7 @@ denextAuth({
   adapter: sqliteAuthAdapter({ path: "auth.db" }), // needs the native session group
   native: {
     redirectUris: ["com.example.app://auth/callback"], // exact match
+    refreshTokenMaxAge: 90 * 86_400, // optional: sign in again after 90 days, however active
     apple: { clientIds: ["com.example.app"], clientSecret: () => appleClientSecretJwt() },
     google: { clientIds: [IOS_CLIENT_ID, WEB_CLIENT_ID] },
   },
@@ -1469,7 +1470,11 @@ client migration, or electing a single leader tab for a shared connection.
   under their own MAC domain and re-checked against their session family on every request,
   so a revoked family stops at once. A replayed refresh token (an older generation with a
   valid MAC) revokes its whole family; a forged one (bad MAC) is refused without touching
-  it. The native POSTs take no ambient credential, so a request with no `Origin` (a native
+  it. Two opt-ins adjust this: `native.refreshTokenMaxAge` caps a family absolutely from its
+  sign-in (default none), and `native.refreshReuseInterval` (default `0`, at most 60 seconds)
+  lets the immediately previous refresh token re-fetch the same pair shortly after its
+  rotation, for apps whose refreshes can race — at the cost of missing a replay inside that
+  window. The native POSTs take no ambient credential, so a request with no `Origin` (a native
   HTTP client) passes, while a present `Origin` must be this app or one the `cors` config
   allows, and `"null"` never is. See [App backend](/docs/app-backend#security).
 

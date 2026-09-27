@@ -505,6 +505,22 @@ const NATIVE_CASES: Record<string, Case> = {
     );
     await revoke.call(adapter, "unknown"); // no-op
   },
+  "rotateNativeSession records rotatedAt": async (adapter) => {
+    const create = adapter.createNativeSession;
+    const get = adapter.getNativeSession;
+    const rotate = adapter.rotateNativeSession;
+    assert(create && get && rotate);
+    await create.call(adapter, family("r1", "u1"));
+    assertEquals((await get.call(adapter, "r1"))?.rotatedAt, undefined, "none before a rotation");
+    assert(await rotate.call(adapter, "r1", 0, at(100), { rotatedAt: 50 }));
+    let stored = await get.call(adapter, "r1");
+    assertEquals([stored?.rotatedAt, stored?.expiresAt, stored?.createdAt], [50, at(100), 1]);
+    assert(await rotate.call(adapter, "r1", 1, at(200), { rotatedAt: 70 }));
+    stored = await get.call(adapter, "r1");
+    assertEquals([stored?.rotatedAt, stored?.generation], [70, 2]);
+    assertEquals(await rotate.call(adapter, "r1", 0, at(300), { rotatedAt: 90 }), false);
+    assertEquals((await get.call(adapter, "r1"))?.rotatedAt, 70, "a lost swap writes nothing");
+  },
   "revokeNativeSessionsByUser revokes that user's families only": async (adapter) => {
     const create = adapter.createNativeSession;
     const get = adapter.getNativeSession;

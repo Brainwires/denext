@@ -19,6 +19,17 @@
  *   that doesn't verify is a forgery, refused without touching the family — so knowing a
  *   family id is not enough to sign someone out.
  *
+ * Two opt-in refresh policies:
+ * - **`refreshTokenMaxAge`** caps a family absolutely, from its original sign-in
+ *   (`createdAt`): past it a refresh is refused like an expired family's, and the family is
+ *   revoked. Its expiry never slides past the cap, so access tokens stop with it too.
+ * - **`refreshReuseInterval`** answers the loser of a refresh race: within that many seconds of
+ *   a rotation, the IMMEDIATELY previous generation gets the pair that rotation issued, again.
+ *   Nothing token-shaped is stored for this. Every part of a pair is a pure function of server
+ *   secrets and stored family state — the refresh MAC covers `(family, generation, salt)`, and
+ *   the access token's issue time is the stored `rotatedAt` and its id an HMAC of the same
+ *   input under its own domain — so the pair is re-derived, byte-identical, from the record.
+ *
  * Every refusal is uniform (`null` / `invalid_grant`), and no token is ever logged.
  *
  * @module
@@ -37,6 +48,8 @@ import type { AuthConfig, AuthNativeConfig, AuthSession, AuthUser } from "./type
 const ACCESS_DOMAIN = "denext.native.access.v1";
 /** The MAC domain of a native refresh token. */
 const REFRESH_DOMAIN = "denext.native.refresh.v1";
+/** The MAC domain of an access token's id (derived, so a pair can be re-derived exactly). */
+const ACCESS_ID_DOMAIN = "denext.native.access-id.v1";
 /** Access-token prefix — recognizable in logs and secret scanners. */
 const ACCESS_PREFIX = "nat_";
 /** Refresh-token prefix. */
@@ -104,6 +117,10 @@ export interface ResolvedNative {
   accessTtl: number;
   /** Refresh-token (family) lifetime, seconds. */
   refreshTtl: number;
+  /** Absolute family lifetime from its original sign-in, seconds; `null` for none. */
+  refreshMaxAge: number | null;
+  /** The concurrent-refresh grace window, seconds (`0`: every reuse is a replay). */
+  reuseInterval: number;
   /** One-time code lifetime, seconds. */
   codeTtl: number;
   /** Whether native id_token sign-in requires a server-issued nonce. */
@@ -189,6 +206,10 @@ export function resolveNative(config: AuthConfig): ResolvedNative | null {
     redirects: native.redirectUris.map(registerRedirect),
     accessTtl: lifetime(native.accessTokenTtl, 900, 60, 3600),
     refreshTtl: lifetime(native.refreshTokenTtl, 30 * 86_400, 3600, 365 * 86_400),
+    refreshMaxAge: native.refreshTokenMaxAge === undefined
+      ? null
+      : lifetime(native.refreshTokenMaxAge, 3600, 3600, 10 * 365 * 86_400),
+    reuseInterval: lifetime(native.refreshReuseInterval, 0, 0, 60),
     codeTtl: lifetime(native.codeTtl, 60, 10, 600),
     requireNonce: native.requireNonce !== false,
     config: native,
@@ -422,7 +443,11 @@ interface AccessPayload {
   i: number;
   /** Expires at, epoch seconds. */
   e: number;
-  /** A random token id, so no two issued tokens are ever byte-identical. */
+  /**
+   * The token id: an HMAC of the family, generation and salt, so tokens of different
+   * generations or families never collide, yet one generation's token can be re-derived
+   * exactly (the `refreshReuseInterval` answer).
+   */
   j: string;
 }
 
@@ -431,35 +456,35 @@ function refreshInput(familyId: string, generation: number, salt: string): strin
   return `${familyId}.${generation}.${salt}`;
 }
 
-/** Mint the token pair for a family at `generation`. */
+/**
+ * Mint the token pair for a family at its current generation, issued at `issued`. Deterministic
+ * in `(signing secret, family record, snapshot, issued)` — nothing random — so the same inputs
+ * re-derive the same pair byte for byte.
+ */
 async function mintTokens(
   config: AuthConfig,
   native: ResolvedNative,
   family: NativeSessionRecord,
-  generation: number,
   snapshot: NativeSnapshot,
+  issued: number,
 ): Promise<NativeTokens> {
-  const issued = now();
+  const [signer] = secrets(config);
+  const input = refreshInput(family.id, family.generation, family.salt);
   const payload: AccessPayload = {
     f: family.id,
     u: family.userId,
     i: issued,
     e: issued + native.accessTtl,
-    j: randomToken(9),
+    j: (await hmacSign(input, signer, ACCESS_ID_DOMAIN)).slice(0, 12),
   };
   const body = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
-  const [signer] = secrets(config);
   const accessMac = await hmacSign(body, signer, ACCESS_DOMAIN);
-  const refreshMac = await hmacSign(
-    refreshInput(family.id, generation, family.salt),
-    signer,
-    REFRESH_DOMAIN,
-  );
+  const refreshMac = await hmacSign(input, signer, REFRESH_DOMAIN);
   return {
     access_token: `${ACCESS_PREFIX}${body}.${accessMac}`,
     token_type: "Bearer",
     expires_in: native.accessTtl,
-    refresh_token: `${REFRESH_PREFIX}${family.id}.${generation}.${refreshMac}`,
+    refresh_token: `${REFRESH_PREFIX}${family.id}.${family.generation}.${refreshMac}`,
     refresh_expires_in: Math.max(0, family.expiresAt - issued),
     user: snapshot.user,
   };
@@ -486,10 +511,10 @@ export async function startNativeSession(
     salt: randomToken(16),
     session: JSON.stringify(snapshot),
     createdAt: created,
-    expiresAt: created + native.refreshTtl,
+    expiresAt: slidExpiry(native, created, created),
   };
   await native.adapter.createNativeSession(family);
-  return await mintTokens(config, native, family, 0, snapshot);
+  return await mintTokens(config, native, family, snapshot, created);
 }
 
 /** A parsed refresh token. */
@@ -512,11 +537,99 @@ export type RefreshOutcome =
   | { ok: true; tokens: NativeTokens }
   | { ok: false; reason: "invalid" | "reuse" | "revoked" | "expired" | "user_gone" };
 
+/** A refusal, as {@link RefreshOutcome} carries it. */
+type RefreshRefusal = Extract<RefreshOutcome, { ok: false }>;
+
+/** The family's expiry after sliding at `at`: `refreshTtl` on, never past the absolute cap. */
+function slidExpiry(native: ResolvedNative, at: number, createdAt: number): number {
+  const sliding = at + native.refreshTtl;
+  return native.refreshMaxAge === null
+    ? sliding
+    : Math.min(sliding, createdAt + native.refreshMaxAge);
+}
+
+/** Whether a family is past `refreshTokenMaxAge`, counted from its creation (the sign-in). */
+function pastMaxAge(native: ResolvedNative, family: NativeSessionRecord, at: number): boolean {
+  return native.refreshMaxAge !== null && family.createdAt + native.refreshMaxAge <= at;
+}
+
+/**
+ * The checks every successful refresh shares, on a genuine, unrevoked family: unexpired, within
+ * its absolute lifetime (past it the family is revoked, and the refusal reads as an expiry),
+ * and its user still exists (else it is revoked). Answers the snapshot to mint for.
+ */
+async function liveSnapshot(
+  config: AuthConfig,
+  native: ResolvedNative,
+  family: NativeSessionRecord,
+  at: number,
+): Promise<NativeSnapshot | RefreshRefusal> {
+  // The absolute cap first: its expiry never slides past it, so the plain expiry check below
+  // would otherwise refuse without revoking.
+  if (pastMaxAge(native, family, at)) {
+    await native.adapter.revokeNativeSession(family.id);
+    return { ok: false, reason: "expired" };
+  }
+  if (family.expiresAt <= at) return { ok: false, reason: "expired" };
+  const snapshot = parseSnapshot(family.session);
+  const user = snapshot && await resolveAuthOptions(config).adapter?.getUser(family.userId);
+  if (!snapshot || !user) {
+    await native.adapter.revokeNativeSession(family.id);
+    return { ok: false, reason: "user_gone" };
+  }
+  return snapshot;
+}
+
+/**
+ * Whether presenting `generation` at `at` falls in the concurrent-refresh grace window: it is
+ * the generation the family's LAST rotation consumed, and that rotation was at most
+ * `refreshReuseInterval` seconds ago. Anything else that isn't current is a replay.
+ */
+function withinReuseInterval(
+  native: ResolvedNative,
+  family: NativeSessionRecord,
+  generation: number,
+  at: number,
+): boolean {
+  return native.reuseInterval > 0 && family.revokedAt === undefined &&
+    generation === family.generation - 1 && family.rotatedAt !== undefined &&
+    at - family.rotatedAt <= native.reuseInterval;
+}
+
+/**
+ * An older generation was presented: within the grace window the previous generation is
+ * answered with the pair its rotation issued — re-derived from the family record (`rotatedAt`
+ * is that pair's issue time), never stored — and anything else is a replay.
+ */
+async function olderGeneration(
+  config: AuthConfig,
+  native: ResolvedNative,
+  family: NativeSessionRecord,
+  generation: number,
+  at: number,
+): Promise<RefreshOutcome> {
+  if (!withinReuseInterval(native, family, generation, at)) {
+    return await reuse(config, native, family);
+  }
+  const snapshot = await liveSnapshot(config, native, family, at);
+  if ("ok" in snapshot) return snapshot;
+  resolveAuthOptions(config).logger.debug(
+    "denextAuth: a concurrent native refresh was answered within refreshReuseInterval",
+    { userId: family.userId },
+  );
+  return {
+    ok: true,
+    tokens: await mintTokens(config, native, family, snapshot, family.rotatedAt!),
+  };
+}
+
 /**
  * Rotate a refresh token: verify its MAC against the family's salt, then advance the family's
  * generation atomically and mint a new pair. An older generation with a valid MAC is a
  * **replay** — the family is revoked, so the thief and the legitimate app are both signed out
- * and the user signs in again. A forged token (bad MAC) is refused without touching the family.
+ * and the user signs in again — unless `refreshReuseInterval` covers it (the immediately
+ * previous generation, shortly after its rotation: the same pair is answered again). A forged
+ * token (bad MAC) is refused without touching the family.
  *
  * @param config The app's auth config.
  * @param native The resolved native settings.
@@ -540,25 +653,32 @@ export async function refreshNativeSession(
   );
   if (!genuine || parts.generation > family.generation) return { ok: false, reason: "invalid" };
   if (family.revokedAt !== undefined) return { ok: false, reason: "revoked" };
-  if (parts.generation < family.generation) return await reuse(config, native, family);
-  if (family.expiresAt <= now()) return { ok: false, reason: "expired" };
-  const snapshot = parseSnapshot(family.session);
-  const user = snapshot && await resolveAuthOptions(config).adapter?.getUser(family.userId);
-  if (!snapshot || !user) {
-    await native.adapter.revokeNativeSession(family.id);
-    return { ok: false, reason: "user_gone" };
+  const at = now();
+  if (parts.generation < family.generation) {
+    return await olderGeneration(config, native, family, parts.generation, at);
   }
-  const expiresAt = now() + native.refreshTtl;
-  // The compare-and-swap: a concurrent refresh with the same token loses here, and a lost
-  // swap is a replay like any other.
-  if (!(await native.adapter.rotateNativeSession(family.id, parts.generation, expiresAt))) {
-    return await reuse(config, native, family);
+  const snapshot = await liveSnapshot(config, native, family, at);
+  if ("ok" in snapshot) return snapshot;
+  const expiresAt = slidExpiry(native, at, family.createdAt);
+  // The compare-and-swap: a concurrent refresh with the same token loses here. A lost swap is
+  // judged against the family as the winner left it — a replay, unless the grace window covers it.
+  const swapped = await native.adapter.rotateNativeSession(
+    family.id,
+    parts.generation,
+    expiresAt,
+    { rotatedAt: at },
+  );
+  if (!swapped) {
+    const after = await native.adapter.getNativeSession(family.id) ?? family;
+    return await olderGeneration(config, native, after, parts.generation, at);
   }
-  const rotated = { ...family, generation: parts.generation + 1, expiresAt };
-  return {
-    ok: true,
-    tokens: await mintTokens(config, native, rotated, rotated.generation, snapshot),
+  const rotated: NativeSessionRecord = {
+    ...family,
+    generation: parts.generation + 1,
+    expiresAt,
+    rotatedAt: at,
   };
+  return { ok: true, tokens: await mintTokens(config, native, rotated, snapshot, at) };
 }
 
 /** A replayed refresh token: revoke the family and report it. */

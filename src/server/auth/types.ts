@@ -557,6 +557,23 @@ export interface AuthNativeConfig {
    * 30 days; clamped to 1 hour..1 year).
    */
   refreshTokenTtl?: number;
+  /**
+   * An absolute cap on a session family, in seconds from its original sign-in: however often
+   * the app refreshes, the family stops refreshing (and is revoked) this long after the user
+   * signed in, and they sign in again. Default: none — a family used within every
+   * `refreshTokenTtl` lives indefinitely. Clamped to 1 hour..10 years.
+   */
+  refreshTokenMaxAge?: number;
+  /**
+   * A grace window, in seconds, for two refreshes racing with one refresh token (a background
+   * task and the foreground app, two processes). Within this long after a rotation, presenting
+   * the IMMEDIATELY previous refresh token answers the same token pair that rotation issued,
+   * instead of treating it as a replay and revoking the family. An older generation, or the
+   * previous one after the window, is still a replay. Default `0` (strict: any reuse revokes);
+   * clamped to 0..60. It weakens replay detection for a token replayed within the window of
+   * its legitimate use — see the docs before enabling it.
+   */
+  refreshReuseInterval?: number;
   /** One-time code lifetime in seconds (default 60; clamped to 10..600). */
   codeTtl?: number;
   /**

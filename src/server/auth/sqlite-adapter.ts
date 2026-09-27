@@ -219,6 +219,7 @@ const SCHEMA: TableSpec[] = [
       ["created_at", "INTEGER"],
       ["expires_at", "INTEGER"],
       ["revoked_at", "INTEGER"],
+      ["rotated_at", "INTEGER"],
     ],
     indexes: [{
       sql: "CREATE INDEX IF NOT EXISTS auth_native_sessions_user ON auth_native_sessions (user_id)",
@@ -465,6 +466,7 @@ const NATIVE_SESSION_MAP: FieldMap<NativeSessionRecord> = {
   createdAt: ["created_at", INT],
   expiresAt: ["expires_at", INT],
   revokedAt: ["revoked_at", INT],
+  rotatedAt: ["rotated_at", INT],
 };
 
 // ---- statements ------------------------------------------------------------
@@ -819,12 +821,20 @@ function nativeMethods(
       const row = one(state.db(), "SELECT * FROM auth_native_sessions WHERE id = ?", [id]);
       return row && fromRow(NATIVE_SESSION_MAP, row);
     },
-    rotateNativeSession(id, fromGeneration, expiresAt) {
-      // The WHERE clause is the compare-and-swap: one refresh with a generation wins.
+    rotateNativeSession(id, fromGeneration, expiresAt, rotation) {
+      // The WHERE clause is the compare-and-swap: one refresh with a generation wins. The same
+      // statement records the rotation time.
       const rotated = state.db().query(
-        "UPDATE auth_native_sessions SET generation = ?, expires_at = ? " +
+        "UPDATE auth_native_sessions SET generation = ?, expires_at = ?, " +
+          "rotated_at = COALESCE(?, rotated_at) " +
           "WHERE id = ? AND generation = ? AND revoked_at IS NULL RETURNING id",
-        [fromGeneration + 1, expiresAt, id, fromGeneration],
+        [
+          fromGeneration + 1,
+          expiresAt,
+          rotation?.rotatedAt ?? null,
+          id,
+          fromGeneration,
+        ],
       );
       return rotated.length === 1;
     },

@@ -449,13 +449,14 @@ function nativeMethods(
       state.nativeSessions.set(session.id, { ...session });
     },
     getNativeSession: (id) => copy(state.nativeSessions.get(id)),
-    rotateNativeSession(id, fromGeneration, expiresAt) {
+    rotateNativeSession(id, fromGeneration, expiresAt, rotation) {
       const record = state.nativeSessions.get(id);
       if (!record || record.revokedAt !== undefined || record.generation !== fromGeneration) {
         return false;
       }
       record.generation = fromGeneration + 1;
       record.expiresAt = expiresAt;
+      if (rotation) record.rotatedAt = rotation.rotatedAt;
       return true;
     },
     revokeNativeSession(id) {
