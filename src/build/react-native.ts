@@ -22,6 +22,19 @@
 //   - react-native-web's `Appearance` gains `setColorScheme` (React Native 0.72+), which it
 //     lacks: an override `getColorScheme()`, the change listeners and the root element's
 //     `color-scheme` honour.
+//   - The shell overlay: react-native-web stays pinned and unforked, and each of its modules
+//     named in RN_OVERLAY_EXPORTS (the mocks — Keyboard, KeyboardAvoidingView, BackHandler,
+//     StatusBar, AccessibilityInfo, I18nManager, Alert, RefreshControl — plus Platform,
+//     Linking, AppState, Vibration, Share and Clipboard, whose browser-only versions fall
+//     short in the Capacitor shell) loads as a one-line module that re-exports denext's
+//     implementation from `denext/react-native` (src/react-native/, a prebuilt runtime entry
+//     sharing the app's one denext instance). Replacing the module file, not the `react-native`
+//     entry, reaches every importer: the app, libraries, deep `react-native/Libraries/…`
+//     imports and react-native-web's own internals (its FlatList builds a RefreshControl).
+//     Unused ones still tree-shake away (react-native-web is `sideEffects: false`). The two
+//     components take react-native-web's `View` from the replaced module. `Platform.OS` stays
+//     "web" in the shell: react-native-web and the libraries on top of it pick their DOM code
+//     paths by it (see src/react-native/platform.ts).
 //   - `expo-router/_ctx` (Metro's `require.context` over the route directory) resolves to a
 //     module generated from the app's `app/` (or `src/app/`) files (expo-router.ts).
 //   - Each `expo-*` package in the `denext/expo` manifest (and its known subpaths) resolves
@@ -353,6 +366,64 @@ export function withAppearancePolyfill(source: string): string {
     source.slice(match.index);
 }
 
+/** The prebuilt runtime specifier of the shell overlay (`src/react-native/mod.ts`). */
+export const RN_OVERLAY = "denext/react-native";
+
+/**
+ * The react-native-web modules the shell overlay replaces, by export name: `"value"` re-exports
+ * denext's export of the same name; `"view"` is a component built by denext's
+ * `create<Name>(View)` from react-native-web's own `View`.
+ */
+export const RN_OVERLAY_EXPORTS: Readonly<Record<string, "value" | "view">> = {
+  AccessibilityInfo: "value",
+  Alert: "value",
+  AppState: "value",
+  BackHandler: "value",
+  Clipboard: "value",
+  I18nManager: "value",
+  Keyboard: "value",
+  KeyboardAvoidingView: "view",
+  Linking: "value",
+  Platform: "value",
+  RefreshControl: "view",
+  Share: "value",
+  StatusBar: "value",
+  Vibration: "value",
+};
+
+/** A replaced react-native-web module (ES or CommonJS build); group 1 is `cjs/`, 2 the name. */
+const OVERLAY_MODULE = new RegExp(
+  `[\\\\/]react-native-web[\\\\/]dist[\\\\/](cjs[\\\\/])?exports[\\\\/](${
+    Object.keys(RN_OVERLAY_EXPORTS).join("|")
+  })[\\\\/]index\\.js$`,
+);
+
+/**
+ * The source that stands in for react-native-web's module `name`: a re-export of denext's
+ * export of that name, or, for a component built on react-native-web's `View`, denext's
+ * `create<name>(View)` over the sibling `View` module. The ES build gets an ES module; the
+ * CommonJS build gets `module.exports = …`, as react-native-web's own CommonJS modules do.
+ *
+ * @param name A key of {@linkcode RN_OVERLAY_EXPORTS}.
+ * @param cjs Whether the module is from react-native-web's CommonJS build.
+ * @returns The module source.
+ */
+export function overlayModuleSource(name: string, cjs: boolean): string {
+  const view = RN_OVERLAY_EXPORTS[name] === "view";
+  if (!cjs) {
+    return view
+      ? `import View from "../View";\nimport { create${name} } from "${RN_OVERLAY}";\n` +
+        `export default /* @__PURE__ */ create${name}(View);\n`
+      : `export { ${name} as default } from "${RN_OVERLAY}";\n`;
+  }
+  const overlay = `require(${JSON.stringify(RN_OVERLAY)})`;
+  return view
+    ? `"use strict";\nvar View = require("../View");\n` +
+      `if (View && View.__esModule) View = View.default;\n` +
+      `module.exports = ${overlay}.create${name}(View);\n`
+    : `"use strict";\nmodule.exports = ${overlay}.${name};\n`;
+}
+
 /**
  * The esbuild plugin that sends `react-native` (and its subpaths) to react-native-web. It
  * must run ahead of the app and node_modules resolvers, which is where the SPA bundle's
@@ -402,6 +473,14 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
         contents: nativeOnlyStubSource(args.path),
         loader: "js",
       }));
+      build.onLoad({ filter: OVERLAY_MODULE }, (args) => {
+        const [, cjs, name] = OVERLAY_MODULE.exec(args.path)!;
+        return {
+          contents: overlayModuleSource(name, cjs !== undefined),
+          loader: "js",
+          resolveDir: dirname(args.path),
+        };
+      });
       build.onLoad({ filter: APPEARANCE_MODULE }, async (args) => ({
         contents: withAppearancePolyfill(await Deno.readTextFile(args.path)),
         loader: "js",
