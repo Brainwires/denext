@@ -728,7 +728,7 @@ function pickIslandStrategy(
 // ---- Flight value serialization -------------------------------------------------------------
 
 /** Sentinel for a value that does not cross to the client (undefined, a function, a symbol…). */
-export const SKIP: unique symbol = Symbol("skip");
+export const SKIP: unique symbol = /* @__PURE__ */ Symbol("skip");
 
 /** The result of serializing one value: a Flight value, or {@link SKIP}. */
 export type Serialized = FlightValue | typeof SKIP;

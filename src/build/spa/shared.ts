@@ -64,7 +64,13 @@ export function generateSpaEntry(
   // silently no-op.
   const install = supportInstall(support);
   if (!dev) {
-    return `// denext generated SPA entry — do not edit.\n${prelude}${install}import ${
+    // The installs ride a `data:` module imported AHEAD of the app entry: ES imports are
+    // hoisted, so install STATEMENTS here would run only after the app module had evaluated —
+    // and an app entry mounts synchronously (`createRoot(el).render(<App/>)`, React Native's
+    // `AppRegistry` / `registerRootComponent`). Its first render would then meet class
+    // components with no runtime installed and commit them blank for a round trip (a
+    // gesture-handler `GestureDetector` finds its child missing and throws).
+    return `// denext generated SPA entry — do not edit.\n${prelude}${seamImport(install)}import ${
       JSON.stringify(entryUrl)
     };\n`;
   }
@@ -89,6 +95,16 @@ export interface SpaEntrySupport {
   activity?: boolean;
   /** Install the per-element `<ViewTransition>` runtime (set when the app uses it). */
   viewTransition?: boolean;
+}
+
+/**
+ * The seam installs as one side-effect `import` of a `data:` module, evaluated before every
+ * later import of the entry (esbuild and `deno bundle` both inline it and resolve its bare
+ * `denext/*` imports as the entry's own). `""` when there is nothing to install.
+ */
+function seamImport(install: string): string {
+  if (!install) return "";
+  return `import 'data:text/javascript,${install.trim().split("\n").join("")}';\n`;
 }
 
 /** The `import`+`install()` lines for each seam runtime the entry needs. */

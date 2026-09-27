@@ -9,6 +9,7 @@
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, setDocument } from "../src/client/reconciler.ts";
+import { installDuplicateKeyWarning } from "../src/client/fiber/reconcile-children.ts";
 import { useState } from "../src/runtime/hooks.ts";
 import type { VNode } from "../src/jsx/types.ts";
 import { type FakeElement, type FakeNode, makeDom } from "./helpers/dom.ts";
@@ -220,6 +221,7 @@ Deno.test("keyed: a duplicate key warns in dev and still renders every child", (
   const errors: string[] = [];
   const orig = console.error;
   g.__denextDev = true;
+  installDuplicateKeyWarning(); // the dev entries install it (via installDevtools)
   console.error = (...a: unknown[]) => void errors.push(a.map(String).join(" "));
   try {
     const { ul } = mountList(["a", "b", "a"]);
@@ -227,6 +229,7 @@ Deno.test("keyed: a duplicate key warns in dev and still renders every child", (
     assert(errors.some((e) => e.includes("two children with the same key") && e.includes("`a`")));
   } finally {
     console.error = orig;
+    installDuplicateKeyWarning(false);
     delete g.__denextDev;
   }
 });

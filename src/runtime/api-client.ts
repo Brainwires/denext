@@ -340,7 +340,7 @@ export function isApiClientError(value: unknown): value is ApiClientError {
 }
 
 /** Bound on how much of a failed response body is read to look for the error envelope. */
-const MAX_ERROR_BODY_BYTES = 64 * 1024;
+const MAX_ERROR_BODY_BYTES = 65_536; // 64 KiB — a literal, which a bundler drops where unused
 
 /** Read a failed response's envelope (bounded; a huge or non-JSON body yields undefined). */
 async function readErrorEnvelope(res: Response): Promise<ApiErrorEnvelope | undefined> {
@@ -477,7 +477,7 @@ async function batchedRequest(
 // ── In-flight dedupe ─────────────────────────────────────────────────────────
 
 /** The key under which a request context's `memo` holds this client family's in-flight table. */
-const INFLIGHT_MEMO_KEY = Symbol.for("denext.apiClient.inflight");
+const INFLIGHT_MEMO_KEY = /* @__PURE__ */ Symbol.for("denext.apiClient.inflight");
 
 /** The server installs this bridge; its absence means "a browser bundle". */
 interface ContextBridge {

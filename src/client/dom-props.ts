@@ -262,23 +262,18 @@ function parseEvent(prop: string): ParsedEvent {
 
 // React's SyntheticEvent members that denext's native event lacks, installed as own
 // properties on each dispatched event (never on `Event.prototype`, so nothing leaks into
-// code outside denext's handlers). Shared functions read `this`, so no per-event closures.
-function persist(): void {} // a no-op since React 17 (events are never pooled)
-function isPersistent(): boolean {
-  return true;
-}
-function isDefaultPrevented(this: Event): boolean {
-  return this.defaultPrevented === true;
-}
-function isPropagationStopped(this: Event): boolean {
-  // `cancelBubble` reads back the event's stop-propagation flag (DOM Living Standard).
-  return this.cancelBubble === true;
-}
+// code outside denext's handlers). One shared object of methods that read `this`, so no
+// per-event closures. `persist()` is a no-op since React 17 (events are never pooled).
 const SYNTHETIC_MEMBERS: Record<string, unknown> = {
-  persist,
-  isPersistent,
-  isDefaultPrevented,
-  isPropagationStopped,
+  persist() {},
+  isPersistent: () => true,
+  isDefaultPrevented(this: Event): boolean {
+    return !!this.defaultPrevented;
+  },
+  isPropagationStopped(this: Event): boolean {
+    // `cancelBubble` reads back the event's stop-propagation flag (DOM Living Standard).
+    return !!this.cancelBubble;
+  },
 };
 
 /**
@@ -292,7 +287,7 @@ const SYNTHETIC_MEMBERS: Record<string, unknown> = {
  * once per event: a bubbling event keeps the members for the next handler.
  */
 function addSyntheticEventMembers(event: unknown): void {
-  if (event == null || typeof event !== "object" || "nativeEvent" in event) return;
+  if (!event || typeof event !== "object" || "nativeEvent" in event) return;
   try {
     const e = event as Record<string, unknown>;
     for (const k in SYNTHETIC_MEMBERS) if (!(k in e)) e[k] = SYNTHETIC_MEMBERS[k];

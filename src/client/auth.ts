@@ -80,8 +80,11 @@ function noSession(): Promise<ClientSession> {
   return Promise.resolve({ ...LOADING, update: noSession });
 }
 
-const SessionContext: Context<ClientSession> = createContext<ClientSession>({
-  ...LOADING,
+// A literal, not `{ ...LOADING }`: a spread argument keeps the (otherwise pure, unused) call
+// in every client bundle whose graph reaches this module.
+const SessionContext: Context<ClientSession> = /* @__PURE__ */ createContext<ClientSession>({
+  user: null,
+  status: "loading",
   update: noSession,
 });
 

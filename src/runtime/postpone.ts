@@ -4,7 +4,7 @@
 // importing it from prerender.ts would drag `node:async_hooks` into every client chunk,
 // where the CSP refuses to load it and hydration silently never runs.
 
-const POSTPONE = Symbol.for("denext.postpone");
+const POSTPONE = /* @__PURE__ */ Symbol.for("denext.postpone");
 
 /**
  * The signal thrown by a dynamic read reached during a prerender pass (outside a
@@ -12,9 +12,14 @@ const POSTPONE = Symbol.for("denext.postpone");
  * per-request dynamic hole in the otherwise-static shell.
  */
 export class Postpone {
-  readonly [POSTPONE] = true as const;
+  declare readonly [POSTPONE]: true;
   /** The dynamic API that triggered the postpone (for diagnostics). */
-  constructor(readonly api: string) {}
+  readonly api: string;
+  constructor(api: string) {
+    this.api = api;
+    // Set here, not as a field: a computed field key pins the class into every bundle.
+    this[POSTPONE] = true;
+  }
 }
 
 /** Is `x` a {@link Postpone} signal? */

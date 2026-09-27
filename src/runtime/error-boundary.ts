@@ -16,7 +16,7 @@ import type { Href } from "../client/navigation.ts";
 export type { Component, VNode, VNodeChildren } from "../jsx/types.ts";
 
 /** Marker used as the `type` of an ErrorBoundary VNode so the renderer recognizes it. */
-export const ERROR_BOUNDARY: symbol = Symbol.for("denext.errorBoundary");
+export const ERROR_BOUNDARY: symbol = /* @__PURE__ */ Symbol.for("denext.errorBoundary");
 
 /** Props passed to the fallback component rendered when a child throws. */
 export interface ErrorFallbackProps {
@@ -114,15 +114,17 @@ export function ErrorBoundary(props: ErrorBoundaryProps): VNode {
 // ---- notFound() ------------------------------------------------------------
 
 /** Brand symbol tagging {@link NotFoundError} instances so they survive serialization boundaries. */
-const NOT_FOUND: symbol = Symbol.for("denext.notFound");
+const NOT_FOUND: symbol = /* @__PURE__ */ Symbol.for("denext.notFound");
 
 /** Error thrown by {@link notFound} to trigger the nearest not-found UI (HTTP 404). */
 export class NotFoundError extends Error {
   /** Brand flag identifying this as a not-found signal. */
-  readonly [NOT_FOUND] = true;
+  declare readonly [NOT_FOUND]: true;
   /** Create a not-found error with the standard `NEXT_NOT_FOUND` message. */
   constructor() {
     super("NEXT_NOT_FOUND");
+    // Set here, not as a field: a computed field key pins the class into every bundle.
+    (this as Record<symbol, unknown>)[NOT_FOUND] = true;
     this.name = "NotFoundError";
   }
 }
@@ -143,17 +145,19 @@ export function isNotFound(value: unknown): value is NotFoundError {
 // ---- forbidden() / unauthorized() ------------------------------------------
 
 /** Brand symbol tagging {@link ForbiddenError} instances. */
-const FORBIDDEN: symbol = Symbol.for("denext.forbidden");
+const FORBIDDEN: symbol = /* @__PURE__ */ Symbol.for("denext.forbidden");
 /** Brand symbol tagging {@link UnauthorizedError} instances. */
-const UNAUTHORIZED: symbol = Symbol.for("denext.unauthorized");
+const UNAUTHORIZED: symbol = /* @__PURE__ */ Symbol.for("denext.unauthorized");
 
 /** Error thrown by {@link forbidden} to render the nearest `forbidden` UI (HTTP 403). */
 export class ForbiddenError extends Error {
   /** Brand flag identifying this as a forbidden signal. */
-  readonly [FORBIDDEN] = true;
+  declare readonly [FORBIDDEN]: true;
   /** Create a forbidden error. */
   constructor() {
     super("NEXT_FORBIDDEN");
+    // Set here, not as a field: a computed field key pins the class into every bundle.
+    (this as Record<symbol, unknown>)[FORBIDDEN] = true;
     this.name = "ForbiddenError";
   }
 }
@@ -161,10 +165,12 @@ export class ForbiddenError extends Error {
 /** Error thrown by {@link unauthorized} to render the nearest `unauthorized` UI (HTTP 401). */
 export class UnauthorizedError extends Error {
   /** Brand flag identifying this as an unauthorized signal. */
-  readonly [UNAUTHORIZED] = true;
+  declare readonly [UNAUTHORIZED]: true;
   /** Create an unauthorized error. */
   constructor() {
     super("NEXT_UNAUTHORIZED");
+    // Set here, not as a field: a computed field key pins the class into every bundle.
+    (this as Record<symbol, unknown>)[UNAUTHORIZED] = true;
     this.name = "UnauthorizedError";
   }
 }
@@ -198,7 +204,7 @@ export function isUnauthorized(value: unknown): value is UnauthorizedError {
 // ---- redirect() / permanentRedirect() --------------------------------------
 
 /** Brand symbol tagging {@link RedirectError} instances. */
-const REDIRECT: symbol = Symbol.for("denext.redirect");
+const REDIRECT: symbol = /* @__PURE__ */ Symbol.for("denext.redirect");
 
 /**
  * `next/navigation`'s `RedirectType` — how a client-side (soft) navigation applies the
@@ -213,7 +219,7 @@ export enum RedirectType {
 /** Error thrown by {@link redirect}/{@link permanentRedirect} to issue an HTTP redirect. */
 export class RedirectError extends Error {
   /** Brand flag identifying this as a redirect signal. */
-  readonly [REDIRECT] = true;
+  declare readonly [REDIRECT]: true;
   /** Destination URL for the redirect. */
   readonly url: string;
   /** HTTP status code (307 temporary, 308 permanent). */
@@ -223,6 +229,8 @@ export class RedirectError extends Error {
   /** Create a redirect signal to `url` with the given `status` and optional soft-nav type. */
   constructor(url: string, status: number, redirectType?: RedirectType) {
     super(`NEXT_REDIRECT:${status}:${url}`);
+    // Set here, not as a field: a computed field key pins the class into every bundle.
+    (this as Record<symbol, unknown>)[REDIRECT] = true;
     this.name = "RedirectError";
     this.url = url;
     this.status = status;
@@ -297,7 +305,9 @@ export function unstable_rethrow(error: unknown): void {
  * Brand for an error a boundary may receive UNREDACTED in production: it was thrown
  * to be rendered (a Remix `ErrorResponse`: status + data), not an internal failure.
  */
-export const EXPOSE_ERROR: unique symbol = Symbol.for("denext.exposeError") as never;
+export const EXPOSE_ERROR: unique symbol = /* @__PURE__ */ Symbol.for(
+  "denext.exposeError",
+) as never;
 
 /** Whether `value` is an Error flagged {@link EXPOSE_ERROR}. */
 export function isExposedError(value: unknown): value is Error {

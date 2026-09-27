@@ -45,13 +45,14 @@ function hostPropsChanged(
 ): boolean {
   if (prev === next) return false;
   if (prev == null || next == null) return true;
+  // `children` counts on both sides: only its presence changing (rare) reads as a change,
+  // which costs one no-op applyProps.
   let count = 0;
   for (const k in next) {
-    if (k === "children") continue;
-    if (next[k] !== prev[k] || !(k in prev)) return true;
+    if (k !== "children" && (next[k] !== prev[k] || !(k in prev))) return true;
     count++;
   }
-  for (const k in prev) if (k !== "children") count--;
+  for (const _ in prev) count--;
   return count !== 0;
 }
 

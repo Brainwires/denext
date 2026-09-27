@@ -15,23 +15,23 @@
  */
 
 /** `$$typeof` of a React element (React ≥19 transitional brand). */
-export const REACT_ELEMENT_TYPE: symbol = Symbol.for("react.transitional.element");
+export const REACT_ELEMENT_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.transitional.element");
 /** `$$typeof` of a React element (React ≤18 / legacy brand; still accepted). */
-export const REACT_LEGACY_ELEMENT_TYPE: symbol = Symbol.for("react.element");
+export const REACT_LEGACY_ELEMENT_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.element");
 /** Brand for a `forwardRef` component. */
-export const REACT_FORWARD_REF_TYPE: symbol = Symbol.for("react.forward_ref");
+export const REACT_FORWARD_REF_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.forward_ref");
 /** Brand for a `memo` component. */
-export const REACT_MEMO_TYPE: symbol = Symbol.for("react.memo");
+export const REACT_MEMO_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.memo");
 /** Brand for a `lazy` component. */
-export const REACT_LAZY_TYPE: symbol = Symbol.for("react.lazy");
+export const REACT_LAZY_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.lazy");
 /** Brand for a portal element. */
-export const REACT_PORTAL_TYPE: symbol = Symbol.for("react.portal");
+export const REACT_PORTAL_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.portal");
 /** Type marker for a `Fragment`. */
-export const REACT_FRAGMENT_TYPE: symbol = Symbol.for("react.fragment");
+export const REACT_FRAGMENT_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.fragment");
 /** Type marker for `Suspense`. */
-export const REACT_SUSPENSE_TYPE: symbol = Symbol.for("react.suspense");
+export const REACT_SUSPENSE_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.suspense");
 /** Type marker for `StrictMode`. */
-export const REACT_STRICT_MODE_TYPE: symbol = Symbol.for("react.strict_mode");
+export const REACT_STRICT_MODE_TYPE: symbol = /* @__PURE__ */ Symbol.for("react.strict_mode");
 /** Non-enumerable property name carrying a type brand. */
 export const TYPEOF_KEY = "$$typeof";
 

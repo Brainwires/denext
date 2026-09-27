@@ -80,6 +80,8 @@ function fakeHistory(start: string) {
   const entries: Array<{ url: string; state: unknown }> = [{ url: start, state: null }];
   let index = 0;
   const log: string[] = [];
+  /** The pops the router would have refetched (no navigator claimed them). */
+  const refetches: string[] = [];
   const url = () => new URL(entries[index].url, origin);
   const location = {
     get pathname() {
@@ -121,13 +123,15 @@ function fakeHistory(start: string) {
         const event = new Event("popstate");
         Object.defineProperty(event, "state", { value: entries[index].state });
         g.dispatchEvent(event);
+        // What the router's popstate handler does first: offer the pop to a navigator.
+        if (!(g as Any).__dnxPop?.(url().href, event)) refetches.push(entries[index].url);
       }, 0);
     },
     back() {
       this.go(-1);
     },
   };
-  return { location, history, entries, log, index: () => index };
+  return { location, history, entries, log, refetches, index: () => index };
 }
 
 /** A document with a hydration data island and a title. */
@@ -466,6 +470,7 @@ Deno.test("StackLayout: push stamps history; back is claimed at once with title 
     );
     assertEquals((doc as Any).title, "Items", "the kept title is back");
     assertEquals(JSON.parse(island.textContent).pathname, "/items", "and its hydration data");
+    assertEquals(hist.refetches, [], "the claimed pop skips the router's refetch");
     root.unmount();
   });
 });

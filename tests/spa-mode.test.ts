@@ -233,3 +233,25 @@ Deno.test("collectSpaPreloads: transitive STATIC import graph only (dynamic impo
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 });
+
+Deno.test("generateSpaEntry (prod): seam installs ride a data: import AHEAD of the app entry", () => {
+  // ES imports are hoisted: an install STATEMENT would run after the app module evaluated
+  // (and an app entry mounts synchronously), so its first render met class components with
+  // no runtime installed. The installs must be an import that precedes the app import.
+  const lines = generateSpaEntry("file:///app/src/main.tsx", false, null, { activity: true })
+    .split("\n");
+  const seam = lines.findIndex((l) => l.startsWith("import 'data:text/javascript,"));
+  const app = lines.indexOf('import "file:///app/src/main.tsx";');
+  assert(seam !== -1 && seam < app, "the seam import precedes the app import");
+  assertStringIncludes(lines[seam], "installClassSupport();");
+  assertStringIncludes(lines[seam], "installActivitySupport();");
+  assert(
+    !lines.some((l) => /^install\w+\(\);$/.test(l)),
+    "no install statement is left at the top level (it would run after the app)",
+  );
+  assert(
+    !generateSpaEntry("file:///x.tsx", false, null, { classComponents: false })
+      .includes("data:"),
+    "nothing to install → no seam import",
+  );
+});

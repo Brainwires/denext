@@ -31,8 +31,14 @@
 export const SWAP_RUNTIME_BODY =
   `(function(){function s(t){if(!t.isConnected)return;var i=t.getAttribute('data-dnx-r');if(!i)return;var m=t.getAttribute('data-dnx-ms');var p=document.querySelector('[data-dnx-b="'+i+'"]');if(p){p.innerHTML='';p.appendChild(t.content.cloneNode(true));}t.remove();if(window.__denextDev){try{performance.mark('dnx-reveal:'+i);}catch(e){}(window.__denextBoundaries||(window.__denextBoundaries=[])).push({id:i,revealAt:(window.performance&&performance.now?performance.now():0),serverMs:m?parseFloat(m):null});try{document.dispatchEvent(new CustomEvent('denext:reveal',{detail:i}));}catch(e){}}}function scan(){var l=document.querySelectorAll('template[data-dnx-r]');for(var j=0;j<l.length;j++)s(l[j]);}var o=new MutationObserver(function(m){for(var k=0;k<m.length;k++){var a=m[k].addedNodes;for(var q=0;q<a.length;q++){var n=a[q];if(n.nodeType===1&&n.tagName==='TEMPLATE'&&n.hasAttribute('data-dnx-r'))s(n);}}});o.observe(document.body||document.documentElement,{childList:true,subtree:true});scan();if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',function(){scan();o.disconnect();});}else{o.disconnect();}})();`;
 
-/** The full inline `<script>` element wrapping {@link SWAP_RUNTIME_BODY}. */
-export const SWAP_RUNTIME = `<script>${SWAP_RUNTIME_BODY}</script>`;
+/**
+ * The full inline `<script>` element wrapping {@link SWAP_RUNTIME_BODY}. Built by a
+ * `@__PURE__` call rather than a template literal: bundlers keep an interpolated template
+ * (it may call `toString`), which pinned both strings (~1.2 KB) into every client bundle
+ * whose graph reaches this module without using it.
+ */
+export const SWAP_RUNTIME: string = /* @__PURE__ */ ["<script>", SWAP_RUNTIME_BODY, "</script>"]
+  .join("");
 
 /** SHA-256 of `text` as base64 (the form a CSP `'sha256-…'` source expects). */
 async function sha256Base64(text: string): Promise<string> {

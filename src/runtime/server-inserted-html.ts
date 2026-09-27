@@ -25,7 +25,7 @@ import { renderScope } from "./render-scope.ts";
  * source/type compatibility with libraries that reference it directly.
  */
 export const ServerInsertedHTMLContext: Context<((callback: () => VNodeChildren) => void) | null> =
-  createContext<((callback: () => VNodeChildren) => void) | null>(null);
+  /* @__PURE__ */ createContext<((callback: () => VNodeChildren) => void) | null>(null);
 
 /**
  * Register a callback whose returned markup is inserted into the server-rendered

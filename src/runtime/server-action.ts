@@ -214,7 +214,9 @@ export interface SubscriptionDef {
 }
 
 /** The symbol under which a `defineSubscription` ref carries its {@link SubscriptionDef}. */
-export const SUBSCRIPTION_DEF: unique symbol = Symbol.for("denext.subscriptionDef") as never;
+export const SUBSCRIPTION_DEF: unique symbol = /* @__PURE__ */ Symbol.for(
+  "denext.subscriptionDef",
+) as never;
 
 const subscriptionDefs = new Map<string, SubscriptionDef>();
 

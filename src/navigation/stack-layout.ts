@@ -9,8 +9,8 @@
  * - **The URL is the stack.** Every history entry is stamped with the stack it shows. Browser
  *   back, `history.back()`, the header's back button, a link to a screen below, the iOS swipe
  *   and Android's back all go through history, and a back to a kept screen is claimed: the
- *   screen shows at once (no waiting on the network) while the router re-renders that route in
- *   the background, so hooks such as `usePathname()` catch up.
+ *   router's popstate handler asks the stack first (`__dnxPop`), the screen shows at once and
+ *   the router skips its refetch — only the location hooks (`usePathname()`, …) catch up.
  * - **Transitions.** A push or pop to a screen being loaded runs inside the router's View
  *   Transition with the platform's animation; a claimed pop, or a browser without View
  *   Transitions, animates the kept screens directly (Web Animations).
@@ -57,7 +57,7 @@ import {
   withStamp,
 } from "./stack-model.ts";
 import { StackView, type StackViewAnimate, type StackViewHandle } from "./stack-view.ts";
-import { suspendViewTransitions, viewTransitionsOn } from "./vt-hold.ts";
+import { viewTransitionsOn } from "./vt-hold.ts";
 import type { NavigationPlatform, ScreenOptions, StackViewEntry } from "./types.ts";
 
 /** Props of {@linkcode StackLayout}. */
@@ -208,16 +208,13 @@ interface LayoutRt {
   children: unknown;
   /** A `push` / `replace` from `useStackNavigation`, for the route it navigates to. */
   intent: { key: string; kind: RouteIntent } | null;
-  /** A back to a kept screen, claimed by the popstate listener, for the next render. */
+  /** A back to a kept screen, claimed from the router's popstate, for the next render. */
   claim: { index: number; animated: boolean } | null;
-  /** The href of that claim (the router's own navigation to it is not a new transition). */
-  claimedHref: string | null;
   /** Whether the next history pop animates (a gesture already did). */
   popHow: { animated: boolean } | null;
   /** A View Transition the router is running for a push or pop. */
   vt: { kind: "push" | "pop"; fromId: string } | null;
   vtCleanup: ReturnType<typeof setTimeout> | null;
-  releaseVt: (() => void) | null;
   handle: StackViewHandle | null;
   container: HTMLElement | null;
   /** The stack shape last stamped into history. */
@@ -405,28 +402,36 @@ function claimIndex(rt: LayoutRt, m: StackModel, state: unknown, key: string): n
   return indexBelowTop(m, key);
 }
 
-/** A back to a kept screen: claim it (show it now); the router catches up behind. */
-function claimBack(rt: LayoutRt, event: Event): void {
+/**
+ * A back to a kept screen: claim it (show it now) and tell the router so, which then skips
+ * its refetch. False when the stack does not hold the target (the router loads it).
+ */
+function claimBack(rt: LayoutRt, event: Event): boolean {
   const m = rt.model;
-  if (!m || typeof location === "undefined") return;
+  if (!m || typeof location === "undefined") return false;
   const target = currentHref();
-  if (!underBase(routeKey(target), rt.base)) return;
+  if (!underBase(routeKey(target), rt.base)) return false;
   const index = claimIndex(rt, m, (event as PopStateEvent).state, rt.getKey(target));
   const entry = index >= 0 ? m.entries[index] : undefined;
-  if (!entry || entry.element === undefined) return; // not kept: the router loads it
+  if (!entry || entry.element === undefined) return false; // not kept: the router loads it
   const how = rt.popHow;
   rt.popHow = null;
   const uaAnimated = (event as { hasUAVisualTransition?: boolean }).hasUAVisualTransition === true;
   rt.claim = { index, animated: (how?.animated ?? true) && !uaAnimated };
-  rt.claimedHref = target;
   if (entry.title !== undefined) document.title = entry.title;
   const island = document.getElementById("__denext_data");
   if (island && entry.data !== undefined) island.textContent = entry.data;
-  rt.releaseVt?.();
-  const release = suspendViewTransitions();
-  rt.releaseVt = release;
-  setTimeout(release, 5000); // in case the router never settles (a blocked navigation)
   rt.force();
+  return true;
+}
+
+/** Every mounted stack's pop claim; the router's popstate asks them in mount order. */
+const popClaims = new Set<(event: Event) => boolean>();
+
+/** The router's `__dnxPop` hook: true when a stack showed the popped-to screen itself. */
+function claimPop(_href: string, event: Event): boolean {
+  for (const claim of popClaims) if (claim(event)) return true;
+  return false;
 }
 
 /** What a navigation to `target` does to the stack: a push, a pop, or nothing to animate. */
@@ -441,17 +446,8 @@ function classifyNav(rt: LayoutRt, m: StackModel, target: string): "push" | "pop
 /** A navigation starts (or settles): for a View Transition, name the outgoing screen. */
 function onNavigating(rt: LayoutRt): void {
   const nav = getNavigatingHref();
-  if (nav === null) {
-    // Settled: the background re-render of a claimed pop is in; View Transitions resume.
-    rt.releaseVt?.();
-    rt.releaseVt = null;
-    return;
-  }
+  if (nav === null) return;
   const target = toHref(nav);
-  if (rt.claimedHref !== null && rt.claimedHref === target) {
-    rt.claimedHref = null;
-    return;
-  }
   const m = rt.model;
   if (!m || !target || !viewTransitionsOn() || !underBase(routeKey(target), rt.base)) return;
   const kind = classifyNav(rt, m, target);
@@ -506,14 +502,14 @@ function createApi(rt: LayoutRt): StackNavigatorApi {
   };
 }
 
-/** The window/router listeners: claimed backs, navigation starts, links to screens below. */
+/** The router/container hooks: claimed backs, navigation starts, links to screens below. */
 function useLayoutListeners(rt: LayoutRt): void {
   useEffect(() => {
-    if (typeof globalThis.addEventListener !== "function") return;
-    const onPop = (event: Event) => claimBack(rt, event);
-    globalThis.addEventListener("popstate", onPop, true);
-    return () => globalThis.removeEventListener("popstate", onPop, true);
-  }, [rt.base]);
+    const claim = (event: Event) => claimBack(rt, event);
+    popClaims.add(claim);
+    (globalThis as { __dnxPop?: typeof claimPop }).__dnxPop = claimPop;
+    return () => void popClaims.delete(claim);
+  }, []);
   useEffect(() => subscribeNavigating(() => onNavigating(rt)), [rt.base]);
   useEffect(() => {
     const root = rt.container;
@@ -525,7 +521,6 @@ function useLayoutListeners(rt: LayoutRt): void {
   // Tidy the document on unmount.
   useEffect(() => () => {
     if (rt.vtCleanup) clearTimeout(rt.vtCleanup);
-    rt.releaseVt?.();
     if (typeof document !== "undefined") markDocument(null);
   }, []);
 }
@@ -553,11 +548,9 @@ function createLayoutRuntime(props: StackLayoutProps): LayoutRt {
     children: NONE,
     intent: null,
     claim: null,
-    claimedHref: null,
     popHow: null,
     vt: null,
     vtCleanup: null,
-    releaseVt: null,
     handle: null,
     container: null,
     stamped: "",

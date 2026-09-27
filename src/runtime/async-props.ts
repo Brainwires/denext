@@ -4,7 +4,7 @@
 // a non-enumerable property, so JSON / Flight / `Object.keys` never see it.
 
 /** Brand for an {@linkcode asyncProps} object (so Flight serializes it as a plain object). */
-const ASYNC_PROPS: unique symbol = Symbol.for("denext.asyncProps");
+const ASYNC_PROPS: unique symbol = /* @__PURE__ */ Symbol.for("denext.asyncProps");
 
 /** A value that is both `T` and awaitable to `T` (Next 15's `Promise<T>` page props). */
 export type AsyncProps<T extends object> = T & PromiseLike<T>;

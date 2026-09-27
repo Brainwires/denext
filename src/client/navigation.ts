@@ -839,7 +839,11 @@ function installBlurClearing(): void {
 
 /** Install global click + popstate handlers (idempotent per page load). */
 function installNavigation(): void {
-  const w = globalThis as unknown as { __denextNav?: boolean };
+  const w = globalThis as unknown as {
+    __denextNav?: boolean;
+    /** A navigator's pop claim (StackLayout): true when it shows the target screen itself. */
+    __dnxPop?: (href: string, event: Event) => unknown;
+  };
   if (typeof document === "undefined" || w.__denextNav) return;
   w.__denextNav = true;
 
@@ -853,7 +857,7 @@ function installNavigation(): void {
   installBlurClearing();
 
   committedHref = location.href;
-  globalThis.addEventListener("popstate", () => {
+  globalThis.addEventListener("popstate", (event) => {
     const target = location.href;
     // A registered blocker (useBlocker) also vetoes browser back/forward: the browser has
     // already moved to `target`, so undo it by restoring the entry we were on, and let the
@@ -865,6 +869,9 @@ function installNavigation(): void {
       return;
     }
     committedHref = target;
+    // A navigator that still holds the target screen (StackLayout's kept screens) claims the
+    // pop: it shows the screen itself, so only the location hooks catch up — no refetch.
+    if (w.__dnxPop?.(target, event)) return emit();
     navigate(target, { history: false, scroll: false }); // the browser restores scroll itself
   });
 }

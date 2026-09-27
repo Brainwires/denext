@@ -110,7 +110,7 @@ interface Snapshot {
 }
 
 const browserStore = new Map<string, Entry>();
-const STORE_KEY = Symbol.for("denext.useApi.store");
+const STORE_KEY = /* @__PURE__ */ Symbol.for("denext.useApi.store");
 
 interface ContextBridge {
   __denextCurrentRequestContext?: () => { memo?: Map<unknown, Map<string, unknown>> } | undefined;

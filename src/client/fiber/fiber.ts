@@ -332,71 +332,82 @@ export interface Fiber {
   unmounted?: boolean;
 }
 
+/**
+ * A fiber. Every field is a class field, declared up front, so all fibers share ONE hidden
+ * class: added lazily (in whatever order a fiber's life assigns them) they left V8 with many
+ * shapes, and `carryOver`'s ~40 property copies per re-rendered fiber went megamorphic — the
+ * single largest cost of re-rendering a long list. A class states the shape once (an
+ * uninitialized field is `undefined`), which is also far smaller in the client bundle than
+ * the same shape as an object literal of `field: undefined` pairs.
+ */
+class FiberNode implements Fiber {
+  tag: FiberTag;
+  vnode: VNode;
+  stateNode: Fiber["stateNode"] = null;
+  child: Fiber | null = null;
+  sibling: Fiber | null = null;
+  return: Fiber | null = null;
+  alternate: Fiber | null = null;
+  flags = NoFlags;
+  subtreeFlags = NoFlags;
+  deletions: Fiber[] | null = null;
+  lanes = NoLane;
+  childLanes = NoLane;
+  host: Fiber | null = null;
+  boundary: Fiber | null = null;
+  inherited: Map<symbol, unknown> = new Map();
+  contexts: Map<symbol, unknown> = new Map();
+  hooks: Fiber["hooks"];
+  forceRender: Fiber["forceRender"];
+  stateUpdate: Fiber["stateUpdate"];
+  didRender: Fiber["didRender"];
+  insertionEffects: Fiber["insertionEffects"];
+  pendingEffects: Fiber["pendingEffects"];
+  passiveEffects: Fiber["passiveEffects"];
+  provParent: Fiber["provParent"];
+  provValue: Fiber["provValue"];
+  readContexts: Fiber["readContexts"];
+  debugValues: Fiber["debugValues"];
+  listeners: Fiber["listeners"];
+  attachedRef: Fiber["attachedRef"];
+  refCleanup: Fiber["refCleanup"];
+  formStatus: Fiber["formStatus"];
+  strict: Fiber["strict"];
+  lastImpl: Fiber["lastImpl"];
+  profiler: Fiber["profiler"];
+  underProfiler: Fiber["underProfiler"];
+  actualDuration: Fiber["actualDuration"];
+  selfBaseDuration: Fiber["selfBaseDuration"];
+  profilerMounted: Fiber["profilerMounted"];
+  showingFallback: Fiber["showingFallback"];
+  offscreen: Fiber["offscreen"];
+  primaryCount: Fiber["primaryCount"];
+  hiddenEls: Fiber["hiddenEls"];
+  hidden: Fiber["hidden"];
+  listState: Fiber["listState"];
+  listIndex: Fiber["listIndex"];
+  listOwnerState: Fiber["listOwnerState"];
+  __error: Fiber["__error"];
+  pendingElement: Fiber["pendingElement"];
+  classInstance: Fiber["classInstance"];
+  __snapshot: Fiber["__snapshot"];
+  __prevProps: Fiber["__prevProps"];
+  __prevState: Fiber["__prevState"];
+  bailed: Fiber["bailed"];
+  idParentScope: Fiber["idParentScope"];
+  idScope: Fiber["idScope"];
+  hydrationCursor: Fiber["hydrationCursor"];
+  unmounted: Fiber["unmounted"];
+
+  constructor(tag: FiberTag, vnode: VNode) {
+    this.tag = tag;
+    this.vnode = vnode;
+  }
+}
+
 /** Allocate a fresh fiber for `vnode` with the given tag. */
 export function createFiber(tag: FiberTag, vnode: VNode): Fiber {
-  return {
-    tag,
-    vnode,
-    stateNode: null,
-    child: null,
-    sibling: null,
-    return: null,
-    alternate: null,
-    flags: NoFlags,
-    subtreeFlags: NoFlags,
-    deletions: null,
-    lanes: NoLane,
-    childLanes: NoLane,
-    host: null,
-    boundary: null,
-    inherited: new Map(),
-    contexts: new Map(),
-    // Every optional field is declared up front so all fibers share ONE hidden class. Added
-    // lazily (in whatever order a fiber's life assigns them) they left V8 with many shapes,
-    // and `carryOver`'s ~40 property copies per re-rendered fiber went megamorphic — the
-    // single largest cost of re-rendering a long list.
-    hooks: undefined,
-    forceRender: undefined,
-    stateUpdate: undefined,
-    didRender: undefined,
-    insertionEffects: undefined,
-    pendingEffects: undefined,
-    passiveEffects: undefined,
-    provParent: undefined,
-    provValue: undefined,
-    readContexts: undefined,
-    debugValues: undefined,
-    listeners: undefined,
-    attachedRef: undefined,
-    refCleanup: undefined,
-    formStatus: undefined,
-    strict: undefined,
-    lastImpl: undefined,
-    profiler: undefined,
-    underProfiler: undefined,
-    actualDuration: undefined,
-    selfBaseDuration: undefined,
-    profilerMounted: undefined,
-    showingFallback: undefined,
-    offscreen: undefined,
-    primaryCount: undefined,
-    hiddenEls: undefined,
-    hidden: undefined,
-    listState: undefined,
-    listIndex: undefined,
-    listOwnerState: undefined,
-    __error: undefined,
-    pendingElement: undefined,
-    classInstance: undefined,
-    __snapshot: undefined,
-    __prevProps: undefined,
-    __prevState: undefined,
-    bailed: undefined,
-    idParentScope: undefined,
-    idScope: undefined,
-    hydrationCursor: undefined,
-    unmounted: undefined,
-  };
+  return new FiberNode(tag, vnode);
 }
 
 /**

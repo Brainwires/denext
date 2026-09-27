@@ -89,19 +89,35 @@ function claimReusable(match: Fiber | undefined, used: Set<Fiber>, nv: VNode): F
 /**
  * Dev only: React's duplicate-key warning. Two siblings with one key cannot both keep their
  * identity — the second never matches the first's old fiber and remounts on every render.
- * `seen` is null in production, so the check costs nothing there.
+ * Installed by the dev entries ({@linkcode installDuplicateKeyWarning}, via `installDevtools`);
+ * a production bundle never references the checker, so the check and its message are
+ * tree-shaken out and the reconciler pays one `?.` per reconcile.
  */
-function warnDuplicateKey(seen: Set<unknown> | null, nv: VNode): void {
-  if (seen === null || nv.key == null) return;
-  if (!seen.has(nv.key)) {
-    seen.add(nv.key);
-    return;
+let checkKeys: ((children: VNode[]) => void) | null = null;
+
+function warnDuplicateKeys(children: VNode[]): void {
+  if (children.length < 2 || !devHydrationActive()) return;
+  const seen = new Set<unknown>();
+  for (const { key } of children) {
+    if (key == null) continue;
+    if (!seen.has(key)) {
+      seen.add(key);
+      continue;
+    }
+    console.error(
+      `denext: Encountered two children with the same key, \`${String(key)}\`. Keys ` +
+        "should be unique so that components maintain their identity across updates; " +
+        "non-unique keys may cause children to be duplicated, omitted or remounted.",
+    );
   }
-  console.error(
-    `denext: Encountered two children with the same key, \`${String(nv.key)}\`. Keys ` +
-      "should be unique so that components maintain their identity across updates; " +
-      "non-unique keys may cause children to be duplicated, omitted or remounted.",
-  );
+}
+
+/**
+ * Install (`true`) or remove (`false`) the dev-only duplicate-key warning. Called from the
+ * dev path only (`installDevtools`), so production bundles never contain the check.
+ */
+export function installDuplicateKeyWarning(on = true): void {
+  checkKeys = on ? warnDuplicateKeys : null;
 }
 
 /** What every child fiber inherits from its parent during reconcile. */
@@ -112,7 +128,13 @@ interface ChildLinks {
   idParentScope: Fiber["idParentScope"];
 }
 
-function linkChildFiber(fiber: Fiber, returnFiber: Fiber, links: ChildLinks): void {
+/** Link `fiber` in after `prev` (as the first child when `prev` is null); returns it. */
+function linkChildFiber(
+  fiber: Fiber,
+  returnFiber: Fiber,
+  links: ChildLinks,
+  prev: Fiber | null,
+): Fiber {
   fiber.return = returnFiber;
   fiber.host = links.host;
   fiber.boundary = links.boundary;
@@ -127,6 +149,9 @@ function linkChildFiber(fiber: Fiber, returnFiber: Fiber, links: ChildLinks): vo
     fiber.listIndex = returnFiber.listIndex;
   }
   fiber.sibling = null;
+  if (prev) prev.sibling = fiber;
+  else returnFiber.child = fiber;
+  return fiber;
 }
 
 /** Queue every committed child no new vnode reused for deletion; true if any. */
@@ -154,65 +179,26 @@ function sameSlot(old: Fiber, nv: VNode): boolean {
   return sameType(old.vnode, nv);
 }
 
-/** The child chain being built for one reconcile, plus what each child inherits. */
-interface ChildChain {
-  returnFiber: Fiber;
-  links: ChildLinks;
-  first: Fiber | null;
-  last: Fiber | null;
-  /** Dev only: keys seen so far, for the duplicate-key warning (null in production). */
-  seenKeys: Set<unknown> | null;
-}
-
-function appendChild(chain: ChildChain, fiber: Fiber): void {
-  linkChildFiber(fiber, chain.returnFiber, chain.links);
-  if (chain.last) chain.last.sibling = fiber;
-  else chain.first = fiber;
-  chain.last = fiber;
-}
-
-/**
- * Pass 1, lockstep (React's first pass): reuse old children in place while each new vnode
- * matches the old child in its slot — no maps, no allocation. Covers a re-render of an
- * unchanged list and an append in O(n) with small constants.
- *
- * @returns The first new index and the first old child the pass did not consume.
- */
-function reconcileLockstep(
-  chain: ChildChain,
-  newVNodes: VNode[],
-): { index: number; oldFiber: Fiber | null } {
-  let oldFiber = chain.returnFiber.child;
-  let j = 0;
-  for (; j < newVNodes.length && oldFiber !== null; j++) {
-    const nv = newVNodes[j];
-    if (!sameSlot(oldFiber, nv)) break;
-    warnDuplicateKey(chain.seenKeys, nv);
-    const next: Fiber | null = oldFiber.sibling;
-    appendChild(chain, createWorkInProgress(oldFiber, nv));
-    oldFiber = next;
-  }
-  return { index: j, oldFiber };
-}
-
 /**
  * Pass 2 (a prepend, insert, removal or move): match the remaining new vnodes against the
  * remaining old children by key / by type, mount the rest and queue the unused old ones for
- * deletion. True when membership or order changed.
+ * deletion; flags `ChildrenChanged` when membership or order changed. `prev` is the last
+ * child pass 1 linked.
  */
 function reconcileRemaining(
-  chain: ChildChain,
+  returnFiber: Fiber,
+  links: ChildLinks,
   newVNodes: VNode[],
   start: number,
   oldFiber: Fiber | null,
-): boolean {
+  prev: Fiber | null,
+): void {
   const index = indexOldChildren(oldFiber, start);
   const used = new Set<Fiber>();
   let changed = false;
   let lastMatchedOldIndex = start - 1;
   for (let j = start; j < newVNodes.length; j++) {
     const nv = newVNodes[j];
-    warnDuplicateKey(chain.seenKeys, nv);
     const match = claimReusable(matchOldChild(nv, index), used, nv);
     let fiber: Fiber;
     if (match !== null) {
@@ -226,9 +212,11 @@ function reconcileRemaining(
       fiber.flags |= Placement;
       changed = true;
     }
-    appendChild(chain, fiber);
+    prev = linkChildFiber(fiber, returnFiber, links, prev);
   }
-  return collectDeletions(chain.returnFiber, index.oldChildren, used) || changed;
+  if (collectDeletions(returnFiber, index.oldChildren, used) || changed) {
+    returnFiber.flags |= ChildrenChanged;
+  }
 }
 
 export function reconcileChildren(
@@ -239,25 +227,30 @@ export function reconcileChildren(
   childInherited: Map<symbol, unknown>,
 ): void {
   const newVNodes = normalizeChildren(childrenRaw);
-  const chain: ChildChain = {
-    returnFiber,
-    links: {
-      host: childHost,
-      boundary: childBoundary,
-      inherited: childInherited,
-      // The id scope the children's components slot into: a component parent exposes
-      // its own scope; host/fragment/suspense/… levels pass their enclosing one through.
-      idParentScope: returnFiber.idScope ?? returnFiber.idParentScope,
-    },
-    first: null,
-    last: null,
-    seenKeys: newVNodes.length > 1 && devHydrationActive() ? new Set<unknown>() : null,
+  checkKeys?.(newVNodes);
+  const links: ChildLinks = {
+    host: childHost,
+    boundary: childBoundary,
+    inherited: childInherited,
+    // The id scope the children's components slot into: a component parent exposes
+    // its own scope; host/fragment/suspense/… levels pass their enclosing one through.
+    idParentScope: returnFiber.idScope ?? returnFiber.idParentScope,
   };
-  const { index, oldFiber } = reconcileLockstep(chain, newVNodes);
-  const changed = (index < newVNodes.length || oldFiber !== null) &&
-    reconcileRemaining(chain, newVNodes, index, oldFiber);
-  returnFiber.child = chain.first;
-  if (changed) returnFiber.flags |= ChildrenChanged;
+  let oldFiber = returnFiber.child;
+  returnFiber.child = null; // re-linked below, child by child
+  let prev: Fiber | null = null;
+  let j = 0;
+  // Pass 1, lockstep (React's first pass): reuse old children in place while each new vnode
+  // matches the old child in its slot — no maps, no allocation. Covers a re-render of an
+  // unchanged list and an append in O(n) with small constants.
+  for (; j < newVNodes.length && oldFiber !== null && sameSlot(oldFiber, newVNodes[j]); j++) {
+    const next: Fiber | null = oldFiber.sibling;
+    prev = linkChildFiber(createWorkInProgress(oldFiber, newVNodes[j]), returnFiber, links, prev);
+    oldFiber = next;
+  }
+  if (j < newVNodes.length || oldFiber !== null) {
+    reconcileRemaining(returnFiber, links, newVNodes, j, oldFiber, prev);
+  }
 }
 
 /** Clone a bailed-out fiber's current children into fresh work-in-progress. */

@@ -16,9 +16,9 @@ const DEFAULT_MESSAGE =
 /** Object references that must not be serialized to the client. Weak → auto-released. */
 const taintedObjects = new WeakMap<object, string>();
 /** Unique secret values (string/bigint) that must not be serialized to the client. */
-const taintedValues = new Map<string | bigint, string>();
+const taintedValues = /* @__PURE__ */ new Map<string | bigint, string>();
 /** Release a tainted value when its `lifetime` object is garbage-collected. */
-const lifetimeRegistry = new FinalizationRegistry<string | bigint>((value) => {
+const lifetimeRegistry = /* @__PURE__ */ new FinalizationRegistry<string | bigint>((value) => {
   taintedValues.delete(value);
 });
 
