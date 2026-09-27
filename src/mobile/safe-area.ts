@@ -61,9 +61,13 @@ export const SAFE_AREA_CSS: string = `:root {
 
 /** The device's safe-area insets in CSS px, as {@linkcode useSafeAreaInsets} reports them. */
 export interface SafeAreaInsets {
+  /** The top inset (status bar, notch, Dynamic Island). */
   readonly top: number;
+  /** The right inset (a landscape notch). */
   readonly right: number;
+  /** The bottom inset (home indicator, navigation bar). */
   readonly bottom: number;
+  /** The left inset (a landscape notch). */
   readonly left: number;
 }
 

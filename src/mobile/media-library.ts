@@ -63,8 +63,9 @@ export interface MediaItem {
   readonly thumbnail: string;
   /** When it was taken, ISO 8601. */
   readonly createdAt: string;
-  /** Its full size in pixels. */
+  /** Its full width in pixels. */
   readonly width: number;
+  /** Its full height in pixels. */
   readonly height: number;
   /** A video's length in seconds. */
   readonly duration?: number;

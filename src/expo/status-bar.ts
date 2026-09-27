@@ -101,7 +101,7 @@ export function setStatusBarHidden(hidden: boolean, animation?: StatusBarAnimati
  * @param props The status bar's props.
  * @returns The React Native mode `StatusBar` element.
  */
-export function StatusBar(props: StatusBarProps): VNode {
+function StatusBarView(props: StatusBarProps): VNode {
   const scheme = usePageScheme();
   const { style, animated, hidden, hideTransitionAnimation } = props;
   return h(NativeStatusBar as unknown as VNodeType, {
@@ -112,7 +112,28 @@ export function StatusBar(props: StatusBarProps): VNode {
   });
 }
 
-/** Expo's static form of {@linkcode setStatusBarStyle}. */
-StatusBar.setStyle = setStatusBarStyle;
-/** Expo's static form of {@linkcode setStatusBarHidden}. */
-StatusBar.setHidden = setStatusBarHidden;
+/** The {@linkcode StatusBar} component with Expo's static forms. */
+export interface StatusBarComponent {
+  /**
+   * Render the status bar's props while mounted.
+   *
+   * @param props The status bar's props.
+   * @returns The React Native mode `StatusBar` element.
+   */
+  (props: StatusBarProps): VNode;
+  /** Expo's static form of {@linkcode setStatusBarStyle}. */
+  setStyle: typeof setStatusBarStyle;
+  /** Expo's static form of {@linkcode setStatusBarHidden}. */
+  setHidden: typeof setStatusBarHidden;
+}
+
+/**
+ * The status bar, while mounted: its `style` (following the page's color scheme for `"auto"`
+ * and `"inverted"`), `hidden` and animations, stacked like React Native's `<StatusBar>` (the
+ * newest mounted one wins). Renders nothing. `StatusBar.setStyle` / `StatusBar.setHidden` are
+ * Expo's static forms of {@linkcode setStatusBarStyle} / {@linkcode setStatusBarHidden}.
+ */
+export const StatusBar: StatusBarComponent = /* @__PURE__ */ Object.assign(StatusBarView, {
+  setStyle: setStatusBarStyle,
+  setHidden: setStatusBarHidden,
+});
