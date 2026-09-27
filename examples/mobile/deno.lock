@@ -3,13 +3,15 @@
   "specifiers": {
     "jsr:@std/encoding@1": "1.0.11",
     "jsr:@std/fs@1": "1.0.24",
-    "jsr:@std/http@1": "1.1.3",
+    "jsr:@std/http@1": "1.1.4",
     "jsr:@std/internal@^1.0.14": "1.0.14",
     "jsr:@std/media-types@1": "1.1.0",
     "jsr:@std/path@1": "1.1.6",
     "jsr:@std/path@^1.1.5": "1.1.6",
+    "npm:@aparajita/capacitor-biometric-auth@10": "10.0.0",
     "npm:@aparajita/capacitor-secure-storage@^8.0.1": "8.0.1",
     "npm:@capacitor-community/keep-awake@^8.0.1": "8.0.1_@capacitor+core@8.5.2",
+    "npm:@capacitor-community/media@^9.1.0": "9.1.0_@capacitor+core@8.5.2",
     "npm:@capacitor-community/sqlite@^8.1.1": "8.1.1_@capacitor+core@8.5.2",
     "npm:@capacitor/android@8.5.2": "8.5.2_@capacitor+core@8.5.2",
     "npm:@capacitor/app@^8.1.1": "8.1.1_@capacitor+core@8.5.2",
@@ -19,15 +21,23 @@
     "npm:@capacitor/clipboard@^8.0.1": "8.0.1_@capacitor+core@8.5.2",
     "npm:@capacitor/core@8.5.2": "8.5.2",
     "npm:@capacitor/device@^8.0.3": "8.0.3_@capacitor+core@8.5.2",
+    "npm:@capacitor/dialog@^8.0.1": "8.0.1_@capacitor+core@8.5.2",
     "npm:@capacitor/filesystem@^8.1.3": "8.1.3_@capacitor+core@8.5.2",
+    "npm:@capacitor/geolocation@^8.2.2": "8.2.2_@capacitor+core@8.5.2",
     "npm:@capacitor/haptics@^8.0.2": "8.0.2_@capacitor+core@8.5.2",
     "npm:@capacitor/ios@8.5.2": "8.5.2_@capacitor+core@8.5.2",
+    "npm:@capacitor/keyboard@^8.0.5": "8.0.5_@capacitor+core@8.5.2",
+    "npm:@capacitor/local-notifications@^8.3.1": "8.3.1_@capacitor+core@8.5.2",
     "npm:@capacitor/network@^8.0.1": "8.0.1_@capacitor+core@8.5.2",
+    "npm:@capacitor/privacy-screen@^2.0.1": "2.0.1_@capacitor+core@8.5.2",
     "npm:@capacitor/push-notifications@^8.1.2": "8.1.2_@capacitor+core@8.5.2",
+    "npm:@capacitor/screen-orientation@^8.0.1": "8.0.1_@capacitor+core@8.5.2",
     "npm:@capacitor/share@^8.0.2": "8.0.2_@capacitor+core@8.5.2",
     "npm:@capacitor/splash-screen@^8.0.2": "8.0.2_@capacitor+core@8.5.2",
+    "npm:@capawesome/capacitor-app-review@^8.0.2": "8.0.2_@capacitor+core@8.5.2",
     "npm:@capawesome/capacitor-app-shortcuts@^8.0.2": "8.0.2_@capacitor+core@8.5.2",
-    "npm:@capawesome/capacitor-file-picker@^8.1.0": "8.1.0_@capacitor+core@8.5.2"
+    "npm:@capawesome/capacitor-file-picker@^8.1.0": "8.1.0_@capacitor+core@8.5.2",
+    "npm:capacitor-plugin-app-tracking-transparency@3": "3.0.0_@capacitor+core@8.5.2"
   },
   "jsr": {
     "@std/encoding@1.0.11": {
@@ -40,8 +50,8 @@
         "jsr:@std/path@^1.1.5"
       ]
     },
-    "@std/http@1.1.3": {
-      "integrity": "73a98e05ff58aa18bea562d286172e6c815b1eddd4fcab194beda19e3683b88c"
+    "@std/http@1.1.4": {
+      "integrity": "4f1575226ca7c0df1df38b26d50265fed30869b2a63ab867edc5b92492150c8c"
     },
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
@@ -57,6 +67,15 @@
     }
   },
   "npm": {
+    "@aparajita/capacitor-biometric-auth@10.0.0": {
+      "integrity": "sha512-azjWaRucB8x1/gSzSTp/NxelaOZyg+m765gSzjwUkSQgg30RrZPmPq6pyLeeXVSZNDY3Rxf5Hj8obgZaXirCFQ==",
+      "dependencies": [
+        "@capacitor/android",
+        "@capacitor/app",
+        "@capacitor/core",
+        "@capacitor/ios"
+      ]
+    },
     "@aparajita/capacitor-secure-storage@8.0.1": {
       "integrity": "sha512-NSYIQtH6TyBgL3myumQGcCE3iecq2PtGNFlGxl1fJKEU37Dv5DudzDlwg42cgbVxCm1ay72g4X7rTSAvKULsVg==",
       "dependencies": [
@@ -69,6 +88,12 @@
     },
     "@capacitor-community/keep-awake@8.0.1_@capacitor+core@8.5.2": {
       "integrity": "sha512-wTI5A6FWl5gWoMduzJ5euuJ1P73SO+rea0jV6vNdmz5TLbwIDhufelFe/GowNvU9gog6kDYbFhJ2pOp9ua1f3w==",
+      "dependencies": [
+        "@capacitor/core"
+      ]
+    },
+    "@capacitor-community/media@9.1.0_@capacitor+core@8.5.2": {
+      "integrity": "sha512-HTd+n2pPBE7otRqYzr09sOrAb59t/bVzCME19dVixKmDP09rxB+Mt6aj0c5AhMoKS8Jw4712r5tk+gifHTlW/Q==",
       "dependencies": [
         "@capacitor/core"
       ]
@@ -147,8 +172,21 @@
         "@capacitor/core"
       ]
     },
+    "@capacitor/dialog@8.0.1_@capacitor+core@8.5.2": {
+      "integrity": "sha512-Dq0mZBsd++7CvPvpD2gfbUB44k/zCoe5K9IgYmMImQ4Yphu4/MxLVpFDFAqSya011UBBTGPrUQGVacIW3jDNkw==",
+      "dependencies": [
+        "@capacitor/core"
+      ]
+    },
     "@capacitor/filesystem@8.1.3_@capacitor+core@8.5.2": {
       "integrity": "sha512-GNBlRkaXEEb+6WP/YsDXr2zygyOHoieuye6viyd2ZkEdBwfseG41jxfarVxLWH0r0owhyNUbwJ/Qi8fubqr6wA==",
+      "dependencies": [
+        "@capacitor/core",
+        "@capacitor/synapse"
+      ]
+    },
+    "@capacitor/geolocation@8.2.2_@capacitor+core@8.5.2": {
+      "integrity": "sha512-X8ryw6CfL4LspJnnfVL4++DUKKZVfdUIA9JljWVRljEDIQxZQZtz6xf7qstht+ymc+le6oa5EaUChVA6KsCYlA==",
       "dependencies": [
         "@capacitor/core",
         "@capacitor/synapse"
@@ -172,14 +210,32 @@
         "@capacitor/core"
       ]
     },
+    "@capacitor/local-notifications@8.3.1_@capacitor+core@8.5.2": {
+      "integrity": "sha512-F7zu/+p/mIR958YP4axOkeI5hBKRaXDyYjbNPrAil2wWfd7OxScPSTvP9t85NpQ0eULVRu0/sntoxOg6ck477A==",
+      "dependencies": [
+        "@capacitor/core"
+      ]
+    },
     "@capacitor/network@8.0.1_@capacitor+core@8.5.2": {
       "integrity": "sha512-9xK/FHFmzKGanB6BdoSZOzXk8vF0OFVQSQ4PAsIrzAzLuXHryO317qy8dcHVpgxYeuZq2noI0My9z1DvVDi/9w==",
       "dependencies": [
         "@capacitor/core"
       ]
     },
+    "@capacitor/privacy-screen@2.0.1_@capacitor+core@8.5.2": {
+      "integrity": "sha512-NDKXhf2tGMZu6JcVTDtwfUw0Y7BMBfcoinhxVqRhzHaBCO7HgXF7MRX2HLk0T+l4/2uzmRb3AvUKHiF4BW8drA==",
+      "dependencies": [
+        "@capacitor/core"
+      ]
+    },
     "@capacitor/push-notifications@8.1.2_@capacitor+core@8.5.2": {
       "integrity": "sha512-TQl4XxqJfNF+KbSYBFMXYYT5WXUaleVKXlByhh/8+KySMVNjp+l5OqAUoGe/sY1IAnGXEuUeCjA/WLZEVvGwrA==",
+      "dependencies": [
+        "@capacitor/core"
+      ]
+    },
+    "@capacitor/screen-orientation@8.0.1_@capacitor+core@8.5.2": {
+      "integrity": "sha512-DPz/1YGmlAUDMg2ON+AGJp1eFn9IfVNP9VKI5zIU+jD5xAZ4JGxUDlY9MDCvEPQs7UCD53NduJpqvqhcnb32Kw==",
       "dependencies": [
         "@capacitor/core"
       ]
@@ -198,6 +254,12 @@
     },
     "@capacitor/synapse@1.0.4": {
       "integrity": "sha512-/C1FUo8/OkKuAT4nCIu/34ny9siNHr9qtFezu4kxm6GY1wNFxrCFWjfYx5C1tUhVGz3fxBABegupkpjXvjCHrw=="
+    },
+    "@capawesome/capacitor-app-review@8.0.2_@capacitor+core@8.5.2": {
+      "integrity": "sha512-N0YyjTsnfuuY4PvTc45GNu1iQ/jrEuki8Kiky5PXCcnP02RqJSdo9Pq6H3bOA4z3A5QWu2UeV5oxwWsJvNpxBA==",
+      "dependencies": [
+        "@capacitor/core"
+      ]
     },
     "@capawesome/capacitor-app-shortcuts@8.0.2_@capacitor+core@8.5.2": {
       "integrity": "sha512-gvwF+oc+dvBDN88TI/MNUYEUpWoTdHP2ZRyZ5P1/nHOgw4vzU2LMflZg+Pi85I78Vx7tt+EX1JpsOYYJnX+v5w==",
@@ -418,6 +480,12 @@
     },
     "buffer-crc32@0.2.13": {
       "integrity": "sha512-VO9Ht/+p3SN7SKWqcrgEzjGbRSJYTx+Q1pTQC0wrWqHx0vpJraQ6GtHx8tvcg1rlK1byhU5gccxgOgj7B0TDkQ=="
+    },
+    "capacitor-plugin-app-tracking-transparency@3.0.0_@capacitor+core@8.5.2": {
+      "integrity": "sha512-paBaxm/7nu83e4U/o2PiM39oI6XKIpUGuG/WuoXyX9olZ6EYFc9YXA4wUvR4fllBDqGqvVYzUrZ7XTSeZxJMVw==",
+      "dependencies": [
+        "@capacitor/core"
+      ]
     },
     "chownr@3.0.0": {
       "integrity": "sha512-+IxzY9BZOQd/XuYPRmrvEVjF/nqj5kgT4kEq7VofrDoM1MxoRjEWkrCC3EtLi59TVawxTAn+orJwFQcrqEN1+g=="
@@ -856,8 +924,10 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@aparajita/capacitor-biometric-auth@10",
         "npm:@aparajita/capacitor-secure-storage@^8.0.1",
         "npm:@capacitor-community/keep-awake@^8.0.1",
+        "npm:@capacitor-community/media@^9.1.0",
         "npm:@capacitor-community/sqlite@^8.1.1",
         "npm:@capacitor/android@8.5.2",
         "npm:@capacitor/app@^8.1.1",
@@ -867,29 +937,37 @@
         "npm:@capacitor/clipboard@^8.0.1",
         "npm:@capacitor/core@8.5.2",
         "npm:@capacitor/device@^8.0.3",
+        "npm:@capacitor/dialog@^8.0.1",
         "npm:@capacitor/filesystem@^8.1.3",
+        "npm:@capacitor/geolocation@^8.2.2",
         "npm:@capacitor/haptics@^8.0.2",
         "npm:@capacitor/ios@8.5.2",
+        "npm:@capacitor/keyboard@^8.0.5",
+        "npm:@capacitor/local-notifications@^8.3.1",
         "npm:@capacitor/network@^8.0.1",
+        "npm:@capacitor/privacy-screen@^2.0.1",
         "npm:@capacitor/push-notifications@^8.1.2",
+        "npm:@capacitor/screen-orientation@^8.0.1",
         "npm:@capacitor/share@^8.0.2",
         "npm:@capacitor/splash-screen@^8.0.2",
+        "npm:@capawesome/capacitor-app-review@^8.0.2",
         "npm:@capawesome/capacitor-app-shortcuts@^8.0.2",
-        "npm:@capawesome/capacitor-file-picker@^8.1.0"
+        "npm:@capawesome/capacitor-file-picker@^8.1.0",
+        "npm:capacitor-plugin-app-tracking-transparency@3"
       ]
     },
     "links": {
       "jsr:@denext/avif@0.1.2": {},
       "jsr:@denext/content-collections@0.4.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0-rc.3",
+          "jsr:@denext/denext@^2.10.0",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
           "jsr:@std/yaml@1"
         ]
       },
-      "jsr:@denext/denext@2.10.0-rc.3": {
+      "jsr:@denext/denext@2.10.0": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
           "jsr:@denext/lightningcss@^1.0.0-rc.72",
@@ -913,13 +991,13 @@
       },
       "jsr:@denext/effect@0.1.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0-rc.3",
+          "jsr:@denext/denext@^2.10.0",
           "npm:effect@^3.22.0"
         ]
       },
       "jsr:@denext/graphql@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0-rc.3",
+          "jsr:@denext/denext@^2.10.0",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.10.0",
           "npm:graphql@^16.9.0"
@@ -927,7 +1005,7 @@
       },
       "jsr:@denext/htmx@2.0.11": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0-rc.3",
+          "jsr:@denext/denext@^2.10.0",
           "jsr:@std/path@1"
         ]
       },
@@ -935,20 +1013,20 @@
       "jsr:@denext/og@0.1.1": {},
       "jsr:@denext/openapi@0.3.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0-rc.3",
+          "jsr:@denext/denext@^2.10.0",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/pages-router@0.10.0": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0-rc.3",
+          "jsr:@denext/denext@^2.10.0",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/photon@0.3.6": {},
       "jsr:@denext/react-router@0.1.1": {
         "dependencies": [
-          "jsr:@denext/denext@^2.10.0-rc.3",
+          "jsr:@denext/denext@^2.10.0",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]

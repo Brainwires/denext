@@ -73,6 +73,10 @@ export interface KeyboardStatic {
   metrics(): KeyboardMetrics | undefined;
   /** React Native animates layout with the keyboard here; a web view does nothing. */
   scheduleLayoutAnimation(event: KeyboardEvent): void;
+  /** Call `eventName`'s listeners with `event` (React Native's event-emitter face). */
+  emit(eventName: KeyboardEventName, event: KeyboardEvent): void;
+  /** How many listeners `eventName` has. */
+  listenerCount(eventName: KeyboardEventName): number;
 }
 
 /** The keyboard hub: listeners, the last state, and the watcher while it runs. */
@@ -189,6 +193,12 @@ export const Keyboard: KeyboardStatic = {
     return keyboardHub().metrics;
   },
   scheduleLayoutAnimation(_event) {},
+  emit(eventName, event) {
+    hub?.listeners.emit(eventName, event);
+  },
+  listenerCount(eventName) {
+    return hub?.listeners.count(eventName) ?? 0;
+  },
 };
 
 /** React Native's `KeyboardAvoidingView` behaviors. */

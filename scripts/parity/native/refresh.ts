@@ -15,6 +15,7 @@
 import type { Baseline } from "../types.ts";
 import { captureReal } from "./capture.ts";
 import { refreshLists } from "./lists.ts";
+import { refreshDesktop } from "./desktop.ts";
 import { countSurfaceSymbols } from "./shared.ts";
 import {
   expoBaselinePath,
@@ -94,6 +95,7 @@ async function main() {
   if (doRn) await refreshReactNative();
   if (doExpo) await refreshExpo();
   if (args.length === 0 || args.includes("lists")) await refreshLists(ROOT);
+  if (args.length === 0 || args.includes("desktop")) await refreshDesktop(ROOT);
 }
 
 if (import.meta.main) await main();

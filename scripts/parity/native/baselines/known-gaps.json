@@ -2,8 +2,530 @@
   "note": "Real, currently-open native (react-native / expo) signature deviations. Burn this down; `deno task parity:native` fails on any deviation NOT listed here. Regenerate with `deno task parity:native:gaps`.",
   "gaps": [
     {
-      "specifier": "react-native",
-      "symbol": "ActionSheetIOS",
+      "specifier": "react-native-macos",
+      "symbol": "ActivityIndicatorBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ActivityIndicatorComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "AppRegistry",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): cancelHeadlessTask, getRegistry, getRunnable, getSectionKeys, getSections, registerCancellableHeadlessTask, registerHeadlessTask, registerSection, setRootViewStyleProvider, setSurfaceProps, startHeadlessTask"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "DeviceEventEmitter",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): sharedSubscriber"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "DrawerLayoutAndroidBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "DrawerLayoutAndroidComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "DrawerLayoutAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "FlatListComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ImageBackgroundBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ImageBackgroundComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ImageBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ImageComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "Image",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): abortPrefetch, getSizeWithHeaders, prefetchWithMetadata, resolveAssetSource"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "KeyboardAvoidingViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "KeyboardAvoidingViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "LayoutAnimation",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): configChecker"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "NativeAppEventEmitter",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): sharedSubscriber"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "PixelRatio",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): startDetecting"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ProgressBarAndroidBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ProgressBarAndroidComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ProgressBarAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "RefreshControlBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "RefreshControlComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "SafeAreaViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "SafeAreaViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ScrollViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ScrollViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "SectionListComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "Settings",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "StyleSheet",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): setStyleAttributePreprocessor"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "SwitchBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "SwitchComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TextBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TextComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TextInputBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TextInputComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TouchableNativeFeedbackBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TouchableNativeFeedbackComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TouchableNativeFeedback",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): Ripple, SelectableBackground, SelectableBackgroundBorderless, canUseNativeForeground"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TouchableWithoutFeedbackBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "TouchableWithoutFeedbackComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "UIManager",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): dispatchViewManagerCommand, getViewManagerConfig, hasViewManagerConfig"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-macos",
+      "symbol": "ViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ActivityIndicatorBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ActivityIndicatorComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "AppRegistry",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): cancelHeadlessTask, getRegistry, getRunnable, getSectionKeys, getSections, registerCancellableHeadlessTask, registerHeadlessTask, registerSection, setRootViewStyleProvider, setSurfaceProps, startHeadlessTask"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "DeviceEventEmitter",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): sharedSubscriber"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "DrawerLayoutAndroidBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "DrawerLayoutAndroidComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "DrawerLayoutAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "FlatListComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ImageBackgroundBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ImageBackgroundComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ImageBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ImageComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "Image",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): abortPrefetch, getSizeWithHeaders, prefetchWithMetadata, resolveAssetSource"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "KeyboardAvoidingViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "KeyboardAvoidingViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "LayoutAnimation",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): configChecker"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "NativeAppEventEmitter",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): sharedSubscriber"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "PixelRatio",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): startDetecting"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ProgressBarAndroidBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ProgressBarAndroidComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ProgressBarAndroid",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "RefreshControlBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "RefreshControlComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "SafeAreaViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "SafeAreaViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ScrollViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ScrollViewComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "SectionListComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "Settings",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "StyleSheet",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): setStyleAttributePreprocessor"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "SwitchBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "SwitchComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TextBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TextComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TextInputBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TextInputComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TouchableNativeFeedbackBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TouchableNativeFeedbackComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TouchableNativeFeedback",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): Ripple, SelectableBackground, SelectableBackgroundBorderless, canUseNativeForeground"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TouchableWithoutFeedbackBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "TouchableWithoutFeedbackComponent",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "UIManager",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): dispatchViewManagerCommand, getViewManagerConfig, hasViewManagerConfig"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ViewBase",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native-windows",
+      "symbol": "ViewComponent",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
     },
@@ -21,33 +543,15 @@
     },
     {
       "specifier": "react-native",
-      "symbol": "codegenNativeCommands",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
+      "symbol": "AppRegistry",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): cancelHeadlessTask, getRegistry, getRunnable, getSectionKeys, getSections, registerCancellableHeadlessTask, registerHeadlessTask, registerSection, setRootViewStyleProvider, setSurfaceProps, startHeadlessTask"
     },
     {
       "specifier": "react-native",
-      "symbol": "codegenNativeComponent",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "CodegenTypes",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "DevMenu",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "DevSettings",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
+      "symbol": "DeviceEventEmitter",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): sharedSubscriber"
     },
     {
       "specifier": "react-native",
@@ -64,12 +568,6 @@
     {
       "specifier": "react-native",
       "symbol": "DrawerLayoutAndroid",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "DynamicColorIOS",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
     },
@@ -105,9 +603,9 @@
     },
     {
       "specifier": "react-native",
-      "symbol": "InputAccessoryView",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
+      "symbol": "Image",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): abortPrefetch, getSizeWithHeaders, prefetchWithMetadata, resolveAssetSource"
     },
     {
       "specifier": "react-native",
@@ -123,27 +621,21 @@
     },
     {
       "specifier": "react-native",
+      "symbol": "LayoutAnimation",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): configChecker"
+    },
+    {
+      "specifier": "react-native",
       "symbol": "NativeAppEventEmitter",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): sharedSubscriber"
     },
     {
       "specifier": "react-native",
-      "symbol": "NativeComponentRegistry",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "PermissionsAndroid",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "PlatformColor",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
+      "symbol": "PixelRatio",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): startDetecting"
     },
     {
       "specifier": "react-native",
@@ -165,12 +657,6 @@
     },
     {
       "specifier": "react-native",
-      "symbol": "PushNotificationIOS",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
       "symbol": "RefreshControlBase",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
@@ -178,24 +664,6 @@
     {
       "specifier": "react-native",
       "symbol": "RefreshControlComponent",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "registerCallableModule",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "requireNativeComponent",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "RootTagContext",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
     },
@@ -237,6 +705,12 @@
     },
     {
       "specifier": "react-native",
+      "symbol": "StyleSheet",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): setStyleAttributePreprocessor"
+    },
+    {
+      "specifier": "react-native",
       "symbol": "SwitchBase",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
@@ -244,12 +718,6 @@
     {
       "specifier": "react-native",
       "symbol": "SwitchComponent",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "Systrace",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
     },
@@ -279,12 +747,6 @@
     },
     {
       "specifier": "react-native",
-      "symbol": "ToastAndroid",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
       "symbol": "TouchableNativeFeedbackBase",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
@@ -294,6 +756,12 @@
       "symbol": "TouchableNativeFeedbackComponent",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "TouchableNativeFeedback",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): Ripple, SelectableBackground, SelectableBackgroundBorderless, canUseNativeForeground"
     },
     {
       "specifier": "react-native",
@@ -309,27 +777,9 @@
     },
     {
       "specifier": "react-native",
-      "symbol": "TurboModuleRegistry",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "useAnimatedColor",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "useAnimatedValue",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "useAnimatedValueXY",
-      "category": "MISSING_VALUE",
-      "detail": "runtime export missing from denext"
+      "symbol": "UIManager",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): dispatchViewManagerCommand, getViewManagerConfig, hasViewManagerConfig"
     },
     {
       "specifier": "react-native",
@@ -342,6 +792,12 @@
       "symbol": "ViewComponent",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "react-native",
+      "symbol": "View",
+      "category": "MEMBER_MISSING",
+      "detail": "missing member(s): forceTouchAvailable"
     }
   ]
 }

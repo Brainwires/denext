@@ -6,6 +6,7 @@
  */
 
 import { nativePlugin } from "./plugin.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /** The JS side of `@capacitor/clipboard` (the string half of it). */
 interface ClipboardPlugin {
@@ -38,7 +39,8 @@ function webClipboard(fn: string): WebClipboard {
 
 /**
  * Read text from the clipboard: through `@capacitor/clipboard` inside the native shell
- * (`denext mobile add clipboard`), else `navigator.clipboard.readText()`, which browsers
+ * (`denext mobile add clipboard`), through the desktop runtime in a Deno Desktop window
+ * (`denext desktop add clipboard`; no user gesture needed), else `navigator.clipboard.readText()`, which browsers
  * gate behind a permission prompt or a user gesture.
  *
  * @returns The clipboard's text (`""` when it holds none).
@@ -53,6 +55,8 @@ function webClipboard(fn: string): WebClipboard {
  * ```
  */
 export async function readClipboard(): Promise<string> {
+  const desktop = onDesktop() && await viaDesktop("clipboard", (d) => d.clipboardRead());
+  if (desktop) return desktop.value;
   const plugin = clipboardPlugin();
   if (plugin) return (await plugin.read()).value ?? "";
   return await webClipboard("readClipboard").readText();
@@ -60,7 +64,8 @@ export async function readClipboard(): Promise<string> {
 
 /**
  * Write text to the clipboard: through `@capacitor/clipboard` inside the native shell
- * (`denext mobile add clipboard`), else `navigator.clipboard.writeText()`.
+ * (`denext mobile add clipboard`), through the desktop runtime in a Deno Desktop window
+ * (`denext desktop add clipboard`), else `navigator.clipboard.writeText()`.
  *
  * @param text The text to copy.
  * @returns A promise that settles once the text is on the clipboard. It rejects where there is
@@ -76,6 +81,7 @@ export async function readClipboard(): Promise<string> {
  * ```
  */
 export async function writeClipboard(text: string): Promise<void> {
+  if (onDesktop() && await viaDesktop("clipboard", (d) => d.clipboardWrite(text))) return;
   const plugin = clipboardPlugin();
   if (plugin) return await plugin.write({ string: text });
   await webClipboard("writeClipboard").writeText(text);

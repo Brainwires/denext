@@ -7,6 +7,7 @@
 
 import { blobToBase64, isDismissal } from "./base64.ts";
 import { nativePlugin } from "./plugin.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /**
  * Where {@linkcode pickImage} gets the picture: `"camera"` (take one), `"photos"` (the photo
@@ -230,6 +231,9 @@ export async function pickImage(options: PickImageOptions = {}): Promise<PickedI
  * - Inside the native shell with `@capawesome/capacitor-file-picker` installed (`denext
  *   mobile add document-picker`), the iOS document picker / Android's system file picker; the
  *   result carries the picked copy's `path`, and `data` with `readData: true`.
+ * - In a Deno Desktop window (`denext desktop add dialogs`), the native open panel: the result
+ *   carries the file's absolute `path` (which the `fs` capability may then read), and `data`
+ *   with `readData: true`.
  * - Otherwise a file chooser, and the file's bytes as base64 `data`.
  *
  * A dismissed picker resolves `null` rather than rejecting.
@@ -249,6 +253,10 @@ export async function pickDocument(
   options: PickDocumentOptions = {},
 ): Promise<PickedDocument | null> {
   const types = options.types ? [...options.types] : undefined;
+  const readData = options.readData === true;
+  const desktop = onDesktop() &&
+    await viaDesktop("dialogs", (d) => d.dialogOpenFile(types, readData));
+  if (desktop) return desktop.value;
   const plugin = nativePlugin<FilePickerPlugin>("FilePicker", ["pickFiles"]);
   if (plugin) {
     const result = await unlessDismissed(

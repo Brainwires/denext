@@ -22,8 +22,13 @@ import {
   sha256Text,
 } from "./native-template-marker.ts";
 
-/** The generation of the templates below, stamped into every file `add-ota` writes. */
-export const OTA_TEMPLATE_VERSION = 4;
+/**
+ * The generation of the templates below, stamped into every file `add-ota` writes. Generation 5
+ * (denext 2.11): the composed `DenextBridgeViewController` can register the DenextSettings and
+ * DenextAccessibility plugins, which 2.10.0 (generation 4) does not know; the bump makes 2.10.0
+ * keep such a bridge (a newer denext's) instead of rewriting it without them.
+ */
+export const OTA_TEMPLATE_VERSION = 5;
 
 /**
  * SHA-256 of every template file denext shipped before the marker line existed, by file name:

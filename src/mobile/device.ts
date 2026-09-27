@@ -7,6 +7,7 @@
 
 import { type NativePlatform, nativePlatform } from "./bridge.ts";
 import { nativePlugin } from "./plugin.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /** What {@linkcode deviceInfo} reports. Only `platform` is always known. */
 export interface DeviceInfo {
@@ -77,6 +78,9 @@ function defined(info: DeviceInfo): DeviceInfo {
  *
  * - Inside the native shell with `@capacitor/device` installed (`denext mobile add
  *   device`), the model, OS version and simulator flag from the OS.
+ * - In a Deno Desktop window (`denext desktop add device`), the OS (`model`: `"Macintosh"`,
+ *   `"Windows"` or `"Linux"`) and its release from the desktop runtime; `platform` stays
+ *   `"web"` (use `runtimePlatform()` to tell desktop apart).
  * - Otherwise a best-effort parse of `navigator.userAgent` (model and OS version only; it
  *   can be wrong, and iPadOS reports itself as a Mac). During SSR only `platform` is set.
  *
@@ -101,6 +105,8 @@ export async function deviceInfo(): Promise<DeviceInfo> {
       isVirtual: typeof info.isVirtual === "boolean" ? info.isVirtual : undefined,
     });
   }
+  const desktop = onDesktop() && await viaDesktop("device", (d) => d.desktopDeviceFacts());
+  if (desktop) return defined({ platform, ...desktop.value });
   const ua = (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent;
   return defined({ platform, ...(typeof ua === "string" ? parseUserAgent(ua) : {}) });
 }

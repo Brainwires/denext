@@ -1,0 +1,40 @@
+{
+  "tasks": {
+    "dev": "deno run -A ../../cli.ts dev .",
+    "export": "deno run -A ../../cli.ts export .",
+    "desktop": "deno run -A ../../cli.ts desktop run .",
+    "desktop:dev": "deno run -A ../../cli.ts desktop dev .",
+    "desktop:package": "deno run -A ../../cli.ts desktop package ."
+  },
+  "nodeModulesDir": "manual",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/mobile": "../../src/mobile/mod.ts",
+    "denext/desktop": "../../src/build/desktop.ts",
+    "denext/desktop/client": "../../src/desktop/client.ts",
+    "react": "../../src/compat/react.ts",
+    "react-dom": "../../src/compat/react-dom.ts",
+    "react-dom/client": "../../src/compat/react-dom-client.ts",
+    "react/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "react/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "react-is": "../../src/compat/react-is.ts"
+  },
+  "lint": {
+    "plugins": ["../../src/lint/denext-plugin.ts"]
+  },
+  "desktop": {
+    "app": {
+      "name": "denext RN desktop",
+      "identifier": "dev.denext.rn-desktop"
+    }
+  }
+}

@@ -8,11 +8,17 @@
  * On the web a notification scheduled for now shows through the Notifications API (when
  * permission is granted); nothing can be scheduled for later, so a trigger rejects there.
  *
+ * In a Deno Desktop window (`denext desktop add notifications`) the desktop runtime shows them
+ * as OS notifications, schedules triggers while the app runs (not after it quits), and routes
+ * a click like a tap: it focuses the window, then `onLocalNotificationTapped` fires. There are
+ * no action buttons, channels or categories on desktop.
+ *
  * @module
  */
 
 import { useEffect, useRef } from "../runtime/hooks.ts";
-import { nativePlatform } from "./bridge.ts";
+import { nativePlatform, runtimePlatform } from "./bridge.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { createFanout, type Fanout } from "./link-routing.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 import { deliverTap, type PushTap, type PushTapOptions } from "./push.ts";
@@ -464,6 +470,9 @@ interface WebNotificationCtor {
 export async function scheduleNotification(notification: LocalNotificationInput): Promise<number> {
   const fn = "scheduleNotification";
   const schema = schemaOf(fn, notification);
+  if (onDesktop() && await viaDesktop("notifications", (d) => d.notifySchedule(schema))) {
+    return schema.id as number;
+  }
   const plugin = localPlugin();
   if (plugin) {
     await plugin.schedule({ notifications: [schema] });
@@ -485,6 +494,7 @@ export async function scheduleNotification(notification: LocalNotificationInput)
 export async function cancelNotification(ids: number | readonly number[]): Promise<void> {
   const list = (Array.isArray(ids) ? ids : [ids]) as number[];
   if (list.length === 0) return;
+  if (onDesktop() && await viaDesktop("notifications", (d) => d.notifyCancel(list))) return;
   await localPlugin()?.cancel({ notifications: list.map((id) => ({ id })) });
 }
 
@@ -524,9 +534,11 @@ function toLocal(raw: RawLocal | undefined): LocalNotification {
  * @returns The pending notifications.
  */
 export async function pendingNotifications(): Promise<ScheduledLocalNotification[]> {
+  const desktop = onDesktop() && await viaDesktop("notifications", (d) => d.notifyPending());
   const plugin = localPlugin();
-  if (!plugin) return [];
-  return ((await plugin.getPending()).notifications ?? []).map((raw) => {
+  if (!desktop && !plugin) return [];
+  const raws = desktop ? desktop.value : (await plugin!.getPending()).notifications ?? [];
+  return (raws as RawLocal[]).map((raw) => {
     const n = toLocal(raw);
     return { id: n.id, title: n.title ?? "", body: n.body ?? "", data: n.data };
   });
@@ -656,6 +668,7 @@ export async function setNotificationCategories(
 
 let receivedFanout: Fanout<LocalNotification> | undefined;
 let tappedFanout: Fanout<LocalNotificationTap> | undefined;
+let desktopTappedFanout: Fanout<LocalNotificationTap> | undefined;
 
 /** A fan-out over one plugin event, mapped through `map`. */
 function pluginFanout<Raw, T>(eventName: string, map: (raw: Raw) => T): Fanout<T> {
@@ -674,21 +687,48 @@ function asPushTap(tap: LocalNotificationTap): PushTap {
   };
 }
 
+/** A raw tap (the plugin's `ActionPerformed`, or the desktop runtime's click) as a tap. */
+function toLocalTap(raw: RawLocalTap | undefined): LocalNotificationTap {
+  return {
+    notification: toLocal(raw?.notification),
+    actionId: str(raw?.actionId) ?? "tap",
+    inputValue: str(raw?.inputValue),
+  };
+}
+
+/**
+ * The fan-out over Deno Desktop notification clicks (the runtime focuses the window, then
+ * emits `notifications` / `click` on the bridge's event stream). The desktop module loads
+ * lazily, only in a desktop window.
+ */
+function desktopTaps(): Fanout<LocalNotificationTap> {
+  return desktopTappedFanout ??= createFanout<LocalNotificationTap>((emit) =>
+    listenerDisposer(
+      import("../desktop/native.ts").then((d) => ({
+        remove: d.onNotificationClick((raw) => emit(toLocalTap(raw as RawLocalTap))),
+      })),
+    )
+  );
+}
+
+/** Where taps come from here: the desktop runtime, the native plugin, or nowhere. */
+function tapFanout(): Fanout<LocalNotificationTap> | undefined {
+  if (runtimePlatform() === "desktop") return desktopTaps();
+  if (!localPlugin()) return undefined;
+  return tappedFanout ??= pluginFanout<RawLocalTap, LocalNotificationTap>(
+    "localNotificationActionPerformed",
+    toLocalTap,
+  );
+}
+
 /** Subscribe to taps with options read at delivery time. */
 function subscribeTaps(
   callback: (tap: LocalNotificationTap) => void,
   options: () => LocalNotificationTapOptions,
 ): () => void {
-  if (!localPlugin()) return () => {};
-  tappedFanout ??= pluginFanout<RawLocalTap, LocalNotificationTap>(
-    "localNotificationActionPerformed",
-    (raw) => ({
-      notification: toLocal(raw?.notification),
-      actionId: str(raw?.actionId) ?? "tap",
-      inputValue: str(raw?.inputValue),
-    }),
-  );
-  return tappedFanout.subscribe((tap, once) =>
+  const fanout = tapFanout();
+  if (!fanout) return () => {};
+  return fanout.subscribe((tap, once) =>
     deliverTap(asPushTap(tap), once, () => callback(tap), options())
   );
 }
@@ -760,4 +800,5 @@ export function useLocalNotificationTapped(
 export function resetLocalNotificationsForTesting(): void {
   receivedFanout = undefined;
   tappedFanout = undefined;
+  desktopTappedFanout = undefined;
 }

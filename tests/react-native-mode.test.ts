@@ -278,11 +278,16 @@ Deno.test("withNativeModuleExports: appended to an ES or CommonJS entry; existin
   const esm = withNativeModuleExports('export { default as View } from "./View";\n');
   assertStringIncludes(
     esm,
-    'export { TurboModuleRegistry, codegenNativeComponent, codegenNativeCommands } from "denext-react-native-native-modules";',
+    "export { TurboModuleRegistry, codegenNativeComponent, codegenNativeCommands, " +
+      "requireNativeComponent, NativeComponentRegistry, CodegenTypes, DevMenu, " +
+      'PushNotificationIOS, registerCallableModule, Systrace } from "denext-react-native-native-modules";',
   );
+  assert(!esm.includes("denext/react-native"), "no overlay additions unless it resolves");
   const partial = withNativeModuleExports(
     "export const TurboModuleRegistry = {};\nexport function codegenNativeComponent() {}\n" +
-      "export function codegenNativeCommands() {}\n",
+      "export function codegenNativeCommands() {}\nexport function requireNativeComponent() {}\n" +
+      "export { NativeComponentRegistry, CodegenTypes, DevMenu, PushNotificationIOS, " +
+      "registerCallableModule, Systrace } from './internals';\n",
   );
   assert(!partial.includes("denext-react-native-native-modules"), "all present: unchanged");
   const cjs = withNativeModuleExports("exports.View = 1;\nexports.TurboModuleRegistry = {};\n");
@@ -329,11 +334,13 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(on.jsxInJs, true);
   assertEquals(on.plugins.map((p) => p.name), [
     "denext-react-native-web",
+    "denext-react-native-desktop",
     "denext-expo-router-ctx",
     "denext-expo-router-navigators",
     "denext-expo-shims",
     "denext-react-native-lists",
     "denext-reanimated-worklets",
+    "denext-react-native-aliases",
   ]);
   assertEquals(on.usesActivity, true, "the navigators need the Activity runtime");
   const off = reactNativeBundleOptions({ reactNative: { expoShims: false } }, "/p", false)!;
@@ -341,10 +348,12 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
     off.plugins.map((p) => p.name),
     [
       "denext-react-native-web",
+      "denext-react-native-desktop",
       "denext-expo-router-ctx",
       "denext-expo-router-navigators",
       "denext-react-native-lists",
       "denext-reanimated-worklets",
+      "denext-react-native-aliases",
     ],
     "expoShims: false",
   );
@@ -463,7 +472,7 @@ Deno.test("reactNative bundle: expoShims: false resolves every expo-* package no
 const SPA = { entry: "./src/main.tsx" };
 const ROOT_STYLE = "html,body,#root{height:100%;margin:0}#root{display:flex}";
 
-Deno.test("spaShellHtml: Expo's root style only in reactNative mode, before spa.head", async () => {
+Deno.test("spaShellHtml: Expo's root style and viewport-fit=cover only in reactNative mode", async () => {
   const plain = await spaShellHtml({ spa: SPA, scriptSrc: "/x.js" });
   assert(!plain.includes("display:flex"), "no root style without reactNative");
   const rn = await spaShellHtml({
@@ -473,6 +482,19 @@ Deno.test("spaShellHtml: Expo's root style only in reactNative mode, before spa.
   });
   assertStringIncludes(rn, `<style>${ROOT_STYLE}</style>`);
   assert(rn.indexOf(ROOT_STYLE) < rn.indexOf("background:red"), "spa.head can override it");
+  assertStringIncludes(
+    rn,
+    'content="width=device-width, initial-scale=1, viewport-fit=cover"',
+    "React Native mode covers the screen, so safe-area insets are not 0 in the iOS shell",
+  );
+  assert(!plain.includes("viewport-fit"), "a plain SPA keeps the plain viewport");
+  const own = await spaShellHtml({
+    spa: { ...SPA, head: '<meta name="viewport" content="width=device-width" />' },
+    scriptSrc: "/x.js",
+    reactNativeRootStyle: true,
+  });
+  assertEquals((own.match(/name="viewport"/g) ?? []).length, 1, "the app's own viewport wins");
+  assert(!own.includes("viewport-fit"));
   const custom = await spaShellHtml({
     spa: { ...SPA, rootId: "app" },
     scriptSrc: "/x.js",

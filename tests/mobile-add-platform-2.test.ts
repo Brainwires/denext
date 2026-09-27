@@ -77,6 +77,8 @@ async function inProject(
       "import type { CapacitorConfig } from '@capacitor/cli';\n\nconst config: CapacitorConfig = {\n  appId: 'com.example.app',\n  webDir: 'out',\n};\n\nexport default config;\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    // The web export `cap sync` copies (without it the run falls back to `cap update`).
+    "out/index.html": "<!doctype html>\n",
     ".git/HEAD": "ref: refs/heads/main\n",
     [INFO_PLIST]: INFO_PLIST_TEXT,
     [APP_DELEGATE]: DELEGATE_TEXT,
@@ -113,7 +115,7 @@ Deno.test("platform capabilities: each pins a Capacitor 8 package and says what 
   for (const [name, cap] of Object.entries(PLATFORM_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
     assert(cap.notes, name);
-    pins[name] = `${cap.npm}@${cap.version}`;
+    pins[name] = cap.npm ? `${cap.npm}@${cap.version}` : "(denext native plugin)";
   }
   assertEquals(pins, {
     "app-review": "@capawesome/capacitor-app-review@^8.0.2",
@@ -124,6 +126,9 @@ Deno.test("platform capabilities: each pins a Capacitor 8 package and says what 
     tracking: "capacitor-plugin-app-tracking-transparency@^3.0.0",
     background: "@capacitor/background-runner@^3.0.0",
     restore: "@capacitor/app@^8.1.1",
+    accessibility: "(denext native plugin)",
+    "background-location": "@capgo/background-geolocation@^8.4.7",
+    application: "@capacitor/app@^8.1.1",
   });
 });
 

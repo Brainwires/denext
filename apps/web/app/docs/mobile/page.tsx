@@ -375,7 +375,11 @@ export default function RootLayout({ children }: { children: unknown }) {
         (looking up to the repository root, so a pnpm / yarn / bun workspace's lockfile counts; else
         a <code>packageManager</code>{" "}
         field; else npm), declares any Android permissions they need, and runs{" "}
-        <code>npx cap sync</code>. The install runs in the Capacitor project folder.
+        <code>npx cap sync</code>. The install runs in the Capacitor project folder. Before the web
+        export exists (no <code>index.html</code> in the config&apos;s{" "}
+        <code>webDir</code>), sync would stop at the missing folder, so it runs{" "}
+        <code>npx cap update</code> instead (the native half of sync) and says what is left:{" "}
+        <code>denext export</code>, then <code>npx cap sync</code>.
       </p>
       <Code lang="bash">
         {`denext mobile add --list                    # the capabilities and their plugins
@@ -412,7 +416,9 @@ denext mobile add haptics share network secure-store`}
         <li>
           <code>deviceInfo()</code>{" "}
           (<code>device</code>): platform, model, OS version; a best-effort user-agent read on the
-          web.
+          web. <code>application</code> installs <code>@capacitor/app</code> and{" "}
+          <code>@capacitor/device</code> together, the pair <code>expo-application</code>{" "}
+          reads (name, id, version, build, and the vendor / Android id).
         </li>
         <li>
           <code>networkStatus()</code> / <code>useNetworkStatus()</code>{" "}
@@ -453,8 +459,8 @@ denext mobile add haptics share network secure-store`}
         </li>
         <li>
           <code>pickImage({"{ source }"})</code>{" "}
-          (<code>camera</code>, which also writes the camera and photo-library usage strings) and
-          {" "}
+          (<code>camera</code>, which also writes the camera, photo-library and microphone usage
+          strings; the microphone one is for video recorded in the page) and{" "}
           <code>pickDocument({"{ types }"})</code> (<code>document-picker</code>): resolve{" "}
           <code>null</code> when the user cancels; a hidden file input on the web.
         </li>
@@ -1079,10 +1085,11 @@ export function CameraGate({ children }: { children: unknown }) {
         (<code>code: "unsupported"</code>): a plugin that is not installed with no browser API
         behind it (contacts needs a contacts plugin with <code>checkPermissions</code>, such as{" "}
         <code>@capacitor-community/contacts</code>; calendar{" "}
-        <code>@capacitor/calendar</code>), and always <code>location-background</code>{" "}
-        (see Geolocation). Biometrics have no separate prompt: iOS asks for Face ID the first time a
-        prompt runs, so its status is <code>granted</code> when a prompt can run and{" "}
-        <code>blocked</code> when the user turned Face ID off for the app.
+        <code>@capacitor/calendar</code>), and for now <code>location-background</code>{" "}
+        (<code>watchPositionInBackground</code>{" "}
+        asks for it itself; see Background location). Biometrics have no separate prompt: iOS asks
+        for Face ID the first time a prompt runs, so its status is <code>granted</code>{" "}
+        when a prompt can run and <code>blocked</code> when the user turned Face ID off for the app.
       </p>
 
       <h2 id="local-notifications">Local notifications</h2>
@@ -1251,13 +1258,63 @@ function Here() {
         need a geocoding service a WebView does not have, so they call the geocoder you pass to{" "}
         <code>setGeocoder</code> (any HTTP geocoding API) and reject without one.
       </p>
-      <Callout kind="note">
-        <strong>Background location is not shipped.</strong>{" "}
-        <code>@capacitor-community/background-geolocation</code>{" "}
-        supports Capacitor 7 only (its Capacitor 8 pull request was closed unmerged), so there is no
+
+      <h2 id="background-location">Background location</h2>
+      <p>
+        <code>background-location</code> installs <code>@capgo/background-geolocation</code>{" "}
+        (Capacitor 8, MPL-2.0), writes <code>NSLocationWhenInUseUsageDescription</code>,{" "}
+        <code>NSLocationAlwaysAndWhenInUseUsageDescription</code> and the <code>location</code>{" "}
+        background mode, and declares <code>FOREGROUND_SERVICE_LOCATION</code>{" "}
+        with its companions. iOS keeps the fixes coming with Always authorization; Android runs a
+        foreground service with a visible notification, which needs no{" "}
+        <code>ACCESS_BACKGROUND_LOCATION</code>{" "}
+        (denext does not declare it). Without the plugin (the web, or a shell without it) the same
+        call is the foreground <code>watchPosition</code>.
+      </p>
+      <Code lang="tsx">
+        {`import { isBackgroundLocationAvailable, stopBackgroundLocation, watchPositionInBackground } from "denext/mobile";
+
+const stop = watchPositionInBackground((p) => route.push([p.longitude, p.latitude]), {
+  notification: { title: "Recording your run", message: "Tap to return to the app." }, // Android
+  distanceFilterM: 10,
+  url: "https://api.example.com/locations", // optional: native POSTs, alive while the WebView sleeps
+});
+// later: stop(), or stopBackgroundLocation() from anywhere (one watch runs at a time)`}
+      </Code>
+      <Callout kind="warn">
+        <strong>Store review.</strong>{" "}
+        Apple and Google both scrutinise background location. The App Store (Guidelines 2.5.4 and
+        5.1.1) wants a visible feature that needs it (navigation, fitness, delivery tracking), named
+        in the usage string and in the review notes. Google Play wants the <code>location</code>
         {" "}
-        <code>location-background</code> permission or background watch yet; it is on the roadmap.
+        foreground service type declared in the Play Console with a short video, and{" "}
+        <code>ACCESS_BACKGROUND_LOCATION</code>{" "}
+        (only for background geofencing) adds a location permissions declaration and a prominent
+        in-app disclosure. On Android, also set <code>android.useLegacyBridge: true</code>{" "}
+        in the Capacitor config, or updates stop after about five minutes in the background.
       </Callout>
+
+      <h2 id="screen-readers">Screen readers</h2>
+      <p>
+        <code>accessibility</code> has no npm package: it writes denext&apos;s{" "}
+        <code>DenextAccessibility</code>{" "}
+        plugin (Swift and Java, registered like the other denext plugins), which reports whether
+        VoiceOver or TalkBack is on and when that changes. React Native mode&apos;s{" "}
+        <code>AccessibilityInfo.isScreenReaderEnabled</code>{" "}
+        reads the same plugin. The web has no API that reveals a screen reader, so there it is
+        always <code>false</code>.
+      </p>
+      <Code lang="tsx">
+        {`import { isScreenReaderEnabled, onScreenReaderChange, useScreenReader } from "denext/mobile";
+
+if (await isScreenReaderEnabled()) carousel.stopAutoplay();
+const stop = onScreenReaderChange((on) => document.body.classList.toggle("sr", on));
+
+function Slides({ items }: { items: string[] }) {
+  const screenReader = useScreenReader(); // false until the first answer
+  return screenReader ? <ol>{items.map((i) => <li key={i}>{i}</li>)}</ol> : <Carousel items={items} />;
+}`}
+      </Code>
 
       <h2 id="in-app-purchases">In-app purchases</h2>
       <p>

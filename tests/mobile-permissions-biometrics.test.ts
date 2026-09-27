@@ -140,7 +140,11 @@ Deno.test("permissions: unsupported names reject with a PermissionError", async 
       "@capacitor-community",
     );
     assertEquals((err as Any).code, "unsupported");
-    await assertRejects(() => checkPermission("location-background"), Error, "background");
+    await assertRejects(
+      () => checkPermission("location-background"),
+      Error,
+      "mobile add background-location",
+    );
     await assertRejects(() => checkPermission("camera"), Error, "mobile add camera");
     await assertRejects(() => checkPermission("biometrics"), Error, "mobile add biometrics");
     await assertRejects(() => checkPermission("nope" as Any), TypeError, "unknown permission");

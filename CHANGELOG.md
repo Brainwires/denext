@@ -10,6 +10,24 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop capabilities in `denext/mobile`.** In a Deno Desktop window
+  (`runtimePlatform() === "desktop"`), `secureStore` (the OS keychain), `readFile` / `writeFile`
+  / `deleteFile` / `listDir` / `downloadToFile` (the app-support folder), `openSqlite`
+  (`node:sqlite`), `showContextMenu` (the native menu), `openExternal` (the system browser),
+  `pickDocument` (the native open panel, with a path), the local notifications (a click routes
+  like a tap), `useKeepAwake`, the clipboard and `deviceInfo` call the desktop runtime through
+  its token-gated bridge, loading the desktop code lazily. New `openPath`,
+  `revealInFileManager`, `moveToTrash`, `saveFile` and `pickFolder`. A capability that is not
+  enabled keeps the web path (storage ones warn once: browser storage is wiped per launch).
+- **`denext desktop add <capability...>`** (`--list`, `--dry-run`) writes `desktop.capabilities`
+  in `denext.config.ts` (the runtime's allowlist) and prints the Deno permissions each capability
+  needs per OS, with its trust level.
+- **`denext/desktop/client`**: `desktopExtension<typeof ext>(name)` (a typed proxy to a desktop
+  extension's methods), `onDesktopEvent(cap, event, handler)` and `isDesktopBridgeError`.
+- **`examples/rn-desktop`**: a React Native (react-native-web) app in a Deno Desktop window;
+  `/docs/desktop` gains Native capabilities, extensions, the security model and React Native on
+  desktop.
+
 - **iOS privacy manifest.** Every `denext mobile add` capability declares the required-reason
   APIs its iOS code calls (checked against the pinned plugins' sources and Apple's reason list):
   `filesystem` FileTimestamp C617.1, `document-picker` 3B52.1, `social-login` and `background`
@@ -222,6 +240,46 @@ and this project adheres to
   `AppState` (iOS `inactive`), `Vibration`, `Share` and `Clipboard` over the Capacitor plugins.
   `Platform.OS` stays `"web"` in the shell (react-native-web and libraries pick their DOM paths
   by it); `Platform.Version` and `Platform.isPad` describe the device.
+- **React Native mode: the React Native core exports react-native-web lacks.** An import of any
+  of these was a build error ("No matching export"); each now binds from `react-native` and
+  tree-shakes away when unused. `requireNativeComponent` (a component that renders nothing, as
+  `codegenNativeComponent`: react-native-fast-image and react-native-date-picker now build);
+  load-safe no-ops for `CodegenTypes`, `DevMenu`, `NativeComponentRegistry`,
+  `PushNotificationIOS`, `registerCallableModule` and `Systrace` (and their `Libraries/…`
+  paths); `useAnimatedValue` / `useAnimatedValueXY` / `useAnimatedColor` over react-native-web's
+  `Animated`; `PermissionsAndroid` (`check` / `request` / `requestMultiple`, `RESULTS`,
+  `PERMISSIONS`, the rationale dialog) over `denext/mobile`'s permissions, on iOS and Android;
+  `ToastAndroid` (`@capacitor/toast`'s system toast in the Android shell when installed, else an
+  in-page toast drawn like Android's); `ActionSheetIOS` (`@capacitor/action-sheet` when
+  installed, else the in-page dialog, or the context menu for disabled options; the share sheet
+  over `Share`); `DevSettings` (`reload()` reloads the page); `PlatformColor` /
+  `DynamicColorIOS` (iOS and Android system colors as CSS, `light-dark()` when the page lets the
+  browser switch schemes); `RootTagContext`; `NativeAppEventEmitter`; `unstable_batchedUpdates`
+  (denext's); and `InputAccessoryView` (docked over the keyboard through `KeyboardStickyView`).
+- **React Native mode: `react-native-windows` and `react-native-macos`.** Both resolve to
+  `react-native` (react-native-web with the shell overlay) plus what each package adds, so the
+  real packages (Flow source, native projects) are never read: Windows' `Flyout` / `Popup` (a
+  popover over `Modal` against `target` at `placement`, light dismiss and Escape call
+  `onDismiss`), `Glyph` (a `Text` in the `fontUri`'s family), `AppTheme` (high contrast from
+  `forced-colors`), `supportKeyboard` and `EventPhase`; macOS' `DynamicColorMacOS` and
+  `ColorWithSystemEffectMacOS` (CSS `color-mix()`); and both packages' `View` props (`tooltip`,
+  `onDoubleClick`, `keyDownEvents` / `validKeysDown` key filters, `enableFocusRing`; the
+  window-level props warn once). `PlatformColor` knows the NSColor and Windows system color
+  names. Deep `Libraries/…` imports resolve as `react-native`'s. What each provides is recorded
+  in `src/react-native/desktop-manifest.ts`; `deno task parity:native -- desktop` checks both
+  against the pinned packages (0.84.0 / 0.81.9).
+- **React Native mode: `Platform` on Deno Desktop.** `Platform.constants.denextDesktop` (true in
+  a Deno Desktop window) and `Platform.constants.os` (`"macos"`, `"windows"` or `"linux"`, from
+  the desktop runtime); `Platform.select` picks the host OS's `macos` / `windows` / `linux` key
+  there when the spec has no `web` one. `Platform.OS` stays `"web"`.
+- **React Native mode: safe areas.** The SPA shell's default viewport adds `viewport-fit=cover`
+  in `reactNative` mode, so safe-area insets are not 0 in the iOS shell. `SafeAreaView` pads with
+  `denext/mobile`'s inset source (Capacitor's injected insets on Android, where Android WebView
+  before 140 reports wrong `env()` values), and `createNativeSafeAreaProvider` backs
+  react-native-safe-area-context's web provider with `useSafeAreaInsets()`.
+- **React Native mode: `Platform.constants`** (`reactNativeVersion`, `osVersion`, `systemName`,
+  `interfaceIdiom`, Android's `Version` / `Release`, and `denextShell`: `"ios"`, `"android"`,
+  `"desktop"` or `"web"`, the runtime `Platform.OS` does not tell apart).
 - **`<PullToRefresh>` (from `denext/mobile`).** A scroll container with a touch pull-to-refresh
   gesture (from the top only, never touching the scroll position, so iOS momentum is intact)
   and a spinner that rests while `refreshing`; a light haptic as the pull arms in the shell.
@@ -307,6 +365,15 @@ and this project adheres to
   end native sessions. Loopback redirect URIs match any port (RFC 8252). The adapter contract
   gains an optional native session group, implemented by `sqliteAuthAdapter` and
   `inMemoryAuthAdapter`.
+- **Native refresh policies: `native.refreshTokenMaxAge` and `native.refreshReuseInterval`**
+  (both off by default). `refreshTokenMaxAge` caps a session family absolutely from its sign-in:
+  the sliding expiry never passes it, and past it a refresh is `invalid_grant` and the family is
+  revoked. `refreshReuseInterval` (0..60 seconds) answers two refreshes racing with one token:
+  within it, the immediately previous refresh token gets the same pair its rotation issued
+  (re-derived from server secrets, never stored) instead of revoking the family; an older
+  generation, or the previous one after the window, is still a replay. The cap counts from the
+  family's `createdAt`; families gain `rotatedAt` (a SQLite column), and `rotateNativeSession`
+  takes an optional fourth `{ rotatedAt }` argument.
 - **Native Sign in with Apple / Google: `POST /auth/native/apple` | `/auth/native/google`.**
   Verifies a native sheet's `id_token` against the provider's JWKS (cached, one throttled
   refetch on key rotation), `iss`, `exp`, the configured set of client ids (`aud` / `azp`) and a
@@ -406,13 +473,89 @@ and this project adheres to
 - **The Expo shim manifest names missing statics.** `omitted` lists `Name.member` for statics a
   shim leaves out (`Asset.byHash`, `Paths.relative`, `File.pickFileAsync`, …), and the
   `expo-constants` fields it does not report; the expo parity baseline covers the new shims.
+- **Screen reader state: `denext mobile add accessibility`.** denext's own `DenextAccessibility`
+  plugin (Swift over `UIAccessibility.isVoiceOverRunning` and its change notification, Java over
+  `AccessibilityManager.isTouchExplorationEnabled` and a state listener), registered through
+  `DenextBridgeViewController` and `MainActivity` like the other denext plugins. `denext/mobile`
+  adds `isScreenReaderEnabled()`, `onScreenReaderChange(cb)` and `useScreenReader()` (`false` on
+  the web, which has no such API); React Native mode's `AccessibilityInfo.isScreenReaderEnabled`
+  reads the same plugin.
+- **Background location: `denext mobile add background-location`.** Installs
+  `@capgo/background-geolocation` 8 (Capacitor 8, MPL-2.0), writes the `location` background
+  mode and `NSLocationAlwaysAndWhenInUseUsageDescription`, declares
+  `FOREGROUND_SERVICE_LOCATION` (not `ACCESS_BACKGROUND_LOCATION`), declares UserDefaults CA92.1
+  in the privacy manifest, and prints the App Store / Play review steps. `denext/mobile` adds
+  `watchPositionInBackground(cb, { notification, distanceFilterM, url })`,
+  `stopBackgroundLocation()` and `isBackgroundLocationAvailable()`; without the plugin it is the
+  foreground `watchPosition`.
+- **`denext mobile add application`** installs `@capacitor/app` and `@capacitor/device`, the
+  pair `denext/expo/application` reads.
+
+- **Community React Native packages run unchanged in React Native mode.** One alias table
+  (`src/react-native-compat/manifest.ts`, rendered as `/docs/react-native`'s "Community packages"
+  table) resolves popular libraries whose native half a WebView lacks to denext
+  implementations: `@react-navigation/native-stack` / `bottom-tabs` (their navigators drawn by
+  `denext/navigation`), `@react-navigation/drawer` (a new denext drawer over React Navigation's
+  `DrawerRouter`), `react-native-keyboard-controller`, `react-native-safe-area-context`,
+  `react-native-permissions`, `react-native-share`, `react-native-keychain`,
+  `react-native-haptic-feedback`, `@react-native-google-signin/google-signin`,
+  `react-native-purchases`, `react-native-biometrics`, `react-native-bootsplash`,
+  `@notifee/react-native` (local notifications), `@react-native-community/netinfo` and
+  `react-native-device-info` over `denext/mobile`; the build-breakers
+  `@react-native-community/datetimepicker` and `react-native-date-picker` (date inputs),
+  `react-native-linear-gradient`, `@react-native-community/blur`,
+  `@react-native-masked-view/masked-view` and `@react-native-menu/menu`; `react-native-webview`
+  (an `<iframe>` with a `postMessage` bridge) and `react-native-pager-view` (a scroll-snap
+  pager). `.svg` imports become react-native-svg components when the app uses
+  react-native-svg-transformer, and NativeWind v4's JSX runtime runs the app's JSX (a recipe
+  covers its Tailwind 3 CSS). `reactNative: { aliases: { "<package>": false } }` restores any
+  one of them.
+- **`@expo/ui/community/*`**: `masked-view`, `menu`, `pager-view` and `datetime-picker` resolve
+  to the same implementations (`@expo/ui`'s own web builds mask nothing, fire no menu action,
+  throw, and render nothing respectively).
+- **`denext migrate --from expo`** reports `@expo/*` packages with shims (`@expo/ui` was listed
+  as native-only) and the app's aliased community packages, and maps the newly shimmed Expo
+  packages and the community packages to `denext mobile add` capabilities (`expo-location` →
+  `geolocation`, `expo-local-authentication` → `biometrics`, `expo-apple-authentication` →
+  `social-login`, `expo-tracking-transparency` → `tracking`, `expo-application` →
+  `application`, `expo-camera` → `camera` + `barcode`, local `expo-notifications` scheduling →
+  `local-notifications`, …).
 
 ### Changed
 
+- **React Native mode: `Platform.select` falls back to the shell's own key.** Inside the iOS or
+  Android shell, a `spec` without `web` now picks `ios` / `android` (then `default`), as React
+  Native on that device would, instead of `default` or `undefined`: `Platform.select({ ios: 44,
+  android: 56 })` is no longer `undefined` in the shell. `web` still wins everywhere, `native`
+  is never picked, and a browser or Deno Desktop picks exactly as react-native-web does.
+- **React Native mode: `Linking.openSettings()` opens the app's settings** through
+  `denext/mobile`'s `openAppSettings()` (it always rejected); it rejects only where nothing can
+  open them (a browser, the Android shell without `denext mobile add permissions`).
+- **The native parity gate measures the bundle apps get.** `deno task parity:native` builds
+  `export * from "react-native"` with React Native mode's own plugins over the pinned
+  react-native-web (overlay and entry additions included) instead of importing raw
+  react-native-web, and checks each export's members (class statics, object members) as well as
+  its name; the known-gaps ledger no longer lists names the build provides
+  (`TurboModuleRegistry`, `codegenNativeComponent`, `codegenNativeCommands`, …).
+  `unstable_batchedUpdates` is no longer waived.
+
+- **`denext mobile add` no longer fails at `cap sync` before the first export.** When the web
+  export (capacitor.config `webDir`, Capacitor's default `www` when unset) has no `index.html`,
+  it runs `npx cap update` (the native half of sync) instead and warns to run `denext export`,
+  then `npx cap sync`; a `server.url` config still syncs. A package two capabilities share
+  (`@capacitor/app`) is installed once.
+- **`denext mobile add camera` also writes `NSMicrophoneUsageDescription`** (when absent): video
+  recorded in the page (expo-camera's `recordAsync`) has sound, which WKWebView refuses without
+  it. The Android permissions for in-page capture are printed as a step.
+- **The OTA and app extension templates are generation 5 and 2.** The composed
+  `DenextBridgeViewController` can now register `DenextSettings` and `DenextAccessibility`, which
+  denext 2.10.0 does not know; the bump makes 2.10.0 keep such a bridge instead of rewriting it
+  without them. Unedited files of the earlier generation are upgraded in place on the next run
+  (with OTA installed, run `denext mobile add-ota` first, as after any upgrade).
 - **`expo-auth-session`'s token calls send a client secret as HTTP Basic credentials** and the
   client id in the body only without one, as Expo does (they sent both in the body).
 - **The MainActivity denext composes is template generation 2.** It can now register
-  `DenextBack` and call `EdgeToEdge.enable`; the body for the earlier features is unchanged,
+  `DenextBack`, `DenextSettings` and `DenextAccessibility` and call `EdgeToEdge.enable`; the body for the earlier features is unchanged,
   and an unedited generation-1 file is upgraded in place the next time a feature is added.
 - **Docs: the desktop page covers the desktop target only.** `/docs/desktop` is now "Desktop
   apps"; its Capacitor sections moved to `/docs/mobile`, and a short section on the desktop page

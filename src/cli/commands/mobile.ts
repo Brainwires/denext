@@ -725,8 +725,10 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  for a workspace's; else a packageManager field; else npm) as caret ranges, or as exact\n" +
     "  versions (the range's minimum) when package.json pins every @capacitor/* package\n" +
     "  exactly, adds any Info.plist keys (never replacing yours) and Android permissions the\n" +
-    "  capability needs, and runs `npx cap sync`. --dry-run prints the plan and changes\n" +
-    "  nothing. Ship a new app binary afterwards.\n" +
+    "  capability needs, and runs `npx cap sync`. When the web export (capacitor.config webDir)\n" +
+    "  has no index.html yet it runs `npx cap update` instead (the native half of sync, which\n" +
+    "  cannot fail on the missing folder) and says to run `denext export`, then `npx cap sync`.\n" +
+    "  --dry-run prints the plan and changes nothing. Ship a new app binary afterwards.\n" +
     "\n" +
     "  deep-links takes --scheme (CFBundleURLTypes + a VIEW intent filter) and --domain\n" +
     "  (applinks: in the entitlements + an autoVerify https intent filter); give several as\n" +
@@ -752,6 +754,15 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  in MainActivity. keyboard adds @capacitor/keyboard for useKeyboard and the keyboard views.\n" +
     "  dialog adds @capacitor/dialog, so React Native mode's Alert.alert / Alert.prompt show\n" +
     "  system dialogs.\n" +
+    "\n" +
+    "  accessibility has no npm package: it writes denext's DenextAccessibility plugin\n" +
+    "  (VoiceOver / TalkBack state for isScreenReaderEnabled, and React Native mode's\n" +
+    "  AccessibilityInfo), registered like auth-session. background-location adds\n" +
+    "  @capgo/background-geolocation, UIBackgroundModes location,\n" +
+    "  NSLocationAlwaysAndWhenInUseUsageDescription and Android's FOREGROUND_SERVICE_LOCATION\n" +
+    "  (not ACCESS_BACKGROUND_LOCATION), and prints the App Store and Play review steps.\n" +
+    "  application adds @capacitor/app and @capacitor/device (expo-application). camera also\n" +
+    "  adds NSMicrophoneUsageDescription (video recorded in the page has sound).\n" +
     "\n" +
     "  share-extension, widget and live-activity add app extensions (no npm package either).\n" +
     "  share-extension: an iOS Share Extension target (ios/App/DenextShareExtension, embedded in\n" +

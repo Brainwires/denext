@@ -2,11 +2,17 @@
 include ':capacitor-android'
 project(':capacitor-android').projectDir = new File('../node_modules/@capacitor/android/capacitor')
 
+include ':aparajita-capacitor-biometric-auth'
+project(':aparajita-capacitor-biometric-auth').projectDir = new File('../node_modules/@aparajita/capacitor-biometric-auth/android')
+
 include ':aparajita-capacitor-secure-storage'
 project(':aparajita-capacitor-secure-storage').projectDir = new File('../node_modules/@aparajita/capacitor-secure-storage/android')
 
 include ':capacitor-community-keep-awake'
 project(':capacitor-community-keep-awake').projectDir = new File('../node_modules/@capacitor-community/keep-awake/android')
+
+include ':capacitor-community-media'
+project(':capacitor-community-media').projectDir = new File('../node_modules/@capacitor-community/media/android')
 
 include ':capacitor-community-sqlite'
 project(':capacitor-community-sqlite').projectDir = new File('../node_modules/@capacitor-community/sqlite/android')
@@ -26,23 +32,44 @@ project(':capacitor-clipboard').projectDir = new File('../node_modules/@capacito
 include ':capacitor-device'
 project(':capacitor-device').projectDir = new File('../node_modules/@capacitor/device/android')
 
+include ':capacitor-dialog'
+project(':capacitor-dialog').projectDir = new File('../node_modules/@capacitor/dialog/android')
+
 include ':capacitor-filesystem'
 project(':capacitor-filesystem').projectDir = new File('../node_modules/@capacitor/filesystem/android')
+
+include ':capacitor-geolocation'
+project(':capacitor-geolocation').projectDir = new File('../node_modules/@capacitor/geolocation/android')
 
 include ':capacitor-haptics'
 project(':capacitor-haptics').projectDir = new File('../node_modules/@capacitor/haptics/android')
 
+include ':capacitor-keyboard'
+project(':capacitor-keyboard').projectDir = new File('../node_modules/@capacitor/keyboard/android')
+
+include ':capacitor-local-notifications'
+project(':capacitor-local-notifications').projectDir = new File('../node_modules/@capacitor/local-notifications/android')
+
 include ':capacitor-network'
 project(':capacitor-network').projectDir = new File('../node_modules/@capacitor/network/android')
 
+include ':capacitor-privacy-screen'
+project(':capacitor-privacy-screen').projectDir = new File('../node_modules/@capacitor/privacy-screen/android')
+
 include ':capacitor-push-notifications'
 project(':capacitor-push-notifications').projectDir = new File('../node_modules/@capacitor/push-notifications/android')
+
+include ':capacitor-screen-orientation'
+project(':capacitor-screen-orientation').projectDir = new File('../node_modules/@capacitor/screen-orientation/android')
 
 include ':capacitor-share'
 project(':capacitor-share').projectDir = new File('../node_modules/@capacitor/share/android')
 
 include ':capacitor-splash-screen'
 project(':capacitor-splash-screen').projectDir = new File('../node_modules/@capacitor/splash-screen/android')
+
+include ':capawesome-capacitor-app-review'
+project(':capawesome-capacitor-app-review').projectDir = new File('../node_modules/@capawesome/capacitor-app-review/android')
 
 include ':capawesome-capacitor-app-shortcuts'
 project(':capawesome-capacitor-app-shortcuts').projectDir = new File('../node_modules/@capawesome/capacitor-app-shortcuts/android')

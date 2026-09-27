@@ -105,6 +105,17 @@ function readLocation(answer: Record<string, unknown>): string | undefined {
   return fine;
 }
 
+/**
+ * Background location (`@capgo/background-geolocation`, `denext mobile add background-location`):
+ * "always" is the background grant; "when_in_use" means foreground only, so background is
+ * `denied` (an app asks for the upgrade with `requestPermission`).
+ */
+function readBackgroundLocation(answer: Record<string, unknown>): string | undefined {
+  const state = field("backgroundLocation")(answer);
+  if (state === "always") return "granted";
+  return state === "when_in_use" ? "denied" : state;
+}
+
 /** Calendar: read + write granted, or write-only (`limited`). */
 function readCalendar(answer: Record<string, unknown>): string | undefined {
   const read = field("readCalendar")(answer);
@@ -120,7 +131,13 @@ const NATIVE_SOURCES: Readonly<Record<PermissionName, readonly NativeSource[]>> 
   photos: [{ plugin: "Camera", request: ["photos"], read: field("photos") }],
   microphone: [],
   location: [{ plugin: "Geolocation", read: readLocation }],
-  "location-background": [],
+  "location-background": [
+    {
+      plugin: "BackgroundGeolocation",
+      request: ["backgroundLocation"],
+      read: readBackgroundLocation,
+    },
+  ],
   notifications: [
     { plugin: "LocalNotifications", read: field("display") },
     { plugin: "PushNotifications", read: field("receive") },
@@ -284,23 +301,12 @@ function checkName(fn: string, name: PermissionName): void {
 async function check(fn: string, name: PermissionName): Promise<PermissionState> {
   checkName(fn, name);
   if (name === "biometrics") return await biometricState(fn);
-  if (name === "location-background") throw backgroundUnsupported(fn);
   const found = nativeSource(name);
   if (found) return normalize(found.source.read(await found.plugin.checkPermissions()), true);
   const web = WEB_SOURCES[name];
   const raw = web ? await web.check() : undefined;
   if (raw === undefined) throw notAnswerable(fn, name);
   return normalize(raw, nativePlatform() !== "web");
-}
-
-/** The error for background location, which denext does not ship a plugin for. */
-function backgroundUnsupported(fn: string): PermissionError {
-  return unsupported(
-    fn,
-    "location-background",
-    "denext has no background-location capability yet (no Capacitor 8 plugin it installs); " +
-      "see https://denext.dev/docs/mobile#geolocation",
-  );
 }
 
 /** The error for a name no installed plugin and no browser API answers. */
@@ -310,7 +316,13 @@ function notAnswerable(fn: string, name: PermissionName): PermissionError {
     : name === "calendar"
     ? "install @capacitor/calendar"
     : `install its capability (\`denext mobile add ${
-      name === "notifications" ? "local-notifications" : name === "location" ? "geolocation" : name
+      name === "notifications"
+        ? "local-notifications"
+        : name === "location"
+        ? "geolocation"
+        : name === "location-background"
+        ? "background-location"
+        : name
     }\`), or run where the browser has a permission API for it`;
   return unsupported(fn, name, `nothing here can answer for it: ${hint}`);
 }
@@ -324,8 +336,7 @@ function notAnswerable(fn: string, name: PermissionName): PermissionError {
  * `notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the
  * web (and for `microphone`, which the WebView itself asks for) the browser's Permissions /
  * Notifications API. It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing
- * here can answer: a plugin that is not installed and no browser API, and always for
- * `location-background` (not shipped yet).
+ * here can answer: a plugin that is not installed and no browser API.
  *
  * @param name The permission.
  * @returns Its status.

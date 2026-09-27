@@ -12,6 +12,7 @@ import { isLoopbackHost } from "../utils/loopback.ts";
 import { VERB_NAME } from "../cli/command.ts";
 import { resolveCors } from "./cors.ts";
 import { validateAppLinks } from "./app-links.ts";
+import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys — the generated
@@ -522,12 +523,40 @@ function validateReactNative(config: DenextConfig, fail: Fail): void {
       fail(`reactNative.${key}`, "must be a boolean");
     }
   }
-  const lists = isObject ? (value as Record<string, unknown>).lists : undefined;
-  if (lists !== undefined && lists !== "denext" && lists !== "library") {
-    fail("reactNative.lists", 'must be "denext" or "library"');
-  }
+  if (isObject) validateReactNativeObject(value as Record<string, unknown>, fail);
   if (config.mode !== "spa") {
     fail("reactNative", 'applies only in SPA mode — set `mode: "spa"` and `spa.entry`');
+  }
+}
+
+/** `reactNative`'s object options: `lists` and `aliases`. */
+function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): void {
+  if (value.lists !== undefined && value.lists !== "denext" && value.lists !== "library") {
+    fail("reactNative.lists", 'must be "denext" or "library"');
+  }
+  validateReactNativeAliases(value.aliases, fail);
+}
+
+/**
+ * `reactNative.aliases`: a map of aliased package names (`COMMUNITY_ALIASES`) to booleans. An
+ * unknown name is a mistake (the alias it means to turn off stays on), so it fails with the
+ * closest package named.
+ */
+function validateReactNativeAliases(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("reactNative.aliases", "must be an object of package name → boolean");
+    return;
+  }
+  const known = Object.keys(COMMUNITY_ALIASES);
+  for (const [pkg, on] of Object.entries(value)) {
+    if (typeof on !== "boolean") fail(`reactNative.aliases.${pkg}`, "must be a boolean");
+    if (known.includes(pkg)) continue;
+    const near = known.map((k) =>
+      [k, editDistance(pkg, k)] as const
+    ).sort((a, b) => a[1] - b[1])[0];
+    const hint = near && near[1] <= 3 ? ` (did you mean "${near[0]}"?)` : "";
+    fail(`reactNative.aliases.${pkg}`, `is not an aliased package${hint}`);
   }
 }
 

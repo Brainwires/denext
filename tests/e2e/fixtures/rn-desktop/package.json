@@ -1,0 +1,11 @@
+{
+  "name": "denext-e2e-rn-desktop",
+  "private": true,
+  "dependencies": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native-macos": "0.81.9",
+    "react-native-web": "0.21.2",
+    "react-native-windows": "0.84.0"
+  }
+}

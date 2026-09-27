@@ -420,8 +420,10 @@ four documented bounds of the opt-in:
 - **Live Activities are iOS only.** `startLiveActivity` and the other Live Activity functions
   reject with code `unsupported` on Android and the web; push-to-start tokens need iOS 17.2+ and
   resolve `null` below it.
-- **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell and
-  a plain IndexedDB database in a browser or Deno Desktop window.
+- **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell, the
+  OS keychain in a Deno Desktop window with the `secureStore` capability (`denext desktop add
+  secure-store`), and a plain IndexedDB database in a browser (or a desktop window without that
+  capability, where it is also wiped on relaunch).
 - **Passkeys (WebAuthn) do not run in the iOS Capacitor WebView.** The page's origin is
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
   `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's
@@ -433,9 +435,11 @@ four documented bounds of the opt-in:
 - **The Deno Desktop self-updater replaces the UI, not the app.** `denext/desktop/updater`
   verifies and overlays a signed UI export in the app-support directory; the executable and
   the runtime are updated only by shipping a new build. Every manifest must be signed.
-- **`showContextMenu` is an in-page menu.** denext ships no native context-menu plugin: the
-  menu is an accessible popover in the WebView unless the app registers its own
-  `DenextContextMenu` Capacitor plugin.
+- **`showContextMenu` is an in-page menu on mobile and the web.** denext ships no native
+  context-menu plugin for Capacitor: the menu is an accessible popover in the WebView unless the
+  app registers its own `DenextContextMenu` plugin. In a Deno Desktop window with the
+  `contextMenu` capability it is the OS menu, flat (no submenus) and without destructive
+  styling.
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
@@ -489,6 +493,43 @@ four documented bounds of the opt-in:
   `packages` / `catalog` into the root `package.json` as `workspaces` / `catalog`. denext cannot
   intercept either (both happen while Deno loads the module graph), so pass
   `--node-modules-dir=none` (or `--no-config`) there.
+
+### Deno Desktop capabilities (`denext desktop add`, `denext/desktop/client`)
+
+- **Browser storage does not survive a relaunch of a Deno Desktop app.** The runtime binds a new
+  loopback port each launch (denoland/deno#35444), so the page's origin changes and
+  `localStorage`, IndexedDB, OPFS and the Cache API start empty. `secureStore`, the file
+  functions and `openSqlite` persist only with their desktop capability enabled (`secure-store`,
+  `fs`, `sqlite`); without it they fall back to browser storage and warn once.
+- **The page side is tested against a fake runtime.** The `denext/mobile` desktop branches and
+  `denext/desktop/client` are unit-tested against a fake of the bridge's gate and wire contract;
+  until the desktop runtime's capability modules ship, a real window answers `unavailable` and
+  every function keeps its web path.
+- **The bridge token is readable by any script in the page.** The per-launch token lives in the
+  top-level document (never in frames), so script injected into the page (an XSS) can use every
+  capability the app enabled. Keep the strict CSP, enable only the capabilities you use, and
+  treat `dialogs`, `shell`, `secure-store` and `keep-awake` as trusting the page with that power.
+- **A path the user picks needs an unscoped file permission.** Deno Desktop bakes permissions at
+  build time, and a path chosen in a dialog is known only at run time, so `dialogs` implies
+  `--allow-read` and `--allow-write` without a list. The runtime narrows file access to the app's
+  folders and the paths picked this session; other code in the Deno process is not narrowed.
+- **FFI and spawned programs are full trust.** `secure-store` loads the OS keychain library,
+  `shell` and `keep-awake` run OS tools (`open` / `xdg-open` / `explorer`, `caffeinate` /
+  `systemd-inhibit`): each can do anything the user can. Node-API (`.node`) addons do not load in
+  desktop builds on Linux and Windows (denoland/deno#36596); use FFI or a sidecar. FFI cannot
+  touch windows or AppKit / Win32 UI, because the runtime is not on the main thread.
+- **Desktop notifications are basic.** No action buttons, inline reply, channels or categories;
+  a scheduled notification fires only while the app runs; macOS shows them only from a signed
+  bundle. A click focuses the window and routes like a tap.
+- **Not on desktop:** drag-out of files, file paths from drag-in, the share sheet, Handoff,
+  Spotlight, the Touch Bar, passkeys in the webview (its loopback IP origin is not a valid
+  relying party; use `openAuthSession`), fullscreen / maximize / minimum-size / screen APIs, a
+  `hiddenInset` title bar or Mica, DevTools in the default WebView backend (use `--backend cef`),
+  and deep links or open-file events reaching an already-running macOS app.
+- **`react-native-windows` / `react-native-macos` are not native here.** A `reactNative` app runs
+  as react-native-web in the window; their C++ / C# / Objective-C native modules do not run
+  (write a desktop extension instead), `Platform.OS` stays `"web"`, and their extra components
+  (`Flyout`, `Popup`, `Glyph`, `DynamicColorMacOS`) and View props are not aliased yet.
 
 ### React Native mode & Expo shims (`reactNative`, `denext/expo/*`)
 

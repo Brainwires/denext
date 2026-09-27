@@ -12,6 +12,12 @@
  *   probe-vs-reconnect decisions (under 10 s: probe; 10 s or more: reconnect and refetch).
  * - {@linkcode openExternal}: the in-app browser via the native `Browser` plugin, else
  *   `window.open` with `noopener`; only http(s), mailto: and tel: are allowed.
+ * - In a Deno Desktop window ({@linkcode runtimePlatform} `"desktop"`), `secureStore`, the
+ *   file functions, `openSqlite`, `showContextMenu`, `openExternal`, `pickDocument`, the
+ *   notifications, `useKeepAwake`, the clipboard and `deviceInfo` go through the desktop
+ *   runtime's capabilities (`denext desktop add <capability>`); {@linkcode openPath},
+ *   {@linkcode revealInFileManager}, {@linkcode moveToTrash}, {@linkcode saveFile} and
+ *   {@linkcode pickFolder} are the desktop file-manager and dialog extras.
  * - {@linkcode installKeyboardInset} / {@linkcode useKeyboardInset}: the keyboard height as
  *   `--denext-keyboard-inset`, for shells with Keyboard `resize: "none"`.
  * - {@linkcode useBackSwipe} / {@linkcode isBackSwipe}: swipe right to go back.
@@ -72,6 +78,12 @@
  *   native sign-in sheets, verified by a denext server (`denext mobile add social-login`).
  * - {@linkcode getCurrentPosition} / {@linkcode watchPosition} / {@linkcode useLocation}
  *   (`denext mobile add geolocation`; `navigator.geolocation` on the web).
+ * - {@linkcode watchPositionInBackground} / {@linkcode stopBackgroundLocation}: location that
+ *   keeps arriving in the background (`denext mobile add background-location`; the foreground
+ *   watch on the web).
+ * - {@linkcode isScreenReaderEnabled} / {@linkcode onScreenReaderChange} /
+ *   {@linkcode useScreenReader}: VoiceOver / TalkBack state (`denext mobile add accessibility`;
+ *   `false` on the web).
  * - {@linkcode configurePurchases}, {@linkcode getOfferings}, {@linkcode purchasePackage},
  *   {@linkcode restorePurchases}, {@linkcode getCustomerInfo}, {@linkcode useEntitlement}:
  *   in-app purchases through RevenueCat (`denext mobile add purchases`; no web fallback).
@@ -240,6 +252,14 @@ export {
   pickImage,
   type PickImageOptions,
 } from "./pickers.ts";
+export {
+  type PickedFolder,
+  pickFolder,
+  type SavedFile,
+  saveFile,
+  type SaveFileOptions,
+} from "./file-dialogs.ts";
+export { moveToTrash, openPath, revealInFileManager } from "./shell.ts";
 export {
   type BarcodeFormat,
   type BarcodeScanError,
@@ -424,3 +444,10 @@ export {
   type SentrySiblingSdk,
 } from "./crash-reporting.ts";
 export { installOfflineScreen, type OfflineScreenOptions } from "./offline-screen.ts";
+export { isScreenReaderEnabled, onScreenReaderChange, useScreenReader } from "./accessibility.ts";
+export {
+  type BackgroundLocationOptions,
+  isBackgroundLocationAvailable,
+  stopBackgroundLocation,
+  watchPositionInBackground,
+} from "./background-location.ts";

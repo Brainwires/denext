@@ -1,0 +1,7 @@
+{
+  "name": "denext-example-rn-desktop",
+  "private": true,
+  "dependencies": {
+    "react-native-web": "0.21.2"
+  }
+}

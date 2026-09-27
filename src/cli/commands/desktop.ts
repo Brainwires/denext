@@ -23,10 +23,13 @@ import { spawnDenoChild, startOrAttachDevServer, waitForShutdownSignal } from ".
 import { staticExport } from "../../build/export.ts";
 import { desktopDevTarget, type DesktopWindow, runDesktopDev } from "../../build/desktop-dev.ts";
 import { DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
+import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
-  return resolve(ctx.global.cwd ?? ctx.positionals[1] ?? ".");
+  return resolve(
+    ctx.global.cwd ?? (ctx.positionals[0] === "add" ? "." : ctx.positionals[1]) ?? ".",
+  );
 }
 
 async function exportSpa(dir: string): Promise<void> {
@@ -81,6 +84,7 @@ export const desktopCommand: CommandSpec = {
       type: "boolean",
       help: "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)",
     },
+    ...DESKTOP_ADD_FLAGS,
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0] ?? "run";
@@ -90,6 +94,7 @@ export const desktopCommand: CommandSpec = {
     if (action === "run") return await runDesktop(dir, entry);
     if (action === "dev") return await runDesktopDevSession(ctx, dir, entry);
     if (action === "package") return await packageDesktop(ctx, dir);
+    if (action === "add") return await desktopAdd(ctx);
     console.error(
       `denext desktop: unknown action "${action}" (expected run | build | dev | package).`,
     );

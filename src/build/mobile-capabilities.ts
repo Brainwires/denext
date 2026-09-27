@@ -29,7 +29,7 @@ import {
 } from "./mobile-native-config.ts";
 import { addAuthSessionToProject } from "./mobile-auth-session-install.ts";
 import { addBackToProject, addEdgeToEdgeToProject } from "./mobile-system-ui-install.ts";
-import { addSettingsToProject } from "./mobile-settings-install.ts";
+import { SETTINGS_INSTALL } from "./mobile-settings-install.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import {
   addLiveActivitiesToProject,
@@ -40,7 +40,7 @@ import {
 import { parseWidgetParams } from "./widget-native-templates.ts";
 import { checkAppGroup } from "./mobile-app-group.ts";
 import { applicationTargetName, targetBuildSetting } from "./pbxproj.ts";
-import { CAPACITOR_CONFIGS } from "./capacitor-config.ts";
+import { CAPACITOR_CONFIGS, capacitorConfigFile, readCapacitorConfig } from "./capacitor-config.ts";
 import { addOfflineScreenToProject } from "./mobile-offline-screen.ts";
 import { privacyEntriesFor, privacyLabels, writePrivacyManifests } from "./mobile-privacy.ts";
 import { PLATFORM_CAPABILITIES } from "./mobile-capabilities-platform.ts";
@@ -402,6 +402,29 @@ function configureBarcode(): CapabilityConfig {
 }
 
 /**
+ * `camera`: in-page capture. `NSMicrophoneUsageDescription` is always added (when absent):
+ * expo-camera's `recordAsync` (and any `getUserMedia({ audio })`) records audio in the WebView,
+ * which WKWebView refuses without the string, and an unused usage string costs nothing at
+ * review. It is an edit, not one of the table's plist keys, because those are what `mobile
+ * doctor --store` requires of every app with the plugin, and a photo-only app needs no
+ * microphone. Android's runtime permissions for the WebView's own capture are the app's call
+ * (Play asks about RECORD_AUDIO), so they are a printed step.
+ */
+function configureCamera(): CapabilityConfig {
+  return {
+    infoPlist: [{
+      label: "NSMicrophoneUsageDescription (when absent: video recorded in the page has sound)",
+      apply: (text) => withPlistDefault(text, "NSMicrophoneUsageDescription", MICROPHONE_USAGE),
+    }],
+    manual: [
+      "Android: an in-page camera (expo-camera's CameraView, getUserMedia) needs " +
+      "android.permission.CAMERA in AndroidManifest.xml, and recording with sound (recordAsync) " +
+      "RECORD_AUDIO and MODIFY_AUDIO_SETTINGS too; pickImage() needs neither",
+    ],
+  };
+}
+
+/**
  * `back`: denext's `DenextBack` plugin registered from MainActivity (Android's predictive-back
  * events), and `android:enableOnBackInvokedCallback="true"` on `<application>`, which Android
  * 13–15 need before they route back through the callback (and animate it, 14+); Android 16
@@ -440,16 +463,6 @@ function configureSystemBars(): CapabilityConfig {
     },
   };
 }
-
-/**
- * denext's `DenextSettings` plugin behind `openAppSettings()`: every capability that asks for a
- * permission installs it, so a refused (`blocked`) permission can send the user to Settings.
- */
-const SETTINGS_INSTALL: NativeInstallStep = {
-  label: "DenextSettings plugin (openAppSettings: iOS app settings, Android App info) + its " +
-    "registration in DenextBridgeViewController / MainActivity",
-  run: addSettingsToProject,
-};
 
 /** `permissions` (and the capabilities that ask for one): the DenextSettings plugin. */
 function configureSettings(): CapabilityConfig {
@@ -548,6 +561,8 @@ function configureOfflineScreen(): CapabilityConfig {
 
 /** The camera usage string `camera` and `barcode` share. */
 const CAMERA_USAGE = "Take photos and scan codes with the camera.";
+/** The microphone usage string `camera` adds (video recording in the WebView records audio). */
+const MICROPHONE_USAGE = "Record sound with your videos.";
 
 /**
  * Every capability `denext mobile add` knows, keyed by the name on its command line. Ranges
@@ -650,6 +665,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
       NSPhotoLibraryAddUsageDescription: "Save photos to your library.",
     },
     notes: "pickImage({ source: camera | photos | prompt })",
+    configure: configureCamera,
   },
   "document-picker": {
     npm: "@capawesome/capacitor-file-picker",
@@ -834,9 +850,18 @@ export interface CapabilityPlan {
   /** The `@capacitor/core` major found, and where it was read. */
   readonly capacitorMajor: number;
   readonly capacitorSource: "installed" | "package.json";
-  /** The package install, then `cap sync` (neither when no capability has an npm package). */
+  /**
+   * The package install, then `cap sync` (neither when no capability has an npm package), or
+   * `cap update` when the web export is not built yet (see `webAssetsMissing`).
+   */
   readonly install?: PlannedCommand;
   readonly sync?: PlannedCommand;
+  /**
+   * The web export folder (capacitor.config `webDir`, project-relative) when it has no
+   * `index.html` yet: `cap sync` would fail copying it, so the plan runs `cap update` (the
+   * native half of sync) and warns to export and sync afterwards.
+   */
+  readonly webAssetsMissing?: string;
   /** Info.plist keys to add when absent. */
   readonly plist: ReadonlyArray<{ key: string; value: string }>;
   /** Android permissions to declare. */
@@ -1111,6 +1136,20 @@ function packageSpec(cap: MobileCapability, exact: boolean): string {
   return `${cap.npm}@${version}`;
 }
 
+/**
+ * `specs` (`name@range`) with each package once, the first spec winning: two capabilities can
+ * share a package (`@capacitor/app` behind deep-links, back, restore and application).
+ */
+function uniquePackages(specs: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return specs.filter((spec) => {
+    const name = spec.slice(0, spec.indexOf("@", 1));
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
+
 /** The capability names, deduplicated, refusing unknown ones. */
 function pickCapabilities(
   names: readonly string[],
@@ -1312,6 +1351,43 @@ function uniquePlistKeys(caps: readonly MobileCapability[]): Array<{ key: string
 }
 
 /**
+ * The web export folder `cap sync` would copy, when it is missing: capacitor.config's `webDir`
+ * (Capacitor's default `www` when the config names none) without an `index.html`. Undefined
+ * when it is there, when the config loads the app from `server.url` (sync skips the copy check
+ * then), or when the config cannot be read literally (Capacitor itself decides).
+ */
+async function missingWebAssets(root: string): Promise<string | undefined> {
+  const file = await capacitorConfigFile(root);
+  if (!file) return undefined;
+  const source = await Deno.readTextFile(file);
+  const config = await readCapacitorConfig(file, source);
+  if (!config) return undefined;
+  const server = config.server as { url?: unknown } | undefined;
+  if (typeof server?.url === "string" && server.url !== "") return undefined;
+  const webDir = config.webDir ?? (/\bwebDir\b/.test(source) ? undefined : "www");
+  if (typeof webDir !== "string") return undefined;
+  return await exists(join(root, webDir, "index.html")) ? undefined : webDir;
+}
+
+/**
+ * The command after the install: `npx cap sync`, or `npx cap update` while the web export is
+ * missing, with the warning that says what is left.
+ */
+async function syncStep(
+  root: string,
+): Promise<{ sync: PlannedCommand; missing?: string; warning?: string }> {
+  const missing = await missingWebAssets(root);
+  if (missing === undefined) return { sync: { cmd: "npx", args: ["cap", "sync"], cwd: root } };
+  return {
+    sync: { cmd: "npx", args: ["cap", "update"], cwd: root },
+    missing,
+    warning: `no web export at ${missing}/index.html (capacitor.config webDir) yet, so ` +
+      "`npx cap update` runs instead of `npx cap sync` (it installs the native plugins; sync " +
+      "would stop at the missing folder). Run `denext export`, then `npx cap sync`",
+  };
+}
+
+/**
  * Work out what `denext mobile add` will do, without changing anything: the project root,
  * its package manager, the install and sync commands, and the native config edits. It throws
  * for an unknown capability, a folder without a Capacitor project, and an `@capacitor/core`
@@ -1345,8 +1421,11 @@ export async function planMobileCapabilities(
   const { manager, lockfile, packageManagerField } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
   const exact = await pinsCapacitorExactly(root);
-  const specs = caps.flatMap((c) => c.npm ? [packageSpec(c, exact), ...(c.peers ?? [])] : []);
+  const specs = uniquePackages(
+    caps.flatMap((c) => c.npm ? [packageSpec(c, exact), ...(c.peers ?? [])] : []),
+  );
   const target = await entitlementsTarget(root);
+  const after = specs.length > 0 ? await syncStep(root) : undefined;
   return {
     root,
     capabilities: names,
@@ -1356,13 +1435,17 @@ export async function planMobileCapabilities(
     capacitorMajor: core.major,
     capacitorSource: core.source,
     install: specs.length > 0 ? addCommand(manager, specs, root, exact) : undefined,
-    sync: specs.length > 0 ? { cmd: "npx", args: ["cap", "sync"], cwd: root } : undefined,
+    sync: after?.sync,
+    webAssetsMissing: after?.missing,
     plist: uniquePlistKeys(caps),
     permissions: [...new Set(caps.flatMap((c) => c.androidPermissions ?? []))],
     notes: names.flatMap((n) => table[n].notes ? [`${n}: ${table[n].notes}`] : []),
     native: configured.native,
     entitlementsFiles: target.files,
-    warnings: await missingFiles(root, configured.requiredFiles),
+    warnings: [
+      ...(await missingFiles(root, configured.requiredFiles)),
+      ...(after?.warning ? [after.warning] : []),
+    ],
     manual: [
       ...(await entitlementSteps(root, target, configured.native.entitlements)),
       ...configured.manual,
@@ -1428,7 +1511,8 @@ export function formatCapabilityTable(
   table: Readonly<Record<string, MobileCapability>> = MOBILE_CAPABILITIES,
 ): string {
   return Object.entries(table).map(([name, c]) =>
-    `  ${name.padEnd(17)}${
+    // A name longer than the column (background-location) still gets one space.
+    `  ${name.padEnd(16)} ${
       (c.npm ? `${c.npm}@${c.version}` : "(denext native plugin)").padEnd(46)
     }${c.notes ?? ""}`
   ).join("\n");

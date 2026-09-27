@@ -68,6 +68,8 @@ async function project(files: Record<string, string | null> = {}): Promise<strin
     "capacitor.config.ts": "export default { appId: 'dev.example', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    // The web export `cap sync` copies (without it the run falls back to `cap update`).
+    "out/index.html": "<!doctype html>\n",
     [PLIST_PATH]: INFO_PLIST,
     [MANIFEST_PATH]: MANIFEST,
     // Bounds the package-manager walk to this folder, so no lockfile above the temp dir leaks in.
@@ -602,6 +604,9 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "tracking",
     "background",
     "restore",
+    "accessibility",
+    "background-location",
+    "application",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
@@ -636,11 +641,17 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
       "system-bars",
       "permissions",
       "offline-screen",
+      "accessibility",
     ],
   );
   assertStringIncludes(
     formatCapabilityTable(),
     "keep-awake       @capacitor-community/keep-awake@^8",
+  );
+  // A name longer than the column still gets a space before its package.
+  assertStringIncludes(
+    formatCapabilityTable(),
+    "background-location @capgo/background-geolocation@^8.4.7",
   );
 });
 

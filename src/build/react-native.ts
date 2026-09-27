@@ -11,10 +11,18 @@
 //     A deep `react-native/Libraries/…` import maps to react-native-web's equivalent where
 //     one exists; otherwise it loads a stub that throws, naming the import, when used.
 //   - The codegen / TurboModule entry points react-native-web lacks — `TurboModuleRegistry`,
-//     `codegenNativeComponent` and `codegenNativeCommands` — are added to its entry and back
-//     their deep `Libraries/…` imports: no native module is registered (`get` → null,
-//     `getEnforcing` returns a module that throws, naming it, on first use), a native
-//     component renders nothing, and native commands do nothing.
+//     `codegenNativeComponent`, `codegenNativeCommands` and `requireNativeComponent` — are
+//     added to its entry and back their deep `Libraries/…` imports: no native module is
+//     registered (`get` → null, `getEnforcing` returns a module that throws, naming it, on
+//     first use), a native component renders nothing, and native commands do nothing. React
+//     Native internals a library may import (`CodegenTypes`, `DevMenu`,
+//     `NativeComponentRegistry`, `PushNotificationIOS`, `registerCallableModule`, `Systrace`)
+//     are load-safe no-ops.
+//   - The entry also gains the React Native APIs react-native-web has no module for, from the
+//     shell overlay (`PermissionsAndroid`, `ToastAndroid`, `ActionSheetIOS`, `DevSettings`,
+//     `PlatformColor`, `DynamicColorIOS`, `RootTagContext`), the `useAnimatedValue` family
+//     over its own `Animated`, `InputAccessoryView` and `NativeAppEventEmitter` from its own
+//     modules, and `unstable_batchedUpdates` from `react-dom` (withNativeModuleExports).
 //   - `.web.tsx` / `.web.ts` / `.web.jsx` / `.web.js` are probed first (the bundler's
 //     `platformExtensions`), for relative/alias imports and package subpaths.
 //   - `.js` parses as JSX (the bundler's `jsxInJs`).
@@ -25,13 +33,14 @@
 //   - The shell overlay: react-native-web stays pinned and unforked, and each of its modules
 //     named in RN_OVERLAY_EXPORTS (the mocks — Keyboard, KeyboardAvoidingView, BackHandler,
 //     StatusBar, AccessibilityInfo, I18nManager, Alert, RefreshControl — plus Platform,
-//     Linking, AppState, Vibration, Share and Clipboard, whose browser-only versions fall
-//     short in the Capacitor shell) loads as a one-line module that re-exports denext's
+//     Linking, AppState, Vibration, Share, Clipboard and SafeAreaView, whose browser-only
+//     versions fall short in the Capacitor shell, and InputAccessoryView, which it leaves
+//     unimplemented) loads as a one-line module that re-exports denext's
 //     implementation from `denext/react-native` (src/react-native/, a prebuilt runtime entry
 //     sharing the app's one denext instance). Replacing the module file, not the `react-native`
 //     entry, reaches every importer: the app, libraries, deep `react-native/Libraries/…`
 //     imports and react-native-web's own internals (its FlatList builds a RefreshControl).
-//     Unused ones still tree-shake away (react-native-web is `sideEffects: false`). The two
+//     Unused ones still tree-shake away (react-native-web is `sideEffects: false`). The
 //     components take react-native-web's `View` from the replaced module. `Platform.OS` stays
 //     "web" in the shell: react-native-web and the libraries on top of it pick their DOM code
 //     paths by it (see src/react-native/platform.ts).
@@ -40,6 +49,9 @@
 //     app's `expo-router` / `expo-router/stack` / `expo-router/tabs` imports get `Stack` /
 //     `Tabs` drawn by `denext/navigation` (expo-router-navigators.ts; the bundle then includes
 //     the `Activity` runtime, which hidden stack screens need).
+//   - `react-native-windows` / `react-native-macos` resolve to `react-native` plus what each
+//     adds (Flyout, Popup, Glyph, AppTheme, DynamicColorMacOS, the desktop View props, …),
+//     from the overlay (react-native-desktop.ts).
 //   - React Native's FlatList / SectionList / VirtualizedList and the FlashList / LegendList
 //     packages run on denext's VirtualList unless `reactNative: { lists: "library" }`
 //     (react-native-lists.ts).
@@ -58,6 +70,8 @@ import { expoRouterContextPlugin } from "./expo-router.ts";
 import { expoRouterNavigatorsPlugin } from "./expo-router-navigators.ts";
 import { listAdaptersPlugin } from "./react-native-lists.ts";
 import { reanimatedWorkletsPlugin } from "./reanimated.ts";
+import { desktopReactNativePlugin } from "./react-native-desktop.ts";
+import { reactNativeAliasesPlugin, resolveInstead } from "./react-native-aliases.ts";
 
 /** The web platform extensions React Native mode probes ahead of the plain ones. */
 export const WEB_PLATFORM_EXTENSIONS: readonly string[] = [
@@ -94,14 +108,80 @@ const NATIVE_DEEP_IMPORTS: Readonly<Record<string, string>> = {
     `export { codegenNativeComponent, codegenNativeComponent as default } from "${NATIVE_MODULES}";\n`,
   "Libraries/Utilities/codegenNativeCommands":
     `export { codegenNativeCommands, codegenNativeCommands as default } from "${NATIVE_MODULES}";\n`,
+  "Libraries/ReactNative/requireNativeComponent":
+    `export { requireNativeComponent, requireNativeComponent as default } from "${NATIVE_MODULES}";\n`,
+  "Libraries/NativeComponent/NativeComponentRegistry":
+    `import { NativeComponentRegistry as R } from "${NATIVE_MODULES}";\n` +
+    "export var get = R.get, getWithFallback_DEPRECATED = R.getWithFallback_DEPRECATED, " +
+    "setRuntimeConfigProvider = R.setRuntimeConfigProvider, " +
+    "unstable_hasStaticViewConfig = R.unstable_hasStaticViewConfig;\n",
+  "Libraries/Performance/Systrace": `import { Systrace as S } from "${NATIVE_MODULES}";\n` +
+    "export var isEnabled = S.isEnabled, setEnabled = S.setEnabled, beginEvent = S.beginEvent, " +
+    "endEvent = S.endEvent, beginAsyncEvent = S.beginAsyncEvent, " +
+    "endAsyncEvent = S.endAsyncEvent, counterEvent = S.counterEvent;\n",
+  "Libraries/Core/registerCallableModule":
+    `export { registerCallableModule as default } from "${NATIVE_MODULES}";\n`,
+  "Libraries/PushNotificationIOS/PushNotificationIOS":
+    `export { PushNotificationIOS as default } from "${NATIVE_MODULES}";\n`,
 };
 
-/** The names react-native-web's entry gains from {@linkcode nativeModulesSource}. */
+/**
+ * The names react-native-web's entry gains from {@linkcode nativeModulesSource}: the codegen /
+ * TurboModule entry points, `requireNativeComponent` (the same stand-in as
+ * `codegenNativeComponent`), and load-safe no-ops for React Native internals a library may
+ * import (`CodegenTypes`, `DevMenu`, `NativeComponentRegistry`, `PushNotificationIOS`,
+ * `registerCallableModule`, `Systrace`).
+ */
 const NATIVE_ENTRY_EXPORTS = [
   "TurboModuleRegistry",
   "codegenNativeComponent",
   "codegenNativeCommands",
+  "requireNativeComponent",
+  "NativeComponentRegistry",
+  "CodegenTypes",
+  "DevMenu",
+  "PushNotificationIOS",
+  "registerCallableModule",
+  "Systrace",
 ] as const;
+
+/**
+ * The names react-native-web's entry gains from the shell overlay (`denext/react-native`,
+ * src/react-native/): React Native APIs react-native-web does not have at all.
+ */
+export const OVERLAY_ENTRY_EXPORTS: readonly string[] = [
+  "ActionSheetIOS",
+  "DevSettings",
+  "DynamicColorIOS",
+  "PermissionsAndroid",
+  "PlatformColor",
+  "RootTagContext",
+  "ToastAndroid",
+];
+
+/**
+ * The names react-native-web's entry gains from its own modules, which it ships but leaves out
+ * of its entry: each name's module under `exports/` (its default export). `InputAccessoryView`
+ * is then replaced by the overlay (see {@linkcode RN_OVERLAY_EXPORTS}); `NativeAppEventEmitter`
+ * is React Native's alias of `DeviceEventEmitter`.
+ */
+export const WEB_ENTRY_EXPORTS: Readonly<Record<string, string>> = {
+  InputAccessoryView: "InputAccessoryView",
+  NativeAppEventEmitter: "DeviceEventEmitter",
+};
+
+/**
+ * React Native's `Animated` hooks the entry gains, each built by the overlay's
+ * `createAnimatedHook` over react-native-web's own `Animated` (the node class it constructs).
+ */
+export const ANIMATED_HOOK_EXPORTS: Readonly<Record<string, "Value" | "ValueXY" | "Color">> = {
+  useAnimatedValue: "Value",
+  useAnimatedValueXY: "ValueXY",
+  useAnimatedColor: "Color",
+};
+
+/** The names the entry re-exports from `react-dom` (denext's, in React Native mode). */
+const REACT_DOM_ENTRY_EXPORTS = ["unstable_batchedUpdates"] as const;
 
 /**
  * `react-native` itself or any `react-native/…` subpath (not `react-native-web`, etc.), and
@@ -244,8 +324,15 @@ function nativeDeepImport(spec: string): string | null {
  *   - `toString` / `toJSON` → a description naming the module; `constructor` → `Object`;
  *   - `then` (not thenable), `$$typeof` (not a React element), `__esModule`, `inspect`,
  *     `nodeType`, `asymmetricMatch`, `@@`-prefixed keys and symbol keys → `undefined`. A
- * `codegenNativeComponent(name)` component renders nothing (warning once per name in dev), and
- * `codegenNativeCommands()` returns commands that do nothing.
+ * `codegenNativeComponent(name)` (and `requireNativeComponent(name)`, and
+ * `NativeComponentRegistry.get(name)`) component renders nothing (warning once per name in dev),
+ * and `codegenNativeCommands()` returns commands that do nothing.
+ *
+ * The React Native internals a library may import load and do nothing: `CodegenTypes` is an
+ * empty object (its members are types), `DevMenu.show()`, `registerCallableModule()` and
+ * `Systrace`'s events are no-ops (`Systrace.isEnabled()` is false), and `PushNotificationIOS`
+ * reports no permission, no notifications and no initial notification (use
+ * `denext/mobile`'s push and local notifications).
  *
  * @returns The module source.
  */
@@ -269,19 +356,21 @@ function getEnforcing(name) {
   });
 }
 var TurboModuleRegistry = { get: get, getEnforcing: getEnforcing };
-var warned = new Set();
-function codegenNativeComponent(name) {
+var warned = /* @__PURE__ */ new Set();
+function nativeComponent(name, via) {
   function NativeComponent() {
     if ((typeof __DEV__ === "undefined" || __DEV__) && !warned.has(name)) {
       warned.add(name);
       console.warn("denext reactNative: <" + name + "> is a native component " +
-        "(codegenNativeComponent) with no web implementation; it renders nothing on the web.");
+        "(" + via + ") with no web implementation; it renders nothing on the web.");
     }
     return null;
   }
   NativeComponent.displayName = name;
   return NativeComponent;
 }
+function codegenNativeComponent(name) { return nativeComponent(name, "codegenNativeComponent"); }
+function requireNativeComponent(name) { return nativeComponent(name, "requireNativeComponent"); }
 function noop() {}
 function codegenNativeCommands() {
   return new Proxy({}, {
@@ -290,32 +379,217 @@ function codegenNativeCommands() {
     },
   });
 }
-export { TurboModuleRegistry, get, getEnforcing, codegenNativeComponent, codegenNativeCommands };
+var NativeComponentRegistry = {
+  get: function (name) { return nativeComponent(name, "NativeComponentRegistry"); },
+  getWithFallback_DEPRECATED: function (name) {
+    return nativeComponent(name, "NativeComponentRegistry");
+  },
+  setRuntimeConfigProvider: noop,
+  unstable_hasStaticViewConfig: function () { return false; },
+};
+var CodegenTypes = {};
+var DevMenu = { show: noop };
+function registerCallableModule() {}
+var asyncCookie = 0;
+var Systrace = {
+  isEnabled: function () { return false; },
+  setEnabled: noop,
+  beginEvent: noop,
+  endEvent: noop,
+  beginAsyncEvent: function () { return ++asyncCookie; },
+  endAsyncEvent: noop,
+  counterEvent: noop,
+};
+var PushNotificationIOS = /* @__PURE__ */ (function () {
+  function none() { return { alert: false, badge: false, sound: false }; }
+  function call(value) { return function (cb) { if (typeof cb === "function") cb(value()); }; }
+  function P(nativeNotif) { this._data = nativeNotif || {}; }
+  P.FetchResult = {
+    NewData: "UIBackgroundFetchResultNewData",
+    NoData: "UIBackgroundFetchResultNoData",
+    ResultFailed: "UIBackgroundFetchResultFailed",
+  };
+  [
+    "presentLocalNotification", "scheduleLocalNotification", "cancelAllLocalNotifications",
+    "removeAllDeliveredNotifications", "removeDeliveredNotifications",
+    "setApplicationIconBadgeNumber", "cancelLocalNotifications", "addEventListener",
+    "removeEventListener", "abandonPermissions",
+  ].forEach(function (key) { P[key] = noop; });
+  P.getDeliveredNotifications = call(function () { return []; });
+  P.getScheduledLocalNotifications = call(function () { return []; });
+  P.getApplicationIconBadgeNumber = call(function () { return 0; });
+  P.checkPermissions = call(none);
+  P.getAuthorizationStatus = call(function () { return 0; });
+  P.requestPermissions = function () { return Promise.resolve(none()); };
+  P.getInitialNotification = function () { return Promise.resolve(null); };
+  [
+    "getMessage", "getSound", "getCategory", "getAlert", "getContentAvailable", "getBadgeCount",
+    "getData", "getThreadID",
+  ].forEach(function (key) { P.prototype[key] = function () { return null; }; });
+  P.prototype.finish = noop;
+  return P;
+})();
+export {
+  TurboModuleRegistry, get, getEnforcing, codegenNativeComponent, codegenNativeCommands,
+  requireNativeComponent, NativeComponentRegistry, CodegenTypes, DevMenu, PushNotificationIOS,
+  registerCallableModule, Systrace,
+};
 `;
 }
 
 /** react-native-web's entry module, its ES build or its CommonJS one. */
 const WEB_ENTRY_MODULE = /[\\/]react-native-web[\\/]dist[\\/](?:cjs[\\/])?index\.js$/;
 
+/** Which of the entry additions' sources this build can resolve ({@linkcode withNativeModuleExports}). */
+export interface EntrySources {
+  /** `denext/react-native` resolves: add {@linkcode OVERLAY_ENTRY_EXPORTS} and the Animated hooks. */
+  readonly overlay?: boolean;
+  /** `react-dom` resolves: add `unstable_batchedUpdates`. */
+  readonly reactDom?: boolean;
+  /** The react-native-web `exports/<name>` modules present (for {@linkcode WEB_ENTRY_EXPORTS}). */
+  readonly webModules?: ReadonlySet<string>;
+}
+
+/** Whether `source` (an entry) already exports `name`. */
+function exportsName(source: string, name: string): boolean {
+  return new RegExp(`\\bexport\\b[^;]*\\b${name}\\b|\\bexports\\.${name}\\b`).test(source);
+}
+
+/** A group of names the entry gains from one module: ES and CommonJS source for them. */
+interface AdditionGroup {
+  readonly names: readonly string[];
+  readonly esm: (names: readonly string[]) => string;
+  readonly cjs: (names: readonly string[]) => string;
+}
+
+/** `exports.<name> = <from>.<name>` for each name. */
+function cjsAssign(from: string, names: readonly string[]): string {
+  return names.map((name) => `exports.${name} = ${from}.${name};\n`).join("");
+}
+
+/** `require(spec)`'s default export, as react-native-web's CommonJS modules shape it. */
+function cjsDefault(spec: string): string {
+  return `(function (m) { return m && m.__esModule ? m.default : m; })(require(${
+    JSON.stringify(spec)
+  }))`;
+}
+
+/** The addition groups for `sources` (only the ones whose source resolves). */
+function additionGroups(sources: EntrySources): AdditionGroup[] {
+  const overlay = JSON.stringify(RN_OVERLAY);
+  const groups: AdditionGroup[] = [{
+    names: NATIVE_ENTRY_EXPORTS,
+    esm: (names) => `export { ${names.join(", ")} } from "${NATIVE_MODULES}";\n`,
+    cjs: (names) =>
+      `var __denextNative = require("${NATIVE_MODULES}");\n` + cjsAssign("__denextNative", names),
+  }];
+  if (sources.overlay) {
+    // Through a namespace, so an overlay without one of the names (a stale prebuilt runtime, a
+    // test stand-in) reads undefined with a warning instead of failing the build; esbuild
+    // still binds each `__denextOverlay.<name>` statically and drops the unused ones.
+    groups.push({
+      names: OVERLAY_ENTRY_EXPORTS,
+      esm: (names) =>
+        `import * as __denextOverlay from ${overlay};\n` +
+        names.map((n) => `export var ${n} = __denextOverlay.${n};\n`).join(""),
+      cjs: (names) =>
+        `var __denextOverlay = require(${overlay});\n` +
+        cjsAssign("__denextOverlay", names),
+    });
+  }
+  if (sources.overlay && sources.webModules?.has("Animated")) {
+    const hook = (name: string, animated: string) =>
+      `/* @__PURE__ */ __denextAnimatedHook(${animated}, "${ANIMATED_HOOK_EXPORTS[name]}")`;
+    groups.push({
+      names: Object.keys(ANIMATED_HOOK_EXPORTS),
+      esm: (names) =>
+        `import __denextAnimated from "./exports/Animated";\n` +
+        `import * as __denextOverlayHooks from ${overlay};\n` +
+        "var __denextAnimatedHook = __denextOverlayHooks.createAnimatedHook;\n" +
+        names.map((n) => `export var ${n} = ${hook(n, "__denextAnimated")};\n`).join(""),
+      cjs: (names) =>
+        `var __denextAnimatedHook = require(${overlay}).createAnimatedHook;\n` +
+        names.map((n) => `exports.${n} = ${hook(n, cjsDefault("./exports/Animated"))};\n`)
+          .join(""),
+    });
+  }
+  // A module the overlay replaces (InputAccessoryView) loads `denext/react-native` itself.
+  const web = Object.keys(WEB_ENTRY_EXPORTS).filter((n) =>
+    sources.webModules?.has(WEB_ENTRY_EXPORTS[n]) &&
+    (sources.overlay || !Object.hasOwn(RN_OVERLAY_EXPORTS, WEB_ENTRY_EXPORTS[n]))
+  );
+  if (web.length > 0) {
+    groups.push({
+      names: web,
+      esm: (names) =>
+        names.map((n) => `export { default as ${n} } from "./exports/${WEB_ENTRY_EXPORTS[n]}";\n`)
+          .join(""),
+      cjs: (names) =>
+        names.map((n) => `exports.${n} = ${cjsDefault(`./exports/${WEB_ENTRY_EXPORTS[n]}`)};\n`)
+          .join(""),
+    });
+  }
+  if (sources.reactDom) {
+    groups.push({
+      names: REACT_DOM_ENTRY_EXPORTS,
+      esm: (names) => `export { ${names.join(", ")} } from "react-dom";\n`,
+      cjs: (names) => cjsAssign('require("react-dom")', names),
+    });
+  }
+  return groups;
+}
+
 /**
- * react-native-web's entry with {@linkcode NATIVE_ENTRY_EXPORTS} appended (from
- * {@linkcode nativeModulesSource}), so `import { TurboModuleRegistry } from "react-native"`
- * binds. A name the entry already exports is left to it. An ES entry gains an
- * `export { … } from`; a CommonJS one (no `export` statement) gains `exports.<name>` assignments.
+ * react-native-web's entry with the React Native names it lacks appended, so
+ * `import { requireNativeComponent, PermissionsAndroid } from "react-native"` binds:
+ *
+ * - always, {@linkcode NATIVE_ENTRY_EXPORTS} from {@linkcode nativeModulesSource} (the
+ *   codegen / TurboModule entry points, `requireNativeComponent`, the internals' no-ops);
+ * - when `denext/react-native` resolves, {@linkcode OVERLAY_ENTRY_EXPORTS} from the shell
+ *   overlay, and (with react-native-web's `Animated`) {@linkcode ANIMATED_HOOK_EXPORTS} built
+ *   by its `createAnimatedHook`;
+ * - {@linkcode WEB_ENTRY_EXPORTS} whose react-native-web module exists;
+ * - when `react-dom` resolves (denext's, in React Native mode), `unstable_batchedUpdates`.
+ *
+ * A name the entry already exports is left to it. An ES entry gains `export … from` lines; a
+ * CommonJS one (no `export` statement) gains `exports.<name>` assignments. Every addition is a
+ * re-export or a `/* @__PURE__ *\/` call, so an unused one tree-shakes away.
  *
  * @param source The entry's source.
+ * @param sources Which additions' sources resolve in this build (default: only the native ones).
+ * @returns The entry source with the additions.
  */
-export function withNativeModuleExports(source: string): string {
-  const missing = NATIVE_ENTRY_EXPORTS.filter((name) =>
-    !new RegExp(`\\bexport\\b[^;]*\\b${name}\\b|\\bexports\\.${name}\\b`).test(source)
-  );
-  if (missing.length === 0) return source;
+export function withNativeModuleExports(source: string, sources: EntrySources = {}): string {
   const esm = /^\s*export\s/m.test(source);
-  const tail = esm
-    ? `export { ${missing.join(", ")} } from "${NATIVE_MODULES}";\n`
-    : `var __denextNative = require("${NATIVE_MODULES}");\n` +
-      missing.map((name) => `exports.${name} = __denextNative.${name};\n`).join("");
-  return `${source}\n${tail}`;
+  let tail = "";
+  for (const group of additionGroups(sources)) {
+    const missing = group.names.filter((name) => !exportsName(source, name));
+    if (missing.length > 0) tail += esm ? group.esm(missing) : group.cjs(missing);
+  }
+  return tail === "" ? source : `${source}\n${tail}`;
+}
+
+/**
+ * Which entry additions' sources resolve for react-native-web's entry at `entry`: the overlay
+ * and `react-dom` through the build's own resolvers, the `exports/<name>` modules on disk. A
+ * bare build (no prebuilt runtime) gets only the native additions instead of a resolve error.
+ *
+ * @param build The esbuild plugin build.
+ * @param entry The entry module's path.
+ */
+async function entrySources(build: esbuild.PluginBuild, entry: string): Promise<EntrySources> {
+  const resolveDir = dirname(entry);
+  const resolves = async (spec: string) =>
+    (await build.resolve(spec, { kind: "import-statement", resolveDir })).errors.length === 0;
+  const names = ["Animated", ...Object.values(WEB_ENTRY_EXPORTS)];
+  const present = await Promise.all(
+    names.map(async (name) => (await probeWebFile(join(resolveDir, "exports", name))) !== null),
+  );
+  return {
+    overlay: await resolves(RN_OVERLAY),
+    reactDom: await resolves("react-dom"),
+    webModules: new Set(names.filter((_, i) => present[i])),
+  };
 }
 
 /** react-native-web's `Appearance` module (its ES build), which the polyfill below extends. */
@@ -390,11 +664,13 @@ export const RN_OVERLAY_EXPORTS: Readonly<Record<string, "value" | "view">> = {
   BackHandler: "value",
   Clipboard: "value",
   I18nManager: "value",
+  InputAccessoryView: "view",
   Keyboard: "value",
   KeyboardAvoidingView: "view",
   Linking: "value",
   Platform: "value",
   RefreshControl: "view",
+  SafeAreaView: "view",
   Share: "value",
   StatusBar: "value",
   Vibration: "value",
@@ -457,7 +733,7 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
         }
         const spec = args.path === EXPO_RN_BRIDGE ? "react-native" : args.path;
         const native = nativeDeepImport(spec);
-        if (native) return { path: native, namespace: NATIVE_NAMESPACE };
+        if (native) return { path: native, namespace: NATIVE_NAMESPACE, sideEffects: false };
         const file = await resolveReactNativeSpecifier(dir, spec);
         return file
           ? await withPackageSideEffects(file)
@@ -466,6 +742,7 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
       build.onResolve({ filter: new RegExp(`^${NATIVE_MODULES}$`) }, () => ({
         path: NATIVE_MODULES,
         namespace: NATIVE_NAMESPACE,
+        sideEffects: false,
       }));
       build.onLoad({ filter: /.*/, namespace: NATIVE_NAMESPACE }, (args) => ({
         contents: args.path === NATIVE_MODULES
@@ -474,7 +751,10 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
         loader: "js",
       }));
       build.onLoad({ filter: WEB_ENTRY_MODULE }, async (args) => ({
-        contents: withNativeModuleExports(await Deno.readTextFile(args.path)),
+        contents: withNativeModuleExports(
+          await Deno.readTextFile(args.path),
+          await entrySources(build, args.path),
+        ),
         loader: "js",
         resolveDir: dirname(args.path),
       }));
@@ -512,14 +792,7 @@ export function expoShimPlugin(): esbuild.Plugin {
     setup(build) {
       build.onResolve({ filter: EXPO_FILTER }, async (args) => {
         const shim = expoShimSpecifier(args.path);
-        if (!shim) return null;
-        const result = await build.resolve(shim, {
-          kind: args.kind,
-          importer: args.importer,
-          resolveDir: args.resolveDir,
-        });
-        if (result.errors.length > 0) return { errors: result.errors };
-        return { path: result.path, namespace: result.namespace, external: result.external };
+        return shim ? await resolveInstead(build, shim, args) : null;
       });
     },
   };
@@ -565,11 +838,13 @@ export function reactNativeBundleOptions(
     define: reactNativeDefines(dev),
     plugins: [
       reactNativeWebPlugin(projectDir),
+      desktopReactNativePlugin(),
       expoRouterContextPlugin(projectDir),
       expoRouterNavigatorsPlugin(),
       ...(options.expoShims === false ? [] : [expoShimPlugin()]),
       ...(options.lists === "library" ? [] : [listAdaptersPlugin(projectDir)]),
       reanimatedWorkletsPlugin(projectDir, { dev }),
+      reactNativeAliasesPlugin(projectDir, config),
     ],
     platformExtensions: WEB_PLATFORM_EXTENSIONS,
     jsxInJs: true,

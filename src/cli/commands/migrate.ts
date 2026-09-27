@@ -249,15 +249,13 @@ function reportExpoDeps(d: NonNullable<MigrateResult["expo"]>["deps"]): void {
     `  ▸ expo-* packages (${d.expo.length}): ${shimmed.length} resolve to denext/expo shims` +
       (plain.length ? `; ${plain.length} resolve to the real package` : ""),
   );
-  for (const p of shimmed) {
-    const omitted = p.omitted ? ` (${p.omitted} export(s) not provided)` : "";
-    console.log(`      ${p.name.padEnd(24)} ${p.status}${omitted}`);
-  }
+  for (const p of shimmed) console.log(`      ${p.name.padEnd(24)} ${shimLine(p)}`);
   for (const p of plain) {
     console.log(
       `      ${p.name.padEnd(24)} no shim (the real package, which must have a web build)`,
     );
   }
+  reportCommunityDeps(d.community);
   if (d.nativeOnly.length) {
     console.log(`  ⚠️  native-only packages, no web build (${d.nativeOnly.length}):`);
     for (const p of d.nativeOnly) console.log(`      ${p.name} — ${p.kind}`);
@@ -269,6 +267,28 @@ function reportExpoDeps(d: NonNullable<MigrateResult["expo"]>["deps"]): void {
   }
   if (d.notInstalled.length) {
     console.log(`    not installed, so not classified: ${d.notInstalled.join(", ")}`);
+  }
+}
+
+/** An `expo-*` shim's status line: the status, what it omits, and its shimmed subpaths. */
+function shimLine(p: NonNullable<MigrateResult["expo"]>["deps"]["expo"][number]): string {
+  const omitted = p.omitted ? ` (${p.omitted} export(s) not provided)` : "";
+  const subpaths = p.subpaths ? ` — shims for ${p.subpaths.join(", ")}; the rest is real` : "";
+  return `${p.status}${omitted}${subpaths}`;
+}
+
+/** The community packages React Native mode replaces with denext implementations. */
+function reportCommunityDeps(
+  community: NonNullable<MigrateResult["expo"]>["deps"]["community"],
+): void {
+  if (community.length === 0) return;
+  console.log(
+    `  ▸ community packages React Native mode replaces (${community.length}; ` +
+      '`reactNative: { aliases: { "<package>": false } }` keeps the real one):',
+  );
+  for (const p of community) {
+    const omitted = p.omitted ? `, ${p.omitted} export(s) not provided` : "";
+    console.log(`      ${p.name.padEnd(24)} → ${p.implementation} (${p.status}${omitted})`);
   }
 }
 

@@ -75,6 +75,8 @@ export interface Listeners<E extends string, T> {
   remove(event: E, fn: (value: T) => void): void;
   /** How many listeners are registered, over all events. */
   size(): number;
+  /** How many listeners `event` has. */
+  count(event: E): number;
 }
 
 /**
@@ -121,6 +123,7 @@ export function listeners<E extends string, T>(
       if (entry) drop(event, entry);
     },
     size: () => count,
+    count: (event) => byEvent.get(event)?.length ?? 0,
   };
 }
 

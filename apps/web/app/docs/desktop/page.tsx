@@ -468,6 +468,385 @@ try {
         gets one trial launch.
       </p>
 
+      <h2 id="desktop-capabilities">Native capabilities</h2>
+      <p>
+        A desktop app's native side is the Deno process <code>denext/desktop</code>{" "}
+        runs beside the window. The same <code>denext/mobile</code>{" "}
+        functions an iOS or Android app calls work in the window: when{" "}
+        <code>runtimePlatform()</code> is <code>"desktop"</code>{" "}
+        they ask the runtime over its token-gated bridge, loading the desktop code lazily (web and
+        mobile bundles never fetch it). Each is off until you enable it:
+      </p>
+      <Code lang="bash">
+        {`denext desktop add secure-store fs context-menu   # writes desktop.capabilities
+denext desktop add --list                          # every capability, its trust level
+denext desktop add dialogs --dry-run               # the config diff + permissions, no write`}
+      </Code>
+      <p>
+        <code>denext desktop add</code> splices the capability into{" "}
+        <code>desktop.capabilities</code> in <code>denext.config.ts</code>{" "}
+        (comments and the rest of the file keep their bytes; a key you already customised is kept)
+        and prints the Deno permissions it adds per OS. That one object is both the runtime's
+        allowlist (a call to a capability that is not listed is refused{" "}
+        <code>unavailable</code>, and the function keeps its web path) and the source the package
+        scripts derive the app's <code>--allow-*</code> flags from.
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>Page APIs</th>
+            <th>Permissions (macOS · Windows · Linux)</th>
+            <th>Trust</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <code>secure-store</code>
+            </td>
+            <td>
+              <code>secureStore</code> (Keychain / Credential Manager / libsecret)
+            </td>
+            <td>
+              <code>--allow-ffi</code>: Security.framework · advapi32.dll · libsecret-1.so.0
+            </td>
+            <td>full</td>
+          </tr>
+          <tr>
+            <td>
+              <code>fs</code>
+            </td>
+            <td>
+              <code>readFile</code>, <code>writeFile</code>, <code>deleteFile</code>,{" "}
+              <code>listDir</code>, <code>downloadToFile</code>
+            </td>
+            <td>
+              <code>--allow-read</code> /{" "}
+              <code>--allow-write</code>: the app-support and cache folders
+            </td>
+            <td>scoped</td>
+          </tr>
+          <tr>
+            <td>
+              <code>sqlite</code>
+            </td>
+            <td>
+              <code>openSqlite</code>, <code>deleteSqlite</code> (<code>node:sqlite</code>)
+            </td>
+            <td>the app-support folder</td>
+            <td>scoped</td>
+          </tr>
+          <tr>
+            <td>
+              <code>context-menu</code>
+            </td>
+            <td>
+              <code>showContextMenu</code> (the OS menu)
+            </td>
+            <td>none</td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
+              <code>shell</code>
+            </td>
+            <td>
+              <code>openExternal</code>, <code>openPath</code>, <code>revealInFileManager</code>,
+              {" "}
+              <code>moveToTrash</code>
+            </td>
+            <td>
+              <code>--allow-run</code>: open, osascript · explorer, rundll32, powershell · xdg-open,
+              gio, dbus-send
+            </td>
+            <td>full</td>
+          </tr>
+          <tr>
+            <td>
+              <code>dialogs</code>
+            </td>
+            <td>
+              <code>pickDocument</code>, <code>saveFile</code>, <code>pickFolder</code> (paths)
+            </td>
+            <td>
+              unscoped <code>--allow-read</code> /{" "}
+              <code>--allow-write</code>, plus osascript · comdlg32 · zenity/kdialog
+            </td>
+            <td>broad</td>
+          </tr>
+          <tr>
+            <td>
+              <code>notifications</code>
+            </td>
+            <td>
+              <code>scheduleNotification</code>, <code>cancelNotification</code>,{" "}
+              <code>pendingNotifications</code>, <code>onLocalNotificationTapped</code>
+            </td>
+            <td>none</td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
+              <code>keep-awake</code>
+            </td>
+            <td>
+              <code>useKeepAwake</code>
+            </td>
+            <td>caffeinate · kernel32.dll · systemd-inhibit</td>
+            <td>full</td>
+          </tr>
+          <tr>
+            <td>
+              <code>clipboard</code>
+            </td>
+            <td>
+              <code>readClipboard</code>, <code>writeClipboard</code> (no user gesture)
+            </td>
+            <td>none</td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
+              <code>device</code>
+            </td>
+            <td>
+              <code>deviceInfo</code> (OS and release)
+            </td>
+            <td>
+              <code>--allow-sys=osRelease</code>
+            </td>
+            <td>scoped</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
+        <code>openPath</code>, <code>revealInFileManager</code> and <code>moveToTrash</code>;{" "}
+        <code>saveFile</code> downloads in a browser and <code>pickFolder</code> uses{" "}
+        <code>showDirectoryPicker</code>{" "}
+        where the browser has it. Storage matters most: a Deno Desktop window gets a new origin each
+        launch, so browser storage starts empty every time. Enable <code>secure-store</code>,{" "}
+        <code>fs</code> and <code>sqlite</code>{" "}
+        for anything that must survive a relaunch; without them the functions fall back to browser
+        storage and warn once.
+      </p>
+
+      <h2 id="desktop-extensions">Your own native extensions</h2>
+      <p>
+        When a built-in is not enough, write an extension: TypeScript that runs in the Deno process,
+        with FFI (<code>Deno.dlopen</code>{" "}
+        of a C-ABI library) or a sidecar binary when it needs native code. Each method declares
+        Standard Schemas for its input and output; the runtime validates the page's arguments before
+        the handler runs and strips the result after it. List it in{" "}
+        <code>desktop.capabilities.extensions</code>, then call it from the page through{" "}
+        <code>denext/desktop/client</code>:
+      </p>
+      <Code lang="tsx">
+        {`// desktop/extensions/scanner.ts: runs in the Deno process only
+import { defineDesktopExtension } from "denext/desktop";
+import { z } from "zod";
+export default defineDesktopExtension({
+  name: "scanner",
+  permissions: { ffi: ["./native/libscanner.dylib"] },
+  events: ["attached"],
+  methods: {
+    listDevices: {
+      input: z.object({ kind: z.string().optional() }),
+      output: z.array(z.string()),
+      handler: ({ kind }) => listDevices(kind), // FFI, a sidecar, or plain Deno
+    },
+  },
+});
+
+// a "use client" component
+import { desktopExtension, isDesktopBridgeError, onDesktopEvent } from "denext/desktop/client";
+import type scanner from "../desktop/extensions/scanner.ts";
+
+const scan = desktopExtension<typeof scanner>("scanner");
+const devices = await scan.listDevices({ kind: "usb" }); // string[], typed from the schemas
+const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => refresh(id));
+// Off desktop (the web, iOS, Android) a call rejects without a request:
+// isDesktopBridgeError(err) && err.code === "unavailable"`}
+      </Code>
+      <p>
+        Add <code>"denext/desktop/client"</code> to your <code>deno.json</code> imports next to{" "}
+        <code>denext/mobile</code>. A call rejects with a <code>DesktopBridgeError</code> whose{" "}
+        <code>code</code> is <code>unavailable</code> (not a desktop window, or not enabled),{" "}
+        <code>forbidden</code> (the gate refused it), <code>validation</code>, <code>timeout</code>
+        {" "}
+        (30 s by default; pass <code>{"{ timeoutMs }"}</code>), <code>too_large</code>{" "}
+        (a request over 4 MiB), or the extension's own code. Events that fire before a handler
+        subscribes (a notification click that launched the app, a deep link) are kept by the runtime
+        and delivered to the first subscriber.
+      </p>
+
+      <h2 id="desktop-security">Security model</h2>
+      <p>
+        Any local process can reach the app's loopback port, so the page's only power is one gated
+        bridge, and every request must pass all of: the per-launch token in{" "}
+        <code>x-denext-desktop-token</code>, an <code>Origin</code> exactly equal to the window's,
+        {" "}
+        <code>content-type: application/json</code>{" "}
+        (a foreign page cannot send that cross-origin without a preflight, which the runtime
+        refuses), and <code>POST</code>{" "}
+        for calls. Then the capability allowlist, then the method's input schema. There are no
+        bridge endpoints outside the desktop runtime, and off desktop the page never requests one.
+      </p>
+      <ul>
+        <li>
+          <strong>The token and the page.</strong>{" "}
+          The runtime injects the token into the top-level document only (never into frames), behind
+          a hash-based CSP, and strips it before anything is proxied. It is per launch and never
+          leaves the machine. But any script running in the page can read it: an XSS in your UI can
+          use every capability you enabled. Keep the strict CSP, do not load remote scripts into the
+          window, and enable only what you use.
+        </li>
+        <li>
+          <strong>Permissions are honest about their reach.</strong> <code>fs</code> and{" "}
+          <code>sqlite</code> stay inside the app's folders. <code>dialogs</code>{" "}
+          needs unscoped read and write, because Deno bakes permissions at build time and the user
+          picks paths at run time; the runtime narrows file calls to the paths picked this session.
+          {" "}
+          <code>--allow-run</code> and <code>--allow-ffi</code> (<code>shell</code>,{" "}
+          <code>keep-awake</code>,{" "}
+          <code>secure-store</code>, your extensions) are full trust: that program or library can do
+          anything the user can.
+        </li>
+        <li>
+          <strong>Errors carry codes, not internals.</strong>{" "}
+          A failure reaches the page as a code and a short message; arguments, paths from the
+          handler's stack, and the token never appear in it.
+        </li>
+      </ul>
+
+      <h2 id="desktop-react-native">React Native on desktop</h2>
+      <p>
+        A <a href="/docs/react-native">React Native / Expo app</a> (<code>reactNative: true</code>,
+        {" "}
+        <code>mode: "spa"</code>) runs in a Deno Desktop window like any SPA:{" "}
+        <code>denext desktop run</code>{" "}
+        exports it (react-native-web renders it to the DOM) and opens it natively, and{" "}
+        <code>denext desktop package</code> ships it. The platform APIs are the{" "}
+        <code>denext/mobile</code>{" "}
+        ones above, so one component tree persists to the OS keychain on desktop, the iOS Keychain
+        in the Capacitor shell, and IndexedDB on the web. See{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/rn-desktop">
+          <code>examples/rn-desktop</code>
+        </a>.
+      </p>
+      <ul>
+        <li>
+          <code>Platform.OS</code> stays <code>"web"</code>{" "}
+          in the window, on purpose: react-native-web and RN libraries choose their DOM code paths
+          from it. Tell desktop apart with <code>Platform.constants.denextDesktop</code> (and{" "}
+          <code>Platform.constants.os</code>: <code>"macos"</code>, <code>"windows"</code> or{" "}
+          <code>"linux"</code>, when the runtime reports it) or <code>runtimePlatform()</code> from
+          {" "}
+          <code>denext/mobile</code>. Without a <code>web</code> key, <code>Platform.select</code>
+          {" "}
+          picks the host OS key (<code>macos</code>, <code>windows</code>,{" "}
+          <code>linux</code>) in the window, then <code>default</code>.
+        </li>
+        <li>
+          Coming from <code>react-native-windows</code> or{" "}
+          <code>react-native-macos</code>: shared RN code runs; their C++, C# and Objective-C native
+          modules do not. Rewrite a native module as a{" "}
+          <a href="#desktop-extensions">desktop extension</a>{" "}
+          (the TurboModule's methods become schema-typed methods; its events become{" "}
+          <code>onDesktopEvent</code>).
+        </li>
+      </ul>
+      <p>
+        In React Native mode an import of <code>react-native-windows</code> or{" "}
+        <code>react-native-macos</code> resolves to <code>react-native</code>{" "}
+        (react-native-web with the shell overlay) plus what the package adds, so the real packages
+        are never read or needed. A deep <code>Libraries/</code> import resolves as the same{" "}
+        <code>react-native</code> path.
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Package API</th>
+            <th>In React Native mode</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <code>Flyout</code>, <code>Popup</code> (Windows)
+            </td>
+            <td>
+              A popover over react-native-web's <code>Modal</code> while{" "}
+              <code>isOpen</code>, against <code>target</code>{" "}
+              (an element or a ref; centred without one) at <code>placement</code>{" "}
+              with the offsets; a tap outside (<code>isLightDismissEnabled</code>) or Escape calls
+              {" "}
+              <code>onDismiss</code>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>Glyph</code> (Windows)
+            </td>
+            <td>
+              A <code>Text</code> of <code>glyph</code> at{" "}
+              <code>emSize</code>, in the font family named by the <code>fontUri</code>{" "}
+              <code>#fragment</code>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>AppTheme</code> (Windows)
+            </td>
+            <td>
+              High contrast from <code>forced-colors</code>, its palette as CSS system colors, and
+              {" "}
+              <code>highContrastChanged</code>; light and dark are <code>Appearance</code>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>supportKeyboard</code>, <code>EventPhase</code> (Windows)
+            </td>
+            <td>The component itself; the phase constants</td>
+          </tr>
+          <tr>
+            <td>
+              <code>DynamicColorMacOS</code>, <code>ColorWithSystemEffectMacOS</code> (macOS)
+            </td>
+            <td>
+              A light / dark CSS color (as <code>DynamicColorIOS</code>); a CSS{" "}
+              <code>color-mix()</code> per effect. <code>PlatformColor</code>{" "}
+              knows the NSColor and Windows system color names
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <code>View</code> props
+            </td>
+            <td>
+              <code>tooltip</code> → <code>title</code>; <code>onDoubleClick</code> → a{" "}
+              <code>dblclick</code> listener; <code>keyDownEvents</code> / <code>keyUpEvents</code>
+              {" "}
+              / <code>validKeysDown</code>{" "}
+              → a key filter (listed keys are handled; macOS passes only those to{" "}
+              <code>onKeyDown</code>, Windows every key); <code>enableFocusRing</code> → the{" "}
+              <code>:focus-visible</code> ring; <code>acceptsFirstMouse</code>,{" "}
+              <code>mouseDownCanMoveWindow</code>, <code>allowsVibrancy</code>,{" "}
+              <code>draggedTypes</code> → accepted, with a dev warning
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        The desktop <code>View</code> props apply to a <code>View</code>{" "}
+        imported from the desktop package; one imported from <code>react-native</code>{" "}
+        is react-native-web's. <code>deno task parity:native -- desktop</code>{" "}
+        checks both aliases against the pinned packages (react-native-windows 0.84.0,
+        react-native-macos 0.81.9).
+      </p>
+
       <h2 id="mobile-capacitor">Mobile (Capacitor)</h2>
       <p>
         The iOS/Android material moved to its own page,{" "}

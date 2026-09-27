@@ -49,6 +49,9 @@ ignoreDependencies = [
   # tests/e2e/fixtures/reanimated/package.json: installed into the e2e's temp copy of the fixture
   "react-native-reanimated",
   "react-native-gesture-handler",
+  # tests/e2e/fixtures/rn-desktop installs these itself (the desktop RN alias smoke).
+  "react-native-macos",
+  "react-native-windows",
   # per-directory package.json / test-written import maps — see the note below the list
   "@radix-ui/react-dialog",
   "@radix-ui/react-collapsible",
@@ -125,6 +128,11 @@ entry = [
   # TanStack Router file-based routes (examples/tanstack-router): every module under
   # src/routes/ is wired by the generated src/routeTree.gen.ts (the TanStack Router CLI).
   "examples/tanstack-router/src/routes/**",
+  # React Native mode's community-package stand-ins: prebuilt runtime entries
+  # (`denext/react-native-compat/<name>`, src/build/react-native-aliases.ts) that an app reaches by
+  # importing the npm package they stand in for, so each export is that package's public API
+  # (the `src/expo/*` shims are entry points through deno.json's exports).
+  "src/react-native-compat/*.ts",
   # SPA mode: the entry (and worker) named by `spa.entry` in denext.config.ts.
   "**/src/main.tsx",
   "**/src/worker.ts",
@@ -136,6 +144,7 @@ entry = [
   # scripts, per-example setup scripts, and the import-map alias target for better-sqlite3.
   "examples/*/serve.ts",
   "examples/native/desktop.ts",
+  "examples/rn-desktop/desktop.ts",
   "examples/native/capacitor.config.ts",
   "examples/native/scripts/*.ts",
   "examples/prisma/scripts/*.ts",

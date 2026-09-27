@@ -272,6 +272,18 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
       "(CapacitorAPI/KV.swift)",
   }],
   restore: [],
+  // UIAccessibility.isVoiceOverRunning and its notification are not required-reason APIs.
+  accessibility: [],
+  // The fixes themselves are the app's data to declare (Precise Location, when they leave the
+  // device); the plugin's own API use is UserDefaults.
+  "background-location": [{
+    bundle: "app",
+    apis: [{ category: USER_DEFAULTS, reasons: ["CA92.1"] }],
+    source: "@capgo/background-geolocation keeps its geofence setup and regions in " +
+      "UserDefaults.standard (CapgoCapacitorBackgroundGeolocationPlugin.swift)",
+  }],
+  // @capacitor/app's getInfo() reads the bundle; @capacitor/device is `device` above.
+  application: [],
 };
 
 /**

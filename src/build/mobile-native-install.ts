@@ -45,6 +45,11 @@ import {
   renderSettingsTemplate,
   SETTINGS_TEMPLATE_VERSION,
 } from "./settings-native-templates.ts";
+import {
+  ACCESSIBILITY_TEMPLATE_VERSION,
+  isPristineAccessibilityTemplate,
+  renderAccessibilityTemplate,
+} from "./accessibility-native-templates.ts";
 
 /** A denext native feature that registers a plugin with the bridge. */
 export type NativeFeature =
@@ -53,7 +58,8 @@ export type NativeFeature =
   | "share-receive"
   | "widgets"
   | "live-activity"
-  | "settings";
+  | "settings"
+  | "accessibility";
 
 /** Every feature, in the order the bridge view controller registers them after OTA. */
 const ALL_FEATURES: readonly NativeFeature[] = [
@@ -63,6 +69,7 @@ const ALL_FEATURES: readonly NativeFeature[] = [
   "widgets",
   "live-activity",
   "settings",
+  "accessibility",
 ];
 
 /** Every non-empty combination of `features`, for recognising a file denext composed. */
@@ -160,6 +167,7 @@ const TEMPLATE_GENERATIONS: Readonly<Record<string, number>> = {
   "app-extension": APP_EXTENSION_TEMPLATE_VERSION,
   back: BACK_TEMPLATE_VERSION,
   settings: SETTINGS_TEMPLATE_VERSION,
+  accessibility: ACCESSIBILITY_TEMPLATE_VERSION,
 };
 
 /** The manual step for a shared file a newer denext wrote that lacks `step`'s registration. */
@@ -201,6 +209,12 @@ export const BACK_TEMPLATES: TemplateKind = {
 export const SETTINGS_TEMPLATES: TemplateKind = {
   render: (template) => renderSettingsTemplate(template),
   isPristine: (_name, text) => isPristineSettingsTemplate(text),
+};
+
+/** The screen-reader templates (`DenextAccessibility`): `// denext-accessibility-template:`. */
+export const ACCESSIBILITY_TEMPLATES: TemplateKind = {
+  render: (template) => renderAccessibilityTemplate(template),
+  isPristine: (_name, text) => isPristineAccessibilityTemplate(text),
 };
 
 /** Accumulates the report while an installer runs. */
@@ -312,6 +326,7 @@ const IOS_FEATURE_FILES: Readonly<Record<NativeFeature, string>> = {
   widgets: "DenextWidgetsPlugin.swift",
   "live-activity": "DenextLiveActivityPlugin.swift",
   settings: "DenextSettingsPlugin.swift",
+  accessibility: "DenextAccessibilityPlugin.swift",
 };
 
 /** Where the OTA bridge view controller registers its plugin; the others go after it. */
@@ -329,6 +344,8 @@ const IOS_REGISTRATIONS: Readonly<Record<Exclude<NativeFeature, "ota">, string>>
     "        bridge?.registerPluginInstance(DenextLiveActivityPlugin())\n",
   settings: "        // denext app settings: openAppSettings() in denext/mobile.\n" +
     "        bridge?.registerPluginInstance(DenextSettingsPlugin())\n",
+  accessibility: "        // denext screen reader: isScreenReaderEnabled() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextAccessibilityPlugin())\n",
 };
 
 /** The registration lines of the non-OTA features in `features`, in their fixed order. */
@@ -561,6 +578,12 @@ const ANDROID_REGISTRATIONS: Readonly<
     step: "call `EdgeToEdge.enable(this);` (import androidx.activity.EdgeToEdge) in " +
       "MainActivity.onCreate, before super.onCreate.",
   },
+  accessibility: pluginRegistration(
+    "dev.denext.accessibility",
+    "DenextAccessibilityPlugin",
+    "denext screen reader: registers the DenextAccessibility plugin (isScreenReaderEnabled\n" +
+      "        // in denext/mobile)",
+  ),
   settings: pluginRegistration(
     "dev.denext.settings",
     "DenextSettingsPlugin",
@@ -612,6 +635,7 @@ const ANDROID_REGISTRATIONS: Readonly<
  * earlier releases wrote for OTA and auth sessions the same.
  */
 const FEATURE_ORDER: readonly AndroidFeature[] = [
+  "accessibility",
   "settings",
   "edge-to-edge",
   "back",
@@ -625,7 +649,8 @@ const FEATURE_ORDER: readonly AndroidFeature[] = [
 const MAIN_ACTIVITY_FAMILY = "main-activity";
 /**
  * The generation of {@linkcode mainActivitySource}'s text, stamped into its marker line.
- * Generation 2 (denext 2.11) added the `back` and `edge-to-edge` features. The text of every
+ * Generation 2 (denext 2.11) added the `back`, `edge-to-edge`, `settings` and `accessibility`
+ * features. The text of every
  * generation-1 combination is unchanged (only the marker's number differs), and a marked
  * generation-1 file is recognised by its intact marker, so no hash joins
  * {@linkcode SHIPPED_MAIN_ACTIVITY_SHA256}. The bump keeps an older denext from rewriting a

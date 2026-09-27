@@ -36,6 +36,7 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/lazy", file: `${ROOT}src/lazy.ts` },
   { module: "denext/desktop", file: `${ROOT}src/build/desktop.ts` },
   { module: "denext/desktop/updater", file: `${ROOT}src/desktop/updater.ts` },
+  { module: "denext/desktop/client", file: `${ROOT}src/desktop/client.ts` },
   { module: "denext/mobile", file: `${ROOT}src/mobile/mod.ts` },
   { module: "denext/cli/command", file: `${ROOT}src/cli/command.ts` },
   ...(await expoEntries()),

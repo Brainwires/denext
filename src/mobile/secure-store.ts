@@ -8,6 +8,7 @@
 
 import { nativePlugin } from "./plugin.ts";
 import { authenticateBiometric } from "./biometrics.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /** Options for {@linkcode SecureStore.set}. */
 export interface SecureStoreSetOptions {
@@ -167,6 +168,8 @@ async function withStore<T>(
  *   unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the
  *   plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same
  *   entries.
+ * - Inside a Deno Desktop window (`denext desktop add secure-store`), the OS keychain: the
+ *   macOS Keychain, Windows Credential Manager or libsecret, through the desktop runtime.
  * - **On the web it is NOT secret.** The fallback is a plain IndexedDB database
  *   (`denext-secure-store`) that any script on the origin, and anyone with the device's
  *   browser profile, can read. It keeps a web build working; it does not protect anything.
@@ -190,6 +193,8 @@ async function withStore<T>(
 export const secureStore: SecureStore = {
   async get(key: string, options?: SecureStoreGetOptions): Promise<string | null> {
     checkKey("get", key);
+    const desktop = onDesktop() && await viaDesktop("secureStore", (d) => d.secureGet(key), true);
+    if (desktop) return await ungated(desktop.value, options);
     const plugin = securePlugin();
     if (plugin) {
       const { data } = await plugin.internalGetItem({
@@ -207,6 +212,7 @@ export const secureStore: SecureStore = {
       throw new TypeError("secureStore.set: the value must be a string (JSON.stringify it)");
     }
     const data = stored(value, options);
+    if (onDesktop() && await viaDesktop("secureStore", (d) => d.secureSet(key, data), true)) return;
     const plugin = securePlugin();
     if (plugin) {
       return await plugin.internalSetItem({
@@ -222,6 +228,7 @@ export const secureStore: SecureStore = {
   },
   async delete(key: string): Promise<void> {
     checkKey("delete", key);
+    if (onDesktop() && await viaDesktop("secureStore", (d) => d.secureDelete(key), true)) return;
     const plugin = securePlugin();
     if (plugin) {
       await plugin.internalRemoveItem({ prefixedKey: NATIVE_PREFIX + key, sync: false });

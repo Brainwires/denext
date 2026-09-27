@@ -348,6 +348,18 @@
       "hasReadme": true
     },
     {
+      "name": "rn-desktop",
+      "title": "React Native on the desktop (reactNative + Deno Desktop)",
+      "blurb": "A React Native component tree (react-native-web) running in a Deno Desktop window, with native desktop capabilities: the counter persists in the OS keychain, right-click opens the native context…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/rn-desktop",
+      "tags": [
+        "spa",
+        "compat",
+        "desktop"
+      ],
+      "hasReadme": true
+    },
+    {
       "name": "spa",
       "title": "SPA example (mode: \"spa\")",
       "blurb": "A client-only React SPA on denext — \"React but not Next.\" There is no app/ directory: denext bundles a single entry (src/main.tsx), wraps it in an HTML shell, and serves that shell for every…",

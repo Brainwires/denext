@@ -82,8 +82,15 @@ half is not in the repository, so to test OTA, generate your own pair and re-run
 
 ## The code
 
-- `src/main.tsx`: mounts the app, adds `SAFE_AREA_CSS`, hides the splash, calls
-  `otaBooted()`.
+- `denext.config.ts`: SPA mode, `SAFE_AREA_CSS` as an inline `<style>` in the head, and
+  `spa.csp`: denext's strict Content-Security-Policy as a `<meta>` (inline styles are allowed by
+  hash, so nothing may inject a `<style>` at runtime; `connect-src` adds http(s) for the OTA
+  server on your LAN).
+- `ios/App/App/PrivacyInfo.xcprivacy`: the example requests App Tracking Transparency (the
+  `tracking` capability), so it sets `NSPrivacyTracking` to true. It contacts no tracker, so
+  `NSPrivacyTrackingDomains` lists the placeholder `tracking.example.com`. A real app lists the
+  domains it tracks through, which iOS blocks until the user allows tracking.
+- `src/main.tsx`: mounts the app, hides the splash, calls `otaBooted()`.
 - `src/app.tsx`: the two routes (`/` and `/detail/:id`), `runtimePlatform()` at
   the top, and the listeners that must subscribe at startup: `useDeepLink`,
   `usePushReceived`, `usePushTapped`, `useQuickAction` and `useShareReceived`.
@@ -91,6 +98,21 @@ half is not in the repository, so to test OTA, generate your own pair and re-run
   `files`, `inbound`, `ios-extras`, `ota`).
 - `src/ui.tsx`: the section card, the result box and a 20-line history router
   that follows `popstate` (which is how deep links and push taps navigate).
+- `src/v211/`: one screen per denext 2.11 mobile feature (keyboard, safe area and system
+  bars, dialogs, pull-to-refresh, permissions, local notifications, biometrics, geolocation,
+  orientation, privacy screen, tracking, app review, media library, lists, navigation), listed
+  on the home screen. Each says what to do and what to see. The dialog screen reaches the
+  internal `showDialog` through the `denext-internal/dialog` alias in `deno.json`, because
+  `denext/mobile` does not export a dialog API.
+- `src/v211/selftest.tsx`: an automatic self-test of every check that needs no human and shows
+  no OS prompt. Open `denextmobile://selftest` (or tap "Run the automatic self-test"). Each check
+  logs `SELFTEST|<name>|PASS|FAIL|SKIP|<detail>` to the console, then
+  `SELFTEST|DONE|<passed>/<total>`:
+
+  ```sh
+  xcrun devicectl device process launch --console --terminate-existing --device <udid> \
+    --payload-url denextmobile://selftest com.brainwires.denext.mobile
+  ```
 - `serve.ts`: `deno task ota:serve`, the OTA server for the device test.
 
 ## Testing each capability on a device

@@ -558,6 +558,43 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "The start url and stale dates are ignored, addUserInteractionListener never fires, and " +
       "widgetsDirectory is empty. On the web the updates do nothing and start throws.",
   },
+  "@expo/ui/community/datetime-picker": {
+    module: "./ui-community-datetime-picker.ts",
+    pinned: "57.0.14",
+    status: "partial",
+    notes: "React Native mode's DateTimePicker (also @react-native-community/datetimepicker's): " +
+      "an <input type=date|time|datetime-local> with onChange / onValueChange / onDismiss, " +
+      "minimumDate / maximumDate and disabled; display, locale and the Android dialog " +
+      "presentation are accepted and use the browser's own picker (@expo/ui's own web build " +
+      "renders nothing).",
+  },
+  "@expo/ui/community/masked-view": {
+    module: "./ui-community-masked-view.ts",
+    pinned: "57.0.14",
+    status: "partial",
+    notes: "React Native mode's MaskedView (also @react-native-masked-view/masked-view's): a " +
+      "LinearGradient mask becomes a CSS mask-image and a Text mask over a LinearGradient " +
+      "becomes gradient text; any other mask renders the children unmasked and warns once " +
+      "(@expo/ui's own web build never masks).",
+  },
+  "@expo/ui/community/menu": {
+    module: "./ui-community-menu.ts",
+    pinned: "57.0.14",
+    status: "partial",
+    notes: "React Native mode's MenuView (also @react-native-menu/menu's): the actions open " +
+      "through denext/mobile's showContextMenu on a tap, or a long press / right click with " +
+      "shouldOpenOnLongPress, and the choice reaches onPressAction (@expo/ui's own web build " +
+      "never fires one). One level deep: submenus are listed after their parent's title; " +
+      "images are not drawn.",
+  },
+  "@expo/ui/community/pager-view": {
+    module: "./ui-community-pager-view.ts",
+    pinned: "57.0.14",
+    status: "partial",
+    notes: "React Native mode's PagerView (also react-native-pager-view's): a CSS scroll-snap " +
+      "pager with its events and ref methods (@expo/ui's own web build throws when it " +
+      "renders).",
+  },
   "@expo/ui/jetpack-compose": {
     module: "./ui-jetpack-compose.ts",
     pinned: "57.0.14",

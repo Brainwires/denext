@@ -579,7 +579,7 @@ Deno.test("Platform: OS stays web in the shell; Version and isPad from the devic
   assertEquals(Platform.Version, "0.0.0");
   await inShell("ios", {}, () => {
     assertEquals(Platform.OS, "web", "web inside the iOS shell too");
-    assertEquals(Platform.select({ ios: 2, default: 3 }), 3);
+    assertEquals(Platform.select({ ios: 2, default: 3 }), 2, "the shell's own key, then default");
     assertEquals(Platform.Version, "17.4");
     assertEquals(Platform.isPad, false);
   }, { navigator: { userAgent: IPHONE_UA } });

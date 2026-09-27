@@ -7,6 +7,8 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
 import {
+  expoApiUsage,
+  expoDependencyReport,
   expoMobilePlan,
   readExpoAppConfig,
   readStaticAppConfig,
@@ -219,8 +221,13 @@ Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native mo
         kind: "iOS / Android files only (dist/components/ImageItem has no web or plain variant)",
       },
       { name: "react-native-nitro-markdown", kind: "Nitro module (JSI)" },
-      { name: "react-native-webview", kind: "TurboModule / Fabric component (codegen)" },
     ]);
+    // react-native-webview is codegen-only, but React Native mode replaces it.
+    assertEquals(e.deps.community.map((p) => p.name), ["react-native-webview"]);
+    assertStringIncludes(
+      e.mobile.capabilities.find((c) => c.capability === "camera")!.because,
+      "NSMicrophoneUsageDescription",
+    );
     assertEquals(e.metro, {
       file: "metro.config.js",
       extraModules: ["@acme/generated-licenses"],
@@ -450,8 +457,92 @@ Deno.test("expo app config: config-plugin permission options become usage string
     const plan = expoMobilePlan({ expo: "1", "expo-auth-session": "1" }, config);
     assertEquals(
       plan.command,
-      "denext mobile add secure-store auth-session barcode --scheme <scheme>",
+      "denext mobile add secure-store auth-session camera barcode geolocation --scheme <scheme>",
       "auth-session with no scheme in the config gets a placeholder",
     );
+  });
+});
+
+/** An empty static app config, for plans built from packages alone. */
+const NO_CONFIG = {
+  source: null,
+  schemes: [],
+  infoPlist: {},
+  androidPermissions: [],
+  plugins: [],
+  linkDomains: [],
+  runtimeConfig: {},
+  unresolved: [],
+  notes: [],
+};
+
+Deno.test("expoMobilePlan: the newly shimmed Expo packages and community aliases map to capabilities", () => {
+  const plan = expoMobilePlan(
+    {
+      expo: "1",
+      "expo-location": "1",
+      "expo-local-authentication": "1",
+      "expo-apple-authentication": "1",
+      "expo-tracking-transparency": "1",
+      "expo-application": "1",
+      "expo-camera": "1",
+      "expo-notifications": "1",
+      "react-native-keychain": "1",
+      "@react-native-community/netinfo": "1",
+    },
+    NO_CONFIG,
+    { localNotifications: true },
+  );
+  const caps = plan.capabilities.map((c) => c.capability);
+  for (
+    const cap of [
+      "camera",
+      "barcode",
+      "geolocation",
+      "biometrics",
+      "social-login",
+      "tracking",
+      "application",
+      "push",
+      "local-notifications",
+      "secure-store",
+      "network",
+    ]
+  ) {
+    assert(caps.includes(cap), `${cap} in ${caps.join(" ")}`);
+  }
+  const local = plan.capabilities.find((c) => c.capability === "local-notifications")!;
+  assertStringIncludes(local.because, "scheduleNotificationAsync");
+  // Without local scheduling in the source, expo-notifications is push only.
+  const pushOnly = expoMobilePlan({ "expo-notifications": "1" }, NO_CONFIG);
+  assertEquals(pushOnly.capabilities.map((c) => c.capability), ["push"]);
+});
+
+Deno.test("expoApiUsage: finds local-notification calls in the app's own source only", async () => {
+  await withApp({
+    "package.json": { name: "p" },
+    "src/notify.ts": "await Notifications.scheduleNotificationAsync({ content, trigger });\n",
+    "node_modules/x/index.js": "presentNotificationAsync();\n",
+  }, async (dir) => {
+    assertEquals(await expoApiUsage(dir), { localNotifications: true });
+    await Deno.remove(join(dir, "src/notify.ts"));
+    assertEquals(await expoApiUsage(dir), { localNotifications: false }, "node_modules is skipped");
+  });
+});
+
+Deno.test("expoDependencyReport: @expo/ui is an Expo package with per-subpath shims", async () => {
+  await withApp({ "package.json": { name: "p" } }, async (dir) => {
+    const report = await expoDependencyReport(dir, {
+      "@expo/ui": "57.0.20",
+      "@expo/vector-icons": "15.0.0",
+      "react-native-keychain": "10.0.0",
+    });
+    const ui = report.expo.find((p) => p.name === "@expo/ui")!;
+    assertEquals(ui.status, "partial");
+    assert(ui.subpaths!.includes("swift-ui"), "swift-ui is shimmed");
+    assert(ui.subpaths!.includes("community/masked-view"), "community/masked-view is shimmed");
+    assert(!report.expo.some((p) => p.name === "@expo/vector-icons"), "a plain @expo package");
+    assertEquals(report.nativeOnly, [], "@expo/ui is not native-only");
+    assertEquals(report.community.map((p) => p.name), ["react-native-keychain"]);
   });
 });

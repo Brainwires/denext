@@ -252,7 +252,10 @@ export async function spaShellHtml(opts: {
   devScriptSrc?: string;
   /** Client chunk URLs to `<link rel="modulepreload">` (the entry's static graph). */
   preload?: string[];
-  /** Inject Expo web's root style ahead of `spa.head` (`reactNative` mode). */
+  /**
+   * Inject Expo web's root style ahead of `spa.head`, and default the viewport to
+   * `viewport-fit=cover` (`reactNative` mode).
+   */
   reactNativeRootStyle?: boolean;
 }): Promise<string> {
   const { spa } = opts;
@@ -269,10 +272,15 @@ export async function spaShellHtml(opts: {
   const rnStyle = opts.reactNativeRootStyle ? reactNativeRootStyleTag(rootId) : "";
   const head = rnStyle + (spa.head ? `\n    ${spa.head}` : "");
   // An app-supplied viewport (`viewport-fit=cover` for iOS safe areas, `interactive-widget`)
-  // replaces the default instead of competing with it.
+  // replaces the default instead of competing with it. React Native mode's default covers the
+  // whole screen, as a React Native app does: without `viewport-fit=cover` every safe-area
+  // inset (SafeAreaView, react-native-safe-area-context) reads 0 in the iOS shell.
+  const viewportContent = opts.reactNativeRootStyle
+    ? "width=device-width, initial-scale=1, viewport-fit=cover"
+    : "width=device-width, initial-scale=1";
   const viewport = /<meta\b[^>]*\bname=["']viewport["']/i.test(spa.head ?? "")
     ? ""
-    : `\n    <meta name="viewport" content="width=device-width, initial-scale=1" />`;
+    : `\n    <meta name="viewport" content="${viewportContent}" />`;
   // Boot placeholder rendered inside #root; the app's first render replaces it.
   const loading = spa.loading ?? "";
   const devScript = opts.devScriptSrc

@@ -1,12 +1,13 @@
 // The SPA entry: mount the app, then tell the native side the UI is up.
 import { createRoot } from "denext/client";
-import { hideSplash, otaBooted, SAFE_AREA_CSS } from "denext/mobile";
+import { hideSplash, otaBooted } from "denext/mobile";
 import { App } from "./app.tsx";
 import "./styles.css";
 
-const style = document.createElement("style");
-style.textContent = SAFE_AREA_CSS;
-document.head.append(style);
+// `?selftest` at boot (or the deep link denextmobile://selftest) runs the automatic self-test.
+if (new URLSearchParams(location.search).has("selftest")) {
+  history.replaceState(null, "", "/selftest");
+}
 
 const el = document.getElementById("root");
 if (el) createRoot(el).render(<App />);

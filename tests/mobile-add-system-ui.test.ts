@@ -72,6 +72,8 @@ async function inProject(
     "capacitor.config.ts": "export default { appId: 'com.example.app', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    // The web export `cap sync` copies (without it the run falls back to `cap update`).
+    "out/index.html": "<!doctype html>\n",
     ".git/HEAD": "ref: refs/heads/main\n",
     [PLIST_PATH]: INFO_PLIST,
     [MANIFEST_PATH]: MANIFEST,

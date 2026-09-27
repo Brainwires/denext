@@ -29,6 +29,11 @@ import {
   isExpoBridgeImport,
 } from "./expo-shims.ts";
 import {
+  communityRuntimeEntries,
+  communityRuntimeFiles,
+  isCommunityBridgeImport,
+} from "./react-native-aliases.ts";
+import {
   isSqliteWasmBridgeImport,
   registerSqliteWasmBridge,
   SQLITE_WASM_BRIDGE,
@@ -202,6 +207,8 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // React Native mode's FlashList / LegendList shims (see react-native-lists.ts).
     "react-native-flash-list": u("src/react-native/flash-list.ts"),
     "react-native-legend-list": u("src/react-native/legend-list.ts"),
+    // React Native mode's community-package stand-ins (see react-native-aliases.ts).
+    ...communityRuntimeEntries(u),
   };
 }
 
@@ -308,7 +315,8 @@ function expoBridgeExternalPlugin(): esbuild.Plugin {
       build.onResolve(
         { filter: /react-native\.ts$/ },
         (args) =>
-          isExpoBridgeImport(args.path, args.importer)
+          isExpoBridgeImport(args.path, args.importer) ||
+            isCommunityBridgeImport(args.path, args.importer)
             ? { path: EXPO_RN_BRIDGE, external: true }
             : null,
       );
@@ -591,6 +599,8 @@ const DENEXT_RUNTIME_FILES: Record<string, string> = {
   "denext/react-native": "react-native.js",
   "denext/react-native/flash-list": "react-native-flash-list.js",
   "denext/react-native/legend-list": "react-native-legend-list.js",
+  // React Native mode's community-package stand-ins (see react-native-aliases.ts).
+  ...communityRuntimeFiles(),
 };
 
 /**

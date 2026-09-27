@@ -3,7 +3,10 @@
 // pinned npm packages, the Info.plist usage strings, Android permissions, the Sign in with Apple
 // entitlement and Google's URL scheme, and denext's DenextSettings plugin (behind
 // openAppSettings) written once however many capabilities install it, registered through the
-// shared bridge view controller and MainActivity. No test spawns a real process.
+// shared bridge view controller and MainActivity. Also `accessibility` (the DenextAccessibility
+// plugin, and a 2.10.0 bridge upgraded to register it), `background-location`,
+// `application`, camera's microphone string, and the web-export precheck before `cap sync`. No
+// test spawns a real process.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
@@ -15,17 +18,29 @@ import {
   type PlannedCommand,
 } from "../src/build/mobile-capabilities.ts";
 import { addSettingsToProject } from "../src/build/mobile-settings-install.ts";
+import { addAccessibilityToProject } from "../src/build/mobile-accessibility-install.ts";
 import {
   bridgeViewControllerSource,
   mainActivitySource,
 } from "../src/build/mobile-native-install.ts";
+import {
+  ACCESSIBILITY_ANDROID_FILES,
+  ACCESSIBILITY_IOS_FILES,
+  isPristineAccessibilityTemplate,
+  renderAccessibilityTemplate,
+} from "../src/build/accessibility-native-templates.ts";
+import { OTA_TEMPLATE_VERSION } from "../src/build/ota-native-templates.ts";
+import {
+  APP_EXTENSION_TEMPLATE_VERSION,
+  genericBridgeViewController,
+} from "../src/build/app-extension-native-templates.ts";
 import {
   isPristineSettingsTemplate,
   renderSettingsTemplate,
   SETTINGS_ANDROID_FILES,
   SETTINGS_IOS_FILES,
 } from "../src/build/settings-native-templates.ts";
-import { markedTemplateIntact } from "../src/build/native-template-marker.ts";
+import { markedTemplateIntact, renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 
 const PBXPROJ_FIXTURE = await Deno.readTextFile(
   new URL("./fixtures/capacitor8/project.pbxproj", import.meta.url),
@@ -39,6 +54,9 @@ const BRIDGE = "ios/App/App/DenextBridgeViewController.swift";
 const IOS_SETTINGS = "ios/App/App/DenextSettingsPlugin.swift";
 const ANDROID_SETTINGS = "android/app/src/main/java/dev/denext/settings/DenextSettingsPlugin.java";
 const ENTITLEMENTS = "ios/App/App/App.entitlements";
+const IOS_A11Y = "ios/App/App/DenextAccessibilityPlugin.swift";
+const ANDROID_A11Y =
+  "android/app/src/main/java/dev/denext/accessibility/DenextAccessibilityPlugin.java";
 
 const STOCK_STORYBOARD = `<?xml version="1.0" encoding="UTF-8"?>
 <document type="com.apple.InterfaceBuilder3.CocoaTouch.Storyboard.XIB" version="3.0">
@@ -86,6 +104,8 @@ async function inProject(
     "capacitor.config.ts": "export default { appId: 'com.example.app', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    // The web export `cap sync` copies (without it the run falls back to `cap update`).
+    "out/index.html": "<!doctype html>\n",
     ".git/HEAD": "ref: refs/heads/main\n",
     [PBXPROJ]: PBXPROJ_FIXTURE,
     "ios/App/App/Base.lproj/Main.storyboard": STOCK_STORYBOARD,
@@ -256,4 +276,264 @@ Deno.test("DenextSettings: composes with the other bridge / MainActivity feature
   // Existing combinations are byte-for-byte what they were (settings adds nothing to them).
   const before = await mainActivitySource("com.example.app", new Set(["auth-session"]));
   assert(!before.includes("Settings"));
+});
+
+// ---- accessibility ----------------------------------------------------------------------------
+
+Deno.test("mobile add accessibility: no package; DenextAccessibility on iOS + Android, registered", async () => {
+  await inProject({}, async (dir) => {
+    const { run, lines } = fakeRunner();
+    const report = await addMobileCapabilities({ capabilities: ["accessibility"], cwd: dir, run });
+    assertEquals(lines(), [], "no npm package, no cap sync");
+    for (const path of [IOS_A11Y, ANDROID_A11Y, BRIDGE, MAIN_ACTIVITY, PBXPROJ]) {
+      assert(report.written.includes(path), path);
+    }
+    const ios = await read(dir, IOS_A11Y);
+    assert(ios.startsWith("// denext-accessibility-template: 1 sha256="));
+    assertStringIncludes(ios, "UIAccessibility.voiceOverStatusDidChangeNotification");
+    assertStringIncludes(ios, 'jsName = "DenextAccessibility"');
+    const android = await read(dir, ANDROID_A11Y);
+    assertStringIncludes(android, "addTouchExplorationStateChangeListener");
+    assertStringIncludes(android, '@CapacitorPlugin(name = "DenextAccessibility")');
+    assertEquals(
+      await read(dir, BRIDGE),
+      await bridgeViewControllerSource(new Set(["accessibility"])),
+    );
+    assertStringIncludes(
+      await read(dir, BRIDGE),
+      "registerPluginInstance(DenextAccessibilityPlugin())",
+    );
+    assertEquals(
+      await read(dir, MAIN_ACTIVITY),
+      await mainActivitySource("com.example.app", new Set(["accessibility"])),
+    );
+    assertStringIncludes(await read(dir, PBXPROJ), "DenextAccessibilityPlugin.swift");
+    assertStringIncludes(report.plan.notes.join("\n"), "useScreenReader()");
+    const again = await addMobileCapabilities({ capabilities: ["accessibility"], cwd: dir, run });
+    assertEquals(again.written, []);
+  });
+});
+
+Deno.test("mobile add accessibility + permissions: one bridge and one MainActivity, either order", async () => {
+  const results: string[][] = [];
+  for (const order of [["accessibility", "permissions"], ["permissions", "accessibility"]]) {
+    await inProject({}, async (dir) => {
+      const { run } = fakeRunner();
+      for (const cap of order) await addMobileCapabilities({ capabilities: [cap], cwd: dir, run });
+      results.push([await read(dir, BRIDGE), await read(dir, MAIN_ACTIVITY)]);
+    });
+  }
+  assertEquals(results[0], results[1]);
+  const [bridge, activity] = results[0];
+  assertEquals(bridge, await bridgeViewControllerSource(new Set(["settings", "accessibility"])));
+  assertStringIncludes(activity, "registerPlugin(DenextAccessibilityPlugin.class);");
+  assertStringIncludes(activity, "registerPlugin(DenextSettingsPlugin.class);");
+  const withOta = await mainActivitySource("com.example.app", new Set(["ota", "accessibility"]));
+  assert(
+    withOta.indexOf("DenextOta.prepare(") < withOta.indexOf("DenextAccessibilityPlugin.class"),
+  );
+});
+
+Deno.test("DenextAccessibility templates: an edited file is kept, an unedited one upgraded", async () => {
+  await inProject({ [INFO_PLIST]: null }, async (dir) => {
+    const first = await addAccessibilityToProject({ dir });
+    assert(first.written.includes(IOS_A11Y));
+    await Deno.writeTextFile(join(dir, ANDROID_A11Y), "// mine\n");
+    const second = await addAccessibilityToProject({ dir });
+    assert(second.kept.includes(ANDROID_A11Y));
+    const forced = await addAccessibilityToProject({ dir, force: true });
+    assert(forced.written.includes(ANDROID_A11Y));
+  });
+  for (
+    const [name, template] of Object.entries({
+      ...ACCESSIBILITY_IOS_FILES,
+      ...ACCESSIBILITY_ANDROID_FILES,
+    })
+  ) {
+    const text = await renderAccessibilityTemplate(template);
+    assertEquals(await isPristineAccessibilityTemplate(text), true, name);
+    assertEquals(await isPristineAccessibilityTemplate(text + "// edit\n"), false, name);
+  }
+});
+
+Deno.test("bridge: a 2.10.0 bridge is upgraded when accessibility joins; a newer one is kept", async () => {
+  // 2.10.0 wrote ota generation 4 and app-extension generation 1 and knew neither settings nor
+  // accessibility: this release's bridges are ahead of both, so 2.10.0 keeps them.
+  assert(OTA_TEMPLATE_VERSION > 4 && APP_EXTENSION_TEMPLATE_VERSION > 1);
+  const widgetsLines =
+    "        // denext widgets: setWidgetData() / reloadWidgets() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextWidgetsPlugin())\n";
+  const shipped = await renderMarkedTemplate(
+    "app-extension",
+    1,
+    genericBridgeViewController(widgetsLines),
+  );
+  await inProject({
+    [BRIDGE]: shipped,
+    "ios/App/App/DenextWidgetsPlugin.swift": "// widgets\n",
+  }, async (dir) => {
+    const report = await addAccessibilityToProject({ dir });
+    assert(report.upgraded.includes(BRIDGE));
+    assertEquals(
+      await read(dir, BRIDGE),
+      await bridgeViewControllerSource(new Set(["widgets", "accessibility"])),
+    );
+  });
+  const newer = await renderMarkedTemplate(
+    "app-extension",
+    APP_EXTENSION_TEMPLATE_VERSION + 1,
+    genericBridgeViewController("        // a newer denext's feature\n"),
+  );
+  await inProject({ [BRIDGE]: newer }, async (dir) => {
+    const report = await addAccessibilityToProject({ dir });
+    assert(report.kept.includes(BRIDGE));
+    assertEquals(await read(dir, BRIDGE), newer, "never downgraded");
+    assertStringIncludes(report.manual.join("\n"), "newer denext");
+  });
+});
+
+// ---- background-location, application, camera --------------------------------------------------
+
+Deno.test("mobile add background-location: the plugin, the keys, no background permission", async () => {
+  await inProject({}, async (dir) => {
+    const { run, lines } = fakeRunner();
+    const report = await addMobileCapabilities({
+      capabilities: ["background-location", "background"],
+      cwd: dir,
+      run,
+    });
+    assertEquals(lines(), [
+      "npm install @capgo/background-geolocation@^8.4.7 @capacitor/background-runner@^3.0.0",
+      "npx cap sync",
+    ]);
+    const plist = await read(dir, INFO_PLIST);
+    for (
+      const key of [
+        "NSLocationWhenInUseUsageDescription",
+        "NSLocationAlwaysAndWhenInUseUsageDescription",
+      ]
+    ) {
+      assertStringIncludes(plist, `<key>${key}</key>`);
+    }
+    const modes = plist.slice(plist.indexOf("<key>UIBackgroundModes</key>"));
+    for (const mode of ["fetch", "processing", "location"]) {
+      assertStringIncludes(modes.slice(0, modes.indexOf("</array>")), `<string>${mode}</string>`);
+    }
+    const manifest = await read(dir, MANIFEST);
+    for (const p of ["FOREGROUND_SERVICE_LOCATION", "FOREGROUND_SERVICE", "ACCESS_FINE_LOCATION"]) {
+      assertStringIncludes(manifest, `android.permission.${p}"`);
+    }
+    assert(!manifest.includes("ACCESS_BACKGROUND_LOCATION"), "Play reviews it; not declared");
+    assert(report.written.includes(IOS_SETTINGS), "a refused Always needs openAppSettings()");
+    assertStringIncludes(
+      await read(dir, "ios/App/App/PrivacyInfo.xcprivacy"),
+      "<string>CA92.1</string>",
+    );
+    const manual = report.plan.manual.join("\n");
+    for (const step of ["2.5.4", "Foreground service permissions", "useLegacyBridge"]) {
+      assertStringIncludes(manual, step);
+    }
+  });
+});
+
+Deno.test("mobile add application: @capacitor/app + @capacitor/device, each package once", async () => {
+  await inProject({}, async (dir) => {
+    const { run, lines } = fakeRunner();
+    await addMobileCapabilities({ capabilities: ["application"], cwd: dir, run });
+    assertEquals(lines(), [
+      "npm install @capacitor/app@^8.1.1 @capacitor/device@^8.0.3",
+      "npx cap sync",
+    ]);
+    const plan = await planMobileCapabilities({
+      capabilities: ["restore", "device", "application", "back"],
+      cwd: dir,
+    });
+    assertEquals(plan.install?.args, [
+      "install",
+      "@capacitor/app@^8.1.1",
+      "@capacitor/device@^8.0.3",
+    ]);
+  });
+});
+
+Deno.test("mobile add camera: NSMicrophoneUsageDescription for in-page video recording", async () => {
+  await inProject({}, async (dir) => {
+    const { run } = fakeRunner();
+    const report = await addMobileCapabilities({ capabilities: ["camera"], cwd: dir, run });
+    const plist = await read(dir, INFO_PLIST);
+    assertStringIncludes(plist, "<key>NSMicrophoneUsageDescription</key>");
+    assertStringIncludes(plist, "<key>NSCameraUsageDescription</key>");
+    assertStringIncludes(report.plan.manual.join("\n"), "RECORD_AUDIO");
+  });
+});
+
+// ---- the web export before `cap sync` -----------------------------------------------------------
+
+Deno.test("mobile add: no web export yet runs `cap update` and says what is left", async () => {
+  await inProject({ "out/index.html": null }, async (dir) => {
+    const { run, lines } = fakeRunner();
+    const report = await addMobileCapabilities({ capabilities: ["dialog"], cwd: dir, run });
+    assertEquals(lines(), ["npm install @capacitor/dialog@^8.0.1", "npx cap update"]);
+    assertEquals(report.plan.webAssetsMissing, "out");
+    const warning = report.plan.warnings.join("\n");
+    assertStringIncludes(warning, "no web export at out/index.html");
+    assertStringIncludes(warning, "Run `denext export`, then `npx cap sync`");
+    const text = formatCapabilityPlan(report.plan);
+    assertStringIncludes(text, "sync           npx cap update");
+    assertStringIncludes(text, "WARNING        no web export");
+  });
+  // An empty folder is not an export either (cap sync wants its index.html).
+  await inProject({ "out/index.html": null, "out/.keep": "" }, async (dir) => {
+    const plan = await planMobileCapabilities({ capabilities: ["dialog"], cwd: dir });
+    assertEquals(plan.sync?.args, ["cap", "update"]);
+  });
+});
+
+Deno.test("mobile add: the web-export check follows webDir, server.url and Capacitor's default", async () => {
+  const cases: Array<[Record<string, string | null>, string[], string | undefined]> = [
+    // No webDir: Capacitor's default, www.
+    [{ "capacitor.config.ts": "export default { appId: 'a.b' };\n" }, ["cap", "update"], "www"],
+    [
+      { "capacitor.config.ts": "export default { appId: 'a.b' };\n", "www/index.html": "x" },
+      ["cap", "sync"],
+      undefined,
+    ],
+    // A JSON config naming its own folder.
+    [
+      {
+        "capacitor.config.ts": null,
+        "capacitor.config.json": JSON.stringify({ appId: "a.b", webDir: "dist" }),
+        "dist/index.html": "x",
+      },
+      ["cap", "sync"],
+      undefined,
+    ],
+    // server.url: cap sync skips the copy check.
+    [
+      {
+        "capacitor.config.ts":
+          "export default { appId: 'a.b', webDir: 'out', server: { url: 'http://10.0.0.2:3000' } };\n",
+        "out/index.html": null,
+      },
+      ["cap", "sync"],
+      undefined,
+    ],
+    // A webDir computed by code: left to Capacitor.
+    [
+      {
+        "capacitor.config.ts":
+          "const d = () => 'out';\nexport default { appId: 'a.b', webDir: d() };\n",
+        "out/index.html": null,
+      },
+      ["cap", "sync"],
+      undefined,
+    ],
+  ];
+  for (const [files, sync, missing] of cases) {
+    await inProject(files, async (dir) => {
+      const plan = await planMobileCapabilities({ capabilities: ["dialog"], cwd: dir });
+      assertEquals(plan.sync?.args, sync, JSON.stringify(files));
+      assertEquals(plan.webAssetsMissing, missing);
+    });
+  }
 });

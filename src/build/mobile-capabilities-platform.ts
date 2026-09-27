@@ -1,5 +1,6 @@
 // The 2.11 platform capabilities of `denext mobile add`: app-review, app-update,
-// screen-orientation, media-library, privacy-screen, tracking, background and restore. Kept
+// screen-orientation, media-library, privacy-screen, tracking, background, restore,
+// accessibility, background-location and application. Kept
 // apart from the main table in ./mobile-capabilities.ts (which spreads them in) so each
 // capability's plugin pin, plist keys and native wiring sit together. Every plugin below was
 // checked against its published package: a `@capacitor/core` peer range admitting 8 and (for
@@ -16,6 +17,8 @@ import {
 } from "./capacitor-config.ts";
 import { BACKGROUND_RUNNER_EVENT, BACKGROUND_RUNNER_FILE } from "./background-runner.ts";
 import { BACKGROUND_RUNNER_LABEL } from "../mobile/background.ts";
+import { ACCESSIBILITY_INSTALL } from "./mobile-accessibility-install.ts";
+import { SETTINGS_INSTALL } from "./mobile-settings-install.ts";
 
 /** The Capacitor major these pins target. */
 const CAPACITOR_MAJOR = 8;
@@ -273,6 +276,42 @@ function configureRestore(): CapabilityConfig {
   };
 }
 
+// ---- background-location ----------------------------------------------------------------------
+
+/**
+ * `background-location`: `UIBackgroundModes: location` (the Info.plist keys are the table's),
+ * DenextSettings (a refused Always can only be changed in Settings), and the review steps.
+ * Android's ACCESS_BACKGROUND_LOCATION is deliberately not declared: the plugin tracks through
+ * a foreground service (FOREGROUND_SERVICE_LOCATION) with a visible notification, which needs
+ * no background permission, and Play reviews every app that declares one.
+ */
+function configureBackgroundLocation(): CapabilityConfig {
+  return {
+    infoPlist: [{
+      label: "UIBackgroundModes: location",
+      apply: (text) => withPlistStringArray(text, "UIBackgroundModes", ["location"]),
+    }],
+    install: SETTINGS_INSTALL,
+    manual: [
+      "App Store review (Guideline 2.5.4, 5.1.1): background location must serve a feature the " +
+      "user can see and that needs it (navigation, fitness, delivery tracking); say which in the " +
+      "review notes, make NSLocationAlwaysAndWhenInUseUsageDescription name that feature, and " +
+      "expect a rejection when it is not obvious from the app",
+      "Google Play: the foreground service type `location` is declared in the Play Console " +
+      "(App content > Foreground service permissions) with a short video of the feature; " +
+      "ACCESS_BACKGROUND_LOCATION (only for background geofencing) adds the Location " +
+      "permissions declaration and a prominent in-app disclosure before the request",
+      "Android: set android.useLegacyBridge: true in capacitor.config, or updates stop after " +
+      "about 5 minutes in the background (the plugin's README); forward fixes to a server with " +
+      "CapacitorHttp or watchPositionInBackground's native `url`, since WebView requests are " +
+      "throttled in the background",
+      "declare Precise Location in App Store Connect's privacy details (and " +
+      "NSPrivacyCollectedDataTypePreciseLocation in PrivacyInfo.xcprivacy) when fixes leave " +
+      "the device",
+    ],
+  };
+}
+
 /** The platform capabilities, spread into `MOBILE_CAPABILITIES`. */
 export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   "app-review": {
@@ -344,5 +383,40 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
     notes: "onRestoredResult(handler) / useRestoredResult / restoreRouteOnRelaunch() (Android " +
       "process death)",
     configure: configureRestore,
+  },
+  accessibility: {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "isScreenReaderEnabled() / onScreenReaderChange(cb) / useScreenReader() (VoiceOver, " +
+      "TalkBack; React Native mode's AccessibilityInfo reads it too)",
+    configure: () => ({ install: ACCESSIBILITY_INSTALL }),
+  },
+  "background-location": {
+    npm: "@capgo/background-geolocation",
+    version: "^8.4.7",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: {
+      NSLocationWhenInUseUsageDescription: "Show where you are in the app.",
+      NSLocationAlwaysAndWhenInUseUsageDescription:
+        "Keep tracking your route while the app is in the background.",
+    },
+    androidPermissions: [
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_LOCATION",
+      "android.permission.POST_NOTIFICATIONS",
+    ],
+    notes: "watchPositionInBackground(cb, { notification }) / stopBackgroundLocation() / " +
+      "isBackgroundLocationAvailable() (@capgo/background-geolocation, MPL-2.0; foreground " +
+      "watchPosition on the web)",
+    configure: configureBackgroundLocation,
+  },
+  application: {
+    npm: "@capacitor/app",
+    version: "^8.1.1",
+    peers: ["@capacitor/device@^8.0.3"],
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "the app's name, id, version and build (expo-application over @capacitor/app's " +
+      "getInfo()) and the vendor / Android id (@capacitor/device's getId())",
   },
 };

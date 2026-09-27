@@ -1,6 +1,7 @@
 /**
- * App-private files for `denext/mobile`: the native `Filesystem` plugin in the shell, else the
- * Origin Private File System (OPFS) in the browser.
+ * App-private files for `denext/mobile`: the native `Filesystem` plugin in the shell, the app's
+ * folder in the OS app-support directory in a Deno Desktop window (`denext desktop add fs`),
+ * else the Origin Private File System (OPFS) in the browser.
  *
  * On the web a {@linkcode FileDirectory} is a top-level OPFS folder of the same name, so
  * `writeFile("notes.txt", …, { directory: "data" })` is OPFS `data/notes.txt`, the file the
@@ -12,6 +13,7 @@
 import { opfsSupported, resolveDir, resolveFile, splitPath } from "../utils/opfs-paths.ts";
 import { base64ToBytes, bytesToBase64 } from "./base64.ts";
 import { nativePlugin } from "./plugin.ts";
+import { type DesktopNative, onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /**
  * Where a file lives:
@@ -158,6 +160,9 @@ export async function readFile(path: string, options: ReadFileOptions = {}): Pro
   const rel = pathOf("readFile", path);
   const directory = directoryOf("readFile", options.directory);
   const encoding = encodingOf("readFile", options.encoding);
+  const desktop = onDesktop() &&
+    await viaDesktop("fs", (d) => d.fsReadFile(rel, directory, encoding), true);
+  if (desktop) return desktop.value;
   const plugin = filesystemPlugin("readFile");
   if (plugin) {
     const { data } = await plugin.readFile({
@@ -224,6 +229,8 @@ export async function writeFile(
   const directory = directoryOf("writeFile", options.directory);
   const encoding = encodingOf("writeFile", options.encoding);
   const recursive = options.recursive === true;
+  const write = (d: DesktopNative) => d.fsWriteFile(rel, data, directory, encoding, recursive);
+  if (onDesktop() && await viaDesktop("fs", write, true)) return;
   const plugin = filesystemPlugin("writeFile");
   if (plugin) {
     await plugin.writeFile({
@@ -260,6 +267,7 @@ export async function writeFile(
 export async function deleteFile(path: string, options: FileLocationOptions = {}): Promise<void> {
   const rel = pathOf("deleteFile", path);
   const directory = directoryOf("deleteFile", options.directory);
+  if (onDesktop() && await viaDesktop("fs", (d) => d.fsDeleteFile(rel, directory), true)) return;
   const plugin = filesystemPlugin("deleteFile");
   if (plugin) {
     await plugin.deleteFile({ path: rel, directory: NATIVE_DIRECTORY[directory] });
@@ -319,8 +327,11 @@ export async function listDir(
 ): Promise<FileEntry[]> {
   const rel = pathOf("listDir", path);
   const directory = directoryOf("listDir", options.directory);
+  const desktop = onDesktop() && await viaDesktop("fs", (d) => d.fsListDir(rel, directory), true);
   const plugin = filesystemPlugin("readdir");
-  const entries = plugin
+  const entries = desktop
+    ? desktop.value
+    : plugin
     ? ((await plugin.readdir({ path: rel, directory: NATIVE_DIRECTORY[directory] })).files ?? [])
       .map(fromNativeEntry)
     : await opfsEntries(
@@ -362,6 +373,9 @@ export async function downloadToFile(
   if (!/^https?:\/\//i.test(String(url))) {
     throw new TypeError(`downloadToFile: "${url}" is not an http(s) URL`);
   }
+  const desktop = onDesktop() &&
+    await viaDesktop("fs", (d) => d.fsDownload(url, rel, directory), true);
+  if (desktop) return desktop.value;
   const plugin = filesystemPlugin("downloadFile");
   if (plugin) {
     const done = await plugin.downloadFile({

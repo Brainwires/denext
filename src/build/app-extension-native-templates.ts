@@ -27,8 +27,13 @@ import {
   renderMarkedTemplate,
 } from "./native-template-marker.ts";
 
-/** The generation of the templates, stamped into every file the installers write. */
-export const APP_EXTENSION_TEMPLATE_VERSION = 1;
+/**
+ * The generation of the templates, stamped into every file the installers write. Generation 2
+ * (denext 2.11): the registering-only `DenextBridgeViewController` (written in this family) can
+ * register the DenextSettings and DenextAccessibility plugins, which 2.10.0 (generation 1) does
+ * not know; the bump makes 2.10.0 keep such a bridge instead of rewriting it without them.
+ */
+export const APP_EXTENSION_TEMPLATE_VERSION = 2;
 
 /** The marker family of the app extension templates. */
 const FAMILY = "app-extension";

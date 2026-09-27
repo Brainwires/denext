@@ -29,6 +29,15 @@
       }
     },
     {
+      "identity" : "ion-ios-geolocation",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ionic-team/ion-ios-geolocation.git",
+      "state" : {
+        "revision" : "db363927d3a954e3ea24d2e72b6e9814769a84be",
+        "version" : "2.1.1"
+      }
+    },
+    {
       "identity" : "keychain-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/evgenyneu/keychain-swift.git",
@@ -44,6 +53,15 @@
       "state" : {
         "revision" : "7f9d166289c10601bfbed95cd3ec56019870ce1b",
         "version" : "2.2.1"
+      }
+    },
+    {
+      "identity" : "sdwebimage",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/SDWebImage/SDWebImage.git",
+      "state" : {
+        "revision" : "2de3a496eaf6df9a1312862adcfd54acd73c39c0",
+        "version" : "5.21.7"
       }
     },
     {

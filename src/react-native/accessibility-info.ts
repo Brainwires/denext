@@ -5,14 +5,14 @@
  * react-native-web ships it as a mock whose `isScreenReaderEnabled()` always resolves `true`.
  *
  * Whether VoiceOver / TalkBack is running is not visible to a web page, in a browser or in the
- * Capacitor shell's WebView. A native plugin registered as `DenextAccessibility` (with
- * `isScreenReaderEnabled()` resolving `{ value }` and a `screenReaderChanged` event) is used
- * when present; denext does not ship one yet, so the answer is otherwise `false`.
+ * Capacitor shell's WebView. In the shell, denext's `DenextAccessibility` plugin (`denext
+ * mobile add accessibility`) answers it, through `denext/mobile`'s `isScreenReaderEnabled` /
+ * `onScreenReaderChange`; without the plugin, and on the web, the answer is `false`.
  *
  * @module
  */
 
-import { listenerDisposer, type ListenerHandle, nativePlugin } from "../mobile/plugin.ts";
+import { isScreenReaderEnabled, onScreenReaderChange } from "../mobile/accessibility.ts";
 import {
   type EmitterSubscription,
   type HandlerSubscriptions,
@@ -48,6 +48,8 @@ export interface AccessibilityInfoStatic {
   isReduceMotionEnabled(): Promise<boolean>;
   isHighTextContrastEnabled(): Promise<boolean>;
   isDarkerSystemColorsEnabled(): Promise<boolean>;
+  /** `react-native-macos`: Increase Contrast (`prefers-contrast: more`). */
+  isHighContrastEnabled(): Promise<boolean>;
   prefersCrossFadeTransitions(): Promise<boolean>;
   isReduceTransparencyEnabled(): Promise<boolean>;
   isScreenReaderEnabled(): Promise<boolean>;
@@ -82,39 +84,11 @@ const MEDIA: Readonly<Partial<Record<AccessibilityChangeEventName, string>>> = {
   invertColorsChanged: "(inverted-colors: inverted)",
 };
 
-/** The JS side of an app-registered `DenextAccessibility` plugin. */
-interface AccessibilityPlugin {
-  isScreenReaderEnabled(): Promise<{ value?: boolean }>;
-  addListener(
-    eventName: "screenReaderChanged",
-    listener: (event?: { value?: boolean }) => void,
-  ): ListenerHandle | Promise<ListenerHandle>;
-}
-
 /** The registrations by handler, for the deprecated `removeEventListener`. */
 let registered: HandlerSubscriptions | undefined;
 
 /** Announcement listeners (`announcementFinished`). */
 let announced: Set<(event: AnnouncementFinishedEvent) => void> | undefined;
-
-/** The screen-reader plugin, when the shell registers one. */
-function screenReaderPlugin(): AccessibilityPlugin | undefined {
-  return nativePlugin<AccessibilityPlugin>("DenextAccessibility", [
-    "isScreenReaderEnabled",
-    "addListener",
-  ]);
-}
-
-/** Whether a screen reader runs: the native plugin's answer, else `false`. */
-async function screenReaderEnabled(): Promise<boolean> {
-  const plugin = screenReaderPlugin();
-  if (!plugin) return false;
-  try {
-    return (await plugin.isScreenReaderEnabled())?.value === true;
-  } catch {
-    return false;
-  }
-}
 
 /** Start the source behind `eventName` for `handler`; returns the stop function. */
 function watch(
@@ -124,11 +98,7 @@ function watch(
   const query = MEDIA[eventName];
   if (query) return watchMedia(query, handler);
   if (eventName === "screenReaderChanged" || eventName === "accessibilityServiceChanged") {
-    const plugin = screenReaderPlugin();
-    if (!plugin) return () => {};
-    return listenerDisposer(
-      plugin.addListener("screenReaderChanged", (e) => handler(e?.value === true)),
-    );
+    return onScreenReaderChange(handler);
   }
   if (eventName === "announcementFinished") {
     const set = announced ??= new Set();
@@ -217,12 +187,13 @@ function focusNode(tag: unknown): void {
  * - `isReduceMotionEnabled` / `reduceMotionChanged`: `prefers-reduced-motion: reduce`.
  * - `isReduceTransparencyEnabled` / `reduceTransparencyChanged`:
  *   `prefers-reduced-transparency: reduce` (where the engine supports it, else `false`).
- * - `isHighTextContrastEnabled`, `isDarkerSystemColorsEnabled` and their events:
+ * - `isHighTextContrastEnabled`, `isDarkerSystemColorsEnabled`, `react-native-macos`'
+ *   `isHighContrastEnabled` and their events:
  *   `prefers-contrast: more`.
  * - `isInvertColorsEnabled` / `invertColorsChanged`: `inverted-colors: inverted` (Safari).
- * - `isScreenReaderEnabled` / `isAccessibilityServiceEnabled` and their events: an
- *   app-registered `DenextAccessibility` native plugin when present, else `false` (no web
- *   API exposes it).
+ * - `isScreenReaderEnabled` / `isAccessibilityServiceEnabled` and their events: denext's
+ *   `DenextAccessibility` plugin in the shell (`denext mobile add accessibility`), else `false`
+ *   (no web API exposes it).
  * - `isBoldTextEnabled`, `isGrayscaleEnabled`, `prefersCrossFadeTransitions`: `false` (no
  *   web signal).
  * - `announceForAccessibility`: a visually hidden `aria-live="polite"` region
@@ -244,14 +215,15 @@ export const AccessibilityInfo: AccessibilityInfoStatic = {
   isInvertColorsEnabled: () => Promise.resolve(mediaMatches(MEDIA.invertColorsChanged!)),
   isReduceMotionEnabled: () => Promise.resolve(mediaMatches(MEDIA.reduceMotionChanged!)),
   isHighTextContrastEnabled: () => Promise.resolve(mediaMatches(MEDIA.highTextContrastChanged!)),
+  isHighContrastEnabled: () => Promise.resolve(mediaMatches(MEDIA.highTextContrastChanged!)),
   isDarkerSystemColorsEnabled: () =>
     Promise.resolve(mediaMatches(MEDIA.darkerSystemColorsChanged!)),
   prefersCrossFadeTransitions: () => Promise.resolve(false),
   isReduceTransparencyEnabled: () =>
     Promise.resolve(mediaMatches(MEDIA.reduceTransparencyChanged!)),
-  isScreenReaderEnabled: screenReaderEnabled,
-  isAccessibilityServiceEnabled: screenReaderEnabled,
-  fetch: screenReaderEnabled,
+  isScreenReaderEnabled,
+  isAccessibilityServiceEnabled: isScreenReaderEnabled,
+  fetch: isScreenReaderEnabled,
   addEventListener(eventName, handler) {
     const stop = watch(eventName, handler);
     return (registered ??= handlerSubscriptions()).track(handler, stop);

@@ -91,7 +91,11 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   );
   assertEquals(files["denext/expo/ui/jetpack-compose"], "expo-ui-jetpack-compose.js");
   assertEquals(expoShimSpecifier("@expo/ui"), null, "the scoped package itself is not shimmed");
-  assertEquals(expoShimSpecifier("@expo/ui/community/masked-view"), null);
+  assertEquals(
+    expoShimSpecifier("@expo/ui/community/masked-view"),
+    "denext/expo/ui/community/masked-view",
+  );
+  assertEquals(expoShimSpecifier("@expo/ui/community/slider"), null, "its web build works");
   assertEquals(expoShimSpecifier("@expo/vector-icons"), null);
   assertEquals(
     expoShimSpecifier("expo-auth-session/providers/google"),

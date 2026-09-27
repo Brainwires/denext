@@ -28,6 +28,7 @@ import {
   capacitorConfigSource,
   capacitorIdentity,
   capacitorTasks,
+  expoApiUsage,
   type ExpoAppConfig,
   expoConfigScript,
   type ExpoDependencyReport,
@@ -2478,7 +2479,7 @@ async function migrateExpoProject(
         { path: entry.generated.path, kind: entry.generated.kind },
       expoRouter: entry.expoRouter,
       capacitor: { ...identity, configWritten: capWritten },
-      mobile: expoMobilePlan(deps, config),
+      mobile: expoMobilePlan(deps, config, await expoApiUsage(dir)),
       // Runtime dependencies only: the dev toolchain never reaches the bundle.
       deps: await expoDependencyReport(
         dir,

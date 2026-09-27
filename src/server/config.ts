@@ -415,6 +415,18 @@ export interface ReactNativeConfig {
    * @default "denext"
    */
   lists?: "denext" | "library";
+  /**
+   * Per-package switches for the community-package aliases. React Native mode resolves
+   * popular React Native libraries whose native half a WebView lacks to denext
+   * implementations (`react-native-webview` → an `<iframe>` WebView,
+   * `react-native-keychain` → `denext/mobile`'s `secureStore`, `@react-navigation/native-stack`
+   * → `denext/navigation`'s stack, …: the list is `/docs/react-native`'s "Community packages"
+   * table). Every alias is on by default; `{ "<package>": false }` resolves that package
+   * normally again (`"react-native-svg-transformer": false` keeps `.svg` imports as asset URLs).
+   *
+   * @default {}
+   */
+  aliases?: Readonly<Record<string, boolean>>;
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */

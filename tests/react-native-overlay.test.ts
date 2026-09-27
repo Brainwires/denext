@@ -9,6 +9,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
 import * as esbuild from "esbuild";
 import {
+  OVERLAY_ENTRY_EXPORTS,
   overlayModuleSource,
   reactNativeBundleOptions,
   RN_OVERLAY,
@@ -77,11 +78,15 @@ export const result = {
  * The stand-in for `denext/react-native`: each value export is `DENEXT_<name>`, each
  * `create<name>(View)` returns `DENEXT_<name>(<View>)`, and `CREATED` counts the factory calls.
  */
-const STAND_IN = Object.entries(RN_OVERLAY_EXPORTS).map(([name, kind]) =>
-  kind === "view"
-    ? `export function create${name}(View) { return "DENEXT_${name}(" + View + ")"; }\n`
-    : `export const ${name} = "DENEXT_${name}";\n`
-).join("");
+const STAND_IN =
+  Object.entries(RN_OVERLAY_EXPORTS).map(([name, kind]) =>
+    kind === "view"
+      ? `export function create${name}(View) { return "DENEXT_${name}(" + View + ")"; }\n`
+      : `export const ${name} = "DENEXT_${name}";\n`
+  ).join("") +
+  // The names the overlay adds to react-native-web's entry (see react-native-core-build.test.ts).
+  OVERLAY_ENTRY_EXPORTS.map((name) => `export const ${name} = "DENEXT_${name}";\n`).join("") +
+  "export function createAnimatedHook(A, kind) { return function () { return kind; }; }\n";
 
 /** Bundle `entry` of the fixture with React Native mode's plugins and the stand-in overlay. */
 async function bundle(entry: string): Promise<{ code: string; result: Record<string, string> }> {

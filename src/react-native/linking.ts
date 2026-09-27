@@ -9,11 +9,14 @@
 
 import { isNativeShell, openExternal } from "../mobile/bridge.ts";
 import { onDeepLink } from "../mobile/deep-link.ts";
+import { openAppSettings } from "../mobile/permissions.ts";
 import { nativePlugin } from "../mobile/plugin.ts";
 import {
   type EmitterSubscription,
   type HandlerSubscriptions,
   handlerSubscriptions,
+  type Listeners,
+  listeners,
   subscription,
 } from "./internal.ts";
 
@@ -27,6 +30,14 @@ export interface LinkingStatic {
   addEventListener(type: "url", handler: (event: LinkingEvent) => void): EmitterSubscription;
   /** Removed in React Native 0.65; kept for older libraries. */
   removeEventListener(type: "url", handler: (event: LinkingEvent) => void): void;
+  /** `addEventListener` (React Native's event-emitter face). */
+  addListener(type: "url", handler: (event: LinkingEvent) => void): EmitterSubscription;
+  /** Call the `url` listeners with `event`, as an incoming link would. */
+  emit(type: "url", event: LinkingEvent): void;
+  /** How many `url` listeners there are. */
+  listenerCount(type: "url"): number;
+  /** Remove every `url` listener. */
+  removeAllListeners(type?: "url"): void;
   openURL(url: string, target?: string): Promise<void>;
   canOpenURL(url: string): Promise<boolean>;
   getInitialURL(): Promise<string | null>;
@@ -50,6 +61,10 @@ const EXTERNAL = new Set(["http:", "https:", "mailto:", "tel:"]);
 
 /** The registrations by handler, for the deprecated `removeEventListener`. */
 let registered: HandlerSubscriptions | undefined;
+
+/** The `url` listeners, for `emit` / `listenerCount`, and their live subscriptions. */
+let urlListeners: Listeners<"url", LinkingEvent> | undefined;
+let urlSubscriptions: Set<EmitterSubscription> | undefined;
 
 /** `url` resolved against the page (as react-native-web does), or null when unparseable. */
 function resolved(url: string): URL | null {
@@ -87,10 +102,16 @@ function openOther(target: URL, windowName: string): void {
  *   cannot ask the OS which apps handle a scheme).
  * - `getInitialURL()`: inside the shell, the link that cold-started the app
  *   (`@capacitor/app`'s launch URL), else `null`; in a browser, the page's URL.
- * - `addEventListener("url", handler)`: each link that opens the app while it runs (not the
- *   launch link, which is `getInitialURL()`'s), through `denext/mobile`'s deep links with routing left to the app, as in
- *   React Native (`denext mobile add deep-links`). A browser has none.
- * - `openSettings()` / `sendIntent()` reject: a web view cannot open them.
+ * - `addEventListener("url", handler)` (or `addListener`): each link that opens the app while
+ *   it runs (not the launch link, which is `getInitialURL()`'s), through `denext/mobile`'s deep
+ *   links with routing left to the app, as in React Native (`denext mobile add deep-links`). A
+ *   browser has none. `emit`, `listenerCount` and `removeAllListeners` complete React Native's
+ *   event-emitter face.
+ * - `openSettings()`: the app's page in the system settings, through `denext/mobile`'s
+ *   `openAppSettings()`: denext's `DenextSettings` plugin in the shell (`denext mobile add
+ *   permissions`), iOS's `app-settings:` URL without it. It rejects where nothing can open them
+ *   (the Android shell without the plugin, a browser).
+ * - `sendIntent()` rejects: a web view cannot send an Android intent.
  *
  * @example
  * ```ts
@@ -108,7 +129,27 @@ export const Linking: LinkingStatic = {
       accept: () => true,
       route: false,
     });
-    return (registered ??= handlerSubscriptions()).track(handler, stop);
+    const local = (urlListeners ??= listeners()).add("url", handler);
+    const subs = urlSubscriptions ??= new Set();
+    const sub = (registered ??= handlerSubscriptions()).track(handler, () => {
+      stop();
+      local.remove();
+      subs.delete(sub);
+    });
+    subs.add(sub);
+    return sub;
+  },
+  addListener(type, handler) {
+    return Linking.addEventListener(type, handler);
+  },
+  emit(type, event) {
+    urlListeners?.emit(type, event);
+  },
+  listenerCount(type) {
+    return urlListeners?.count(type) ?? 0;
+  },
+  removeAllListeners() {
+    for (const sub of [...(urlSubscriptions ?? [])]) sub.remove();
   },
   removeEventListener(_type, handler) {
     registered?.removeAll(handler);
@@ -140,7 +181,7 @@ export const Linking: LinkingStatic = {
     }
   },
   openSettings() {
-    return Promise.reject(new Error("Linking.openSettings is not available in a web view"));
+    return openAppSettings();
   },
   sendIntent() {
     return Promise.reject(new Error("Linking.sendIntent is not available in a web view"));

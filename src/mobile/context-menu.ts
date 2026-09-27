@@ -7,6 +7,7 @@
  */
 
 import { nativePlugin } from "./plugin.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /** One entry in a {@linkcode showContextMenu} menu. */
 export interface ContextMenuItem {
@@ -230,7 +231,10 @@ function showWebContextMenu(
  *
  * - Inside the native shell with an app-registered `DenextContextMenu` plugin (see below), the OS
  *   menu — every item, including `disabled` and `destructive` ones, is handed to it.
- * - Otherwise (the web, desktop, and SSR-safe) an accessible in-DOM popover: `role="menu"`
+ * - Inside a Deno Desktop window (`denext desktop add context-menu`), the native menu at the
+ *   same client coordinates (`BrowserWindow.showContextMenu`); `destructive` has no native
+ *   styling there.
+ * - Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role="menu"`
  *   with a `role="menuitem"` per item, opened at `(x, y)` or under `anchor`. It is keyboard
  *   navigable (Up/Down to move, Enter/Space to choose, Escape to dismiss), dismisses on an
  *   outside pointer press, respects `disabled` (shown, not selectable) and `destructive`, and
@@ -279,6 +283,13 @@ export async function showContextMenu(
   options: ContextMenuOptions = {},
 ): Promise<string | null> {
   const list = [...items];
+  // Deno Desktop: the OS menu through the bridge (lazy, so web/mobile bundles never load it).
+  const x = options.x ?? options.anchor?.left ?? 0;
+  const y = options.y ?? options.anchor?.bottom ?? 0;
+  const desktop = list.length > 0 && onDesktop()
+    ? await viaDesktop("contextMenu", (d) => d.showNativeContextMenu(list, x, y, options.title))
+    : undefined;
+  if (desktop) return desktop.value;
   const plugin = nativePlugin<ContextMenuPlugin>("DenextContextMenu", ["show"]);
   if (plugin) {
     const result = await plugin.show({
