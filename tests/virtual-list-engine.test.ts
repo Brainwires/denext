@@ -540,6 +540,9 @@ Deno.test("core: hints seed estimates (exact hints count as measured) and blankA
   const core = new VirtualCore({ defaultSize: 10 });
   core.setMetrics(500, 0, 0);
   core.setSource(source(range(0, 100), () => 25, true));
+  // A data change never seeds in the render (deterministic SSR); the controller seeds after it.
+  assert(core.seeding, "hints are pending after the data change");
+  core.flushSeed();
   assertEquals(core.total, 2500);
   assert(core.tree.isMeasured(50));
   core.updateRange();

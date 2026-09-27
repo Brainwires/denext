@@ -868,6 +868,11 @@ function layoutProps(
     anchor: model.inverted || engine.anchorEnd ? "end" : "start",
     maintainVisibleContentPosition: engine.mvcp ?? !!list.maintainVisibleContentPosition,
     overscan: list.disableVirtualization ? 1e9 : engine.overscan,
+    // React Native's first batch, only when the app sets it (the rest renders after the first
+    // paint); unset, one commit renders the whole window (a faster time-to-ready).
+    initialNumToRender: list.disableVirtualization || list.initialNumToRender === undefined
+      ? undefined
+      : Math.max(1, Math.floor(list.initialNumToRender)),
     recycle: engine.recycle === true,
     initialScrollIndex: initial >= 0 && initial < model.count ? model.flip(initial) : undefined,
     initialScrollAlign: model.inverted ? "end" : "start",

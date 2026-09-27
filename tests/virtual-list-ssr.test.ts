@@ -15,6 +15,8 @@ import { fireEventOn, walkElements } from "../src/testing/dom.ts";
 import type { DomEl } from "../src/testing/dom.ts";
 import { transformModule } from "../src/build/compiler.ts";
 import { VirtualList } from "../src/client/virtual/virtual-list.ts";
+import { VirtualController } from "../src/client/virtual/controller.ts";
+import { px } from "../src/client/virtual/shared.ts";
 import type { VirtualListProps } from "../src/client/virtual/types.ts";
 import { FakeDocument, type FakeElement } from "./helpers/dom.ts";
 
@@ -134,6 +136,74 @@ Deno.test("hydration: adopts the server rows with no mismatch and no visual move
   assert(rowEl(5000) === server5000, "the server's row element was adopted, not re-created");
   assertEquals(scroller.scrollTop, 150_000, "the real scroll offset was reconciled");
   assertEquals(visualTop(), 0, "row 5000 did not move");
+  await act(() => root!.unmount());
+});
+
+Deno.test("hydration: the server's inner size equals the client's first render (variable hints, no budget-dependent seeding)", async () => {
+  // Variable exact sizes over ≤ 50k rows: hint seeding must not run before hydration, or the
+  // server and client would lay out different totals depending on how fast each seeded.
+  const size = (i: number) => 20 + (i % 7) * 13;
+  const props = {
+    data: rows(40_000),
+    getItemSize: (_r: Row, i: number) => size(i),
+    viewportSize: 300,
+    renderItem: (r: Row) => h("span", null, r.text),
+  };
+  const html = await renderToString(list(props));
+  const serverInner = /data-vl-inner[^>]*style="[^"]*height:([\d.]+)px/.exec(html) ??
+    /style="[^"]*height:([\d.]+)px[^"]*"[^>]*data-vl-inner/.exec(html);
+  assert(serverInner, "the server markup carries the inner size");
+  // The client's first render on a slow device: its render-phase sizes (what the inner style
+  // is rendered from) with a clock that advances 50 ms per read — any time-budgeted seeding in
+  // the render would stop at once and lay out a different total than the server did.
+  const perf = globalThis.performance;
+  let t = 0;
+  Object.defineProperty(globalThis, "performance", {
+    configurable: true,
+    value: { now: () => (t += 50) },
+  });
+  let clientFirst: number;
+  try {
+    const ctl = new VirtualController<Row>("flow");
+    ctl.sync(props as never);
+    clientFirst = ctl.core.physicalSize();
+  } finally {
+    Object.defineProperty(globalThis, "performance", { configurable: true, value: perf });
+  }
+  assertEquals(
+    px(clientFirst),
+    `${serverInner[1]}px`,
+    "the client's first render lays out the same size",
+  );
+  const doc = new FakeDocument();
+  const container = doc.createElement("div");
+  parseInto(doc, container, html);
+  const inner = () =>
+    walkElementsFake(container).find((e) => e.getAttribute("data-vl-inner") !== null)!;
+  const serverHeight = /height:\s*([\d.]+)px/.exec(inner().getAttribute("style") ?? "")![1];
+  const warnings: string[] = [];
+  const warn = console.warn;
+  const error = console.error;
+  console.warn = (...a: unknown[]) => warnings.push(a.join(" "));
+  console.error = (...a: unknown[]) => warnings.push(a.join(" "));
+  (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  setDocument(doc as never);
+  let root: { unmount(): void } | undefined;
+  try {
+    await act(() => {
+      root = hydrateRoot(container as never, list(props)) as unknown as { unmount(): void };
+    });
+  } finally {
+    console.warn = warn;
+    console.error = error;
+    delete (globalThis as { __denextDev?: boolean }).__denextDev;
+  }
+  assertEquals(serverHeight, serverInner[1]);
+  assertEquals(warnings.filter((w) => /hydrat|mismatch/i.test(w)), [], "no hydration mismatch");
+  // After the commit the hints are applied (exact total), so the size may now differ.
+  const total = Array.from({ length: 40_000 }, (_, i) => size(i)).reduce((a, b) => a + b, 0);
+  const after = Number(/height:\s*([\d.]+)px/.exec(inner().getAttribute("style") ?? "")![1]);
+  assertEquals(after, total, "every hint applied after the commit");
   await act(() => root!.unmount());
 });
 

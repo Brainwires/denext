@@ -233,7 +233,11 @@ export interface VirtualizedListProps<T> extends ListScrollProps {
   }) => void;
   /** Render every item (no virtualization). Use for short lists only. */
   readonly disableVirtualization?: boolean;
-  /** Accepted, no effect: denext renders the viewport's items (plus overscan) at once. */
+  /**
+   * When set, the first commit renders at most this many items and the rest after the first
+   * paint, like React Native. Unset (unlike React Native's default of 10): one commit renders
+   * the whole window, a faster time-to-ready.
+   */
   readonly initialNumToRender?: number;
   /** Accepted, no effect (denext's window follows the viewport and scroll speed). */
   readonly windowSize?: number;

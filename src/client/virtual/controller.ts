@@ -65,6 +65,12 @@ const SEED_SLICE_MS = 4;
  */
 const PROBE_ROWS = 10;
 
+/** Whether frames are painted here (a browser): the first window then waits for one. */
+function paints(): boolean {
+  return typeof (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame ===
+    "function";
+}
+
 /** A learned default row size is replaced when the measured average moves by this fraction. */
 const LEARN_TOLERANCE = 0.1;
 
@@ -499,6 +505,9 @@ export class VirtualController<T> {
   #settleTimer: ReturnType<typeof setTimeout> | undefined;
   #restTimer: ReturnType<typeof setTimeout> | undefined;
   #targetTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The first window has painted (the overscan is added after it). */
+  #painted = false;
+  #paintScheduled = false;
   #seedTimer: ReturnType<typeof setTimeout> | undefined;
   /** Sum and count of every size measured so far (for a list given no size information). */
   #measuredSum = 0;
@@ -711,23 +720,60 @@ export class VirtualController<T> {
   #config(props: ControllerProps<T>): CoreConfig {
     const prev = this.core.config;
     const unknown = this.#sizesUnknown(props);
-    const probing = unknown && this.#probing();
     const next: CoreConfig = {
       defaultSize: props.estimatedItemSize ?? this.#sampledSize(props) ??
         (unknown ? this.#learnedSize : undefined) ?? DEFAULT_CONFIG.defaultSize,
-      overscan: probing ? 0 : props.overscan,
+      ...this.#window(props, unknown),
       anchor: props.anchor ?? "start",
       maintainVisibleContentPosition: props.maintainVisibleContentPosition ?? true,
       maxPhysicalSize: DEFAULT_MAX_PHYSICAL_SIZE,
       endThreshold: props.onEndReachedThreshold ?? DEFAULT_CONFIG.endThreshold,
       startThreshold: props.onStartReachedThreshold ?? DEFAULT_CONFIG.startThreshold,
-      maxRows: probing ? PROBE_ROWS : undefined,
     };
     const same = (Object.keys(next) as (keyof CoreConfig)[]).every((k) => prev[k] === next[k]);
     return same ? prev : next;
   }
 
   #sample: { token: unknown; size: number | undefined } | undefined;
+
+  /**
+   * The window's overscan and row cap: none and at most `initialNumToRender` (else
+   * {@linkcode PROBE_ROWS}) while probing a list with no size information, none and at most
+   * `initialNumToRender` in its first window (see `#firstWindow`), the props' otherwise.
+   */
+  #window(props: ControllerProps<T>, unknown: boolean): Pick<CoreConfig, "overscan" | "maxRows"> {
+    const cap = props.initialNumToRender;
+    if (unknown && this.#probing()) return { overscan: 0, maxRows: cap ?? PROBE_ROWS };
+    if (cap !== undefined && this.#firstWindow()) return { overscan: 0, maxRows: cap };
+    return { overscan: props.overscan, maxRows: undefined };
+  }
+
+  /**
+   * With `initialNumToRender` set (React Native's first batch): the first render (server and
+   * client alike) and, where frames paint, every render until the first paint render the rows
+   * filling the viewport only, at most that many; the overscan is added in the idle slice after
+   * that paint. Unset, the first commit renders the whole window: one commit, a faster
+   * time-to-ready (measured on scroll-bench).
+   */
+  #firstWindow(): boolean {
+    return !this.#synced || (!this.#painted && paints());
+  }
+
+  /** After the first paint: add the overscan window (see `#firstWindow`). */
+  #schedulePaint(): void {
+    if (this.#paintScheduled || this.#painted) return;
+    this.#paintScheduled = true;
+    if (!paints() || this.props.initialNumToRender === undefined) {
+      this.#painted = true;
+      return;
+    }
+    afterPaint(() => {
+      this.#painted = true;
+      if (!this.#mounted || this.printing) return;
+      this.core.configure(this.#config(this.props));
+      if (this.core.updateRange()) this.force();
+    });
+  }
 
   /** The props give no size information: no estimate, no hints (the default is a guess). */
   #sizesUnknown(props: ControllerProps<T>): boolean {
@@ -1171,9 +1217,13 @@ export class VirtualController<T> {
     }
     if (!this.#mounted && !this.#mount()) return;
     if (this.printing) return;
-    // The first render's window was a probe (see `#probing`); without a ResizeObserver to wait
-    // for, the normal window applies from here.
-    if (this.#sizesUnknown(this.props)) this.core.configure(this.#config(this.props));
+    // The first render's window was the first screen only (see `#firstWindow`, `#probing`):
+    // without frames or a ResizeObserver to wait for, the normal window applies from here.
+    this.#schedulePaint();
+    this.core.configure(this.#config(this.props));
+    // Hints are applied after the commit (never in a render: see core's EAGER_HINT_LIMIT) — at
+    // once without a layout engine (deterministic test mode), else in background slices.
+    if (sharedObserver() === undefined) this.core.flushSeed();
     this.#readMetrics();
     if (!this.#initialized) {
       this.#initialized = true;

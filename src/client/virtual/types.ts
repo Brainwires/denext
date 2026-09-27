@@ -187,6 +187,14 @@ export interface VirtualListOptions<T> {
    * direction of travel grows with scroll speed.
    */
   readonly overscan?: number;
+  /**
+   * When set, the first commit renders at most this many rows (the viewport's, no overscan)
+   * and the rest of the window after the first paint, like React Native's
+   * `initialNumToRender`. Unset: one commit renders the whole window — a faster time-to-ready.
+   * (A list with no size information renders at most 10 rows until its first measurement
+   * either way.)
+   */
+  readonly initialNumToRender?: number;
   /** Row to show first (server-rendered at that position, no flash of row 0). */
   readonly initialScrollIndex?: number;
   /** Alignment of `initialScrollIndex`. Default `"start"`. */

@@ -184,6 +184,54 @@ Deno.test("test mode: no ResizeObserver → deterministic rows from getItemSize 
   await screen.unmount();
 });
 
+Deno.test("initialNumToRender: where frames paint, the first commit renders at most N rows of the viewport; the overscan follows the paint", async () => {
+  const g = globalThis as { requestAnimationFrame?: (cb: () => void) => number };
+  const frames: (() => void)[] = [];
+  g.requestAnimationFrame = (cb) => frames.push(cb);
+  const paint = async () => {
+    for (const cb of frames.splice(0)) cb();
+    await new Promise((r) => setTimeout(r, 5));
+    await act(() => {});
+  };
+  try {
+    for (const cap of [10, 4]) {
+      frames.length = 0;
+      const screen = await render(list({
+        data: rows(10_000),
+        getItemSize: () => 40,
+        viewportSize: 400,
+        initialNumToRender: cap,
+        renderItem: (r: Row) => h("span", null, r.text),
+      }));
+      assertEquals(indices(screen), Array.from({ length: cap }, (_, i) => i), "first batch only");
+      await paint();
+      assertEquals(indices(screen).length, 20, "the overscan window after the first paint");
+      await screen.unmount();
+    }
+  } finally {
+    delete g.requestAnimationFrame;
+  }
+});
+
+Deno.test("initialNumToRender unset: one commit renders the whole window, even where frames paint", async () => {
+  const g = globalThis as { requestAnimationFrame?: (cb: () => void) => number };
+  let scheduled = 0;
+  g.requestAnimationFrame = () => ++scheduled;
+  try {
+    const screen = await render(list({
+      data: rows(10_000),
+      getItemSize: () => 40,
+      viewportSize: 400,
+      renderItem: (r: Row) => h("span", null, r.text),
+    }));
+    assertEquals(indices(screen).length, 20, "viewport + overscan in the first commit");
+    assertEquals(scheduled, 0, "no post-paint pass is scheduled");
+    await screen.unmount();
+  } finally {
+    delete g.requestAnimationFrame;
+  }
+});
+
 Deno.test("a11y: role list/listitem with aria-setsize / aria-posinset on every rendered row (G1, T26)", async () => {
   const screen = await render(list({
     data: rows(500),

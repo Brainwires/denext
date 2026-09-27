@@ -100,19 +100,14 @@ const MAX_SETTLE_PASSES = 120;
 const AT_END_EPSILON = 4;
 
 /**
- * Row counts up to this get every hint applied (an exact scrollbar): as much as fits
- * {@linkcode SEED_BUDGET_MS} when the data arrives, the rest in background slices (see
- * `seedPending`) or at once when an absolute offset is asked for (`flushSeed`). Larger lists
- * apply hints to the rows they render only.
+ * Row counts up to this get every hint applied (an exact scrollbar), outside the render: the
+ * controller seeds them in background slices after the commit (`seedPending`), or at once
+ * when an absolute offset is asked for (`flushSeed`). A data change applies hints only to the
+ * rows it renders, so a render's sizes never depend on a time budget (server and client first
+ * renders match) and never pay for materializing every item (a hint receives the item). Larger
+ * lists apply hints to the rows they render only.
  */
 const EAGER_HINT_LIMIT = 50_000;
-
-/**
- * Time (ms) the data change itself may spend applying hints. A hint may be expensive (it
- * receives the item, which a `getItem` source materializes): seeding 10k of them before the
- * first paint was the bulk of a fixed-size list's time to first render.
- */
-const SEED_BUDGET_MS = 2;
 
 /** Rows seeded between two clock reads. */
 const SEED_CHUNK = 256;
@@ -327,7 +322,6 @@ export class VirtualCore {
       return undefined;
     });
     this.#seedNext = src.hint && src.count <= EAGER_HINT_LIMIT ? 0 : -1;
-    this.seedPending(SEED_BUDGET_MS);
     this.#edges.data(this.#edgeToken());
     return true;
   }
