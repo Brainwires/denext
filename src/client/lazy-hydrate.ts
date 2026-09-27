@@ -68,6 +68,19 @@ export function setLazyScheduler(s: LazyScheduler = defaultScheduler()): void {
   scheduler = s;
 }
 
+/**
+ * Drop the pending islands a navigation took off the page (their strategy never fires), keeping
+ * those still in the document.
+ */
+export function dropDetachedLazyIslands(): void {
+  for (const r of islands) {
+    if (!r.container.isConnected) {
+      r.teardown?.();
+      islands.delete(r);
+    }
+  }
+}
+
 /** Drop all pending islands (tests) — real pages never unregister globally. */
 export function resetLazyIslands(): void {
   for (const r of islands) r.teardown?.();

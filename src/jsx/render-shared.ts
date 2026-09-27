@@ -270,9 +270,18 @@ function hostHtml(tag: string, attrs: string, inner: string): string {
   return VOID_ELEMENTS.has(tag) ? `<${tag}${attrs}>` : `<${tag}${attrs}>${inner}</${tag}>`;
 }
 
-/** A Flight host node. */
+/** Tags the HTML parser drops when they are nested in the page container (content stays). */
+const DOCUMENT_TAGS = new Set(["html", "head", "body"]);
+
+/**
+ * A Flight host node. A root layout's `<html>`/`<head>`/`<body>` are the exception: their HTML
+ * is nested in the page container (`#__denext`), where the browser's parser drops the three tags
+ * and keeps their content in place (a `<head>`'s hoisted `<title>`/`<meta>`/`<link>` are already
+ * gone; its `<style>`/`<script>` stay). The Flight tree mirrors that parsed DOM — the children
+ * alone — so the client hydrates the server markup instead of re-creating the page.
+ */
 export function flightHost(tag: string, p: FlightProps, c: FlightNode[]): FlightNode {
-  return { $: "h", t: tag, p, c };
+  return DOCUMENT_TAGS.has(tag) ? c : { $: "h", t: tag, p, c };
 }
 
 /** A children result's Flight as a host node's child list (children flights are arrays). */

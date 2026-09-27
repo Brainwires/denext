@@ -7,7 +7,7 @@
 
 import { createRoot, hydrateRoot, type Root } from "./reconciler.ts";
 import { type ClientRegistry, ensureFlightModules, parseFlight } from "./flight-client.ts";
-import { registerLazyIsland, resetLazyIslands } from "./lazy-hydrate.ts";
+import { dropDetachedLazyIslands, registerLazyIsland, resetLazyIslands } from "./lazy-hydrate.ts";
 import { installQrlDispatch } from "./qrl-dispatch.ts";
 import { setResumabilityReboot, setRootlessMount } from "./navigation.ts";
 import { ROOT_ID } from "../server/root-id.ts";
@@ -19,7 +19,7 @@ import {
   ISLAND_ID_ATTR,
   ISLAND_MARKER_ATTR,
 } from "../runtime/lazy-directive.ts";
-import type { VNode, VNodeChild } from "../jsx/types.ts";
+import type { VNode } from "../jsx/types.ts";
 
 /** Attribute marking an island wrapper whose hydration has already run. */
 const HYDRATED_ATTR = "data-dnx-hydrated";
@@ -66,36 +66,18 @@ function sweepIslands(): void {
  */
 function mountRootlessPage(tree: VNode | null, adopt: boolean): Root {
   const container = document.getElementById(ROOT_ID)!;
-  let root: Root;
+  // The server's Flight tree already matches the parsed markup (a root layout's <html>/<body>
+  // are peeled out on the server; see `flightHost`), so adoption hydrates it as is.
   if (adopt && tree) {
     clearStaticAttributes(container);
-    root = hydrateRoot(container, peelDocumentTags(tree) as VNode, { onRecoverableError() {} });
-  } else {
-    resetLazyIslands();
-    for (const [wrapper, { root }] of islandRoots) unmountIsland(wrapper, root);
-    container.textContent = "";
-    root = createRoot(container);
-    if (tree) root.render(peelDocumentTags(tree) as VNode);
+    return hydrateRoot(container, tree, { onRecoverableError() {} });
   }
-  // Every later render into this root is peeled the same way, so it reconciles in place.
-  return { render: (next) => root.render(peelDocumentTags(next) as VNode), unmount: root.unmount };
-}
-
-/** Tags the HTML parser drops inside the page container (their children stay in place). */
-const DOCUMENT_TAGS = new Set(["html", "head", "body"]);
-
-/**
- * A root layout's `<html>`/`<head>`/`<body>`, replaced by their children: the server HTML nests
- * them in the page container, where the browser's parser drops the tags and keeps the content —
- * so this is the tree the live markup actually has, and what adoption must hydrate against.
- */
-function peelDocumentTags(node: VNodeChild): VNodeChild {
-  if (Array.isArray(node)) return node.map(peelDocumentTags) as unknown as VNodeChild;
-  const v = node as VNode | null;
-  if (v && typeof v === "object" && DOCUMENT_TAGS.has(v.type as string)) {
-    return peelDocumentTags(v.props.children as VNodeChild);
-  }
-  return node;
+  resetLazyIslands();
+  for (const [wrapper, { root }] of islandRoots) unmountIsland(wrapper, root);
+  container.textContent = "";
+  const root = createRoot(container);
+  if (tree) root.render(tree);
+  return root;
 }
 
 /** Remove every attribute below `el`, except on island wrappers (and inside them: not ours). */
@@ -140,6 +122,10 @@ export function bootResumability(
   );
   setRootlessMount(mountRootlessPage);
   sweepIslands();
+  // An empty list is the sweep after a navigation that brought no islands through this call
+  // (an HTML or isomorphic nav): the incoming page's own islands, if any, boot from its entry —
+  // keep their registrations and state, drop only what left the document.
+  if (islandsIn?.length === 0) return dropDetachedLazyIslands();
   installQrlDispatch();
   adoptInitialState(eager, signalStateIn);
   const islands = islandsIn ? islandsByid(islandsIn) : readIslandsIsland();

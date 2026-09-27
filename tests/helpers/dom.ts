@@ -1,5 +1,14 @@
 // A tiny in-memory DOM implementation — just enough for the reconciler tests,
-// so denext stays free of a third-party DOM dependency.
+// so denext stays free of a third-party DOM dependency. The child-list and listener
+// primitives are denext/testing's own (src/testing/dom.ts).
+
+import {
+  clearChildren,
+  detachChild,
+  insertChild,
+  type ListenerMethods,
+  listenerMethods,
+} from "../../src/testing/dom.ts";
 
 export class FakeNode {
   nodeType = 0;
@@ -7,32 +16,18 @@ export class FakeNode {
   childNodes: FakeNode[] = [];
 
   appendChild(node: FakeNode): FakeNode {
-    node.remove();
-    node.parentNode = this as unknown as FakeElement;
-    this.childNodes.push(node);
-    return node;
+    return insertChild(this, node, null);
   }
 
   insertBefore(node: FakeNode, ref: FakeNode | null): FakeNode {
-    node.remove();
-    node.parentNode = this as unknown as FakeElement;
-    if (ref === null) {
-      this.childNodes.push(node);
-    } else {
-      const idx = this.childNodes.indexOf(ref);
-      if (idx === -1) this.childNodes.push(node);
-      else this.childNodes.splice(idx, 0, node);
-    }
-    return node;
+    return insertChild(this, node, ref);
   }
 
   removeChild(node: FakeNode): FakeNode {
-    const idx = this.childNodes.indexOf(node);
-    if (idx !== -1) this.childNodes.splice(idx, 1);
-    node.parentNode = null;
-    return node;
+    return detachChild(this, node);
   }
 
+  // fallow-ignore-next-line unused-class-member -- DOM API: the runtime and insertChild call it
   remove(): void {
     if (this.parentNode) this.parentNode.removeChild(this);
   }
@@ -46,7 +41,7 @@ export class FakeNode {
 
   /** DOM `replaceChildren` — clear existing children, then append the given ones. */
   replaceChildren(...kids: (FakeNode | string)[]): void {
-    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+    clearChildren(this);
     this.append(...kids);
   }
 
@@ -167,15 +162,6 @@ export class FakeElement extends FakeNode {
     this.attributes.delete(name);
   }
 
-  addEventListener(type: string, fn: Listener, capture = false): void {
-    const map = capture ? this.captureListeners : this.listeners;
-    if (!map.has(type)) map.set(type, new Set());
-    map.get(type)!.add(fn);
-  }
-  removeEventListener(type: string, fn: Listener, capture = false): void {
-    (capture ? this.captureListeners : this.listeners).get(type)?.delete(fn);
-  }
-
   /** No-op focus (the panel focuses its search box; tests just need it not to throw). */
   focus(): void {}
 
@@ -213,7 +199,7 @@ export class FakeElement extends FakeNode {
   /** Assigning innerHTML replaces children with raw markup (dangerouslySetInnerHTML). */
   set innerHTML(html: string) {
     this._rawHtml = html === "" ? null : html;
-    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+    clearChildren(this);
   }
   private _rawHtml: string | null = null;
   get textContent(): string {
@@ -221,11 +207,15 @@ export class FakeElement extends FakeNode {
   }
   /** Assigning textContent replaces children with a single text node. */
   set textContent(value: string) {
-    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+    clearChildren(this);
     this._rawHtml = null;
     if (value !== "") this.appendChild(new FakeText(value));
   }
 }
+
+// The listener methods (declared on the class through the merged interface below).
+Object.assign(FakeElement.prototype, listenerMethods);
+export interface FakeElement extends ListenerMethods<Listener> {}
 
 function serialize(node: FakeNode): string {
   if (node instanceof FakeText) return node.nodeValue;

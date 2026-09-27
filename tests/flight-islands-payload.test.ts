@@ -189,7 +189,10 @@ Deno.test("the generated Flight entry boots a null tree root-less instead of bai
   // A page that never loaded the resumability runtime still mounts a soft-nav target's islands:
   // the entry's fallback re-boot hook loads it on demand.
   assertStringIncludes(entry, "setResumabilityReboot((islands, state) =>");
-  assertStringIncludes(entry, "m.bootResumability(registry, true, islands, state)");
+  assertStringIncludes(
+    entry,
+    "m.bootResumability(registry, true, islands?.length ? islands : undefined, state)",
+  );
 });
 
 // ---- The client: root-less boot, refresh adoption, navigation, island cleanup --------------
@@ -327,12 +330,9 @@ Deno.test("a root-less page: a same-route refresh adopts the markup and keeps is
     // A static attribute the refreshed output drops must go (server markup had data-x).
     env.container.childNodes[0].childNodes[0].setAttribute("data-x", "stale");
 
-    // A Server Action's refresh(): the same route, with CHANGED server output. The root layout's
-    // <html>/<body> are in the Flight tree but not in the live markup (the browser's parser
-    // dropped them inside the page container), so adoption must see through them.
+    // A Server Action's refresh(): the same route, with CHANGED server output.
     const v2 = { cls: "b", title: "v2", rows: ["r1", "r2*"], island: true, footer: "f" };
-    const doc = (f: FlightNode) => host("html", { lang: "en" }, host("body", {}, f));
-    env.serve(doc(pageFlight(v2)));
+    env.serve(pageFlight(v2));
     await navigate("/from", { history: false });
     await settle();
     const html = env.container.innerHTML;
@@ -345,12 +345,11 @@ Deno.test("a root-less page: a same-route refresh adopts the markup and keeps is
     flushSync();
     assertStringIncludes(env.container.innerHTML, "pings 2", "the island is still live");
     // A later refresh (through the retained root) reconciles in place: still the same island.
-    env.serve(doc(pageFlight({ ...v2, title: "v3" })));
+    env.serve(pageFlight({ ...v2, title: "v3" }));
     await navigate("/from", { history: false });
     await settle();
     assertStringIncludes(env.container.innerHTML, '<p class="b">v3</p>');
     assertStringIncludes(env.container.innerHTML, "pings 2", "island state kept again");
-    assert(!env.container.innerHTML.includes("<html"), "no document tags inside the container");
     assert((globalThis as Any).__dnxRoot, "the adopted root is retained");
   } finally {
     env.restore();
@@ -400,6 +399,60 @@ Deno.test("a retained root that re-keys an island's wrapper remounts the new isl
     assertStringIncludes(env.container.innerHTML, "pings 0", "a fresh island, not the old one");
     assertEquals(env.pings(), 1, "exactly one live listener: the old island's was removed");
   } finally {
+    env.restore();
+  }
+});
+
+Deno.test("an HTML nav whose re-run entry drops the island (target has none) unmounts it", async () => {
+  const env = fakeBrowser();
+  const g = globalThis as Any;
+  const saveParser = g.DOMParser;
+  const saveAppend = env.d.body.appendChild;
+  try {
+    await bootRootless(env, pageFlight(v1));
+    env.serve(pageFlight(v1)); // adopt: now a retained root with a live island
+    await navigate("/from", { history: false });
+    await settle();
+    assertEquals(env.pings(), 1);
+    // A plain-HTML soft nav (static export) to a Flight page with NO islands: the retained root
+    // stays, and the page's re-run entry reconciles it — dropping the island's wrapper.
+    g.fetch = () =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: () => Promise.resolve("<html></html>"),
+      });
+    const found: Record<string, unknown> = {
+      __denext: { innerHTML: "<main><p>next</p></main>" },
+      __denext_flight: { textContent: "[]" }, // a root that hydrates (not root-less)
+    };
+    g.DOMParser = class {
+      parseFromString() {
+        return {
+          getElementById: (id: string) => found[id] ?? null,
+          querySelector: (sel: string) =>
+            sel.startsWith("script") ? { getAttribute: () => "/entry.js" } : null,
+        };
+      }
+    };
+    // The injected entry "runs": it renders the new route through the retained root.
+    env.d.body.appendChild = function (node: Any) {
+      const out = saveAppend.call(this, node);
+      if (node.tagName === "SCRIPT") {
+        startClient(env.container, h("main", null, h("p", null, "next")));
+        node.dispatch("load");
+      }
+      return out;
+    };
+    await navigate("/next");
+    await settle();
+    assertEquals(env.container.innerHTML, "<main><p>next</p></main>");
+    assertEquals(env.pings(), 0, "the dropped island's listener was removed");
+  } finally {
+    env.d.body.appendChild = saveAppend;
+    if (saveParser === undefined) delete g.DOMParser;
+    else g.DOMParser = saveParser;
     env.restore();
   }
 });

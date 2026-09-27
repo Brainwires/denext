@@ -21,6 +21,7 @@ import { CLASS_MARKER_ID, takeClassRendered } from "../runtime/render-scope.ts";
 import type { ClientRefInfo } from "../runtime/client-reference.ts";
 import { serializeFlight } from "./render-to-html-flight.ts";
 import { inlinedRootFlight } from "./flight-inline.ts";
+import { fillFlightHoles } from "./flight-holes.ts";
 import { deferErrorMarker, serializeScalar } from "./flight-scalar.ts";
 import {
   type CarvedIsland,
@@ -184,7 +185,7 @@ class StreamFlightRenderer extends VNodeRenderer<Dual> implements IslandRenderer
     this.ids.scope = boundaryScope;
     try {
       const fallback = await this.renderChildren(props.fallback as VNodeChildren, scopes);
-      // The hole is a transient node type filled by fillHoles before emit.
+      // The hole is a transient node type filled by fillFlightHoles before emit.
       const hole = { $: "$", r: id } as FlightHole;
       return {
         html: `<div data-dnx-b="${id}">${fallback.html}</div>`,
@@ -338,25 +339,6 @@ function substitutePropsValueHoles(
   return out;
 }
 
-/** Recursively fill `{$:"$",r}` Suspense holes with their resolved Flight. */
-function fillHoles(
-  node: FlightNode,
-  holes: Map<string, FlightNode>,
-): FlightNode {
-  if (node === null || typeof node !== "object") return node;
-  if (Array.isArray(node)) return node.map((n) => fillHoles(n, holes));
-  const tag = (node as { $?: string }).$;
-  if (tag === "$") {
-    const filled = holes.get((node as unknown as FlightHole).r);
-    return filled === undefined ? null : fillHoles(filled, holes);
-  }
-  if (tag === "h" || tag === "c") {
-    const n = node as { c: FlightNode[] };
-    return { ...node, c: n.c.map((c) => fillHoles(c, holes)) } as FlightNode;
-  }
-  return node;
-}
-
 /** The trailing Flight/islands/state payload of a streamed Flight document. */
 export interface FlightStreamTail {
   /** The complete Flight tree (holes filled), for `#__denext_flight`. */
@@ -481,7 +463,7 @@ async function finishFlightTail(
 ): Promise<Awaited<ReturnType<FlightShellRender["streamHoles"]>>> {
   let root = shellFlight;
   if (Array.isArray(root) && root.length === 1) root = root[0];
-  let flight = fillHoles(root, renderer.holes);
+  let flight = fillFlightHoles(root, renderer.holes);
   const resolvedValues = await renderer.resolveValueHoles();
   if (resolvedValues.size > 0) {
     flight = substituteValueHoles(flight, resolvedValues) as FlightNode;

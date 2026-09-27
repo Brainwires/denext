@@ -503,11 +503,11 @@ function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOpt
     const rootless = parsed.getElementById("__denext_flight")?.textContent === "null";
     if (retainedRoot && (!entrySrc || rootless)) discardRetainedRoot();
     swapRootHtml(container, newRoot);
-    // Unmount the islands whose wrapper the swap removed (the incoming ones boot from the entry).
-    resumabilityReboot?.([]);
     emit();
     scrollAfterNav(url, options);
     if (entrySrc) await injectRouteEntry(entrySrc, url);
+    // Unmount the islands whose wrapper the swap or the re-run entry's reconcile removed.
+    resumabilityReboot?.([]);
   });
 }
 

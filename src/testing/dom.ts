@@ -49,6 +49,66 @@ export interface TestEvent {
 
 type Listener = (event: TestEvent) => void;
 
+// ---- Tree and listener primitives, shared with the repo's reconciler test fakes -------------
+
+/** The node shape the primitives below work on. */
+export interface TreeNode {
+  parentNode: unknown;
+  childNodes: unknown[];
+  remove(): void;
+}
+
+/** DOM `insertBefore` (`ref` null or not a child: append): move `node` under `parent`. */
+export function insertChild<N extends TreeNode>(parent: TreeNode, node: N, ref: unknown): N {
+  node.remove();
+  node.parentNode = parent;
+  const idx = ref === null ? -1 : parent.childNodes.indexOf(ref);
+  if (idx === -1) parent.childNodes.push(node);
+  else parent.childNodes.splice(idx, 0, node);
+  return node;
+}
+
+/** DOM `removeChild`: detach `node` from `parent`. */
+export function detachChild<N extends TreeNode>(parent: TreeNode, node: N): N {
+  const idx = parent.childNodes.indexOf(node);
+  if (idx !== -1) parent.childNodes.splice(idx, 1);
+  node.parentNode = null;
+  return node;
+}
+
+/** Detach every child of `parent` (what assigning `innerHTML`/`textContent` starts with). */
+export function clearChildren(parent: { childNodes: unknown[] }): void {
+  for (const child of parent.childNodes.splice(0)) (child as TreeNode).parentNode = null;
+}
+
+/** An element's listener sets, bubble and capture phase, by event type. */
+interface ListenerMaps<F> {
+  listeners: Map<string, Set<F>>;
+  captureListeners: Map<string, Set<F>>;
+}
+
+/** The listener methods an element class declares (see {@link listenerMethods}). */
+export interface ListenerMethods<F> {
+  addEventListener(type: string, fn: F, capture?: boolean): void;
+  removeEventListener(type: string, fn: F, capture?: boolean): void;
+}
+
+/**
+ * DOM `addEventListener`/`removeEventListener` over {@link ListenerMaps}, mounted onto an element
+ * class's prototype (`Object.assign(Cls.prototype, listenerMethods)`, with the class declaring
+ * {@link ListenerMethods} through interface merging).
+ */
+export const listenerMethods: ListenerMethods<unknown> = {
+  addEventListener(this: ListenerMaps<unknown>, type: string, fn: unknown, capture = false) {
+    const map = capture ? this.captureListeners : this.listeners;
+    if (!map.has(type)) map.set(type, new Set());
+    map.get(type)!.add(fn);
+  },
+  removeEventListener(this: ListenerMaps<unknown>, type: string, fn: unknown, capture = false) {
+    (capture ? this.captureListeners : this.listeners).get(type)?.delete(fn);
+  },
+};
+
 /** Base DOM node. */
 class DomNode {
   nodeType = 0;
@@ -56,30 +116,15 @@ class DomNode {
   childNodes: DomNode[] = [];
 
   appendChild(node: DomNode): DomNode {
-    node.remove();
-    node.parentNode = this as unknown as DomEl;
-    this.childNodes.push(node);
-    return node;
+    return insertChild(this, node, null);
   }
 
   insertBefore(node: DomNode, ref: DomNode | null): DomNode {
-    node.remove();
-    node.parentNode = this as unknown as DomEl;
-    if (ref === null) {
-      this.childNodes.push(node);
-    } else {
-      const idx = this.childNodes.indexOf(ref);
-      if (idx === -1) this.childNodes.push(node);
-      else this.childNodes.splice(idx, 0, node);
-    }
-    return node;
+    return insertChild(this, node, ref);
   }
 
   removeChild(node: DomNode): DomNode {
-    const idx = this.childNodes.indexOf(node);
-    if (idx !== -1) this.childNodes.splice(idx, 1);
-    node.parentNode = null;
-    return node;
+    return detachChild(this, node);
   }
 
   remove(): void {
@@ -130,15 +175,6 @@ export class DomEl extends DomNode implements TestElement {
     if (name === "checked") this.checked = false;
   }
 
-  addEventListener(type: string, fn: Listener, capture = false): void {
-    const map = capture ? this.captureListeners : this.listeners;
-    if (!map.has(type)) map.set(type, new Set());
-    map.get(type)!.add(fn);
-  }
-  removeEventListener(type: string, fn: Listener, capture = false): void {
-    (capture ? this.captureListeners : this.listeners).get(type)?.delete(fn);
-  }
-
   /** Element children only (text nodes omitted). */
   get children(): DomEl[] {
     return this.childNodes.filter((n): n is DomEl => n.nodeType === 1);
@@ -155,17 +191,21 @@ export class DomEl extends DomNode implements TestElement {
   }
   set innerHTML(html: string) {
     this.#rawHtml = html === "" ? null : html;
-    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+    clearChildren(this);
   }
   get textContent(): string {
     return this.childNodes.map(textOf).join("");
   }
   set textContent(value: string) {
-    for (const child of this.childNodes.splice(0)) child.parentNode = null;
+    clearChildren(this);
     this.#rawHtml = null;
     if (value !== "") this.appendChild(new DomText(value));
   }
 }
+
+// The listener methods (declared on the class through the merged interface below).
+Object.assign(DomEl.prototype, listenerMethods);
+export interface DomEl extends ListenerMethods<Listener> {}
 
 function serialize(node: DomNode): string {
   if (node instanceof DomText) return escapeHtml(node.nodeValue);

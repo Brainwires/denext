@@ -864,7 +864,7 @@ setFlightParser((flight) => registry.ensure(flight).then(() => parseFlight(fligh
 setResumabilityReboot((islands, state) => {
   if (islands?.length || document.querySelector("[data-dnx-h]")) {
     import("denext/lazy")
-      .then((m) => m.bootResumability(registry, true, islands, state))
+      .then((m) => m.bootResumability(registry, true, islands?.length ? islands : undefined, state))
       .catch((err) => console.warn("denext: resumability boot failed:", err && err.message));
   }
 });
@@ -1447,6 +1447,19 @@ async function assertNoServerOnlyLeaks(
 }
 
 /**
+ * A fresh `deno bundle` workspace (after checking the toolchain supports it): a temp dir with
+ * an empty `src/` for the entry sources and the `out/` path the bundle writes to. The caller
+ * removes `tmpDir` when done.
+ */
+async function bundleWorkspace(): Promise<{ tmpDir: string; srcDir: string; outDir: string }> {
+  await ensureBundleSupport();
+  const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
+  const srcDir = join(tmpDir, "src");
+  await Deno.mkdir(srcDir);
+  return { tmpDir, srcDir, outDir: join(tmpDir, "out") };
+}
+
+/**
  * Bundle an entry source string into browser JavaScript by shelling out to
  * `deno bundle` with code splitting. Returns the entry file plus any chunk files
  * emitted for dynamic imports.
@@ -1455,11 +1468,7 @@ export async function bundleSourceFiles(
   entrySource: string,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  await ensureBundleSupport();
-  const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
-  const srcDir = join(tmpDir, "src");
-  const outDir = join(tmpDir, "out");
-  await Deno.mkdir(srcDir);
+  const { tmpDir, srcDir, outDir } = await bundleWorkspace();
   const entryPath = join(srcDir, "entry.tsx");
   try {
     await Deno.writeTextFile(entryPath, momentumScrollSeed(opts.momentumSafeScroll) + entrySource);
@@ -1507,11 +1516,7 @@ export async function bundleRoutes(
   routeEntries: Array<{ key: string; source: string }>,
   opts: BundleOptions,
 ): Promise<MultiBundleOutput> {
-  await ensureBundleSupport();
-  const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
-  const srcDir = join(tmpDir, "src");
-  const outDir = join(tmpDir, "out");
-  await Deno.mkdir(srcDir);
+  const { tmpDir, srcDir, outDir } = await bundleWorkspace();
   try {
     // Distinct per-entry basenames so esbuild's outputs map back unambiguously.
     const bases = routeEntries.map((_, i) => `entry_${i}`);
