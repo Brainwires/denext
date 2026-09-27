@@ -207,8 +207,9 @@ export interface RequestContext {
    */
   screenOptions?: Record<string, unknown>;
   /**
-   * Attributes a root component put on ITS `<html>`/`<body>` (a migrated Remix root's
-   * `<html className={theme}>`), merged onto the real document tags by the assembler.
+   * Attributes a root component put on ITS `<html>`/`<body>` (a root layout's
+   * `<html lang="fr">`, a migrated Remix root's `<html className={theme}>`), merged onto the
+   * real document tags by the assembler.
    */
   documentAttrs?: { html?: Record<string, unknown>; body?: Record<string, unknown> };
   /** Per-request memoization store backing {@link cache}, keyed by function. */
@@ -603,6 +604,17 @@ export function currentContext(): RequestContext | undefined {
 // Installed on the server only; absent in a client bundle.
 (globalThis as { __denextCurrentRequestContext?: () => RequestContext | undefined })
   .__denextCurrentRequestContext = currentContext;
+
+// The recorder the renderers (a root layout's `<html>`/`<body>`) and the Remix compat's
+// document components hand their attributes to: the assembler merges them onto the real
+// document tags, where the browser's parser would drop the nested ones' `lang` (denext's own
+// wins). A process-global seam, like the bridge above; the Remix server installs the same.
+(globalThis as {
+  __denextDocumentAttrsSink?: (part: "html" | "body", attrs: Record<string, unknown>) => void;
+}).__denextDocumentAttrsSink ??= (part, attrs) => {
+  const ctx = storage.getStore();
+  if (ctx) (ctx.documentAttrs ??= {})[part] = attrs;
+};
 
 /**
  * Record a serialized SSR resource-hint `<link>`/`<script>` on the current request

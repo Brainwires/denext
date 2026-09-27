@@ -270,6 +270,26 @@ function hostHtml(tag: string, attrs: string, inner: string): string {
   return VOID_ELEMENTS.has(tag) ? `<${tag}${attrs}>` : `<${tag}${attrs}>${inner}</${tag}>`;
 }
 
+/**
+ * Hand a root layout's `<html>`/`<body>` attributes to the document assembler (through the
+ * server's request-scoped recorder), which puts them on the real document tags: nested in the
+ * page container, the parser would keep only the attributes the real tag lacks — `lang` (denext
+ * always sets its own) would be lost. Plain string/number values only: a React-only prop
+ * (`suppressHydrationWarning`) or a handler is not an attribute.
+ */
+function recordDocumentAttrs(tag: string, props: Record<string, unknown>): void {
+  if (tag !== "html" && tag !== "body") return;
+  const sink = (globalThis as {
+    __denextDocumentAttrsSink?: (part: "html" | "body", attrs: Record<string, unknown>) => void;
+  }).__denextDocumentAttrsSink;
+  if (!sink) return;
+  const attrs: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(props)) {
+    if (typeof value === "string" || typeof value === "number") attrs[name] = value;
+  }
+  sink(tag, attrs);
+}
+
 /** Tags the HTML parser drops when they are nested in the page container (content stays). */
 const DOCUMENT_TAGS = new Set(["html", "head", "body"]);
 
@@ -314,6 +334,7 @@ export async function renderHostHtml(
     await hoistIntoHead(head, tag, props, attrs, () => ops.renderTitle(children), key);
     return "";
   }
+  recordDocumentAttrs(tag, props);
   if (VOID_ELEMENTS.has(tag)) return hostHtml(tag, attrs, "");
   const dangerous = dangerousInnerHtml(props, tag);
   if (dangerous !== null) return hostHtml(tag, attrs, dangerous);
@@ -368,6 +389,7 @@ export async function renderHostDual(
     );
     return { html: "", flight: null };
   }
+  recordDocumentAttrs(tag, props);
   const p = await serializeFlightProps(props, (v) => r.serializeValue(v, scopes));
   if (VOID_ELEMENTS.has(tag)) {
     return { html: hostHtml(tag, attrs, ""), flight: flightHost(tag, p, []) };

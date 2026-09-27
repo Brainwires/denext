@@ -175,6 +175,7 @@ export interface PprShell {
   holeIds: string[];
   headExtras: string | undefined;
   inTreeTitle: string | undefined;
+  documentAttrs?: CachedPage["documentAttrs"];
   routeCsp: CspSetting | undefined;
   flight?: {
     shell: FlightNode;
@@ -193,6 +194,7 @@ export function shellFromCache(hit: CachedPage): PprShell {
     holeIds: hit.holeIds ?? [],
     headExtras: hit.headExtras,
     inTreeTitle: hit.inTreeTitle,
+    documentAttrs: hit.documentAttrs,
     routeCsp: hit.routeCsp,
     flight: hit.flightShell !== undefined
       ? {
@@ -226,10 +228,15 @@ export function shellFromPrerender(
   };
 }
 
-/** Rebuild the shell's cached `<head>` extras + title onto this request's metadata. */
-function applyShellHead(metadata: Metadata, shell: PprShell): void {
+/**
+ * Rebuild the shell's cached `<head>` extras + title onto this request's metadata, and its
+ * root layout's `<html>`/`<body>` attributes onto the request (the resume does not re-render
+ * the layout).
+ */
+function applyShellHead(pr: PageRequest, metadata: Metadata, shell: PprShell): void {
   if (shell.inTreeTitle !== undefined) metadata.title = shell.inTreeTitle;
   if (shell.headExtras) metadata.head = (metadata.head ?? "") + shell.headExtras;
+  if (shell.documentAttrs) pr.state.ctx.documentAttrs ??= shell.documentAttrs;
 }
 
 /** Dev render-mode telemetry: a PPR shell serves streamed, with holes. */
@@ -259,7 +266,7 @@ async function resumeHtmlShell(
     shell.holeIds,
     { messages: pr.messages, signal: pr.state.ctx.signal },
   );
-  applyShellHead(metadata, shell);
+  applyShellHead(pr, metadata, shell);
   const doc = documentOptions(pr);
   markStreamedFromCache(pr, cacheState);
   const stream = streamPprDocument({
@@ -293,7 +300,7 @@ async function resumeFlightShell(
     { messages: pr.messages, signal: pr.state.ctx.signal },
   );
   const { metadata, viewport } = resume;
-  applyShellHead(metadata, shell);
+  applyShellHead(pr, metadata, shell);
   const doc = documentOptions(pr);
   markStreamedFromCache(pr, cacheState);
   const flight = shell.flight!;

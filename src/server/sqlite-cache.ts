@@ -84,6 +84,7 @@ const PPR_FIELDS = [
   "routeCsp",
   "headExtras",
   "inTreeTitle",
+  "documentAttrs",
   "flightShell",
   "flightIslands",
   "flightSignalState",

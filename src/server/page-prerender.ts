@@ -75,6 +75,7 @@ async function serveShellWithHoles(
       routeCsp: pre.config.csp,
       headExtras: pre.headExtras,
       inTreeTitle: pre.inTreeTitle,
+      documentAttrs: pr.state.ctx.documentAttrs,
       // The shell rendered a class → a later cache hit must re-seed the marker (peek, not
       // take: this request's own document assembly still consumes the flag).
       classRuntime: classRendered() || undefined,

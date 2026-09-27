@@ -13,7 +13,7 @@ import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
-import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
+import { inMemoryCacheStore, PageCache, pageStoreKey, setCacheStore } from "../src/server/cache.ts";
 import { cookies } from "../src/server/request-context.ts";
 import { parseFlight } from "../src/client/flight-client.ts";
 import { createRoot, flushSync, hydrateRoot, setDocument } from "../src/client/reconciler.ts";
@@ -146,8 +146,12 @@ async function Who(): Promise<VNode> {
   return await Promise.resolve(h("i", null, `hi ${cookies().get("u")?.value ?? "anon"}`));
 }
 
-function makeApp(extra: Record<string, unknown>, page: () => VNode) {
-  const layout = ({ children }: { children: VNodeChildren }) => nextLayout(children);
+function makeApp(
+  extra: Record<string, unknown>,
+  page: () => VNode,
+  shell: (children: VNodeChildren) => VNode = nextLayout,
+) {
+  const layout = ({ children }: { children: VNodeChildren }) => shell(children);
   return createApp({
     getManifest: manifest,
     load: (fp) =>
@@ -208,4 +212,84 @@ Deno.test("PPR shell (MISS and cached HIT): no document tags in the Flight tree"
     assert(!DOCUMENT_TAG.test(flight), flight);
     assertStringIncludes(flight, `hi ${user}`);
   }
+});
+
+Deno.test("a page cached before the Flight format change is never served after the upgrade", async () => {
+  // The durable store is not keyed per build: a shell cached by an older denext (its Flight
+  // tree still wrapped in <html>/<body>) sits under the old, unversioned key. The page-cache
+  // format version keeps it from being read — the upgrade renders (and caches) afresh.
+  const store = inMemoryCacheStore();
+  setCacheStore(store);
+  await store.setPage("/", {
+    body: "<!DOCTYPE html><html><body>OLD SHELL</body></html>",
+    status: 200,
+    path: "/",
+    expiresAt: Infinity,
+    tags: [],
+    flightShell: { $: "h", t: "html", p: {}, c: [] },
+  });
+  const app = makeApp({ pageCache: new PageCache(), cacheComponents: true }, holePage);
+  const res = await app(new Request("http://x/", { headers: { cookie: "u=cy" } }));
+  const body = await res.text();
+  assertEquals(res.headers.get("x-denext-cache"), "MISS");
+  assert(!body.includes("OLD SHELL"), "the pre-upgrade entry was not served");
+  assert(!DOCUMENT_TAG.test(inlined(body)));
+  assert(await store.getPage(pageStoreKey("/")), "the fresh shell is cached under the new format");
+});
+
+// ---- The layout's <html>/<body> attributes reach the real document tags ---------------------
+
+/** A root layout whose document tags carry attributes (and a React-only prop). */
+const frLayout = (children: VNodeChildren) =>
+  h(
+    "html",
+    { lang: "fr", dir: "rtl", className: "dark", suppressHydrationWarning: true },
+    h("body", { className: "b", "data-theme": "night" }, h(Counter as Component, null), children),
+  );
+
+/** The document's real (first) `<html …>` and `<body …>` open tags. */
+function documentTags(body: string): { html: string; body: string } {
+  return { html: /<html[^>]*>/.exec(body)![0], body: /<body[^>]*>/.exec(body)![0] };
+}
+
+function assertFrenchDocument(body: string): void {
+  const tags = documentTags(body);
+  assertEquals(tags.html, '<html lang="fr" dir="rtl" class="dark">');
+  assertEquals(tags.body, '<body class="b" data-theme="night">');
+}
+
+Deno.test("a root layout's <html>/<body> attributes land on the real tags (buffered)", async () => {
+  const app = makeApp({}, plainPage, frLayout);
+  assertFrenchDocument(await (await app(new Request("http://x/"))).text());
+});
+
+Deno.test("a root layout's <html>/<body> attributes land on the real tags (streamed)", async () => {
+  const app = makeApp({ streaming: true, csp: "off" }, holePage, frLayout);
+  const res = await app(new Request("http://x/", { headers: { cookie: "u=ann" } }));
+  const reader = res.body!.getReader();
+  const first = new TextDecoder().decode((await reader.read()).value);
+  // The first flushed chunk already carries them: streaming is not held back.
+  assertFrenchDocument(first);
+  await reader.cancel();
+});
+
+Deno.test("a root layout's <html>/<body> attributes survive a PPR cache hit", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const app = makeApp({ pageCache: new PageCache(), cacheComponents: true }, holePage, frLayout);
+  for (const cache of ["MISS", "HIT"]) {
+    const res = await app(new Request("http://x/", { headers: { cookie: "u=ann" } }));
+    assertEquals(res.headers.get("x-denext-cache"), cache);
+    assertFrenchDocument(await res.text());
+  }
+});
+
+Deno.test("a non-Flight page's root layout attributes land on the real tags too", async () => {
+  const app = makeApp(
+    { flight: false, flightRoutes: undefined },
+    plainPage,
+    (children) => h("html", { lang: "de" }, h("body", { className: "plain" }, children)),
+  );
+  const body = await (await app(new Request("http://x/"))).text();
+  assertEquals(documentTags(body).html, '<html lang="de">');
+  assertEquals(documentTags(body).body, '<body class="plain">');
 });

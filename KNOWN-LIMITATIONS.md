@@ -28,6 +28,17 @@ next-compat interop path — denext's own apps are unaffected):
   correctly, just not off-thread. A one-time dev warning fires. Self-host
   Partytown if you need true off-main-thread execution.
 
+- **A root layout's `<html>`/`<body>` rendered by CLIENT code is re-created on hydration.**
+  denext owns the real document tags and nests a layout's `<html>`/`<head>`/`<body>` inside
+  its page container, where the browser's parser drops them. A Server Component layout is
+  handled: the server's Flight tree leaves the three tags out, so hydration adopts the
+  server DOM, and their attributes (`lang`, `dir`, `className`…) are moved onto the real
+  tags. When the layout is rendered in the browser instead — a `"use client"` root layout, or
+  a route without a client boundary that re-renders its whole tree from its own bundle — the
+  client tree still contains the tags, hydration mismatches at `<html>`, and the page DOM is
+  re-created once (silently in production). Keep the root layout a Server Component, or
+  render only the in-body chrome and let denext supply the document tags.
+
 - **`global-error.tsx` hydration is not wired on the next-compat / static-export paths.**
   global-error replaces the root layout and renders its own document, which now hydrates on the
   native `denext build` and `denext dev` paths, so `reset` and any author interactivity work

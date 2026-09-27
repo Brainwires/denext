@@ -1422,6 +1422,11 @@ export interface CachedPage {
   /** PPR only: an in-tree `<title>` from the shell (wins over `generateMetadata`). */
   inTreeTitle?: string;
   /**
+   * PPR only: the shell's root layout `<html>`/`<body>` attributes (`lang`, `dir`, `class`…),
+   * put back on a cache hit's rebuilt document tags (the hit does not re-render the layout).
+   */
+  documentAttrs?: { html?: Record<string, unknown>; body?: Record<string, unknown> };
+  /**
    * PPR only: the shell render produced a class component. A cache hit re-seeds the
    * request's render scope with it so the rebuilt document carries the `#__denext_classes`
    * marker and the browser entry loads the class runtime before hydrating.
@@ -1441,6 +1446,29 @@ export interface CachedPage {
 }
 
 /**
+ * The page-cache entry format. A cached page is a rendered document (and a PPR shell also its
+ * Flight tree), and the durable store outlives an upgrade — it is not keyed per build — so a
+ * framework change to either shape must never serve a page cached before it. Every store key
+ * carries this version; bump it whenever the cached HTML or Flight shape changes. An older
+ * format's entries are never read again and age out through the store's own eviction.
+ *
+ * - 2: a root layout's `<html>`/`<head>`/`<body>` are peeled from Flight trees, and an
+ *   islands-only document inlines no root Flight tree.
+ */
+const PAGE_CACHE_FORMAT = 2;
+
+/**
+ * The store key a {@link PageCache} entry for `key` (a path + query) lives under: the entry
+ * format, then the key. Exported for tests that seed or inspect a store directly.
+ *
+ * @param key The page cache key (see `pageCacheKey`).
+ * @returns The key in the store.
+ */
+export function pageStoreKey(key: string): string {
+  return `v${PAGE_CACHE_FORMAT}:${key}`;
+}
+
+/**
  * The rendered-page store for Incremental Static Regeneration. A thin façade
  * over the active {@link CacheStore}: the prod server consults it before
  * rendering and populates it afterward for cacheable routes. Injecting a shared
@@ -1455,7 +1483,7 @@ export class PageCache {
    */
   async get(key: string): Promise<CachedPage | undefined> {
     try {
-      const page = await currentCacheStore.getPage(key);
+      const page = await currentCacheStore.getPage(pageStoreKey(key));
       if (page) cacheStats.pageHits++;
       else cacheStats.pageMisses++;
       return page;
@@ -1470,7 +1498,7 @@ export class PageCache {
    * is served uncached) so a failed write never fails a successful render. */
   async set(key: string, page: CachedPage): Promise<void> {
     try {
-      await currentCacheStore.setPage(key, page);
+      await currentCacheStore.setPage(pageStoreKey(key), page);
       cacheStats.pageSets++;
     } catch (err) {
       logCacheError("setPage", err);
