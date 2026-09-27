@@ -81,8 +81,10 @@ Android capability claim in this file is "built".
      token events, push-to-start tokens (iOS 17.2+) and `listLiveActivities`.
 
    The `expo-widgets` shim drives all of it. **iPhone:** the share extension, a configurable
-   widget and a Live Activity. **Built only:** a Live Activity started by a real push-to-start
-   push, and every Android half (Android widgets are static). T3's own widget and Live Activity
+   widget, a Live Activity, and a Live Activity started by a real APNs push-to-start push
+   (2026-09-27: `event: start`, `attributes-type: DenextActivityAttributes`, topic
+   `<bundle>.push-type.liveactivity`, HTTP 200 and on the Lock Screen). **Built only:** every
+   Android half (Android widgets are static). T3's own widget and Live Activity
    layouts are app work: the generated SwiftUI views are templates to edit.
 
 5. **Native feel on Android. Open: measured on an emulator, scrolling is behind.** React Native
@@ -387,7 +389,8 @@ is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `ex
    the iPhone.
 2. ~~App extensions (share, widgets, Live Activities) and dev-server attach for phones, plus the
    desktop half of dev-server attach (`denext desktop dev`).~~ Shipped (2.10.0-rc.3; desktop
-   attach in the following release); verified on the iPhone except a real push-to-start push.
+   attach in the following release); verified on the iPhone, including a real push-to-start
+   push.
 3. ~~The compatibility layer: the measured spike, the `react-native` resolve mode, the
    `denext/expo/*` shims, and `migrate --from expo`.~~ Shipped (2.10.0-rc.2–rc.3). Left: the
    app's own stubs for non-Expo native modules (see Integration above).
