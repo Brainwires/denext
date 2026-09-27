@@ -34,6 +34,13 @@ ignoreDependencies = [
   "zod", # examples/openapi/deno.json: npm:zod@^4 (defineApi schemas → OpenAPI via Standard JSON Schema)
   "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json
   "@tanstack/react-router", # examples/tanstack-router/package.json: installed into that example's manual node_modules
+  # examples/scroll-bench/web/package.json: the list libraries the scroll bench compares, installed
+  # into that app's manual node_modules (`react-native` resolves to react-native-web through
+  # denext's `reactNative: true` mode).
+  "@legendapp/list",
+  "@tanstack/react-virtual",
+  "virtua",
+  "react-native",
   "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
@@ -129,6 +136,8 @@ entry = [
   "examples/native/scripts/*.ts",
   "examples/prisma/scripts/*.ts",
   "examples/spa/bench.ts",
+  # The scroll bench's image generator (`deno task images` in examples/scroll-bench).
+  "examples/scroll-bench/shared/gen-images.ts",
   "examples/drizzle/vendor/**",
   # The Next→denext dependency probes and drop-in verifier: user-run tools documented in
   # https://denext.dev/docs/migrating (§1) (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
@@ -167,13 +176,27 @@ ignorePatterns = [
   # (`deno task routes`) and `denext openapi types` output; their exported helper types are
   # for consumers, never imported here. Regenerated, never hand-edited.
   "examples/**/*.gen.ts",
+  # The React Native twin of the scroll benchmark: a self-contained Metro/npm project (its own
+  # package.json + node_modules, bundled by Metro, entry index.js via AppRegistry) that
+  # fallow cannot model. examples/scroll-bench/{web,shared,harness} stay analyzed.
+  "examples/scroll-bench/native/**",
+  # The scroll bench's device and browser drivers: `harness/measure.ts` drives an Android
+  # emulator over adb and `harness/web-smoke.ts` headless Chromium. Every function is I/O
+  # against a device/browser, untestable without one, so CRAP-on-zero-coverage is noise
+  # there. Their pure parts (harness/parse.ts, harness/matrix.ts) stay analyzed and tested.
+  "examples/scroll-bench/harness/measure.ts",
+  "examples/scroll-bench/harness/web-smoke.ts",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls
 # the npm `ws` relay, which the SPA/desktop servers must not load otherwise) and then called
 # through the module namespace (`proxy.proxyToBackend(...)`), which the static graph cannot
 # attribute to the export. Seeding the file as a runtime root credits its exports.
-dynamicallyLoaded = ["src/build/dev-proxy.ts"]
+#
+# The scroll bench's web list impls are loaded with `lazy(() => import("./<impl>.tsx"))`
+# (examples/scroll-bench/web/src/impls/index.ts), one chunk per list library; their default
+# exports are reached through that dynamic import.
+dynamicallyLoaded = ["src/build/dev-proxy.ts", "examples/scroll-bench/web/src/impls/*.tsx"]
 
 # DOM interface members implemented by the fake-DOM test doubles (tests/helpers/dom.ts,
 # src/testing/dom.ts). The framework invokes them through `Element`/`Node`/`Document`-typed

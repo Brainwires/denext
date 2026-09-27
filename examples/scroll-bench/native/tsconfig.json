@@ -1,0 +1,19 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": []
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../shared/*.ts"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/Pods",
+    "../shared/gen-images.ts",
+    "../shared/*_test.ts"
+  ]
+}

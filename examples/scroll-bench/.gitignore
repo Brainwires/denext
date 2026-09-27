@@ -1,0 +1,7 @@
+# harness output (harness/measure.ts matrix writes results/<stamp>/)
+results/
+# throwaway signing keys: never commit a keystore
+*.jks
+*.keystore
+# release APKs
+*.apk

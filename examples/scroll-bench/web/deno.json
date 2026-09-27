@@ -1,0 +1,55 @@
+{
+  "//": "`workspace: []`: this app is its own Deno workspace root (see examples/tanstack-router/deno.json). The list libraries are npm packages bundled through denext's compat build, which aliases every `react` import (theirs included) to denext.",
+  "workspace": [],
+  "nodeModulesDir": "manual",
+  "tasks": {
+    "install": "npm install",
+    "dev": "deno run -A ../../../cli.ts dev .",
+    "build": "deno run -A ../../../cli.ts build .",
+    "export": "deno run -A ../../../cli.ts export .",
+    "start": "deno run -A ../../../cli.ts start .",
+    "cap:sync": "deno task export && node_modules/.bin/cap sync android"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "skipLibCheck": true,
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ]
+  },
+  "imports": {
+    "denext": "../../../mod.ts",
+    "denext/jsx-runtime": "../../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../../src/server/mod.ts",
+    "denext/client": "../../../src/client/mod.ts",
+    "denext/mobile": "../../../src/mobile/mod.ts",
+    "react": "../../../src/compat/react.ts",
+    "react-dom": "../../../src/compat/react-dom.ts",
+    "react-dom/client": "../../../src/compat/react-dom-client.ts",
+    "react/jsx-runtime": "../../../src/jsx/jsx-runtime.ts",
+    "react/jsx-dev-runtime": "../../../src/jsx/jsx-runtime.ts"
+  },
+  "lint": {
+    "plugins": [
+      "../../../src/lint/denext-plugin.ts"
+    ]
+  },
+  "exclude": [
+    "android/",
+    "node_modules/",
+    "out/",
+    ".denext/"
+  ],
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  }
+}

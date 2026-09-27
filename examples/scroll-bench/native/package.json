@@ -1,0 +1,34 @@
+{
+  "name": "rn-scroll-bench",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "android": "react-native run-android",
+    "start": "react-native start",
+    "bundle:android": "react-native bundle --platform android --dev false --minify true --entry-file index.js --bundle-output /tmp/rnscrollbench.android.bundle",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@legendapp/list": "3.4.0",
+    "@shopify/flash-list": "2.3.2",
+    "react": "19.2.3",
+    "react-native": "0.87.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@babel/preset-env": "^7.25.3",
+    "@babel/runtime": "^7.25.0",
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-android": "20.2.0",
+    "@react-native-community/cli-platform-ios": "20.2.0",
+    "@react-native/babel-preset": "0.87.1",
+    "@react-native/metro-config": "0.87.1",
+    "@react-native/typescript-config": "0.87.1",
+    "@types/react": "^19.2.0",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">= 22.11.0"
+  },
+  "description": "React Native twin of the denext scroll benchmark (examples/scroll-bench). Same shared/ data and row designs; native Android views."
+}

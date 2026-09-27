@@ -1,0 +1,19 @@
+{
+  "name": "denext-scroll-bench-web",
+  "private": true,
+  "description": "npm packages for the denext side of the scroll benchmark: the list libraries (bundled through denext's compat build, react aliased to denext) and the Capacitor shell.",
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "8.5.2",
+    "@legendapp/list": "3.4.0",
+    "@tanstack/react-virtual": "3.14.13",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native-web": "0.21.2",
+    "virtua": "0.52.7"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "appId": "com.brainwires.denext.scrollbench",
+  "appName": "denext scroll bench",
+  "webDir": "out",
+  "loggingBehavior": "production"
+}
