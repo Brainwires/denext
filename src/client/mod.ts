@@ -130,6 +130,7 @@ export type {
 } from "../client/use-api.ts";
 export type {
   ApiClient,
+  ApiClientAuth,
   ApiClientOptions,
   ApiEndpoint,
   ApiErrorEnvelope,
@@ -146,6 +147,15 @@ export type {
   ResponseOf,
   TypedQuery,
 } from "../runtime/api-client.ts";
+// Native session mode (`denextAuth({ native })`): an app's bearer session as the client's `auth`.
+export { nativeSession, NativeSessionError } from "../runtime/native-session.ts";
+export type {
+  NativeIdTokenSignIn,
+  NativeSession,
+  NativeSessionOptions,
+  NativeSessionStorage,
+  NativeSessionUser,
+} from "../runtime/native-session.ts";
 // Type-level inference behind the generated `.denext/api.ts` (`ModuleEndpoints<typeof Route, P>`).
 export type {
   ApiPhantom,

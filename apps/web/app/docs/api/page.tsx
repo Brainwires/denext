@@ -16,9 +16,28 @@ const BLURB: Record<string, string> = {
   "denext/live": "Live Server Components — server-pushed boundary updates.",
   "denext/lazy": "Lazy / deferred module + island hydration helpers.",
   "denext/desktop": "Desktop packaging runtime.",
+  "denext/desktop/updater": "Signed over-the-air UI updates for a Deno Desktop app.",
   "denext/mobile": "Client runtime for apps in a Capacitor iOS/Android shell.",
   "denext/cli/command": "The CLI command contract (for plugins contributing verbs).",
 };
+
+/** The `denext/expo/*` shims get their own section, after the core entry points. */
+const isExpo = (m: string) => m.startsWith("denext/expo/");
+const core = reference.groups.filter((g) => !isExpo(g.module));
+const expo = reference.groups.filter((g) => isExpo(g.module));
+
+/** One module card: its name, symbol count and (when it has one) blurb. */
+function ModuleCard({ g }: { g: { module: string; symbols: unknown[] } }) {
+  return (
+    <a class="api-card" href={`/docs/api/${slug(g.module)}`}>
+      <span class="api-card-head">
+        <code>{g.module}</code>
+        <span class="api-card-count">{g.symbols.length}</span>
+      </span>
+      {BLURB[g.module] ? <span class="api-card-blurb">{BLURB[g.module]}</span> : null}
+    </a>
+  );
+}
 
 export const metadata = {
   title: "API reference",
@@ -38,19 +57,23 @@ export default function ApiIndex() {
         <code>deno task docs:api</code>.
       </p>
       <div class="api-index">
-        {reference.groups.map((g) => (
-          <a
-            key={g.module}
-            class="api-card"
-            href={`/docs/api/${slug(g.module)}`}
-          >
-            <span class="api-card-head">
-              <code>{g.module}</code>
-              <span class="api-card-count">{g.symbols.length}</span>
-            </span>
-            {BLURB[g.module] ? <span class="api-card-blurb">{BLURB[g.module]}</span> : null}
-          </a>
-        ))}
+        {core.map((g) => <ModuleCard key={g.module} g={g} />)}
+      </div>
+      <h2 id="expo-shims">Expo shims</h2>
+      <p>
+        In <a href="/docs/react-native">React Native mode</a> each <code>expo-*</code>{" "}
+        import resolves to one of these modules. They implement the Expo API with web platform APIs
+        and, for native capabilities, over{" "}
+        <a href="/docs/api/denext-mobile">
+          <code>denext/mobile</code>
+        </a>. Each module mirrors its Expo package, so read Expo&apos;s documentation for the
+        behaviour and these pages for what the shim provides; what each one omits is listed in{" "}
+        <a href="/docs/api/denext-expo-manifest">
+          <code>denext/expo/manifest</code>
+        </a>.
+      </p>
+      <div class="api-index">
+        {expo.map((g) => <ModuleCard key={g.module} g={g} />)}
       </div>
     </DocsShell>
   );

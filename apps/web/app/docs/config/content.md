@@ -229,7 +229,7 @@ Per-request observability is code, not config: export `onRequest(info)` from
   for one run. A listed host is trusted like loopback: a device that can reach
   it can read the app's transformed source. Cross-site pages are still refused
   (`Sec-Fetch-Site` / `Origin`). See
-  [Live reload on a device](/docs/desktop#live-reload-on-a-device).
+  [Live reload on a device](/docs/mobile#live-reload-on-a-device).
 
 ```ts
 export default {
@@ -408,7 +408,7 @@ Build-time switches. All off by default except `nodeResolve`,
   iframes are not covered; a shifted list's `position: fixed` descendants and
   sticky headers move with it until the fling settles. Set `false` to opt out
   (it holds in every build: App Router, Pages Router, SPA, dev and export). See
-  [`denext/mobile`](/docs/desktop).
+  [`denext/mobile`](/docs/mobile#the-denextmobile-runtime).
 - **`reactNative`** — `boolean | { rootStyle?: boolean }` (off; SPA mode only).
   Builds a React Native / Expo app's source for the web through
   `react-native-web`: `react-native` resolves to react-native-web for every

@@ -192,6 +192,7 @@ export type {
 } from "./src/client/use-api.ts";
 export type {
   ApiClient,
+  ApiClientAuth,
   ApiClientOptions,
   ApiEndpoint,
   ApiErrorEnvelope,
@@ -208,6 +209,15 @@ export type {
   ResponseOf,
   TypedQuery,
 } from "./src/runtime/api-client.ts";
+// Native session mode (`denextAuth({ native })`): an app's bearer session as the client's `auth`.
+export { nativeSession, NativeSessionError } from "./src/runtime/native-session.ts";
+export type {
+  NativeIdTokenSignIn,
+  NativeSession,
+  NativeSessionOptions,
+  NativeSessionStorage,
+  NativeSessionUser,
+} from "./src/runtime/native-session.ts";
 // Type-level inference behind the generated `.denext/api.ts` (`ModuleEndpoints<typeof Route, P>`).
 export type {
   ApiPhantom,
@@ -369,6 +379,40 @@ export type { NetworkState } from "./src/utils/use-network-state.ts";
 export { useDebouncedValue } from "./src/utils/use-debounced-value.ts";
 export { useCopyToClipboard } from "./src/utils/use-clipboard.ts";
 export type { UseClipboardResult } from "./src/utils/use-clipboard.ts";
+
+// Virtualized lists (denext-specific): `VirtualList` + the headless `useVirtualList`, over one
+// engine (O(log n) offsets, anchoring, momentum-safe corrections, scroll scaling). Client-safe,
+// SSR-safe, side-effect free: an app that does not import them bundles none of it.
+export { VirtualList } from "./src/client/virtual/virtual-list.ts";
+export { useVirtualList } from "./src/client/virtual/use-virtual-list.ts";
+// Drag-to-reorder for VirtualList rows (pointer + keyboard, edge auto-scroll); its own module.
+export { useVirtualReorder } from "./src/client/virtual/reorder.ts";
+export type { VirtualReorder, VirtualReorderOptions } from "./src/client/virtual/reorder.ts";
+export type {
+  ItemLayoutAnimationOptions,
+  ScrollNativeEvent,
+  ScrollPoint,
+  ScrollSize,
+  ScrollToIndexOptions,
+  TextEstimateOptions,
+  UseVirtualListResult,
+  ViewabilityConfig,
+  ViewabilityConfigCallbackPair,
+  ViewableItemsChanged,
+  ViewToken,
+  VirtualItem,
+  VirtualListAlign,
+  VirtualListBlankArea,
+  VirtualListHandle,
+  VirtualListKey,
+  VirtualListOptions,
+  VirtualListProps,
+  VirtualListRange,
+  VirtualListScrollElement,
+  VirtualListScrollEvent,
+  VirtualListScrollMetrics,
+  VirtualListSlot,
+} from "./src/client/virtual/types.ts";
 
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";

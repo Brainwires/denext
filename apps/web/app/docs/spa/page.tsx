@@ -275,7 +275,7 @@ await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`
         plugin (<code>denext mobile add-ota</code>) can pull a newer UI without a new app build. Set
         {" "}
         <code>DENEXT_OTA_SIGNING_KEY</code> to sign it. See{" "}
-        <a href="/docs/desktop">Desktop &amp; mobile</a>.
+        <a href="/docs/mobile#over-the-air-ui-updates">Over-the-air UI updates</a>.
       </Callout>
       <h3>App icon</h3>
       <p>

@@ -212,11 +212,14 @@ export type {
   RewriteCommand,
 } from "./middleware.ts";
 
+// The resolved CORS policy (`config.cors`) a request context and route dispatch carry.
+export type { CorsPolicy } from "./cors.ts";
 // Project configuration (denext.config): redirects / rewrites / headers / etc.
 export {
   type ApiBatchConfig,
   type CacheConfig,
   type CompiledPattern,
+  type CorsConfig,
   type DenextCommand,
   type DenextConfig,
   type ExperimentalConfig,
@@ -453,6 +456,8 @@ export type {
   AuthAdapter,
   MaybePromise,
   MfaRecord,
+  NativeGrantRecord,
+  NativeSessionRecord,
   VerificationPurpose,
   VerificationTokenRecord,
   VerificationTokenRef,
@@ -510,6 +515,7 @@ export type { TotpAuthUriOptions, TotpVerifyOptions, TotpVerifyResult } from "./
 export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";
 export type { BackupCodes } from "./auth/backup-codes.ts";
 export type {
+  AccountDeletedPayload,
   AuthCallbacks,
   AuthConfig,
   AuthCookieConfig,
@@ -517,6 +523,7 @@ export type {
   AuthEvents,
   AuthLogger,
   AuthMfaConfig,
+  AuthNativeConfig,
   AuthorizedCallbackInput,
   AuthProvider,
   AuthSession,
@@ -524,6 +531,8 @@ export type {
   AuthUser,
   CredentialsProvider,
   EmailProvider,
+  NativeAppleConfig,
+  NativeIdTokenProviderConfig,
   OAuthProvider,
   ProfileInput,
   SendVerificationRequest,
@@ -595,3 +604,4 @@ export function serve(options: ServeOptions): Deno.HttpServer {
 // The current request context — the seam integrations (e.g. @denext/effect) read
 // per-request state through; app code uses cookies()/headers()/getSession() instead.
 export { currentContext } from "./request-context.ts";
+export * from "./revenuecat.ts";

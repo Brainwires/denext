@@ -242,6 +242,16 @@ try {
         </code>) and stub that module's export in the test.
       </p>
 
+      <h2 id="mobile">Mobile code</h2>
+      <p>
+        Code that uses <code>denext/mobile</code>{" "}
+        takes its web path in a test: a component that uses it renders without setup, and a fallback
+        that needs a browser API Deno lacks (the clipboard, Web Share) needs a fake of that API. To
+        test the path inside the iOS/Android shell, install a fake <code>Capacitor</code>{" "}
+        global with the plugin methods your code calls, and remove it in <code>finally</code>
+        : see <a href="/docs/mobile#testing-mobile-code">Testing mobile code</a>.
+      </p>
+
       <h2 id="ci">Continuous integration</h2>
       <p>
         Nothing here needs a browser or a service, so CI is <code>deno test</code>. Define one{" "}

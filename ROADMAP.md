@@ -236,6 +236,13 @@ and for Deno Desktop the OAuth loopback sheet and a signed UI self-updater. Stil
   time and uses less memory, but misses vsync on 67–70% of fling frames against 25–28% for RN.
   Next step: a real device. If the scroll gap holds there, profile the WebView list. The Android
   capability halves are still built and unit-tested only.
+- **Background location / geofencing** — not shipped with the 2.11 platform capabilities:
+  `@capacitor-community/background-geolocation` supports Capacitor 7 only (its Capacitor 8 PR
+  #158 was closed unmerged, 2026-09-12). Candidates: that plugin once it moves, or
+  `@capgo/background-geolocation` (Capacitor 8, MPL-2.0; not yet evaluated). Would add
+  `location-background` to `checkPermission`, `UIBackgroundModes: location`, the Always usage
+  string and `ACCESS_BACKGROUND_LOCATION`, and back `expo-location`'s
+  `startLocationUpdatesAsync`.
 
 ## Candidate features (from the framework-gap survey)
 

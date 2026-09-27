@@ -320,7 +320,7 @@ four documented bounds of the opt-in:
   `pages.afterSignIn`) with `?error=invalid_token`; a bad magic link or code goes to
   `pages.error` (else `pages.signIn`) with `?error=Verification`. Set `pages.error` to land
   both in one place.
-- **Two presets carry provider constraints**: Apple is `openid`-only (name and email require
+- **Two presets carry provider constraints**: the web `apple()` provider is `openid`-only (name and email require
   `response_mode=form_post`, a cross-site POST callback that would arrive without the
   `SameSite=Lax` transaction cookie, so the router does not serve it — tracked in
   [ROADMAP.md](./ROADMAP.md)), and `microsoftEntra`
@@ -329,6 +329,20 @@ four documented bounds of the opt-in:
 - **A session issued before 2.5.0-rc.3 has no `authTime`.** Enrolling a factor (the route or
   `enrollTotp()`) and minting an API token both need a recent sign-in, so such a session is
   asked to sign in again.
+- **Native session mode (`native`) has edges of its own.** A user with a second factor can't
+  use a native Apple / Google `id_token` sign-in (`403 mfa_required`; the browser flow runs
+  the step-up). Two concurrent refreshes with one refresh token revoke the family (the loser
+  reads as a replay) — `nativeSession()` is single-flight, a hand-rolled client must be too.
+  A custom-scheme redirect URI can be registered by another app; PKCE stops it redeeming an
+  intercepted code, a claimed `https://` URI stops it receiving one. See
+  [App backend](https://denext.dev/docs/app-backend#limitations).
+- **Deleting an account can't end stateless cookie sessions on other devices**, and Apple
+  token revocation needs the client-secret JWT (`native.apple.clientSecret`, minted from your
+  `.p8` key by you); without it deletion proceeds and reports `appleRevoked: false`.
+- **The `cors` config covers route handlers and the native auth endpoints only** — not pages,
+  Server Actions, the `/_denext/api-batch` endpoint or Live. The native auth endpoints answer
+  their preflights after `middleware.ts`, so a middleware guard must let `OPTIONS` under
+  `/auth` through.
 
 ### Project UI (`denext ui`)
 
@@ -371,9 +385,10 @@ four documented bounds of the opt-in:
   in; a device reaching the dev server by any other name (a second NIC's address, a DNS name
   you did not list) still gets a dead page. `--lan` binds only the LAN address, so
   `http://localhost` does not answer while it is on. Wildcard entries are not supported.
-- **Desktop dev attach is not supported yet.** A packaged `denext desktop` window cannot load
-  `denext dev` (tracked in [ROADMAP.md](./ROADMAP.md) as `denext desktop dev`); `denext desktop
-  run` serves a static export over loopback. The Capacitor half works (`denext mobile dev`).
+- **`denext desktop dev` runs the window under the `deno` CLI only.** A packaged app ignores
+  `DENEXT_DESKTOP_DEV_URL`, the target must be a loopback `http:` URL unless `--lan` opts in, and
+  with `--lan` the per-launch desktop token is not injected, so token-gated desktop features
+  (`openAuthSession`'s loopback sheet, the updater boot beacon) are refused in that mode.
 - **`denext mobile dev` edits `capacitor.config.*` (and, for iOS, `ios/App/App/Info.plist`)
   for the session.** Both are restored on every exit path Deno can observe; a `SIGKILL` or power
   loss leaves the edits and a backup in `.denext/`, restored by the next `mobile dev` or
@@ -389,7 +404,10 @@ four documented bounds of the opt-in:
 - **Android is compiled, not device-tested.** Every Android half of `denext/mobile` and the
   `denext mobile add` generators is unit-tested and builds with Gradle, but none has run on an
   Android device or emulator yet (the iOS halves were run on an iPhone; see
-  [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md)).
+  [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md)). Android performance is measured on an
+  emulator only: a whole-app comparison (T3 Code's Capacitor build against its React Native
+  build, gap 5 there) found Capacitor starting faster and using less memory, and React Native
+  scrolling a long list more smoothly. There are no real-device Android numbers yet.
 - **Android push needs `google-services.json`.** `@capacitor/push-notifications` registers with
   FCM through Firebase, so without `android/app/google-services.json` (from your Firebase
   project) registration fails; `denext mobile add push` only warns that it is missing. There is

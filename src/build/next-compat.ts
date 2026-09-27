@@ -169,6 +169,11 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "feature": u("src/feature.ts"),
     // `denext/mobile` — the Capacitor-shell client runtime; shares the one hooks instance.
     "mobile": u("src/mobile/mod.ts"),
+    // `denext/navigation` — StackLayout / TabsLayout / Sheet; client components whose hooks
+    // must share the one instance (React Native mode's navigator adapters import it too).
+    "navigation": u("src/navigation/mod.ts"),
+    // `denext/virtual-masonry` — VirtualMasonry; shares the one hooks instance.
+    "virtual-masonry": u("src/virtual-masonry.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
     "next-index": u("src/compat/next/index.ts"),
@@ -190,6 +195,9 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // The `denext/expo/*` shims (`expo-<name>`): React Native mode aliases `expo-*` to them,
     // and their hooks must share the one denext instance, as `denext/mobile`'s do.
     ...expoRuntimeEntries(u),
+    // React Native mode's shell overlay (`denext/react-native`): the react-native-web modules
+    // it replaces re-export from it (see react-native.ts), and its hooks share this instance.
+    "react-native": u("src/react-native/mod.ts"),
   };
 }
 
@@ -567,12 +575,16 @@ const DENEXT_RUNTIME_FILES: Record<string, string> = {
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
   "denext/mobile": "mobile.js",
+  "denext/navigation": "navigation.js",
+  "denext/virtual-masonry": "virtual-masonry.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
   "denext/remix": "remix.js",
   // The `denext/expo/*` shims (see expo-shims.ts).
   ...expoRuntimeFiles(),
+  // React Native mode's shell overlay (see react-native.ts).
+  "denext/react-native": "react-native.js",
 };
 
 /**

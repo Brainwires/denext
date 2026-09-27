@@ -1,7 +1,14 @@
 import type { Metadata, PageProps } from "denext/server";
 import { DocsShell } from "../../../../components/ui.tsx";
 import { SymbolBadges } from "../../../../components/api.tsx";
-import { byKind, groupForSlug, GROUPS, moduleSlug } from "../../../../lib/api.ts";
+import {
+  byKind,
+  groupForSlug,
+  GROUPS,
+  isExpoModule,
+  moduleSlug,
+  navGroups,
+} from "../../../../lib/api.ts";
 
 /** Pre-render one static page per module during `denext export`. */
 export function generateStaticParams(): Array<{ module: string }> {
@@ -49,7 +56,7 @@ export default function ApiModule(props: PageProps) {
     >
       <nav class="api-modnav" aria-label="API modules">
         <a href="/docs/api">All modules</a>
-        {GROUPS.map((m) => (
+        {navGroups(g.module).map((m) => (
           <a
             key={m.module}
             href={`/docs/api/${moduleSlug(m.module)}`}
@@ -59,6 +66,7 @@ export default function ApiModule(props: PageProps) {
             <code>{m.module}</code>
           </a>
         ))}
+        {isExpoModule(g.module) ? null : <a href="/docs/api#expo-shims">Expo shims</a>}
       </nav>
       <div class="api-sections">
         {sections.map((section) => (

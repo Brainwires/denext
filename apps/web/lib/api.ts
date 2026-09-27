@@ -28,6 +28,16 @@ export const moduleSlug = (m: string) => m.replace(/\//g, "-");
 
 export const groupForSlug = (seg: string) => GROUPS.find((g) => moduleSlug(g.module) === seg);
 
+/** Whether `module` is one of the `denext/expo/*` shims (React Native mode). */
+export const isExpoModule = (module: string) => module.startsWith("denext/expo/");
+
+/**
+ * The modules a module page's nav lists: the Expo shims on an Expo shim's page, the core
+ * entry points everywhere else (the ~40 shims would otherwise swamp every page's nav).
+ */
+export const navGroups = (module: string) =>
+  GROUPS.filter((g) => isExpoModule(g.module) === isExpoModule(module));
+
 /**
  * The kinds, in display order, with their section heading and a stable anchor id. deno doc
  * reports callable `const`s as `variable`; we surface those under "Values".

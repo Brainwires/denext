@@ -158,7 +158,7 @@ Ship the same app to the web, the desktop (via
 [`deno desktop`](https://docs.deno.com/runtime/desktop/) — one native binary, no Chromium) and
 iOS/Android (via [Capacitor](https://capacitorjs.com)); both native targets serve denext's static
 export. Scaffold with `denext create --desktop --capacitor`, then `deno task desktop` /
-`deno task mobile:ios` — see [Desktop & mobile](https://denext.dev/docs/desktop) and
+`deno task mobile:ios` — see [Desktop apps](https://denext.dev/docs/desktop), [Mobile (Capacitor)](https://denext.dev/docs/mobile) and
 [`examples/native`](./examples/native). Inside the shell, `denext/mobile` covers what a native
 app needs from the page — safe areas, the keyboard inset, the back swipe, app resume,
 opening links in the system browser and over-the-air UI updates — with no `@capacitor/*`
@@ -353,7 +353,7 @@ The full documentation is at [denext.dev](https://denext.dev/docs/getting-starte
 
 **Move an app over** — [Migrating from Next.js](https://denext.dev/docs/migrating) · [Migrating from Remix](https://denext.dev/docs/migrating-remix) · [Patching packages](https://denext.dev/docs/patches)
 
-**Ship it** — [Deployment & ops](https://denext.dev/docs/deploy) · [Databases](https://denext.dev/docs/database) · [Auth](https://denext.dev/docs/auth) · [Testing](https://denext.dev/docs/testing) · [Desktop & mobile](https://denext.dev/docs/desktop) · [Security posture](https://denext.dev/docs/security)
+**Ship it** — [Deployment & ops](https://denext.dev/docs/deploy) · [Databases](https://denext.dev/docs/database) · [Auth](https://denext.dev/docs/auth) · [Testing](https://denext.dev/docs/testing) · [Desktop apps](https://denext.dev/docs/desktop) · [Mobile (Capacitor)](https://denext.dev/docs/mobile) · [Security posture](https://denext.dev/docs/security)
 
 **Reference** — [Configuration](https://denext.dev/docs/config) · [API](https://denext.dev/docs/api) · [Writing a plugin](https://denext.dev/docs/plugins) · [MCP server](https://denext.dev/docs/mcp) · [DevTools](https://denext.dev/docs/devtools) · [Project UI](https://denext.dev/docs/ui) · [Changelog](https://denext.dev/docs/changelog)
 

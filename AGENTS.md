@@ -307,7 +307,7 @@ App extensions: `denext mobile add share-extension | widget --name <N> [--config
 Live reload on a device: `denext mobile dev --lan` points the app's `server.url` at
 `denext dev` for the session (restored on exit); a non-loopback host loads the dev assets only
 when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`). Docs:
-https://denext.dev/docs/desktop
+https://denext.dev/docs/mobile
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
 Safari included, whenever `momentumSafeScroll` is on (the default).
