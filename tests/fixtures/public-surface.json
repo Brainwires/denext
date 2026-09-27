@@ -2972,6 +2972,7 @@
     "registerComponentMeta:function",
     "registerFamily:function",
     "setFlightParser:function",
+    "setResumabilityReboot:function",
     "startClient:function",
     "startGlobalErrorClient:function"
   ],

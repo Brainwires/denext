@@ -93,6 +93,28 @@ Deno.test({
         "back navigation did not full-reload",
       );
     });
+
+    await t.step(
+      "a soft nav into a route with islands mounts them, though no page loaded the islands runtime",
+      async () => {
+        // Every page so far hydrated eagerly (no `client:*` island), so the islands runtime
+        // (the `lazy-*` chunk) was never loaded.
+        assert(
+          await page.evaluate(
+            "!performance.getEntriesByType('resource').some((e) => /\\/lazy-[^/]*\\.js/.test(e.name))",
+          ),
+          "the islands runtime is not loaded before the nav",
+        );
+        await page.evaluate(clickLink("/islands"));
+        await pollFor(page, "!!document.querySelector('[data-testid=islandcount]')");
+        await pollFor(
+          page,
+          "(document.querySelector('[data-testid=islandcount]').click(), " +
+            "!document.querySelector('[data-testid=islandcount]').textContent.includes('island: 0'))",
+        );
+        assert(await page.evaluate("window.__noReload === true"), "the nav did not full-reload");
+      },
+    );
   } finally {
     await page.close();
     await browser.close();

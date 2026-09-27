@@ -53,6 +53,12 @@ export class FakeNode {
   get firstChild(): FakeNode | null {
     return this.childNodes[0] ?? null;
   }
+
+  /** In a document: the topmost ancestor is its `<html>` (the node was attached under it). */
+  get isConnected(): boolean {
+    if (this.parentNode) return this.parentNode.isConnected;
+    return this instanceof FakeElement && this.tagName === "HTML";
+  }
 }
 
 class FakeText extends FakeNode {
@@ -144,6 +150,14 @@ export class FakeElement extends FakeNode {
   getAttribute(name: string): string | null {
     if (name === "style") return this.style.size ? this.style.cssText : null;
     return this.attributes.has(name) ? this.attributes.get(name)! : null;
+  }
+  // fallow-ignore-next-line unused-class-member -- the islands runtime calls it through the DOM
+  hasAttribute(name: string): boolean {
+    return this.getAttribute(name) !== null;
+  }
+  // fallow-ignore-next-line unused-class-member -- the islands runtime calls it through the DOM
+  getAttributeNames(): string[] {
+    return [...this.attributes.keys(), ...(this.style.size ? ["style"] : [])];
   }
   removeAttribute(name: string): void {
     if (name === "style") {

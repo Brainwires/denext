@@ -583,7 +583,7 @@ function flightRefreshBlock(
  */
 function flightLiveBlock(usesLive: boolean) {
   const clientImport =
-    `import { flightClientIds, startClient, parseFlight, setFlightParser } from "denext/client-runtime";${
+    `import { flightClientIds, startClient, parseFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
     }`;
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
@@ -751,7 +751,6 @@ function flightMain(catchBody: string, classBoot: string): string {
   } catch {
     return;
   }
-  if (flight == null) return;
   // Adopt server-transported signal state BEFORE hydration, so useSignal/useStore
   // resume from it instead of recomputing their initializers. Parked on a global
   // (no framework import) so the signal runtime stays off the shared chunk unless
@@ -772,7 +771,9 @@ function flightMain(catchBody: string, classBoot: string): string {
     } catch { /* ignore malformed state */ }
   }
 ${classBoot}  await registry.ensure(flight); // this page's islands (code-split chunks)
-  const tree = parseFlight(flight, registry);
+  // A null tree is a root-less islands page (every client part a carved island): nothing to
+  // hydrate at the root — startClient only installs navigation, and the islands boot below.
+  const tree = flight == null ? null : parseFlight(flight, registry);
   try {
     startClient(el, tree);
   } catch (err) {
@@ -858,6 +859,15 @@ ${enableRefresh}${liveRegister}
 // route reconstructs its tree through this app-wide registry (no bundle re-run) —
 // loading that route's island chunks first.
 setFlightParser((flight) => registry.ensure(flight).then(() => parseFlight(flight, registry)));
+// A soft nav into a route with islands (or resumable handlers) from a page that never loaded
+// the resumability runtime loads it now; once loaded, bootResumability owns this hook.
+setResumabilityReboot((islands, state) => {
+  if (islands?.length || document.querySelector("[data-dnx-h]")) {
+    import("denext/lazy")
+      .then((m) => m.bootResumability(registry, true, islands, state))
+      .catch((err) => console.warn("denext: resumability boot failed:", err && err.message));
+  }
+});
 
 ${liveConfigure}
 ${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"), classBoot)}

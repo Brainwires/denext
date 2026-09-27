@@ -20,6 +20,7 @@ import { beginSignalCollection, endSignalCollection } from "../runtime/signal-st
 import { CLASS_MARKER_ID, takeClassRendered } from "../runtime/render-scope.ts";
 import type { ClientRefInfo } from "../runtime/client-reference.ts";
 import { serializeFlight } from "./render-to-html-flight.ts";
+import { inlinedRootFlight } from "./flight-inline.ts";
 import { deferErrorMarker, serializeScalar } from "./flight-scalar.ts";
 import {
   type CarvedIsland,
@@ -540,8 +541,9 @@ export function renderToFlightStream(
  * when present. Exposed so the document assembler can emit the same tail.
  */
 export function flightTailScripts(tail: FlightStreamTail): string {
+  // An all-islands page inlines `null` for its root (see flight-inline.ts).
   let out = `<script id="__denext_flight" type="application/json">${
-    serializeFlight(tail.flight)
+    serializeFlight(inlinedRootFlight(tail.flight))
   }</script>`;
   if (tail.islands && tail.islands.length > 0) {
     const map: Record<string, unknown> = {};

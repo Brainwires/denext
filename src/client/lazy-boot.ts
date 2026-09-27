@@ -5,18 +5,109 @@
 // apps with no lazy islands bundle none of the deferred-hydration runtime — the
 // same "tiny by default" discipline the `denext/live` subpath follows.
 
-import { createRoot, hydrateRoot } from "./reconciler.ts";
+import { createRoot, hydrateRoot, type Root } from "./reconciler.ts";
 import { type ClientRegistry, ensureFlightModules, parseFlight } from "./flight-client.ts";
 import { registerLazyIsland, resetLazyIslands } from "./lazy-hydrate.ts";
 import { installQrlDispatch } from "./qrl-dispatch.ts";
-import { setResumabilityReboot } from "./navigation.ts";
+import { setResumabilityReboot, setRootlessMount } from "./navigation.ts";
+import { ROOT_ID } from "../server/root-id.ts";
 import { adoptSignalState } from "../runtime/signal-state.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import type { IslandPayload } from "../jsx/render-to-html-flight.ts";
-import { type HydrationStrategy, ISLAND_MARKER_ATTR } from "../runtime/lazy-directive.ts";
+import {
+  type HydrationStrategy,
+  ISLAND_ID_ATTR,
+  ISLAND_MARKER_ATTR,
+} from "../runtime/lazy-directive.ts";
+import type { VNode, VNodeChild } from "../jsx/types.ts";
 
 /** Attribute marking an island wrapper whose hydration has already run. */
 const HYDRATED_ATTR = "data-dnx-hydrated";
+
+/**
+ * The live island roots, keyed by wrapper, with the island id each was hydrated under — so an
+ * island whose wrapper the page root removed or re-keyed can be unmounted (its effects clean up)
+ * instead of outliving its DOM.
+ */
+const islandRoots = new Map<Element, { root: Root; id: string | null }>();
+
+/** Unmount one island root and unmark its wrapper (a re-keyed wrapper then mounts afresh). */
+function unmountIsland(wrapper: Element, root: Root): void {
+  islandRoots.delete(wrapper);
+  wrapper.removeAttribute(HYDRATED_ATTR);
+  try {
+    root.unmount();
+  } catch { /* a torn-down island is the goal either way */ }
+}
+
+/**
+ * Unmount every island whose wrapper is gone from the document, or now carries another island's
+ * id — what a retained root's reconcile of a new route (or a refresh) leaves behind.
+ */
+function sweepIslands(): void {
+  for (const [wrapper, { root, id }] of islandRoots) {
+    if (!wrapper.isConnected || wrapper.getAttribute(ISLAND_ID_ATTR) !== id) {
+      unmountIsland(wrapper, root);
+    }
+  }
+}
+
+/**
+ * A root-less islands page's first Flight navigation (see navigation.ts), rendering `tree`:
+ *
+ * - `adopt` (a refresh of the same route — a Server Action's `refresh()`, a revalidation):
+ *   hydrate `tree` onto the current markup. Matching elements are adopted and patched (text,
+ *   replaced or added or removed nodes), and each island wrapper is adopted as a foreign host,
+ *   so its root and state survive. The static elements' attributes are cleared first, since a
+ *   hydration only sets the new props: an attribute the refreshed output dropped must not stay.
+ *   A difference is the new data, not a mismatch, so it is not reported.
+ * - otherwise (another route): unmount every island, clear the markup and mount fresh. A
+ *   `null` tree only prepares the empty root, for a navigation whose re-run entry renders it.
+ */
+function mountRootlessPage(tree: VNode | null, adopt: boolean): Root {
+  const container = document.getElementById(ROOT_ID)!;
+  let root: Root;
+  if (adopt && tree) {
+    clearStaticAttributes(container);
+    root = hydrateRoot(container, peelDocumentTags(tree) as VNode, { onRecoverableError() {} });
+  } else {
+    resetLazyIslands();
+    for (const [wrapper, { root }] of islandRoots) unmountIsland(wrapper, root);
+    container.textContent = "";
+    root = createRoot(container);
+    if (tree) root.render(peelDocumentTags(tree) as VNode);
+  }
+  // Every later render into this root is peeled the same way, so it reconciles in place.
+  return { render: (next) => root.render(peelDocumentTags(next) as VNode), unmount: root.unmount };
+}
+
+/** Tags the HTML parser drops inside the page container (their children stay in place). */
+const DOCUMENT_TAGS = new Set(["html", "head", "body"]);
+
+/**
+ * A root layout's `<html>`/`<head>`/`<body>`, replaced by their children: the server HTML nests
+ * them in the page container, where the browser's parser drops the tags and keeps the content —
+ * so this is the tree the live markup actually has, and what adoption must hydrate against.
+ */
+function peelDocumentTags(node: VNodeChild): VNodeChild {
+  if (Array.isArray(node)) return node.map(peelDocumentTags) as unknown as VNodeChild;
+  const v = node as VNode | null;
+  if (v && typeof v === "object" && DOCUMENT_TAGS.has(v.type as string)) {
+    return peelDocumentTags(v.props.children as VNodeChild);
+  }
+  return node;
+}
+
+/** Remove every attribute below `el`, except on island wrappers (and inside them: not ours). */
+function clearStaticAttributes(el: Element): void {
+  for (const child of Array.from(el.childNodes)) {
+    if (child.nodeType !== 1) continue;
+    const c = child as Element;
+    if (c.hasAttribute(ISLAND_MARKER_ATTR)) continue;
+    for (const name of c.getAttributeNames()) c.removeAttribute(name);
+    clearStaticAttributes(c);
+  }
+}
 
 /**
  * Boot the deferred half of resumability: install delegated qrl dispatch (so
@@ -47,6 +138,8 @@ export function bootResumability(
   setResumabilityReboot((islands, signalState) =>
     bootResumability(registry, true, islands, signalState)
   );
+  setRootlessMount(mountRootlessPage);
+  sweepIslands();
   installQrlDispatch();
   adoptInitialState(eager, signalStateIn);
   const islands = islandsIn ? islandsByid(islandsIn) : readIslandsIsland();
@@ -104,8 +197,12 @@ async function hydrateIsland(
   try {
     await ensureFlightModules(reg, flight); // code-split islands: load this island's chunks
     const tree = parseFlight(flight, reg) as never;
-    if (mount) createRoot(wrapper).render(tree);
-    else hydrateRoot(wrapper, tree);
+    const id = wrapper.getAttribute(ISLAND_ID_ATTR);
+    if (mount) {
+      const root = createRoot(wrapper);
+      islandRoots.set(wrapper, { root, id });
+      root.render(tree);
+    } else islandRoots.set(wrapper, { root: hydrateRoot(wrapper, tree), id });
   } catch (err) {
     console.warn("denext: island hydration failed:", (err as Error)?.message);
   }

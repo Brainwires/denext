@@ -18,6 +18,7 @@ import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cach
 import type { RouteManifest, SegmentLevel } from "../src/router/manifest.ts";
 import type { PageProps } from "../src/server/types.ts";
 import type { VNode } from "../src/jsx/types.ts";
+import { tagClientExports } from "../src/runtime/client-reference.ts";
 
 /**
  * A one-page manifest. `levels` (a root segment level, as the scanner produces for any
@@ -546,8 +547,17 @@ Deno.test("Flight path: notFound() inside a streamed hole carries the not-found 
     read();
     return notFound();
   };
+  // A client component with no directive: the page ROOT hydrates, so its Flight is inlined
+  // (a page of only carved islands, or of no client parts, inlines `null` instead).
+  const Clock = (): VNode => h("time", null, "now");
+  tagClientExports({ Clock } as Record<string, unknown>, "c_clock");
   const Page = (_p: PageProps): VNode =>
-    h("main", null, h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Slow, null) }));
+    h(
+      "main",
+      null,
+      h(Clock, null),
+      h(Suspense, { fallback: h("p", null, "Loading…"), children: h(Slow, null) }),
+    );
   const app = appWith(
     { default: Page },
     {

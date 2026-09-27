@@ -491,13 +491,20 @@ function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOpt
     syncScript(parsed, "__denext_data");
     // Flight island: sync it too so a soft-nav to a Flight route hydrates from the new
     // payload (and a nav to an isomorphic route clears a stale one).
-    syncScript(parsed, "__denext_flight");
+    // The re-run entry also reads the incoming page's lazy islands + signal state, not ours.
+    for (const id of ["__denext_flight", "__denext_islands", "__denext_state"]) {
+      syncScript(parsed, id);
+    }
     // A retained root only reconciles in place when the incoming page re-runs a client
-    // entry (→ `startClient` → `root.render`). A STATIC target ships no entry, so nothing
-    // would ever render it: drop the root (its tree unmounts) and swap the markup in, or the
-    // URL would change while the old page stayed on screen.
-    if (retainedRoot && !entrySrc) discardRetainedRoot();
+    // entry (→ `startClient` → `root.render`). A STATIC target ships no entry, and a
+    // root-less islands target (its Flight island is `null`) hydrates only its islands, so
+    // nothing would ever render it: drop the root (its tree unmounts) and swap the markup in,
+    // or the URL would change while the old page stayed on screen.
+    const rootless = parsed.getElementById("__denext_flight")?.textContent === "null";
+    if (retainedRoot && (!entrySrc || rootless)) discardRetainedRoot();
     swapRootHtml(container, newRoot);
+    // Unmount the islands whose wrapper the swap removed (the incoming ones boot from the entry).
+    resumabilityReboot?.([]);
     emit();
     scrollAfterNav(url, options);
     if (entrySrc) await injectRouteEntry(entrySrc, url);
@@ -505,7 +512,7 @@ function applyHtmlNav(body: string, url: URL, href: string, options: NavigateOpt
 }
 
 /** Unmount and forget the retained root (the next `startClient` hydrates fresh). */
-function discardRetainedRoot(): void {
+export function discardRetainedRoot(): void {
   const root = retainedRoot ?? globalWin.__dnxRoot;
   retainedRoot = globalWin.__dnxRoot = null;
   try {
@@ -570,10 +577,10 @@ async function navigateSameOrigin(
   const { body, flight, iso } = loaded;
   // Flight route: the server sent a JSON payload, not HTML. Parse it through the app-wide
   // client registry and reconcile the retained root in place — no HTML parse, no bundle
-  // re-run. If we can't (no parser / no retained root), hard navigate rather than
-  // DOMParser-ing JSON.
+  // re-run. A root-less islands page mounts a fresh root on its first Flight nav. If we can't
+  // (no parser / no root to render into), hard navigate rather than DOMParser-ing JSON.
   if (flight) {
-    if (flightParse && retainedRoot) {
+    if (flightParse && (retainedRoot || canMountRootless())) {
       // Parse first (the parser may load this route's island chunks — async), then commit
       // the DOM synchronously inside the view transition: an async transition callback is
       // aborted by the browser when it outlives the transition ("invalid state").
@@ -654,7 +661,12 @@ function applyIsoNav(body: string, url: URL, href: string, options: NavigateOpti
     swapRouteStyles(payload.styles);
     emit();
     scrollAfterNav(url, options);
+    // A root-less islands page has no root for the entry to render into: give it a fresh one
+    // (its islands are unmounted first).
+    if (canMountRootless()) mountRootlessPage(null, false);
     await injectRouteEntry(payload.entry, url); // resolves once the re-run entry has reconciled
+    // The new route has no islands: unmount the ones whose wrapper the reconcile removed.
+    resumabilityReboot?.([]);
   });
 }
 
@@ -715,6 +727,9 @@ function commitFlightNav(
   href: string,
   options: NavigateOptions,
 ): void {
+  // A refresh of the current route (a Server Action's `refresh()`, a revalidation), read before
+  // history moves: a root-less islands page adopts its markup instead of re-mounting it.
+  const sameRoute = url.pathname === location.pathname;
   // Update history first so route hooks read the correct URL after render.
   updateHistory(url, options);
 
@@ -727,7 +742,8 @@ function commitFlightNav(
   scrollAfterNav(url, options);
 
   try {
-    retainedRoot!.render(tree);
+    if (retainedRoot) retainedRoot.render(tree);
+    else mountRootlessPage(tree, sameRoute);
   } catch {
     // The render threw after we committed history/title — recover with a hard nav
     // so the document isn't left half-updated.
@@ -741,6 +757,22 @@ function commitFlightNav(
   // its own Flight. The hook is null until the resumability runtime has loaded (an
   // app without islands never registers it, and pays nothing here).
   resumabilityReboot?.(payload.islands, payload.signalState);
+}
+
+/** Whether this is a root-less islands page the resumability runtime can mount a root for. */
+function canMountRootless(): boolean {
+  return !retainedRoot && !!globalWin.__dnxRootless && !!rootlessMount;
+}
+
+/**
+ * The first Flight navigation of a root-less islands page (its document inlined no root Flight;
+ * see `startClient`): the resumability runtime's {@link rootlessMount} renders `tree` — adopting
+ * the current markup and its live islands for a refresh of the same route, else into a fresh
+ * root. That root is retained, so later navigations reconcile in place as on any Flight page.
+ */
+function mountRootlessPage(tree: VNode | null, adopt: boolean): void {
+  globalWin.__dnxRootless = false;
+  retainedRoot = globalWin.__dnxRoot = rootlessMount!(tree, adopt);
 }
 
 /** Write the `#__denext_data` island from a hydration-data object (Flight nav). */
@@ -771,6 +803,19 @@ export function setResumabilityReboot(
   fn: (islands?: IslandPayload[], signalState?: Record<string, unknown>) => void,
 ): void {
   resumabilityReboot = fn;
+}
+
+/**
+ * Renders a root-less islands page's first Flight navigation into a root (see
+ * {@link mountRootlessPage}) — registered by the resumability runtime, which owns the island
+ * roots it must keep (a refresh adopts them) or unmount (another route). Injected like
+ * {@link resumabilityReboot}, keeping that code off the shared chunk.
+ */
+let rootlessMount: ((tree: VNode | null, adopt: boolean) => Root) | null = null;
+
+/** Register the root-less page mount (called by the resumability runtime). */
+export function setRootlessMount(fn: (tree: VNode | null, adopt: boolean) => Root): void {
+  rootlessMount = fn;
 }
 
 /**
@@ -906,7 +951,7 @@ let retainedRoot: Root | null = null;
  * correct. Embedding two independent denext apps on one page is unsupported — the
  * second `startClient` would reconcile its tree into the first app's container.
  */
-const globalWin = globalThis as { __dnxRoot?: Root | null };
+const globalWin = globalThis as { __dnxRoot?: Root | null; __dnxRootless?: boolean };
 
 /**
  * Mount (first load) or reconcile (soft nav) the route tree and enable client-side
@@ -914,12 +959,22 @@ const globalWin = globalThis as { __dnxRoot?: Root | null };
  * server markup and retains the root; on a soft nav's bundle re-run it renders the
  * new tree through the retained root, reconciling in place.
  *
+ * A `null` tree is a root-less islands page: every client part of it is a carved `client:*`
+ * island that hydrates in its own root, so the page root has nothing to hydrate (its server
+ * inlined no root Flight). Only navigation is installed; the first Flight navigation away
+ * mounts a fresh root ({@link mountRootlessPage}).
+ *
  * @param container The hydration root element.
- * @param tree The route's virtual-node tree.
+ * @param tree The route's virtual-node tree, or `null` for a root-less islands page.
  */
-export function startClient(container: Element, tree: VNode): void {
+export function startClient(container: Element, tree: VNode | null): void {
   const root = retainedRoot ?? globalWin.__dnxRoot;
-  if (root) {
+  if (tree === null) {
+    if (!root) {
+      revealStreamedHoles(); // the islands hydrate against resolved content, not a fallback
+      globalWin.__dnxRootless = true;
+    }
+  } else if (root) {
     root.render(tree); // soft nav: reconcile in place (preserves state)
   } else {
     // Ordering safety: reveal any streamed hole not yet swapped by the inline
