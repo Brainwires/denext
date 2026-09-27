@@ -19,7 +19,7 @@ import type {
 } from "../compat/react-types.ts";
 
 /** A stable identity for a VNode among its siblings, used to keep lists reconciled. */
-export type Key = string | number | null | undefined;
+export type Key = string | number | bigint | null | undefined;
 
 /** A component is a function that receives props and returns a renderable node. */
 export type Component<P = Record<string, unknown>> = (

@@ -116,29 +116,40 @@ function commitPlacement(handle: RootHandle, wipRoot: Fiber): void {
  *     Reset so the next commit starts clean.
  */
 function clearCommittedFlags(wipRoot: Fiber): void {
-  walk(wipRoot, (f) => {
-    // A fresh mount's deferred ref attaches HERE — after commitPlacement put the node in the
-    // DOM, before layout effects run — never in `completeWork` (render). Firing a ref callback
-    // during render breaks libraries that guard against it (Base UI's "Cannot call an event
-    // handler while rendering"). An update's ref rode its commit-phase `applyProps`.
-    if ((f.flags & RefAttach) !== 0) {
-      updateRef(f, undefined, f.vnode.props?.ref, f.stateNode as Element);
+  clearFiberFlags(wipRoot);
+}
+
+/**
+ * Reset one fiber, then descend only while its subtree carries any flag (`subtreeFlags` is
+ * read BEFORE the reset). A subtree with no flag at all — not even `Rendered` — has nothing
+ * to reset, no deferred ref and no hook baseline to promote: every fiber in it is a bailed
+ * clone (flags zeroed by createWorkInProgress) or a current fiber an earlier commit already
+ * cleared. So a re-render of a long list of bailed rows no longer walks every row's subtree.
+ */
+function clearFiberFlags(f: Fiber): void {
+  const descend = f.subtreeFlags !== NoFlags;
+  // A fresh mount's deferred ref attaches HERE — after commitPlacement put the node in the
+  // DOM, before layout effects run — never in `completeWork` (render). Firing a ref callback
+  // during render breaks libraries that guard against it (Base UI's "Cannot call an event
+  // handler while rendering"). An update's ref rode its commit-phase `applyProps`.
+  if ((f.flags & RefAttach) !== 0) {
+    updateRef(f, undefined, f.vnode.props?.ref, f.stateNode as Element);
+  }
+  f.flags = NoFlags;
+  f.subtreeFlags = NoFlags;
+  f.deletions = null;
+  // Promote each stateful hook's rendered value to "committed" — the baseline the no-op
+  // state bailout (begin-work) compares a pending update against. Only fibers that actually
+  // rendered this pass need it: a bailed fiber's hook cells are unchanged, so `committed`
+  // already equals `rendered`.
+  if (f.didRender) {
+    if (f.hooks) {
+      for (const cell of f.hooks) if ("rendered" in cell) cell.committed = cell.rendered;
     }
-    f.flags = NoFlags;
-    f.subtreeFlags = NoFlags;
-    f.deletions = null;
-    // Promote each stateful hook's rendered value to "committed" — the baseline the no-op
-    // state bailout (begin-work) compares a pending update against. Only fibers that actually
-    // rendered this pass need it: a bailed fiber's hook cells are unchanged, so `committed`
-    // already equals `rendered`. Skipping them keeps this per-commit walk O(rendered hooks)
-    // instead of O(all hooks in the tree), which matters for a large mostly-bailed tree.
-    if (f.didRender) {
-      if (f.hooks) {
-        for (const cell of f.hooks) if ("rendered" in cell) cell.committed = cell.rendered;
-      }
-      f.didRender = false;
-    }
-  });
+    f.didRender = false;
+  }
+  if (!descend) return;
+  for (let c = f.child; c !== null; c = c.sibling) clearFiberFlags(c);
 }
 
 /**

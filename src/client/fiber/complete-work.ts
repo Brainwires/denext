@@ -34,13 +34,36 @@ function createHostInstance(wip: Fiber): Element {
   return ns !== null ? doc.createElementNS(ns, hType) : doc.createElement(hType);
 }
 
+/**
+ * Whether a host's props differ in anything but `children` (reconciled separately). Shallow
+ * identity, like applyProps' own per-prop `oldValue === value` guard — so a `false` here
+ * means applyProps would change nothing (it would only re-register identical listeners).
+ */
+function hostPropsChanged(
+  prev: Record<string, unknown> | null | undefined,
+  next: Record<string, unknown> | null | undefined,
+): boolean {
+  if (prev === next) return false;
+  if (prev == null || next == null) return true;
+  let count = 0;
+  for (const k in next) {
+    if (k === "children") continue;
+    if (next[k] !== prev[k] || !(k in prev)) return true;
+    count++;
+  }
+  for (const k in prev) if (k !== "children") count--;
+  return count !== 0;
+}
+
 function completeHost(wip: Fiber): void {
   if (isHydrating) popHydrationCursor();
   if (!wip.listeners) wip.listeners = wip.alternate?.listeners ?? new Map();
   if (wip.alternate !== null) {
-    // Update: applyProps + re-sync deferred to the commit (mutation) phase.
+    // Update: applyProps + re-sync deferred to the commit (mutation) phase — only when a
+    // prop other than `children` changed (React's prepareUpdate diff). applyProps over
+    // equal props is a no-op, so a re-rendered list of unchanged rows commits no work.
     stampFiber(wip.stateNode, wip); // keep the reverse map on the live buffer
-    wip.flags |= Update;
+    if (hostPropsChanged(wip.alternate.vnode.props, wip.vnode.props)) wip.flags |= Update;
     return;
   }
   // Fresh mount (or a hydration-adopted node): build off-DOM. Apply every prop EXCEPT the ref
@@ -61,6 +84,9 @@ function completeHost(wip: Fiber): void {
 
 function completeText(wip: Fiber): void {
   if (wip.alternate !== null) {
+    // Same text as last render: nothing to do, without reading the DOM (React compares
+    // the old and new text the same way). Otherwise compare against the live node.
+    if (wip.alternate.vnode.props.nodeValue === wip.vnode.props.nodeValue) return;
     const value = String(wip.vnode.props.nodeValue ?? "");
     if ((wip.stateNode as Text).nodeValue !== value) wip.flags |= Update;
   } else if (isHydrating) {

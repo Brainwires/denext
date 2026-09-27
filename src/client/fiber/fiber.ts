@@ -152,6 +152,12 @@ export const RefAttach = 32;
  * instead of walking the whole tree to find that a subtree has no effects.
  */
 export const HasEffect = 64;
+/**
+ * This component fiber re-ran its render this pass (mirrors `didRender`). Carries no commit
+ * work of its own; it lets `clearCommittedFlags` prune by `subtreeFlags` — a subtree with no
+ * flags at all has nothing to reset and no hook baselines to promote.
+ */
+export const Rendered = 128;
 
 // ---- Priority lanes --------------------------------------------------------
 
@@ -345,6 +351,51 @@ export function createFiber(tag: FiberTag, vnode: VNode): Fiber {
     boundary: null,
     inherited: new Map(),
     contexts: new Map(),
+    // Every optional field is declared up front so all fibers share ONE hidden class. Added
+    // lazily (in whatever order a fiber's life assigns them) they left V8 with many shapes,
+    // and `carryOver`'s ~40 property copies per re-rendered fiber went megamorphic — the
+    // single largest cost of re-rendering a long list.
+    hooks: undefined,
+    forceRender: undefined,
+    stateUpdate: undefined,
+    didRender: undefined,
+    insertionEffects: undefined,
+    pendingEffects: undefined,
+    passiveEffects: undefined,
+    provParent: undefined,
+    provValue: undefined,
+    readContexts: undefined,
+    debugValues: undefined,
+    listeners: undefined,
+    attachedRef: undefined,
+    refCleanup: undefined,
+    formStatus: undefined,
+    strict: undefined,
+    lastImpl: undefined,
+    profiler: undefined,
+    underProfiler: undefined,
+    actualDuration: undefined,
+    selfBaseDuration: undefined,
+    profilerMounted: undefined,
+    showingFallback: undefined,
+    offscreen: undefined,
+    primaryCount: undefined,
+    hiddenEls: undefined,
+    hidden: undefined,
+    listState: undefined,
+    listIndex: undefined,
+    listOwnerState: undefined,
+    __error: undefined,
+    pendingElement: undefined,
+    classInstance: undefined,
+    __snapshot: undefined,
+    __prevProps: undefined,
+    __prevState: undefined,
+    bailed: undefined,
+    idParentScope: undefined,
+    idScope: undefined,
+    hydrationCursor: undefined,
+    unmounted: undefined,
   };
 }
 
@@ -465,22 +516,110 @@ export function childrenDom(fiber: Fiber): (Element | Text)[] {
   return out;
 }
 
-/** Arrange `desired` nodes as the exact ordered children of `parent`. */
+/** Place `node` before `anchor`: appendChild at the end, as React does; else insertBefore. */
+function placeBefore(parent: Element, node: Element | Text, anchor: Node | null): void {
+  if (anchor === null) parent.appendChild(node);
+  else parent.insertBefore(node, anchor);
+}
+
+/**
+ * Arrange `desired` nodes as the exact ordered children of `parent`, with the fewest DOM
+ * moves: the common prefix and suffix stay put, and in the changed middle only nodes outside
+ * the longest run already in order (a longest increasing subsequence of their current
+ * positions) are moved — so an append, prepend, insert, removal, swap or single move touches
+ * only the nodes that changed. The current children are read ONCE, in order; indexing the
+ * live `childNodes` per position instead is quadratic in a real browser, whose NodeList
+ * index cache every insertBefore invalidates (a 100k-row reorder took seconds). Every move
+ * is an `insertBefore` against a known reference node, never a position.
+ */
 export function syncChildren(parent: Element, desired: (Element | Text)[]): void {
   // Nothing to place into an empty parent (a root whose tree rendered only `null`): no DOM
   // is touched, so a bare container stub without `childNodes` works, as it does in React.
-  if (desired.length === 0 && (parent.childNodes?.length ?? 0) === 0) return;
-  for (let i = 0; i < desired.length; i++) {
-    const node = desired[i];
-    const current = parent.childNodes[i] ?? null;
-    if (current === node) continue;
-    // Append with appendChild, as React does; insertBefore only when a node follows.
-    if (current === null) parent.appendChild(node);
-    else parent.insertBefore(node, current);
+  const oldLen = parent.childNodes?.length ?? 0;
+  if (oldLen === 0) {
+    for (const node of desired) placeBefore(parent, node, null);
+    return;
   }
-  while (parent.childNodes.length > desired.length) {
-    parent.removeChild(parent.childNodes[parent.childNodes.length - 1]);
+  const current: Node[] = Array.from(parent.childNodes);
+  const newLen = desired.length;
+  let start = 0;
+  while (start < newLen && start < oldLen && desired[start] === current[start]) start++;
+  let newEnd = newLen;
+  let oldEnd = oldLen;
+  while (newEnd > start && oldEnd > start && desired[newEnd - 1] === current[oldEnd - 1]) {
+    newEnd--;
+    oldEnd--;
   }
+  if (start === newEnd && start === oldEnd) return; // already in order
+  syncMiddle(parent, desired, current, start, newEnd, oldEnd);
+}
+
+/**
+ * The changed middle of {@link syncChildren}: `desired[start, newEnd)` must replace
+ * `current[start, oldEnd)`. Nodes of the old middle that are not wanted are removed; the
+ * wanted ones that already sit in increasing order stay; everything else is inserted,
+ * back to front, before its successor.
+ */
+function syncMiddle(
+  parent: Element,
+  desired: (Element | Text)[],
+  current: Node[],
+  start: number,
+  newEnd: number,
+  oldEnd: number,
+): void {
+  const count = newEnd - start;
+  // Old position of each node of the old middle (the prefix/suffix are fixed, and a desired
+  // node appears once, so no middle node of `desired` sits in the prefix or suffix).
+  const oldPos = new Map<Node, number>();
+  for (let i = start; i < oldEnd; i++) oldPos.set(current[i], i);
+  // For each desired middle node: its old position, or -1 for a node new to `parent`.
+  const sources = new Int32Array(count);
+  for (let j = 0; j < count; j++) {
+    const pos = oldPos.get(desired[start + j]);
+    sources[j] = pos === undefined ? -1 : pos;
+    if (pos !== undefined) oldPos.delete(desired[start + j]);
+  }
+  // Whatever is left in `oldPos` is not wanted here any more (a deletion normally removed it
+  // already; this catches a node the reconciler never inserted).
+  for (const node of oldPos.keys()) parent.removeChild(node);
+  const stable = longestIncreasingRun(sources);
+  let anchor: Node | null = newEnd < desired.length ? desired[newEnd] : null;
+  for (let j = count - 1; j >= 0; j--) {
+    const node = desired[start + j];
+    if (stable[j] !== 1) placeBefore(parent, node, anchor);
+    anchor = node;
+  }
+}
+
+/**
+ * Mark (1) the members of one longest strictly increasing subsequence of `sources`,
+ * skipping `-1` entries (new nodes, always placed). O(n log n) patience sort with
+ * predecessor links.
+ */
+function longestIncreasingRun(sources: Int32Array): Uint8Array {
+  const n = sources.length;
+  const marks = new Uint8Array(n);
+  const prev = new Int32Array(n);
+  // tails[k]: index (into sources) of the smallest tail of an increasing run of length k+1.
+  const tails = new Int32Array(n);
+  let len = 0;
+  for (let i = 0; i < n; i++) {
+    const v = sources[i];
+    if (v < 0) continue;
+    let lo = 0;
+    let hi = len;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (sources[tails[mid]] < v) lo = mid + 1;
+      else hi = mid;
+    }
+    prev[i] = lo > 0 ? tails[lo - 1] : -1;
+    tails[lo] = i;
+    if (lo === len) len++;
+  }
+  for (let i = len > 0 ? tails[len - 1] : -1; i >= 0; i = prev[i]) marks[i] = 1;
+  return marks;
 }
 
 /**

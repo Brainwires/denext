@@ -25,7 +25,7 @@ import { toError } from "../../runtime/error-boundary.ts";
 import { normalizeChildren } from "../vnode-utils.ts";
 import { propsAndContextEqual, providerContexts } from "../context-map.ts";
 import { isClassComponent } from "../../compat/class-detect.ts";
-import { type Fiber, NoLane, type SuspenseListState } from "./fiber.ts";
+import { type Fiber, NoLane, Rendered, type SuspenseListState } from "./fiber.ts";
 import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
 import { renderLanes } from "./scheduler.ts";
 
@@ -99,6 +99,7 @@ function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
   wip.contexts = wip.inherited;
   const rendered = renderComponent(wip);
   wip.didRender = true; // this fiber re-ran its render → its hook baselines need promotion at commit
+  wip.flags |= Rendered; // …and lets the commit's flag reset prune clean subtrees
   if (__DENEXT_CLASS_COMPONENTS__ && wip.bailed) {
     // shouldComponentUpdate/PureComponent bailed. Like the function bailout,
     // still descend into children that have their own pending work, so a

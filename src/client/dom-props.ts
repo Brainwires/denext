@@ -260,6 +260,46 @@ function parseEvent(prop: string): ParsedEvent {
   return { type: REACT_EVENT_MAP[lower] ?? lower, capture };
 }
 
+// React's SyntheticEvent members that denext's native event lacks, installed as own
+// properties on each dispatched event (never on `Event.prototype`, so nothing leaks into
+// code outside denext's handlers). Shared functions read `this`, so no per-event closures.
+function persist(): void {} // a no-op since React 17 (events are never pooled)
+function isPersistent(): boolean {
+  return true;
+}
+function isDefaultPrevented(this: Event): boolean {
+  return this.defaultPrevented === true;
+}
+function isPropagationStopped(this: Event): boolean {
+  // `cancelBubble` reads back the event's stop-propagation flag (DOM Living Standard).
+  return this.cancelBubble === true;
+}
+const SYNTHETIC_MEMBERS: Record<string, unknown> = {
+  persist,
+  isPersistent,
+  isDefaultPrevented,
+  isPropagationStopped,
+};
+
+/**
+ * React-compat: give the native event the SyntheticEvent surface libraries call.
+ * `nativeEvent` — libraries (Base UI / floating-ui-react, etc.) reach the DOM event via
+ * `event.nativeEvent` (and gate on `"nativeEvent" in event`); React's
+ * `SyntheticEvent.nativeEvent` IS the DOM event and denext's event already is that DOM
+ * event, so the self-reference is faithful. `persist()` / `isPersistent()` — React 17+
+ * keeps them as no-op / `true` (react-native-web's ScrollView calls `e.persist()` on every
+ * scroll). `isDefaultPrevented()` / `isPropagationStopped()` read the native flags. Runs
+ * once per event: a bubbling event keeps the members for the next handler.
+ */
+function addSyntheticEventMembers(event: unknown): void {
+  if (event == null || typeof event !== "object" || "nativeEvent" in event) return;
+  try {
+    const e = event as Record<string, unknown>;
+    for (const k in SYNTHETIC_MEMBERS) if (!(k in e)) e[k] = SYNTHETIC_MEMBERS[k];
+    e.nativeEvent = event;
+  } catch { /* non-extensible event (rare) — leave as-is */ }
+}
+
 function setListener(
   el: Element,
   state: HostState,
@@ -281,17 +321,7 @@ function setListener(
       // transition is in flight.)
       beginEventDispatch();
       try {
-        // React-compat: libraries (Base UI / floating-ui-react, etc.) reach the DOM
-        // event via `event.nativeEvent` (and gate on `"nativeEvent" in event`). denext
-        // passes the native event directly, so point `.nativeEvent` at itself — React's
-        // `SyntheticEvent.nativeEvent` IS the DOM event, and denext's event already is
-        // that DOM event, so the self-reference is faithful. Without it `event.nativeEvent`
-        // is `undefined` and code like `"composedPath" in event.nativeEvent` throws.
-        if (event != null && typeof event === "object" && !("nativeEvent" in event)) {
-          try {
-            (event as { nativeEvent?: Event }).nativeEvent = event;
-          } catch { /* non-extensible event (rare) — leave as-is */ }
-        }
+        addSyntheticEventMembers(event);
         const r = handler(event) as unknown;
         if (r && typeof (r as { then?: unknown }).then === "function") {
           (r as Promise<unknown>).then(undefined, (err) => onError(err));

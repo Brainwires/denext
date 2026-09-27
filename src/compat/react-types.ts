@@ -19,7 +19,7 @@ import type { Context as RuntimeContext } from "../runtime/hooks.ts";
 import type { VNode } from "../jsx/types.ts";
 
 /** A stable list identity. */
-export type Key = string | number;
+export type Key = string | number | bigint;
 
 // --- Nodes & elements --------------------------------------------------------
 
@@ -272,6 +272,8 @@ export interface SyntheticEvent<T = Element, E = Event> {
   isPropagationStopped(): boolean;
   /** No-op retained for React API compatibility. */
   persist(): void;
+  /** Always `true` (React 17+ never pools events); retained for React API compatibility. */
+  isPersistent(): boolean;
 }
 /** A change event (inputs). */
 export interface ChangeEvent<T = Element> extends SyntheticEvent<T> {
