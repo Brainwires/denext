@@ -37,6 +37,8 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_feature": "src/feature.ts",
   // The Capacitor-shell client runtime — imported only from "use client" modules.
   "denext_mobile": "src/mobile/mod.ts",
+  // VirtualMasonry — a client-only subpath of its own (VirtualList users bundle none of it).
+  "denext_virtual-masonry": "src/virtual-masonry.ts",
 };
 
 /** denext runtime specifiers → their prebuilt runtime file (compat client graph). */
@@ -51,6 +53,7 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
   "denext/mobile": "mobile.js",
+  "denext/virtual-masonry": "virtual-masonry.js",
 };
 
 /** The URL slug for a bare `denext`/`denext/x` specifier (matches DEP_ENTRYPOINTS keys). */
