@@ -846,6 +846,21 @@ export interface DenextConfig {
    */
   cacheKeyParams?: string[];
   /**
+   * Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/
+   * JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. Negotiated from
+   * `Accept-Encoding` (brotli, else gzip, with q-values) through the web-standard
+   * `CompressionStream`; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a
+   * flush per chunk, so it still reaches the browser progressively. Skipped for bodies under
+   * 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives),
+   * a response that already has a `Content-Encoding`, `Cache-Control: no-transform`, range
+   * responses, `HEAD` and `204`/`304`. A page, layout or route handler opts out with
+   * `export const compress = false`. Build-time precompressed client bundles (`.gz`) are
+   * served as-is. Set `false` when a proxy in front (nginx, Cloudflare, a CDN) compresses.
+   *
+   * @default true
+   */
+  compress?: boolean;
+  /**
    * denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.
    *
    * Every bare npm specifier is resolved straight from the app's installed `node_modules`
@@ -1324,10 +1339,10 @@ export function resolveCacheComponents(
 /**
  * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
  * config's `canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`, `maxConcurrency`,
- * `slotBackstop`, `actionMaxBodyBytes` and `cacheKeyParams`, each falling back to its env
- * var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`, `DENEXT_TRUST_PROXY=1`,
- * `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else `undefined` so `createApp`'s
- * own default applies — config > env > default. A malformed env value (a non-numeric
+ * `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams` and `compress`, each falling back
+ * to its env var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`,
+ * `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
+ * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
  * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
  * env is set by an operator, not type-checked like the config.
  */
@@ -1346,6 +1361,8 @@ export interface ServerOptions {
   actionMaxBodyBytes?: number;
   /** The ISR cache-key query-param allowlist. */
   cacheKeyParams?: string[];
+  /** Whether dynamic responses are compressed (`false` = off; default on). */
+  compress?: boolean;
 }
 
 /** One env var, or `undefined` when unset, empty, or not permitted (a narrowed `--allow-env`). */
@@ -1398,6 +1415,7 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
     slotBackstop: config?.slotBackstop,
     actionMaxBodyBytes: config?.actionMaxBodyBytes,
     cacheKeyParams: config?.cacheKeyParams,
+    compress: config?.compress,
   };
 }
 

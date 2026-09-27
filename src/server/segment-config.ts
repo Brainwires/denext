@@ -78,6 +78,12 @@ export interface SegmentConfig {
    * is adopted rather than recomputed. Defaults to `false` (React-style hydration).
    */
   resumable: boolean;
+  /**
+   * `false` opts this route's responses out of response compression (the app-wide
+   * `compress` config) — e.g. a page that reflects a secret next to user input (BREACH).
+   * Absent ⇒ the app setting applies. Inherited down the layout chain like other fields.
+   */
+  compress?: boolean;
 }
 
 /** Optional route-segment-config exports a module may declare. */
@@ -106,6 +112,8 @@ export interface SegmentConfigExports {
   csp?: CspSetting | boolean;
   /** See {@link SegmentConfig.resumable}. */
   resumable?: boolean;
+  /** See {@link SegmentConfig.compress}. */
+  compress?: boolean;
 }
 
 /** The default segment config applied when a module declares nothing. */
@@ -151,6 +159,7 @@ export function readSegmentConfig(mod: unknown): SegmentConfig {
   if (typeof m.maxDuration === "number") set("maxDuration", m.maxDuration);
   if (typeof m.fetchCache === "string") set("fetchCache", m.fetchCache);
   if (typeof m.resumable === "boolean") set("resumable", m.resumable);
+  if (typeof m.compress === "boolean") set("compress", m.compress);
   const csp = normalizeCspSetting(m.csp);
   if (csp !== undefined) set("csp", csp);
 

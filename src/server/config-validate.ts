@@ -320,9 +320,9 @@ function validateSecurity(config: DenextConfig, fail: Fail): void {
 }
 
 /**
- * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`,
- * `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`): a bare origin,
- * a boolean, whole numbers in range, a list of param names. A bad `canonicalOrigin` would
+ * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `compress`,
+ * `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`):
+ * a bare origin, booleans, whole numbers in range, a list of param names. A bad `canonicalOrigin` would
  * otherwise silently 403 every Server Action (the origin check compares against it).
  */
 function validateServerOptions(config: DenextConfig, fail: Fail): void {
@@ -338,6 +338,9 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
   }
   if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
     fail("trustForwardedHeaders", "must be a boolean");
+  }
+  if (config.compress !== undefined && typeof config.compress !== "boolean") {
+    fail("compress", "must be a boolean");
   }
   if (config.requestTimeout !== undefined) {
     num(fail, "requestTimeout", config.requestTimeout, { int: true, min: 0 }); // ms; 0 disables

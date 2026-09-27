@@ -21,6 +21,8 @@ import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-st
 import { runPipeline } from "./request-pipeline.ts";
 import { resolveCors } from "./cors.ts";
 import { createAppLinksHandler } from "./app-links.ts";
+import { compressOrPassThrough } from "./compress.ts";
+import type { RequestContext } from "./request-context.ts";
 
 export type { AppConfig, RequestHandler, RequestLogInfo } from "./app-config.ts";
 export { applyDefaultSecurityHeaders, hstsHeaderValue } from "./response-headers.ts";
@@ -119,9 +121,23 @@ function dispatch(
   pipeline = pipeline.then((res) => echoRequestId(res, requestCtx.requestId));
   const secure = isSecureRequest(config, originalRequest);
   pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
+  // Response compression (config `compress`, default on). A background regen serves no
+  // client (its body is discarded), so it is never encoded.
+  if (config.compress !== false && !isBackgroundRegen) {
+    pipeline = pipeline.then((res) => maybeCompress(originalRequest, res, requestCtx));
+  }
   pipeline = withRequestLog(pipeline, config, originalRequest, requestCtx.requestId, startedAt);
   if (release) pipeline = withSlotRelease(pipeline, requestTimeout, config.slotBackstop, release);
   return pipeline;
+}
+
+/**
+ * Compress the response unless the served route opted out (`export const compress = false`
+ * on its page, a layout above it, or its route handler).
+ */
+function maybeCompress(request: Request, res: Response, ctx: RequestContext): Promise<Response> {
+  if (ctx.segmentConfig?.compress === false || ctx.compressOptOut) return Promise.resolve(res);
+  return compressOrPassThrough(request, res);
 }
 
 /** The request logger: the app's `onRequest`, else the DENEXT_LOG default, else none. */

@@ -244,6 +244,12 @@ export interface RequestContext {
    */
   segmentConfig?: SegmentConfig;
   /**
+   * The served route opted out of response compression (`export const compress = false`)
+   * on a path that does not resolve {@link segmentConfig} — an ISR cache hit. Read with
+   * `segmentConfig.compress` by the response compressor (compress.ts).
+   */
+  compressOptOut?: boolean;
+  /**
    * Tags accrued from cached data read during this render (via
    * {@link unstable_cache}/{@link cachedFetch} `tags`). The page cache attaches
    * them to the stored render so {@link revalidateTag} can purge the page, not

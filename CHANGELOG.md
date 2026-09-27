@@ -10,6 +10,18 @@ and this project adheres to
 
 ### Added
 
+- **Response compression (`compress`, on by default — Next.js's `compress`).** `denext start`,
+  `denext dev` (App Router and SPA mode) and any `createApp()` handler now compress dynamic
+  responses — rendered HTML,
+  Flight/JSON payloads, route-handler text/JSON/JS/CSS/SVG/XML — with brotli or gzip per
+  `Accept-Encoding` (q-values, `identity;q=0`), through the web-standard `CompressionStream`.
+  Streamed Suspense/PPR HTML stays progressive (a flush per chunk; same-tick chunks coalesced).
+  Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types, an existing
+  `Content-Encoding` (so the precompressed client bundles and an outer compressor are never
+  doubled), `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`. A page,
+  layout or route handler opts out with `export const compress = false`; `compress: false` in
+  `denext.config.ts` turns it off (a proxy/CDN that compresses). A 10 000-row list page goes
+  from 617 KB to 91 KB (gzip) / 41 KB (brotli) on the wire without a compressing proxy.
 - **Deno Desktop capabilities in `denext/mobile`.** In a Deno Desktop window
   (`runtimePlatform() === "desktop"`), `secureStore` (the OS keychain), `readFile` / `writeFile`
   / `deleteFile` / `listDir` / `downloadToFile` (the app-support folder), `openSqlite`

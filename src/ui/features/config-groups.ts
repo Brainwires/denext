@@ -63,6 +63,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "actionMaxBodyBytes",
     "canonicalOrigin",
     "trustForwardedHeaders",
+    // Response compression: a proxy that compresses in front of the server turns it off.
+    "compress",
     // The dev server's origin gate (which non-loopback hosts may load the dev assets).
     "allowedDevOrigins",
   ],

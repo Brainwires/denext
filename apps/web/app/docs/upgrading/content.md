@@ -24,6 +24,18 @@ links back to the release that introduced it.
   generated file changed shape.** Migrate writes config by default and is
   non-destructive to your source; see [Migrating from Next.js](/docs/migrating).
 
+## Upgrading to 2.11
+
+- **Responses are now compressed by default** (gzip or brotli per `Accept-Encoding`, Next.js's
+  `compress`). `denext start` and `denext dev` — App Router and SPA mode — and every
+  `createApp()` / `serve()` embedder encode dynamic HTML, JSON, JS, CSS, SVG and XML responses
+  of 1 KiB or more, and add `Vary: Accept-Encoding` to them. Set `compress: false` in
+  `denext.config.ts` (or pass `compress: false` to `createApp()`) if a proxy or CDN in front
+  already compresses. A response that already carries a `Content-Encoding` is never
+  re-encoded, and a route opts out with `export const compress = false`. A test that calls a
+  `createApp()` handler directly with an `Accept-Encoding` request header now gets an encoded
+  body: drop the header or decode it. ([Configuration](/docs/config#production-server))
+
 ## Upgrading to 2.10
 
 2.10 shipped through three release candidates; this section covers every change that needs

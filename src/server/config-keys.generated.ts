@@ -44,6 +44,7 @@ export const CONFIG_KEYS = [
   "maxConcurrency",
   "slotBackstop",
   "cacheKeyParams",
+  "compress",
   "nodeResolve",
   "cacheComponents",
   "reactCompiler",

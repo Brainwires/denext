@@ -166,6 +166,13 @@ export interface AppConfig {
    */
   cacheKeyParams?: string[];
   /**
+   * Compress dynamic responses per `Accept-Encoding` (brotli, else gzip) — default `true`,
+   * like Next.js's `compress`. See `compressResponse` (compress.ts) for the skip rules; a
+   * page/layout/route opts out with `export const compress = false`. `denext start`/`dev`
+   * take it from the config's `compress`.
+   */
+  compress?: boolean;
+  /**
    * Extra origins allowed to invoke Server Actions, beyond the request's own
    * Host (for reverse-proxy / multi-host deployments). Actions are same-origin
    * only by default.

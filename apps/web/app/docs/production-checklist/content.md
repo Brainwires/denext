@@ -67,6 +67,14 @@ Each line: what to set → where it is documented. Config keys go in
   platform) — the in-process `maxConcurrency` complements it, it does not
   replace it. →
   [Put a concurrency ceiling in front of denext](/docs/deploy#1-put-a-concurrency-ceiling-in-front-of-denext-required)
+- `compress: false` — only when the proxy or CDN in front (nginx `gzip on` /
+  `brotli on`, Cloudflare, your platform) compresses responses itself. denext
+  compresses dynamic HTML and JSON with brotli or gzip by default, and never
+  re-encodes a response that already has a `Content-Encoding`, so leaving both on
+  is harmless but spends the CPU twice. A proxy that buffers responses before
+  compressing (nginx `proxy_buffering on`) also holds back streamed Suspense
+  HTML; denext's own compression flushes per chunk. →
+  [Configuration › Production server](/docs/config#production-server)
 
 **Permissions and files**
 

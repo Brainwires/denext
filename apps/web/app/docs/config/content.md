@@ -199,6 +199,21 @@ itself (it reads neither the config keys nor the env vars for them).
   fork the ISR page-cache key; every other param (`?utm_*`, `?fbclid`) is
   ignored for keying but still reaches the render via `searchParams`. Unset,
   every param participates.
+- **`compress`** — `boolean` (**on by default**, like Next.js's `compress`).
+  Compresses dynamic responses — rendered HTML, Flight/JSON payloads and
+  route-handler text, JSON, JavaScript, CSS, SVG and XML — with brotli or gzip,
+  whichever the client's `Accept-Encoding` prefers (q-values honoured; brotli
+  wins a tie). Streamed (Suspense) HTML is compressed chunk by chunk with a
+  flush after each, so it still reaches the browser progressively. Skipped for
+  bodies under 1 KiB, `text/event-stream` (Live/SSE), images, fonts, video and
+  archives, a response that already has a `Content-Encoding`,
+  `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`; the
+  build-time precompressed client bundles are served as they are. A page,
+  layout or route handler opts out with `export const compress = false` (for
+  example a response that reflects a secret next to user input — BREACH). Set
+  `false` when a proxy or CDN in front compresses instead. SPA mode applies the
+  same rules to its HTML shell and `public/` files (a `spa.proxy` backend's
+  responses are relayed as the backend encoded them).
 
 ```ts
 export default {

@@ -149,6 +149,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     maxConcurrency: "number",
     slotBackstop: "number",
     cacheKeyParams: "chips",
+    compress: "toggle",
     nodeResolve: "toggle",
     cacheComponents: "toggle",
     reactCompiler: "toggle",
