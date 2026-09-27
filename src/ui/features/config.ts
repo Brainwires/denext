@@ -719,6 +719,7 @@ const KEY_LABELS: Readonly<Record<string, string>> = {
   spa: "SPA",
   publicEnv: "Public env",
   apiBatch: "API batch",
+  cors: "CORS",
 };
 
 /** A config key as its tab says it: a listed name, else the camelCase split into words. */

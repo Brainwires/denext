@@ -150,6 +150,7 @@ export async function createProdApp(
     publicEnvKeys: info.publicEnvKeys,
     apiBatch: paths.config?.apiBatch,
     apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
+    cors: paths.config?.cors,
     // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
     // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
     ...resolveServerOptions(paths.config),

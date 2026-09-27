@@ -10,6 +10,7 @@ import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "./config-keys.generated.ts";
 import { editDistance } from "../utils/edit-distance.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { VERB_NAME } from "../cli/command.ts";
+import { resolveCors } from "./cors.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys — the generated
@@ -308,6 +309,7 @@ function validateSecurity(config: DenextConfig, fail: Fail): void {
   validateCsp(config.csp, fail);
   validateHsts(config.hsts, fail);
   validateApiBatch(config.apiBatch, fail);
+  validateCors(config.cors, fail);
   if (config.apiMaxBodyBytes !== undefined) {
     num(fail, "apiMaxBodyBytes", config.apiMaxBodyBytes, { int: true, min: 1 });
   }
@@ -350,6 +352,19 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
     if (!Array.isArray(cacheKeyParams) || cacheKeyParams.some((p) => typeof p !== "string")) {
       fail("cacheKeyParams", "must be an array of query-parameter-name strings");
     }
+  }
+}
+
+/**
+ * `cors`: the same resolution `createApp` runs (exact origins, never `"null"`, `"*"` alone and
+ * never with credentials, a sane `maxAge`), so a bad policy fails at config load.
+ */
+function validateCors(cors: DenextConfig["cors"], fail: Fail): void {
+  if (cors === undefined) return;
+  try {
+    resolveCors(cors);
+  } catch (error) {
+    fail("cors", (error instanceof Error ? error.message : String(error)).replace(/^denext: /, ""));
   }
 }
 

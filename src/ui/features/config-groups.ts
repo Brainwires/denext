@@ -55,6 +55,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "hsts",
     "publicEnv",
     "apiBatch",
+    // Which other origins (a Capacitor shell, a web front end) may call the API.
+    "cors",
     "apiMaxBodyBytes",
     "actionMaxBodyBytes",
     "canonicalOrigin",

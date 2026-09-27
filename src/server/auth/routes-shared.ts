@@ -36,7 +36,7 @@ export interface AuthRouteContext {
  * on the provider's type (a GET is the OAuth callback, a POST the credentials one) and
  * anything else must be a `405`, not a fall-through.
  */
-export type AuthRouteMethod = "GET" | "POST" | "DELETE" | "*";
+export type AuthRouteMethod = "GET" | "POST" | "DELETE" | "OPTIONS" | "*";
 
 /** One endpoint. */
 export interface AuthRoute {

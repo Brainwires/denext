@@ -36,6 +36,8 @@ import type {
   ApiTokenRecord,
   AuthAdapter,
   MfaRecord,
+  NativeGrantRecord,
+  NativeSessionRecord,
   VerificationTokenRecord,
   VerificationTokenRef,
 } from "./adapter.ts";
@@ -122,6 +124,10 @@ interface MemoryState {
   apiTokenHashes: Map<string, string>;
   /** TOTP factors by user id. */
   mfa: Map<string, MfaRecord>;
+  /** Native single-use grants (codes, nonces) by `kind\0hash`. */
+  nativeGrants: Table<NativeGrantRecord>;
+  /** Native session families by id. */
+  nativeSessions: Table<NativeSessionRecord>;
   /** The store `sessions` exposes. */
   sessions: SessionStore;
   /** Epoch seconds. */
@@ -147,6 +153,8 @@ function createState(options: InMemoryAuthAdapterOptions): MemoryState {
     }),
     apiTokenHashes: new Map(),
     mfa: new Map(),
+    nativeGrants: table<NativeGrantRecord>(max),
+    nativeSessions: table<NativeSessionRecord>(max),
     sessions: inMemorySessionStore(),
     now: options.now ?? (() => Math.floor(Date.now() / 1000)),
     lock<T>(key: string, run: () => Promise<T>): Promise<T> {
@@ -411,6 +419,102 @@ function mfaMethods(
   };
 }
 
+/** The native-app session group: single-use grants plus refresh-token families. */
+function nativeMethods(
+  state: MemoryState,
+): Pick<
+  AuthAdapter,
+  | "createNativeGrant"
+  | "useNativeGrant"
+  | "createNativeSession"
+  | "getNativeSession"
+  | "rotateNativeSession"
+  | "revokeNativeSession"
+  | "revokeNativeSessionsByUser"
+> {
+  const grantKey = (kind: string, hash: string) => `${kind}${SEP}${hash}`;
+  return {
+    createNativeGrant(grant) {
+      state.nativeGrants.set(grantKey(grant.kind, grant.hash), { ...grant });
+    },
+    useNativeGrant(hash, kind) {
+      // Synchronous delete-and-return: on one isolate this IS the critical section.
+      const key = grantKey(kind, hash);
+      const record = state.nativeGrants.get(key);
+      if (!record) return undefined;
+      state.nativeGrants.delete(key);
+      return record.expiresAt <= state.now() ? undefined : record;
+    },
+    createNativeSession(session) {
+      state.nativeSessions.set(session.id, { ...session });
+    },
+    getNativeSession: (id) => copy(state.nativeSessions.get(id)),
+    rotateNativeSession(id, fromGeneration, expiresAt) {
+      const record = state.nativeSessions.get(id);
+      if (!record || record.revokedAt !== undefined || record.generation !== fromGeneration) {
+        return false;
+      }
+      record.generation = fromGeneration + 1;
+      record.expiresAt = expiresAt;
+      return true;
+    },
+    revokeNativeSession(id) {
+      const record = state.nativeSessions.get(id);
+      if (record && record.revokedAt === undefined) record.revokedAt = state.now();
+    },
+    revokeNativeSessionsByUser(userId) {
+      for (const record of state.nativeSessions.rows.values()) {
+        if (record.userId === userId && record.revokedAt === undefined) {
+          record.revokedAt = state.now();
+        }
+      }
+    },
+  };
+}
+
+/** Drop every row of `table` whose value `matches`, running `onDrop` for each. */
+function dropWhere<T>(
+  table: Table<T>,
+  matches: (value: T) => boolean,
+  onDrop?: (value: T) => void,
+): void {
+  for (const [key, value] of [...table.rows]) {
+    if (!matches(value)) continue;
+    table.delete(key);
+    onDrop?.(value);
+  }
+}
+
+/** Delete a user and every row keyed by them (accounts, secrets, tokens, sessions). */
+function deleteUserRows(state: MemoryState, id: string): void {
+  const user = state.users.get(id);
+  if (user) {
+    state.users.delete(id);
+    forgetUser(state, id, user);
+  }
+  const address = user?.email ? emailKey(user.email) : undefined;
+  if (address) dropWhere(state.tokens, (token) => emailKey(token.identifier) === address);
+  state.credentials.delete(id);
+  state.mfa.delete(id);
+  dropWhere(state.accounts, (account) => account.userId === id);
+  dropWhere(
+    state.apiTokens,
+    (token) => token.userId === id,
+    (token) => state.apiTokenHashes.delete(token.tokenHash),
+  );
+  dropWhere(state.nativeSessions, (session) => session.userId === id);
+}
+
+/** The account-deletion group: every row of the user, plus their `sessions` records. */
+function deletionMethods(state: MemoryState): Pick<AuthAdapter, "deleteUser"> {
+  return {
+    async deleteUser(id) {
+      deleteUserRows(state, id);
+      await state.sessions.deleteByUser(id);
+    },
+  };
+}
+
 /** Drop every row and release the session store (idempotent). */
 function closeState(state: MemoryState): void {
   state.users.rows.clear();
@@ -421,12 +525,15 @@ function closeState(state: MemoryState): void {
   state.apiTokens.rows.clear();
   state.apiTokenHashes.clear();
   state.mfa.clear();
+  state.nativeGrants.rows.clear();
+  state.nativeSessions.rows.clear();
   state.sessions.close?.();
 }
 
 /**
  * Build a per-process, in-memory {@link ./adapter.ts | AuthAdapter}: every method group
- * (users, accounts, verification tokens, credentials, API tokens, MFA) plus a
+ * (users, accounts, verification tokens, credentials, API tokens, MFA, native app sessions,
+ * account deletion) plus a
  * `sessions` store and `close()`. Ids are `crypto.randomUUID()` unless the caller
  * supplies one; emails are matched case-insensitively and whitespace-trimmed.
  *
@@ -446,6 +553,8 @@ export function inMemoryAuthAdapter(options: InMemoryAuthAdapterOptions = {}): A
     ...credentialMethods(state),
     ...apiTokenMethods(state),
     ...mfaMethods(state),
+    ...nativeMethods(state),
+    ...deletionMethods(state),
     sessions: state.sessions,
     close: () => closeState(state),
   };

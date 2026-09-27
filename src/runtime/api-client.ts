@@ -159,6 +159,29 @@ export interface ApiClientOptions {
   batch?: boolean | { maxItems?: number };
   /** The `fetch` to use (default: the global; a seam for tests and custom transports). */
   fetch?: typeof fetch;
+  /**
+   * Bearer authentication for a client pointed at a remote `base` (a Capacitor shell calling its
+   * server): every call carries `Authorization: Bearer <getToken()>`, and a `401` is retried
+   * ONCE after `refresh()` — concurrent 401s share a single refresh. Pass `nativeSession(…)`
+   * (native session mode) or your own provider. Batching is off for an authenticated client
+   * (the batch endpoint is same-origin only).
+   */
+  auth?: ApiClientAuth;
+}
+
+/**
+ * A bearer-token source for {@link createApiClient}: the token to send, and how to get a new
+ * one after a `401`.
+ */
+export interface ApiClientAuth {
+  /** The current access token, or `null`/`undefined` to send the call unauthenticated. */
+  getToken(): string | null | undefined | Promise<string | null | undefined>;
+  /**
+   * Obtain a fresh token after a `401` (e.g. rotate the refresh token). Resolve `null` when the
+   * session is gone (the call then fails with the original `401`). Never called concurrently:
+   * the client shares one pending refresh between every call that hit a `401`.
+   */
+  refresh?(): Promise<string | null | undefined>;
 }
 
 /** The default per-request timeout (ms) — bounds a server-side call so SSR can't hang forever. */
@@ -500,6 +523,20 @@ function deduped(
   return promise;
 }
 
+/** Run `run` through the in-flight table when dedupe applies (a GET/HEAD not opted out). */
+function maybeDeduped(
+  dedupe: boolean,
+  local: Map<string, Promise<unknown>>,
+  pattern: string,
+  method: HttpMethod,
+  opts: ApiRequestOptions,
+  run: () => Promise<unknown>,
+): Promise<unknown> {
+  const readOnly = method === "GET" || method === "HEAD";
+  if (!dedupe || opts.dedupe === false || !readOnly) return run();
+  return deduped(local, pattern, method, opts, run);
+}
+
 /**
  * Create a typed API client bound to an app's generated {@link ApiSchema} (the registered
  * schema when `.denext/api.ts` is imported). Concurrent GET/HEAD calls with equal inputs share
@@ -514,6 +551,7 @@ export function createApiClient<S extends ApiSchema = RegisteredSchema>(
   const options = typeof baseOrOptions === "string" ? { base: baseOrOptions } : baseOrOptions;
   const base = options.base ?? "";
   const dedupe = options.dedupe ?? true;
+  if (options.auth) return authenticatedClient<S>(options, options.auth);
   const batchOpt = options.batch ?? true;
   const batcher = batchOpt
     ? createBatcher({
@@ -531,8 +569,54 @@ export function createApiClient<S extends ApiSchema = RegisteredSchema>(
       canBatch
         ? batchedRequest(batcher, path, method as "GET" | "HEAD", opts, base)
         : apiRequest(path, method, opts, base, options.fetch);
-    const readOnly = method === "GET" || method === "HEAD";
-    if (!dedupe || opts.dedupe === false || !readOnly) return run();
-    return deduped(local, path, method, opts, run);
+    return maybeDeduped(dedupe, local, path, method, opts, run);
+  }) as ApiClient<S>;
+}
+
+/** `opts` with `Authorization: Bearer <token>` merged over its headers (none for no token). */
+function withBearer(opts: ApiRequestOptions, token: string | null | undefined): ApiRequestOptions {
+  if (!token) return opts;
+  const headers = new Headers(opts.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return { ...opts, headers };
+}
+
+/**
+ * The `auth` flavour of {@link createApiClient}: every call carries the bearer token, a `401`
+ * is retried once with a fresh token, and one refresh is shared by every concurrent `401`. A
+ * call that failed with a token the client has since replaced retries with the new one without
+ * refreshing again.
+ */
+function authenticatedClient<S extends ApiSchema>(
+  options: ApiClientOptions,
+  auth: ApiClientAuth,
+): ApiClient<S> {
+  const base = options.base ?? "";
+  const dedupe = options.dedupe ?? true;
+  const local = new Map<string, Promise<unknown>>();
+  let refreshing: Promise<string | null | undefined> | null = null;
+  const refreshOnce = (): Promise<string | null | undefined> => {
+    if (!auth.refresh) return Promise.resolve(null);
+    refreshing ??= Promise.resolve()
+      .then(() => auth.refresh!())
+      .finally(() => {
+        refreshing = null;
+      });
+    return refreshing;
+  };
+  const call = async (path: string, method: HttpMethod, opts: ApiRequestOptions) => {
+    const token = await auth.getToken();
+    try {
+      return await apiRequest(path, method, withBearer(opts, token), base, options.fetch);
+    } catch (error) {
+      if (!isApiClientError(error) || error.status !== 401 || !auth.refresh) throw error;
+      const current = await auth.getToken();
+      const fresh = current && current !== token ? current : await refreshOnce();
+      if (!fresh) throw error;
+      return await apiRequest(path, method, withBearer(opts, fresh), base, options.fetch);
+    }
+  };
+  return ((path: string, method: HttpMethod, opts: ApiRequestOptions = {}) => {
+    return maybeDeduped(dedupe, local, path, method, opts, () => call(path, method, opts));
   }) as ApiClient<S>;
 }

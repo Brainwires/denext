@@ -34,6 +34,13 @@ import { resolveAuthOptions, type ResolvedAuthOptions } from "./options.ts";
 import { assertEmailProviderConfig } from "./providers-email.ts";
 import { authTrustsProxy } from "./rate-limit.ts";
 import { handleAuthRequest } from "./routes.ts";
+import {
+  nativeAdapterOf,
+  nativeBearerToken,
+  resolveNative,
+  verifyNativeAccessToken,
+} from "./native.ts";
+import { currentContext } from "../request-context.ts";
 import type { SessionStore } from "./session-store.ts";
 import { readAuthSession, refreshIfStale } from "./session.ts";
 import { isOAuthProvider } from "./types.ts";
@@ -91,6 +98,8 @@ function validateConfig(config: AuthConfig): void {
   // name, or `session.strategy: "database"` with nowhere to store sessions all throw here
   // — at config time, not on the first login.
   const options = resolveAuthOptions(config);
+  // `native`: registered redirect URIs and the adapter's native session group, checked now.
+  resolveNative(config);
   if (options.mfa.required === "always" && !hasMfaAdapter(options)) {
     // Every sign-in would come back pending with no way to enroll or verify a factor:
     // nobody could ever finish signing in.
@@ -272,13 +281,22 @@ export async function revokeSession(sessionId: string): Promise<void> {
 
 /**
  * Revoke every server-side session of `userId` — "sign out everywhere", the right call
- * after a password change or a suspected cookie theft. Fires the `sessionRevoked` event.
- * Requires `denextAuth({ sessionStore })`; throws when sessions are stateless.
+ * after a password change or a suspected cookie theft — and every native app session family
+ * when the adapter has that group. Fires the `sessionRevoked` event. Requires
+ * `denextAuth({ sessionStore })` or native sessions; throws when neither exists.
  *
  * @param userId The user whose sessions end.
  */
 export async function revokeAllSessions(userId: string): Promise<void> {
+  // Native app sessions (`native` config) end too — they need no session store.
+  const native = activeConfig ? nativeAdapterOf(activeConfig.adapter) : null;
+  if (native && !resolveAuthOptions(activeConfig!).sessionStore) {
+    await native.revokeNativeSessionsByUser(userId);
+    await emitAuthEvent(resolveAuthOptions(activeConfig!), "sessionRevoked", { userId });
+    return;
+  }
   const { options, store } = requireSessionStore("revokeAllSessions");
+  await native?.revokeNativeSessionsByUser(userId);
   await store.deleteByUser(userId);
   await emitAuthEvent(options, "sessionRevoked", { userId });
 }
@@ -290,6 +308,11 @@ export async function revokeAllSessions(userId: string): Promise<void> {
  */
 function currentSession(): Promise<AuthSession | null> {
   if (!activeConfig) return Promise.resolve(null);
+  // A native app authenticates with `Authorization: Bearer nat_…` instead of the cookie. A
+  // presented native token decides alone — an invalid one is signed out, never "fall back to
+  // the cookie" — while any other Authorization (an API token) leaves the cookie path as is.
+  const bearer = nativeBearerToken(currentContext()?.request);
+  if (bearer !== undefined) return verifyNativeAccessToken(activeConfig, bearer);
   return readAuthSession(activeConfig);
 }
 
@@ -333,6 +356,8 @@ export async function pendingMfaSession(): Promise<AuthSession | null> {
  * headers, so only call it where the response has not been sent yet.
  */
 function refreshActiveSession(session: AuthSession): Promise<AuthSession> {
+  // A native (bearer) session has no cookie to slide; its app refreshes its own token.
+  if (session.nativeSessionId) return Promise.resolve(session);
   return activeConfig ? refreshIfStale(activeConfig, session) : Promise.resolve(session);
 }
 

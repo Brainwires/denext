@@ -452,6 +452,45 @@ export interface ApiBatchConfig {
 }
 
 /**
+ * Cross-origin access to the app's route handlers (`route.ts`, `defineApi`) and the native
+ * `denextAuth` endpoints — what a Capacitor shell (`capacitor://localhost`,
+ * `https://localhost`) or another front end on a different origin needs to call this server.
+ * Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards,
+ * prefixes or suffixes, and `"null"` is refused.
+ */
+export interface CorsConfig {
+  /**
+   * The origins allowed to call, e.g. `["capacitor://localhost", "https://localhost",
+   * "myapp://app", "https://web.example.com"]`. Each is a bare origin (scheme + host, an
+   * optional port, no path). `["*"]` allows any origin, and only without `credentials`.
+   */
+  origins: string[];
+  /**
+   * The methods a preflight may approve (default `GET, HEAD, POST, PUT, PATCH, DELETE`).
+   */
+  methods?: string[];
+  /**
+   * The request headers a preflight may approve, case-insensitive (default
+   * `authorization`, `content-type`, `x-denext-wire`).
+   */
+  headers?: string[];
+  /** Response headers the caller's script may read beyond the safelisted ones (default none). */
+  exposeHeaders?: string[];
+  /**
+   * Send `Access-Control-Allow-Credentials: true`, so the browser sends and accepts cookies
+   * cross-origin (default `false`). Never combined with `"*"`.
+   */
+  credentials?: boolean;
+  /**
+   * How long, in seconds, a browser may cache a preflight answer (default 600).
+   *
+   * @minimum 0
+   * @maximum 86400
+   */
+  maxAge?: number;
+}
+
+/**
  * A project-local CLI verb declared in `denext.config.ts` under
  * {@link DenextConfig.commands} — the zero-ceremony half of denext's CLI extension
  * story: no plugin, no `setup`, just an object. It is structurally a CLI
@@ -634,6 +673,13 @@ export interface DenextConfig {
    * @minimum 1
    */
   apiMaxBodyBytes?: number;
+  /**
+   * Cross-origin (CORS) access to route handlers and the native `denextAuth` endpoints —
+   * what a Capacitor shell or a front end on another origin needs. Off by default (no CORS
+   * headers at all). A route overrides it with `export const cors = { … } | false`. See
+   * {@link CorsConfig}.
+   */
+  cors?: CorsConfig;
   /**
    * The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise
    * it only for actions that accept large payloads (multipart uploads); over the cap → 413

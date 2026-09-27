@@ -19,6 +19,7 @@ import { setBasePath } from "../client/navigation.ts";
 import { applyDefaultSecurityHeaders } from "./response-headers.ts";
 import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-state.ts";
 import { runPipeline } from "./request-pipeline.ts";
+import { resolveCors } from "./cors.ts";
 
 export type { AppConfig, RequestHandler, RequestLogInfo } from "./app-config.ts";
 export { applyDefaultSecurityHeaders, hstsHeaderValue } from "./response-headers.ts";
@@ -54,6 +55,8 @@ export function createApp(config: AppConfig): RequestHandler {
     basePath,
     rules: () => (compiled ??= compileRules(config)),
     handle: null!, // wired below — the ISR background regen loops back through it
+    // Validated here, at boot: a malformed origin or `"*"` with credentials throws now.
+    cors: resolveCors(config.cors),
   };
   // The typed API client's server-side calls run in-process through this app's pipeline
   // (no loopback HTTP) — see src/server/api-dispatcher.ts.
@@ -92,6 +95,7 @@ function dispatch(
     trustForwardedHeaders: config.trustForwardedHeaders,
   });
   requestCtx.routes = { manifest: config.getManifest, load: config.load };
+  requestCtx.cors = app.cors ?? null;
   const startedAt = performance.now();
   // Per-request abort signal — fires on client disconnect or (when configured)
   // request timeout. Exposed on the context so handlers/components can thread it

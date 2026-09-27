@@ -791,6 +791,53 @@
       "type": "number",
       "minimum": 1
     },
+    "cors": {
+      "description": "Cross-origin (CORS) access to route handlers and the native `denextAuth` endpoints — what a Capacitor shell or a front end on another origin needs. Off by default (no CORS headers at all). A route overrides it with `export const cors = { … } | false`. See CorsConfig.",
+      "type": "object",
+      "properties": {
+        "origins": {
+          "description": "The origins allowed to call, e.g. `[\"capacitor://localhost\", \"https://localhost\", \"myapp://app\", \"https://web.example.com\"]`. Each is a bare origin (scheme + host, an optional port, no path). `[\"*\"]` allows any origin, and only without `credentials`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "methods": {
+          "description": "The methods a preflight may approve (default `GET, HEAD, POST, PUT, PATCH, DELETE`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "headers": {
+          "description": "The request headers a preflight may approve, case-insensitive (default `authorization`, `content-type`, `x-denext-wire`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exposeHeaders": {
+          "description": "Response headers the caller's script may read beyond the safelisted ones (default none).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "credentials": {
+          "description": "Send `Access-Control-Allow-Credentials: true`, so the browser sends and accepts cookies cross-origin (default `false`). Never combined with `\"*\"`.",
+          "type": "boolean"
+        },
+        "maxAge": {
+          "description": "How long, in seconds, a browser may cache a preflight answer (default 600).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "origins"
+      ]
+    },
     "actionMaxBodyBytes": {
       "description": "The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise it only for actions that accept large payloads (multipart uploads); over the cap → 413 before the action runs. `denext start`/`dev` forward it to the server; a custom server passes `actionMaxBodyBytes` to `createApp()` itself.",
       "type": "number",

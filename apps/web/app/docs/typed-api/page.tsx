@@ -116,6 +116,15 @@ try {
           <code>undefined</code>, NaN, ±Infinity or -0 in a body or response arrives intact; a
           plain-JSON payload is byte-identical to before.
         </li>
+        <li>
+          <strong>A remote server, with a bearer.</strong>{" "}
+          <code>createApiClient({"{ base, auth }"})</code>{" "}
+          points the client at another origin (a Capacitor app calling its server) and sends{" "}
+          <code>Authorization: Bearer</code> on every call; a <code>401</code>{" "}
+          is retried once after one shared refresh. Pass <code>nativeSession(…)</code> or any{" "}
+          <code>{"{ getToken, refresh? }"}</code>. See{" "}
+          <a href="/docs/app-backend#the-client">App backend</a>.
+        </li>
       </ul>
 
       <h2>The hook</h2>

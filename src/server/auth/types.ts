@@ -51,6 +51,12 @@ export interface AuthSession {
    */
   sessionId?: string;
   /**
+   * The native-app session family this request authenticated with — present only when the
+   * caller presented a native access token (`Authorization: Bearer nat_…`, see
+   * {@link AuthNativeConfig}). Such a session is never slid forward and sets no cookie.
+   */
+  nativeSessionId?: string;
+  /**
    * Payload version. Absent (or `1`) on a session issued before 2.5; `2` on every session
    * denext issues now. The cookie's MAC domain is unchanged, so a v1 cookie keeps
    * verifying — readers just treat the fields below as absent.
@@ -493,6 +499,97 @@ export interface AuthMfaConfig {
   freshness?: number;
 }
 
+/** A provider whose `id_token`s a native app may exchange at `POST {basePath}/native/<id>`. */
+export interface NativeIdTokenProviderConfig {
+  /**
+   * The client ids an `id_token` may be issued to — every one the app signs in with (Apple:
+   * the iOS bundle id and, for the web, the Services ID; Google: the iOS client id and the web
+   * client id Android's Credential Manager uses as `serverClientId`). The token's `aud` must
+   * be one of them, and a multi-valued `aud` or any `azp` must name one of them too.
+   */
+  clientIds: string[];
+  /**
+   * DANGEROUS, as on an OAuth provider: link to an existing local account whose address is
+   * unverified. Off by default.
+   */
+  allowDangerousEmailAccountLinking?: boolean;
+  /** Advanced (tests, a private issuer): the accepted `iss` values. */
+  issuers?: string[];
+  /** Advanced (tests, a private issuer): the JWKS URL. */
+  jwksUrl?: string;
+}
+
+/** Sign in with Apple for a native app: {@link NativeIdTokenProviderConfig} plus the secret. */
+export interface NativeAppleConfig extends NativeIdTokenProviderConfig {
+  /**
+   * The client-secret JWT (ES256, signed with your Apple key, at most 6 months) — or a
+   * function returning a fresh one. With it, a native sign-in that passes Apple's
+   * `authorizationCode` stores the Apple refresh token, and account deletion revokes it at
+   * `https://appleid.apple.com/auth/revoke` (App Store guideline 5.1.1(v)). Without it (and
+   * without an `apple()` web provider to borrow it from) nothing is revoked, and deletion says
+   * so to the logger.
+   */
+  clientSecret?: string | (() => string | Promise<string>);
+}
+
+/**
+ * **Native session mode** — sessions for an app whose WebView can't use the `__Host-`
+ * SameSite cookie (a Capacitor shell at `capacitor://localhost`). The app opens
+ * `{basePath}/native/authorize` in a system browser sheet (`openAuthSession`), signs in there
+ * with any provider, and receives a one-time `code` at its redirect URI; it exchanges the
+ * code plus its PKCE verifier at `POST {basePath}/native/token` for a short-lived bearer
+ * access token and a rotating refresh token. `auth()`, `requireAuth()` and `requireSession()`
+ * accept the access token. Needs an adapter with the native session group.
+ */
+export interface AuthNativeConfig {
+  /**
+   * The app callback URIs a code may be delivered to, matched EXACTLY (e.g.
+   * `"com.example.app://auth/callback"`, or a claimed `https://` universal link). A loopback
+   * `http://127.0.0.1/…` / `http://[::1]/…` entry matches any port (RFC 8252 §7.3), for a
+   * desktop app's ephemeral listener. Plain `http:` elsewhere, `javascript:`, `data:` and
+   * `file:` are refused.
+   */
+  redirectUris: string[];
+  /** Access-token lifetime in seconds (default 900; clamped to 60..3600). */
+  accessTokenTtl?: number;
+  /**
+   * How long a refresh token stays usable, in seconds; each refresh slides it forward (default
+   * 30 days; clamped to 1 hour..1 year).
+   */
+  refreshTokenTtl?: number;
+  /** One-time code lifetime in seconds (default 60; clamped to 10..600). */
+  codeTtl?: number;
+  /**
+   * Require a server-issued nonce (`POST {basePath}/native/nonce`) in every native id_token
+   * sign-in (default `true`), so a captured id_token can't be replayed.
+   */
+  requireNonce?: boolean;
+  /** Native Sign in with Apple (`POST {basePath}/native/apple`). */
+  apple?: NativeAppleConfig;
+  /** Native Google sign-in (`POST {basePath}/native/google`). */
+  google?: NativeIdTokenProviderConfig;
+  /**
+   * Test / advanced seam: the fetch used for the providers' JWKS and Apple's token and revoke
+   * endpoints. Default: `safeFetch`, pinned to the provider's hosts.
+   */
+  fetch?: (
+    url: string,
+    init: { method: string; headers: Record<string, string>; body?: string },
+  ) => Promise<Response>;
+}
+
+/** What {@link AuthConfig.onAccountDeleted} is told. */
+export interface AccountDeletedPayload {
+  /** The user record as it was just before deletion. */
+  user: AdapterUser;
+  /**
+   * Whether Sign in with Apple tokens were revoked: `true` when every stored Apple token was
+   * revoked, `false` when one could not be (no secret configured, or Apple refused), and
+   * `undefined` when the user had no Apple token to revoke.
+   */
+  appleRevoked?: boolean;
+}
+
 /** Configuration for {@link ../auth/mod.ts | denextAuth}. */
 export interface AuthConfig {
   /** Configured providers. */
@@ -608,4 +705,16 @@ export interface AuthConfig {
   email?: AuthEmailConfig;
   /** Second-factor (TOTP) policy. */
   mfa?: AuthMfaConfig;
+  /**
+   * Native session mode for a Capacitor (or desktop) app: code exchange → bearer access token
+   * + rotating refresh token, and native Apple / Google `id_token` sign-in. See
+   * {@link AuthNativeConfig}.
+   */
+  native?: AuthNativeConfig;
+  /**
+   * Called after `POST {basePath}/account/delete` removed a user (and revoked their sessions
+   * and Apple tokens) — delete the app's own rows for them here. Awaited; a throw is logged,
+   * never shown to the caller (the account is already gone).
+   */
+  onAccountDeleted?: (payload: AccountDeletedPayload) => Promise<void> | void;
 }

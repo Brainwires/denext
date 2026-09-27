@@ -7,8 +7,8 @@
  * denextAuth({ ..., adapter: sqliteAuthAdapter({ path: "auth.db" }) });
  * ```
  *
- * Six `auth_`-prefixed tables hold users, linked provider accounts, verification tokens,
- * password hashes, bearer API tokens and TOTP factors. The adapter also exposes
+ * Eight `auth_`-prefixed tables hold users, linked provider accounts, verification tokens,
+ * password hashes, bearer API tokens, TOTP factors, and native-app grants and session families. The adapter also exposes
  * {@linkcode AuthAdapter.sessions} — a {@link ./sqlite-session-store.ts | sqliteSessionStore}
  * driven over the **same** handle, so one file holds everything and an app that already
  * had `sessionStore: sqliteSessionStore({ path })` can point the adapter at that same
@@ -41,6 +41,8 @@ import type {
   ApiTokenRecord,
   AuthAdapter,
   MfaRecord,
+  NativeGrantRecord,
+  NativeSessionRecord,
   VerificationTokenRecord,
 } from "./adapter.ts";
 import { emailKey } from "./email-key.ts";
@@ -95,7 +97,7 @@ interface IndexSpec {
   duplicates?: string;
 }
 
-/** The six tables, in creation order. */
+/** The eight tables, in creation order. */
 const SCHEMA: TableSpec[] = [
   {
     name: "auth_users",
@@ -191,6 +193,36 @@ const SCHEMA: TableSpec[] = [
       ["backup_code_hashes", "TEXT"],
       ["last_step", "INTEGER"],
     ],
+  },
+  {
+    name: "auth_native_grants",
+    columns: [
+      ["kind", "TEXT NOT NULL"],
+      ["hash", "TEXT NOT NULL"],
+      ["expires_at", "INTEGER NOT NULL"],
+      ["data", "TEXT"],
+    ],
+    constraints: "PRIMARY KEY (kind, hash)",
+    indexes: [{
+      sql:
+        "CREATE INDEX IF NOT EXISTS auth_native_grants_expiry ON auth_native_grants (expires_at)",
+    }],
+  },
+  {
+    name: "auth_native_sessions",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["user_id", "TEXT NOT NULL"],
+      ["generation", "INTEGER NOT NULL"],
+      ["salt", "TEXT NOT NULL"],
+      ["session", "TEXT NOT NULL"],
+      ["created_at", "INTEGER"],
+      ["expires_at", "INTEGER"],
+      ["revoked_at", "INTEGER"],
+    ],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_native_sessions_user ON auth_native_sessions (user_id)",
+    }],
   },
 ];
 
@@ -415,6 +447,24 @@ const MFA_MAP: FieldMap<MfaRecord> = {
   confirmedAt: ["confirmed_at", INT],
   backupCodeHashes: ["backup_code_hashes", CODES],
   lastStep: ["last_step", INT],
+};
+
+const NATIVE_GRANT_MAP: FieldMap<NativeGrantRecord> = {
+  hash: ["hash", TEXT],
+  kind: ["kind", TEXT],
+  expiresAt: ["expires_at", INT],
+  data: ["data", TEXT],
+};
+
+const NATIVE_SESSION_MAP: FieldMap<NativeSessionRecord> = {
+  id: ["id", TEXT],
+  userId: ["user_id", TEXT],
+  generation: ["generation", INT],
+  salt: ["salt", TEXT],
+  session: ["session", TEXT],
+  createdAt: ["created_at", INT],
+  expiresAt: ["expires_at", INT],
+  revokedAt: ["revoked_at", INT],
 };
 
 // ---- statements ------------------------------------------------------------
@@ -733,6 +783,99 @@ function mfaMethods(
   };
 }
 
+/** The native-app session group: single-use grants plus refresh-token families. */
+function nativeMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  | "createNativeGrant"
+  | "useNativeGrant"
+  | "createNativeSession"
+  | "getNativeSession"
+  | "rotateNativeSession"
+  | "revokeNativeSession"
+  | "revokeNativeSessionsByUser"
+> {
+  return {
+    createNativeGrant(grant) {
+      put(state.db(), "auth_native_grants", toRow(NATIVE_GRANT_MAP, grant));
+      // Grants a minute past their expiry are reclaimed on every write (an indexed delete).
+      state.db().exec("DELETE FROM auth_native_grants WHERE expires_at <= ?", [state.now() - 60]);
+    },
+    useNativeGrant(hash, kind) {
+      // One statement: read and delete together, so a concurrent redemption never sees it.
+      const row = state.db().query<Record<string, SqlValue>>(
+        "DELETE FROM auth_native_grants WHERE kind = ? AND hash = ? RETURNING *",
+        [kind, hash],
+      )[0];
+      if (!row) return undefined;
+      const record = fromRow(NATIVE_GRANT_MAP, row);
+      return record.expiresAt <= state.now() ? undefined : record;
+    },
+    createNativeSession(session) {
+      put(state.db(), "auth_native_sessions", toRow(NATIVE_SESSION_MAP, session));
+    },
+    getNativeSession(id) {
+      const row = one(state.db(), "SELECT * FROM auth_native_sessions WHERE id = ?", [id]);
+      return row && fromRow(NATIVE_SESSION_MAP, row);
+    },
+    rotateNativeSession(id, fromGeneration, expiresAt) {
+      // The WHERE clause is the compare-and-swap: one refresh with a generation wins.
+      const rotated = state.db().query(
+        "UPDATE auth_native_sessions SET generation = ?, expires_at = ? " +
+          "WHERE id = ? AND generation = ? AND revoked_at IS NULL RETURNING id",
+        [fromGeneration + 1, expiresAt, id, fromGeneration],
+      );
+      return rotated.length === 1;
+    },
+    revokeNativeSession(id) {
+      state.db().exec(
+        "UPDATE auth_native_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        [state.now(), id],
+      );
+    },
+    revokeNativeSessionsByUser(userId) {
+      state.db().exec(
+        "UPDATE auth_native_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+        [state.now(), userId],
+      );
+    },
+  };
+}
+
+/** The tables keyed by `user_id` that a user's deletion clears. */
+const USER_TABLES = [
+  "auth_accounts",
+  "auth_credentials",
+  "auth_api_tokens",
+  "auth_mfa",
+  "auth_native_sessions",
+];
+
+/**
+ * Delete a user and every row keyed by them, in ONE transaction: the user row, the tables in
+ * {@link USER_TABLES}, and the verification tokens issued to their address. Either all of it
+ * goes or none does.
+ */
+function deleteUserRows(state: SqliteState, id: string): void {
+  const db = state.db();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = one(db, "SELECT email_lc FROM auth_users WHERE id = ?", [id]);
+    if (typeof row?.email_lc === "string") {
+      db.exec("DELETE FROM auth_verification_tokens WHERE identifier = ?", [row.email_lc]);
+    }
+    for (const table of USER_TABLES) db.exec(`DELETE FROM ${table} WHERE user_id = ?`, [id]);
+    db.exec("DELETE FROM auth_users WHERE id = ?", [id]);
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch { /* the failed statement may already have ended the transaction */ }
+    throw error;
+  }
+}
+
 /** The lazy handle and the throttled sweep for one adapter. */
 function createState(
   options: SqliteAuthAdapterOptions,
@@ -789,7 +932,8 @@ function createState(
 
 /**
  * Build the durable {@link ./adapter.ts | AuthAdapter} on Deno's built-in `node:sqlite`:
- * every method group (users, accounts, verification tokens, credentials, API tokens, MFA)
+ * every method group (users, accounts, verification tokens, credentials, API tokens, MFA,
+ * native app sessions, account deletion)
  * plus a `sessions` store over the **same** database handle and an idempotent `close()`.
  *
  * Ids are `crypto.randomUUID()` unless the caller supplies one; emails are matched
@@ -815,6 +959,11 @@ export function sqliteAuthAdapter(options: SqliteAuthAdapterOptions = {}): AuthA
     ...credentialMethods(state),
     ...apiTokenMethods(state),
     ...mfaMethods(state),
+    ...nativeMethods(state),
+    async deleteUser(id) {
+      deleteUserRows(state, id);
+      await sessions.deleteByUser(id);
+    },
     sessions,
     close() {
       sessions.close?.(); // drops that store's memo; the facade's close is the same one
