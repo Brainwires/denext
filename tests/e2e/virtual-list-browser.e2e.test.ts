@@ -222,6 +222,40 @@ window.scenarios = {
     return out;
   },
 
+  async mvcpSplit(mvcp) {
+    // Variable rows from the end (unmeasured above): scroll up in steps; then prepend 10 rows.
+    const size = (id) => 24 + ((id * 53) % 170);
+    let data = rowsOf(5000).map((r, i) => ({ ...r, n: i }));
+    const props = () => ({
+      data, estimatedItemSize: 60, style: { height: "600px" }, initialScrollIndex: 4900,
+      maintainVisibleContentPosition: mvcp, keyExtractor: (r) => r.id,
+      renderItem: (r) => h("div", { style: { height: size(r.n) + "px", boxSizing: "border-box" } }, r.text),
+    });
+    const render = mount(props());
+    await frames(6);
+    const s = sc();
+    const sr = () => s.getBoundingClientRect().top;
+    const rowById = (id) => host.querySelector('[data-vl-row][data-key="' + id + '"]') ||
+      [...host.querySelectorAll("[data-vl-row]")].find((e) => e.textContent === id.replace("r", "row "));
+    const drift = [];
+    for (let step = 0; step < 12; step++) {
+      const ref = [...host.querySelectorAll("[data-vl-row]")].find((e) => e.getBoundingClientRect().top >= sr());
+      const top = ref.getBoundingClientRect().top;
+      s.scrollTop -= 400;
+      await frames(4);
+      drift.push(Math.round(ref.getBoundingClientRect().top - (top + 400)));
+    }
+    await frames(4);
+    const ref = [...host.querySelectorAll("[data-vl-row]")].find((e) => e.getBoundingClientRect().top >= sr());
+    const text = ref.textContent;
+    const before = ref.getBoundingClientRect().top;
+    data = [...Array.from({ length: 10 }, (_, i) => ({ id: "p" + i, text: "pre " + i, n: 90000 + i })), ...data];
+    render(props());
+    await frames(6);
+    const same = [...host.querySelectorAll("[data-vl-row]")].find((e) => e.textContent === text);
+    return { drift, prependMove: same ? Math.round(same.getBoundingClientRect().top - before) : null };
+  },
+
   async progressive(on) {
     const busy = (ms) => { const t = performance.now(); while (performance.now() - t < ms) { /* heavy row */ } };
     mount({
@@ -274,7 +308,7 @@ const HTML = (script: string) =>
 
 Deno.test({
   name:
-    "browser: RTL, sticky push, animations, print, selection, window cache, keyboard inset, scrollToIndex, progressive",
+    "browser: RTL, sticky push, animations, print, selection, window cache, keyboard inset, scrollToIndex, MVCP, progressive",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
@@ -405,6 +439,24 @@ Deno.test({
             assert(Math.abs(x.err!) <= 1, `row ${x.index} lands within 1px (${x.err})`);
             assert(Math.abs(x.drift ?? 0) <= 1, `row ${x.index} stays put after landing`);
           }
+        },
+      );
+    }
+
+    for (const mvcp of [true, false]) {
+      await t.step(
+        `maintainVisibleContentPosition: ${mvcp} — scrolling up into unmeasured rows never drifts; a prepend ${
+          mvcp ? "keeps" : "shifts"
+        } the view (A2, B1)`,
+        async () => {
+          const r = await run<{ drift: number[]; prependMove: number | null }>(
+            `window.scenarios.mvcpSplit(${mvcp})`,
+          );
+          report[`mvcpSplit_${mvcp}`] = r;
+          assertEquals(r.drift, r.drift.map(() => 0), "no drift scrolling up");
+          assert(r.prependMove !== null, "the reference row is still rendered");
+          if (mvcp) assertEquals(r.prependMove, 0, "MVCP keeps the visible row");
+          else assert(r.prependMove! > 0, `MVCP off shifts the content (${r.prependMove})`);
         },
       );
     }

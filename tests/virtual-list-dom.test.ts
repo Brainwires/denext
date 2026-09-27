@@ -410,35 +410,76 @@ Deno.test("prepend preserves the visible row, even with rows much taller than es
   });
 });
 
-Deno.test("scrolling up into unmeasured rows never moves the visible content (A2, T2)", async () => {
+Deno.test("MVCP off: a prepend above the view shifts the content (React Native); at the top the new rows show", async () => {
   await withRO(async () => {
-    const truth = (i: number) => 20 + ((i * 31) % 120);
-    const screen = await render(list({
-      data: rows(2000),
+    let data = rows(200, 1000);
+    const truth = (i: number) => 30 + (Number(data[i].id.slice(1)) % 7) * 10;
+    const props = (d: Row[]) => ({
+      data: d,
       estimatedItemSize: 50,
       viewportSize: 500,
-      overscan: 200,
-      initialScrollIndex: 1990,
+      maintainVisibleContentPosition: false,
       renderItem: (r: Row) => h("span", null, r.text),
-    }));
+    });
+    const screen = await render(list(props(data)));
     await measureAll(truth);
-    for (let step = 0; step < 15; step++) {
-      const tops = visualTops(screen, truth);
-      // Pick the first fully visible row as the reference.
-      const [ref, top] = [...tops].find(([, t]) => t >= 0)!;
-      const sc = scrollerOf(screen) as unknown as { scrollTop: number };
-      await scrollTo(screen, sc.scrollTop - 300);
-      await measureAll(truth);
-      const after = visualTops(screen, truth).get(ref);
-      assertEquals(
-        Math.round(after!),
-        Math.round(top + 300),
-        `step ${step}: moved exactly by the scroll delta`,
-      );
-    }
+    await scrollTo(screen, 2000);
+    await measureAll(truth);
+    const idOf = (id: string) => data.findIndex((r) => r.id === id);
+    const [refIndex, before] = [...visualTops(screen, truth)].find(([, t]) => t >= 0)!;
+    const ref = data[refIndex].id;
+    const older = rows(10, 900);
+    data = [...older, ...data];
+    await screen.rerender(list(props(data)));
+    await measureAll(truth);
+    // The inserted rows are far above the window, unmeasured: they take their estimate (50 px),
+    // and measuring them later (scrolling up to them) will not move the view again.
+    assertEquals(
+      Math.round(visualTops(screen, truth).get(idOf(ref))!),
+      Math.round(before + older.length * 50),
+      "the row moved down by the inserted rows' size",
+    );
+    await scrollTo(screen, 0);
+    data = [...rows(5, 800), ...data];
+    await screen.rerender(list(props(data)));
+    await measureAll(truth);
+    assertEquals(Math.round(visualTops(screen, truth).get(0)!), 0, "the new first row shows");
     await screen.unmount();
   });
 });
+
+for (const mvcp of [true, false]) {
+  Deno.test(`scrolling up into unmeasured rows never moves the visible content, maintainVisibleContentPosition: ${mvcp} (A2, T2)`, async () => {
+    await withRO(async () => {
+      const truth = (i: number) => 20 + ((i * 31) % 120);
+      const screen = await render(list({
+        data: rows(2000),
+        estimatedItemSize: 50,
+        viewportSize: 500,
+        overscan: 200,
+        maintainVisibleContentPosition: mvcp,
+        initialScrollIndex: 1990,
+        renderItem: (r: Row) => h("span", null, r.text),
+      }));
+      await measureAll(truth);
+      for (let step = 0; step < 15; step++) {
+        const tops = visualTops(screen, truth);
+        // Pick the first fully visible row as the reference.
+        const [ref, top] = [...tops].find(([, t]) => t >= 0)!;
+        const sc = scrollerOf(screen) as unknown as { scrollTop: number };
+        await scrollTo(screen, sc.scrollTop - 300);
+        await measureAll(truth);
+        const after = visualTops(screen, truth).get(ref);
+        assertEquals(
+          Math.round(after!),
+          Math.round(top + 300),
+          `step ${step}: moved exactly by the scroll delta`,
+        );
+      }
+      await screen.unmount();
+    });
+  });
+}
 
 Deno.test("chat: anchor end starts at the bottom, stays pinned on append/growth, not when scrolled up (B2, B3, T6)", async () => {
   await withRO(async () => {

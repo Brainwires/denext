@@ -16,6 +16,15 @@ import { bench, type ListHandle, log, setController, setFps, setFpsListener } fr
 import { implComponent } from "./impls/index.ts";
 import { createController, startCell } from "./runner.ts";
 
+/**
+ * `n` with comma thousands separators ("100,000"). Not `toLocaleString`: its first call
+ * initializes Intl (ICU data), which cost 40–57 ms (6x CPU throttle) inside every cell's
+ * measured time-to-ready — the overlay renders with the list.
+ */
+function groupDigits(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 export function App({ initial, subscribe }: {
   initial: RunParams | null;
   /** Deep-link run requests (main.tsx). */
@@ -44,7 +53,7 @@ function Menu() {
                   key={n}
                   href={`/?${runQuery({ list: d.id, kind, n, seed: 1 })}`}
                 >
-                  {n.toLocaleString("en-US")}
+                  {groupDigits(n)}
                 </a>
               ))}
             </div>
@@ -65,7 +74,7 @@ function Overlay({ params }: { params: RunParams }) {
   return (
     <div className="sb-overlay">
       <span>
-        {params.list} · {params.kind} · {params.n.toLocaleString("en-US")}
+        {params.list} · {params.kind} · {groupDigits(params.n)}
       </span>
       {fps && <span>{fps}</span>}
       <button

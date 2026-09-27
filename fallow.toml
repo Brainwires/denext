@@ -190,6 +190,9 @@ ignorePatterns = [
   # there. Their pure parts (harness/parse.ts, harness/matrix.ts) stay analyzed and tested.
   "examples/scroll-bench/harness/measure.ts",
   "examples/scroll-bench/harness/web-smoke.ts",
+  # harness/ssr-measure.ts drives the server-rendered list bench in headless Chromium (CDP I/O
+  # only; its pure parts live in harness/ssr-report.ts, which stays analyzed and tested).
+  "examples/scroll-bench/harness/ssr-measure.ts",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls

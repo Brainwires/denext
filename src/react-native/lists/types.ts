@@ -145,10 +145,11 @@ export interface ListScrollProps {
   /** Accepted: sticky items always stick to the visible top (also when `inverted`). */
   readonly invertStickyHeaders?: boolean;
   /**
-   * denext always keeps the visible items in place when items are added or resized above them
-   * (measuring rows above the view never moves it); a view at the very top still shows items
-   * added there, as in React Native. With this prop, `autoscrollToTopThreshold` widens that
-   * distance.
+   * Keep the visible items in place when items are added or removed above them (without it,
+   * as in React Native, such a change shifts the view and a view at the very top shows the new
+   * first items). With it, `autoscrollToTopThreshold` scrolls to new first items from within
+   * that distance of the start. Items measured taller or shorter than estimated never move the
+   * view either way.
    */
   readonly maintainVisibleContentPosition?: MaintainVisibleContentPosition | null;
   /** Snap each item to the viewport's start (CSS scroll snap). */

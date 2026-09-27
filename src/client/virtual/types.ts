@@ -175,8 +175,11 @@ export interface VirtualListOptions<T> {
    */
   readonly anchor?: "start" | "end";
   /**
-   * Keep the visible rows in place when rows are added, removed or resized above them
-   * (anchored by key). Default `true`.
+   * Keep the visible rows in place when rows are added or removed above them (anchored by
+   * key). Default `true`. With `false`, a data change above the view shifts what is visible
+   * (React Native's default: a view at the very top shows new first rows). Size refinements —
+   * a row measured taller or shorter than its estimate, a resize — never move the visible rows
+   * either way, and a pending `scrollToIndex` holds its target either way.
    */
   readonly maintainVisibleContentPosition?: boolean;
   /**

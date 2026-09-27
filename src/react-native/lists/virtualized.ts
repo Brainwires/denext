@@ -753,7 +753,7 @@ function sizingProps(
  */
 export function CoreList(props: CoreListProps): VNode {
   const { list, prim } = props;
-  const engine = withRNDefaults(list, props.engine ?? NO_ENGINE);
+  const engine = withRNMvcp(list, props.engine ?? NO_ENGINE);
   const model = useModel(list);
   const vl = useRef<VirtualListHandle | null>(null);
   const state = useRef<HandleState>({ list, model, vl: null });
@@ -866,7 +866,7 @@ function layoutProps(
   return {
     horizontal: !!list.horizontal,
     anchor: model.inverted || engine.anchorEnd ? "end" : "start",
-    maintainVisibleContentPosition: engine.mvcp ?? true,
+    maintainVisibleContentPosition: engine.mvcp ?? !!list.maintainVisibleContentPosition,
     overscan: list.disableVirtualization ? 1e9 : engine.overscan,
     recycle: engine.recycle === true,
     initialScrollIndex: initial >= 0 && initial < model.count ? model.flip(initial) : undefined,
@@ -882,19 +882,18 @@ function layoutProps(
 const NO_ENGINE: EngineOptions = {};
 
 /**
- * React Native's `maintainVisibleContentPosition` on the engine. The engine always keeps the
- * visible items in place when items above them are inserted or resized — measuring rows above
- * the viewport must never move what the user sees (`scrollToIndex` is exact either way: a pending
- * target anchors the engine whatever this setting).
- * Without the prop, React Native leaves a view at the very top showing the new first items, so
- * the core scrolls back to the start after a change made there (`autoscrollStart: 0`); with it,
- * `autoscrollToTopThreshold` sets that distance. An adapter's own `mvcp` is left as it is.
+ * React Native's `maintainVisibleContentPosition` on the engine. Without the prop (React
+ * Native's default) a data change above the view shifts what is visible, and a view at the very
+ * top shows new first items; with it, the visible items stay put, and a view within
+ * `autoscrollToTopThreshold` of the start scrolls to new first items. Measurements never move
+ * the view either way (the engine anchors size refinements always), so scrolling up into
+ * unmeasured items does not jump. An adapter's own `mvcp` / `autoscrollStart` win.
  */
-function withRNDefaults(list: VirtualizedListProps<unknown>, engine: EngineOptions): EngineOptions {
+function withRNMvcp(list: VirtualizedListProps<unknown>, engine: EngineOptions): EngineOptions {
   if (engine.mvcp !== undefined) return engine;
   const mvcp = list.maintainVisibleContentPosition;
-  const threshold = mvcp ? mvcp.autoscrollToTopThreshold ?? undefined : 0;
-  return { ...engine, mvcp: true, autoscrollStart: engine.autoscrollStart ?? threshold };
+  const threshold = mvcp ? mvcp.autoscrollToTopThreshold ?? undefined : undefined;
+  return { ...engine, mvcp: !!mvcp, autoscrollStart: engine.autoscrollStart ?? threshold };
 }
 
 /**

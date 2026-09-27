@@ -59,7 +59,10 @@ export interface CoreConfig {
   readonly overscan?: number;
   /** `"end"` sticks to the end while the view is at the end (chat). */
   readonly anchor: "start" | "end";
-  /** Keep the visible rows in place when content above them changes. */
+  /**
+   * Keep the visible rows in place when data above them changes (inserts, removals). Size
+   * refinements are anchored regardless (see `#mutate`'s `refine`).
+   */
   readonly maintainVisibleContentPosition: boolean;
   /** Largest physical extent to lay out before scaling. */
   readonly maxPhysicalSize: number;
@@ -483,8 +486,9 @@ export class VirtualCore {
    * Run `change` (which may replace the data and the sizes), then restore the view: the end
    * while pinned, the scroll target while one is pending, otherwise the anchor row at its old
    * distance from the viewport (by key, with the next visible rows as fallbacks). `refine`: the
-   * change only refines estimates (hints, a learned default size), so the view is anchored
-   * even without `maintainVisibleContentPosition`.
+   * change only refines sizes (a measurement, a resize, hints, a learned default size), not
+   * the content, so the view is anchored even without `maintainVisibleContentPosition` — that
+   * setting governs data changes only.
    */
   #mutate(change: () => ((oldIndex: number) => number) | void, refine = false): void {
     const pinned = this.#cfg.anchor === "end" && this.pinned && this.target === null;
@@ -563,7 +567,10 @@ export class VirtualCore {
 
   // ---- inputs ---------------------------------------------------------------------------
 
-  /** New viewport / lead / tail sizes; the visible rows (or the end, when pinned) stay. */
+  /**
+   * New viewport / lead / tail sizes; the visible rows (or the end, when pinned) stay, whatever
+   * `maintainVisibleContentPosition` says (a resize is not a content change).
+   */
   setMetrics(vp: number, lead: number, tail: number): boolean {
     if (vp === this.vp && lead === this.lead && tail === this.tail) return false;
     const leadShift = lead - this.lead;
@@ -573,11 +580,15 @@ export class VirtualCore {
       this.s -= leadShift;
       this.lead = lead;
       this.tail = tail;
-    });
+    }, true);
     return true;
   }
 
-  /** Apply measured sizes (`[index, px]`); returns whether any size changed. */
+  /**
+   * Apply measured sizes (`[index, px]`); returns whether any size changed. A measurement
+   * refines an estimate, it does not change the content: the visible rows stay put whatever
+   * `maintainVisibleContentPosition` says (no jump scrolling up into unmeasured rows).
+   */
   measure(entries: Iterable<readonly [number, number]>): boolean {
     let changed = false;
     this.#mutate(() => {
@@ -587,7 +598,7 @@ export class VirtualCore {
           changed = true;
         }
       }
-    });
+    }, true);
     if (changed) {
       const r = this.range;
       this.tree.compact(r.first - 4096, r.last + 4096, MAX_FULL_BLOCKS);
