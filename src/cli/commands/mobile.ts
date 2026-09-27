@@ -719,6 +719,15 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  order works). --scheme registers the OAuth callback scheme as deep-links does; Android\n" +
     "  needs it to receive the redirect. No install or `cap sync` runs for it alone.\n" +
     "\n" +
+    "  back (Android) adds @capacitor/app, denext's DenextBack plugin (predictive-back progress\n" +
+    "  for onBack / useBackProgress) registered in MainActivity, and\n" +
+    '  android:enableOnBackInvokedCallback="true" on <application>. system-bars has no npm\n' +
+    "  package (SystemBars ships in @capacitor/core 8): it sets\n" +
+    "  UIViewControllerBasedStatusBarAppearance in Info.plist and calls EdgeToEdge.enable(this)\n" +
+    "  in MainActivity. keyboard adds @capacitor/keyboard for useKeyboard and the keyboard views.\n" +
+    "  dialog adds @capacitor/dialog, so React Native mode's Alert.alert / Alert.prompt show\n" +
+    "  system dialogs.\n" +
+    "\n" +
     "  share-extension, widget and live-activity add app extensions (no npm package either).\n" +
     "  share-extension: an iOS Share Extension target (ios/App/DenextShareExtension, embedded in\n" +
     "  the app) that queues shares in the App Group container and opens the app with its URL\n" +

@@ -51,6 +51,17 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "installOnUIRuntime does nothing (no worklets UI runtime). " +
       "`expo/fetch` resolves here too (the platform fetch).",
   },
+  "expo-apple-authentication": {
+    module: "./apple-authentication.ts",
+    pinned: "57.0.2",
+    status: "partial",
+    notes: "signInAsync over denext/mobile's signInWithApple (@capgo/capacitor-social-login, " +
+      "`denext mobile add social-login`); iOS only, as in Expo. The nonce is sent to Apple as its " +
+      "SHA-256 hex. The plugin signs in only: refreshAsync, signOutAsync and " +
+      "getCredentialStateAsync reject, addRevokeListener never fires, and realUserStatus is " +
+      "UNKNOWN. AppleAuthenticationButton is a styled <button> (black / white / outline), " +
+      "rendered only in the iOS shell.",
+  },
   "expo-asset": {
     module: "./asset.ts",
     pinned: "57.0.15",
@@ -258,7 +269,45 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "57.0.8",
     status: "partial",
     notes: "createURL builds <scheme>://… in the native shell and an origin URL on the web; " +
-      "openURL takes http(s)/mailto/tel only; openSettings and sendIntent reject.",
+      "openURL takes http(s)/mailto/tel only; openSettings opens the app's settings through " +
+      "denext/mobile's openAppSettings (`denext mobile add permissions`); sendIntent rejects.",
+  },
+  "expo-local-authentication": {
+    module: "./local-authentication.ts",
+    pinned: "57.0.3",
+    status: "partial",
+    notes: "Over denext/mobile's biometrics (@aparajita/capacitor-biometric-auth, `denext mobile " +
+      "add biometrics`). No web biometrics: no hardware, and authenticateAsync fails with " +
+      "not_available. cancelAuthenticate resolves without dismissing the prompt; the Android " +
+      "prompt's subtitle, description, confirmation and security class are the plugin's own; " +
+      "getEnrolledLevelAsync cannot tell a weak Android biometric from a strong one.",
+  },
+  "expo-location": {
+    module: "./location.ts",
+    pinned: "57.0.20",
+    status: "partial",
+    omitted: [
+      "getHeadingAsync",
+      "watchHeadingAsync",
+      "getMotionActivityPermissionsAsync",
+      "requestMotionActivityPermissionsAsync",
+      "useMotionActivityPermissions",
+      "getMotionActivityAsync",
+      "watchMotionActivityAsync",
+      "startLocationUpdatesAsync",
+      "stopLocationUpdatesAsync",
+      "hasStartedLocationUpdatesAsync",
+      "startGeofencingAsync",
+      "stopGeofencingAsync",
+      "hasStartedGeofencingAsync",
+    ],
+    notes: "Foreground location over denext/mobile's geolocation (@capacitor/geolocation, " +
+      "`denext mobile add geolocation`; navigator.geolocation on the web) and its permission " +
+      "API. geocodeAsync / reverseGeocodeAsync need a geocoding service a WebView lacks: they " +
+      "call the geocoder passed to setGeocoder (denext only) and reject without one. Background " +
+      "location and geofencing (no Capacitor 8 plugin shipped; background permission reads " +
+      "denied), the compass heading and motion activity are not provided. " +
+      "installWebGeolocationPolyfill does nothing (navigator.geolocation is already there).",
   },
   "expo-network": {
     module: "./network.ts",
@@ -273,14 +322,6 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     status: "partial",
     omitted: [
       "getExpoPushTokenAsync",
-      "scheduleNotificationAsync",
-      "cancelScheduledNotificationAsync",
-      "cancelAllScheduledNotificationsAsync",
-      "getAllScheduledNotificationsAsync",
-      "getNextTriggerDateAsync",
-      "getNotificationCategoriesAsync",
-      "setNotificationCategoryAsync",
-      "deleteNotificationCategoryAsync",
       "getNotificationChannelGroupsAsync",
       "getNotificationChannelGroupAsync",
       "setNotificationChannelGroupAsync",
@@ -297,11 +338,15 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "IosAlertStyle",
       "IosAllowsPreviews",
     ],
-    notes: "Remote push over @capacitor/push-notifications (APNs/FCM device tokens). " +
-      "getExpoPushTokenAsync needs Expo's push service; send through APNs/FCM with the device " +
-      "token instead. No local scheduling, categories, topics or background tasks. The " +
-      "handler is called, but presentation follows the plugin's presentationOptions. " +
-      "setBadgeCountAsync uses the Badging API; its web (badgin) options are ignored.",
+    notes: "Remote push over @capacitor/push-notifications (APNs/FCM device tokens); local " +
+      "scheduling, categories and channels over @capacitor/local-notifications (`denext mobile " +
+      "add local-notifications`). getExpoPushTokenAsync needs Expo's push service; send through " +
+      "APNs/FCM with the device token instead. Identifiers map to the plugin's 32-bit ids by " +
+      "hash; getNextTriggerDateAsync is computed in JS; categories persist in localStorage (the " +
+      "plugin cannot list them) and, on iOS, also apply to remote pushes' aps.category. No " +
+      "channel groups, topics or background tasks. The handler is called, but presentation " +
+      "follows the plugins' presentationOptions. setBadgeCountAsync uses the Badging API; its " +
+      "web (badgin) options are ignored.",
   },
   "expo-paste-input": {
     module: "./paste-input.ts",
@@ -323,7 +368,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     omitted: ["getItem", "setItem"],
     notes: "The sync getItem/setItem run over JSI in Expo; the Capacitor bridge is async. " +
       "Keychain/Keystore natively; on the web an IndexedDB store that is NOT secret. " +
-      "Biometric and accessibility options are ignored.",
+      "requireAuthentication gates reads behind denext/mobile's authenticateBiometric (`denext " +
+      "mobile add biometrics`): enforced in denext's code, not by a Keychain access control " +
+      "(the plugin has none), and unreadable on the web. Accessibility options are ignored.",
   },
   "expo-sharing": {
     module: "./sharing.ts",
@@ -362,6 +409,14 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "57.0.8",
     status: "full",
     notes: "Hold the native splash with the Capacitor plugin's launchAutoHide: false.",
+  },
+  "expo-status-bar": {
+    module: "./status-bar.ts",
+    pinned: "57.0.1",
+    status: "full",
+    notes: "Over React Native mode's StatusBar: Capacitor 8's SystemBars in the native shell " +
+      '(denext mobile add system-bars); "auto" / "inverted" follow the page\'s color scheme. ' +
+      "Does nothing in a browser, as Expo's web build.",
   },
   "expo-symbols": {
     module: "./symbols.ts",

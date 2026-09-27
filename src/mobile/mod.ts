@@ -17,7 +17,21 @@
  * - {@linkcode useBackSwipe} / {@linkcode isBackSwipe}: swipe right to go back.
  * - {@linkcode installMomentumSafeScroll} / {@linkcode useMomentumSafeScroll}: keep iOS
  *   momentum scrolling alive while virtualized lists correct the scroll offset mid-fling.
- * - {@linkcode SAFE_AREA_CSS}: `--denext-safe-*` custom properties (needs `viewport-fit=cover`).
+ * - {@linkcode SAFE_AREA_CSS}: `--denext-safe-*` custom properties (needs `viewport-fit=cover`);
+ *   {@linkcode useSafeAreaInsets}: the same insets as numbers, live.
+ * - {@linkcode useKeyboard} / {@linkcode onKeyboardChange}: the keyboard's visibility and height
+ *   (`@capacitor/keyboard`'s will-show / will-hide in the shell, the visual viewport on the
+ *   web); {@linkcode KeyboardAvoidingView} / {@linkcode KeyboardStickyView} move out of its
+ *   way; {@linkcode hideKeyboard} / {@linkcode setKeyboardResizeMode}.
+ * - {@linkcode onBack} / {@linkcode useBackHandler}: a LIFO stack of handlers for Android's
+ *   back button and gesture (the browser's back button on the web);
+ *   {@linkcode onBackProgress} / {@linkcode useBackProgress}: the predictive-back gesture's
+ *   progress (`denext mobile add back`).
+ * - {@linkcode setSystemBars} / {@linkcode useSystemBarsFollowTheme}: the status and
+ *   navigation bars' style and visibility (Capacitor 8's `SystemBars`).
+ * - {@linkcode PullToRefresh}: a scroll container with a touch pull-to-refresh gesture and
+ *   spinner (React Native mode's `RefreshControl` shares it); {@linkcode RefreshControl}: the
+ *   same around a scroll container you already render (`VirtualList`'s `refreshControl`).
  * - {@linkcode checkForUiUpdate} / {@linkcode otaBooted} / {@linkcode otaStatus} /
  *   {@linkcode otaReset}: over-the-air UI updates through the native `DenextOta` plugin
  *   that `denext mobile add-ota` installs; {@linkcode prepareUiUpdate} /
@@ -46,6 +60,21 @@
  *   your server), {@linkcode onPushReceived} / {@linkcode usePushReceived} and
  *   {@linkcode onPushTapped} / {@linkcode usePushTapped} (`denext mobile add push`; no
  *   web-push fallback).
+ * - {@linkcode checkPermission} / {@linkcode requestPermission} / {@linkcode usePermission}: one
+ *   permission status across iOS, Android and the web; {@linkcode openAppSettings} for a
+ *   `blocked` one (`denext mobile add permissions`).
+ * - {@linkcode scheduleNotification} and the rest of the local-notification API: triggers,
+ *   Android channels, categories with action buttons, {@linkcode onLocalNotificationTapped}
+ *   (`denext mobile add local-notifications`).
+ * - {@linkcode isBiometricAvailable} / {@linkcode authenticateBiometric} (`denext mobile add
+ *   biometrics`), and `secureStore.set(key, value, { requireBiometric: true })`.
+ * - {@linkcode signInWithApple} / {@linkcode signInWithGoogle} / {@linkcode signInNative}: the
+ *   native sign-in sheets, verified by a denext server (`denext mobile add social-login`).
+ * - {@linkcode getCurrentPosition} / {@linkcode watchPosition} / {@linkcode useLocation}
+ *   (`denext mobile add geolocation`; `navigator.geolocation` on the web).
+ * - {@linkcode configurePurchases}, {@linkcode getOfferings}, {@linkcode purchasePackage},
+ *   {@linkcode restorePurchases}, {@linkcode getCustomerInfo}, {@linkcode useEntitlement}:
+ *   in-app purchases through RevenueCat (`denext mobile add purchases`; no web fallback).
  *
  * @example
  * ```tsx
@@ -74,7 +103,46 @@ export { type RuntimePlatform, runtimePlatform } from "./bridge.ts";
 export { onAppResume, useAppResume } from "./resume.ts";
 export { installKeyboardInset, type KeyboardInsetOptions, useKeyboardInset } from "./keyboard.ts";
 export { type BackSwipeOptions, isBackSwipe, useBackSwipe } from "./back-swipe.ts";
-export { SAFE_AREA_CSS } from "./safe-area.ts";
+export { SAFE_AREA_CSS, type SafeAreaInsets, useSafeAreaInsets } from "./safe-area.ts";
+export {
+  hideKeyboard,
+  type KeyboardResizeMode,
+  type KeyboardState,
+  onKeyboardChange,
+  setKeyboardResizeMode,
+  useKeyboard,
+} from "./keyboard-state.ts";
+export {
+  type KeyboardAvoidingBehavior,
+  KeyboardAvoidingView,
+  type KeyboardAvoidingViewProps,
+  KeyboardStickyView,
+  type KeyboardStickyViewProps,
+  type KeyboardViewStyle,
+} from "./keyboard-views.ts";
+export {
+  type BackEdge,
+  type BackGesture,
+  type BackHandler,
+  type BackProgressEvent,
+  onBack,
+  onBackProgress,
+  useBackHandler,
+  useBackProgress,
+} from "./back-handler.ts";
+export {
+  setSystemBars,
+  type SystemBar,
+  type SystemBarsOptions,
+  type SystemBarsStyle,
+  useSystemBarsFollowTheme,
+} from "./system-bars.ts";
+export {
+  PullToRefresh,
+  type PullToRefreshProps,
+  type PullToRefreshStyle,
+} from "./pull-to-refresh.ts";
+export { RefreshControl, type RefreshControlProps } from "./refresh-control.ts";
 export {
   installMomentumSafeScroll,
   type MomentumSafeScrollOptions,
@@ -107,7 +175,12 @@ export {
 } from "./network.ts";
 export { useKeepAwake } from "./keep-awake.ts";
 export { hideSplash } from "./splash.ts";
-export { type SecureStore, secureStore } from "./secure-store.ts";
+export {
+  type SecureStore,
+  secureStore,
+  type SecureStoreGetOptions,
+  type SecureStoreSetOptions,
+} from "./secure-store.ts";
 export { type DeepLinkEvent, type DeepLinkOptions, onDeepLink, useDeepLink } from "./deep-link.ts";
 export type { LinkAccept, LinkAllowList, LinkRoute } from "./link-routing.ts";
 export {
@@ -186,3 +259,88 @@ export * from "./share-receive.ts";
 export * from "./widgets.ts";
 export * from "./live-activity.ts";
 export { type ContextMenuItem, type ContextMenuOptions, showContextMenu } from "./context-menu.ts";
+export {
+  checkPermission,
+  openAppSettings,
+  type PermissionError,
+  type PermissionErrorCode,
+  type PermissionHandle,
+  type PermissionName,
+  type PermissionState,
+  requestPermission,
+  usePermission,
+  type UsePermissionOptions,
+} from "./permissions.ts";
+export {
+  type CalendarComponents,
+  cancelAllNotifications,
+  cancelNotification,
+  createNotificationChannel,
+  deleteNotificationChannel,
+  listNotificationChannels,
+  type LocalNotification,
+  type LocalNotificationInput,
+  type LocalNotificationTap,
+  type LocalNotificationTapOptions,
+  type LocalNotificationTrigger,
+  type NotificationAction,
+  type NotificationCategory,
+  type NotificationChannel,
+  onLocalNotificationReceived,
+  onLocalNotificationTapped,
+  pendingNotifications,
+  type ScheduledLocalNotification,
+  scheduleNotification,
+  setNotificationCategories,
+  useLocalNotificationTapped,
+} from "./local-notifications.ts";
+export {
+  authenticateBiometric,
+  type BiometricAuthOptions,
+  type BiometricAvailability,
+  type BiometricError,
+  type BiometricErrorCode,
+  type BiometricType,
+  isBiometricAvailable,
+} from "./biometrics.ts";
+export {
+  type AppleSignInOptions,
+  type GoogleSignInOptions,
+  type IdTokenSession,
+  signInNative,
+  signInWithApple,
+  signInWithGoogle,
+  type SocialSignInError,
+  type SocialSignInErrorCode,
+  type SocialSignInResult,
+} from "./social-login.ts";
+export {
+  type GeolocationError,
+  type GeolocationErrorCode,
+  type GeoPosition,
+  type GeoPositionOptions,
+  getCurrentPosition,
+  type LocationState,
+  useLocation,
+  type UseLocationOptions,
+  watchPosition,
+} from "./geolocation.ts";
+export {
+  configurePurchases,
+  type CustomerInfo,
+  type EntitlementInfo,
+  type EntitlementState,
+  getCustomerInfo,
+  getOfferings,
+  type PurchaseOffering,
+  type PurchaseOfferings,
+  type PurchasePackage,
+  purchasePackage,
+  type PurchaseProduct,
+  type PurchaseResult,
+  type PurchasesConfig,
+  type PurchasesError,
+  type PurchasesErrorCode,
+  restorePurchases,
+  useEntitlement,
+} from "./purchases.ts";

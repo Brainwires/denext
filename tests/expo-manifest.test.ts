@@ -61,7 +61,7 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   }
   assertEquals(expoShimName("expo-haptics"), "haptics");
   assertEquals(expoShimName("expo-file-system/legacy"), "file-system/legacy");
-  assertEquals(expoShimName("expo-location"), null);
+  assertEquals(expoShimName("expo-contacts"), null);
   assertEquals(expoShimSpecifier("expo-file-system/legacy"), "denext/expo/file-system/legacy");
   assertEquals(files["denext/expo/file-system/legacy"], "expo-file-system-legacy.js");
   assertEquals(expoShimSpecifier("expo-file-system/next"), null);
@@ -109,6 +109,17 @@ const T3_PACKAGE_JSON = Deno.env.get("T3_MOBILE_PACKAGE_JSON") ??
 /** The expo-* dependencies of T3's app that deliberately have no shim. */
 const NOT_SHIMMED: string[] = [];
 
+/**
+ * Shims for packages T3's app does not depend on, pinned to their Expo SDK 57 release instead
+ * (`expo-status-bar`: React Native mode's StatusBar makes it more than Expo's no-op web build).
+ */
+const BEYOND_T3: Readonly<Record<string, string>> = {
+  "expo-status-bar": "57.0.1",
+  "expo-apple-authentication": "57.0.2",
+  "expo-local-authentication": "57.0.3",
+  "expo-location": "57.0.20",
+};
+
 let t3Present = false;
 try {
   t3Present = Deno.statSync(T3_PACKAGE_JSON).isFile;
@@ -124,6 +135,10 @@ Deno.test({
     >;
     for (const [key, shim] of Object.entries(EXPO_SHIMS)) {
       const pkg = packageOf(key);
+      if (Object.hasOwn(BEYOND_T3, pkg)) {
+        assertEquals(shim.pinned, BEYOND_T3[pkg], `${key} pin (SDK 57 release)`);
+        continue;
+      }
       assert(pkg in deps, `${pkg} is not a dependency of T3's app`);
       assertEquals(shim.pinned, deps[pkg].replace(/^[~^]/, ""), `${key} pin`);
     }

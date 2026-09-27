@@ -1,6 +1,7 @@
 {
   "versions": {
     "expo": "57.0.18",
+    "expo-apple-authentication": "57.0.2",
     "expo-asset": "57.0.15",
     "expo-audio": "57.0.4",
     "expo-auth-session": "57.0.10",
@@ -22,6 +23,8 @@
     "expo-image-picker": "57.0.14",
     "expo-keep-awake": "57.0.2",
     "expo-linking": "57.0.8",
+    "expo-local-authentication": "57.0.3",
+    "expo-location": "57.0.20",
     "expo-network": "57.0.1",
     "expo-notifications": "57.0.15",
     "expo-paste-input": "0.1.15",
@@ -30,13 +33,14 @@
     "expo-sharing": "57.0.17",
     "expo-sqlite": "57.0.2",
     "expo-splash-screen": "57.0.8",
+    "expo-status-bar": "57.0.1",
     "expo-symbols": "57.0.2",
     "expo-updates": "57.0.19",
     "expo-video": "57.0.3",
     "expo-web-browser": "57.0.2",
     "expo-widgets": "57.0.15"
   },
-  "capturedAt": "2026-09-25T18:18:50.027Z",
+  "capturedAt": "2026-09-27T13:13:32.595Z",
   "surfaces": [
     {
       "specifier": "expo",
@@ -270,6 +274,191 @@
             }
           ],
           "typeParamCount": 3
+        }
+      }
+    },
+    {
+      "specifier": "expo-apple-authentication",
+      "resolved": true,
+      "symbols": {
+        "AppleAuthenticationButton": {
+          "name": "AppleAuthenticationButton",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "signInAsync": {
+          "name": "signInAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "refreshAsync": {
+          "name": "refreshAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "signOutAsync": {
+          "name": "signOutAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getCredentialStateAsync": {
+          "name": "getCredentialStateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "formatFullName": {
+          "name": "formatFullName",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addRevokeListener": {
+          "name": "addRevokeListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "AppleAuthenticationScope": {
+          "name": "AppleAuthenticationScope",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "EMAIL",
+            "FULL_NAME"
+          ]
+        },
+        "AppleAuthenticationOperation": {
+          "name": "AppleAuthenticationOperation",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "IMPLICIT",
+            "LOGIN",
+            "LOGOUT",
+            "REFRESH"
+          ]
+        },
+        "AppleAuthenticationCredentialState": {
+          "name": "AppleAuthenticationCredentialState",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AUTHORIZED",
+            "NOT_FOUND",
+            "REVOKED",
+            "TRANSFERRED"
+          ]
+        },
+        "AppleAuthenticationUserDetectionStatus": {
+          "name": "AppleAuthenticationUserDetectionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "LIKELY_REAL",
+            "UNKNOWN",
+            "UNSUPPORTED"
+          ]
+        },
+        "AppleAuthenticationButtonType": {
+          "name": "AppleAuthenticationButtonType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CONTINUE",
+            "SIGN_IN",
+            "SIGN_UP"
+          ]
+        },
+        "AppleAuthenticationButtonStyle": {
+          "name": "AppleAuthenticationButtonStyle",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BLACK",
+            "WHITE",
+            "WHITE_OUTLINE"
+          ]
         }
       }
     },
@@ -4703,6 +4892,679 @@
       }
     },
     {
+      "specifier": "expo-local-authentication",
+      "resolved": true,
+      "symbols": {
+        "hasHardwareAsync": {
+          "name": "hasHardwareAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "supportedAuthenticationTypesAsync": {
+          "name": "supportedAuthenticationTypesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isEnrolledAsync": {
+          "name": "isEnrolledAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getEnrolledLevelAsync": {
+          "name": "getEnrolledLevelAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "authenticateAsync": {
+          "name": "authenticateAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "cancelAuthenticate": {
+          "name": "cancelAuthenticate",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "AuthenticationType": {
+          "name": "AuthenticationType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "FACIAL_RECOGNITION",
+            "FINGERPRINT",
+            "IRIS"
+          ]
+        },
+        "SecurityLevel": {
+          "name": "SecurityLevel",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "BIOMETRIC",
+            "BIOMETRIC_STRONG",
+            "BIOMETRIC_WEAK",
+            "NONE",
+            "SECRET"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-location",
+      "resolved": true,
+      "symbols": {
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        },
+        "EventEmitter": {
+          "name": "EventEmitter",
+          "kind": "value",
+          "isValue": true,
+          "isType": false
+        },
+        "_getCurrentWatchId": {
+          "name": "_getCurrentWatchId",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "installWebGeolocationPolyfill": {
+          "name": "installWebGeolocationPolyfill",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Accuracy": {
+          "name": "Accuracy",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Balanced",
+            "BestForNavigation",
+            "High",
+            "Highest",
+            "Low",
+            "Lowest"
+          ]
+        },
+        "ActivityType": {
+          "name": "ActivityType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Airborne",
+            "AutomotiveNavigation",
+            "Fitness",
+            "Other",
+            "OtherNavigation"
+          ]
+        },
+        "GeofencingEventType": {
+          "name": "GeofencingEventType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Enter",
+            "Exit"
+          ]
+        },
+        "GeofencingRegionState": {
+          "name": "GeofencingRegionState",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Inside",
+            "Outside",
+            "Unknown"
+          ]
+        },
+        "getProviderStatusAsync": {
+          "name": "getProviderStatusAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "enableNetworkProviderAsync": {
+          "name": "enableNetworkProviderAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getCurrentPositionAsync": {
+          "name": "getCurrentPositionAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getLastKnownPositionAsync": {
+          "name": "getLastKnownPositionAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "watchPositionAsync": {
+          "name": "watchPositionAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getHeadingAsync": {
+          "name": "getHeadingAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "watchHeadingAsync": {
+          "name": "watchHeadingAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "geocodeAsync": {
+          "name": "geocodeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "reverseGeocodeAsync": {
+          "name": "reverseGeocodeAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getForegroundPermissionsAsync": {
+          "name": "getForegroundPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestForegroundPermissionsAsync": {
+          "name": "requestForegroundPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getBackgroundPermissionsAsync": {
+          "name": "getBackgroundPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestBackgroundPermissionsAsync": {
+          "name": "requestBackgroundPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasServicesEnabledAsync": {
+          "name": "hasServicesEnabledAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getMotionActivityPermissionsAsync": {
+          "name": "getMotionActivityPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestMotionActivityPermissionsAsync": {
+          "name": "requestMotionActivityPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getMotionActivityAsync": {
+          "name": "getMotionActivityAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "watchMotionActivityAsync": {
+          "name": "watchMotionActivityAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "isBackgroundLocationAvailableAsync": {
+          "name": "isBackgroundLocationAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "startLocationUpdatesAsync": {
+          "name": "startLocationUpdatesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "stopLocationUpdatesAsync": {
+          "name": "stopLocationUpdatesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasStartedLocationUpdatesAsync": {
+          "name": "hasStartedLocationUpdatesAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "startGeofencingAsync": {
+          "name": "startGeofencingAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "stopGeofencingAsync": {
+          "name": "stopGeofencingAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasStartedGeofencingAsync": {
+          "name": "hasStartedGeofencingAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useForegroundPermissions": {
+          "name": "useForegroundPermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useBackgroundPermissions": {
+          "name": "useBackgroundPermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useMotionActivityPermissions": {
+          "name": "useMotionActivityPermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "LocationAccuracy": {
+          "name": "LocationAccuracy",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Balanced",
+            "BestForNavigation",
+            "High",
+            "Highest",
+            "Low",
+            "Lowest"
+          ]
+        },
+        "LocationActivityType": {
+          "name": "LocationActivityType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Airborne",
+            "AutomotiveNavigation",
+            "Fitness",
+            "Other",
+            "OtherNavigation"
+          ]
+        },
+        "LocationGeofencingEventType": {
+          "name": "LocationGeofencingEventType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Enter",
+            "Exit"
+          ]
+        },
+        "LocationGeofencingRegionState": {
+          "name": "LocationGeofencingRegionState",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Inside",
+            "Outside",
+            "Unknown"
+          ]
+        },
+        "MotionActivityConfidence": {
+          "name": "MotionActivityConfidence",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "High",
+            "Low",
+            "Medium"
+          ]
+        },
+        "MotionActivityType": {
+          "name": "MotionActivityType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "Automotive",
+            "Cycling",
+            "Running",
+            "Stationary",
+            "Unknown",
+            "Walking"
+          ]
+        }
+      }
+    },
+    {
       "specifier": "expo-network",
       "resolved": true,
       "symbols": {
@@ -6275,6 +7137,54 @@
             {
               "arity": 0,
               "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-status-bar",
+      "resolved": true,
+      "symbols": {
+        "StatusBar": {
+          "name": "StatusBar",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setStatusBarStyle": {
+          "name": "setStatusBarStyle",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setStatusBarHidden": {
+          "name": "setStatusBarHidden",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
               "restParam": false
             }
           ],

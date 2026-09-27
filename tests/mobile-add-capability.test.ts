@@ -582,17 +582,31 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "share-extension",
     "widget",
     "live-activity",
+    "keyboard",
+    "back",
+    "system-bars",
+    "dialog",
+    "permissions",
+    "local-notifications",
+    "biometrics",
+    "social-login",
+    "geolocation",
+    "purchases",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
-    // auth-session and the app extensions are denext's own native code: no npm package to pin.
+    // auth-session and the app extensions are denext's own native code, and system-bars is in
+    // @capacitor/core: no npm package to pin.
     if (cap.npm === undefined) continue;
-    // @capacitor/barcode-scanner numbers its own releases: 3.x targets Capacitor 8.
-    assert(cap.version?.startsWith(name === "barcode" ? "^3." : "^8."), name);
+    // Some plugins number their own releases: @capacitor/barcode-scanner 3.x,
+    // @aparajita/capacitor-biometric-auth 10.x and @revenuecat/purchases-capacitor 13.x target
+    // Capacitor 8.
+    const own: Record<string, string> = { barcode: "^3.", biometrics: "^10.", purchases: "^13." };
+    assert(cap.version?.startsWith(own[name] ?? "^8."), name);
   }
   assertEquals(
     Object.keys(MOBILE_CAPABILITIES).filter((n) => MOBILE_CAPABILITIES[n].npm === undefined),
-    ["auth-session", "share-extension", "widget", "live-activity"],
+    ["auth-session", "share-extension", "widget", "live-activity", "system-bars", "permissions"],
   );
   assertStringIncludes(
     formatCapabilityTable(),

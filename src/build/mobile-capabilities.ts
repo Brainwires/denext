@@ -6,8 +6,8 @@
 // capability needs, and runs `npx cap sync`. A capability that takes options (deep-links:
 // --scheme / --domain) or needs more than plist keys and permissions (push: entitlements and
 // AppDelegate forwarding) computes its edits in a `configure` hook. A capability with no npm
-// package (auth-session, and the app extensions share-extension / widget / live-activity)
-// installs denext's own native plugin templates instead, through the
+// package (auth-session, system-bars, and the app extensions share-extension / widget /
+// live-activity) installs denext's own native plugin templates instead, through the
 // hook's `install` step; with no package to add, neither the install nor `cap sync` runs. Every
 // subprocess goes through a runner the caller passes in, so tests never spawn a real install.
 
@@ -17,15 +17,19 @@ import {
   withAppDelegatePushForwarding,
   withAppDelegateQuickActions,
   withGradleMinSdk,
+  withManifestApplicationAttribute,
   withManifestIntentFilter,
   withManifestPermission,
   withPlistDefault,
   withPlistString,
   withPlistStringArray,
+  withPlistTrue,
   withPlistUrlScheme,
   withSceneDelegateQuickActions,
 } from "./mobile-native-config.ts";
 import { addAuthSessionToProject } from "./mobile-auth-session-install.ts";
+import { addBackToProject, addEdgeToEdgeToProject } from "./mobile-system-ui-install.ts";
+import { addSettingsToProject } from "./mobile-settings-install.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import {
   addLiveActivitiesToProject,
@@ -384,6 +388,120 @@ function configureBarcode(): CapabilityConfig {
   };
 }
 
+/**
+ * `back`: denext's `DenextBack` plugin registered from MainActivity (Android's predictive-back
+ * events), and `android:enableOnBackInvokedCallback="true"` on `<application>`, which Android
+ * 13–15 need before they route back through the callback (and animate it, 14+); Android 16
+ * does it by default for apps targeting SDK 36. `@capacitor/app` (the npm package) is the
+ * fallback `onBack` listens to without the plugin, and leaves the app when nothing handles back.
+ */
+function configureBack(): CapabilityConfig {
+  return {
+    manifest: [{
+      label: 'android:enableOnBackInvokedCallback="true" on <application> (when unset)',
+      apply: (text) =>
+        withManifestApplicationAttribute(text, "android:enableOnBackInvokedCallback", "true"),
+    }],
+    install: {
+      label: "DenextBack plugin (Android OnBackPressedCallback: predictive-back progress) + its " +
+        "registration in MainActivity",
+      run: addBackToProject,
+    },
+  };
+}
+
+/**
+ * `system-bars`: Capacitor 8 bundles `SystemBars` in `@capacitor/core`, so there is no package.
+ * iOS needs `UIViewControllerBasedStatusBarAppearance` (true in Capacitor's template, set here
+ * when missing or false); Android gets `EdgeToEdge.enable(this)` in MainActivity.
+ */
+function configureSystemBars(): CapabilityConfig {
+  return {
+    infoPlist: [{
+      label: "UIViewControllerBasedStatusBarAppearance: true (SystemBars needs it)",
+      apply: (text) => withPlistTrue(text, "UIViewControllerBasedStatusBarAppearance"),
+    }],
+    install: {
+      label: "EdgeToEdge.enable(this) in MainActivity (edge to edge on every Android version)",
+      run: addEdgeToEdgeToProject,
+    },
+  };
+}
+
+/**
+ * denext's `DenextSettings` plugin behind `openAppSettings()`: every capability that asks for a
+ * permission installs it, so a refused (`blocked`) permission can send the user to Settings.
+ */
+const SETTINGS_INSTALL: NativeInstallStep = {
+  label: "DenextSettings plugin (openAppSettings: iOS app settings, Android App info) + its " +
+    "registration in DenextBridgeViewController / MainActivity",
+  run: addSettingsToProject,
+};
+
+/** `permissions` (and the capabilities that ask for one): the DenextSettings plugin. */
+function configureSettings(): CapabilityConfig {
+  return { install: SETTINGS_INSTALL };
+}
+
+/** `local-notifications`: DenextSettings, plus the Android exact-alarm note. */
+function configureLocalNotifications(): CapabilityConfig {
+  return {
+    install: SETTINGS_INSTALL,
+    manual: [
+      "Android: the plugin declares SCHEDULE_EXACT_ALARM; Google Play allows it only for " +
+      'alarm / calendar apps (else remove it with tools:node="remove" in AndroidManifest.xml ' +
+      "and accept inexact delivery). A small monochrome icon for the status bar goes in " +
+      "plugins.LocalNotifications.smallIcon in capacitor.config",
+    ],
+  };
+}
+
+/**
+ * `social-login`: the Sign in with Apple entitlement, and each `--scheme` (Google's reversed iOS
+ * client id, `com.googleusercontent.apps.<id>`) registered as a URL type for the Google SDK's
+ * redirect.
+ */
+function configureSocialLogin(options: CapabilityOptions): CapabilityConfig {
+  const schemes = options.schemes.map(checkScheme);
+  return {
+    infoPlist: schemeEdits(schemes).infoPlist,
+    entitlements: [{
+      label: "com.apple.developer.applesignin: Default (Sign in with Apple)",
+      apply: (text) => withPlistStringArray(text, "com.apple.developer.applesignin", ["Default"]),
+    }],
+    manual: [
+      "capacitor.config: set plugins.SocialLogin.providers to { apple: true, google: true, " +
+      "facebook: false, twitter: false } (a disabled provider is not bundled; Facebook's SDK adds " +
+      "the AD_ID permission Play asks about)",
+      "Apple: enable Sign in with Apple for the App ID (developer.apple.com → Identifiers); the " +
+      "server's apple provider lists the bundle id as a client id",
+      "Google: create OAuth clients of type iOS (bundle id), Android (package + signing SHA-1) and " +
+      "Web application; pass the web and iOS ids to signInWithGoogle and list both in the " +
+      "server's google provider",
+      ...(schemes.length > 0 ? [] : [
+        "Google on iOS: re-run with --scheme com.googleusercontent.apps.<id> (the iOS client id " +
+        "reversed) to register its redirect scheme",
+      ]),
+    ],
+  };
+}
+
+/** `purchases`: the store-side steps RevenueCat needs. */
+function configurePurchasesCapability(): CapabilityConfig {
+  return {
+    manual: [
+      "iOS: add the In-App Purchase capability (Xcode → Signing & Capabilities) and create the " +
+      "products in App Store Connect; Android: create them in the Play Console (billing needs an " +
+      "uploaded build on a testing track)",
+      "RevenueCat: add both apps, map products to entitlements and offerings, copy each app's " +
+      "public SDK key into configurePurchases({ apiKey: { ios, android } }), and point a webhook " +
+      "at a route that calls verifyRevenueCatWebhook (denext/server)",
+      "Digital goods must use in-app purchase (App Store Review Guideline 3.1.1; Google Play " +
+      "Payments policy)",
+    ],
+  };
+}
+
 /** The camera usage string `camera` and `barcode` share. */
 const CAMERA_USAGE = "Take photos and scan codes with the camera.";
 
@@ -537,6 +655,89 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
       "liveActivityPushToStartToken (iOS 16.1+, push-to-start 17.2+; --name <Name>)",
     options: ["names", "appGroups"],
     configure: configureLiveActivity,
+  },
+  keyboard: {
+    npm: "@capacitor/keyboard",
+    version: "^8.0.5",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "useKeyboard() / onKeyboardChange / <KeyboardAvoidingView> / <KeyboardStickyView> / " +
+      "hideKeyboard() / setKeyboardResizeMode(mode) (iOS)",
+  },
+  back: {
+    npm: "@capacitor/app",
+    version: "^8.1.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "onBack / useBackHandler / onBackProgress / useBackProgress (Android back button and " +
+      "predictive back; iOS has none)",
+    configure: configureBack,
+  },
+  "system-bars": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "setSystemBars({ style, hidden, animation, bar }) / useSystemBarsFollowTheme() " +
+      "(SystemBars ships in @capacitor/core 8)",
+    configure: configureSystemBars,
+  },
+  dialog: {
+    npm: "@capacitor/dialog",
+    version: "^8.0.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "React Native mode's Alert.alert / Alert.prompt as system dialogs (else an in-page " +
+      "dialog)",
+  },
+  permissions: {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "checkPermission / requestPermission / usePermission (each capability's plugin " +
+      "answers) and openAppSettings()",
+    configure: configureSettings,
+  },
+  "local-notifications": {
+    npm: "@capacitor/local-notifications",
+    version: "^8.3.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    androidPermissions: ["android.permission.POST_NOTIFICATIONS"],
+    notes: "scheduleNotification / cancelNotification / pendingNotifications / " +
+      "createNotificationChannel / setNotificationCategories / onLocalNotificationTapped",
+    configure: configureLocalNotifications,
+  },
+  biometrics: {
+    npm: "@aparajita/capacitor-biometric-auth",
+    version: "^10.0.0",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: { NSFaceIDUsageDescription: "Unlock the app with Face ID." },
+    androidPermissions: ["android.permission.USE_BIOMETRIC"],
+    notes: "isBiometricAvailable() / authenticateBiometric({ reason }) / " +
+      "secureStore.set(key, value, { requireBiometric: true })",
+    configure: configureSettings,
+  },
+  "social-login": {
+    npm: "@capgo/capacitor-social-login",
+    version: "^8.5.11",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "signInWithApple() (iOS) / signInWithGoogle({ webClientId, iosClientId }) / " +
+      "signInNative(session, provider) (--scheme <Google's reversed iOS client id>)",
+    options: ["schemes"],
+    configure: configureSocialLogin,
+  },
+  geolocation: {
+    npm: "@capacitor/geolocation",
+    version: "^8.2.2",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: { NSLocationWhenInUseUsageDescription: "Show where you are in the app." },
+    androidPermissions: [
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION",
+    ],
+    notes: "getCurrentPosition() / watchPosition(cb) / useLocation() (foreground only; " +
+      "navigator.geolocation on the web)",
+    configure: configureSettings,
+  },
+  purchases: {
+    npm: "@revenuecat/purchases-capacitor",
+    version: "^13.6.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "configurePurchases / getOfferings / purchasePackage / restorePurchases / " +
+      "getCustomerInfo / useEntitlement(id) (RevenueCat; no web fallback)",
+    configure: configurePurchasesCapability,
   },
 };
 
@@ -935,7 +1136,8 @@ function configureAll(
       manifest: dedupeByLabel(configs.flatMap((c) => c.manifest ?? [])),
       appDelegate: dedupeByLabel(configs.flatMap((c) => c.appDelegate ?? [])),
       variablesGradle: dedupeByLabel(configs.flatMap((c) => c.variablesGradle ?? [])),
-      installs: configs.flatMap((c) => c.install ? [c.install] : []),
+      // Several capabilities share one install (DenextSettings): run and list it once.
+      installs: [...new Set(configs.flatMap((c) => c.install ? [c.install] : []))],
     },
     requiredFiles: Object.assign({}, ...configs.map((c) => c.requiredFiles ?? {})),
     manual: configs.flatMap((c) => c.manual ?? []),

@@ -16,6 +16,8 @@
 //     skip). A runtime value react-native declares that react-native-web does not export is
 //     an error; a missing type-only export is a warning. No signature diff: react-native-web
 //     ships no types.
+//     The shell overlay check then requires every API react-native-web ships as a mock to be
+//     backed by React Native mode's overlay (`RN_OVERLAY_EXPORTS`, `src/react-native/`).
 //   • expo — each `denext/expo/*` shim in `src/expo/manifest.ts` (`deno doc` over its source,
 //     offline) against its package's pinned `.d.ts` surface, frozen in
 //     `baselines/expo.baseline.json`, minus the shim's `omitted` list: names, value-ness,
@@ -37,10 +39,12 @@ import {
   loadExpoShims,
   REACT_NATIVE_PACKAGE,
   REACT_NATIVE_SPECIFIER,
+  REACT_NATIVE_WEB_MOCKS,
   REACT_NATIVE_WEB_PACKAGE,
   REACT_NATIVE_WEB_PIN,
   rnBaselinePath,
 } from "./spec.ts";
+import { RN_OVERLAY_EXPORTS } from "../../../src/build/react-native.ts";
 
 const ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 
@@ -110,6 +114,34 @@ async function checkReactNative(offline: boolean, knownGaps: Set<string>): Promi
   return result.ok;
 }
 
+/**
+ * react-native-web's mocks vs React Native mode's shell overlay: every API react-native-web ships
+ * as a mock (or leaves unstarted) must be one the overlay replaces, and the overlay module
+ * (`src/react-native/mod.ts`) must export it (a component as `create<Name>`). Offline.
+ */
+async function checkShellOverlay(): Promise<boolean> {
+  const overlay = await import("../../../src/react-native/mod.ts") as Record<string, unknown>;
+  const backed = (name: string) => {
+    const kind = RN_OVERLAY_EXPORTS[name];
+    if (kind === undefined) return false;
+    return overlay[kind === "view" ? `create${name}` : name] !== undefined;
+  };
+  const mocked = REACT_NATIVE_WEB_MOCKS.filter((name) => !backed(name));
+  const extra = Object.keys(RN_OVERLAY_EXPORTS).filter((n) => !REACT_NATIVE_WEB_MOCKS.includes(n));
+  const unexported = extra.filter((name) => !backed(name));
+  console.log(
+    `\n== react-native shell overlay (react-native-web mocks → denext implementations) ==`,
+  );
+  console.log(
+    `  mocked in react-native-web: ${REACT_NATIVE_WEB_MOCKS.length}; backed by denext: ${
+      REACT_NATIVE_WEB_MOCKS.length - mocked.length
+    }; also replaced (browser-only in react-native-web): ${extra.join(", ")}`,
+  );
+  for (const name of mocked) console.log(`  ✗ ${name}: still react-native-web's mock`);
+  for (const name of unexported) console.log(`  ✗ ${name}: listed but not exported by the overlay`);
+  return mocked.length === 0 && unexported.length === 0;
+}
+
 /** expo target: each denext shim vs its frozen `expo-*` baseline minus `omitted`. */
 // fallow-ignore-next-line complexity -- CLI parity-report script; not unit-tested, CRAP is coverage-estimated
 async function checkExpo(knownGaps: Set<string>): Promise<boolean> {
@@ -176,6 +208,7 @@ async function main() {
   const knownGaps = await loadKnownGaps();
   let ok = true;
   if (doRn) ok = (await checkReactNative(offline, knownGaps)) && ok;
+  if (doRn) ok = (await checkShellOverlay()) && ok;
   if (doExpo) ok = (await checkExpo(knownGaps)) && ok;
 
   if (!ok) {

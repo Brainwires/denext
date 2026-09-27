@@ -314,8 +314,8 @@ function tapTarget(
   return linked === undefined ? undefined : { path: linked, url };
 }
 
-/** Call a tap subscriber, then navigate (once per tap). */
-function deliverTap(
+/** Call a tap subscriber, then navigate (once per tap); local notification taps share it. */
+export function deliverTap(
   tap: PushTap,
   once: RouteOnce,
   callback: (tap: PushTap) => void,

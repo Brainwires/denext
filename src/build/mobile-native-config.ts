@@ -478,6 +478,31 @@ export function withManifestApplicationBlock(
   return end < 0 ? null : insertNested(manifest, end, lines);
 }
 
+/** The `<application …>` open tag (attribute values may hold `>`). */
+const APPLICATION_OPEN = /<application\b(?:[^>"]|"[^"]*")*>/;
+
+/**
+ * `manifest` with the attribute `name="value"` on its `<application>` element. Unchanged when
+ * the element already has that attribute, whatever its value (an app's own setting is kept);
+ * null without an `<application>` element. A multi-line open tag gets the attribute on a line
+ * of its own, indented like the tag's next line.
+ */
+export function withManifestApplicationAttribute(
+  manifest: string,
+  name: string,
+  value: string,
+): string | null {
+  const open = APPLICATION_OPEN.exec(manifest);
+  if (!open) return null;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`\\s${escaped}\\s*=`).test(open[0])) return manifest;
+  const at = open.index + "<application".length;
+  const nextLine = /^(\r?\n)([ \t]*)/.exec(manifest.slice(at));
+  const attribute = `${name}="${xmlText(value)}"`;
+  const insert = nextLine ? `${nextLine[1]}${nextLine[2]}${attribute}` : ` ${attribute}`;
+  return manifest.slice(0, at) + insert + manifest.slice(at);
+}
+
 /**
  * `plist` with the top-level boolean `key` set to `<true/>`: added when absent, a `<false/>`
  * turned to `<true/>`. Null without a top-level dict, or when the key holds a non-boolean.

@@ -33,6 +33,23 @@ export const REACT_NATIVE_WEB_PACKAGE = "react-native-web";
 /** The pinned react-native-web whose runtime namespace is the ACTUAL surface (see runtime.ts). */
 export const REACT_NATIVE_WEB_PIN = "0.21.2";
 
+/**
+ * The APIs react-native-web's compatibility table marks as a "Mock" ("no equivalent web APIs")
+ * or "Not started" (https://necolas.github.io/react-native-web/docs/react-native-compatibility/).
+ * React Native mode's shell overlay (`RN_OVERLAY_EXPORTS` in `src/build/react-native.ts`) must
+ * back every one of them with a denext implementation; `check.ts` fails when one is left mocked.
+ */
+export const REACT_NATIVE_WEB_MOCKS: readonly string[] = [
+  "AccessibilityInfo",
+  "Alert",
+  "BackHandler",
+  "I18nManager",
+  "Keyboard",
+  "KeyboardAvoidingView",
+  "RefreshControl",
+  "StatusBar",
+];
+
 /** EXPECTED-side target: `react-native` ↔ the `react-native` package's own bundled types. */
 export const REACT_NATIVE_EXPECTED_TARGET: RealTarget = {
   specifier: REACT_NATIVE_SPECIFIER,

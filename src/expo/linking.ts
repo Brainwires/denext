@@ -5,8 +5,9 @@
  *
  * `createURL` builds a `<scheme>://…` link inside the native shell (the scheme comes from the
  * `scheme` option or the Expo config's `scheme`, see `denext/expo/constants`) and a URL on
- * the page's origin on the web, as Expo's web build does. `openSettings` and `sendIntent`
- * are not available to a web view and reject.
+ * the page's origin on the web, as Expo's web build does. `openSettings` opens the app's system
+ * settings in the shell (`denext mobile add permissions`) and rejects on the web; `sendIntent`
+ * is not available to a web view and rejects.
  *
  * @example
  * ```ts
@@ -22,6 +23,7 @@
 import { useEffect, useState } from "../runtime/hooks.ts";
 import { nativePlatform, openExternal } from "../mobile/bridge.ts";
 import { onDeepLink } from "../mobile/deep-link.ts";
+import { openAppSettings } from "../mobile/permissions.ts";
 import { nativePlugin } from "../mobile/plugin.ts";
 import { expoConfigGlobal, type Subscription, subscription } from "./internal/common.ts";
 
@@ -265,12 +267,14 @@ export function canOpenURL(url: string): Promise<boolean> {
 }
 
 /**
- * Open the app's system settings: not available to a web view.
+ * Open the app's page in the system settings, through `denext/mobile`'s `openAppSettings`
+ * (denext's `DenextSettings` plugin, `denext mobile add permissions`; iOS falls back to
+ * `app-settings:`). Rejects on the web and on Android without the plugin.
  *
- * @returns A promise that rejects.
+ * @returns A promise that settles once the settings were opened.
  */
 export function openSettings(): Promise<void> {
-  return Promise.reject(new Error("openSettings is not supported here (no native settings API)"));
+  return openAppSettings();
 }
 
 /**
