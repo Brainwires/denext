@@ -512,10 +512,15 @@ export function appUsesClassComponents(
  * decides if the generated entry installs the offscreen scheduler (see
  * {@linkcode activitySupportBlock}). An app can't render one without naming `Activity` (its
  * import, `React.Activity`, or `<Activity>`); whole-word (`\b`) so `ActivityIndicator` /
- * `myActivity` don't trip it.
+ * `myActivity` don't trip it. `denext/navigation`'s `StackLayout` / `TabsLayout` / `StackView` /
+ * `TabsView` keep their hidden screens with `<Activity>`, so naming one of them counts too.
  */
 export function appUsesActivity(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
-  return scanAppSources(rootDir, (c) => /\bActivity\b/.test(c), extraFiles);
+  return scanAppSources(
+    rootDir,
+    (c) => /\b(?:Activity|StackLayout|TabsLayout|StackView|TabsView)\b/.test(c),
+    extraFiles,
+  );
 }
 
 /**

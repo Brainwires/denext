@@ -46,6 +46,11 @@ export interface HydrationData {
    * it on soft-nav fetches so unmatched slots keep their content (`server/slot-state.ts`).
    */
   slotState?: Record<string, string>;
+  /**
+   * The page's `export const screenOptions` (a `denext/navigation` stack's per-route options:
+   * title, animation, presentation, header), when it exports them.
+   */
+  screenOptions?: Record<string, unknown>;
 }
 
 /**

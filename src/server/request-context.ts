@@ -10,6 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/cookie";
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
+import type { CorsPolicy } from "./cors.ts";
 import { currentCacheScope } from "./cache-scope.ts";
 import { lastForwardedHop, remoteAddrOf } from "./remote-addr.ts";
 
@@ -166,6 +167,11 @@ export interface RequestContext {
    * socket peer is used.
    */
   trustForwardedHeaders?: boolean;
+  /**
+   * The app-level CORS policy (`config.cors`), set by `createApp`. The native `denextAuth`
+   * endpoints read it to answer an app WebView's origin; `null`/absent means no CORS.
+   */
+  cors?: CorsPolicy | null;
   /** Headers accumulated to attach to the response (e.g. Set-Cookie, loader-set headers). */
   outgoingHeaders: Headers;
   /** Per-request render collectors (signal state, `useServerInsertedHTML`) — see `render-scope.ts`. */
@@ -195,6 +201,11 @@ export interface RequestContext {
   slotState?: Record<string, string>;
   /** The slot state this render produced (shipped to the client in the nav/hydration data). */
   renderedSlotState?: Record<string, string>;
+  /**
+   * The rendered page's `export const screenOptions` (`denext/navigation`'s per-route stack
+   * options), shipped to the client in the nav/hydration data. Absent when the page has none.
+   */
+  screenOptions?: Record<string, unknown>;
   /**
    * Attributes a root component put on ITS `<html>`/`<body>` (a migrated Remix root's
    * `<html className={theme}>`), merged onto the real document tags by the assembler.
