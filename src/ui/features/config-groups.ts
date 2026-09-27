@@ -57,6 +57,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "apiBatch",
     // Which other origins (a Capacitor shell, a web front end) may call the API.
     "cors",
+    // Which mobile apps this domain vouches for (universal links / App Links).
+    "appLinks",
     "apiMaxBodyBytes",
     "actionMaxBodyBytes",
     "canonicalOrigin",

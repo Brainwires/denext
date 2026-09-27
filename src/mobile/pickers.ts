@@ -82,6 +82,29 @@ interface FilePickerPlugin {
   }>;
 }
 
+/** A `Camera.getPhoto` result as a {@linkcode PickedImage}: `as` picks the field (else whichever is set). */
+export function pickedImageFrom(
+  photo: { webPath?: string; dataUrl?: string; format?: string },
+  as?: "webPath" | "dataUrl",
+): PickedImage {
+  const format = String(photo.format ?? "jpeg").toLowerCase();
+  const inline = as === "dataUrl" || (as === undefined && typeof photo.webPath !== "string");
+  return inline ? { dataUrl: photo.dataUrl, format } : { webPath: photo.webPath, format };
+}
+
+/** One file of a `FilePicker.pickFiles` result as a {@linkcode PickedDocument}. */
+export function pickedDocumentFrom(
+  file: { name?: string; mimeType?: string; size?: number; data?: string; path?: string },
+): PickedDocument {
+  const picked: PickedDocument = {
+    name: String(file.name ?? ""),
+    mimeType: file.mimeType || "application/octet-stream",
+    size: typeof file.size === "number" ? file.size : 0,
+    ...(typeof file.path === "string" ? { path: file.path } : {}),
+  };
+  return typeof file.data === "string" ? { ...picked, data: file.data } : picked;
+}
+
 /** {@linkcode ImageSource} → the Camera plugin's `CameraSource` value. */
 const CAMERA_SOURCE: Record<ImageSource, string> = {
   camera: "CAMERA",
@@ -191,11 +214,7 @@ export async function pickImage(options: PickImageOptions = {}): Promise<PickedI
         }),
       CAMERA_CANCEL_CODES,
     );
-    if (!photo) return null;
-    const format = String(photo.format ?? "jpeg").toLowerCase();
-    return as === "dataUrl"
-      ? { dataUrl: photo.dataUrl, format }
-      : { webPath: photo.webPath, format };
+    return photo ? pickedImageFrom(photo, as) : null;
   }
   const file = await chooseFile("pickImage", "image/*", source === "camera");
   if (!file) return null;
@@ -242,14 +261,7 @@ export async function pickDocument(
       [],
     );
     const file = result?.files?.[0];
-    if (!file) return null;
-    const picked: PickedDocument = {
-      name: String(file.name ?? ""),
-      mimeType: file.mimeType || "application/octet-stream",
-      size: typeof file.size === "number" ? file.size : 0,
-      ...(typeof file.path === "string" ? { path: file.path } : {}),
-    };
-    return typeof file.data === "string" ? { ...picked, data: file.data } : picked;
+    return file ? pickedDocumentFrom(file) : null;
   }
   const file = await chooseFile("pickDocument", (types ?? []).join(","), false);
   if (!file) return null;

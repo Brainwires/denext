@@ -60,6 +60,7 @@ import { resolveOnBehalf } from "./esbuild-resolve.ts";
 import { withOptimizedPackageImports } from "./optimize-package-imports.ts";
 import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
 import { googleFontsPlugin } from "./google-fonts-plugin.ts";
+import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -198,6 +199,9 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // React Native mode's shell overlay (`denext/react-native`): the react-native-web modules
     // it replaces re-export from it (see react-native.ts), and its hooks share this instance.
     "react-native": u("src/react-native/mod.ts"),
+    // React Native mode's FlashList / LegendList shims (see react-native-lists.ts).
+    "react-native-flash-list": u("src/react-native/flash-list.ts"),
+    "react-native-legend-list": u("src/react-native/legend-list.ts"),
   };
 }
 
@@ -585,6 +589,8 @@ const DENEXT_RUNTIME_FILES: Record<string, string> = {
   ...expoRuntimeFiles(),
   // React Native mode's shell overlay (see react-native.ts).
   "denext/react-native": "react-native.js",
+  "denext/react-native/flash-list": "react-native-flash-list.js",
+  "denext/react-native/legend-list": "react-native-legend-list.js",
 };
 
 /**
@@ -1996,6 +2002,9 @@ export async function bundleNextCompatModules(
     // re-exports from `"sideEffects": false` deps.
     treeShaking: true,
     metafile: analyze,
+    // `denext export --sourcemaps hidden`: external maps (no sourceMappingURL comment) for the
+    // browser bundle, moved out of the web root by the export (hidden-sourcemaps.ts).
+    ...(!deno && hiddenSourceMapsEnabled() ? { sourcemap: "external" as const } : {}),
     jsx: "automatic",
     jsxImportSource: "react",
     absWorkingDir: options.absWorkingDir,

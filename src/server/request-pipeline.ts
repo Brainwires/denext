@@ -450,6 +450,10 @@ async function answerApiPreflight(state: RequestState): Promise<Response | null>
 
 /** The routing stages, in order; each either produces the response or hands on. */
 async function dispatch(state: RequestState): Promise<Response> {
+  // Universal link / App Link association files: iOS and Android refuse a redirected answer,
+  // so they are served before basePath, trailingSlash, redirects and middleware.
+  const association = state.app.appLinks?.(state.request);
+  if (association) return association;
   const redirected = canonicalizePath(state) ?? applyRedirectRules(state);
   if (redirected) return redirected;
   // Next's order: headers → redirects → MIDDLEWARE → rewrites → filesystem. Middleware

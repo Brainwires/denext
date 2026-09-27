@@ -4,10 +4,13 @@
  * {@linkcode openAuthSession}).
  *
  * Provided: `makeRedirectUri`, `AuthRequest` (with PKCE S256 and `state`), `useAuthRequest`,
- * discovery (`fetchDiscoveryAsync`, `resolveDiscoveryAsync`, `useAutoDiscovery`), the token
- * calls (`exchangeCodeAsync`, `refreshAsync`, `revokeAsync`, `fetchUserInfoAsync`) and
- * `TokenResponse`. The provider presets (`expo-auth-session/providers/*`), the request
- * classes behind the token calls, and `loadAsync`'s proxy options are not (see the manifest).
+ * `useLoadedAuthRequest` and `useAuthRequestResult`, discovery (`fetchDiscoveryAsync`,
+ * `resolveDiscoveryAsync`, `useAutoDiscovery`), the token calls (`exchangeCodeAsync`,
+ * `refreshAsync`, `revokeAsync`, `fetchUserInfoAsync`) and the request classes behind them
+ * (`AccessTokenRequest`, `RefreshTokenRequest`, `RevokeTokenRequest`), `TokenResponse`, the
+ * error classes and `requestAsync`. The Google and Facebook presets are
+ * `denext/expo/auth-session/providers/google` and `…/facebook`. `loadAsync`'s proxy options
+ * are not provided.
  *
  * @example
  * ```ts
@@ -156,9 +159,25 @@ export interface AuthSessionRedirectUriOptions {
   native?: string;
 }
 
-/** An error the provider returned. */
-export class AuthError extends Error {
-  /** The OAuth error code (`access_denied`, …). */
+/** An OAuth error response's parameters (`error`, `error_description`, …). */
+export type ResponseErrorConfig = Record<string, string | undefined> & {
+  /** The OAuth error code. */
+  error: string;
+  /** The provider's description. */
+  error_description?: string;
+  /** The provider's error page. */
+  error_uri?: string;
+};
+
+/** An authorization error response's parameters (plus the returned `state`). */
+export type AuthErrorConfig = ResponseErrorConfig & {
+  /** The returned `state`. */
+  state?: string;
+};
+
+/** An OAuth error response: an authorization redirect's or a token endpoint's. */
+export class ResponseError extends Error {
+  /** The OAuth error code (`access_denied`, `invalid_grant`, …). */
   readonly code: string;
   /** The provider's description. */
   readonly description?: string;
@@ -166,6 +185,28 @@ export class AuthError extends Error {
   readonly uri?: string;
   /** Every returned parameter. */
   readonly params: Record<string, string>;
+
+  /**
+   * Create it.
+   *
+   * @param params The error parameters (`error`, `error_description`, …).
+   * @param errorCodeType Whether the authorization (`auth`) or token (`token`) endpoint sent it.
+   */
+  constructor(params: Record<string, string | undefined>, errorCodeType: "auth" | "token") {
+    super(
+      params.error_description ?? params.error ??
+        (errorCodeType === "auth" ? "Authorization failed" : "The token request failed"),
+    );
+    this.name = "ResponseError";
+    this.code = params.error ?? "unknown";
+    this.description = params.error_description;
+    this.uri = params.error_uri;
+    this.params = params as Record<string, string>;
+  }
+}
+
+/** An error the authorization endpoint returned. */
+export class AuthError extends ResponseError {
   /** The returned `state`. */
   readonly state?: string;
 
@@ -174,14 +215,23 @@ export class AuthError extends Error {
    *
    * @param params The error parameters (`error`, `error_description`, …).
    */
-  constructor(params: Record<string, string>) {
-    super(params.error_description ?? params.error ?? "Authorization failed");
+  constructor(params: Record<string, string | undefined>) {
+    super(params, "auth");
     this.name = "AuthError";
-    this.code = params.error ?? "unknown";
-    this.description = params.error_description;
-    this.uri = params.error_uri;
-    this.params = params;
     this.state = params.state;
+  }
+}
+
+/** An error a token endpoint returned. */
+export class TokenError extends ResponseError {
+  /**
+   * Create it.
+   *
+   * @param params The error parameters (`error`, `error_description`, …).
+   */
+  constructor(params: Record<string, string | undefined>) {
+    super(params, "token");
+    this.name = "TokenError";
   }
 }
 
@@ -240,13 +290,17 @@ export class TokenResponse implements TokenResponseConfig {
   idToken?: string;
   /** When it was issued, in seconds since the epoch. */
   issuedAt: number;
+  /** The token endpoint's whole answer, when it came from one. */
+  rawResponse?: unknown;
 
   /**
    * Create it.
    *
    * @param response The token fields.
+   * @param rawResponse The token endpoint's whole answer.
    */
-  constructor(response: TokenResponseConfig) {
+  constructor(response: TokenResponseConfig, rawResponse?: unknown) {
+    this.rawResponse = rawResponse;
     this.accessToken = response.accessToken;
     this.tokenType = response.tokenType ?? "bearer";
     this.expiresIn = response.expiresIn;
@@ -284,7 +338,8 @@ export class TokenResponse implements TokenResponseConfig {
 
   /** The fields as a plain object. */
   getRequestConfig(): TokenResponseConfig {
-    return { ...this };
+    const { rawResponse: _raw, ...config } = this;
+    return config;
   }
 
   /** Whether the token should be refreshed now. */
@@ -611,106 +666,489 @@ export function useAuthRequest(
   return [discovery ? request : null, result, promptAsync];
 }
 
-/** POST a form to a token-family endpoint and read the JSON answer. */
-async function postForm(
-  endpoint: string | undefined,
-  body: Record<string, string | undefined>,
-): Promise<Record<string, unknown>> {
-  if (!endpoint) throw new Error("The discovery document has no endpoint for this call");
-  const form = new URLSearchParams();
-  for (const [key, value] of Object.entries(body)) if (value !== undefined) form.set(key, value);
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-    body: form,
-  });
-  const text = await response.text();
-  const json = text ? JSON.parse(text) as Record<string, unknown> : {};
-  if (!response.ok || json.error) {
-    throw new AuthError(
-      { error: String(json.error ?? `http_${response.status}`), ...json } as Record<string, string>,
-    );
+/**
+ * An `AuthRequestInstance` (an {@linkcode AuthRequest} or a subclass, like a provider's) for
+ * `config`, once its authorization URL is built for `discovery`; null until then. Rebuilt
+ * when the client, redirect, response type, PKCE, state, scopes, prompt or extra parameters
+ * change.
+ *
+ * @param config The request configuration.
+ * @param discovery The provider's endpoints (null until known).
+ * @param AuthRequestInstance The request class.
+ * @returns The loaded request, or null.
+ */
+export function useLoadedAuthRequest(
+  config: AuthRequestConfig,
+  discovery: DiscoveryDocument | null,
+  AuthRequestInstance: new (config: AuthRequestConfig) => AuthRequest,
+): AuthRequest | null {
+  const [request, setRequest] = useState<AuthRequest | null>(null);
+  const key = JSON.stringify([
+    discovery?.authorizationEndpoint,
+    config.clientId,
+    config.redirectUri,
+    config.responseType,
+    config.clientSecret,
+    config.codeChallenge,
+    config.state,
+    config.usePKCE,
+    config.scopes?.join(" "),
+    [config.prompt ?? []].flat().join(" "),
+    config.extraParams ?? {},
+  ]);
+  useEffect(() => {
+    if (!discovery) return;
+    let mounted = true;
+    const next = new AuthRequestInstance(config);
+    next.makeAuthUrlAsync(discovery).then(() => mounted && setRequest(next), () => {});
+    return () => void (mounted = false);
+  }, [key]);
+  return request;
+}
+
+/** What {@linkcode useAuthRequestResult}'s prompt does. */
+export type PromptMethod = (options?: AuthRequestPromptOptions) => Promise<AuthSessionResult>;
+
+/**
+ * The latest result of `request` and the prompt that produces it. `customOptions` are the
+ * defaults of every prompt (a provider's popup size, say).
+ *
+ * @param request The loaded request ({@linkcode useLoadedAuthRequest}).
+ * @param discovery The provider's endpoints.
+ * @param customOptions Default prompt options.
+ * @returns `[result, promptAsync]`.
+ */
+export function useAuthRequestResult(
+  request: AuthRequest | null,
+  discovery: DiscoveryDocument | null,
+  customOptions: AuthRequestPromptOptions = {},
+): [AuthSessionResult | null, PromptMethod] {
+  const [result, setResult] = useState<AuthSessionResult | null>(null);
+  const promptAsync = useCallback(async (options: AuthRequestPromptOptions = {}) => {
+    if (!discovery || !request) {
+      throw new Error("Cannot prompt to authenticate until the request has finished loading.");
+    }
+    const next = await request.promptAsync(discovery, {
+      ...customOptions,
+      ...options,
+      windowFeatures: { ...customOptions.windowFeatures, ...options.windowFeatures },
+    });
+    setResult(next);
+    return next;
+  }, [request?.url, discovery?.authorizationEndpoint]);
+  return [result, promptAsync];
+}
+
+/** A {@linkcode requestAsync} request. */
+export interface FetchRequest {
+  /** The headers. */
+  headers?: Record<string, string>;
+  /** The parameters: a form body for a POST, the query string otherwise. */
+  body?: Record<string, string>;
+  /** `json` to ask for and parse JSON. */
+  dataType?: string;
+  /** The method (default GET). */
+  method?: string;
+}
+
+/**
+ * Expo's small fetch helper: send `body` as a form (POST) or a query string, and read the
+ * answer as JSON (for `dataType: "json"` or a JSON content type) or text.
+ *
+ * @param requestUrl The URL.
+ * @param fetchRequest The method, headers, body and data type.
+ * @returns The parsed answer.
+ */
+export async function requestAsync<T>(requestUrl: string, fetchRequest: FetchRequest): Promise<T> {
+  const url = new URL(requestUrl);
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(fetchRequest.headers ?? {})) {
+    if (value != null) headers[key] = value;
   }
-  return json;
+  const isPost = fetchRequest.method?.toUpperCase() === "POST";
+  let body: string | undefined;
+  if (fetchRequest.body && isPost) body = new URLSearchParams(fetchRequest.body).toString();
+  else if (fetchRequest.body) {
+    for (const [key, value] of Object.entries(fetchRequest.body)) {
+      url.searchParams.append(key, value);
+    }
+  }
+  const json = fetchRequest.dataType?.toLowerCase() === "json";
+  if (json && !headers.Accept && !headers.accept) {
+    headers.Accept = "application/json, text/javascript; q=0.01";
+  }
+  const response = await fetch(url.toString().replace(/\/$/, ""), {
+    method: fetchRequest.method,
+    mode: "cors",
+    headers,
+    body,
+  });
+  if (json || response.headers.get("content-type")?.includes("application/json")) {
+    return await response.json() as T;
+  }
+  return await response.text() as T;
+}
+
+/** The base of the token-family requests: a config, a body and `performAsync`. */
+export class Request<T, B> {
+  /** The request's configuration. */
+  protected request: T;
+
+  /**
+   * Create it.
+   *
+   * @param request The request's configuration.
+   */
+  constructor(request: T) {
+    this.request = request;
+  }
+
+  /** Send it (a subclass implements this). */
+  performAsync(_discovery: DiscoveryDocument): Promise<B> {
+    return Promise.reject(new Error("performAsync must be extended"));
+  }
+
+  /** The configuration (a subclass implements this). */
+  getRequestConfig(): T {
+    throw new Error("getRequestConfig must be extended");
+  }
+
+  /** The form body (a subclass implements this). */
+  getQueryBody(): Record<string, string> {
+    throw new Error("getQueryBody must be extended");
+  }
 }
 
 /** The fields every token call sends. */
 export interface TokenRequestBase {
   /** The client id. */
   clientId: string;
-  /** The client secret. */
+  /** The client secret (sent as HTTP Basic credentials). */
   clientSecret?: string;
   /** The scopes. */
   scopes?: string[];
   /** More body parameters. */
   extraParams?: Record<string, string>;
+  /** More headers (`Content-Type` is fixed, and `Authorization` too with a secret). */
+  extraHeaders?: Record<string, string>;
+}
+
+/** A token request's configuration. */
+export type TokenRequestConfig = TokenRequestBase;
+
+/** An authorization-code exchange's configuration. */
+export type AccessTokenRequestConfig = TokenRequestBase & {
+  /** The authorization code. */
+  code: string;
+  /** The redirect URI of the authorization request. */
+  redirectUri: string;
+};
+
+/** A refresh's configuration. */
+export type RefreshTokenRequestConfig = TokenRequestBase & {
+  /** The refresh token. */
+  refreshToken?: string;
+};
+
+/** A revocation's configuration. */
+export type RevokeTokenRequestConfig = Partial<TokenRequestBase> & {
+  /** The token to revoke. */
+  token: string;
+  /** Which kind of token it is. */
+  tokenTypeHint?: TokenTypeHint;
+};
+
+/** `extra` without `Content-Type`, and without `Authorization` when a secret sets it. */
+function sanitizeHeaders(
+  extra: Record<string, string> | undefined,
+  hasSecret: boolean,
+): Record<string, string> | undefined {
+  if (!extra) return undefined;
+  const out = { ...extra };
+  delete out["Content-Type"];
+  delete out["content-type"];
+  if (hasSecret) {
+    delete out.Authorization;
+    delete out.authorization;
+  }
+  return out;
+}
+
+/** The form headers, with HTTP Basic client credentials when there is a secret. */
+function formHeaders(
+  extra: Record<string, string> | undefined,
+  clientId: string | undefined,
+  clientSecret: string | undefined,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    ...extra,
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+  if (clientSecret !== undefined) {
+    const credentials = `${encodeURIComponent(clientId ?? "")}:${encodeURIComponent(clientSecret)}`;
+    headers.Authorization = `Basic ${bytesToBase64(new TextEncoder().encode(credentials))}`;
+  }
+  return headers;
+}
+
+/** A token-endpoint request: its grant, client and body. */
+export class TokenRequest<T extends TokenRequestConfig> extends Request<T, TokenResponse>
+  implements TokenRequestConfig {
+  /** The grant type. */
+  grantType: GrantType;
+  /** The client id. */
+  readonly clientId: string;
+  /** The client secret. */
+  readonly clientSecret?: string;
+  /** The scopes. */
+  readonly scopes?: string[];
+  /** More body parameters. */
+  readonly extraParams?: Record<string, string>;
+  /** More headers. */
+  readonly extraHeaders?: Record<string, string>;
+
+  /**
+   * Create it.
+   *
+   * @param request The request's configuration.
+   * @param grantType The grant type.
+   */
+  constructor(request: T, grantType: GrantType) {
+    super(request);
+    this.grantType = grantType;
+    this.clientId = request.clientId;
+    this.clientSecret = request.clientSecret;
+    this.scopes = request.scopes;
+    this.extraParams = request.extraParams;
+    this.extraHeaders = sanitizeHeaders(request.extraHeaders, request.clientSecret !== undefined);
+  }
+
+  /** The request headers. */
+  getHeaders(): Record<string, string> {
+    return formHeaders(this.extraHeaders, this.clientId, this.clientSecret);
+  }
+
+  /** POST it to the token endpoint. */
+  override async performAsync(
+    discovery: Pick<DiscoveryDocument, "tokenEndpoint">,
+  ): Promise<TokenResponse> {
+    if (!discovery.tokenEndpoint) {
+      throw new Error("Cannot invoke `performAsync()` without a valid tokenEndpoint");
+    }
+    const response = await requestAsync<Record<string, unknown>>(discovery.tokenEndpoint, {
+      dataType: "json",
+      method: "POST",
+      headers: this.getHeaders(),
+      body: this.getQueryBody(),
+    });
+    if (typeof response !== "object" || response === null || "error" in response) {
+      throw new TokenError(
+        (response ?? { error: "invalid_response" }) as Record<string, string | undefined>,
+      );
+    }
+    const token = TokenResponse.fromQueryParams(response);
+    token.rawResponse = response;
+    return token;
+  }
+
+  /** The form body: the grant, the client id (without a secret), the scope and extras. */
+  override getQueryBody(): Record<string, string> {
+    const body: Record<string, string> = { grant_type: this.grantType };
+    if (!this.clientSecret) body.client_id = this.clientId;
+    if (this.scopes) body.scope = this.scopes.join(" ");
+    for (const [key, value] of Object.entries(this.extraParams ?? {})) {
+      if (!(key in body) && value != null) body[key] = value;
+    }
+    return body;
+  }
+}
+
+/** An authorization-code exchange. */
+export class AccessTokenRequest extends TokenRequest<AccessTokenRequestConfig>
+  implements AccessTokenRequestConfig {
+  /** The authorization code. */
+  readonly code: string;
+  /** The redirect URI. */
+  readonly redirectUri: string;
+
+  /**
+   * Create it.
+   *
+   * @param options The code, redirect URI and client.
+   */
+  constructor(options: AccessTokenRequestConfig) {
+    if (!options.redirectUri) throw new Error("`AccessTokenRequest` requires a `redirectUri`");
+    if (!options.code) throw new Error("`AccessTokenRequest` requires an authorization `code`");
+    super(options, GrantType.AuthorizationCode);
+    this.code = options.code;
+    this.redirectUri = options.redirectUri;
+  }
+
+  /** The form body, with the code and redirect URI. */
+  override getQueryBody(): Record<string, string> {
+    return { ...super.getQueryBody(), redirect_uri: this.redirectUri, code: this.code };
+  }
+
+  /** The configuration. */
+  override getRequestConfig(): AccessTokenRequestConfig & { grantType: GrantType } {
+    return {
+      clientId: this.clientId,
+      clientSecret: this.clientSecret,
+      grantType: this.grantType,
+      code: this.code,
+      redirectUri: this.redirectUri,
+      extraParams: this.extraParams,
+      extraHeaders: this.extraHeaders,
+      scopes: this.scopes,
+    };
+  }
+}
+
+/** A refresh-token grant. */
+export class RefreshTokenRequest extends TokenRequest<RefreshTokenRequestConfig>
+  implements RefreshTokenRequestConfig {
+  /** The refresh token. */
+  readonly refreshToken?: string;
+
+  /**
+   * Create it.
+   *
+   * @param options The refresh token and client.
+   */
+  constructor(options: RefreshTokenRequestConfig) {
+    if (!options.refreshToken) throw new Error("`RefreshTokenRequest` requires a `refreshToken`");
+    super(options, GrantType.RefreshToken);
+    this.refreshToken = options.refreshToken;
+  }
+
+  /** The form body, with the refresh token. */
+  override getQueryBody(): Record<string, string> {
+    return { ...super.getQueryBody(), refresh_token: this.refreshToken! };
+  }
+
+  /** The configuration. */
+  override getRequestConfig(): RefreshTokenRequestConfig & { grantType: GrantType } {
+    return {
+      clientId: this.clientId,
+      clientSecret: this.clientSecret,
+      grantType: this.grantType,
+      refreshToken: this.refreshToken,
+      extraParams: this.extraParams,
+      extraHeaders: this.extraHeaders,
+      scopes: this.scopes,
+    };
+  }
+}
+
+/** A token revocation (RFC 7009). */
+export class RevokeTokenRequest extends Request<RevokeTokenRequestConfig, boolean>
+  implements RevokeTokenRequestConfig {
+  /** The client id. */
+  readonly clientId?: string;
+  /** The client secret. */
+  readonly clientSecret?: string;
+  /** The token. */
+  readonly token: string;
+  /** Which kind of token it is. */
+  readonly tokenTypeHint?: TokenTypeHint;
+  /** More headers. */
+  readonly extraHeaders?: Record<string, string>;
+
+  /**
+   * Create it.
+   *
+   * @param request The token and client.
+   */
+  constructor(request: RevokeTokenRequestConfig) {
+    if (!request.token) throw new Error("`RevokeTokenRequest` requires a `token`");
+    super(request);
+    this.clientId = request.clientId;
+    this.clientSecret = request.clientSecret;
+    this.token = request.token;
+    this.tokenTypeHint = request.tokenTypeHint;
+    this.extraHeaders = sanitizeHeaders(request.extraHeaders, request.clientSecret !== undefined);
+  }
+
+  /** POST it to the revocation endpoint. */
+  override async performAsync(
+    discovery: Pick<DiscoveryDocument, "revocationEndpoint">,
+  ): Promise<boolean> {
+    if (!discovery.revocationEndpoint) {
+      throw new Error("Cannot invoke `performAsync()` without a valid revocationEndpoint");
+    }
+    await requestAsync<unknown>(discovery.revocationEndpoint, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: this.getQueryBody(),
+    });
+    return true;
+  }
+
+  /** The request headers (HTTP Basic client credentials with a secret). */
+  getHeaders(): Record<string, string> {
+    return formHeaders(this.extraHeaders, this.clientId, this.clientSecret);
+  }
+
+  /** The configuration. */
+  override getRequestConfig(): RevokeTokenRequestConfig {
+    return {
+      clientId: this.clientId,
+      clientSecret: this.clientSecret,
+      token: this.token,
+      tokenTypeHint: this.tokenTypeHint,
+      extraHeaders: this.extraHeaders,
+    };
+  }
+
+  /** The form body: the token, its hint and (without a secret) the client id. */
+  override getQueryBody(): Record<string, string> {
+    const body: Record<string, string> = { token: this.token };
+    if (this.tokenTypeHint) body.token_type_hint = this.tokenTypeHint;
+    if (this.clientId && !this.clientSecret) body.client_id = this.clientId;
+    return body;
+  }
 }
 
 /**
- * Exchange an authorization code for tokens.
+ * Exchange an authorization code for tokens ({@linkcode AccessTokenRequest}).
  *
  * @param config The code, redirect URI, client and PKCE verifier (`extraParams.code_verifier`).
  * @param discovery The token endpoint.
  * @returns The tokens.
  */
-export async function exchangeCodeAsync(
-  config: TokenRequestBase & { code: string; redirectUri: string },
+export function exchangeCodeAsync(
+  config: AccessTokenRequestConfig,
   discovery: Pick<DiscoveryDocument, "tokenEndpoint">,
 ): Promise<TokenResponse> {
-  return TokenResponse.fromQueryParams(
-    await postForm(discovery.tokenEndpoint, {
-      grant_type: GrantType.AuthorizationCode,
-      code: config.code,
-      redirect_uri: config.redirectUri,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      scope: config.scopes?.join(" "),
-      ...config.extraParams,
-    }),
-  );
+  return new AccessTokenRequest(config).performAsync(discovery);
 }
 
 /**
- * Refresh an access token.
+ * Refresh an access token ({@linkcode RefreshTokenRequest}).
  *
  * @param config The refresh token and client.
  * @param discovery The token endpoint.
  * @returns The new tokens.
  */
-export async function refreshAsync(
-  config: TokenRequestBase & { refreshToken?: string },
+export function refreshAsync(
+  config: RefreshTokenRequestConfig,
   discovery: Pick<DiscoveryDocument, "tokenEndpoint">,
 ): Promise<TokenResponse> {
-  return TokenResponse.fromQueryParams(
-    await postForm(discovery.tokenEndpoint, {
-      grant_type: GrantType.RefreshToken,
-      refresh_token: config.refreshToken,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      scope: config.scopes?.join(" "),
-      ...config.extraParams,
-    }),
-  );
+  return new RefreshTokenRequest(config).performAsync(discovery);
 }
 
 /**
- * Revoke a token.
+ * Revoke a token ({@linkcode RevokeTokenRequest}).
  *
  * @param config The token and client.
  * @param discovery The revocation endpoint.
  * @returns `true` once revoked.
  */
-export async function revokeAsync(
-  config: Partial<TokenRequestBase> & { token: string; tokenTypeHint?: TokenTypeHint },
+export function revokeAsync(
+  config: RevokeTokenRequestConfig,
   discovery: Pick<DiscoveryDocument, "revocationEndpoint">,
 ): Promise<boolean> {
-  await postForm(discovery.revocationEndpoint, {
-    token: config.token,
-    token_type_hint: config.tokenTypeHint,
-    client_id: config.clientId,
-    client_secret: config.clientSecret,
-  });
-  return true;
+  return new RevokeTokenRequest(config).performAsync(discovery);
 }
 
 /**

@@ -44,6 +44,10 @@ env:
   # --node-modules-dir=none: next to a package.json (the Capacitor project's), Deno would
   # otherwise resolve the CLI's own npm: imports from node_modules and fail.
   DENEXT: deno run -A --node-modules-dir=none jsr:@denext/denext@^2.10.0/cli
+  # Crash reporting (`denext mobile add sentry`): the upload steps run only when the
+  # SENTRY_AUTH_TOKEN secret is set. Set SENTRY_ORG / SENTRY_PROJECT as repository variables.
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
 
 jobs:
   decide:
@@ -106,13 +110,18 @@ jobs:
     needs: decide
     if: needs.decide.outputs.path == 'ota'
     runs-on: ubuntu-latest
+    env:
+      # Secrets cannot be tested in `if:` directly; as a job env var they can.
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      # --sourcemaps hidden: source maps are built but moved out of the export into
+      # $APP_DIR/.denext/sourcemaps (nothing that ships references them), for the upload below.
       - name: Export the web UI
-        run: $DENEXT export "$APP_DIR"
+        run: $DENEXT export --sourcemaps hidden "$APP_DIR"
       # Signed with DENEXT_OTA_SIGNING_KEY (the PEM contents); a signed manifest also gets a
       # sequence (the Unix time), so apps refuse an older one. The fingerprint is the one
       # `decide` computed (`--native-fingerprint auto --dir "$CAP_DIR"` recomputes it, but
@@ -124,6 +133,13 @@ jobs:
         run: |
           test -n "$DENEXT_OTA_SIGNING_KEY" || { echo "DENEXT_OTA_SIGNING_KEY is not set"; exit 1; }
           $DENEXT ota manifest "$APP_DIR/$WEB_OUT" --native-fingerprint "$NATIVE_FINGERPRINT"
+      # The release is the manifest's version, which initCrashReporting() reads at runtime.
+      - name: Upload source maps to Sentry
+        if: env.SENTRY_AUTH_TOKEN != ''
+        run: |
+          npx --yes @sentry/cli sourcemaps upload \
+            --release "$(jq -r .version "$APP_DIR/$WEB_OUT/_denext/ota.json")" \
+            --url-prefix "~/" "$APP_DIR/.denext/sourcemaps"
       # Placeholder: publish the export wherever your apps' checkForUiUpdate({ baseUrl }) points
       # (a server running createOtaHandler, a bucket behind a CDN, …). Upload every file first
       # and _denext/ota.json last, so a client never sees a manifest whose files are missing.
@@ -141,6 +157,7 @@ jobs:
     runs-on: macos-15
     env:
       NATIVE_FINGERPRINT: ${{ needs.decide.outputs.fingerprint }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
@@ -154,8 +171,19 @@ jobs:
         run: npm ci
       - name: Export the web UI and sync it into ios/
         run: |
-          $DENEXT export "$APP_DIR"
+          $DENEXT export --sourcemaps hidden "$APP_DIR"
           (cd "$CAP_DIR" && npx cap sync ios)
+      # App Review readiness and release security, on what ships (the synced native copies and
+      # the export): fails the job on an error, each printed with its fix.
+      - name: Check the build for App Review and release
+        run: $DENEXT mobile doctor --store --release --dir "$CAP_DIR" --app "$APP_DIR"
+      # The bundled UI's release (spa.ota: true stamps out/_denext/ota.json at export).
+      - name: Upload source maps to Sentry
+        if: env.SENTRY_AUTH_TOKEN != ''
+        run: |
+          npx --yes @sentry/cli sourcemaps upload \
+            --release "$(jq -r .version "$APP_DIR/$WEB_OUT/_denext/ota.json")" \
+            --url-prefix "~/" "$APP_DIR/.denext/sourcemaps"
       # Embeds the fingerprint as Info.plist DenextNativeFingerprint (never changing its value),
       # then checks this job builds the native layer `decide` fingerprinted.
       - name: Embed the native fingerprint
@@ -271,8 +299,10 @@ jobs:
         run: npm ci
       - name: Export the web UI and sync it into android/
         run: |
-          $DENEXT export "$APP_DIR"
+          $DENEXT export --sourcemaps hidden "$APP_DIR"
           (cd "$CAP_DIR" && npx cap sync android)
+      - name: Check the build's release security
+        run: $DENEXT mobile doctor --release --dir "$CAP_DIR"
       # Embeds the fingerprint as the dev.denext.native.FINGERPRINT meta-data.
       - name: Embed the native fingerprint
         run: |

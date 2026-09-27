@@ -406,6 +406,15 @@ export interface ReactNativeConfig {
    * @default true
    */
   expoShims?: boolean;
+  /**
+   * Which engine runs the app's lists. `"denext"` (the default): React Native's `FlatList`,
+   * `SectionList` and `VirtualizedList` (inside react-native-web), `@shopify/flash-list` and
+   * `@legendapp/list` (its React Native entry) run on denext's `VirtualList`, with the same
+   * props and ref methods. `"library"`: each resolves to the real implementation.
+   *
+   * @default "denext"
+   */
+  lists?: "denext" | "library";
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
@@ -488,6 +497,53 @@ export interface CorsConfig {
    * @maximum 86400
    */
   maxAge?: number;
+}
+
+/** The iOS side of {@link AppLinksConfig}. */
+export interface AppleAppLinks {
+  /**
+   * The apps, as `<Team ID>.<bundle id>` (`ABCDE12345.com.example.app`): the Team ID from the
+   * Apple Developer account, the bundle id from Xcode.
+   */
+  appIds: string[];
+  /**
+   * The URL paths that open the app (`*` and `?` wildcards). A leading `!` excludes a path
+   * (`"!/admin/*"`); order matters, the first match wins. Default `["*"]`: every path.
+   */
+  paths?: string[];
+  /**
+   * Also list the apps under `webcredentials`, so iOS offers this domain's saved passwords
+   * and passkeys in the app. Default `true`.
+   */
+  webcredentials?: boolean;
+}
+
+/** The Android side of {@link AppLinksConfig}. */
+export interface AndroidAppLinks {
+  /** The application id (`com.example.app`). */
+  packageName: string;
+  /**
+   * The SHA-256 fingerprints of the certificates the app is signed with, as
+   * `AB:CD:…` (32 colon-separated hex bytes; plain hex is accepted too). With Play App
+   * Signing, list Play's app signing key (Play Console → App integrity) and your upload key.
+   */
+  sha256CertFingerprints: string[];
+  /**
+   * Also delegate `get_login_creds`, so Android's Credential Manager shares this domain's
+   * saved passwords and passkeys with the app. Default `true`.
+   */
+  loginCredentials?: boolean;
+}
+
+/**
+ * The domain-association files for the app's universal links / App Links (`appLinks` in
+ * `denext.config.ts`). Pair it with `denext mobile add deep-links --domain <host>`.
+ */
+export interface AppLinksConfig {
+  /** Serve `/.well-known/apple-app-site-association` for these iOS apps. */
+  apple?: AppleAppLinks;
+  /** Serve `/.well-known/assetlinks.json` for this Android app. */
+  android?: AndroidAppLinks;
 }
 
 /**
@@ -680,6 +736,14 @@ export interface DenextConfig {
    * {@link CorsConfig}.
    */
   cors?: CorsConfig;
+  /**
+   * The domain-association files for the app's universal links (iOS) and App Links (Android):
+   * `denext start` and `denext dev` serve `/.well-known/apple-app-site-association` and
+   * `/.well-known/assetlinks.json` from it (`application/json`, `200`, never redirected), and
+   * `denext export` writes both into the export. Pair it with `denext mobile add deep-links
+   * --domain <host>`. See {@link AppLinksConfig}.
+   */
+  appLinks?: AppLinksConfig;
   /**
    * The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise
    * it only for actions that accept large payloads (multipart uploads); over the cap → 413

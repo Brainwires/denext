@@ -10,6 +10,7 @@ import {
   serveWithPortFallback,
 } from "../../server/serve-utils.ts";
 import { serveStatic } from "../../server/static.ts";
+import { createAppLinksHandler } from "../../server/app-links.ts";
 import { resolveProject } from "../paths.ts";
 import { CLIENT_PREFIX, SHELL_FILE, wantsShell } from "./shared.ts";
 
@@ -50,10 +51,13 @@ export async function startSpaProdServer(
   // never pull in the proxy module (and its `npm:ws` dependency) at all.
   const proxyCfg = paths.config?.spa?.proxy;
   const proxy = proxyCfg ? await import("../dev-proxy.ts") : undefined;
+  const appLinks = createAppLinksHandler(paths.config?.appLinks);
 
   const handler = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const secure = url.protocol === "https:";
+    const association = appLinks(request);
+    if (association) return applyDefaultSecurityHeaders(association, secure, hstsCfg);
     // Proxied prefixes go to the backend before any local serving (an /api or /ws
     // request must reach the backend even if a same-named asset happens to exist).
     if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {

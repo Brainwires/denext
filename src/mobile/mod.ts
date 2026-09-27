@@ -75,6 +75,18 @@
  * - {@linkcode configurePurchases}, {@linkcode getOfferings}, {@linkcode purchasePackage},
  *   {@linkcode restorePurchases}, {@linkcode getCustomerInfo}, {@linkcode useEntitlement}:
  *   in-app purchases through RevenueCat (`denext mobile add purchases`; no web fallback).
+ * - {@linkcode requestReview} / {@linkcode openStoreReview} (`mobile add app-review`),
+ *   {@linkcode getAppUpdateInfo} / {@linkcode promptStoreUpdate} and Android's in-app updates
+ *   (`mobile add app-update`), {@linkcode lockOrientation} / {@linkcode useOrientation}
+ *   (`mobile add screen-orientation`), {@linkcode saveToLibrary} / {@linkcode getAlbums}
+ *   (`mobile add media-library`), {@linkcode usePrivacyScreen} (`mobile add privacy-screen`),
+ *   {@linkcode requestTrackingPermission} (`mobile add tracking`, iOS ATT),
+ *   {@linkcode defineBackgroundTask} (`mobile add background`), and
+ *   {@linkcode onRestoredResult} / {@linkcode restoreRouteOnRelaunch} for Android process death
+ *   (`mobile add restore`).
+ * - {@linkcode initCrashReporting}: Sentry's Capacitor SDK with the OTA UI version as the release
+ *   (`mobile add sentry`); {@linkcode installOfflineScreen}: a full-screen notice while the
+ *   device is offline (`mobile add offline-screen`).
  *
  * @example
  * ```tsx
@@ -156,6 +168,7 @@ export {
   type OtaCheckOptions,
   type OtaCheckResult,
   type OtaErrorCode,
+  otaInstallId,
   type OtaPrepareResult,
   otaReset,
   type OtaStatus,
@@ -344,3 +357,70 @@ export {
   restorePurchases,
   useEntitlement,
 } from "./purchases.ts";
+export {
+  openStoreReview,
+  requestReview,
+  type ReviewRequestResult,
+  type StoreListingOptions,
+} from "./app-review.ts";
+export {
+  type AppStoreOptions,
+  type AppUpdateAvailability,
+  type AppUpdateInfo,
+  type AppUpdateOutcome,
+  completeFlexibleUpdate,
+  type FlexibleUpdateProgress,
+  getAppUpdateInfo,
+  onFlexibleUpdateProgress,
+  openAppStore,
+  performImmediateUpdate,
+  promptStoreUpdate,
+  type PromptStoreUpdateOptions,
+  type PromptStoreUpdateResult,
+  startFlexibleUpdate,
+} from "./app-update.ts";
+export {
+  getOrientation,
+  lockOrientation,
+  onOrientationChange,
+  type Orientation,
+  type OrientationLock,
+  unlockOrientation,
+  useOrientation,
+} from "./screen-orientation.ts";
+export {
+  createAlbum,
+  getAlbums,
+  getRecentMedia,
+  type MediaAlbum,
+  type MediaItem,
+  type RecentMediaOptions,
+  type SavedMedia,
+  saveToLibrary,
+  type SaveToLibraryOptions,
+} from "./media-library.ts";
+export { type PrivacyScreenOptions, setPrivacyScreen, usePrivacyScreen } from "./privacy-screen.ts";
+export { getTrackingStatus, requestTrackingPermission, type TrackingStatus } from "./tracking.ts";
+export {
+  type BackgroundKeyValue,
+  type BackgroundTask,
+  type BackgroundTaskContext,
+  type BackgroundTaskDefinition,
+  defineBackgroundTask,
+  runBackgroundTask,
+} from "./background.ts";
+export {
+  onRestoredResult,
+  type RestoredResult,
+  restoreRouteOnRelaunch,
+  type RestoreRouteOptions,
+  useRestoredResult,
+} from "./restore.ts";
+export {
+  type CrashReportingOptions,
+  type CrashReportingStarted,
+  initCrashReporting,
+  type SentryCapacitorSdk,
+  type SentrySiblingSdk,
+} from "./crash-reporting.ts";
+export { installOfflineScreen, type OfflineScreenOptions } from "./offline-screen.ts";

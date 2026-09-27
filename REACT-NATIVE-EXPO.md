@@ -245,7 +245,10 @@ aliases, all 41 swept routes render, and pairing persists across reloads through
    - **pure JS on RN primitives:** work once layer 1 works;
    - **packages with a web implementation** (reanimated, gesture-handler, react-native-svg,
      safe-area-context, screens, `@legendapp/list`): work through `.web.*` resolution with
-     reduced features, e.g. reanimated worklets run on the main thread;
+     reduced features, e.g. reanimated worklets run on the main thread. React Native mode
+     stamps each worklet's `__closure` / `__workletHash` at build time, as Reanimated's Babel
+     plugin does, so hooks need no dependency arrays
+     ([guide](https://denext.dev/docs/react-native#reanimated-and-worklets));
    - **native-only** (TurboModules, Nitro, JSI: vision-camera frame processors,
      `react-native-nitro-*`, T3's `t3-terminal`): can't run in a WebView. Each needs a
      Capacitor-backed shim or a web replacement of the app's own. It's the same boundary Expo

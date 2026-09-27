@@ -113,7 +113,8 @@ Deno.test("add-ota: a stock project gets every file and all the wiring", async (
       activity.indexOf("DenextOta.prepare(this, bridgeBuilder);") <
         activity.indexOf("super.onCreate(savedInstanceState);"),
     );
-    assertEquals(report.written.length, 6 + 4); // 6 templates + pbxproj, storyboard, scene, activity
+    // 6 templates + pbxproj, storyboard, scene, activity, and PrivacyInfo.xcprivacy (UserDefaults)
+    assertEquals(report.written.length, 6 + 4 + 1);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

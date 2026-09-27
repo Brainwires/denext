@@ -884,7 +884,8 @@ const NO_ENGINE: EngineOptions = {};
 /**
  * React Native's `maintainVisibleContentPosition` on the engine. The engine always keeps the
  * visible items in place when items above them are inserted or resized — measuring rows above
- * the viewport must never move what the user sees, and it is what makes `scrollToIndex` exact.
+ * the viewport must never move what the user sees (`scrollToIndex` is exact either way: a pending
+ * target anchors the engine whatever this setting).
  * Without the prop, React Native leaves a view at the very top showing the new first items, so
  * the core scrolls back to the start after a change made there (`autoscrollStart: 0`); with it,
  * `autoscrollToTopThreshold` sets that distance. An adapter's own `mvcp` is left as it is.

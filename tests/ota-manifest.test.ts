@@ -250,6 +250,12 @@ Deno.test("denext ota: --required and --notes are declared flags", () => {
       ["native-fingerprint", "string"],
       ["dir", "string"],
       ["force", "boolean"],
+      ["channel", "string"],
+      ["release", "string"],
+      ["to", "string"],
+      ["percent", "number"],
+      ["halt", "boolean"],
+      ["file", "string"],
     ],
   );
 });
@@ -952,7 +958,10 @@ Deno.test("createOtaHandler: cors answers the preflight and tags responses for a
       const res = await preflight(withCors, origin);
       assertEquals(res?.status, 204, origin);
       assertEquals(res?.headers.get("access-control-allow-origin"), origin);
-      assertEquals(res?.headers.get("access-control-allow-headers"), "authorization");
+      assertEquals(
+        res?.headers.get("access-control-allow-headers"),
+        "authorization, x-denext-ota-channel, x-denext-ota-install-id",
+      );
       assertEquals(res?.headers.get("access-control-allow-methods"), "GET, HEAD, OPTIONS");
       assertEquals(res?.headers.get("vary"), "Origin");
     }

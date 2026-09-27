@@ -838,6 +838,64 @@
         "origins"
       ]
     },
+    "appLinks": {
+      "description": "The domain-association files for the app's universal links (iOS) and App Links (Android): `denext start` and `denext dev` serve `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` from it (`application/json`, `200`, never redirected), and `denext export` writes both into the export. Pair it with `denext mobile add deep-links --domain <host>`. See AppLinksConfig.",
+      "type": "object",
+      "properties": {
+        "apple": {
+          "description": "Serve `/.well-known/apple-app-site-association` for these iOS apps.",
+          "type": "object",
+          "properties": {
+            "appIds": {
+              "description": "The apps, as `<Team ID>.<bundle id>` (`ABCDE12345.com.example.app`): the Team ID from the Apple Developer account, the bundle id from Xcode.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "paths": {
+              "description": "The URL paths that open the app (`*` and `?` wildcards). A leading `!` excludes a path (`\"!/admin/*\"`); order matters, the first match wins. Default `[\"*\"]`: every path.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "webcredentials": {
+              "description": "Also list the apps under `webcredentials`, so iOS offers this domain's saved passwords and passkeys in the app. Default `true`.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "appIds"
+          ]
+        },
+        "android": {
+          "description": "Serve `/.well-known/assetlinks.json` for this Android app.",
+          "type": "object",
+          "properties": {
+            "packageName": {
+              "description": "The application id (`com.example.app`).",
+              "type": "string"
+            },
+            "sha256CertFingerprints": {
+              "description": "The SHA-256 fingerprints of the certificates the app is signed with, as `AB:CD:…` (32 colon-separated hex bytes; plain hex is accepted too). With Play App Signing, list Play's app signing key (Play Console → App integrity) and your upload key.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "loginCredentials": {
+              "description": "Also delegate `get_login_creds`, so Android's Credential Manager shares this domain's saved passwords and passkeys with the app. Default `true`.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "packageName",
+            "sha256CertFingerprints"
+          ]
+        }
+      }
+    },
     "actionMaxBodyBytes": {
       "description": "The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise it only for actions that accept large payloads (multipart uploads); over the cap → 413 before the action runs. `denext start`/`dev` forward it to the server; a custom server passes `actionMaxBodyBytes` to `createApp()` itself.",
       "type": "number",
@@ -943,6 +1001,14 @@
               "description": "Alias each `expo-*` package that has a `denext/expo/*` shim (`expo-haptics` → `denext/expo/haptics`, …: the list is `denext/expo/manifest`'s `EXPO_SHIMS`) to that shim, which implements the package's API over `denext/mobile` and web APIs. A package without a shim resolves normally. `false` resolves every `expo-*` package normally.",
               "type": "boolean",
               "default": true
+            },
+            "lists": {
+              "description": "Which engine runs the app's lists. `\"denext\"` (the default): React Native's `FlatList`, `SectionList` and `VirtualizedList` (inside react-native-web), `@shopify/flash-list` and `@legendapp/list` (its React Native entry) run on denext's `VirtualList`, with the same props and ref methods. `\"library\"`: each resolves to the real implementation.",
+              "enum": [
+                "denext",
+                "library"
+              ],
+              "default": "denext"
             }
           }
         }

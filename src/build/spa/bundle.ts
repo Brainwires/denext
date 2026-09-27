@@ -215,10 +215,12 @@ export async function bundleSpaInto(
   // that can render class components, which a source scan wouldn't see. `<Activity>`/
   // `<ViewTransition>` are denext-only APIs the app itself must name, so a source scan detects
   // them precisely (and keeps their runtimes out of a bundle that never uses them).
-  const [activity, viewTransition] = await Promise.all([
+  const [scannedActivity, viewTransition] = await Promise.all([
     appUsesActivity(paths.projectDir, [entryPath]),
     appUsesViewTransition(paths.projectDir, [entryPath]),
   ]);
+  // React Native mode's Expo Router navigators keep hidden stack screens in an `Activity`.
+  const activity = scannedActivity || reactNativeOptions(paths.config) !== null;
   // The opt-out seed is an import, not a statement: `main.tsx` is imported statically and may
   // call `createRoot` while it evaluates, before any statement of this entry has run.
   const entrySource = momentumScrollSeedImport(momentumSafeScrollEnabled(paths.config)) +

@@ -139,6 +139,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     live: "group",
     apiBatch: "group",
     cors: "group",
+    appLinks: "group",
     apiMaxBodyBytes: "number",
     actionMaxBodyBytes: "number",
     canonicalOrigin: "text",

@@ -17,6 +17,7 @@ import {
   formatServerOnlyLeaks,
   type ServerOnlyLeak,
 } from "./server-only-scan.ts";
+import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 
 /**
  * The framework root as a URL, in whatever scheme the framework itself runs under:
@@ -1004,6 +1005,11 @@ export interface BundleOutput {
   entry: string;
   /** Every emitted JS file (entry + split chunks) keyed by basename. */
   files: Map<string, string>;
+  /**
+   * External source maps keyed by `<file>.map`: present only for hidden source maps
+   * (`DENEXT_SOURCEMAPS=hidden`, see hidden-sourcemaps.ts).
+   */
+  maps?: Map<string, string>;
 }
 
 /** Convenience: the entry file's JavaScript source from a {@linkcode BundleOutput}. */
@@ -1205,6 +1211,8 @@ interface DenoBundleRun {
    * server-only leak check.
    */
   sources: Map<string, Set<string>>;
+  /** Each emitted file's external source map by `<file>.map`, kept only for hidden source maps. */
+  maps: Map<string, string>;
 }
 
 async function runDenoBundle(
@@ -1248,12 +1256,17 @@ async function runDenoBundle(
     throw new Error(bundleFailureMessage(code, new TextDecoder().decode(stderr)));
   }
   const files = new Map<string, string>();
+  const maps = new Map<string, string>();
+  // `denext export --sourcemaps hidden`: keep the external maps (nothing references them).
+  const keepMaps = !sourcemap && hiddenSourceMapsEnabled();
   for await (const dirEntry of Deno.readDir(outDir)) {
     if (dirEntry.isFile && dirEntry.name.endsWith(".js")) {
       files.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
+    } else if (keepMaps && dirEntry.isFile && dirEntry.name.endsWith(".js.map")) {
+      maps.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
     }
   }
-  return { files, sources: await bundledSources(outDir, files) };
+  return { files, sources: await bundledSources(outDir, files), maps };
 }
 
 /**
@@ -1450,7 +1463,7 @@ export async function bundleSourceFiles(
       );
     }
     await assertNoServerOnlyLeaks([{ source: entrySource, file: entry }], run, opts);
-    return { entry, files };
+    return run.maps.size > 0 ? { entry, files, maps: run.maps } : { entry, files };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
   }
@@ -1578,5 +1591,21 @@ export async function writeBundleOutput(
   for (const [name, code] of output.files) {
     const target = name === output.entry ? entryName : name;
     await Deno.writeTextFile(join(dir, target), code);
+  }
+  for (const [name, map] of output.maps ?? []) {
+    const renamed = name === `${output.entry}.map`;
+    await Deno.writeTextFile(
+      join(dir, renamed ? `${entryName}.map` : name),
+      renamed ? withMapFile(map, entryName) : map,
+    );
+  }
+}
+
+/** A source map's JSON with its `file` field naming `file` (after the entry is renamed). */
+function withMapFile(map: string, file: string): string {
+  try {
+    return JSON.stringify({ ...JSON.parse(map), file });
+  } catch {
+    return map;
   }
 }

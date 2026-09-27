@@ -107,12 +107,32 @@ UI are left out of the hash.
 | `ANDROID_KEYSTORE_PASSWORD`       | android | The keystore password.                                                                                                          |
 | `ANDROID_KEY_ALIAS`               | android | The key's alias in the keystore.                                                                                                |
 | `ANDROID_KEY_PASSWORD`            | android | The key's password.                                                                                                             |
+| `SENTRY_AUTH_TOKEN`               | ota ios | Optional: a Sentry auth token with `project:releases` (Settings → Auth Tokens). Without it the source-map uploads are skipped.  |
 
 The App Store Connect API key is what makes signing work on a runner: `xcodebuild` gets
 `-allowProvisioningUpdates -authenticationKeyPath … -authenticationKeyID … -authenticationKeyIssuerID …`
 and signs automatically, so no Apple ID ever has to be signed in to Xcode (a CI machine never
 has one). The distribution certificate is still imported, so Xcode does not mint a new
 certificate on every run.
+
+## Checks and crash reporting
+
+Before a binary is built, the `ios` job runs `denext mobile doctor --store --release` and the
+`android` job `denext mobile doctor --release` on what ships (the export and the native config
+copies `cap sync` wrote). An error fails the job with its fix printed: a leftover `server.url`, a
+debuggable WebView, cleartext or mixed content, `allowNavigation: ["*"]`, no CSP, a secret in the
+export, and (for the store) a missing usage string, privacy manifest problem, missing icons, or
+sign-in without account deletion. See
+[App Store review](https://denext.dev/docs/mobile#app-store-review).
+
+Every export runs with `--sourcemaps hidden`: source maps are built but moved out of the export
+into `$APP_DIR/.denext/sourcemaps`, so none ships. With the `SENTRY_AUTH_TOKEN` secret (and the
+`SENTRY_ORG` / `SENTRY_PROJECT` repository variables) set, the `ota` and `ios` jobs upload them
+with `npx @sentry/cli sourcemaps upload --release <version> --url-prefix "~/"`, where the release
+is the `version` of `_denext/ota.json`: the same value `initCrashReporting()` from
+`denext/mobile` reports at runtime, so stack traces of the bundled UI and of every over-the-air
+UI resolve. It needs `spa.ota: true` (the bundled UI stamped at export). See
+[Crash reporting](https://denext.dev/docs/mobile#crash-reporting).
 
 ## Store submission
 

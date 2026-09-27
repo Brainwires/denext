@@ -22,6 +22,9 @@
 //   denext mobile fingerprint     hash the native layer (ios/, android/, config, plugins) so CI
 //                                 can tell OTA-able changes from binary ones (--json, --diff
 //                                 <old.json> explains a change, --write embeds it in the app)
+//   denext mobile privacy | doctor --store|--release | inspect
+//                                 privacy manifest, App Review / release checks, device inspector
+//                                 (./mobile-store.ts)
 //
 // Both are flat verbs whose first positional selects the action (as `desktop` does). Neither
 // loads the project's modules: `ota manifest` only hashes files, and `add-ota` only writes
@@ -61,6 +64,8 @@ import {
 } from "../../build/mobile-dev.ts";
 import { pickLanAddress } from "../../build/dev-server/lan.ts";
 import { startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
+import { OTA_CHANNEL_FLAGS, OTA_CHANNEL_USAGE, otaChannel, otaPromote } from "./ota-channels.ts";
+import { mobileDoctor, mobileInspect, mobilePrivacy } from "./mobile-store.ts";
 
 /** Print `message` to stderr and exit 1. */
 function fail(message: string): never {
@@ -254,6 +259,7 @@ export const otaCommand: CommandSpec = {
     "                              --dir; a binary embedding another one (`denext mobile\n" +
     "                              fingerprint --write`) refuses it (code native_mismatch)\n" +
     "  denext ota keygen ota.key   Write a P-256 signing key (0600) and ota.key.pub\n" +
+    OTA_CHANNEL_USAGE +
     "\n" +
     "  Run it after anything that changes the export (e.g. swapping brand icons in), and before\n" +
     "  `cap sync`, so the bundled UI and the served UI carry the right version. `spa.ota: true`\n" +
@@ -266,10 +272,11 @@ export const otaCommand: CommandSpec = {
     "  network. `keygen --force` rotates the key, which breaks OTA for every installed binary\n" +
     "  that embeds the old public key.",
   positionals: [
-    { name: "action", help: "manifest | keygen", required: true },
+    { name: "action", help: "manifest | keygen | channel | promote", required: true },
     {
       name: "path",
-      help: "manifest: the static export directory (e.g. out); keygen: the private key file",
+      help:
+        "manifest: the static export directory (e.g. out); keygen: the private key file; channel: <name> <dir>",
     },
   ],
   flags: [
@@ -322,14 +329,21 @@ export const otaCommand: CommandSpec = {
       name: "force",
       type: "boolean",
       help:
-        "keygen: replace existing key files (breaks OTA for binaries that embed the old public key)",
+        "keygen: replace existing key files (breaks OTA for binaries that embed the old public key); channel / promote: skip the signature and sequence checks",
     },
+    ...OTA_CHANNEL_FLAGS,
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0];
     if (action === "manifest") return await otaManifest(ctx);
     if (action === "keygen") return await otaKeygen(ctx);
-    fail(`denext ota: unknown action "${action ?? ""}" (expected: manifest, keygen).`);
+    if (action === "channel") return await otaChannel(ctx);
+    if (action === "promote") return await otaPromote(ctx);
+    fail(
+      `denext ota: unknown action "${
+        action ?? ""
+      }" (expected: manifest, keygen, channel, promote).`,
+    );
   },
 };
 
@@ -628,10 +642,13 @@ export function createMobileCommand(run: CommandRunner = runInherit): CommandSpe
       if (action === "add") return await addCapabilities(ctx, run);
       if (action === "dev") return await mobileDev(ctx, run);
       if (action === "fingerprint") return await mobileFingerprint(ctx);
+      if (action === "privacy") return await mobilePrivacy(ctx);
+      if (action === "doctor") return await mobileDoctor(ctx);
+      if (action === "inspect") return await mobileInspect(ctx);
       fail(
         `denext mobile: unknown action "${
           action ?? ""
-        }" (expected: add, add-ota, dev, fingerprint).`,
+        }" (expected: add, add-ota, dev, fingerprint, privacy, doctor, inspect).`,
       );
     },
   };
@@ -667,6 +684,14 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "                                Explain which native inputs changed since native.json\n" +
     "  denext mobile fingerprint --write\n" +
     "                                Embed it in Info.plist + AndroidManifest (OTA gate)\n" +
+    "  denext mobile privacy --check Validate ios/App/App/PrivacyInfo.xcprivacy (--write merges\n" +
+    "                                every installed capability's required-reason entries)\n" +
+    "  denext mobile doctor --store  App Review readiness (server.url, usage strings, privacy\n" +
+    "                                manifest, icons, account deletion, …); exits 1 on errors\n" +
+    "  denext mobile doctor --release\n" +
+    "                                Release security (debuggable WebView, cleartext, mixed\n" +
+    "                                content, allowNavigation *, CSP, secrets in the export)\n" +
+    "  denext mobile inspect         Attach Safari Web Inspector / chrome://inspect to the app\n" +
     "\n" +
     "  fingerprint: SHA-256 over the ios/ and android/ sources (minus build output, Pods,\n" +
     "  .gradle, xcuserdata, local.properties and what `cap sync` copies in; text with CRLF\n" +
@@ -761,13 +786,35 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  (replacing an earlier one); the app then refuses any manifest not signed with its key.\n" +
     "  It exits non-zero when the key cannot be embedded on an installed platform, or an edited\n" +
     "  template was kept. --dry-run lists what it would write, upgrade or keep and changes\n" +
-    "  nothing.",
+    "  nothing.\n" +
+    "\n" +
+    "  privacy: prints ios/App/App/PrivacyInfo.xcprivacy and validates it against Apple's\n" +
+    "  required-reason categories and codes, the collected-data values, the entries the\n" +
+    "  installed capabilities need (`mobile add` merges them; --write merges them now, never\n" +
+    "  removing an entry) and whether Xcode copies it into the app. --check exits 1 on an error.\n" +
+    "\n" +
+    "  doctor: --store checks what App Review looks at (a leftover server.url, cleartext / ATS\n" +
+    "  exceptions, a debuggable WebView, usage strings for installed plugins, the privacy\n" +
+    "  manifest, icons and splash, allowNavigation *, the CSP, source maps and secrets in the\n" +
+    "  export, account deletion when the app signs users in). --release checks the release\n" +
+    "  security settings (debuggable WebView, cleartext, mixed content, allowNavigation *,\n" +
+    "  android:debuggable, the CSP, secrets in the export). Both read the native config copies\n" +
+    "  `cap sync` wrote (what ships) as well as capacitor.config.*; run them after export + sync.\n" +
+    "\n" +
+    "  inspect: prints how to attach Safari's Web Inspector (iOS) and chrome://inspect (Android)\n" +
+    "  to the app's WebView, opens Safari (macOS) and Chrome at chrome://inspect/#devices, and\n" +
+    "  lists `adb devices`, best effort. `mobile dev` turns WebView debugging on for its session\n" +
+    "  only.",
   positionals: [
-    { name: "action", help: "add | add-ota | dev | fingerprint", required: true },
+    {
+      name: "action",
+      help: "add | add-ota | dev | fingerprint | privacy | doctor | inspect",
+      required: true,
+    },
     {
       name: "args",
       help:
-        "add: capability names (see --list); add-ota, fingerprint: the Capacitor project (default: .); dev: the denext project (default: .)",
+        "add: capability names (see --list); add-ota, fingerprint, privacy, doctor, inspect: the Capacitor project (default: .); dev: the denext project (default: .)",
       variadic: true,
     },
   ],
@@ -790,7 +837,7 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       type: "string",
       valueName: "<dir>",
       help:
-        "add, dev, fingerprint: the Capacitor project, with no fallback (default: the current directory)",
+        "add, dev, fingerprint, privacy, doctor, inspect: the Capacitor project, with no fallback (default: the current directory)",
     },
     {
       name: "diff",
@@ -802,7 +849,35 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "write",
       type: "boolean",
       help:
-        "fingerprint: embed it in Info.plist (DenextNativeFingerprint) and AndroidManifest (dev.denext.native.FINGERPRINT)",
+        "fingerprint: embed it in Info.plist (DenextNativeFingerprint) and AndroidManifest (dev.denext.native.FINGERPRINT); privacy: merge every installed capability's entries into PrivacyInfo.xcprivacy",
+    },
+    {
+      name: "check",
+      type: "boolean",
+      help: "privacy: exit 1 when the privacy manifest has an error (a CI gate)",
+    },
+    {
+      name: "store",
+      type: "boolean",
+      help: "doctor: App Review readiness checks (exit 1 on an error)",
+    },
+    {
+      name: "release",
+      type: "boolean",
+      help: "doctor: release security checks (exit 1 on an error)",
+    },
+    {
+      name: "app",
+      type: "string",
+      valueName: "<dir>",
+      help:
+        "doctor: the denext app scanned for sign-in and account deletion (default: the Capacitor project)",
+    },
+    {
+      name: "platform",
+      type: "string",
+      valueName: "<ios|android>",
+      help: "inspect: one platform's steps (default: both)",
     },
     {
       name: "lan",
@@ -833,7 +908,7 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "dry-run",
       type: "boolean",
       help:
-        "add, add-ota: print the plan (packages, native files, config, commands) and change nothing",
+        "add, add-ota, privacy --write: print the plan (packages, native files, config, commands) and change nothing; inspect: print the steps without opening anything",
     },
     {
       name: "list",

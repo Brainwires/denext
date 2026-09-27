@@ -11,6 +11,7 @@ import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
 import { writeOtaManifest } from "../ota-manifest.ts";
 import { loadOtaSigningKey } from "../ota-signing.ts";
+import { stashSourceMapsIfHidden } from "../hidden-sourcemaps.ts";
 import {
   assertEntryExists,
   CLIENT_PREFIX,
@@ -21,6 +22,7 @@ import {
   spaShellHtml,
   STYLE_FILE,
 } from "./shared.ts";
+import { writeMobileExportExtras } from "../mobile-export-extras.ts";
 
 /** Bundle the entry into `clientDir` and write the shell into `shellDir`. */
 async function bundleAndShell(
@@ -122,6 +124,9 @@ export async function exportSpa(
     console.log(`  SPA mode: bundling ${spa.entry} -> _denext/client/${ENTRY_FILE}`);
     await bundleAndShell(paths, entryPath, clientOut, staging);
     await copyPublic(paths.publicDir, staging);
+    await writeMobileExportExtras(paths.projectDir, paths.config, staging);
+    // `--sourcemaps hidden`: the maps leave the web root before anything hashes it.
+    await stashSourceMapsIfHidden(staging, paths.outDir);
     // Last, once every file of the export is in place: the OTA manifest hashes the final
     // tree (`*.gz` siblings excluded), so nothing may be written after it.
     // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the manifest is signed too, and stamped

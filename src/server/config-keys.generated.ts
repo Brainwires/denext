@@ -35,6 +35,7 @@ export const CONFIG_KEYS = [
   "apiBatch",
   "apiMaxBodyBytes",
   "cors",
+  "appLinks",
   "actionMaxBodyBytes",
   "canonicalOrigin",
   "trustForwardedHeaders",

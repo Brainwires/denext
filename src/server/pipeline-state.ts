@@ -48,6 +48,8 @@ export interface AppRuntime {
   handle: RequestHandler;
   /** The app-level CORS policy (`config.cors`, resolved at `createApp`), or `null` for none. */
   cors?: CorsPolicy | null;
+  /** The `appLinks` association-file handler (`null` for a request it does not answer). */
+  appLinks?: (request: Request) => Response | null;
 }
 
 /** The mutable routing state of one request as it moves through the pipeline. */

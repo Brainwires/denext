@@ -41,10 +41,14 @@ ignoreDependencies = [
   "@tanstack/react-virtual",
   "virtua",
   "react-native",
+  "react-native-web", # scroll-bench's rnw-flatlist-rnw imports react-native-web's vendored FlatList
   "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
   "tailwindcss", # examples/tailwind/styles/tailwind.css `@import "tailwindcss"` (Tailwind CLI)
+  # tests/e2e/fixtures/reanimated/package.json: installed into the e2e's temp copy of the fixture
+  "react-native-reanimated",
+  "react-native-gesture-handler",
   # per-directory package.json / test-written import maps — see the note below the list
   "@radix-ui/react-dialog",
   "@radix-ui/react-collapsible",

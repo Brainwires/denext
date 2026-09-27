@@ -19,6 +19,7 @@ import {
   withPlistString,
 } from "./mobile-native-config.ts";
 import { OTA_ANDROID_FILES, OTA_IOS_FILES } from "./ota-native-templates.ts";
+import { OTA_PRIVACY, writePrivacyManifests } from "./mobile-privacy.ts";
 import {
   BRIDGE_VC_FILE,
   hasAndroidApp,
@@ -183,5 +184,17 @@ export async function addOtaToProject(opts: AddOtaOptions): Promise<AddOtaReport
   }, opts.dryRun === true);
   await installIos(inst);
   await installAndroid(inst);
+  // DenextOtaStore keeps its state in UserDefaults: declare it (CA92.1) in PrivacyInfo.xcprivacy.
+  const privacy = await writePrivacyManifests(opts.dir, OTA_PRIVACY, {
+    dryRun: opts.dryRun === true,
+    randomId: opts.randomId,
+  });
+  for (const path of privacy.written) {
+    if (!inst.report.written.includes(path)) inst.report.written.push(path);
+  }
+  for (const path of privacy.unchanged) {
+    if (!inst.report.written.includes(path)) inst.report.unchanged.push(path);
+  }
+  inst.report.manual.push(...privacy.manual);
   return inst.report;
 }

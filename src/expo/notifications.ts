@@ -6,9 +6,9 @@
  * that cold-started the app included, remote and local), `setNotificationHandler`, badges,
  * delivered notifications, Android channels, and local scheduling with categories over
  * `denext/mobile`'s local notifications (`@capacitor/local-notifications`, `denext mobile add
- * local-notifications`). Expo's push service (`getExpoPushTokenAsync`), channel groups, topics
- * and background tasks are not (see the manifest): send through APNs / FCM from your server with
- * the device token.
+ * local-notifications`). Expo's push service is not: `getExpoPushTokenAsync` rejects with
+ * guidance, so send through APNs / FCM from your server with the device token. Channel groups,
+ * topics and background tasks are not provided (see the manifest).
  *
  * On the web there is no push: permissions follow the Notifications API and
  * `getDevicePushTokenAsync` rejects.
@@ -393,6 +393,57 @@ export async function getDevicePushTokenAsync(): Promise<DevicePushToken> {
   const result: DevicePushToken = { type: platform, data: token };
   tokenEmitter?.emit(result);
   return result;
+}
+
+/** An Expo push token, as Expo's push service issues it. */
+export interface ExpoPushToken {
+  /** Always `"expo"`. */
+  type: "expo";
+  /** The token (`ExponentPushToken[…]`). */
+  data: string;
+}
+
+/** Options Expo's `getExpoPushTokenAsync` takes (accepted and not used here). */
+export interface ExpoPushTokenOptions {
+  /** Expo's API base URL. */
+  baseUrl?: string;
+  /** The registration URL. */
+  url?: string;
+  /** The token type. */
+  type?: string;
+  /** The installation id. */
+  deviceId?: string;
+  /** Use the development push service. */
+  development?: boolean;
+  /** The EAS project id. */
+  projectId?: string;
+  /** The application id. */
+  applicationId?: string;
+  /** A device token to register instead of asking for one. */
+  devicePushToken?: DevicePushToken;
+}
+
+/**
+ * Expo's push-token call. denext has no Expo push service, and wrapping the native token in
+ * Expo's shape would hand your server a token Expo's push API rejects, so this always
+ * rejects with code `ERR_NOTIFICATIONS_NO_EXPO_PUSH_SERVICE`: register the device token from
+ * {@linkcode getDevicePushTokenAsync} with your own server and send through APNs / FCM
+ * with any APNs / FCM sender.
+ *
+ * @param _options Expo's options (not used).
+ * @returns Never resolves.
+ */
+export function getExpoPushTokenAsync(_options: ExpoPushTokenOptions = {}): Promise<ExpoPushToken> {
+  return Promise.reject(
+    Object.assign(
+      new Error(
+        "denext/expo: expo-notifications' getExpoPushTokenAsync needs Expo's push service, which " +
+          "denext does not have. Call getDevicePushTokenAsync() for the APNs / FCM device token, " +
+          "register it with your own server, and send through APNs / FCM.",
+      ),
+      { code: "ERR_NOTIFICATIONS_NO_EXPO_PUSH_SERVICE" },
+    ),
+  );
 }
 
 /**

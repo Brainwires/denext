@@ -18,6 +18,9 @@ import {
   bundleReportMarkdown,
   readClientChunks,
 } from "../../build/bundle-report.ts";
+import { checkPrivacyManifest } from "../../build/mobile-privacy.ts";
+import { MOBILE_CAPABILITIES } from "../../build/mobile-capabilities.ts";
+import { capacitorConfigFile } from "../../build/capacitor-config.ts";
 
 export const infoCommand: CommandSpec = {
   name: "info",
@@ -136,6 +139,31 @@ async function routeConformance(
 }
 
 /**
+ * The iOS privacy manifest check, for a project that is also a Capacitor project with `ios/`
+ * (advisory: `denext mobile privacy` has the details, `denext mobile doctor --store` gates it).
+ * Null for any other project.
+ */
+async function privacyManifestCheck(dir: string): Promise<Check | null> {
+  try {
+    if (!(await capacitorConfigFile(dir)) || !(await Deno.stat(join(dir, "ios"))).isDirectory) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  const { file, findings } = await checkPrivacyManifest(dir, MOBILE_CAPABILITIES);
+  const errors = findings.filter((f) => f.level === "error");
+  return {
+    name: "iOS privacy manifest",
+    ok: errors.length === 0,
+    detail: errors.length === 0
+      ? `${file}: ${findings.length === 0 ? "valid" : `${findings.length} warning(s)`}`
+      : `${errors[0].message} (${errors.length} error(s); \`denext mobile privacy\`)`,
+    critical: false,
+  };
+}
+
+/**
  * The last build's client chunks, or `null` when `outDir` holds no client build output.
  * Reads what `denext build` emitted; never builds.
  */
@@ -196,6 +224,8 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
     checks.push(r.check);
     routes = r.report;
   }
+  const privacy = await privacyManifestCheck(dir);
+  if (privacy) checks.push(privacy);
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
 }

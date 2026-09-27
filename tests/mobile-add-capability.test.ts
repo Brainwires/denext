@@ -592,6 +592,16 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "social-login",
     "geolocation",
     "purchases",
+    "sentry",
+    "offline-screen",
+    "app-review",
+    "app-update",
+    "screen-orientation",
+    "media-library",
+    "privacy-screen",
+    "tracking",
+    "background",
+    "restore",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
@@ -601,12 +611,32 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     // Some plugins number their own releases: @capacitor/barcode-scanner 3.x,
     // @aparajita/capacitor-biometric-auth 10.x and @revenuecat/purchases-capacitor 13.x target
     // Capacitor 8.
-    const own: Record<string, string> = { barcode: "^3.", biometrics: "^10.", purchases: "^13." };
+    // So do @sentry/capacitor (4.x, pinned exactly), @capacitor-community/media (9.x),
+    // @capacitor/privacy-screen (2.x), @capacitor/background-runner (3.x) and
+    // capacitor-plugin-app-tracking-transparency (3.x, which admits Capacitor 7 and 8).
+    const own: Record<string, string> = {
+      barcode: "^3.",
+      biometrics: "^10.",
+      purchases: "^13.",
+      sentry: "4.",
+      "media-library": "^9.",
+      "privacy-screen": "^2.",
+      background: "^3.",
+      tracking: "^3.",
+    };
     assert(cap.version?.startsWith(own[name] ?? "^8."), name);
   }
   assertEquals(
     Object.keys(MOBILE_CAPABILITIES).filter((n) => MOBILE_CAPABILITIES[n].npm === undefined),
-    ["auth-session", "share-extension", "widget", "live-activity", "system-bars", "permissions"],
+    [
+      "auth-session",
+      "share-extension",
+      "widget",
+      "live-activity",
+      "system-bars",
+      "permissions",
+      "offline-screen",
+    ],
   );
   assertStringIncludes(
     formatCapabilityTable(),
@@ -1120,7 +1150,8 @@ Deno.test("mobile add: the new capabilities install their pinned plugins; plist 
       "top level + nested",
     );
     assertStringIncludes(plist, "<key>NSPhotoLibraryAddUsageDescription</key>");
-    assertEquals(report.written, [PLIST_PATH]);
+    // filesystem and document-picker declare FileTimestamp reasons in the privacy manifest.
+    assertEquals(report.written, [PLIST_PATH, "ios/App/App/PrivacyInfo.xcprivacy"]);
     assertStringIncludes(report.skipped.join("\n"), "no android/variables.gradle");
     assertStringIncludes(report.plan.notes.join("\n"), "pickDocument({ types })");
     assertStringIncludes(

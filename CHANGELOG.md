@@ -10,6 +10,127 @@ and this project adheres to
 
 ### Added
 
+- **iOS privacy manifest.** Every `denext mobile add` capability declares the required-reason
+  APIs its iOS code calls (checked against the pinned plugins' sources and Apple's reason list):
+  `filesystem` FileTimestamp C617.1, `document-picker` 3B52.1, `social-login` and `background`
+  UserDefaults CA92.1, `widget` 1C8F.1 (app and widget extension), `share-extension` C617.1 (app
+  and extension), `sentry` crash/performance/diagnostic data rows; `add-ota` declares CA92.1.
+  `mobile add` merges them into `PrivacyInfo.xcprivacy` (never removing an entry) and adds it to
+  Copy Bundle Resources. New `denext mobile privacy [--write] [--check]` prints, merges and
+  validates it; `denext doctor` reports it for a Capacitor project.
+- **`denext mobile doctor --store | --release`.** One set of checks in two profiles, each finding
+  with its fix, exit 1 on an error: App Review readiness (a leftover `server.url`, ATS /
+  cleartext exceptions, a debuggable WebView, usage strings for installed plugins, the privacy
+  manifest, icons and launch screens, `allowNavigation: ["*"]`, the CSP, source maps and secrets
+  in the export, sign-in without account deletion or without Sign in with Apple) and release
+  security (debuggable WebView, cleartext, mixed content, wildcard navigation,
+  `android:debuggable`, CSP, secrets). The `examples/capacitor-ci` workflow runs both.
+- **`denext mobile add offline-screen`** writes `public/offline.html` and points
+  `server.errorPath` at it; `installOfflineScreen()` in `denext/mobile` covers the page while
+  the device is offline. `/docs/mobile` has an "App Store review" (guideline 4.2) checklist.
+- **Crash reporting.** `denext mobile add sentry` installs `@sentry/capacitor` 4.4.0 and
+  `@sentry/browser` 10.69.0; `initCrashReporting({ dsn, sdk, sibling })` in `denext/mobile`
+  loads them lazily and reports under the OTA UI version as the release.
+  `denext export --sourcemaps hidden` (or `DENEXT_SOURCEMAPS=hidden`) builds source maps and
+  moves them out of the export into `.denext/sourcemaps` for the upload; the CI recipe uploads
+  them with sentry-cli when `SENTRY_AUTH_TOKEN` is set.
+- **On-device debugging.** `denext mobile inspect` prints the Safari Web Inspector /
+  `chrome://inspect` steps and opens them where it can; `denext mobile dev` turns
+  `webContentsDebuggingEnabled` on for its session only, in the native config copies (not
+  `capacitor.config.*`, so the fingerprint is unchanged), and scrubs it from a killed session's. `/docs/mobile` gains "Debugging on a device".
+
+- **`denext mobile add` platform capabilities.** Eight more capabilities, each a pinned
+  Capacitor 8 plugin with its web fallback where one exists:
+  - `app-review` (`@capawesome/capacitor-app-review`): `requestReview()` /
+    `openStoreReview({ appStoreId })`.
+  - `app-update` (`@capawesome/capacitor-app-update`): `getAppUpdateInfo()`, `openAppStore()`,
+    Android's `performImmediateUpdate()` / `startFlexibleUpdate()` /
+    `onFlexibleUpdateProgress` / `completeFlexibleUpdate()`, and `promptStoreUpdate()`, which
+    OTA's new `onNativeUpdateRequired` hook calls when a UI needs a newer binary.
+  - `screen-orientation` (`@capacitor/screen-orientation`): `lockOrientation` /
+    `unlockOrientation` / `getOrientation` / `onOrientationChange` / `useOrientation`, over
+    `screen.orientation` on the web.
+  - `media-library` (`@capacitor-community/media` 9): `saveToLibrary`, `getAlbums`,
+    `createAlbum`, `getRecentMedia` (iOS); the photo-library usage strings; a download on the
+    web.
+  - `privacy-screen` (`@capacitor/privacy-screen` 2): `setPrivacyScreen` / `usePrivacyScreen`.
+  - `tracking` (`capacitor-plugin-app-tracking-transparency` 3):
+    `requestTrackingPermission()` / `getTrackingStatus()` and `NSUserTrackingUsageDescription`.
+  - `background` (`@capacitor/background-runner` 3): `defineBackgroundTask({ name, interval,
+    handler })` modules in `background/`, compiled by `denext export` into
+    `denext-background.js`; `mobile add` writes the runner config, `UIBackgroundModes`, the
+    BGTask identifier, the AppDelegate registration and the Android flat dir.
+    `runBackgroundTask(name)` runs one from the page.
+  - `restore` (`@capacitor/app`): `onRestoredResult` / `useRestoredResult` deliver a picker or
+    camera result that arrived after Android killed the app, and `restoreRouteOnRelaunch()`
+    returns to the last route on a cold start.
+- **`appLinks` config: universal link / App Link association files.** `denext start` and
+  `denext dev` serve `/.well-known/apple-app-site-association` and
+  `/.well-known/assetlinks.json` (`application/json`, answered before redirects, `basePath` and
+  middleware), `denext export` writes them, and `createAppLinksHandler` serves them from a
+  custom server. `denext mobile add deep-links --domain` prints the config to add.
+- **`createPushSender` / `sendPush` in `denext/server`.** Send push with no npm package and no
+  push service: APNs over HTTP/2 with a `.p8` token (ES256 JWT, cached 50 minutes) and FCM HTTP
+  v1 with a service-account OAuth token, on `fetch` and WebCrypto. Typed payloads cover alert,
+  data, badge, sound, category, thread id, background (content-available), mutable content,
+  collapse id, priority, TTL, Android channel and Live Activity pushes. Failures are results:
+  `invalid-token` (BadDeviceToken, Unregistered, FCM UNREGISTERED) says which tokens to prune.
+- **OTA channels and staged rollouts.** `createOtaHandler({ channels: "ota-channels.json" })`
+  serves a release per channel (`x-denext-ota-channel`) and sends a rollout candidate to a
+  stable `percent` of installs, bucketed by the install id (`x-denext-ota-install-id`).
+  Manifests pass through untouched, so signature checks are unchanged. `denext ota channel
+  <name> <dir>` and `denext ota promote --channel beta --to production --percent 20` (`--halt`,
+  and 100% to finish) refuse unsigned-onto-signed and lower-sequence releases unless `--force`.
+  `checkForUiUpdate` / `prepareUiUpdate` take `channel` and `installId` (`otaInstallId()`).
+
+- **React Native mode: Reanimated without its Babel plugin.** The build finds worklets the way
+  `react-native-worklets/plugin` does and stamps each one with the `__closure` and
+  `__workletHash` that Reanimated 4's web runtime reads (`src/build/reanimated.ts`, an swc
+  pass). Worklets are the functions with a `'worklet'` directive, the callbacks of
+  Reanimated's hooks, animations and scheduling functions, and gesture-handler and
+  layout-animation callbacks. It covers app source and node_modules. `useAnimatedStyle`,
+  `useDerivedValue`, `useAnimatedReaction` and `useAnimatedScrollHandler` re-run when a
+  captured value changes, with no dependency arrays and no dev throw. A hook whose worklet the
+  build can't see gets a build warning at its file and line that names the fix (a dependency
+  array). Only modules that import reanimated, worklets or gesture-handler, or contain
+  `'worklet'`, are parsed. Targets react-native-reanimated 4.7 / react-native-worklets 0.13;
+  on those packages' own sources the closures match the plugin's output, except that globals
+  such as `__DEV__` are left out.
+
+- **React Native mode: the app's lists run on denext's `VirtualList`.** In `reactNative` mode,
+  denext replaces react-native-web's `FlatList`, `SectionList` and `VirtualizedList` modules
+  inside the installed package, the same way as the shell overlay. `@shopify/flash-list` (v2)
+  and `@legendapp/list` (plus `/react-native`) resolve to denext shims; the DOM build
+  `@legendapp/list/react` stays the real package. The adapters render with the app's own
+  react-native-web `View`, `StyleSheet` and `RefreshControl`, so an RN app's lists get the
+  engine with no code changes:
+  - `inverted` is a logical reversal: no `scaleY(-1)`, and the wheel, selection, copy order and
+    scrollbar are natural.
+  - `getItemLayout` sizes are exact.
+  - `numColumns` builds React Native's rows.
+  - SectionList flattens into one list, with sticky headers and `scrollToLocation` below the
+    header, and its viewability tokens carry `section`.
+  - `scrollToIndex` is exact whether or not the rows were measured, so `onScrollToIndexFailed`
+    never fires.
+  - `onRefresh` alone gets denext's `RefreshControl`.
+  - The ref methods, the separators API, the drag and momentum events and `onLayout` all work.
+  - FlashList v2: `getItemType`, `overrideItemLayout` spans, `masonry` (on `VirtualMasonry`),
+    the object form of `maintainVisibleContentPosition`, the ref API, `useRecyclingState` and
+    `useLayoutState`. Recycling is off unless the app sets `recycleItems`.
+  - LegendList: `maintainScrollAtEnd`, `alignItemsAtEnd`, `getFixedItemSize`, `numColumns` with
+    gaps, children mode, `getState()` and the cell hooks.
+
+  `reactNative: { lists: "library" }` restores every original. For a single list, import
+  react-native-web's vendored FlatList. `deno task parity:native` now diffs the adapters' props,
+  ref methods and exports against React Native 0.86.3, react-native-web 0.21.2, FlashList 2.3.2
+  and LegendList 3.4.0, and records the remaining gaps in `lists.known-gaps.json`. Docs:
+  `/docs/lists#react-native`.
+- **`VirtualListHandle`: `getScrollableNode()`, `getItemLayout(index)` and
+  `getScrollMetrics()`** (the offset, viewport, offset range and rows' size), which the React
+  Native adapters build `getLayout` / `getState` / inverted offsets on.
+- **scroll-bench: a `denext` VirtualList impl, and `rnw-flatlist-denext` against
+  `rnw-flatlist-rnw`.** The second pair runs React Native's FlatList API on denext's engine and
+  react-native-web's own engine, in the same app.
 - **Native-feel navigation (`denext/navigation`).** A new entry with three client components:
   - `StackLayout` turns the routes under a layout into a stack. A push keeps the screens below
     mounted but hidden with `<Activity>` (state, DOM and scroll position kept; `maxDepth`, default
@@ -243,8 +364,53 @@ and this project adheres to
   `--safe-area-inset-*` values Capacitor 8 injects on Android over `env()`, which Android
   WebView before 140 reports wrongly.
 
+- **Expo packages that broke at import now load.** `expo-tracking-transparency`, `expo-maps`
+  and `@expo/ui`'s `swift-ui` / `jetpack-compose` entry points (and their `/modifiers`) called
+  `requireNativeModule` at the top level and white-screened the bundle; React Native mode now
+  resolves each to a `denext/expo/*` shim. `expo-tracking-transparency` is a full shim over
+  `denext/mobile`'s `getTrackingStatus` / `requestTrackingPermission` (`denext mobile add tracking`): the ATT status in the iOS
+  shell, undetermined and not askable there without the plugin, granted on Android and the web
+  (as Expo). `expo-maps` and `@expo/ui` are load-safe stand-ins: map views render a labelled
+  placeholder whose ref methods throw a denext error, SwiftUI / Compose views render their
+  children with web layout, and modifiers return inert configs; each warns once. `/docs/react-native`
+  has a "Maps" recipe (MapLibre GL / Leaflet in a `.web.tsx` twin).
+- **`denext/expo/application`: an `expo-application` shim.** The app's name, id, version and
+  build come from `@capacitor/app`'s `getInfo()` in the shell (they were `null` there), seeded
+  from the Expo config until it answers; `applicationInfoAsync()` (denext only) waits for it.
+  `getAndroidId` / `getIosIdForVendorAsync` read `@capacitor/device`'s `getId()`; the calls no
+  plugin can answer reject with `ERR_UNAVAILABLE`.
+- **`expo-auth-session/providers/google` and `/facebook`.** `useAuthRequest` and Google's
+  `useIdTokenAuthRequest` over `openAuthSession`, with PKCE; in the Capacitor shell Google's code
+  is exchanged automatically and the client id is the platform's (`iosClientId` /
+  `androidClientId`). `denext/expo/auth-session` adds `useLoadedAuthRequest`,
+  `useAuthRequestResult`, the token request classes (`AccessTokenRequest`,
+  `RefreshTokenRequest`, `RevokeTokenRequest`, `TokenRequest`, `Request`), `ResponseError` /
+  `TokenError` and `requestAsync`.
+- **`denext/expo/image`: Expo's statics and placeholders.** `Image.prefetch` (Cache API for the
+  disk policies), `loadAsync`, `clearMemoryCache` / `clearDiskCache`, `getCachePathAsync`,
+  `writeToCacheAsync` / `readFromCacheAsync`, `configureCache`, `generateBlurhashAsync` /
+  `generateThumbhashAsync`, `Image.Image`, plus `useImage` and `ImageRef`. BlurHash / ThumbHash
+  sources and `placeholder`s are decoded in JS (no canvas), `transition` cross-dissolves,
+  `contentPosition`, `blurRadius`, `recyclingKey` and a best-effort `cachePolicy` work, and the
+  ref's `reloadAsync` reloads.
+- **`denext/expo/camera`: photos and video.** `CameraView` without `onBarcodeScanned` shows a
+  `getUserMedia` preview; its ref's `takePictureAsync` (a canvas frame, or the system camera
+  through `@capacitor/camera` in the shell without a preview; `pictureRef` returns a
+  `PictureRef`) and `recordAsync` / `stopRecording` / `toggleRecordingAsync` (`MediaRecorder`)
+  work. The statics are there: `isAvailableAsync`, `getAvailableVideoCodecsAsync`,
+  `isModernBarcodeScannerAvailable`, `launchScanner` / `onModernBarcodeScanned` over denext's
+  scanner, `dismissScanner`, `ConversionTables`, `defaultProps`.
+- **`expo-notifications`' `getExpoPushTokenAsync` is exported.** Importing it was a build error;
+  it now rejects with `ERR_NOTIFICATIONS_NO_EXPO_PUSH_SERVICE` and points at
+  `getDevicePushTokenAsync` plus your own APNs / FCM sender (denext has no Expo push service).
+- **The Expo shim manifest names missing statics.** `omitted` lists `Name.member` for statics a
+  shim leaves out (`Asset.byHash`, `Paths.relative`, `File.pickFileAsync`, …), and the
+  `expo-constants` fields it does not report; the expo parity baseline covers the new shims.
+
 ### Changed
 
+- **`expo-auth-session`'s token calls send a client secret as HTTP Basic credentials** and the
+  client id in the body only without one, as Expo does (they sent both in the body).
 - **The MainActivity denext composes is template generation 2.** It can now register
   `DenextBack` and call `EdgeToEdge.enable`; the body for the earlier features is unchanged,
   and an unedited generation-1 file is upgraded in place the next time a feature is added.
@@ -254,6 +420,21 @@ and this project adheres to
   pointing at its new place.
 
 ### Fixed
+
+- **Production SPAs install the class-component and `Activity` runtimes before the app renders.**
+  The generated production entry put `installClassSupport()` after `import "./main.tsx"`; ES
+  imports hoist, so an entry that renders synchronously (React Native's `AppRegistry` /
+  `registerRootComponent`, a plain `createRoot().render()`) rendered first and committed every
+  class component blank until the lazy runtime chunk arrived. Reanimated's `Animated.*` views were
+  missing on first paint and gesture-handler's `GestureDetector` threw in `findNodeHandle`. The
+  installs now come first, as a side-effect `data:` import the bundler inlines (dev was not
+  affected).
+
+- **`expo-image`: a startup `Image.configureCache(…)` threw a TypeError** (the static was
+  missing), and so did `Image.loadAsync`, the cache reads and writes, and the hash generators.
+- **VirtualList: `scrollToOffset` on an `anchor="end"` list stayed at the end until the next
+  scroll event.** The list kept the view pinned there, so a jump away from the end snapped back
+  on the next layout. A jump now releases the pin.
 
 - **Keyed list updates are 5–10× faster.** Appending or prepending 50 rows to a 100,000-row
   keyed list took 1.5 s / 3.0 s of render+commit and now takes about 0.3 s; swapping two rows in

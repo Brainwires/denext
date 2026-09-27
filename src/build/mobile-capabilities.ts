@@ -40,6 +40,10 @@ import {
 import { parseWidgetParams } from "./widget-native-templates.ts";
 import { checkAppGroup } from "./mobile-app-group.ts";
 import { applicationTargetName, targetBuildSetting } from "./pbxproj.ts";
+import { CAPACITOR_CONFIGS } from "./capacitor-config.ts";
+import { addOfflineScreenToProject } from "./mobile-offline-screen.ts";
+import { privacyEntriesFor, privacyLabels, writePrivacyManifests } from "./mobile-privacy.ts";
+import { PLATFORM_CAPABILITIES } from "./mobile-capabilities-platform.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -103,6 +107,11 @@ export interface MobileCapability {
    * project that pins its `@capacitor/*` packages exactly gets the range's minimum, exactly.
    */
   readonly version?: string;
+  /**
+   * More packages added with it, as full specs (`@sentry/browser@10.69.0`): a sibling SDK the
+   * plugin's own package pins exactly.
+   */
+  readonly peers?: readonly string[];
   /** The `@capacitor/core` major the pinned plugin (or denext's plugin template) targets. */
   readonly capacitorMajor: number;
   /** Info.plist string keys to add when absent (key → default value; an app's own wins). */
@@ -207,7 +216,11 @@ function configureDeepLinks(options: CapabilityOptions): CapabilityConfig {
     manual: domains.flatMap((d) => [
       `serve https://${d}/.well-known/apple-app-site-association (applinks for <TEAM ID>.<bundle id>) ` +
       `and https://${d}/.well-known/assetlinks.json (package name + signing certificate SHA-256); ` +
-      "without them iOS and Android open the link in the browser instead of the app",
+      "without them iOS and Android open the link in the browser instead of the app. When " +
+      `${d} is served by denext, add to its denext.config.ts: appLinks: { apple: { appIds: ` +
+      '["<TEAM ID>.<bundle id>"] }, android: { packageName: "<application id>", ' +
+      'sha256CertFingerprints: ["<AB:CD:…>"] } } (`denext start` serves both files, and ' +
+      "`denext export` writes them)",
     ]).concat(
       domains.length === 0 ? [] : [
         `https links reach onDeepLink only when listed: accept: { hosts: [${
@@ -502,6 +515,37 @@ function configurePurchasesCapability(): CapabilityConfig {
   };
 }
 
+/**
+ * `sentry`: crash reporting through `@sentry/capacitor` (native crashes via sentry-cocoa /
+ * sentry-android, JS errors via the sibling web SDK). Its 4.4.0 release installs on iOS through
+ * Swift Package Manager only (the podspec was removed), which Capacitor 8 projects use.
+ */
+function configureSentry(): CapabilityConfig {
+  return {
+    manual: [
+      'call initCrashReporting({ dsn, sdk: () => import("@sentry/capacitor"), sibling: () => ' +
+      'import("@sentry/browser") }) from denext/mobile once at startup (the release is the OTA ' +
+      "UI version, so uploaded source maps match)",
+      "export with `denext export --sourcemaps hidden` and upload .denext/sourcemaps with " +
+      "sentry-cli (see /docs/mobile#crash-reporting); keep @sentry/capacitor and @sentry/browser " +
+      "on the versions installed together (4.4.0 depends on @sentry/browser 10.69.0 exactly)",
+      "iOS: @sentry/capacitor 4.4 is Swift Package Manager only; a CocoaPods project (ios/App/" +
+      "Podfile) must move to SPM first",
+    ],
+  };
+}
+
+/** `offline-screen`: `public/offline.html` and `server.errorPath` pointing at it. */
+function configureOfflineScreen(): CapabilityConfig {
+  return {
+    install: {
+      label: "public/offline.html (the page Capacitor shows when the app cannot load) + " +
+        'server.errorPath: "offline.html" in capacitor.config',
+      run: addOfflineScreenToProject,
+    },
+  };
+}
+
 /** The camera usage string `camera` and `barcode` share. */
 const CAMERA_USAGE = "Take photos and scan codes with the camera.";
 
@@ -739,6 +783,24 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
       "getCustomerInfo / useEntitlement(id) (RevenueCat; no web fallback)",
     configure: configurePurchasesCapability,
   },
+  sentry: {
+    npm: "@sentry/capacitor",
+    version: "4.4.0",
+    peers: ["@sentry/browser@10.69.0"],
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "initCrashReporting({ dsn, sdk, sibling }) (native + JS crashes; release = the OTA UI " +
+      "version; hidden source maps with `denext export --sourcemaps hidden`)",
+    configure: configureSentry,
+  },
+  "offline-screen": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "installOfflineScreen() (an overlay while the network is gone; server.errorPath shows " +
+      "offline.html when the app cannot load)",
+    configure: configureOfflineScreen,
+  },
+  // app-review, app-update, screen-orientation, media-library, privacy-screen, tracking,
+  // background, restore: ./mobile-capabilities-platform.ts.
+  ...PLATFORM_CAPABILITIES,
 };
 
 /** A package manager `denext mobile add` can drive. */
@@ -789,6 +851,8 @@ export interface CapabilityPlan {
   readonly warnings: readonly string[];
   /** Steps to do by hand. */
   readonly manual: readonly string[];
+  /** Required-reason / data-use declarations merged into PrivacyInfo.xcprivacy (labels). */
+  readonly privacy: readonly string[];
 }
 
 /** The `configure` edits of every chosen capability, per native file. */
@@ -845,14 +909,6 @@ export interface AddCapabilitiesOptions {
   readonly force?: boolean;
 }
 
-/** The Capacitor config file names, in the order the Capacitor CLI looks for them. */
-export const CAPACITOR_CONFIGS: readonly string[] = [
-  "capacitor.config.ts",
-  "capacitor.config.js",
-  "capacitor.config.mjs",
-  "capacitor.config.cjs",
-  "capacitor.config.json",
-];
 const INFO_PLIST = "ios/App/App/Info.plist";
 const ANDROID_MANIFEST = "android/app/src/main/AndroidManifest.xml";
 const APP_DELEGATE = "ios/App/App/AppDelegate.swift";
@@ -1289,7 +1345,7 @@ export async function planMobileCapabilities(
   const { manager, lockfile, packageManagerField } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
   const exact = await pinsCapacitorExactly(root);
-  const specs = caps.flatMap((c) => c.npm ? [packageSpec(c, exact)] : []);
+  const specs = caps.flatMap((c) => c.npm ? [packageSpec(c, exact), ...(c.peers ?? [])] : []);
   const target = await entitlementsTarget(root);
   return {
     root,
@@ -1311,6 +1367,7 @@ export async function planMobileCapabilities(
       ...(await entitlementSteps(root, target, configured.native.entitlements)),
       ...configured.manual,
     ],
+    privacy: privacyLabels(privacyEntriesFor(names)),
   };
 }
 
@@ -1348,6 +1405,7 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
     ...plan.permissions.map((p) => `  manifest       <uses-permission ${p}>`),
     ...plan.native.manifest.map((e) => `  manifest       ${e.label}`),
     ...plan.native.variablesGradle.map((e) => `  gradle         ${e.label}`),
+    ...plan.privacy.map((p) => `  privacy        ${p} (PrivacyInfo.xcprivacy)`),
     ...(plan.sync ? [`  sync           ${commandLine(plan.sync)}`] : []),
     ...plan.warnings.map((w) => `  WARNING        ${w}`),
   ];
@@ -1428,6 +1486,17 @@ function mergeInstall(report: AddCapabilitiesReport, done: NativeInstallReport):
   pushNew(report.manual, done.manual);
 }
 
+/** Merge the capabilities' required-reason declarations into the privacy manifests. */
+async function mergePrivacy(report: AddCapabilitiesReport): Promise<void> {
+  const entries = privacyEntriesFor(report.plan.capabilities);
+  if (entries.length === 0) return;
+  const done = await writePrivacyManifests(report.plan.root, entries);
+  pushNew(report.written, done.written);
+  pushNew(report.unchanged, done.unchanged.filter((p) => !report.written.includes(p)));
+  report.skipped.push(...done.skipped.filter((s) => !report.skipped.includes(s)));
+  pushNew(report.manual, done.manual);
+}
+
 /** Run `command`, throwing when it exits non-zero. */
 async function runChecked(
   run: CommandRunner,
@@ -1485,6 +1554,7 @@ export async function addMobileCapabilities(
   }));
   await editNative(report, ANDROID_MANIFEST, [...permissions, ...plan.native.manifest]);
   await editNative(report, VARIABLES_GRADLE, plan.native.variablesGradle);
+  await mergePrivacy(report);
   if (plan.sync) await runChecked(opts.run, plan.sync, report.ran);
   return { ...report, plan: await withResolvedEntitlementsNote(plan) };
 }

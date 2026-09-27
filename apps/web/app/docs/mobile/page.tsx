@@ -3,7 +3,7 @@ import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 export const metadata = {
   title: "Mobile (Capacitor)",
   description:
-    "Ship a denext app to iOS and Android in a Capacitor shell: a quickstart, live reload on a device, the denext/mobile runtime and native capabilities, deep links, auth sessions, push, app extensions, signed over-the-air UI updates, the native fingerprint, CI, and testing.",
+    "Ship a denext app to iOS and Android in a Capacitor shell: a quickstart, live reload on a device, the denext/mobile runtime and native capabilities, deep links and their association files, auth sessions, push (and sending it), store prompts, background tasks, process death, app extensions, signed over-the-air UI updates with channels and staged rollouts, the native fingerprint, the privacy manifest, App Store review, crash reporting, debugging on a device, CI, and testing.",
 };
 
 export default function Mobile() {
@@ -797,6 +797,40 @@ export function DeepLinks() {
         to handle it yourself. On the web it does nothing: the browser already loaded the URL.
       </p>
 
+      <h3 id="app-links">Serving the association files</h3>
+      <p>
+        When the link domain is served by denext, the config’s <code>appLinks</code> makes{" "}
+        <code>denext start</code> and <code>denext dev</code> serve{" "}
+        <code>/.well-known/apple-app-site-association</code> and{" "}
+        <code>/.well-known/assetlinks.json</code> (<code>application/json</code>,{" "}
+        <code>200</code>, answered before redirects, <code>basePath</code>,{" "}
+        <code>trailingSlash</code> and middleware, since iOS and Android refuse a redirect), and
+        {" "}
+        <code>denext export</code>{" "}
+        writes both into the export (give the extensionless Apple file a JSON content type on your
+        host). <code>createAppLinksHandler</code> from <code>denext/server</code>{" "}
+        does the same in a custom server.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  appLinks: {
+    apple: { appIds: ["ABCDE12345.com.example.app"], paths: ["/orders/*", "!/admin/*"] },
+    android: {
+      packageName: "com.example.app",
+      sha256CertFingerprints: ["14:6D:E9:…:44:E5"], // the Play app signing key + your upload key
+    },
+  },
+};`}
+      </Code>
+      <p>
+        <code>paths</code> defaults to every path; a leading <code>!</code>{" "}
+        excludes one. The Apple file also lists the apps under{" "}
+        <code>webcredentials</code>, and the Android one delegates{" "}
+        <code>get_login_creds</code>, so saved passwords and passkeys are shared with the app
+        (<code>webcredentials: false</code> / <code>loginCredentials: false</code> turn that off).
+      </p>
+
       <h2 id="auth-sessions">Auth sessions</h2>
       <p>
         <code>openAuthSession(url, {"{ callbackScheme }"})</code>{" "}
@@ -919,6 +953,74 @@ export function PushRouting() {
         <code>registerForPush()</code>{" "}
         on every launch, since the token can change. There is no web-push fallback.
       </p>
+
+      <h3 id="sending-push">Sending push from your server</h3>
+      <p>
+        Sending to the token <code>registerForPush()</code>{" "}
+        returns needs no npm package and no push service: <code>createPushSender</code> in{" "}
+        <code>denext/server</code> talks to APNs (HTTP/2, token-based <code>.p8</code>{" "}
+        auth, an ES256 JWT cached for 50 minutes) and FCM HTTP v1 (a service-account OAuth token,
+        cached until it expires) with <code>fetch</code> and WebCrypto.
+      </p>
+      <Code lang="ts">
+        {`// lib/push.ts (server-only)
+import { createPushSender } from "denext/server";
+
+export const push = createPushSender({
+  apns: {
+    keyId: Deno.env.get("APNS_KEY_ID")!, // Apple Developer → Keys (APNs enabled)
+    teamId: Deno.env.get("APNS_TEAM_ID")!,
+    p8: Deno.env.get("APNS_P8")!, // the contents of the .p8 file
+    topic: "com.example.app", // the bundle id
+    production: Deno.env.get("APNS_PRODUCTION") === "1",
+  },
+  fcm: { serviceAccount: JSON.parse(Deno.env.get("FCM_SERVICE_ACCOUNT")!) },
+});
+
+const result = await push.send({ platform: device.platform, token: device.token }, {
+  title: "Your order shipped",
+  body: "Order #42 is on its way",
+  data: { orderId: "42" }, // arrives in onPushTapped / onPushReceived
+  channelId: "orders", // Android 8+ channel
+  threadId: "orders", // iOS grouping
+});
+if (!result.ok && result.error === "invalid-token") await db.devices.delete(device.token);`}
+      </Code>
+      <ul>
+        <li>
+          <code>ios</code> tokens go to APNs, <code>android</code>{" "}
+          tokens to FCM; a platform without credentials answers{" "}
+          <code>error: "config"</code>. Development builds register sandbox tokens: set{" "}
+          <code>production: true</code>{" "}
+          for TestFlight and App Store builds (a token sent to the wrong environment is{" "}
+          <code>invalid-token</code>).
+        </li>
+        <li>
+          The payload also takes <code>subtitle</code>, <code>badge</code>, <code>sound</code>,{" "}
+          <code>category</code>, <code>mutableContent</code>, <code>collapseId</code>,{" "}
+          <code>priority</code> and <code>ttl</code>.{" "}
+          <code>&#123; contentAvailable: true, data &#125;</code>{" "}
+          alone is a background push (<code>apns-push-type: background</code>, priority 5; a
+          data-only FCM message). FCM data values are strings, so other values are sent as JSON.
+        </li>
+        <li>
+          <code>&#123; liveActivity: &#123; event: "update", contentState &#125; &#125;</code>{" "}
+          goes to a Live Activity’s push token with the <code>.push-type.liveactivity</code> topic;
+          {" "}
+          <code>event: "start"</code> (iOS 17.2+, the push-to-start token) also needs{" "}
+          <code>attributesType</code> and <code>attributes</code>; <code>"end"</code> takes{" "}
+          <code>dismissalDate</code>.
+        </li>
+        <li>
+          Failures are results, never throws: <code>invalid-token</code>{" "}
+          (BadDeviceToken, Unregistered, FCM UNREGISTERED: prune it), <code>auth</code>{" "}
+          (retried once with a fresh token first), <code>rate-limited</code> (with{" "}
+          <code>retryAfter</code>), <code>payload</code>{" "}
+          (an APNs payload over 4 KB is refused before sending), <code>server</code>,{" "}
+          <code>network</code>. Both keys must be PKCS#8 PEMs (convert an older one with{" "}
+          <code>openssl pkcs8 -topk8 -nocrypt</code>).
+        </li>
+      </ul>
 
       <h2 id="permissions">Permissions</h2>
       <p>
@@ -1219,6 +1321,192 @@ export async function POST(request: Request): Promise<Response> {
         </a>. A paywall also needs a "Restore purchases" button (<code>restorePurchases()</code>).
         Physical goods and services used outside the app use your own payments.
       </Callout>
+
+      <h2 id="store-screen-privacy">Store prompts, orientation, photos and privacy</h2>
+      <p>
+        Six more capabilities, each a pinned Capacitor 8 plugin. <code>app-review</code>{" "}
+        (<code>@capawesome/capacitor-app-review</code>), <code>app-update</code>{" "}
+        (<code>@capawesome/capacitor-app-update</code>, free, not an Insiders plugin),{" "}
+        <code>screen-orientation</code> (<code>@capacitor/screen-orientation</code>),{" "}
+        <code>media-library</code> (<code>@capacitor-community/media</code>{" "}
+        9.x, which also writes the photo-library usage strings), <code>privacy-screen</code>{" "}
+        (<code>@capacitor/privacy-screen</code> 2.x) and <code>tracking</code>{" "}
+        (<code>capacitor-plugin-app-tracking-transparency</code>, which writes{" "}
+        <code>NSUserTrackingUsageDescription</code>).
+      </p>
+      <Code lang="tsx">
+        {`import {
+  getAppUpdateInfo, lockOrientation, openStoreReview, promptStoreUpdate, requestReview,
+  requestTrackingPermission, saveToLibrary, unlockOrientation, useOrientation, usePrivacyScreen,
+} from "denext/mobile";
+
+await requestReview();                                  // the OS rating sheet (rate-limited)
+await openStoreReview({ appStoreId: "123456789" });     // "Rate this app": always opens the store
+
+const info = await getAppUpdateInfo();                  // { available, availableVersion, … }
+await promptStoreUpdate({ appStoreId: "123456789" });   // Play in-app update, or the store
+
+await lockOrientation("landscape");                     // a video player
+await unlockOrientation();
+const orientation = useOrientation();                   // "portrait-primary" | …, live
+
+await saveToLibrary("https://cdn.example.com/poster.jpg", { album: "Posters" });
+
+function Statement() {
+  usePrivacyScreen();                                   // hidden in the app switcher while mounted
+  return <Transactions />;
+}
+
+const status = await requestTrackingPermission();       // "authorized" | "denied" | …`}
+      </Code>
+      <ul>
+        <li>
+          <strong>Review.</strong> <code>requestReview()</code>{" "}
+          asks for the sheet; iOS shows it at most three times a year (never in TestFlight), Play
+          applies its own quota, and neither says whether it appeared. It resolves{" "}
+          <code>"unsupported"</code> on the web. <code>openStoreReview</code>{" "}
+          opens the App Store’s write-a-review page (iOS needs{" "}
+          <code>appStoreId</code>) or the Play listing, natively or on the web.
+        </li>
+        <li>
+          <strong>Store updates.</strong> <code>getAppUpdateInfo()</code>{" "}
+          reads the App Store lookup API on iOS (by bundle id; pass <code>country</code>{" "}
+          outside the US) and Play Core on Android (a Play-installed build only).{" "}
+          <code>performImmediateUpdate()</code> / <code>startFlexibleUpdate()</code> +{" "}
+          <code>onFlexibleUpdateProgress</code> / <code>completeFlexibleUpdate()</code>{" "}
+          are Android’s in-app updates. <code>promptStoreUpdate(&#123; confirm &#125;)</code>{" "}
+          checks, optionally asks, then runs Play’s update or opens the store. Pass it as{" "}
+          <code>checkForUiUpdate</code>’s <code>onNativeUpdateRequired</code>{" "}
+          so an over-the-air UI that needs a newer binary (<code>native_too_old</code>,{" "}
+          <code>native_mismatch</code>) sends the user to the store.
+        </li>
+        <li>
+          <strong>Orientation.</strong> <code>getOrientation</code>,{" "}
+          <code>onOrientationChange</code> and <code>useOrientation</code>{" "}
+          read the plugin natively and <code>screen.orientation</code> (else the{" "}
+          <code>(orientation: portrait)</code>{" "}
+          media query) on the web. Locking on the web works only where the browser allows it
+          (fullscreen, installed apps; not Safari). An iPad that allows multitasking cannot lock
+          (set{" "}
+          <code>UIRequiresFullScreen</code>), and Android 16 ignores locks on large screens for apps
+          targeting SDK 36.
+        </li>
+        <li>
+          <strong>Photos.</strong> <code>saveToLibrary(src, &#123; kind, album &#125;)</code>{" "}
+          takes an https URL, a <code>data:</code>{" "}
+          URL or a file path. iOS saves to the camera roll (or{" "}
+          <code>album</code>) with add-only access; Android saves into an album the app owns
+          (default <code>"Saved"</code>) with no permission. <code>getAlbums</code> /{" "}
+          <code>createAlbum</code> work on both; <code>getRecentMedia</code>{" "}
+          (thumbnails) is iOS only. On the web, saving downloads the file.
+        </li>
+        <li>
+          <strong>Privacy screen.</strong> <code>setPrivacyScreen(on, options)</code>{" "}
+          or the ref-counted <code>usePrivacyScreen()</code>{" "}
+          cover the app-switcher snapshot (a blur on iOS; on Android{" "}
+          <code>FLAG_SECURE</code>, which also blocks screenshots unless{" "}
+          <code>preventScreenshots: false</code>). A browser owns its tab snapshots, so there is no
+          web version: it resolves <code>false</code>.
+        </li>
+        <li>
+          <strong>App Tracking Transparency.</strong> <code>getTrackingStatus()</code> /{" "}
+          <code>requestTrackingPermission()</code> return <code>authorized</code>,{" "}
+          <code>denied</code>, <code>restricted</code>, <code>not-determined</code>, or{" "}
+          <code>unavailable</code>{" "}
+          off iOS. Ask before any tracking (App Store guideline 5.1.2) and after launch settles (iOS
+          ignores a request while the app is inactive). The <code>expo-tracking-transparency</code>
+          {" "}
+          shim calls these.
+        </li>
+      </ul>
+
+      <h2 id="background-tasks">Background tasks</h2>
+      <p>
+        <code>denext mobile add background</code> installs Capacitor’s official{" "}
+        <code>@capacitor/background-runner</code> (3.x) and wires it:{" "}
+        <code>plugins.BackgroundRunner</code> in <code>capacitor.config</code>,{" "}
+        <code>UIBackgroundModes</code> (fetch, processing) and the{" "}
+        <code>dev.denext.background</code> BGTask identifier in Info.plist, the registration in{" "}
+        <code>AppDelegate.swift</code>, and the runner’s library folder in{" "}
+        <code>android/app/build.gradle</code>. Write each task as a module in{" "}
+        <code>background/</code>; <code>denext export</code> bundles them into{" "}
+        <code>denext-background.js</code> in the export.
+      </p>
+      <Code lang="ts">
+        {`// background/sync-inbox.ts
+import { defineBackgroundTask } from "denext/mobile";
+
+export default defineBackgroundTask({
+  name: "sync-inbox",
+  interval: 30, // minutes, at least 15
+  handler: async ({ kv, deadline }) => {
+    const since = kv.get("inbox:since") ?? "0";
+    const res = await fetch(\`https://api.example.com/inbox?since=\${since}\`);
+    kv.set("inbox:since", String((await res.json()).cursor));
+  },
+});
+
+// from the page, to run one now: await runBackgroundTask("sync-inbox", { reason: "login" });`}
+      </Code>
+      <ul>
+        <li>
+          The runner is a separate headless JavaScript engine: no DOM, no{" "}
+          <code>window</code>, no page state. It has <code>fetch</code>, timers,{" "}
+          <code>crypto</code>, <code>TextEncoder</code>/<code>TextDecoder</code>,{" "}
+          <code>console</code> and the runner’s <code>CapacitorKV</code>,{" "}
+          <code>CapacitorNotifications</code>, <code>CapacitorDevice</code> and{" "}
+          <code>CapacitorGeolocation</code> globals. <code>ctx.kv</code> is <code>CapacitorKV</code>
+          {" "}
+          (UserDefaults / SharedPreferences), the only state kept between runs.
+        </li>
+        <li>
+          The OS wakes the runner; denext then runs every task whose <code>interval</code>{" "}
+          has passed (90% of it, since wakes are never exact), records the run, and retries a failed
+          task at the next wake. Work stops being started after <code>ctx.deadline</code>{" "}
+          (about 25 s).
+        </li>
+        <li>
+          <strong>iOS</strong>{" "}
+          (BGTaskScheduler) decides when from how the app is used, may not run it for days, gives a
+          run about 30 s, and never runs it in the simulator. <strong>Android</strong>{" "}
+          (WorkManager) runs it at least 15 minutes apart, allows up to 10 minutes, and some
+          vendors’ battery savers stop it (<a href="https://dontkillmyapp.com">
+            dontkillmyapp.com
+          </a>).
+        </li>
+      </ul>
+
+      <h2 id="process-death">Android process death</h2>
+      <p>
+        Android may kill a backgrounded app to free memory, including while the camera or a picker
+        (a separate activity) is open. The relaunched page starts from scratch and the waiting{" "}
+        <code>pickImage()</code> promise is gone; Capacitor keeps the result and hands it over as
+        {" "}
+        <code>@capacitor/app</code>’s <code>appRestoredResult</code>.{" "}
+        <code>denext mobile add restore</code> installs <code>@capacitor/app</code>.
+      </p>
+      <Code lang="tsx">
+        {`import { onRestoredResult, restoreRouteOnRelaunch } from "denext/mobile";
+
+// At startup (the SPA entry, or the root layout client provider):
+onRestoredResult((result) => {
+  if (result.kind === "image") draft.setPhoto(result.image.webPath); // pickImage / the camera
+  if (result.kind === "documents") uploads.queue(result.documents);  // pickDocument
+});
+await restoreRouteOnRelaunch({ navigate: (path) => router.replace(path) });`}
+      </Code>
+      <p>
+        Results come as <code>image</code>, <code>documents</code>, <code>cancelled</code>,{" "}
+        <code>error</code> or <code>other</code>{" "}
+        (any other plugin’s call, raw). Capacitor holds a result until a listener takes it, so
+        registering during startup is enough. <code>restoreRouteOnRelaunch()</code>{" "}
+        saves the route each time the app goes to the background (in{" "}
+        <code>@capacitor/preferences</code> when installed, else{" "}
+        <code>localStorage</code>) and, when the app cold-starts on its start page within{" "}
+        <code>maxAgeMs</code>{" "}
+        (30 minutes), navigates back. Only the route returns: component state, scroll positions and
+        the back stack do not.
+      </p>
 
       <h2 id="app-extensions">App extensions</h2>
       <p>
@@ -1837,6 +2125,59 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <a href="/docs/desktop#desktop-updates">Desktop UI self-updates</a>.
       </p>
 
+      <h3 id="ota-channels">Channels and staged rollouts</h3>
+      <p>
+        One <code>createOtaHandler</code>{" "}
+        can serve several release tracks. Each release is a normal export with its own{" "}
+        <code>_denext/ota.json</code>{" "}
+        (signed as usual); a channels file says which release each channel serves, and a staged
+        rollout sends a candidate to a percentage of installs.
+      </p>
+      <Code lang="bash">
+        {`denext ota channel production releases/2026-09-20   # creates ota-channels.json
+denext ota channel beta releases/2026-09-27
+denext ota promote --channel beta --to production --percent 20   # staged rollout
+denext ota promote --channel beta --to production --percent 50   # widen it
+denext ota promote --channel beta --to production                # 100%: the new stable release
+denext ota promote --to production --halt                        # stop a bad rollout`}
+      </Code>
+      <Code lang="ts">
+        {`// the server
+const ota = createOtaHandler({ channels: "ota-channels.json", basePath: "/mobile-ui", cors: true });
+
+// the app
+await checkForUiUpdate({
+  baseUrl: "https://api.example.com/mobile-ui",
+  channel: "beta",
+  onNativeUpdateRequired: () => promptStoreUpdate({ appStoreId: "123456789" }),
+});`}
+      </Code>
+      <ul>
+        <li>
+          The app sends <code>x-denext-ota-channel</code> (absent: the file’s{" "}
+          <code>default</code>) and <code>x-denext-ota-install-id</code>{" "}
+          (<code>otaInstallId()</code>, a random id kept in{" "}
+          <code>localStorage</code>) with the manifest request and every file download, so one check
+          is served from one release. An unknown channel is not served, never swapped for another.
+        </li>
+        <li>
+          A candidate goes to the installs whose bucket (SHA-256 of the channel, the candidate’s
+          version and the install id) falls under{" "}
+          <code>percent</code>. Each candidate picks a fresh cohort, raising the percent only adds
+          devices, and no install id means the stable release. Manifests pass through untouched, so
+          signatures verify exactly as before.
+        </li>
+        <li>
+          <code>promote</code>{" "}
+          refuses what devices would refuse anyway: an unsigned release onto a channel serving
+          signed ones (<code>signature</code>), or a lower <code>sequence</code>{" "}
+          than the channel’s devices may run (<code>downgrade</code>); <code>--force</code>{" "}
+          overrides both. Halting a rollout does not downgrade devices that took the candidate: fix
+          forward with a higher sequence. The channels file is re-read when it changes, so a promote
+          needs no restart.
+        </li>
+      </ul>
+
       <h2 id="native-fingerprint">Native fingerprint</h2>
       <p>
         Whether a change can ship over the air depends on whether it touched the native layer.{" "}
@@ -1937,6 +2278,294 @@ denext ota manifest out --sign ota.key --native-fingerprint auto --dir .`}
         counts as a native change: set them on the build command line instead (see{" "}
         <a href="#building-in-ci">Building in CI</a>).
       </Callout>
+
+      <h2 id="privacy-manifest">iOS privacy manifest</h2>
+      <p>
+        Since May 1, 2024, App Store Connect refuses an app that calls one of Apple&apos;s{" "}
+        <a href="https://developer.apple.com/documentation/bundleresources/describing-use-of-required-reason-api">
+          required-reason APIs
+        </a>{" "}
+        without declaring an approved reason in its{" "}
+        <code>PrivacyInfo.xcprivacy</code>. None of the plugins <code>denext mobile add</code>{" "}
+        pins ships a manifest of its own, so their use goes in the app&apos;s (as Capacitor&apos;s
+        {" "}
+        <a href="https://capacitorjs.com/docs/ios/privacy-manifest">privacy manifest guide</a>{" "}
+        says). Each capability declares what its iOS code calls, read from the pinned plugin&apos;s
+        sources and denext&apos;s own templates, and <code>mobile add</code> merges it into{" "}
+        <code>ios/App/App/PrivacyInfo.xcprivacy</code>{" "}
+        (creating it, and adding it to the App target&apos;s Copy Bundle Resources). The merge only
+        adds: your own categories, reasons, collected-data rows, <code>NSPrivacyTracking</code>{" "}
+        and tracking domains stay as they are.
+      </p>
+      <ul>
+        <li>
+          <code>filesystem</code>: FileTimestamp <code>C617.1</code> (<code>stat()</code>{" "}
+          returns the times of files in the app container).
+        </li>
+        <li>
+          <code>document-picker</code>: FileTimestamp <code>3B52.1</code>{" "}
+          (the picked file&apos;s modification date).
+        </li>
+        <li>
+          <code>social-login</code>: UserDefaults <code>CA92.1</code>{" "}
+          (the plugin keeps provider state there). <code>background</code>: UserDefaults{" "}
+          <code>CA92.1</code> (the runner&apos;s key-value store). <code>add-ota</code>{" "}
+          (not a capability, same merge): UserDefaults <code>CA92.1</code>.
+        </li>
+        <li>
+          <code>widget</code>: UserDefaults <code>1C8F.1</code> (App Group) in the app and in the
+          {" "}
+          <code>DenextWidgets</code> extension&apos;s own manifest.{" "}
+          <code>share-extension</code>: FileTimestamp <code>C617.1</code> in the app and in{" "}
+          <code>DenextShareExtension</code> (old shared files are pruned by date).
+        </li>
+        <li>
+          <code>sentry</code>: no API (sentry-cocoa ships its own manifest), but the collected data:
+          crash, performance and other diagnostic data, not linked, not tracking, App Functionality.
+        </li>
+        <li>
+          <code>@capacitor/preferences</code> (which <code>restore</code>{" "}
+          uses when you add it): UserDefaults <code>CA92.1</code>, merged by{" "}
+          <code>mobile privacy --write</code>. <code>tracking</code>{" "}
+          needs no reason, but an app that asks for tracking permission tracks: the check warns
+          until <code>NSPrivacyTracking</code> is true, with your tracking domains listed.
+        </li>
+        <li>
+          Every other capability was checked and uses none. None of them reads disk space or boot
+          time; if your own native code does, add <code>E174.1</code> / <code>35F9.1</code>{" "}
+          yourself (the merge keeps them).
+        </li>
+      </ul>
+      <Code lang="bash">
+        {`denext mobile privacy            # print the manifest and what is wrong with it
+denext mobile privacy --write    # merge the entries of every installed capability (never removes)
+denext mobile privacy --check    # exit 1 on an error: a CI gate`}
+      </Code>
+      <p>
+        The check validates each category and reason against Apple&apos;s list (and refuses the
+        SDK-only <code>0A2A.1</code> / <code>C56D.1</code>{" "}
+        in an app), the collected-data types and purposes, tracking without tracking domains, the
+        entries the installed capabilities need, and whether Xcode copies the file into the app.
+        {" "}
+        <code>denext doctor</code>{" "}
+        reports the same as an advisory line when the project is a Capacitor project. The App Store
+        &quot;nutrition label&quot; (what your server collects about users) is yours to fill in App
+        Store Connect; the manifest covers what the app itself does.
+      </p>
+
+      <h2 id="app-store-review">App Store review</h2>
+      <p>
+        Apple&apos;s guideline{" "}
+        <a href="https://developer.apple.com/app-store/review/guidelines/#minimum-functionality">
+          4.2 (Minimum Functionality)
+        </a>{" "}
+        rejects an app that is &quot;a repackaged website&quot;, and a WebView shell is where
+        reviewers look for one; a Capacitor app with location and sharing{" "}
+        <a href="https://developer.apple.com/forums/thread/812889">was still rejected</a>{" "}
+        as not robust enough. What reviewers can see decides it:
+      </p>
+      <ul>
+        <li>
+          <strong>It is an app, not a site.</strong> The UI ships in the binary (the export,{" "}
+          <code>webDir: &quot;out&quot;</code>), never a <code>server.url</code>{" "}
+          pointing at your website. Native navigation (a tab bar, stack transitions, the back
+          gesture), system bars and safe areas, haptics and the keyboard behave like the
+          platform&apos;s.
+        </li>
+        <li>
+          <strong>Native capabilities that matter to the app&apos;s job</strong>, visible in the
+          review build: push, widgets, Live Activities, a share extension, quick actions, biometric
+          unlock, the camera or document picker, deep links. Name them in the review notes.
+        </li>
+        <li>
+          <strong>Offline behaviour.</strong>{" "}
+          The app opens without a network and says what is going on: cached data where it has some,
+          otherwise a proper screen, never a blank page or a browser error.{" "}
+          <code>denext mobile add offline-screen</code> writes <code>public/offline.html</code>{" "}
+          and points Capacitor&apos;s <code>server.errorPath</code>{" "}
+          at it (shown when the content cannot load), and <code>installOfflineScreen()</code> from
+          {" "}
+          <code>denext/mobile</code> covers the page while the device is offline.
+        </li>
+        <li>
+          <strong>No flow that only works in an external browser.</strong> Sign-in uses{" "}
+          <code>openAuthSession</code>{" "}
+          (a system sheet that returns to the app) or the native Apple / Google sheets; links to
+          other sites open in the in-app browser (<code>openExternal</code>), not by leaving the
+          app.
+        </li>
+        <li>
+          <strong>Sign-in requirements.</strong>{" "}
+          An app that offers Google (or another third-party) sign-in also offers Sign in with Apple
+          (guideline 4.8; <code>signInWithApple()</code>). The review notes carry a demo account.
+        </li>
+        <li>
+          <strong>Account deletion.</strong>{" "}
+          An app that creates accounts lets users delete them in the app (5.1.1(v)):{" "}
+          <code>session.deleteAccount()</code> from <code>nativeSession</code>, or{" "}
+          <code>POST /auth/account/delete</code> (denextAuth serves it when the adapter has{" "}
+          <code>deleteUser</code>).
+        </li>
+        <li>
+          <strong>Privacy.</strong>{" "}
+          A valid privacy manifest, a usage string for every permission the plugins ask for, and
+          purchases of digital goods through in-app purchase (3.1.1).
+        </li>
+      </ul>
+      <p>
+        <code>denext mobile doctor --store</code>{" "}
+        checks what it can, each finding with its fix, and exits 1 on an error:
+      </p>
+      <ul>
+        <li>
+          a <code>server.url</code> left in <code>capacitor.config.*</code> or in the native copies
+          {" "}
+          <code>cap sync</code> wrote (what actually ships);
+        </li>
+        <li>
+          cleartext: <code>server.cleartext</code>, App Transport Security exceptions (<code>
+            NSAllowsArbitraryLoads
+          </code>, <code>NSAllowsLocalNetworking</code>, insecure exception domains), and{" "}
+          <code>usesCleartextTraffic</code>;
+        </li>
+        <li>
+          WebView debugging enabled for release (<code>
+            ios/android.webContentsDebuggingEnabled: true
+          </code>);
+        </li>
+        <li>a missing usage string for an installed plugin (Info.plist);</li>
+        <li>a missing or invalid privacy manifest (the check above);</li>
+        <li>missing app icons (iOS asset catalog, Android launcher) and launch screens;</li>
+        <li>
+          <code>server.allowNavigation</code> containing <code>&quot;*&quot;</code>;
+        </li>
+        <li>
+          no Content-Security-Policy meta tag in the export&apos;s <code>index.html</code>;
+        </li>
+        <li>
+          source maps (or{" "}
+          <code>sourceMappingURL</code>) and secret-shaped strings (private keys, live Stripe keys,
+          cloud and API tokens) in the export;
+        </li>
+        <li>
+          sign-in without account deletion, and Google sign-in without Sign in with Apple (read from
+          the app&apos;s sources; <code>--app &lt;dir&gt;</code>{" "}
+          when the denext app is not the Capacitor folder).
+        </li>
+      </ul>
+      <p>
+        <code>denext mobile doctor --release</code>{" "}
+        runs the release security profile of the same checks: a debuggable WebView, cleartext and
+        mixed content (<code>android.allowMixedContent</code>), <code>allowNavigation *</code>,{" "}
+        <code>android:debuggable</code>, a missing CSP and secrets in the export are errors, and
+        {" "}
+        <code>loggingBehavior: &quot;production&quot;</code> is a warning. Run both after{" "}
+        <code>denext export</code> and <code>npx cap sync</code>{" "}
+        (the CI recipe does). Not checked: whether icons are still Capacitor&apos;s placeholders,
+        and anything about the content itself.
+      </p>
+
+      <h2 id="crash-reporting">Crash reporting</h2>
+      <p>
+        <code>denext mobile add sentry</code> installs <code>@sentry/capacitor</code>{" "}
+        4.4.0 with its sibling web SDK <code>@sentry/browser</code>{" "}
+        10.69.0 (the exact version it depends on; keep the two in step). Native crashes are reported
+        by sentry-cocoa and sentry-android, JavaScript errors by the web SDK. It supports Capacitor
+        8; on iOS it installs through Swift Package Manager only (a CocoaPods project moves to SPM
+        first).
+      </p>
+      <Code lang="ts">
+        {`import { initCrashReporting } from "denext/mobile";
+
+await initCrashReporting({
+  dsn: "https://<key>@o0.ingest.sentry.io/<project>",
+  sdk: () => import("@sentry/capacitor"),
+  sibling: () => import("@sentry/browser"), // or @sentry/react
+  environment: "production",
+  options: { tracesSampleRate: 0.1 },
+});`}
+      </Code>
+      <p>
+        The SDKs load only when this runs. The release is the UI version the page was served with,
+        the <code>version</code> of its <code>_denext/ota.json</code>{" "}
+        (<code>spa.ota: true</code>), so every over-the-air UI reports under its own release and its
+        stack traces match its own source maps. No <code>dist</code>{" "}
+        is set by default: one UI version runs on several binaries, and Sentry matches uploaded
+        files only when the dist is equal.
+      </p>
+      <p>
+        <strong>Hidden source maps.</strong> <code>denext export --sourcemaps hidden</code> (or{" "}
+        <code>DENEXT_SOURCEMAPS=hidden</code>) builds external source maps, then moves them out of
+        the export into <code>.denext/sourcemaps/</code>{" "}
+        next to a copy of the JavaScript they map, at the same paths. Nothing in <code>out/</code>
+        {" "}
+        references or contains a map, and the OTA manifest never lists one. Upload them under the
+        same release:
+      </p>
+      <Code lang="bash">
+        {`denext export --sourcemaps hidden
+npx @sentry/cli sourcemaps upload \\
+  --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" \\
+  --release "$(jq -r .version out/_denext/ota.json)" \\
+  --url-prefix "~/" .denext/sourcemaps   # SENTRY_AUTH_TOKEN in the environment`}
+      </Code>
+      <p>
+        <code>~/</code>{" "}
+        matches any origin, so the same upload serves iOS (<code>capacitor://localhost</code>) and
+        Android (<code>https://localhost</code>
+        ). The <code>examples/capacitor-ci</code> workflow runs this step when the{" "}
+        <code>SENTRY_AUTH_TOKEN</code> secret is set.
+      </p>
+
+      <h2 id="debugging-on-a-device">Debugging on a device</h2>
+      <p>
+        The app is a web page in the system WebView, so the browsers&apos; own inspectors attach to
+        it: elements, console, network, breakpoints, performance. <code>denext mobile inspect</code>
+        {" "}
+        prints the steps below and opens what it can (Safari on a Mac, Chrome at{" "}
+        <code>chrome://inspect/#devices</code>, after listing <code>adb devices</code>);{" "}
+        <code>--platform ios|android</code> narrows it.
+      </p>
+      <ul>
+        <li>
+          <strong>iOS</strong> (
+          <a href="https://developer.apple.com/documentation/safari-developer-tools/inspecting-ios">
+            Safari Web Inspector
+          </a>, macOS only): on the device, Settings → Apps → Safari → Advanced → Web Inspector; on
+          the Mac, Safari → Settings → Advanced → &quot;Show features for web developers&quot;.
+          Connect the device, run a debug build, then Safari → Develop → the device → the page.
+        </li>
+        <li>
+          <strong>Android</strong> (
+          <a href="https://developer.chrome.com/docs/devtools/remote-debugging/webviews">
+            Chrome remote debugging
+          </a>): enable Developer options and USB debugging, connect and accept the prompt, run a
+          debug build, then <code>chrome://inspect/#devices</code> in Chrome.
+        </li>
+      </ul>
+      <p>
+        Debug builds are inspectable by default. A release or TestFlight build is inspectable only
+        with <code>ios.webContentsDebuggingEnabled</code> /{" "}
+        <code>android.webContentsDebuggingEnabled</code>{" "}
+        set in the Capacitor config, which must not ship: <code>denext mobile dev</code>{" "}
+        turns the platform&apos;s flag on for its session only, in the native config copies{" "}
+        <code>cap copy</code> wrote (never in{" "}
+        <code>capacitor.config.*</code>, so the native fingerprint does not change), puts them back
+        when it ends, and scrubs a killed session&apos;s copies on the next run; and{" "}
+        <code>denext mobile doctor --release</code> fails a build that still has them.
+      </p>
+      <p>
+        <strong>Logs without an inspector.</strong> During <code>denext mobile dev</code>{" "}
+        the page is served by <code>denext dev</code>, and an App Router app reports{" "}
+        <code>console.error</code>, <code>console.warn</code>{" "}
+        and uncaught errors back to it: read them with the <code>denext_dev_logs</code> MCP tool or
+        {" "}
+        <code>GET /_denext/dev-state</code>. A SPA-mode app does not forward its console yet; use
+        the inspector. Xcode&apos;s console and <code>adb logcat</code>{" "}
+        show the native side and, with Capacitor&apos;s default{" "}
+        <code>loggingBehavior: &quot;debug&quot;</code>, the page&apos;s console in debug builds. In
+        release, send errors to a service instead (<a href="#crash-reporting">crash reporting</a>).
+      </p>
 
       <h2 id="building-in-ci">Building in CI</h2>
       <p>

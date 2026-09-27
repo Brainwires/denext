@@ -29,7 +29,10 @@ export interface ExpoShim {
    * but does nothing.
    */
   readonly status: "full" | "partial" | "stub";
-  /** Exports deliberately not provided. */
+  /**
+   * Exports deliberately not provided. `Name.member` names a static or member of an export
+   * that the shim leaves out (`Asset.byHash`).
+   */
   readonly omitted?: readonly string[];
   /** Why (sync JSI APIs, native-only, …). */
   readonly notes?: string;
@@ -38,7 +41,8 @@ export interface ExpoShim {
 /**
  * Every `expo-*` package React Native mode aliases, by package name. A key with a subpath
  * (`expo-file-system/legacy`) is a shim for that subpath of the package; its entrypoint is
- * the package's shim name plus the subpath (`denext/expo/file-system/legacy`).
+ * the package's shim name plus the subpath (`denext/expo/file-system/legacy`). A scoped
+ * package is shimmed per subpath only (`@expo/ui/swift-ui` → `denext/expo/ui/swift-ui`).
  */
 export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   "expo": {
@@ -62,10 +66,24 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "UNKNOWN. AppleAuthenticationButton is a styled <button> (black / white / outline), " +
       "rendered only in the iOS shell.",
   },
+  "expo-application": {
+    module: "./application.ts",
+    pinned: "57.0.3",
+    status: "partial",
+    notes: "applicationName / applicationId / nativeApplicationVersion / nativeBuildVersion over " +
+      "@capacitor/app's getInfo(); Expo reads them synchronously (JSI), so in the shell they start " +
+      "from the Expo config and turn native a moment after load (live bindings; await the " +
+      "denext-only applicationInfoAsync()). null on the web, as Expo's web build. getAndroidId and " +
+      "getIosIdForVendorAsync over @capacitor/device's getId(); getIosApplicationReleaseTypeAsync " +
+      "tells only SIMULATOR from UNKNOWN and getIosPushNotificationServiceEnvironmentAsync is null. " +
+      "getInstallReferrerAsync, getInstallationTimeAsync and getLastUpdateTimeAsync reject with " +
+      "ERR_UNAVAILABLE (no Capacitor plugin reports them).",
+  },
   "expo-asset": {
     module: "./asset.ts",
     pinned: "57.0.15",
     status: "partial",
+    omitted: ["Asset.byHash", "Asset.byUri", "Asset.fromMetadata"],
     notes: "An asset is the bundled file's URL; numeric Metro asset ids are not supported.",
   },
   "expo-audio": {
@@ -95,20 +113,34 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     module: "./auth-session.ts",
     pinned: "57.0.10",
     status: "partial",
-    omitted: [
-      "AccessTokenRequest",
-      "RefreshTokenRequest",
-      "RevokeTokenRequest",
-      "TokenRequest",
-      "Request",
-      "ResponseError",
-      "TokenError",
-      "useLoadedAuthRequest",
-      "useAuthRequestResult",
-      "requestAsync",
-    ],
-    notes: "AuthRequest (PKCE S256), useAuthRequest, discovery and the token calls over " +
-      "openAuthSession. Provider presets (expo-auth-session/providers/*) are not shimmed.",
+    notes: "AuthRequest (PKCE S256), useAuthRequest / useLoadedAuthRequest / " +
+      "useAuthRequestResult, discovery, the token calls and their request classes " +
+      "(AccessTokenRequest, RefreshTokenRequest, RevokeTokenRequest; a client secret is sent as " +
+      "HTTP Basic credentials, as in Expo) over openAuthSession. loadAsync's proxy options are " +
+      "not provided. The Google and Facebook presets are the providers/* entries below.",
+  },
+  "expo-auth-session/providers/facebook": {
+    module: "./auth-session-facebook.ts",
+    pinned: "57.0.10",
+    status: "full",
+    notes: "useAuthRequest over denext/expo/auth-session (implicit token flow by default). The " +
+      "client id is picked by the platform the page runs on (iosClientId / androidClientId in " +
+      "the Capacitor shell, webClientId on the web), not by Platform.OS; the shell's redirect " +
+      "defaults to fb<clientId>://authorize (register it: `denext mobile add auth-session " +
+      "--scheme fb<clientId>`).",
+  },
+  "expo-auth-session/providers/google": {
+    module: "./auth-session-google.ts",
+    pinned: "57.0.10",
+    status: "full",
+    notes:
+      "useAuthRequest and useIdTokenAuthRequest over denext/expo/auth-session with PKCE. The " +
+      "client id is picked by the platform the page runs on (iosClientId / androidClientId in " +
+      "the Capacitor shell, webClientId on the web). In the shell the code flow runs and the " +
+      "code is exchanged automatically (id_token / access_token in response.params); the " +
+      "redirect defaults to <applicationId>:/oauthredirect (register the scheme with `denext " +
+      "mobile add auth-session --scheme …`). On the web it asks for the token / id_token " +
+      "directly. A failed exchange is an error response (Expo leaves it unhandled).",
   },
   "expo-blur": {
     module: "./blur.ts",
@@ -127,10 +159,17 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     module: "./camera.ts",
     pinned: "57.0.4",
     status: "partial",
-    omitted: ["PictureRef"],
-    notes: "Permissions and barcode scanning only: CameraView with onBarcodeScanned opens " +
-      "denext's full-screen scanner (Capacitor barcode plugin / BarcodeDetector) instead of an " +
-      "inline preview. No photo capture or recording (takePictureAsync, recordAsync). The " +
+    notes: "CameraView previews the camera over getUserMedia; its ref's takePictureAsync takes " +
+      "a canvas frame (a data: URL; quality, base64, scale, imageType, mirror, pictureRef, and " +
+      "exif as the track's settings) and falls back to @capacitor/camera's system camera in the " +
+      "shell without a preview; recordAsync records the preview with MediaRecorder (a blob: " +
+      "URL; maxDuration, maxFileSize, mute), with toggleRecordingAsync / stopRecording. With " +
+      "onBarcodeScanned it opens denext's full-screen scanner (Capacitor barcode plugin / " +
+      "BarcodeDetector) instead of a preview; CameraView.launchScanner does the same and " +
+      "reports to onModernBarcodeScanned (dismissScanner does nothing). The statics " +
+      "(isAvailableAsync, getAvailableVideoCodecsAsync, isModernBarcodeScannerAvailable, " +
+      "ConversionTables, defaultProps) are provided. Not provided: autofocus, white balance, " +
+      "picture size, videoQuality, the codec choice and EXIF written into the file. The " +
       "permission calls live on the Camera object, as in Expo; CameraNativeModule is a " +
       "stand-in that throws when constructed.",
   },
@@ -145,6 +184,15 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     module: "./constants.ts",
     pinned: "57.0.16",
     status: "partial",
+    omitted: [
+      "default.deviceName",
+      "default.systemVersion",
+      "default.isDetached",
+      "default.intentUri",
+      "default.supportedExpoSdks",
+      "default.__unsafeNoWarnManifest",
+      "default.__unsafeNoWarnManifest2",
+    ],
     notes: "expoConfig comes from globalThis.__DENEXT_EXPO_CONFIG__ (set it before the bundle " +
       "runs); manifest/manifest2 are null; appOwnership null, executionEnvironment standalone.",
   },
@@ -183,6 +231,12 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "FileHandle",
       "UploadTask",
       "DownloadTask",
+      "File.createDownloadTask",
+      "File.pickFileAsync",
+      "Directory.pickDirectoryAsync",
+      "Paths.normalize",
+      "Paths.parse",
+      "Paths.relative",
     ],
     notes: "SDK 57's object API (File, Directory, Paths). Expo's API is synchronous (JSI); " +
       "the Capacitor bridge and OPFS are not, so sync calls act on an index kept in " +
@@ -233,10 +287,16 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     module: "./image.ts",
     pinned: "57.0.3",
     status: "partial",
-    omitted: ["useImage", "ImageRef"],
-    notes: "react-native-web's Image (or <img>) with contentFit; no placeholders, transitions " +
-      "or blurhash; the cache calls resolve true. ImageNativeModule is a stand-in that " +
-      "throws when constructed.",
+    notes: "react-native-web's Image (or <img> layers) with contentFit / contentPosition, " +
+      "BlurHash / ThumbHash sources and placeholders (decoded in JS), a cross-dissolve " +
+      "transition, blurRadius and recyclingKey. cachePolicy is best effort: disk / memory-disk " +
+      "read what prefetch or writeToCacheAsync stored with the Cache API, memory what loaded " +
+      "this session. The statics (prefetch, loadAsync, clearMemoryCache, clearDiskCache, " +
+      "getCachePathAsync, write/readFromCacheAsync, configureCache, generateBlurhashAsync / " +
+      "generateThumbhashAsync on a canvas, Image.Image) and useImage / ImageRef are provided; " +
+      "configureCache's limits are not enforced. tintColor is ignored; the ref's " +
+      "startAnimating / stopAnimating / lockResourceAsync do nothing. ImageNativeModule is a " +
+      "stand-in that throws when constructed.",
   },
   "expo-image-manipulator": {
     module: "./image-manipulator.ts",
@@ -309,6 +369,16 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "denied), the compass heading and motion activity are not provided. " +
       "installWebGeolocationPolyfill does nothing (navigator.geolocation is already there).",
   },
+  "expo-maps": {
+    module: "./maps.ts",
+    pinned: "57.0.3",
+    status: "stub",
+    notes: "Apple Maps / Google Maps are native views: AppleMaps.View, GoogleMaps.View and " +
+      "GoogleMaps.StreetView render a labelled placeholder (and warn once), and their ref " +
+      "methods throw a denext error. Importing never throws; the enums are real, and the " +
+      "location permission calls are denext/expo/location's foreground permission. For a " +
+      "real map render a web map (Leaflet / MapLibre GL) in a .web.tsx file.",
+  },
   "expo-network": {
     module: "./network.ts",
     pinned: "57.0.1",
@@ -321,7 +391,6 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "57.0.15",
     status: "partial",
     omitted: [
-      "getExpoPushTokenAsync",
       "getNotificationChannelGroupsAsync",
       "getNotificationChannelGroupAsync",
       "setNotificationChannelGroupAsync",
@@ -340,8 +409,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     ],
     notes: "Remote push over @capacitor/push-notifications (APNs/FCM device tokens); local " +
       "scheduling, categories and channels over @capacitor/local-notifications (`denext mobile " +
-      "add local-notifications`). getExpoPushTokenAsync needs Expo's push service; send through " +
-      "APNs/FCM with the device token instead. Identifiers map to the plugin's 32-bit ids by " +
+      "add local-notifications`). getExpoPushTokenAsync rejects with " +
+      "ERR_NOTIFICATIONS_NO_EXPO_PUSH_SERVICE (denext has no Expo push service): send through " +
+      "APNs/FCM with getDevicePushTokenAsync's device token instead. Identifiers map to the plugin's 32-bit ids by " +
       "hash; getNextTriggerDateAsync is computed in JS; categories persist in localStorage (the " +
       "plugin cannot list them) and, on iOS, also apply to remote pushes' aps.category. No " +
       "channel groups, topics or background tasks. The handler is called, but presentation " +
@@ -425,6 +495,18 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     notes: "SF Symbols / Material Symbols are native-only: SymbolView renders its fallback, " +
       "or an empty box of its size.",
   },
+  "expo-tracking-transparency": {
+    module: "./tracking-transparency.ts",
+    pinned: "57.0.2",
+    status: "full",
+    notes: "App Tracking Transparency over denext/mobile's getTrackingStatus / " +
+      "requestTrackingPermission (`denext mobile add tracking`: " +
+      "capacitor-plugin-app-tracking-transparency 3, which also writes " +
+      "NSUserTrackingUsageDescription). In the iOS shell " +
+      "without the plugin the permission is undetermined and cannot be asked (isAvailable() is " +
+      "false); on Android and the web it reports granted, as Expo's builds do. " +
+      "getAdvertisingId() is always null (the plugin does not read the IDFA).",
+  },
   "expo-updates": {
     module: "./updates.ts",
     pinned: "57.0.19",
@@ -475,5 +557,37 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "from ActivityKit in the background; push and push-to-start token listeners are live. " +
       "The start url and stale dates are ignored, addUserInteractionListener never fires, and " +
       "widgetsDirectory is empty. On the web the updates do nothing and start throws.",
+  },
+  "@expo/ui/jetpack-compose": {
+    module: "./ui-jetpack-compose.ts",
+    pinned: "57.0.14",
+    status: "stub",
+    notes: "Jetpack Compose views are native Android UI: every component renders its children " +
+      "with web layout (Column / Row as flex boxes, Text as text, the buttons as a <button> " +
+      "calling onPress) and warns once; importing never throws. useNativeState is a plain " +
+      "holder, getMaterialColors / useMaterialColors return {}, isDynamicColorAvailable is " +
+      "false. Give the screen a .web.tsx layout for a real web UI.",
+  },
+  "@expo/ui/jetpack-compose/modifiers": {
+    module: "./ui-jetpack-compose-modifiers.ts",
+    pinned: "57.0.14",
+    status: "stub",
+    notes: "Each modifier returns an inert { $type, $args } config that nothing applies.",
+  },
+  "@expo/ui/swift-ui": {
+    module: "./ui-swift-ui.ts",
+    pinned: "57.0.14",
+    status: "stub",
+    notes: "SwiftUI views are native iOS UI: every component renders its children with web " +
+      "layout (VStack / HStack as flex boxes, Text as text, Button as a <button> calling " +
+      "onPress) and warns once; importing never throws. withAnimation runs its body at once; " +
+      "useNativeState is a plain holder. Give the screen a .web.tsx layout for a real web UI.",
+  },
+  "@expo/ui/swift-ui/modifiers": {
+    module: "./ui-swift-ui-modifiers.ts",
+    pinned: "57.0.14",
+    status: "stub",
+    notes: "Each modifier returns an inert { $type, $args } config that nothing applies " +
+      "(Animation presets included).",
   },
 };

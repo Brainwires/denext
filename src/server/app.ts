@@ -20,6 +20,7 @@ import { applyDefaultSecurityHeaders } from "./response-headers.ts";
 import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-state.ts";
 import { runPipeline } from "./request-pipeline.ts";
 import { resolveCors } from "./cors.ts";
+import { createAppLinksHandler } from "./app-links.ts";
 
 export type { AppConfig, RequestHandler, RequestLogInfo } from "./app-config.ts";
 export { applyDefaultSecurityHeaders, hstsHeaderValue } from "./response-headers.ts";
@@ -57,6 +58,7 @@ export function createApp(config: AppConfig): RequestHandler {
     handle: null!, // wired below — the ISR background regen loops back through it
     // Validated here, at boot: a malformed origin or `"*"` with credentials throws now.
     cors: resolveCors(config.cors),
+    appLinks: config.appLinks ? createAppLinksHandler(config.appLinks) : undefined,
   };
   // The typed API client's server-side calls run in-process through this app's pipeline
   // (no loopback HTTP) — see src/server/api-dispatcher.ts.

@@ -139,6 +139,41 @@ export interface OtaCheckOptions {
   timeoutMs?: number;
   /** The `fetch` to use for the manifest (default: the global `fetch`). */
   fetch?: typeof fetch;
+  /**
+   * The OTA channel this app follows (`"production"`, `"beta"`, …), sent as the
+   * `x-denext-ota-channel` header on the manifest request and on every native file download. A
+   * server built with `createOtaHandler({ channels })` serves that channel's release; without it
+   * the server's default channel. Setting it turns on `installId: "auto"`.
+   */
+  channel?: string;
+  /**
+   * The install id sent as `x-denext-ota-install-id`, which a channels server hashes into the
+   * device's staged-rollout bucket (a request without one always gets the stable release).
+   * `"auto"` (the default when `channel` is set) uses {@linkcode otaInstallId}, a random id kept
+   * in `localStorage`; a string is sent as given (8–128 characters of `[A-Za-z0-9_-]`, or the
+   * server ignores it). Omitted without `channel`: no header.
+   */
+  installId?: string;
+  /**
+   * Called when the server's UI needs a newer app binary: a check or prepare that ends in an
+   * `error` result with code `native_too_old` (the manifest's `minNative` is above this build) or
+   * `native_mismatch` (it was built for another native fingerprint). The usual answer is a
+   * store-update prompt. It is fired once per call after the result is known, not awaited into
+   * it; a throw or rejection is swallowed and the result is returned unchanged.
+   *
+   * @example
+   * ```ts
+   * import { checkForUiUpdate, promptStoreUpdate } from "denext/mobile";
+   *
+   * await checkForUiUpdate({
+   *   baseUrl: "https://api.example.com/mobile-ui",
+   *   onNativeUpdateRequired: () => promptStoreUpdate({ appStoreId: "123456789" }),
+   * });
+   * ```
+   */
+  onNativeUpdateRequired?: (
+    refusal: { code: "native_too_old" | "native_mismatch"; reason: string },
+  ) => void | Promise<void>;
 }
 
 /** The outcome of {@linkcode checkForUiUpdate}. It never throws; every failure is a value. */
@@ -243,6 +278,93 @@ function nativeError(
     : { kind: "error", reason: messageOf(err) };
 }
 
+/** The `localStorage` key {@linkcode otaInstallId} keeps the id under. */
+const INSTALL_ID_KEY = "denext:ota-install-id";
+
+/** The id {@linkcode otaInstallId} uses when storage is unavailable (this page's lifetime). */
+let memoryInstallId: string | undefined;
+
+/** The slice of `localStorage` {@linkcode otaInstallId} uses. */
+interface IdStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+/** 16 random bytes as base64url (22 characters). */
+function newInstallId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/**
+ * This install's stable OTA id: a random base64url string made on first use and kept in
+ * `localStorage` (`denext:ota-install-id`), so a channels server (`createOtaHandler({ channels
+ * })`) puts the device in the same staged-rollout bucket on every check. It identifies nothing
+ * but the install; clearing the app's data makes a new one. Where storage is unavailable it
+ * lasts for the page's lifetime.
+ *
+ * @returns The install id (22 characters of `[A-Za-z0-9_-]`).
+ * @example
+ * ```ts
+ * import { otaInstallId } from "denext/mobile";
+ * console.info("OTA install", otaInstallId());
+ * ```
+ */
+export function otaInstallId(): string {
+  let storage: IdStorage | undefined;
+  try {
+    storage = (globalThis as { localStorage?: IdStorage }).localStorage;
+    const stored = storage?.getItem(INSTALL_ID_KEY);
+    if (typeof stored === "string" && /^[A-Za-z0-9_-]{16,128}$/.test(stored)) return stored;
+  } catch {
+    storage = undefined;
+  }
+  // An id this page already made while storage failed stays the id (and is persisted now).
+  const id = memoryInstallId ?? newInstallId();
+  try {
+    if (storage) {
+      storage.setItem(INSTALL_ID_KEY, id);
+      return id;
+    }
+  } catch {
+    // Storage refused the write (private mode, quota): keep it for this page instead.
+  }
+  return memoryInstallId = id;
+}
+
+/** The headers of the manifest request and every native download: the app's, plus the channel's. */
+function otaRequestHeaders(options: OtaCheckOptions): Record<string, string> {
+  const headers: Record<string, string> = { ...options.headers };
+  if (options.channel !== undefined) headers["x-denext-ota-channel"] = options.channel;
+  const installId = options.installId ?? (options.channel !== undefined ? "auto" : undefined);
+  if (installId !== undefined) {
+    headers["x-denext-ota-install-id"] = installId === "auto" ? otaInstallId() : installId;
+  }
+  return headers;
+}
+
+/** Fire `onNativeUpdateRequired` for a `native_too_old` / `native_mismatch` result; return it. */
+function notifyNativeRequired<R extends { readonly kind: string }>(
+  options: OtaCheckOptions,
+  result: R,
+): R {
+  const callback = options.onNativeUpdateRequired;
+  const code = (result as { code?: unknown }).code;
+  if (
+    typeof callback === "function" && result.kind === "error" &&
+    (code === "native_too_old" || code === "native_mismatch")
+  ) {
+    const reason = String((result as { reason?: unknown }).reason ?? "");
+    try {
+      Promise.resolve(callback({ code, reason })).catch(() => {});
+    } catch {
+      // The app's handler threw: the result stands.
+    }
+  }
+  return result;
+}
+
 /** Fetch and validate `${baseUrl}/_denext/ota.json`; a string is the failure reason. */
 async function fetchManifest(
   baseUrl: string,
@@ -254,7 +376,7 @@ async function fetchManifest(
   try {
     const doFetch = options.fetch ?? globalThis.fetch;
     const response = await doFetch(`${baseUrl}/${OTA_MANIFEST_PATH}`, {
-      headers: options.headers ?? {},
+      headers: otaRequestHeaders(options),
       cache: "no-store",
       signal: controller.signal,
     });
@@ -353,7 +475,7 @@ async function install<P extends DenextOtaPlugin>(
   const { manifest, baseUrl } = found;
   let result: unknown;
   try {
-    result = await call(plugin, { baseUrl, headers: { ...options.headers }, manifest });
+    result = await call(plugin, { baseUrl, headers: otaRequestHeaders(options), manifest });
   } catch (err) {
     return { stop: refusal(err) };
   }
@@ -447,7 +569,11 @@ let prepareFlight: ((options: OtaCheckOptions) => Promise<OtaPrepareResult>) | u
  */
 export function checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult> {
   checkFlight ??= singleFlight<OtaCheckResult>(runCheck, asError);
-  return checkFlight(options);
+  const flight = checkFlight(options);
+  // Without a callback the in-flight promise itself is returned, so concurrent callers share it.
+  return options.onNativeUpdateRequired
+    ? flight.then((result) => notifyNativeRequired(options, result))
+    : flight;
 }
 
 /**
@@ -485,7 +611,11 @@ export function checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResu
  */
 export function prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult> {
   prepareFlight ??= singleFlight<OtaPrepareResult>(runPrepare, asError);
-  return prepareFlight(options);
+  const flight = prepareFlight(options);
+  // Without a callback the in-flight promise itself is returned, so concurrent callers share it.
+  return options.onNativeUpdateRequired
+    ? flight.then((result) => notifyNativeRequired(options, result))
+    : flight;
 }
 
 /**
@@ -529,7 +659,7 @@ let ownVersion: string | undefined;
  * has switched to since, which is what binds a confirmation to the page that sends it. The first
  * version read is kept for the page's lifetime.
  */
-async function pageUiVersion(): Promise<string | undefined> {
+export async function pageUiVersion(): Promise<string | undefined> {
   if (ownVersion !== undefined) return ownVersion;
   try {
     const href = (globalThis as { location?: { href?: string } }).location?.href;

@@ -11,6 +11,7 @@ import { editDistance } from "../utils/edit-distance.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { VERB_NAME } from "../cli/command.ts";
 import { resolveCors } from "./cors.ts";
+import { validateAppLinks } from "./app-links.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys — the generated
@@ -310,6 +311,7 @@ function validateSecurity(config: DenextConfig, fail: Fail): void {
   validateHsts(config.hsts, fail);
   validateApiBatch(config.apiBatch, fail);
   validateCors(config.cors, fail);
+  validateAppLinks(config.appLinks, fail);
   if (config.apiMaxBodyBytes !== undefined) {
     num(fail, "apiMaxBodyBytes", config.apiMaxBodyBytes, { int: true, min: 1 });
   }
@@ -519,6 +521,10 @@ function validateReactNative(config: DenextConfig, fail: Fail): void {
     if (option !== undefined && typeof option !== "boolean") {
       fail(`reactNative.${key}`, "must be a boolean");
     }
+  }
+  const lists = isObject ? (value as Record<string, unknown>).lists : undefined;
+  if (lists !== undefined && lists !== "denext" && lists !== "library") {
+    fail("reactNative.lists", 'must be "denext" or "library"');
   }
   if (config.mode !== "spa") {
     fail("reactNative", 'applies only in SPA mode — set `mode: "spa"` and `spa.entry`');

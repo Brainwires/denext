@@ -3,7 +3,7 @@
 // bridge (`reportRequestError`). Imported by every pipeline module; imports none of them.
 
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
-import type { ApiBatchConfig, CorsConfig } from "./config.ts";
+import type { ApiBatchConfig, AppLinksConfig, CorsConfig } from "./config.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { MiddlewareRunner } from "./middleware.ts";
 import type { I18nConfig } from "./i18n.ts";
@@ -192,6 +192,11 @@ export interface AppConfig {
    * throws there. Unset → no CORS headers. See `src/server/cors.ts`.
    */
   cors?: CorsConfig;
+  /**
+   * The universal link / App Link association files (the config's `appLinks`), answered before
+   * any redirect or middleware. Unset → neither file is served. See `src/server/app-links.ts`.
+   */
+  appLinks?: AppLinksConfig;
   /**
    * An explicit public origin (e.g. `"https://example.com"`) used to build
    * absolute URLs (auto-populated `og:image`, canonical). Overrides request
