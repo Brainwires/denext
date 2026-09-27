@@ -67,12 +67,14 @@ export interface CoreConfig {
   readonly endThreshold: number;
   /** `onStartReached` distance, in viewports. */
   readonly startThreshold: number;
+  /** Most rows to render (a window sized by a guess, before the first measurement). */
+  readonly maxRows?: number;
 }
 
 /** A pending `scrollToIndex` (or `scrollToEnd`): the engine keeps landing on it until settled. */
 export interface ScrollTarget {
-  /** The row. */
-  readonly index: number;
+  /** The row (re-located by key when the data changes while the target is pending). */
+  index: number;
   /** Its alignment. */
   readonly align: ScrollAlign;
   /** Extra px between the aligned edge and the viewport edge. */
@@ -85,11 +87,35 @@ export interface ScrollTarget {
   passes: number;
 }
 
+/**
+ * Settling passes after which a target is released even if rows in the window are still
+ * unmeasured (a safety net; the controller also releases it once measurements go quiet).
+ */
+const MAX_SETTLE_PASSES = 120;
+
 /** Views within this many px of the end count as "at the end". */
 const AT_END_EPSILON = 4;
 
-/** Row counts up to this get every hint applied eagerly (an exact scrollbar from the start). */
+/**
+ * Row counts up to this get every hint applied (an exact scrollbar): as much as fits
+ * {@linkcode SEED_BUDGET_MS} when the data arrives, the rest in background slices (see
+ * `seedPending`) or at once when an absolute offset is asked for (`flushSeed`). Larger lists
+ * apply hints to the rows they render only.
+ */
 const EAGER_HINT_LIMIT = 50_000;
+
+/**
+ * Time (ms) the data change itself may spend applying hints. A hint may be expensive (it
+ * receives the item, which a `getItem` source materializes): seeding 10k of them before the
+ * first paint was the bulk of a fixed-size list's time to first render.
+ */
+const SEED_BUDGET_MS = 2;
+
+/** Rows seeded between two clock reads. */
+const SEED_CHUNK = 256;
+
+/** A clock in ms. */
+const clock = (): number => typeof performance !== "undefined" ? performance.now() : Date.now();
 
 /** Per-row storage budget, in blocks (see `SizeTree.compact`): ~2.3 MB, 512k rows. */
 const MAX_FULL_BLOCKS = 2048;
@@ -151,6 +177,8 @@ export class VirtualCore {
   velocity = 0;
   #lastT = 0;
   #dir = 0;
+  /** The next row the hints are applied from (−1: nothing pending). */
+  #seedNext = -1;
   readonly #edges = new EdgeTracker();
 
   /** @param config Initial settings. */
@@ -257,7 +285,8 @@ export class VirtualCore {
     const old = this.#cfg;
     this.#cfg = config;
     if (config.defaultSize !== old.defaultSize) {
-      this.#mutate(() => this.tree.setDefaultSize(config.defaultSize));
+      // A better estimate, not a content change: the view stays put whatever MVCP says.
+      this.#mutate(() => this.tree.setDefaultSize(config.defaultSize), true);
     }
   }
 
@@ -294,13 +323,40 @@ export class VirtualCore {
       else return this.#applyDiff(old, src);
       return undefined;
     });
-    if (src.count <= EAGER_HINT_LIMIT) {
-      this.#mutate(() => {
-        this.#seed(0, src.count - 1);
-      });
-    }
+    this.#seedNext = src.hint && src.count <= EAGER_HINT_LIMIT ? 0 : -1;
+    this.seedPending(SEED_BUDGET_MS);
     this.#edges.data(this.#edgeToken());
     return true;
+  }
+
+  /** Whether hints remain to be applied (see {@linkcode EAGER_HINT_LIMIT}). */
+  get seeding(): boolean {
+    return this.#seedNext >= 0;
+  }
+
+  /**
+   * Apply pending hints for up to `budgetMs` (the view stays put: a hint refines an estimate,
+   * it does not change the content). Returns whether any remain.
+   */
+  seedPending(budgetMs: number): boolean {
+    if (this.#seedNext < 0) return false;
+    const start = clock();
+    const n = this.tree.count;
+    this.#mutate(() => {
+      while (this.#seedNext < n) {
+        const to = Math.min(n, this.#seedNext + SEED_CHUNK);
+        this.#seed(this.#seedNext, to - 1);
+        this.#seedNext = to;
+        if (clock() - start >= budgetMs) break;
+      }
+    }, true);
+    if (this.#seedNext >= n) this.#seedNext = -1;
+    return this.#seedNext >= 0;
+  }
+
+  /** Apply every pending hint now (before an absolute offset is used). */
+  flushSeed(): void {
+    if (this.#seedNext >= 0) this.seedPending(Infinity);
   }
 
   #edgeToken(): string {
@@ -385,6 +441,20 @@ export class VirtualCore {
 
   // ---- anchoring ------------------------------------------------------------------------
 
+  /** Follow a pending target's row (by key) into new data; a removed row keeps its index. */
+  #relocateTarget(
+    t: ScrollTarget,
+    old: CoreSource,
+    map: ((oldIndex: number) => number) | void,
+  ): void {
+    const n = this.tree.count;
+    if (t.toEnd || n === 0 || t.index >= old.count) return;
+    const key = old.keyAt(t.index);
+    const hint = Math.max(0, Math.min(n - 1, map ? map(t.index) : t.index));
+    const found = this.#findKey(key, hint);
+    if (found >= 0) t.index = found;
+  }
+
   /**
    * The anchor row: the first row fully inside the viewport whose size is already known
    * (measured or exact), else the first fully visible row, else the row at the leading edge.
@@ -412,18 +482,25 @@ export class VirtualCore {
   /**
    * Run `change` (which may replace the data and the sizes), then restore the view: the end
    * while pinned, the scroll target while one is pending, otherwise the anchor row at its old
-   * distance from the viewport (by key, with the next visible rows as fallbacks).
+   * distance from the viewport (by key, with the next visible rows as fallbacks). `refine`: the
+   * change only refines estimates (hints, a learned default size), so the view is anchored
+   * even without `maintainVisibleContentPosition`.
    */
-  #mutate(change: () => ((oldIndex: number) => number) | void): void {
+  #mutate(change: () => ((oldIndex: number) => number) | void, refine = false): void {
     const pinned = this.#cfg.anchor === "end" && this.pinned && this.target === null;
     let anchor: Anchor | undefined;
-    if (!pinned && this.target === null && this.#cfg.maintainVisibleContentPosition) {
+    if (!pinned && this.target === null && (refine || this.#cfg.maintainVisibleContentPosition)) {
       anchor = this.#captureAnchor();
     }
+    const src = this.#src;
     const map = change();
     if (pinned) this.#setV(this.vmax);
-    else if (this.target) this.#setV(this.targetOffset(this.target));
-    else if (anchor) {
+    else if (this.target) {
+      // A pending target is the anchor, whatever `maintainVisibleContentPosition` says: the
+      // programmatic scroll owns the view until it settles.
+      if (this.#src !== src) this.#relocateTarget(this.target, src, map);
+      this.#setV(this.targetOffset(this.target));
+    } else if (anchor) {
       const at = this.#locate(anchor, map ?? ((i) => i));
       this.#setV(at ? this.tree.offsetOf(at.index) - at.gap : this.v);
     } else this.#setV(this.v);
@@ -607,34 +684,69 @@ export class VirtualCore {
    */
   updateRange(): boolean {
     const before = this.range;
-    const base = this.#cfg.overscan ?? Math.max(this.vp, 1);
     for (let pass = 0; pass < 4; pass++) {
-      const next = nextRange(this.tree, this.range, this.v, this.vp, base, this.velocity);
+      const next = this.#nextRange();
       this.range = next;
       let seeded = false;
       this.#mutate(() => {
         seeded = this.#seed(next.first, next.last);
-      });
+      }, true);
       if (!seeded) break;
     }
     return !sameRange(before, this.range);
   }
 
   /**
-   * After a measurement or a commit: whether the pending scroll target has landed (its row is
-   * measured, or `exact` sizes are known, and the view sits at its offset). Clears it then.
+   * The range `updateRange` would render now (hysteresis + velocity-scaled overscan), at most
+   * `maxRows` rows from the viewport's leading row (its trailing row at the end of a chat).
+   */
+  #nextRange(): RowRange {
+    const base = this.#cfg.overscan ?? Math.max(this.vp, 1);
+    const r = nextRange(this.tree, this.range, this.v, this.vp, base, this.velocity);
+    const max = this.#cfg.maxRows;
+    if (max === undefined || r.last - r.first < max) return r;
+    const vis = this.visible();
+    if (this.#cfg.anchor === "end" && this.pinned) {
+      return { first: Math.max(r.first, vis.last - max + 1), last: vis.last };
+    }
+    return { first: vis.first, last: Math.min(r.last, vis.first + max - 1) };
+  }
+
+  /**
+   * After a measurement or a commit: whether the pending scroll target has settled — the view
+   * sits at its offset and every row in the rendered window — and in the window about to
+   * render, which grows once estimates above the target turn out too large — has a known size
+   * (measured, or exact), so no later measurement can move it. Clears it then.
+   * Until then the target is the anchor of every size or data change (see `#mutate`).
    */
   settleTarget(measurable: boolean): boolean {
     const t = this.target;
     if (!t) return true;
     t.passes++;
     const landed = Math.abs(this.v - this.targetOffset(t)) < 0.5;
-    const known = !measurable || this.tree.isMeasured(Math.min(t.index, this.tree.count - 1));
-    if ((landed && known && !t.smooth) || t.passes > 30) {
+    const known = !measurable || this.#windowKnown(t);
+    if ((landed && known && !t.smooth) || t.passes > MAX_SETTLE_PASSES) {
       this.target = null;
       return true;
     }
     return false;
+  }
+
+  /** Whether the target row and every row of the current and next windows have known sizes. */
+  #windowKnown(t: ScrollTarget): boolean {
+    const tree = this.tree;
+    if (!tree.isMeasured(Math.min(t.index, tree.count - 1))) return false;
+    const next = this.#nextRange();
+    return this.#rowsKnown(this.range) && (sameRange(next, this.range) || this.#rowsKnown(next));
+  }
+
+  /** Whether every row of `r` has a known size. */
+  #rowsKnown(r: RowRange): boolean {
+    const tree = this.tree;
+    for (let i = Math.max(0, r.first); i <= r.last && i < tree.count; i++) {
+      if (!tree.isMeasured(i)) return false;
+    }
+    return true;
   }
 
   /** Which edge callbacks to fire now (consumes the last movement direction). */

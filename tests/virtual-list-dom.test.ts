@@ -78,6 +78,32 @@ async function measureAll(truth: (index: number) => number, rounds = 12): Promis
   }
 }
 
+/**
+ * Report sizes one row per resize callback: the target row first, then every other rendered row
+ * nearest-first from the top (rows above the target land after it has "settled"); repeat.
+ */
+async function measureOneByOne(truth: (index: number) => number, first: number): Promise<void> {
+  const ro = FakeResizeObserver.instances[FakeResizeObserver.instances.length - 1];
+  for (let round = 0; round < 40; round++) {
+    const pending = [...ro.targets].filter((el) => {
+      const idx = el.getAttribute("data-index");
+      return idx !== null && ro.reported.get(el) !== truth(Number(idx));
+    }).sort((a, b) => {
+      const ia = Number(a.getAttribute("data-index"));
+      const ib = Number(b.getAttribute("data-index"));
+      return (ia === first ? -1 : ib === first ? 1 : 0) || ia - ib;
+    });
+    if (pending.length === 0) return;
+    const el = pending[0];
+    const size = truth(Number(el.getAttribute("data-index")));
+    ro.reported.set(el, size);
+    await act(() =>
+      ro.cb([{ target: el, borderBoxSize: [{ blockSize: size, inlineSize: size }] }])
+    );
+  }
+  await measureAll(truth);
+}
+
 const scrollerOf = (screen: { container: TestElement }): DomEl =>
   screen.container.children[0] as DomEl;
 const listOf = (screen: { container: TestElement }): DomEl =>
@@ -295,6 +321,46 @@ Deno.test("scrollToIndex lands exactly on an unmeasured variable-height row (C1,
     await screen.unmount();
   });
 });
+
+for (const mvcp of [true, false]) {
+  Deno.test(`scrollToIndex is exact with maintainVisibleContentPosition: ${mvcp} — rows above measured after landing never move it (C1)`, async () => {
+    await withRO(async () => {
+      const truth = (i: number) => 30 + ((i * 53) % 170);
+      let handle: VirtualListHandle | null = null;
+      const screen = await render(list({
+        data: rows(3000),
+        estimatedItemSize: 60,
+        viewportSize: 600,
+        maintainVisibleContentPosition: mvcp,
+        ref: (x: VirtualListHandle | null) => {
+          handle = x;
+        },
+        renderItem: (r: Row) => h("span", null, r.text),
+      }));
+      await measureAll(truth);
+      for (
+        const [target, align] of [[2100, "start"], [900, "end"], [1500, "center"], [
+          37,
+          "start",
+        ]] as const
+      ) {
+        await act(() => handle!.scrollToIndex(target, { align }));
+        // The browser reports the rows one at a time (target first, then the rows above it).
+        await measureOneByOne(truth, target);
+        const top = visualTops(screen, truth).get(target);
+        assert(top !== undefined, `row ${target} rendered`);
+        if (align === "start") assertEquals(Math.round(top), 0, `row ${target} at the top`);
+        if (align === "end") {
+          assertEquals(Math.round(top + truth(target)), 600, `row ${target} at the bottom`);
+        }
+        if (align === "center") {
+          assertEquals(Math.round(top + truth(target) / 2), 300, `row ${target} centred`);
+        }
+      }
+      await screen.unmount();
+    });
+  });
+}
 
 Deno.test("initialScrollIndex: the first render already shows the target (C2, T11)", async () => {
   const screen = await render(list({
@@ -539,6 +605,70 @@ Deno.test("iOS: no scrollTop write during a touch fling; corrections are absorbe
     await act(() => fireEventOn(sc, "scrollend"));
     assertEquals(spy.writes.length, 1, "one reconciling write at scrollend");
     assertEquals(visualTops(screen, truth).get(80), ref, "and still no visual move");
+    await screen.unmount();
+  });
+});
+
+Deno.test("iOS: a touch cancels a pending scrollToIndex — no scroll write mid-touch, no re-landing after it (C1, F1)", async () => {
+  await withRO(async () => {
+    const truth = (i: number) => 30 + ((i * 53) % 170);
+    let handle: VirtualListHandle | null = null;
+    const screen = await render(list({
+      data: rows(3000),
+      estimatedItemSize: 60,
+      viewportSize: 600,
+      maintainVisibleContentPosition: false,
+      ref: (x: VirtualListHandle | null) => {
+        handle = x;
+      },
+      renderItem: (r: Row) => h("span", null, r.text),
+    }));
+    await measureAll(truth);
+    await act(() => handle!.scrollToIndex(2100));
+    const sc = scrollerOf(screen);
+    const spy = spyScrollTop(sc);
+    // The finger lands before the target's window has reported its sizes.
+    await act(() => fireEventOn(sc, "touchstart", { touches: [{}] }));
+    await measureAll(truth);
+    assertEquals(spy.writes.length, 0, "no scroll write while the finger is down");
+    const held = visualTops(screen, truth).get(2100);
+    await act(() => fireEventOn(sc, "touchend", { touches: [] }));
+    await act(() => fireEventOn(sc, "scrollend"));
+    await measureAll(truth);
+    assertEquals(
+      visualTops(screen, truth).get(2100),
+      held,
+      "the view stays where the user left it",
+    );
+    await screen.unmount();
+  });
+});
+
+Deno.test("a prepend while scrollToIndex is still settling keeps the target row (by key), MVCP off (C1)", async () => {
+  await withRO(async () => {
+    const size = (id: string) => 30 + ((Number(id.slice(1)) * 53) % 170);
+    let data = rows(3000);
+    const truth = (i: number) => size(data[i].id);
+    let handle: VirtualListHandle | null = null;
+    const props = () => ({
+      data,
+      estimatedItemSize: 60,
+      viewportSize: 600,
+      maintainVisibleContentPosition: false,
+      ref: (x: VirtualListHandle | null) => {
+        handle = x;
+      },
+      renderItem: (r: Row) => h("span", null, r.text),
+    });
+    const screen = await render(list(props()));
+    await measureAll(truth);
+    await act(() => handle!.scrollToIndex(2100));
+    // Before any row of the target's window reports, 10 rows arrive at the front.
+    data = [...rows(10, 90_000), ...data];
+    await screen.rerender(list(props()));
+    await measureAll(truth);
+    const tops = visualTops(screen, truth);
+    assertEquals(Math.round(tops.get(2110)!), 0, "row r2100 (now index 2110) at the top");
     await screen.unmount();
   });
 });

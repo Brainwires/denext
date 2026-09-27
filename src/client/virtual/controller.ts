@@ -49,6 +49,25 @@ const SETTLE_MS = 250;
 /** Idle fallback (ms) that ends a fling even where `scrollend` exists. */
 const IDLE_MS = 1000;
 
+/**
+ * Quiet period (ms) with no measurement after which a landed scroll target is released even if
+ * rows in the window never reported a size (hidden or placeholder rows).
+ */
+const TARGET_QUIET_MS = 500;
+
+/** Time budget (ms) of one background hint-seeding slice. */
+const SEED_SLICE_MS = 4;
+
+/**
+ * Most rows rendered before the first measurement of a list given no size information (React
+ * Native's `initialNumToRender` default): they are sized by a guess, and laying out many more
+ * rows than fit before the first paint is the bulk of such a list's time to first render.
+ */
+const PROBE_ROWS = 10;
+
+/** A learned default row size is replaced when the measured average moves by this fraction. */
+const LEARN_TOLERANCE = 0.1;
+
 /** Quiet period (ms) after a non-touch scroll that counts as "at rest". */
 const REST_MS = 150;
 
@@ -139,9 +158,20 @@ const HORIZONTAL: Axis = {
   trail: (r) => r.right,
 };
 
-/** Horizontal in a right-to-left context: the list grows leftward. */
+/**
+ * Horizontal in a right-to-left context: the list grows leftward. A plain literal, not a
+ * spread of `HORIZONTAL`: a module-level spread is not provably side-effect free, so the
+ * bundler would keep these tables in every app importing `denext`, list or not.
+ */
 const HORIZONTAL_RTL: Axis = {
-  ...HORIZONTAL,
+  offset: "scrollLeft",
+  client: "clientWidth",
+  crossClient: "clientHeight",
+  extent: "scrollWidth",
+  size: "width",
+  winOffset: "scrollX",
+  winSize: "innerWidth",
+  winCross: "innerHeight",
   margin: "margin-right",
   trailingMargin: "margin-left",
   inset: "right",
@@ -468,6 +498,13 @@ export class VirtualController<T> {
   #scrollEnd = false;
   #settleTimer: ReturnType<typeof setTimeout> | undefined;
   #restTimer: ReturnType<typeof setTimeout> | undefined;
+  #targetTimer: ReturnType<typeof setTimeout> | undefined;
+  #seedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Sum and count of every size measured so far (for a list given no size information). */
+  #measuredSum = 0;
+  #measuredCount = 0;
+  /** The default row size learned from measurements (no `estimatedItemSize` or hints given). */
+  #learnedSize: number | undefined;
   #pendingWrite: { smooth: boolean } | null = null;
   #renderedFirst = 0;
   #renderedDelta = 0;
@@ -532,11 +569,13 @@ export class VirtualController<T> {
       getScrollableNode: () => this.#mode === "window" ? null : this.#scroller ?? this.root,
       getItemLayout: (index) => {
         if (!(index >= 0 && index < this.itemCount())) return undefined;
+        this.core.flushSeed();
         const line = this.lineOf(Math.floor(index));
         return { offset: this.core.tree.offsetOf(line), size: this.core.tree.sizeOf(line) };
       },
       getScrollMetrics: () => {
         const core = this.core;
+        core.flushSeed();
         return {
           offset: core.v,
           viewport: core.vp,
@@ -671,21 +710,61 @@ export class VirtualController<T> {
 
   #config(props: ControllerProps<T>): CoreConfig {
     const prev = this.core.config;
+    const unknown = this.#sizesUnknown(props);
+    const probing = unknown && this.#probing();
     const next: CoreConfig = {
       defaultSize: props.estimatedItemSize ?? this.#sampledSize(props) ??
-        DEFAULT_CONFIG.defaultSize,
-      overscan: props.overscan,
+        (unknown ? this.#learnedSize : undefined) ?? DEFAULT_CONFIG.defaultSize,
+      overscan: probing ? 0 : props.overscan,
       anchor: props.anchor ?? "start",
       maintainVisibleContentPosition: props.maintainVisibleContentPosition ?? true,
       maxPhysicalSize: DEFAULT_MAX_PHYSICAL_SIZE,
       endThreshold: props.onEndReachedThreshold ?? DEFAULT_CONFIG.endThreshold,
       startThreshold: props.onStartReachedThreshold ?? DEFAULT_CONFIG.startThreshold,
+      maxRows: probing ? PROBE_ROWS : undefined,
     };
     const same = (Object.keys(next) as (keyof CoreConfig)[]).every((k) => prev[k] === next[k]);
     return same ? prev : next;
   }
 
   #sample: { token: unknown; size: number | undefined } | undefined;
+
+  /** The props give no size information: no estimate, no hints (the default is a guess). */
+  #sizesUnknown(props: ControllerProps<T>): boolean {
+    return props.estimatedItemSize === undefined && !props.getItemSize &&
+      !props.getEstimatedItemSize && !props.estimateText;
+  }
+
+  /**
+   * Whether the list is still waiting for its first measurement to size rows it knows nothing
+   * about: the first render (server and client alike, so hydration matches) and, where a
+   * `ResizeObserver` will report, every render until it has. Meanwhile the window is the
+   * viewport only, at most {@linkcode PROBE_ROWS} rows — a window sized by a guess renders (and
+   * lays out, before the first paint) several times the rows needed when the rows are taller
+   * than the guess.
+   */
+  #probing(): boolean {
+    return !this.#synced || (this.#measuredCount === 0 && sharedObserver() !== undefined);
+  }
+
+  /**
+   * Record measured sizes; for a list given no size information, learn the default size from
+   * their average (re-learned when it moves by more than {@linkcode LEARN_TOLERANCE}). Returns
+   * whether the engine config changed (a new default, or the first measurement).
+   */
+  #learn(batch: readonly (readonly [number, number])[]): boolean {
+    const first = this.#measuredCount === 0;
+    for (const [, size] of batch) {
+      this.#measuredSum += size;
+      this.#measuredCount++;
+    }
+    if (!this.#sizesUnknown(this.props)) return false;
+    const avg = this.#measuredSum / this.#measuredCount;
+    const cur = this.#learnedSize;
+    const learned = avg > 0 && (cur === undefined || Math.abs(avg - cur) > cur * LEARN_TOLERANCE);
+    if (learned) this.#learnedSize = Math.round(avg * 100) / 100;
+    return learned || first;
+  }
 
   /**
    * Without `estimatedItemSize`, the default size of rows not yet hinted is the average hint
@@ -1035,6 +1114,9 @@ export class VirtualController<T> {
       for (const off of offs) off();
       clearTimeout(this.#settleTimer);
       clearTimeout(this.#restTimer);
+      clearTimeout(this.#targetTimer);
+      clearTimeout(this.#seedTimer);
+      this.#seedTimer = undefined;
       for (const t of this.#trackers) t.dispose();
       this.#cleanup = undefined;
       this.#mounted = false;
@@ -1089,6 +1171,9 @@ export class VirtualController<T> {
     }
     if (!this.#mounted && !this.#mount()) return;
     if (this.printing) return;
+    // The first render's window was a probe (see `#probing`); without a ResizeObserver to wait
+    // for, the normal window applies from here.
+    if (this.#sizesUnknown(this.props)) this.core.configure(this.#config(this.props));
     this.#readMetrics();
     if (!this.#initialized) {
       this.#initialized = true;
@@ -1107,7 +1192,20 @@ export class VirtualController<T> {
     this.#playFlip();
     this.#notify();
     this.#scheduleProgress();
+    this.#scheduleSeed();
     if (this.core.updateRange()) this.force();
+  }
+
+  /** Apply the remaining size hints in background slices (after the first paint). */
+  #scheduleSeed(): void {
+    if (this.#seedTimer !== undefined || !this.core.seeding) return;
+    this.#seedTimer = setTimeout(() => {
+      this.#seedTimer = undefined;
+      if (!this.#mounted || this.printing) return;
+      this.core.seedPending(SEED_SLICE_MS);
+      this.#afterChange();
+      this.#scheduleSeed();
+    }, 0);
   }
 
   /** The scroll axis' DOM names. */
@@ -1304,7 +1402,10 @@ export class VirtualController<T> {
   };
 
   readonly #onTouchStart = (): void => {
-    // A finger stops any fling: apply what is pending first (as the momentum shim does).
+    // A finger stops any fling: apply what is pending first (as the momentum shim does). It
+    // also takes the view back from a pending scroll target.
+    this.core.target = null;
+    clearTimeout(this.#targetTimer);
     this.#momentum = false;
     this.#touching = false;
     clearTimeout(this.#settleTimer);
@@ -1417,24 +1518,33 @@ export class VirtualController<T> {
 
   readonly #onResize = (entries: ResizeObserverEntry[]): void => {
     if (this.printing) return;
-    const horizontal = !!this.props.horizontal;
-    const batch: [number, number][] = [];
-    let metrics = false;
-    const progressive = this.props.progressive === true;
-    for (const e of entries) {
-      const key = this.#elKey.get(e.target);
-      const index = key === undefined ? undefined : this.#keyIndex.get(key);
-      if (index !== undefined) {
-        // A placeholder's size is not the row's size.
-        if (!progressive || this.#ready.has(key!)) batch.push([index, entrySize(e, horizontal)]);
-      } else metrics = true;
-    }
+    const { batch, metrics } = this.#rowSizes(entries);
     if (metrics) this.#readMetrics();
+    if (batch.length > 0 && this.#learn(batch)) this.core.configure(this.#config(this.props));
     const changed = batch.length > 0 && this.core.measure(batch);
     this.#afterChange();
     // Absolute layout: every row's offset is in the rendered props.
     if (changed && this.layout === "absolute") this.force();
   };
+
+  /**
+   * Split resize entries into row sizes (`[row, px]`) and whether any other observed element
+   * (the scroller, a header, footer or spacer) resized.
+   */
+  #rowSizes(entries: ResizeObserverEntry[]): { batch: [number, number][]; metrics: boolean } {
+    const horizontal = !!this.props.horizontal;
+    const progressive = this.props.progressive === true;
+    const batch: [number, number][] = [];
+    let metrics = false;
+    for (const e of entries) {
+      const key = this.#elKey.get(e.target);
+      const index = key === undefined ? undefined : this.#keyIndex.get(key);
+      if (index === undefined) metrics = true;
+      // A placeholder's size is not the row's size.
+      else if (!progressive || this.#ready.has(key!)) batch.push([index, entrySize(e, horizontal)]);
+    }
+    return { batch, metrics };
+  }
 
   /** After sizes or metrics changed outside a render. */
   #afterChange(): void {
@@ -1445,7 +1555,12 @@ export class VirtualController<T> {
     if (this.core.updateRange()) this.force();
   }
 
-  /** Keep landing on a pending scroll target until it settles. */
+  /**
+   * The measure-and-correct loop: keep landing on a pending scroll target — the anchor of
+   * every size change meanwhile, whatever `maintainVisibleContentPosition` says — until the
+   * view sits on it and the rendered window's sizes are all known, then release it. A window
+   * whose rows never all report (hidden rows) releases it once measurements go quiet.
+   */
   #afterMeasure(): void {
     const core = this.core;
     if (!core.target) return;
@@ -1454,7 +1569,12 @@ export class VirtualController<T> {
     if (!core.target.smooth && Math.abs(want - core.v) >= 0.5 && !core.deferring) {
       this.#write(want, false);
     }
-    core.settleTarget(measurable);
+    clearTimeout(this.#targetTimer);
+    if (core.settleTarget(measurable) || core.target.smooth) return;
+    const held = core.target;
+    this.#targetTimer = setTimeout(() => {
+      if (this.core.target === held) this.core.target = null;
+    }, TARGET_QUIET_MS);
   }
 
   /** Edge callbacks, range change, viewability, blank-area diagnostics. */
@@ -1592,6 +1712,7 @@ export class VirtualController<T> {
   }
 
   #applySnapshot(snap: RestoreSnapshot): void {
+    this.core.flushSeed();
     const n = this.core.tree.count;
     const hint = Math.max(0, Math.min(n - 1, snap.index));
     const index = scanOutward(hint, n, (i) => String(this.keyAt(i)) === snap.key);
@@ -1733,7 +1854,10 @@ export class VirtualController<T> {
 
   /** Scroll to virtual offset `v` (drops a pending target). */
   #jump(v: number, smooth: boolean): void {
+    this.core.flushSeed();
     this.core.target = null;
+    // A jump leaves the end: stop holding the view there (the next scroll event re-checks).
+    this.core.pinned = false;
     this.#go(v, smooth);
   }
 
@@ -1758,6 +1882,7 @@ export class VirtualController<T> {
     const core = this.core;
     const n = core.tree.count;
     if (n === 0) return;
+    core.flushSeed();
     const i = Math.max(0, Math.min(n - 1, Math.floor(index)));
     core.target = {
       index: i,
@@ -1772,6 +1897,7 @@ export class VirtualController<T> {
   scrollToEnd(smooth: boolean): void {
     const core = this.core;
     if (core.tree.count === 0 && core.tail === 0) return;
+    core.flushSeed();
     core.pinned = true;
     core.target = {
       index: core.tree.count - 1,

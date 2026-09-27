@@ -178,6 +178,10 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["__REACT_DEVTOOLS_GLOBAL_HOOK__", "React-DevTools bridge"], // (Gate B)
     ["__denext_ge_data", "global-error client"], // per-route entries never carry it (Gate C)
     ["view-transition-name:", "ViewTransition marking runtime"], // (WS3 gate)
+    ["two children with the same key", "dev-only duplicate-key warning"], // installDevtools only
+    ["dnx-reveal:", "inline streaming swap runtime (a server string)"], // pure-built SWAP_RUNTIME
+    ["data-vl-", "VirtualList (0 bytes unless imported)"], // the list's row attributes
+    ["trailingMargin", "VirtualList controller's axis tables"], // module-scope objects
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {

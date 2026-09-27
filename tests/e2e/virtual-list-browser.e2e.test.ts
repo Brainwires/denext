@@ -191,6 +191,37 @@ window.scenarios = {
     return { b0: Math.round(b0), b1: Math.round(b1), b2: Math.round(bottom()) };
   },
 
+  async scrollToExact(mvcp) {
+    // Variable rows, none measured up front; each target lands in a never-rendered region. An
+    // over-estimate (200 px) is the hard case: the rows above measure smaller, the window grows
+    // upward after the target first lands, and those rows report a frame later.
+    const size = (i) => 24 + ((i * 53) % 170);
+    const out = [];
+    for (const estimate of [60, 200]) {
+      let handle = null;
+      mount({
+        data: rowsOf(20000), estimatedItemSize: estimate, style: { height: "600px" },
+        maintainVisibleContentPosition: mvcp, ref: (x) => { handle = x; },
+        renderItem: (r, i) => h("div", { style: { height: size(i) + "px", boxSizing: "border-box" } }, r.text),
+      });
+      await frames(3);
+      for (const [index, align] of [[12000, "start"], [4000, "end"], [17000, "center"], [9000, "start"], [150, "start"]]) {
+        handle.scrollToIndex(index, { align });
+        await frames(12);
+        const early = row(index) ? row(index).getBoundingClientRect() : null;
+        await frames(30);
+        const el = row(index);
+        const sr = sc().getBoundingClientRect();
+        if (!el) { out.push({ estimate, index, missing: true }); continue; }
+        const r = el.getBoundingClientRect();
+        const err = align === "start" ? r.top - sr.top : align === "end" ? r.bottom - sr.bottom
+          : (r.top + r.bottom) / 2 - (sr.top + sr.bottom) / 2;
+        out.push({ estimate, index, err: Math.round(err * 10) / 10, drift: early ? Math.round((r.top - early.top) * 10) / 10 : null });
+      }
+    }
+    return out;
+  },
+
   async progressive(on) {
     const busy = (ms) => { const t = performance.now(); while (performance.now() - t < ms) { /* heavy row */ } };
     mount({
@@ -243,7 +274,7 @@ const HTML = (script: string) =>
 
 Deno.test({
   name:
-    "browser: RTL, sticky push, animations, print, selection, window cache, keyboard inset, progressive",
+    "browser: RTL, sticky push, animations, print, selection, window cache, keyboard inset, scrollToIndex, progressive",
   sanitizeOps: false,
   sanitizeResources: false,
 }, async (t) => {
@@ -360,6 +391,23 @@ Deno.test({
       assertEquals(r.b1, 100);
       assertEquals(r.b2, 400);
     });
+
+    for (const mvcp of [true, false]) {
+      await t.step(
+        `scrollToIndex is exact on unmeasured variable rows, maintainVisibleContentPosition: ${mvcp} (C1, T10)`,
+        async () => {
+          const r = await run<{ index: number; err?: number; drift?: number | null }[]>(
+            `window.scenarios.scrollToExact(${mvcp})`,
+          );
+          report[`scrollToExact_${mvcp}`] = r;
+          for (const x of r) {
+            assert(x.err !== undefined, `row ${x.index} rendered`);
+            assert(Math.abs(x.err!) <= 1, `row ${x.index} lands within 1px (${x.err})`);
+            assert(Math.abs(x.drift ?? 0) <= 1, `row ${x.index} stays put after landing`);
+          }
+        },
+      );
+    }
 
     await t.step(
       "progressive: heavy rows — per-frame list work with and without (A6, T1)",
