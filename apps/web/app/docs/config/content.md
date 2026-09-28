@@ -144,8 +144,13 @@ See [Data & caching](/docs/data).
 - **`csp`** — `CspSetting` (default `"strict"`). App-wide
   Content-Security-Policy: `"strict"` (denext's hash-based strict policy on
   every HTML page response), `"off"` (emit no CSP — set it at the edge), or a
-  `RouteCsp` object (the strict policy plus global opt-ins). A route's own `csp`
-  export overrides this. Streamed and PPR responses carry the **same** strict
+  `RouteCsp` object (the strict policy plus global opt-ins). The opt-in keys are
+  `scriptSrc`, `styleSrc`, `imgSrc`, `connectSrc`, `fontSrc`, `frameSrc`,
+  `mediaSrc` and `workerSrc`, each a list of sources added to that directive
+  (e.g. `{ frameSrc: ["https://js.stripe.com"] }` for Stripe's iframes, or
+  `{ mediaSrc: ["https://cdn.example.com"] }` for remote video). `frame-src`,
+  `media-src` and `worker-src` appear in the policy only when set. A route's own
+  `csp` export overrides this. Streamed and PPR responses carry the **same** strict
   hash-based CSP as buffered ones; the only uncovered case is an inline
   `<style>`/`<script>` inside a streamed hole flushed after the head.
 - **`publicEnv`** — `string[]`. Public-env keys to always embed in the page, in

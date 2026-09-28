@@ -299,11 +299,18 @@ export function Checkout({ clientSecret }: { clientSecret: string }) {
 
 A payment method that must leave the page (a bank redirect) returns to `return_url`; in the
 shell, make that a universal link or App Link your app handles
-([Deep links](/docs/mobile#deep-links)). On a server-rendered page, denext's strict
-Content-Security-Policy blocks Stripe's iframes, because the `csp` options have no `frame-src`
-([Known limitations](/docs/limitations)): set `export const csp = "off"` on the checkout route
-and send a policy that allows `https://js.stripe.com` in `script-src` and `frame-src` and
-`https://api.stripe.com` in `connect-src`.
+([Deep links](/docs/mobile#deep-links)). denext's strict Content-Security-Policy blocks
+Stripe's script and iframes until you allow them. Add Stripe's hosts to the `csp` opt-ins, app-wide
+in `denext.config.ts` (`spa: { csp: { … } }` in SPA mode) or on the checkout route alone:
+
+```ts
+// app/checkout/page.tsx (or `csp: { … }` in denext.config.ts)
+export const csp = {
+  scriptSrc: ["https://js.stripe.com"],
+  frameSrc: ["https://js.stripe.com", "https://hooks.stripe.com"],
+  connectSrc: ["https://api.stripe.com"],
+};
+```
 
 Confirm the payment from Stripe's webhook, not from the page. The signature check needs no SDK:
 

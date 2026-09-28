@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- **`csp` opt-ins for frames, media, workers and fonts: `frameSrc`, `mediaSrc`, `workerSrc`,
+  `fontSrc`.** Under the strict Content-Security-Policy a third-party iframe (Stripe's Payment
+  Element, a video embed, a captcha) or a remote `<video>` / `<audio>` was blocked, and the only
+  way out was `csp: "off"` plus a hand-written policy. `csp: { frameSrc: ["https://js.stripe.com",
+  "https://hooks.stripe.com"] }` now adds those sources, in `denext.config.ts`, a route's
+  `csp` export and `spa.csp` alike (the SPA / Capacitor / desktop shell's `<meta>` policy).
+  `frame-src`, `media-src` and `worker-src` appear only when set, so the default policy is
+  unchanged. `denext.config` validation now rejects a `csp` opt-in that is not an array of
+  strings and warns, with a suggestion, on an unknown opt-in key.
+
 - **Maps and video from the packages apps import, drawn natively (React Native mode).**
   `expo-maps`' `AppleMaps.View` / `GoogleMaps.View` and `react-native-maps`' `MapView` (with its
   `<Marker>` children, `region` / `initialRegion`, `onRegionChange(Complete)` and the ref's

@@ -261,7 +261,8 @@ Deno.test("a union branch is a widget of its own, rendered at the union's path",
   const object = csp.branches?.[2].spec;
   assertEquals(object?.kind, "group");
   assertEquals(object?.path, ["csp"]);
-  assertEquals(object?.children?.map((child) => child.kind), ["chips", "chips", "chips", "chips"]);
+  // One chips widget per opt-in directive (scriptSrc … workerSrc).
+  assertEquals(object?.children?.map((child) => child.kind), Array(8).fill("chips"));
   assertEquals(branchFor(csp.schema, "strict").enum, ["strict"]);
   assertEquals(branchFor(csp.schema, { scriptSrc: [] }).type, "object");
   // Nothing matches a number; the first branch is the honest fallback.

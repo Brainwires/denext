@@ -136,6 +136,22 @@ Deno.test("spaShellHtml: csp object adds global opt-ins (connect-src)", async ()
   assertStringIncludes(html, "connect-src 'self' https://api.example.com");
 });
 
+Deno.test("spaShellHtml: csp object adds frame-src / media-src opt-ins (Stripe, remote video)", async () => {
+  const html = await spaShellHtml({
+    spa: {
+      entry: "./src/main.tsx",
+      csp: {
+        frameSrc: ["https://js.stripe.com", "https://hooks.stripe.com"],
+        mediaSrc: ["https://media.example"],
+      },
+    },
+    scriptSrc: "/_denext/client/index.js",
+  });
+  assertStringIncludes(html, "frame-src 'self' https://js.stripe.com https://hooks.stripe.com");
+  assertStringIncludes(html, "media-src 'self' https://media.example");
+  assert(!html.includes("frame-ancestors"), "frame-ancestors stays header-only");
+});
+
 Deno.test("pnpmCatalogPackages: lists catalog:/workspace: deps across every group", async () => {
   const dir = await Deno.makeTempDir();
   try {

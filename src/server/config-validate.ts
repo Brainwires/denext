@@ -11,6 +11,7 @@ import { editDistance } from "../utils/edit-distance.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { VERB_NAME } from "../cli/command.ts";
 import { resolveCors } from "./cors.ts";
+import { ROUTE_CSP_KEYS } from "./segment-config.ts";
 import { validateAppLinks } from "./app-links.ts";
 import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
 
@@ -316,12 +317,26 @@ function validateImageNumerics(images: DenextConfig["images"], fail: Fail): void
   }
 }
 
-/** `csp`: `"strict"` | `"off"` | an opt-in object. */
-function validateCsp(csp: DenextConfig["csp"], fail: Fail): void {
-  if (csp === undefined) return;
-  const ok = csp === "strict" || csp === "off" || (typeof csp === "object" && csp !== null);
-  if (!ok) {
-    fail("csp", 'must be "strict", "off", or an opt-in object (e.g. `{ scriptSrc: [...] }`)');
+/**
+ * `csp` / `spa.csp`: `"strict"` | `"off"` | an opt-in object whose values are string
+ * arrays. An unknown opt-in key (a typo such as `frameSource`) warns with a suggestion —
+ * the policy would otherwise stay strict for that directive with no signal.
+ */
+function validateCsp(field: string, csp: DenextConfig["csp"], fail: Fail): void {
+  if (csp === undefined || csp === "strict" || csp === "off") return;
+  if (typeof csp !== "object" || csp === null || Array.isArray(csp)) {
+    fail(field, 'must be "strict", "off", or an opt-in object (e.g. `{ scriptSrc: [...] }`)');
+  }
+  for (const [key, value] of Object.entries(csp)) validateCspOptIn(field, key, value, fail);
+}
+
+/** One `csp` opt-in entry: a known directive key holding an array of source strings. */
+function validateCspOptIn(field: string, key: string, value: unknown, fail: Fail): void {
+  const known: readonly string[] = ROUTE_CSP_KEYS;
+  if (!known.includes(key)) {
+    console.warn(unknownKeyMessage(`\`${field}\``, key, didYouMean(key, known)));
+  } else if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
+    fail(`${field}.${key}`, 'must be an array of source strings (e.g. `["https://x.io"]`)');
   }
 }
 
@@ -337,7 +352,8 @@ function validateHsts(hsts: DenextConfig["hsts"], fail: Fail): void {
 
 /** `csp` (three-state) and `hsts` (object|false). */
 function validateSecurity(config: DenextConfig, fail: Fail): void {
-  validateCsp(config.csp, fail);
+  validateCsp("csp", config.csp, fail);
+  validateCsp("spa.csp", config.spa?.csp, fail);
   validateHsts(config.hsts, fail);
   validateApiBatch(config.apiBatch, fail);
   validateCors(config.cors, fail);

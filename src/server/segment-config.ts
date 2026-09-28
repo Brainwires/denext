@@ -20,7 +20,38 @@ export interface RouteCsp {
   imgSrc?: string[];
   /** Extra `connect-src` sources (fetch/XHR/EventSource/WebSocket targets). */
   connectSrc?: string[];
+  /** Extra `font-src` sources (e.g. `https://fonts.gstatic.com`); `'self' data:` is always allowed. */
+  fontSrc?: string[];
+  /**
+   * Extra `frame-src` sources: third-party `<iframe>`s such as Stripe's Payment Element
+   * (`["https://js.stripe.com", "https://hooks.stripe.com"]`), a video embed or a captcha.
+   * Without it, frames fall back to `default-src 'self'`.
+   */
+  frameSrc?: string[];
+  /** Extra `media-src` sources (remote `<video>`/`<audio>`); without it, `default-src 'self'`. */
+  mediaSrc?: string[];
+  /**
+   * Extra `worker-src` sources (e.g. `blob:` for a library that spawns a Worker from a Blob
+   * URL). Setting it emits `worker-src 'self' …`, which replaces the `script-src` fallback
+   * browsers otherwise use for workers.
+   */
+  workerSrc?: string[];
 }
+
+/**
+ * Every {@link RouteCsp} opt-in key, in the order the policy lists its directives. The
+ * single source for normalizing, merging and assembling the opt-ins.
+ */
+export const ROUTE_CSP_KEYS = [
+  "scriptSrc",
+  "styleSrc",
+  "imgSrc",
+  "connectSrc",
+  "fontSrc",
+  "frameSrc",
+  "mediaSrc",
+  "workerSrc",
+] as const satisfies readonly (keyof RouteCsp)[];
 
 /**
  * How a scope's Content-Security-Policy is decided (three-state):
@@ -261,7 +292,7 @@ function normalizeRouteCsp(raw: unknown): RouteCsp | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const src = raw as Record<string, unknown>;
   const out: RouteCsp = {};
-  for (const key of ["scriptSrc", "styleSrc", "imgSrc", "connectSrc"] as const) {
+  for (const key of ROUTE_CSP_KEYS) {
     const v = src[key];
     if (Array.isArray(v)) {
       const list = v.filter((x): x is string => typeof x === "string");
@@ -276,7 +307,7 @@ function mergeRouteCsp(a: RouteCsp | undefined, b: RouteCsp | undefined): RouteC
   if (!a) return b;
   if (!b) return a;
   const out: RouteCsp = {};
-  for (const key of ["scriptSrc", "styleSrc", "imgSrc", "connectSrc"] as const) {
+  for (const key of ROUTE_CSP_KEYS) {
     const merged = [...new Set([...(a[key] ?? []), ...(b[key] ?? [])])];
     if (merged.length) out[key] = merged;
   }

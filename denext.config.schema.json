@@ -94,6 +94,34 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "fontSrc": {
+                  "description": "Extra `font-src` sources (e.g. `https://fonts.gstatic.com`); `'self' data:` is always allowed.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "frameSrc": {
+                  "description": "Extra `frame-src` sources: third-party `<iframe>`s such as Stripe's Payment Element (`[\"https://js.stripe.com\", \"https://hooks.stripe.com\"]`), a video embed or a captcha. Without it, frames fall back to `default-src 'self'`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "mediaSrc": {
+                  "description": "Extra `media-src` sources (remote `<video>`/`<audio>`); without it, `default-src 'self'`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "workerSrc": {
+                  "description": "Extra `worker-src` sources (e.g. `blob:` for a library that spawns a Worker from a Blob URL). Setting it emits `worker-src 'self' …`, which replaces the `script-src` fallback browsers otherwise use for workers.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -612,7 +640,7 @@
       ]
     },
     "csp": {
-      "description": "App-wide Content-Security-Policy default (three-state), overridable per file: - `\"strict\"` (default) — denext's hash-based strict policy on buffered pages. - `\"off\"` — emit no CSP header at all (set your policy at the edge, or for Next.js-style \"CSP is the app's job\" behavior). A route can still opt back in with its own `csp` export. - a CspSetting object — the strict policy plus these global opt-ins.",
+      "description": "App-wide Content-Security-Policy default (three-state), overridable per file: - `\"strict\"` (default) — denext's hash-based strict policy on buffered pages. - `\"off\"` — emit no CSP header at all (set your policy at the edge, or for Next.js-style \"CSP is the app's job\" behavior). A route can still opt back in with its own `csp` export. - a CspSetting object — the strict policy plus these global opt-ins (`scriptSrc`, `styleSrc`, `imgSrc`, `connectSrc`, `fontSrc`, `frameSrc`, `mediaSrc`, `workerSrc`; e.g. `{ frameSrc: [\"https://js.stripe.com\"] }` for Stripe's Payment Element iframes).",
       "anyOf": [
         {
           "enum": [
@@ -650,6 +678,34 @@
             },
             "connectSrc": {
               "description": "Extra `connect-src` sources (fetch/XHR/EventSource/WebSocket targets).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fontSrc": {
+              "description": "Extra `font-src` sources (e.g. `https://fonts.gstatic.com`); `'self' data:` is always allowed.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "frameSrc": {
+              "description": "Extra `frame-src` sources: third-party `<iframe>`s such as Stripe's Payment Element (`[\"https://js.stripe.com\", \"https://hooks.stripe.com\"]`), a video embed or a captcha. Without it, frames fall back to `default-src 'self'`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "mediaSrc": {
+              "description": "Extra `media-src` sources (remote `<video>`/`<audio>`); without it, `default-src 'self'`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "workerSrc": {
+              "description": "Extra `worker-src` sources (e.g. `blob:` for a library that spawns a Worker from a Blob URL). Setting it emits `worker-src 'self' …`, which replaces the `script-src` fallback browsers otherwise use for workers.",
               "type": "array",
               "items": {
                 "type": "string"

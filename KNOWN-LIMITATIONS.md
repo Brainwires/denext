@@ -156,14 +156,6 @@ They're shipped and on by default in their contexts; the notes below are their
 **documented boundaries**, not a regression from React and not an "experimental"
 caveat — being a denext original is not the same as being incomplete.
 
-### Content-Security-Policy (`csp`)
-
-- **No `frame-src` or `media-src` opt-in.** A `csp` object adds sources to `script-src`,
-  `style-src`, `img-src` and `connect-src` only; frames and media fall back to
-  `default-src 'self'`, so a third-party iframe (Stripe Elements, a video embed, a captcha) is
-  blocked under the strict policy. Turn the generated policy off for that route
-  (`export const csp = "off"`, or `spa.csp` unset in SPA mode) and send a policy of your own.
-
 ### Islands & resumability (`client:*`, `resumable`, `qrl`)
 
 - **Flight route only.** Per-island carve-out lives on the Flight path; add a

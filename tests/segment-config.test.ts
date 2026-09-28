@@ -220,3 +220,22 @@ Deno.test("dynamicParams:false 404s a param outside generateStaticParams", async
   );
   assertEquals(gone.status, 404);
 });
+
+Deno.test("csp opt-ins: frameSrc / mediaSrc / workerSrc / fontSrc normalize and merge", () => {
+  const csp = (v: unknown) => readSegmentConfig({ csp: v });
+  assertEquals(csp({ frameSrc: ["https://js.stripe.com", 1], mediaSrc: "x", bogus: ["y"] }).csp, {
+    frameSrc: ["https://js.stripe.com"],
+  });
+  assertEquals(
+    mergeSegmentConfig(
+      csp({ frameSrc: ["https://a"], fontSrc: ["https://f"] }),
+      csp({ frameSrc: ["https://a", "https://b"], mediaSrc: ["https://m"], workerSrc: ["blob:"] }),
+    ).csp,
+    {
+      fontSrc: ["https://f"],
+      frameSrc: ["https://a", "https://b"],
+      mediaSrc: ["https://m"],
+      workerSrc: ["blob:"],
+    },
+  );
+});

@@ -799,7 +799,10 @@ export interface DenextConfig {
    * - `"off"` — emit no CSP header at all (set your policy at the edge, or for
    *   Next.js-style "CSP is the app's job" behavior). A route can still opt back in
    *   with its own `csp` export.
-   * - a {@link CspSetting} object — the strict policy plus these global opt-ins.
+   * - a {@link CspSetting} object — the strict policy plus these global opt-ins
+   *   (`scriptSrc`, `styleSrc`, `imgSrc`, `connectSrc`, `fontSrc`, `frameSrc`,
+   *   `mediaSrc`, `workerSrc`; e.g. `{ frameSrc: ["https://js.stripe.com"] }` for
+   *   Stripe's Payment Element iframes).
    *
    * A route's `csp` export overrides this for that route. Streamed responses (PPR /
    * incremental streaming) carry the **same** strict hash-based CSP, computed from the

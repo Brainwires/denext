@@ -303,3 +303,49 @@ Deno.test("desktop.capabilities: valid shapes pass; bad shapes throw a field-sco
     "`desktop.capabilities.fs`",
   );
 });
+
+Deno.test("csp / spa.csp: opt-in values must be string arrays; unknown keys warn", () => {
+  const all = {
+    scriptSrc: ["https://js.stripe.com"],
+    styleSrc: ["https://fonts.googleapis.com"],
+    imgSrc: ["https://cdn.example"],
+    connectSrc: ["https://api.stripe.com"],
+    fontSrc: ["https://fonts.gstatic.com"],
+    frameSrc: ["https://js.stripe.com", "https://hooks.stripe.com"],
+    mediaSrc: ["https://media.example"],
+    workerSrc: ["blob:"],
+  };
+  assertEquals(captureWarn(() => validateDenextConfig({ csp: all })), []);
+  validateDenextConfig({ csp: "strict" });
+  validateDenextConfig({ csp: "off" });
+  assertThrows(
+    () => validateDenextConfig({ csp: { frameSrc: "https://js.stripe.com" } as never }),
+    Error,
+    "`csp.frameSrc` must be an array of source strings",
+  );
+  assertThrows(
+    () => validateDenextConfig({ csp: { mediaSrc: [1] } as never }),
+    Error,
+    "`csp.mediaSrc` must be an array of source strings",
+  );
+  assertThrows(
+    () => validateDenextConfig({ csp: ["x"] as never }),
+    Error,
+    '`csp` must be "strict", "off", or an opt-in object',
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig({
+        mode: "spa",
+        spa: { entry: "./src/main.tsx", csp: { workerSrc: "blob:" } as never },
+      }),
+    Error,
+    "`spa.csp.workerSrc` must be an array of source strings",
+  );
+  const warns = captureWarn(() =>
+    validateDenextConfig({ csp: { frameSource: ["https://x.io"] } as never })
+  );
+  assertEquals(warns.length, 1);
+  assert(warns[0].includes("unknown option `frameSource`"), warns[0]);
+  assert(warns[0].includes("did you mean `frameSrc`?"), warns[0]);
+});
