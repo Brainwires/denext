@@ -24,6 +24,7 @@ import {
   type PrivacyFinding,
 } from "./mobile-privacy.ts";
 import { dictGet, parsePlist, type PlistDict, type PlistNode } from "./plist-value.ts";
+import { leakedCssShimKeys } from "./css-config-guard.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -727,6 +728,34 @@ const webStorage: Check = {
   },
 };
 
+/**
+ * Absolute css→shim import-map entries an interrupted `denext dev` / `mobile dev` / export left
+ * in the app's committed `deno.json`: machine-specific paths that break every other checkout
+ * (and CI) building the app.
+ */
+const cssShimLeak: Check = {
+  id: "css-shim-imports",
+  profiles: ["store", "release"],
+  run: async (p) => {
+    for (const name of ["deno.json", "deno.jsonc"]) {
+      if ((await readText(join(p.appDir, name))) === null) continue;
+      // The committed state: a live run's backup when it has its redirects injected.
+      const keys = await leakedCssShimKeys(join(p.appDir, name), join(p.appDir, ".denext"));
+      if (keys.length === 0) return [];
+      return [{
+        check: "css-shim-imports",
+        level: "error",
+        message: `${name} has ${keys.length} leaked css-shim import entr${
+          keys.length === 1 ? "y" : "ies"
+        } (${keys[0]}${keys.length > 1 ? ", …" : ""}) from an interrupted build or dev run`,
+        fix: "run `denext export` (or `denext dev`) once, which removes them, or delete those " +
+          "`imports` entries by hand before committing",
+      }];
+    }
+    return [];
+  },
+};
+
 /** Every check, in report order. */
 const CHECKS: readonly Check[] = [
   serverUrl,
@@ -745,6 +774,7 @@ const CHECKS: readonly Check[] = [
   splash,
   accountDeletion,
   webStorage,
+  cssShimLeak,
 ];
 
 /** The ids of the checks a profile runs (for docs and `--json`). */

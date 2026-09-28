@@ -798,6 +798,20 @@ and this project adheres to
 
 ### Fixed
 
+- **CSS import redirects no longer leak into a committed `deno.json`.** The absolute
+  `file:///…/x.css` → `.denext/css-shims/css_N.js` entries a build / export / dev run adds to
+  the app's own `deno.json` for its duration are now put back when the run is stopped by
+  Ctrl-C, SIGTERM or a closed terminal (SIGINT / SIGBREAK on Windows) or exits via
+  `Deno.exit`, and the CSS graph crawl no longer writes its copy back over a config another run
+  has since restored. Entries a run killed outright (SIGKILL) left behind with no backup are
+  removed at the next start — only those members, so comments and formatting survive — with
+  one log line; `denext doctor` and `denext mobile doctor` report them as an error with the
+  fix. Stylesheets under the project's `out/`, `ios/` and `android/` (copies of the built CSS
+  in the export and the Capacitor shells) are no longer collected, so they get no shim or
+  redirect at all. And the app's config is patched only when it anchors module resolution
+  (`nodeModulesDir: "manual"` or an `npm:` import — the module re-exec's rule);
+  `nodeModulesDir: "none"` / `"auto"` apps are no longer touched.
+
 - **Native views across reloads and hot updates.** A page reload (dev, `location.reload`, an OTA
   UI switch) tears down every native view — iOS on the WebView's main-frame load, Android on
   `Bridge.reset()`, plus a JS `reset()` before the first view — so no stale video/map is left

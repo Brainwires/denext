@@ -21,7 +21,13 @@ import {
   maybeReexecPinned as reexecPinned,
 } from "./src/cli/self-exec.ts";
 import { CONFIG_FILES, resolveProject } from "./src/build/paths.ts";
-import { buildAppCss, injectAppConfigRedirects, restoreAppConfig } from "./src/build/css.ts";
+import {
+  buildAppCss,
+  injectAppConfigRedirects,
+  restoreAppConfig,
+  restoreAppConfigSync,
+} from "./src/build/css.ts";
+import { guardRestore, healLeakedCssShims, signalExitCode } from "./src/build/css-config-guard.ts";
 import { tailwindPaths } from "./src/build/tailwind.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./src/build/bundle.ts";
 import {
@@ -65,13 +71,16 @@ async function childPermissionFlags(): Promise<string[]> {
  * those imports. A guard env var stops infinite re-exec. Returns `true` if it
  * re-exec'd (the caller should stop).
  */
-async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean> {
+async function maybeReexecForCss(dir: string, minify: boolean, heal = true): Promise<boolean> {
   if (Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
   const paths = await resolveProject(dir);
   // Self-heal a previous run that was killed before it could restore the app's deno.json
   // (see the transient css-redirect injection below), so this build starts from the
-  // committed config, not a leftover mutated one.
+  // committed config, not a leftover mutated one: from the backup when one survived, else
+  // by splicing out any css→shim entries that were left with no backup at all (`doctor`
+  // skips this so it can report them).
   await restoreAppConfig(paths.configPath, paths.outDir);
+  if (heal) await healLeakedCssShims(paths.configPath);
   const css = await buildAppCss({
     projectDir: dir,
     configPath: paths.configPath,
@@ -111,6 +120,19 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
     // redirects — and its backup — behind; put the committed config back before injecting
     // again, or the stale entries would be captured as the "original".
     await restoreAppConfig(paths.configPath, paths.outDir);
+    // Restore on Ctrl-C / SIGTERM / a closed terminal / Deno.exit too — the normal restore
+    // below only runs once the child has exited. Before the child is spawned the guard
+    // restores and exits; while it runs, the child is stopped (forwardShutdown already relays
+    // SIGINT/SIGTERM) and this process exits with its code, as reexecWithConfig does.
+    guardRestore(() => restoreAppConfigSync(paths.configPath, paths.outDir), {
+      onSignal: (sig) => {
+        if (!runningChild) Deno.exit(signalExitCode(sig));
+        if (SHUTDOWN_SIGNALS.includes(sig)) return; // relayed by forwardShutdown
+        try {
+          runningChild.kill("SIGTERM");
+        } catch { /* already exited */ }
+      },
+    });
     await injectAppConfigRedirects(paths.configPath, paths.outDir, css.appConfigRedirects);
   }
   return await reexecWithConfig(
@@ -119,6 +141,9 @@ async function maybeReexecForCss(dir: string, minify: boolean): Promise<boolean>
     () => restoreAppConfig(paths.configPath, paths.outDir),
   );
 }
+
+/** The re-exec child while it runs (its exit, not a signal, then ends this process). */
+let runningChild: Deno.ChildProcess | null = null;
 
 /**
  * Forward the shutdown signals this process receives to `child` (as SIGTERM on Unix; as a
@@ -213,7 +238,9 @@ async function reexecWithConfig(
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
+  runningChild = child;
   const code = await forwardShutdown(child);
+  runningChild = null;
   // Restore any transiently-mutated app config now the build child is done (runs on a
   // clean exit AND after a forwarded shutdown signal — the child exits, status resolves).
   if (cleanup) await cleanup().catch(() => {});
@@ -263,7 +290,8 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   if (await maybeReexecPinned(dir)) return true;
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
-  if (await maybeReexecForCss(dir, command.name !== "dev")) return true;
+  // `doctor` reports leaked css-shim entries instead of silently healing them.
+  if (await maybeReexecForCss(dir, command.name !== "dev", command.name !== "doctor")) return true;
   if (await maybeReexecForModules(dir)) return true;
   return false;
 }

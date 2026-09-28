@@ -23,7 +23,9 @@ import {
   readFrameworkJson,
 } from "./bundle.ts";
 import { compileTailwind } from "./tailwind.ts";
-import { writeManagedFile } from "./self-writes.ts";
+import { configAnchorsResolution } from "./module-config.ts";
+import { recordSelfWrite, writeManagedFile } from "./self-writes.ts";
+import { appConfigBackupPath, guardRestore, isInjectedCssShimEntry } from "./css-config-guard.ts";
 
 /** Result of transforming one CSS file. */
 export interface CssTransform {
@@ -223,7 +225,7 @@ async function stripCssShims(configPath: string): Promise<() => Promise<void>> {
   const imports = cfg?.imports;
   if (!imports || typeof imports !== "object") return () => Promise.resolve();
   const kept = Object.fromEntries(
-    Object.entries(imports).filter(([, v]) => !String(v).includes("/css-shims/")),
+    Object.entries(imports).filter(([k, v]) => !isInjectedCssShimEntry(k, v)),
   );
   if (Object.keys(kept).length === Object.keys(imports).length) {
     return () => Promise.resolve(); // nothing to strip
@@ -234,8 +236,30 @@ async function stripCssShims(configPath: string): Promise<() => Promise<void>> {
   // are recorded as denext's own (and skipped when the file already holds that content), so
   // the SPA dev watcher — which watches the project root when the entry lives there — does
   // not take them for edits and rebuild in a loop.
-  await writeManagedFile(configPath, JSON.stringify(cfg, null, 2) + "\n");
-  return async () => void await writeManagedFile(configPath, original);
+  const stripped = JSON.stringify(cfg, null, 2) + "\n";
+  await writeManagedFile(configPath, stripped);
+  // Put the original back only while the file still holds OUR stripped copy: another run may
+  // have restored (or re-injected) the config meanwhile, and writing `original` over that
+  // would resurrect redirects whose backup is already gone — the leak this guards against.
+  const release = guardRestore(() => {
+    if (readTextSync(configPath) !== stripped) return;
+    recordSelfWrite(configPath, original);
+    Deno.writeTextFileSync(configPath, original);
+  });
+  return async () => {
+    release();
+    if ((await Deno.readTextFile(configPath).catch(() => null)) !== stripped) return;
+    await writeManagedFile(configPath, original);
+  };
+}
+
+/** A file's text, or null when it cannot be read. */
+function readTextSync(path: string): string | null {
+  try {
+    return Deno.readTextFileSync(path);
+  } catch {
+    return null;
+  }
 }
 
 /** The generated CSS assets for a set of source files. */
@@ -370,11 +394,13 @@ async function collectCssFiles(
   excluded: Set<string> | null,
 ): Promise<string[]> {
   const cssFiles: string[] = [];
+  const root = resolve(opts.projectDir);
+  const shells = shellOutputDir(root);
   for await (
-    const entry of walk(opts.projectDir, {
+    const entry of walk(root, {
       exts: [".css", ".scss", ".sass"],
       includeDirs: false,
-      skip: [/[/\\]\.denext[/\\]/, /[/\\]node_modules[/\\]/, /[/\\]\.git[/\\]/],
+      skip: [/[/\\](?:\.denext|node_modules|\.git)(?:[/\\]|$)/, shells],
       match: [/(?:^|[/\\])(?!_)[^/\\]*\.(?:css|scss|sass)$/],
     })
   ) {
@@ -386,11 +412,23 @@ async function collectCssFiles(
   for (const found of await discoverCssFiles(opts.entryFiles, opts.configPath)) {
     const abs = resolve(found);
     if (seen.has(abs) || excluded?.has(abs)) continue;
+    if (shells.test(abs)) continue; // a copy of built CSS; vendored node_modules sheets stay
     if (/^_/.test(basename(found))) continue; // Sass partial — matches the walk's `(?!_)`
     seen.add(abs);
     cssFiles.push(found);
   }
   return cssFiles;
+}
+
+/**
+ * The project-root folders whose stylesheets are copies of denext's own output, never app
+ * sources: the static export (`out/`) and the Capacitor shells (`ios/`, `android/`, which
+ * `cap copy` fills with `public/_denext/client/index.css`). Walking them gave every build a
+ * shim and an absolute-path css→shim redirect per copy, for files nothing imports.
+ */
+function shellOutputDir(root: string): RegExp {
+  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped}[/\\\\](?:out|ios|android)(?:[/\\\\]|$)`);
 }
 
 /**
@@ -473,8 +511,8 @@ async function writeCssConfig(
 /**
  * Stage 4 — Deno resolves an app module's imports using the deno.json discovered next to it
  * (the app's own config), not the `--config` denext re-execs with — so when the app config
- * anchors resolution (declares `nodeModulesDir` / has `npm:` imports, as converted Next/SPA
- * apps do), aliased/relative `.css` imports in app modules bypass the shim redirects in
+ * anchors resolution (`nodeModulesDir: "manual"` / `npm:` imports, as converted Next/SPA
+ * apps have), aliased/relative `.css` imports in app modules bypass the shim redirects in
  * css-config.json and crash at build. Those redirects therefore have to be applied to the
  * app's OWN deno.json — but only TRANSIENTLY, so the committed config is left untouched: this
  * just reports the set to apply, and the CLI injects + restores them around the re-exec.
@@ -486,10 +524,11 @@ async function appConfigRedirectsFor(
   redirects: Record<string, string>,
 ): Promise<Record<string, string> | undefined> {
   try {
+    // The same rule as the module re-exec: only a manual `node_modules` or an `npm:` import
+    // anchors resolution. `nodeModulesDir: "none"` / `"auto"` do not, and patching such an
+    // app's committed config was needless (and what leaked into examples/native-views).
     const appCfg = JSON.parse(await Deno.readTextFile(configPath));
-    const anchors = !!appCfg.nodeModulesDir ||
-      Object.values(appCfg.imports ?? {}).some((v) => String(v).startsWith("npm:"));
-    return anchors ? redirects : undefined;
+    return configAnchorsResolution(appCfg) ? redirects : undefined;
   } catch {
     return undefined; // unreadable/JSONC app config — css-config.json still covers the main graph
   }
@@ -557,11 +596,6 @@ export async function buildAppCss(opts: {
   return { ...assets, configPath, appConfigPath: opts.configPath, cssFiles, appConfigRedirects };
 }
 
-/** Sidecar holding the app `deno.json`'s pre-build bytes (for transient css injection). */
-function appConfigBackupPath(outDir: string): string {
-  return join(outDir, "app-config.pre-css.json");
-}
-
 /**
  * Inject css→shim redirects into the app's `deno.json` for the duration of the build,
  * backing up its exact original bytes first so {@linkcode restoreAppConfig} can put it
@@ -610,6 +644,26 @@ export async function restoreAppConfig(configPath: string, outDir: string): Prom
   if (original === null) return;
   await writeManagedFile(configPath, original); // no write when it already holds the original
   await Deno.remove(bak).catch(() => {});
+}
+
+/**
+ * {@linkcode restoreAppConfig}, synchronously — for a signal / `unload` handler, where the
+ * process may exit before a promise settles.
+ *
+ * @param configPath The app's `deno.json`.
+ * @param outDir The `.denext` output dir (holds the backup).
+ */
+export function restoreAppConfigSync(configPath: string, outDir: string): void {
+  const bak = appConfigBackupPath(outDir);
+  const original = readTextSync(bak);
+  if (original === null) return;
+  if (readTextSync(configPath) !== original) {
+    recordSelfWrite(configPath, original);
+    Deno.writeTextFileSync(configPath, original);
+  }
+  try {
+    Deno.removeSync(bak);
+  } catch { /* already gone */ }
 }
 
 /**

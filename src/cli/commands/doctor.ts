@@ -21,6 +21,7 @@ import {
 import { checkPrivacyManifest } from "../../build/mobile-privacy.ts";
 import { MOBILE_CAPABILITIES } from "../../build/mobile-capabilities.ts";
 import { capacitorConfigFile } from "../../build/capacitor-config.ts";
+import { leakedCssShimKeys } from "../../build/css-config-guard.ts";
 
 export const infoCommand: CommandSpec = {
   name: "info",
@@ -164,6 +165,26 @@ async function privacyManifestCheck(dir: string): Promise<Check | null> {
 }
 
 /**
+ * The leaked css→shim import-map check: absolute `file:` css redirects an interrupted build
+ * or dev run left in the committed `deno.json`. They only resolve on the machine that wrote
+ * them, so a committed copy breaks every other checkout. Null when the config is clean.
+ */
+export async function cssShimLeakCheck(configPath: string, outDir: string): Promise<Check | null> {
+  const keys = await leakedCssShimKeys(configPath, outDir);
+  if (keys.length === 0) return null;
+  return {
+    name: "css-shim imports",
+    ok: false,
+    detail:
+      `${configPath} has ${keys.length} leaked css-shim import entr${
+        keys.length === 1 ? "y" : "ies"
+      } (${keys[0]}${keys.length > 1 ? ", …" : ""}); fix: run \`denext build\` or ` +
+      "`denext dev` once (it removes them), or delete those `imports` entries by hand",
+    critical: true,
+  };
+}
+
+/**
  * The last build's client chunks, or `null` when `outDir` holds no client build output.
  * Reads what `denext build` emitted; never builds.
  */
@@ -218,6 +239,8 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
     detail: paths.config ? `loaded & validated: ${paths.configPath}` : "none (using defaults)",
     critical: false,
   });
+  const leak = await cssShimLeakCheck(paths.configPath, paths.outDir);
+  if (leak) checks.push(leak);
   let routes: ConformanceReport | null = null;
   if (!isSpa && appOk) {
     const r = await routeConformance(dir);
