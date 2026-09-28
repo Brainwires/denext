@@ -269,11 +269,19 @@ function desktopEntry(): string {
 // window (run \`deno task export\` first, or \`deno task desktop\`, which exports then
 // launches the window). The serve + window plumbing lives in denext's desktop runtime;
 // pass \`import.meta.url\` so \`out/\` resolves relative to this entry (works from the
-// packaged app too). To reverse-proxy a backend, add \`spa.proxy\` to \`denext.config.ts\`
-// and pass it here: \`import config from "./denext.config.ts"; ... proxy: config.spa?.proxy\`.
-import { runDesktop } from "denext/desktop";
+// packaged app too).
+//
+// Native capabilities (\`denext desktop add <cap>\`) are read from \`desktop.capabilities\`
+// in the config and served through the gated bridge — default deny when \`desktop\` is
+// absent. To reverse-proxy a backend, add \`spa.proxy\` to \`denext.config.ts\` and pass
+// \`proxy: (config as DenextConfig).spa?.proxy\` below.
+import config from "./denext.config.ts";
+import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
-await runDesktop({ importMetaUrl: import.meta.url });
+await runDesktop({
+  importMetaUrl: import.meta.url,
+  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+});
 `;
 }
 
@@ -524,7 +532,9 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   } else {
     files.push({ path: "public/styles.css", content: GLOBAL_CSS_PLAIN });
   }
-  if (opts.tailwind || opts.compiler) {
+  // The desktop entry imports `./denext.config.ts` to resolve `desktop.capabilities`, so a
+  // desktop scaffold always needs the config file even without tailwind/compiler.
+  if (opts.tailwind || opts.compiler || opts.desktop) {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
   if (opts.desktop) {

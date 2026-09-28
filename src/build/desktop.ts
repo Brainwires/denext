@@ -31,6 +31,13 @@ export {
   type DesktopPermissions,
 } from "../desktop/extension.ts";
 
+// The config→capabilities resolver the generated `desktop.ts` entry spreads into `runDesktop`.
+export {
+  type ResolvedDesktop,
+  resolveDesktopCapabilities,
+  type ResolveDesktopOptions,
+} from "../desktop/caps/mod.ts";
+
 type ProxyModule = typeof import("./dev-proxy.ts");
 
 /** The token-gated loopback OAuth endpoint the desktop client half POSTs to. */
