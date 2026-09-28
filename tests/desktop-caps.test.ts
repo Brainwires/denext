@@ -10,6 +10,7 @@ import { deviceCapability } from "../src/desktop/caps/device.ts";
 import { fsCapability } from "../src/desktop/caps/fs.ts";
 import { sqliteCapability } from "../src/desktop/caps/sqlite.ts";
 import { shellCapability, shellPathCommand } from "../src/desktop/caps/shell.ts";
+import { keepAwakeCapability } from "../src/desktop/caps/keep-awake.ts";
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import type { DesktopAppDirs } from "../src/desktop/app-dirs.ts";
 
@@ -368,6 +369,37 @@ Deno.test("shell.openPath: confines the path to the app dirs and spawns the open
   }
 });
 
+// --- keepAwake ---------------------------------------------------------------
+
+Deno.test("keepAwake: one OS assertion is held while any hold is active (ref-counted)", async () => {
+  let starts = 0;
+  let stops = 0;
+  const cap = keepAwakeCapability({
+    driver: {
+      permissions: {},
+      start: () => {
+        starts++;
+        return Promise.resolve(() => {
+          stops++;
+        });
+      },
+    },
+  });
+  const a = await call(cap, "acquire", {}) as { id: string };
+  const b = await call(cap, "acquire", {}) as { id: string };
+  assert(a.id !== b.id, "each hold gets a distinct id");
+  assertEquals([starts, stops], [1, 0], "two holds share one assertion");
+  await call(cap, "release", { id: a.id });
+  assertEquals(stops, 0, "still held by b");
+  await call(cap, "release", { id: b.id });
+  assertEquals(stops, 1, "released when the last hold drops");
+  // A subsequent acquire starts a fresh assertion; an unknown release is a no-op.
+  await call(cap, "acquire", {});
+  assertEquals(starts, 2);
+  await call(cap, "release", { id: "never-held" });
+  assertEquals(stops, 1);
+});
+
 // --- resolver ----------------------------------------------------------------
 
 Deno.test("resolver: no desktop config → no capabilities (default deny)", async () => {
@@ -378,10 +410,12 @@ Deno.test("resolver: no desktop config → no capabilities (default deny)", asyn
 
 Deno.test("resolver: maps enabled built-ins; echo off unless explicitly true", async () => {
   const r = await resolveDesktopCapabilities({
-    desktop: { capabilities: { device: true, fs: true, sqlite: true, shell: true } },
+    desktop: {
+      capabilities: { device: true, fs: true, sqlite: true, shell: true, keepAwake: true },
+    },
   });
   const names = r.capabilities.map((c) => c.name).sort();
-  assertEquals(names, ["device", "fs", "shell", "sqlite"]);
+  assertEquals(names, ["device", "fs", "keepAwake", "shell", "sqlite"]);
   // echo is a diagnostic — only when capabilities.echo === true.
   const withEcho = await resolveDesktopCapabilities({ desktop: { capabilities: { echo: true } } });
   assertEquals(withEcho.capabilities.map((c) => c.name), ["echo"]);
