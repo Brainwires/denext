@@ -162,8 +162,8 @@ export function readSafeAreaInsets(): SafeAreaInsets {
 /**
  * Follow the device's safe-area insets outside a component: calls `onInsets` synchronously
  * with the current insets, then again whenever they change (rotation, window and
- * visual-viewport resizes, and Capacitor rewriting the `--safe-area-inset-*` it injects on
- * `<html>`), at most once per animation frame and only when they differ. It is what
+ * visual-viewport resizes, Capacitor rewriting the `--safe-area-inset-*` it injects on
+ * `<html>`, and the web view applying its insets late, after the page has run), at most once per animation frame and only when they differ. It is what
  * {@linkcode useSafeAreaInsets} runs. During SSR (no DOM) it calls nothing and the returned
  * stop function is a no-op.
  *
@@ -199,11 +199,19 @@ export function watchSafeAreaInsets(onInsets: (insets: SafeAreaInsets) => void):
   const offViewport = listenAll(globalThis.visualViewport, ["resize"], schedule);
   const observer = typeof MutationObserver === "function" ? new MutationObserver(schedule) : null;
   observer?.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+  // The probe's border box IS the insets (a 0×0 box padded by them), so a resize of it is an
+  // inset change no event announces: iOS's WKWebView applies `env(safe-area-inset-*)` only
+  // once the web view is in the window, which a page loaded from the app bundle
+  // (capacitor://localhost) outruns; its first measurement read 0 and nothing re-measured.
+  const Resize = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+  const sized = typeof Resize === "function" ? new Resize(schedule) : null;
+  sized?.observe(el as unknown as Element, { box: "border-box" });
   measure();
   return () => {
     offWindow();
     offViewport();
     observer?.disconnect();
+    sized?.disconnect();
     cancel?.();
     el.remove();
   };

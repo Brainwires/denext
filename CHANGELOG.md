@@ -879,6 +879,46 @@ and this project adheres to
 
 ### Fixed
 
+- **Library elements keep React's re-render semantics (compat builds, React Native mode).**
+  denext skips a component whose props are shallow-equal (its implicit `memo()`), and code
+  from npm written for React may rely on a child re-rendering whenever its parent does.
+  React Navigation's `useComponent`, which expo-router/ui's headless tabs (Expo's SDK 57
+  starter on the web) use, reads the navigator's latest render function from a ref: the
+  skip left a tab press changing the URL but never the screen. A compat build now resolves
+  `react` and `react/jsx-runtime` for importers inside `node_modules` to variants that record
+  each component element they create, and the reconciler skips such an element only when its
+  props object is the one it rendered (its parent did not re-render), or when it is a
+  `memo()`. The app's own elements keep the implicit memo. On the scroll bench's web lists
+  the scripting time while scrolling moved within noise (-4 % to +5 %), except
+  react-native-web's own `FlatList` engine (`lists: "library"`), which now re-renders as it
+  does under React (about +10 %).
+- **Deep links route expo-router apps in the Capacitor shell (React Native mode).** The link
+  that launches the app (`myapp://settings`) and links opened while it runs now navigate
+  expo-router to their path through `router.navigate`, as expo-router does on iOS and
+  Android. Its web build reads the route from the page URL only, so a link brought the app
+  forward and changed nothing.
+- **The shell's splash screen hides once a React Native app has drawn.** An Expo app's web
+  code never hides it (Expo's web build has no splash; the starter's `SplashScreen.hideAsync()`
+  is in its native-only overlay), so it stayed until `@capacitor/splash-screen`'s own
+  timeout. React Native mode's SPA entry now calls `hideSplash()` a frame after the root
+  element first has content, as expo-router hides Expo's native splash when its first screen
+  is ready.
+- **The focused text field stays above the keyboard.** WebKit scrolls a field into view when
+  it is focused, before the keyboard is up; where the WebView then resizes around the keyboard
+  (the iOS shell's default `resize: "native"`, Android) a field low on the screen ended up
+  under it, inside a scroller nothing scrolled, and with `resize: "none"` the room a
+  `KeyboardAvoidingView` made appeared after the focus scroll. While `denext/mobile`'s
+  `KeyboardAvoidingView` / `KeyboardStickyView` or React Native mode's `KeyboardAvoidingView`
+  is mounted, a focused field below the visible bottom (the visual viewport's, less the part
+  of the keyboard covering the page) is scrolled up through its scrolling ancestors after each
+  viewport resize, covered-height change and focus.
+- **Safe-area insets the web view applies late are picked up.** In the iOS shell a page loaded
+  from the app bundle (`capacitor://localhost`) measured `env(safe-area-inset-*)` before
+  WKWebView applied it and no event announced the change, so `useSafeAreaInsets()` (and
+  react-native-safe-area-context in React Native mode) stayed at 0 and a top bar sat under
+  the status bar. The watcher now also follows its probe's size (a `ResizeObserver`), which
+  is the insets.
+
 - **`feature()` folds on the SPA's denext-native path.** `mode: "spa"` bundled with
   `deno bundle` (no npm React) neither seeded `__DENEXT_FEATURES__` nor folded `feature("KEY")`,
   so every flag read `false` at run time whatever `features` said. The flags are now seeded at the

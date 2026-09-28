@@ -94,6 +94,28 @@ export const REACT_ALIASES: Record<string, string> = {
 };
 
 /**
+ * The react-family specifiers an importer inside `node_modules` gets instead: denext's React
+ * and JSX runtime whose elements keep React's re-render semantics (a library written for React
+ * may rely on a child re-rendering whenever its parent does; `src/runtime/library-elements.ts`).
+ */
+const LIBRARY_REACT_ALIASES: Readonly<Record<string, string>> = {
+  "react": "react-lib.js",
+  "react/jsx-runtime": "jsx-runtime-lib.js",
+  "react/jsx-dev-runtime": "jsx-runtime-lib.js",
+};
+
+/**
+ * The prebuilt runtime file third-party code gets for `spec`: its library variant when
+ * `importer` is inside `node_modules` and there is one, else undefined.
+ *
+ * @param spec The react-family specifier.
+ * @param importer The importing module's path.
+ */
+export function libraryReactFile(spec: string, importer: string): string | undefined {
+  return /[\\/]node_modules[\\/]/.test(importer) ? LIBRARY_REACT_ALIASES[spec] : undefined;
+}
+
+/**
  * `next/*` specifiers rewritten to denext's compat modules → prebuilt entry file.
  * Without this, esbuild resolves `next/font/google`, `next/link`, … from the real
  * `next` npm package in node_modules (component/font APIs that don't run on
@@ -152,6 +174,10 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "react-dom-test-utils": u("src/compat/test-utils.ts"),
     "react-is": u("src/compat/react-is.ts"),
     "jsx-runtime": u("src/jsx/jsx-runtime.ts"),
+    // What `react` and the JSX runtime are for importers inside node_modules (see
+    // LIBRARY_REACT_ALIASES): the same instance, with library elements recorded.
+    "react-lib": u("src/compat/react-lib.ts"),
+    "jsx-runtime-lib": u("src/jsx/jsx-runtime-lib.ts"),
     // The SSR renderer must come from the SAME prebuilt graph as the aliased
     // react, or the server renders with a different dispatcher than the app's
     // components use.
@@ -664,6 +690,8 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // react-family bare specifiers → prebuilt runtime file, in our namespace.
       const filter = /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$/;
       build.onResolve({ filter }, (args) => {
+        const lib = libraryReactFile(args.path, args.importer);
+        if (lib) return runtimeFile(lib);
         const { file, warning } = resolveReactFamilyFile(args.path);
         return { ...runtimeFile(file), warnings: warning ? [{ text: warning }] : undefined };
       });

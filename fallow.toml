@@ -148,6 +148,8 @@ entry = [
   # `expo-router/_ctx` imports from app/ (Metro's require.context, which fallow cannot see).
   "tests/e2e/fixtures/rn-expo-router/index.web.ts",
   "tests/e2e/fixtures/rn-expo-router/app/**",
+  "tests/e2e/fixtures/rn-expo-router-ui/index.web.ts",
+  "tests/e2e/fixtures/rn-expo-router-ui/app/**",
   # Static assets served verbatim from public/ (fallow analyzes the .css files there), and
   # the Tailwind source stylesheet named by `tailwind.input` in denext.config.ts.
   "**/public/**",

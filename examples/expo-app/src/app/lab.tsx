@@ -20,7 +20,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SelfTest } from "@/components/self-test";
+import { LAUNCHES_KEY, SelfTest } from "@/components/self-test";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { MaxContentWidth, Spacing } from "@/constants/theme";
@@ -39,10 +39,17 @@ export default function LabScreen() {
   const theme = useTheme();
   const [note, setNote] = useState("");
   const [log, setLog] = useState("Tap a button: its result shows here.");
+  const [launches, setLaunches] = useState<number | null>(null);
 
-  // The note survives a relaunch: AsyncStorage is denext's durable key-value store.
+  // The note and the launch count survive a relaunch: AsyncStorage is denext's durable
+  // key-value store.
   useEffect(() => {
     AsyncStorage.getItem(NOTE_KEY).then((v) => v !== null && setNote(v));
+    AsyncStorage.getItem(LAUNCHES_KEY).then(async (v) => {
+      const n = Number(v ?? "0") + 1;
+      await AsyncStorage.setItem(LAUNCHES_KEY, String(n));
+      setLaunches(n);
+    });
   }, []);
 
   const saveNote = (text: string) => {
@@ -66,6 +73,9 @@ export default function LabScreen() {
         ]}
       >
         <ThemedText type="subtitle">Lab</ThemedText>
+        <ThemedText type="smallBold" testID="lab-launches">
+          Launches: {launches ?? "…"} (kill and reopen the app: it goes up)
+        </ThemedText>
 
         <SelfTest />
 
@@ -163,7 +173,7 @@ export default function LabScreen() {
           />
         </ThemedView>
         <ThemedText type="small" themeColor="textSecondary">
-          {Platform.OS} · shell {String(Platform.constants?.denextShell ?? "none")}
+          Platform.OS: {Platform.OS} · shell: {String(Platform.constants?.denextShell ?? "none")}
         </ThemedText>
       </ScrollView>
     </KeyboardAvoidingView>

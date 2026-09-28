@@ -17,7 +17,13 @@ internal design choice with no observable difference lives in
   depends on changes. Put such inputs in state, a ref read inside an effect, or a
   context. Test suites ported from React that count renders will see fewer renders.
   Deliberate (it is a large part of why denext's runtime is small and fast), not a
-  bug — so it is listed here rather than fixed.
+  bug — so it is listed here rather than fixed. It applies to the app's own elements only:
+  in a compat build (npm React aliased to denext, and React Native mode) an element that
+  code inside `node_modules` creates keeps React's semantics — it re-renders whenever its
+  parent does, and is skipped only when its parent did not re-render (or it is a `memo()`).
+  Libraries written for React may rely on that: React Navigation's `useComponent`, which
+  expo-router/ui's tabs use, reads the navigator's latest render function from a ref, and
+  skipping it left a tab press changing the URL but not the screen.
 - **Errors thrown in DOM event handlers are routed to the nearest error boundary.**
   React lets them reach `window.onerror` and keeps the UI up; denext catches them
   (`onCaughtError` sees them) and shows the boundary's fallback, so one bad click

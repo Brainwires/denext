@@ -98,6 +98,9 @@ function scrollParent(el: HTMLElement): HTMLElement {
   throw new Error("no scrolling ancestor");
 }
 
+/** How many times the Lab tab has mounted, once per launch (counted by the Lab screen). */
+export const LAUNCHES_KEY = "lab:launches";
+
 const CHECKS: Check[] = [
   {
     name: "Platform.OS",
@@ -195,10 +198,13 @@ const CHECKS: Check[] = [
   {
     name: "AsyncStorage across launches",
     run: async () => {
-      // Counts the Lab tab's mounts: relaunch the app and the number must go up.
-      const n = Number((await AsyncStorage.getItem("selftest:launches")) ?? "0") + 1;
-      await AsyncStorage.setItem("selftest:launches", String(n));
-      return `run #${n}`;
+      // The Lab tab counts its mounts (once per launch): relaunch and the number goes up.
+      for (let i = 0; i < 40; i++) {
+        const n = Number((await AsyncStorage.getItem(LAUNCHES_KEY)) ?? "0");
+        if (n > 0) return `launch #${n}`;
+        await sleep(50);
+      }
+      throw new Error("the Lab screen never counted this launch");
     },
   },
   {

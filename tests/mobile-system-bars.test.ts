@@ -269,6 +269,40 @@ Deno.test("useSafeAreaInsets: all zero during SSR", () => {
 
 // ---- readSafeAreaInsets / watchSafeAreaInsets (outside a component) ----------
 
+Deno.test("watchSafeAreaInsets: insets the web view applies late re-measure (ResizeObserver)", async () => {
+  // iOS applies env(safe-area-inset-*) once the web view is in the window: a page loaded from
+  // the app bundle measured 0 first, and no event announces the change. The probe's border
+  // box is the insets, so its resize is the signal.
+  const env = insetsEnv();
+  Object.assign(env.padding, { paddingTop: "0px", paddingBottom: "0px" });
+  const resized: Array<{ fn: () => void; box?: string; on: boolean }> = [];
+  const ResizeObserver = class {
+    entry: { fn: () => void; box?: string; on: boolean };
+    constructor(fn: () => void) {
+      this.entry = { fn, on: false };
+      resized.push(this.entry);
+    }
+    observe(_el: unknown, opts?: { box?: string }) {
+      Object.assign(this.entry, { on: true, box: opts?.box });
+    }
+    disconnect() {
+      this.entry.on = false;
+    }
+  };
+  await withGlobals({ ...env.globals, ResizeObserver }, () => {
+    const seen: SafeAreaInsets[] = [];
+    const stop = watchSafeAreaInsets((i) => void seen.push(i));
+    assertEquals(seen, [{ top: 0, right: 0, bottom: 0, left: 0 }]);
+    assertEquals(resized.map((r) => [r.on, r.box]), [[true, "border-box"]]);
+    Object.assign(env.padding, { paddingTop: "59px", paddingBottom: "34px" });
+    resized[0].fn();
+    env.frames.flush();
+    assertEquals(seen.at(-1), { top: 59, right: 0, bottom: 34, left: 0 });
+    stop();
+    assertEquals(resized[0].on, false, "disconnected on stop");
+  });
+});
+
 Deno.test("readSafeAreaInsets: one measurement through a probe it removes; zero without a DOM", async () => {
   assertEquals(readSafeAreaInsets(), { top: 0, right: 0, bottom: 0, left: 0 });
   const env = insetsEnv();

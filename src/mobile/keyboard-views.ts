@@ -12,6 +12,7 @@ import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
 import { useEffect, useState } from "../runtime/hooks.ts";
 import { type KeyboardOverlap, watchKeyboardOverlap } from "./keyboard-state.ts";
+import { joinFocusedFieldReveal } from "./keyboard-reveal.ts";
 
 /** An inline style object, as the views accept and extend it. */
 export type KeyboardViewStyle = Readonly<Record<string, string | number | undefined>>;
@@ -67,11 +68,15 @@ export function useOverlap(enabled: boolean): KeyboardOverlap {
   const [overlap, setOverlap] = useState<KeyboardOverlap>(NO_OVERLAP);
   useEffect(() => {
     if (!enabled) return;
-    const stop = watchKeyboardOverlap((next) =>
-      setOverlap((prev) => prev.px === next.px && prev.duration === next.duration ? prev : next)
-    );
+    // The view makes room; the reveal watcher scrolls the focused field into it.
+    const reveal = joinFocusedFieldReveal();
+    const stop = watchKeyboardOverlap((next) => {
+      reveal.covered(next.px);
+      setOverlap((prev) => prev.px === next.px && prev.duration === next.duration ? prev : next);
+    });
     return () => {
       stop();
+      reveal.leave();
       setOverlap(NO_OVERLAP);
     };
   }, [enabled]);

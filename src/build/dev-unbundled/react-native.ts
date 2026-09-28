@@ -42,7 +42,7 @@ import {
   walkAst,
 } from "../swc-ast.ts";
 import type { ParsedModule } from "../swc-ast.ts";
-import { CODE_FILE, runtimeDepUrl } from "./resolve.ts";
+import { CODE_FILE, libraryDepUrl, runtimeDepUrl } from "./resolve.ts";
 import {
   addImporter,
   depSlug,
@@ -361,7 +361,7 @@ function runtimeExternalPlugin(): esbuild.Plugin {
     name: "denext-dev-rn-runtime-external",
     setup(build) {
       build.onResolve({ filter: /^(?:react|react-dom|react-is|next|denext)(?:\/|$)/ }, (args) => {
-        const url = runtimeDepUrl(args.path);
+        const url = libraryDepUrl(args.path, args.importer) ?? runtimeDepUrl(args.path);
         return url ? externalModule(url, args.kind) : null;
       });
       // The facade's own imports: the external module itself.

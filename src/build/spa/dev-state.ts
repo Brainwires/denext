@@ -17,8 +17,14 @@ import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { type SseClients, sseSend } from "../sse.ts";
 import { tailwindPaths } from "../tailwind.ts";
-import { bundleSpaInto, spaCssRoots, spaDefines } from "./bundle.ts";
-import { CLIENT_PREFIX, spaEntryPath, supportInstall } from "./shared.ts";
+import { bundleSpaInto, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
+import {
+  CLIENT_PREFIX,
+  EXPO_ROUTER_LINKS,
+  REACT_NATIVE_SPLASH,
+  spaEntryPath,
+  supportInstall,
+} from "./shared.ts";
 
 export interface SpaDevServerOptions {
   paths: ProjectPaths;
@@ -185,7 +191,7 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
         classComponents: paths.config?.classComponents ?? true,
         activity: activity || rn !== null,
         viewTransition,
-      }),
+      }) + (rn ? REACT_NATIVE_SPLASH : "") + (await usesExpoRouter(paths) ? EXPO_ROUTER_LINKS : ""),
       // The compat bundle's defines: `import.meta.env` (`spa.env`), React Native's globals,
       // and `process.env.NODE_ENV` (the bundle injects a `process` shim; a module does not).
       define: compat

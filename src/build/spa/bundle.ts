@@ -20,7 +20,7 @@ import {
 import { type AppCss, buildAppCss, extractRouteCss } from "../css.ts";
 import { buildNextCompatClientEntries } from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
-import { expoRouterRouteFiles } from "../expo-router.ts";
+import { expoRouterRoot, expoRouterRouteFiles } from "../expo-router.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
@@ -113,6 +113,12 @@ export async function spaCssRoots(paths: ProjectPaths, entryPath: string): Promi
       ...await webPlatformFiles(paths.projectDir),
     ]),
   ];
+}
+
+/** Whether the app is a React Native mode app routed by expo-router (it has `app/`). */
+export async function usesExpoRouter(paths: ProjectPaths): Promise<boolean> {
+  return reactNativeOptions(paths.config) !== null &&
+    await expoRouterRoot(paths.projectDir) !== null;
 }
 
 /** Directories of an app that hold no source of its own. */
@@ -303,7 +309,13 @@ export async function bundleSpaInto(
       toFileUrl(entryPath).href,
       dev,
       paths.instrumentationClientPath,
-      { classComponents: paths.config?.classComponents ?? true, activity, viewTransition },
+      {
+        classComponents: paths.config?.classComponents ?? true,
+        activity,
+        viewTransition,
+        expoRouterLinks: await usesExpoRouter(paths),
+        reactNative: reactNativeOptions(paths.config) !== null,
+      },
     );
   // React Native mode needs the esbuild path (its resolver and loaders live there).
   const compat = reactNativeOptions(paths.config) !== null || await detectNextCompat(paths);

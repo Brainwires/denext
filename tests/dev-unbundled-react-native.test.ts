@@ -217,7 +217,8 @@ Deno.test("React Native: the app's modules transform per module; the dependency 
     const chunks = [...Deno.readDirSync(st.npmDir)].filter((e) => e.name.endsWith(".js"))
       .map((e) => Deno.readTextFileSync(join(st.npmDir, e.name))).join("\n");
     assert(!/__require\(["']\/_denext/.test(chunks), "no chunk requires a runtime URL");
-    assert(/from ["']\/_denext\/@dep\/react\.js["']/.test(chunks), "react imported as ESM");
+    // Packages get the library React (their elements keep React's re-render semantics).
+    assert(/from ["']\/_denext\/@dep\/react-lib\.js["']/.test(chunks), "react imported as ESM");
     const haptics = await Deno.readTextFile(join(st.npmDir, "expo-haptics.js"));
     assertStringIncludes(haptics, '"/_denext/@dep/', "an expo shim is the runtime's, external");
     assert(!haptics.includes("__require"), "an external target is imported, not required");

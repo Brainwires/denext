@@ -63,6 +63,8 @@ export function generateSpaEntry(
   // "class components are disabled" at render; likewise `<Activity>`/`<ViewTransition>` would
   // silently no-op.
   const install = supportInstall(support);
+  const links = (support.reactNative ? REACT_NATIVE_SPLASH : "") +
+    (support.expoRouterLinks ? EXPO_ROUTER_LINKS : "");
   if (!dev) {
     // The installs ride a `data:` module imported AHEAD of the app entry: ES imports are
     // hoisted, so install STATEMENTS here would run only after the app module had evaluated —
@@ -72,7 +74,7 @@ export function generateSpaEntry(
     // gesture-handler `GestureDetector` finds its child missing and throws).
     return `// denext generated SPA entry — do not edit.\n${prelude}${seamImport(install)}import ${
       JSON.stringify(entryUrl)
-    };\n`;
+    };\n${links}`;
   }
   // `__denextDev` is the FIRST statement (after the hoisted instrumentation import): the
   // DevTools panel and the whole inspector no-op unless the flag is set, and nothing else
@@ -84,7 +86,7 @@ export function generateSpaEntry(
     `import { enableFastRefresh } from "denext/client-runtime";\n` +
     `import { installDevtools } from "denext/devtools";\n` +
     `enableFastRefresh();\ninstallDevtools();\n` +
-    `await import(${JSON.stringify(entryUrl)});\n`;
+    `await import(${JSON.stringify(entryUrl)});\n${links}`;
 }
 
 /** Which reconciler-seam runtimes the SPA entry should install (class defaults on for SPA). */
@@ -95,7 +97,58 @@ export interface SpaEntrySupport {
   activity?: boolean;
   /** Install the per-element `<ViewTransition>` runtime (set when the app uses it). */
   viewTransition?: boolean;
+  /** Route the shell's deep links through expo-router (React Native mode with `app/`). */
+  expoRouterLinks?: boolean;
+  /** React Native mode: hide the shell's splash screen once the app has drawn. */
+  reactNative?: boolean;
 }
+
+/**
+ * React Native mode: hide the Capacitor shell's splash screen once the app has drawn its first
+ * frame (a frame after the root element first has content, at most ~10 s after boot), as
+ * expo-router hides Expo's native splash when its first screen is ready. An Expo app's web code never hides it (Expo's web
+ * build has no splash; the template's `hideAsync` call lives in its native-only variant), so
+ * the splash otherwise stayed until the plugin's own timeout. Outside the shell `hideSplash`
+ * does nothing; an app that calls `SplashScreen.hideAsync()` itself hides it the same way.
+ */
+export const REACT_NATIVE_SPLASH =
+  `import { hideSplash as __denextHideSplash } from "denext/mobile";
+(function __denextHideWhenDrawn(frames) {
+  var root = typeof document === "undefined" ? null : document.getElementById("root");
+  if (root && root.firstChild || frames > 600) {
+    requestAnimationFrame(function () { __denextHideSplash().catch(function () {}); });
+  } else {
+    requestAnimationFrame(function () { __denextHideWhenDrawn(frames + 1); });
+  }
+})(0);
+`;
+
+/**
+ * React Native mode with expo-router: the links that open the app in the Capacitor shell (its
+ * custom scheme, `myapp://settings`, at launch and while it runs) navigate expo-router to their
+ * path, as expo-router does on iOS and Android through expo-linking. Its web build reads the
+ * route from the page URL only, so without this a deep link brought the app forward and
+ * changed nothing. `router.navigate` is retried until the root layout has mounted; outside the
+ * shell `onDeepLink` does nothing.
+ *
+ * A namespace import: `router` is a CommonJS export behind React Mode's `expo-router` overlay
+ * (`export *` of the real package, which a dynamic `import()` chunk does not carry), and the
+ * dev loop's dependency bundle exposes the whole CommonJS module as `__denextCjs`.
+ */
+export const EXPO_ROUTER_LINKS = `import * as __denextExpoRouter from "expo-router";
+import { onDeepLink as __denextOnDeepLink } from "denext/mobile";
+function __denextRouteLink(path, tries) {
+  var m = __denextExpoRouter;
+  var router = m.router || (m.__denextCjs && m.__denextCjs.router) || (m.default && m.default.router);
+  try {
+    router.navigate(path);
+  } catch (err) {
+    if (tries < 100) setTimeout(function () { __denextRouteLink(path, tries + 1); }, 100);
+    else console.error(err);
+  }
+}
+__denextOnDeepLink(function () {}, { route: function (path) { __denextRouteLink(path, 0); } });
+`;
 
 /**
  * The seam installs as one side-effect `import` of a `data:` module, evaluated before every

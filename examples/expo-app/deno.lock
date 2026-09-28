@@ -22,6 +22,17 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@capacitor/app@8.1.1",
+        "npm:@capacitor/browser@8.0.4",
+        "npm:@capacitor/cli@8.5.2",
+        "npm:@capacitor/core@8.5.2",
+        "npm:@capacitor/device@8.0.3",
+        "npm:@capacitor/dialog@8.0.1",
+        "npm:@capacitor/haptics@8.0.2",
+        "npm:@capacitor/ios@8.5.2",
+        "npm:@capacitor/keyboard@8.0.5",
+        "npm:@capacitor/share@8.0.2",
+        "npm:@capacitor/splash-screen@8.0.2",
         "npm:@expo/ui@~57.0.20",
         "npm:@react-native-async-storage/async-storage@2.2.0",
         "npm:@types/react@~19.2.2",

@@ -7,7 +7,8 @@ tarball
 denext's [React Native mode](https://denext.dev/docs/react-native) inside a
 Capacitor 8 shell. The template is unchanged apart from `deno fmt`, a safe-area
 top padding on the web tab bar (`src/components/app-tabs.web.tsx`: in the shell
-the page runs under the status bar) and a third tab, **Lab**:
+the page runs under the status bar; below 500 px it also drops the brand so four
+tabs fit) and a third tab, **Lab**:
 
 - `src/app/lab.tsx`: the React Native APIs to try by hand (haptics, `Alert`,
   `Share`, `Linking.openURL`, a `TextInput` whose value `AsyncStorage` keeps
@@ -74,8 +75,8 @@ for the Lab tab.
 After `deno task cap:sync` and `deno task ios`:
 
 1. **Launch.** The splash hides and Home shows "Welcome to Expo" with the
-   animated Expo icon. The floating tab bar (Expo Starter · Home · Explore · Lab
-   · Docs) sits below the status bar.
+   animated Expo icon. The floating tab bar (Home · Explore · Lab · Docs; the
+   "Expo Starter" brand shows only on wide screens) sits below the status bar.
 2. **Lab → self-test.** The card at the top reads `ALL PASS: n/n passed` in a
    few seconds. On the phone nothing is SKIPped (the safe-area check runs only
    in the iOS shell).

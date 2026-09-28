@@ -140,6 +140,11 @@ Measured on a fresh expo-router 57 app: `/`, `/about`, the unmatched-route page 
 navigation all render with no console errors, and a real-browser test builds an expo-router
 57 app and checks its `Stack` and `Tabs`.
 
+In the Capacitor shell, the links that open the app (its `scheme`, `myapp://settings`, at launch
+and while it runs; `denext mobile add deep-links --scheme myapp`) navigate expo-router to their
+path through `router.navigate`, as expo-router does on iOS and Android. The shell's splash
+screen is hidden once the app has drawn its first frame.
+
 expo-router's `Stack` and `Tabs` (from `expo-router`, `expo-router/stack` and
 `expo-router/tabs`) are replaced at build time with navigators drawn by
 [`denext/navigation`](/docs/navigation-native): kept screens, platform push and pop animations,

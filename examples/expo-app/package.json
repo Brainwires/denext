@@ -2,6 +2,16 @@
   "name": "denext-example-expo-app",
   "main": "expo-router/entry",
   "dependencies": {
+    "@capacitor/app": "8.1.1",
+    "@capacitor/browser": "8.0.4",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/device": "8.0.3",
+    "@capacitor/dialog": "8.0.1",
+    "@capacitor/haptics": "8.0.2",
+    "@capacitor/ios": "8.5.2",
+    "@capacitor/keyboard": "8.0.5",
+    "@capacitor/share": "8.0.2",
+    "@capacitor/splash-screen": "8.0.2",
     "@expo/ui": "~57.0.20",
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.25",
@@ -29,6 +39,7 @@
     "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.2",
     "@types/react": "~19.2.2",
     "typescript": "~6.0.3"
   },

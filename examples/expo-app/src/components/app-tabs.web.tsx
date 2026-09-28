@@ -7,7 +7,7 @@ import {
   type TabTriggerSlotProps,
 } from "expo-router/ui";
 import { SymbolView } from "expo-symbols";
-import { Pressable, StyleSheet, useColorScheme, View } from "react-native";
+import { Pressable, StyleSheet, useColorScheme, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ExternalLink } from "./external-link";
@@ -66,16 +66,23 @@ export function CustomTabList(props: TabListProps) {
   // denext: in the iOS / Android shell the page runs under the status bar (viewport-fit=cover),
   // so the floating tab bar keeps clear of it.
   const { top } = useSafeAreaInsets();
+  // denext: with the Lab tab the bar outgrows a phone; drop the brand and tighten it there.
+  const narrow = useWindowDimensions().width < 500;
 
   return (
     <View
       {...props}
       style={[styles.tabListContainer, { paddingTop: top + Spacing.three }]}
     >
-      <ThemedView type="backgroundElement" style={styles.innerContainer}>
-        <ThemedText type="smallBold" style={styles.brandText}>
-          Expo Starter
-        </ThemedText>
+      <ThemedView
+        type="backgroundElement"
+        style={[styles.innerContainer, narrow && styles.innerNarrow]}
+      >
+        {narrow ? null : (
+          <ThemedText type="smallBold" style={styles.brandText}>
+            Expo Starter
+          </ThemedText>
+        )}
 
         {props.children}
 
@@ -112,6 +119,11 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     gap: Spacing.two,
     maxWidth: MaxContentWidth,
+  },
+  innerNarrow: {
+    paddingHorizontal: Spacing.three,
+    gap: 0,
+    justifyContent: "space-between",
   },
   brandText: {
     marginRight: "auto",

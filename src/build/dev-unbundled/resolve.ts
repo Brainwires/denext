@@ -6,6 +6,7 @@ import { ensureDir } from "@std/fs";
 import { frameworkImports, readAliasPrefixes } from "../bundle.ts";
 import {
   DENEXT_RUNTIME_FILES,
+  libraryReactFile,
   NEXT_ALIASES,
   probeSourceFile,
   REACT_ALIASES,
@@ -139,6 +140,19 @@ export function compatDepUrl(
   if (runtime !== undefined) return runtime;
   if (/^(node:|data:|https?:)/.test(spec)) return null;
   return `${NPM_PREFIX}${noteNpm(st, spec, names)}.js`;
+}
+
+/**
+ * The prebuilt-runtime URL of the React / JSX runtime a module inside `node_modules` gets: the
+ * library variant, whose elements keep React's re-render semantics (`libraryReactFile`), or
+ * undefined for any other importer or specifier.
+ *
+ * @param spec The specifier.
+ * @param importer The importing module's path.
+ */
+export function libraryDepUrl(spec: string, importer: string): string | undefined {
+  const file = libraryReactFile(spec, importer);
+  return file ? `${DEP_PREFIX}${file}` : undefined;
 }
 
 /**

@@ -16,7 +16,7 @@ import {
   crawlReactNativeGraph,
   dependencySignature,
 } from "./react-native.ts";
-import { compatDepUrl, ensureMergedConfig } from "./resolve.ts";
+import { compatDepUrl, ensureMergedConfig, libraryDepUrl } from "./resolve.ts";
 import { DEP_ENTRYPOINTS, depSlug, type UnbundledState } from "./state.ts";
 import { transform } from "./transform.ts";
 
@@ -90,7 +90,7 @@ function runtimeExternalPlugin(st: UnbundledState): esbuild.Plugin {
             /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\/|^denext(\/|$)/,
         },
         (args) => {
-          const u = compatDepUrl(st, args.path);
+          const u = libraryDepUrl(args.path, args.importer) ?? compatDepUrl(st, args.path);
           return u ? { path: u, external: true } : null;
         },
       );
