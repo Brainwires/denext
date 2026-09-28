@@ -9,6 +9,7 @@ import { DesktopCapError } from "../src/desktop/extension.ts";
 import { deviceCapability } from "../src/desktop/caps/device.ts";
 import { fsCapability } from "../src/desktop/caps/fs.ts";
 import { sqliteCapability } from "../src/desktop/caps/sqlite.ts";
+import { shellCapability, shellPathCommand } from "../src/desktop/caps/shell.ts";
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import type { DesktopAppDirs } from "../src/desktop/app-dirs.ts";
 
@@ -281,6 +282,92 @@ Deno.test("sqlite: delete removes the file (closing any open handle first)", asy
   }
 });
 
+// --- shell -------------------------------------------------------------------
+
+Deno.test("shellPathCommand: per-OS argv passes the path as a discrete arg (no injection)", () => {
+  const p = "/app/data/report.pdf";
+  assertEquals(shellPathCommand("darwin", "open", p), ["open", [p]]);
+  assertEquals(shellPathCommand("darwin", "reveal", p), ["open", ["-R", p]]);
+  // macOS trash goes through Finder (recoverable) with the path as an argv item, not interpolated.
+  const [tcmd, targs] = shellPathCommand("darwin", "trash", p);
+  assertEquals(tcmd, "osascript");
+  assertEquals(targs[targs.length - 1], p);
+  assertEquals(shellPathCommand("linux", "open", p), ["xdg-open", [p]]);
+  assertEquals(shellPathCommand("linux", "trash", p), ["gio", ["trash", p]]);
+  assertEquals(shellPathCommand("windows", "open", p), ["explorer.exe", [p]]);
+  // Windows trash: the path is the trailing scriptblock argument, not spliced into the script.
+  const [wcmd, wargs] = shellPathCommand("windows", "trash", p);
+  assertEquals(wcmd, "powershell.exe");
+  assertEquals(wargs[wargs.length - 1], p);
+});
+
+function shellFixture(config: Partial<Parameters<typeof shellCapability>[0]["config"]> = {}) {
+  const spawned: Array<[string, string[]]> = [];
+  const cap = shellCapability({
+    dirs: { data: "/app/data", cache: "/app/cache", documents: "/app/docs" },
+    config: {
+      openExternal: ["https:", "mailto:"],
+      openPath: true,
+      reveal: true,
+      trash: true,
+      ...config,
+    },
+    spawn: (cmd, args) => {
+      spawned.push([cmd, args]);
+      return Promise.resolve();
+    },
+  });
+  return { cap, spawned };
+}
+
+Deno.test("shell.openExternal: an allowed scheme launches the browser; others are refused", async () => {
+  const { cap, spawned } = shellFixture();
+  await call(cap, "openExternal", { url: "https://example.com/x?a=1&b=2" });
+  assertEquals(spawned.length, 1);
+  assertEquals(spawned[0][1][spawned[0][1].length - 1], "https://example.com/x?a=1&b=2");
+  for (const bad of ["file:///etc/passwd", "javascript:alert(1)", "not a url"]) {
+    const err = await assertRejects(() => call(cap, "openExternal", { url: bad }), DesktopCapError);
+    assert(err.code === "forbidden" || err.code === "validation", `${bad} → ${err.code}`);
+  }
+  assertEquals(spawned.length, 1); // no extra spawns from the refused URLs
+});
+
+Deno.test("shell.openPath: confines the path to the app dirs and spawns the opener", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-shell-" });
+  try {
+    await Deno.writeTextFile(join(root, "f.txt"), "x");
+    const spawned: Array<[string, string[]]> = [];
+    const cap = shellCapability({
+      dirs: { data: root, cache: root, documents: root },
+      config: { openExternal: [], openPath: true, reveal: false, trash: false },
+      spawn: (cmd, args) => {
+        spawned.push([cmd, args]);
+        return Promise.resolve();
+      },
+    });
+    await call(cap, "openPath", { path: join(root, "f.txt") });
+    assertEquals(spawned.length, 1);
+    // A path outside the app dirs is refused.
+    const err = await assertRejects(
+      () =>
+        call(cap, "openPath", {
+          path: OS === "windows" ? "C:\\Windows\\notepad.exe" : "/etc/hosts",
+        }),
+      DesktopCapError,
+    );
+    assertEquals(err.code, "forbidden");
+    // reveal is disabled in this config.
+    const err2 = await assertRejects(
+      () => call(cap, "reveal", { path: join(root, "f.txt") }),
+      DesktopCapError,
+    );
+    assertEquals(err2.code, "forbidden");
+    assertEquals(spawned.length, 1); // neither refusal spawned anything
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 // --- resolver ----------------------------------------------------------------
 
 Deno.test("resolver: no desktop config → no capabilities (default deny)", async () => {
@@ -291,10 +378,10 @@ Deno.test("resolver: no desktop config → no capabilities (default deny)", asyn
 
 Deno.test("resolver: maps enabled built-ins; echo off unless explicitly true", async () => {
   const r = await resolveDesktopCapabilities({
-    desktop: { capabilities: { device: true, fs: true, sqlite: true } },
+    desktop: { capabilities: { device: true, fs: true, sqlite: true, shell: true } },
   });
   const names = r.capabilities.map((c) => c.name).sort();
-  assertEquals(names, ["device", "fs", "sqlite"]);
+  assertEquals(names, ["device", "fs", "shell", "sqlite"]);
   // echo is a diagnostic — only when capabilities.echo === true.
   const withEcho = await resolveDesktopCapabilities({ desktop: { capabilities: { echo: true } } });
   assertEquals(withEcho.capabilities.map((c) => c.name), ["echo"]);

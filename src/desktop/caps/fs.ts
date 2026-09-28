@@ -23,11 +23,12 @@
  * @module
  */
 
-import { dirname, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
+import { dirname, join } from "@std/path";
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import type { FileDirectory, FileEntry } from "../../mobile/filesystem.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
+import { confineRelative } from "../path-scope.ts";
 
 /** The config path token each {@link FileDirectory} resolves to (for the read/write scope check). */
 const DIRECTORY_TOKEN: Readonly<Record<FileDirectory, string>> = {
@@ -44,11 +45,6 @@ export interface FsCapabilityConfig {
   readonly read: ReadonlySet<string>;
   /** The path tokens the page may WRITE to (also gates delete and download). */
   readonly write: ReadonlySet<string>;
-}
-
-/** `p` is `base` itself or lies within it (using the platform separator). */
-function isWithin(base: string, p: string): boolean {
-  return p === base || p.startsWith(base + SEPARATOR);
 }
 
 /** A validation error (a bad `directory`, absolute path, or malformed arg). */
@@ -74,44 +70,12 @@ function baseFor(cfg: FsCapabilityConfig, directory: unknown, write: boolean): s
   return cfg.dirs[directory];
 }
 
-/**
- * Resolve a page-supplied relative `path` against `base` and confine it: reject an absolute path,
- * normalize `..`, then resolve symlinks in the deepest EXISTING ancestor and re-check the
- * reconstructed real path against the real base. Returns the resolved (non-real, for a
- * not-yet-existing file) path to operate on.
- */
-async function scopedPath(base: string, path: unknown): Promise<string> {
+/** Confine a page-supplied relative `path` to `base` (see {@link confineRelative}). */
+function scopedPath(base: string, path: unknown): Promise<string> {
   if (typeof path !== "string" || path.length === 0) {
     throw badInput("path must be a non-empty string");
   }
-  if (isAbsolute(path)) throw badInput("path must be relative to its directory");
-  const resolved = resolve(base, path);
-  if (!isWithin(base, resolved)) {
-    throw new DesktopCapError("forbidden", "path escapes its directory", { status: 403 });
-  }
-  // Resolve symlinks: realPath the deepest existing prefix, then re-attach the not-yet-existing
-  // tail and confirm the real target is still within the real base.
-  const realBase = await Deno.realPath(base).catch(() => resolve(base));
-  let existing = resolved;
-  // Walk up until an ancestor exists (or we hit the base, which exists after ensureBase).
-  for (;;) {
-    let real: string;
-    try {
-      real = await Deno.realPath(existing);
-    } catch {
-      const parent = dirname(existing);
-      if (parent === existing) break; // reached the filesystem root without an existing ancestor
-      existing = parent;
-      continue;
-    }
-    const tail = relative(existing, resolved);
-    const realTarget = tail && tail !== "." ? join(real, tail) : real;
-    if (!isWithin(realBase, realTarget)) {
-      throw new DesktopCapError("forbidden", "path escapes its directory", { status: 403 });
-    }
-    break;
-  }
-  return resolved;
+  return confineRelative(base, path);
 }
 
 /** `mkdir -p path`, treating an existing directory as success (used for the base and write parents). */

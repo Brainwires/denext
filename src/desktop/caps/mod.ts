@@ -14,13 +14,18 @@
  * @module
  */
 
-import type { DenextConfig, DesktopCapabilitiesConfig } from "../../server/config.ts";
+import type {
+  DenextConfig,
+  DesktopCapabilitiesConfig,
+  DesktopShellConfig,
+} from "../../server/config.ts";
 import type { DesktopCapability } from "../extension.ts";
 import { desktopAppDirs } from "../app-dirs.ts";
 import { echoCapability } from "./echo.ts";
 import { deviceCapability } from "./device.ts";
 import { fsCapability } from "./fs.ts";
 import { sqliteCapability } from "./sqlite.ts";
+import { shellCapability, type ShellCapabilityConfig } from "./shell.ts";
 
 /** The app-support subdirectory name when the config gives no identifier (matches the updater). */
 const DEFAULT_APP_ID = "denext-desktop";
@@ -42,6 +47,24 @@ export interface ResolvedDesktop {
   readonly capabilities: DesktopCapability[];
   /** The app-support (data) directory handed to capability handlers and used by `fs`/`sqlite`. */
   readonly appSupportDir: string;
+}
+
+/** The default URL schemes `shell.openExternal` allows when enabled with `shell: true`. */
+const DEFAULT_SHELL_SCHEMES = ["https:", "mailto:"];
+
+/** Resolve `shell`: `true` enables every action with the default schemes; an object is taken as-is
+ * (unset booleans default off — least privilege). */
+function resolveShell(value: boolean | DesktopShellConfig): ShellCapabilityConfig {
+  if (value === true) {
+    return { openExternal: DEFAULT_SHELL_SCHEMES, openPath: true, reveal: true, trash: true };
+  }
+  const cfg = value as DesktopShellConfig;
+  return {
+    openExternal: cfg.openExternal ?? [],
+    openPath: cfg.openPath === true,
+    reveal: cfg.reveal === true,
+    trash: cfg.trash === true,
+  };
 }
 
 /** The `$…` scope tokens for `fs`: `true`/absent arrays → the defaults, an array → itself. */
@@ -114,6 +137,7 @@ export async function resolveDesktopCapabilities(
     capabilities.push(fsCapability({ dirs, read, write }));
   }
   if (caps.sqlite) capabilities.push(sqliteCapability(dirs.data));
+  if (caps.shell) capabilities.push(shellCapability({ dirs, config: resolveShell(caps.shell) }));
 
   for (const spec of caps.extensions ?? []) {
     capabilities.push(await loadExtension(spec, options.base));
