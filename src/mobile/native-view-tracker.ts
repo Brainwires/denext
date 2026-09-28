@@ -98,6 +98,8 @@ export interface NativeViewFrame {
   readonly interactive: boolean;
   /** Regions (slot coordinates) that belong to the page: its DOM overlays. */
   readonly passthrough: readonly Box[];
+  /** `"embed"`: the marker of the slot's scroller, which the native side attaches the view to. */
+  readonly embedMarker?: number;
 }
 
 /** What `create` sends. */
@@ -180,6 +182,8 @@ export interface TrackedSlot {
   readonly id: string;
   readonly el: GeometryElement;
   readonly placement: NativeViewPlacement;
+  /** `"embed"`: the slot scroller's marker (a view taken over by a new slot re-attaches by it). */
+  readonly marker?: number;
   /** The DOM overlay container, whose children are passthrough regions. */
   overlay(): GeometryElement | null;
   /** Whether the view should show (the slot's `active` prop). */
@@ -465,6 +469,7 @@ export function measureSlot(
     covered,
     interactive: active && !covered,
     passthrough: passthroughOf(slot.overlay(), layoutBox),
+    ...(slot.placement === "embed" && slot.marker ? { embedMarker: slot.marker } : {}),
   };
 }
 
@@ -640,10 +645,18 @@ export function onNativeViewEvent(
 
 let typesCache: { plugin: NativeViewsPlugin; types: Promise<string[]> } | undefined;
 
-/** The view types the native side has registered (asked once per page). */
+/**
+ * The view types the native side has registered (asked once per page). The first ask also
+ * resets the plugin: views an earlier page left (a reload, an over-the-air UI switch) are
+ * removed before this page makes any. (A Fast Refresh keeps this module, so it keeps its views.)
+ */
 export function registeredTypes(plugin: NativeViewsPlugin): Promise<string[]> {
   if (typesCache?.plugin !== plugin) {
-    const types = plugin.types().then(
+    const reset = (plugin as { reset?: () => Promise<void> }).reset;
+    const fresh = typeof reset === "function"
+      ? Promise.resolve().then(() => reset.call(plugin)).catch(() => {})
+      : Promise.resolve();
+    const types = fresh.then(() => plugin.types()).then(
       (r) => Array.isArray(r?.types) ? r.types.filter((t) => typeof t === "string") : [],
       () => [],
     );

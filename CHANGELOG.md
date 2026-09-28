@@ -798,6 +798,15 @@ and this project adheres to
 
 ### Fixed
 
+- **Native views across reloads and hot updates.** A page reload (dev, `location.reload`, an OTA
+  UI switch) tears down every native view — iOS on the WebView's main-frame load, Android on
+  `Bridge.reset()`, plus a JS `reset()` before the first view — so no stale video/map is left
+  on screen tied to the old page's scroller. A Fast Refresh remount re-adopts the parked view
+  (same type + `viewKey` or slot position, 150 ms grace) instead of destroy + create, so video
+  playback and map regions survive edits; native re-binds to a replaced scroll container.
+  `denext mobile dev` / SPA dev running from a denext checkout also watches denext's own
+  `src/` and reloads on framework edits.
+
 - **Production SPAs install the class-component and `Activity` runtimes before the app renders.**
   The generated production entry put `installClassSupport()` after `import "./main.tsx"`; ES
   imports hoist, so an entry that renders synchronously (React Native's `AppRegistry` /

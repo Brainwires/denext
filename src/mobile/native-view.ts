@@ -27,6 +27,7 @@ import {
   pageTracker,
   registeredTypes,
 } from "./native-view-tracker.ts";
+import { parkView, slotIdentity, takeParked } from "./native-view-park.ts";
 
 export type { NativeViewPlacement } from "./native-view-tracker.ts";
 
@@ -52,6 +53,12 @@ export interface NativeViewSlotOptions {
   readonly placement?: NativeViewPlacementOption;
   /** `false` hides the native view without destroying it (default `true`). */
   readonly active?: boolean;
+  /**
+   * A stable key for the view: a slot that remounts with the same `type` and `viewKey` (a Fast
+   * Refresh, a re-keyed parent) keeps the native view and its state. Without it, the slot's
+   * place in the page is its identity.
+   */
+  readonly viewKey?: string;
   /** Events the native view sends (`ready`, `ended`, `regionChange`, …). */
   readonly onEvent?: (name: string, data: unknown) => void;
 }
@@ -130,6 +137,7 @@ interface Live {
   props: Readonly<Record<string, unknown>> | undefined;
   active: boolean;
   onEvent: NativeViewSlotOptions["onEvent"];
+  viewKey: string | undefined;
 }
 
 /** A slot's React state, shared by the hooks below. */
@@ -167,8 +175,10 @@ function usePlacement(
 }
 
 /**
- * Make the native view (a new id each time) and follow its slot; returns the teardown.
- * `placement` is the one asked for; the native side may answer with a fallback.
+ * Make the native view, or take over the one a slot of the same identity just left (a
+ * remount), and follow its slot; returns the teardown, which parks the view briefly rather than
+ * destroying it (see native-view-park.ts). `placement` is the one asked for; the native side may
+ * answer with a fallback.
  */
 function makeView(
   state: SlotState,
@@ -178,45 +188,53 @@ function makeView(
   placement: NativeViewPlacement,
 ): () => void {
   const { live } = state;
-  let made = false;
+  const identity = slotIdentity(type, el, live.viewKey);
+  const reused = takeParked(identity, plugin, placement);
+  let made = reused !== undefined;
   let gone = false;
+  let used = reused?.used ?? placement;
   // A new id per view: a slot re-made before the old view's destroy lands never collides.
-  const viewId = `${state.id}.${++live.made}`;
+  const viewId = reused?.viewId ?? `${state.id}.${++live.made}`;
   live.viewId = viewId;
   const stopEvents = onNativeViewEvent(plugin, viewId, (name, data) => live.onEvent?.(name, data));
   if (placement === "under") warnOpaqueAncestor(el);
-  const created = (r: { placement?: NativeViewPlacement } | undefined) => {
-    made = true;
-    if (gone) return void plugin.destroy({ id: viewId }).catch(() => {});
-    const used = r?.placement ?? placement;
+  const follow = () => {
     if (used !== placement) state.setPlacement(used);
     pageTracker(plugin).add({
       id: viewId,
       el: el as unknown as GeometryElement,
       placement: used,
+      marker: state.marker,
       overlay: () => live.overlay as unknown as GeometryElement | null,
       active: () => live.active,
     });
     state.setStatus("native");
   };
-  const failed = (err: unknown) => {
-    if (gone) return;
-    state.setError(messageOf(err));
-    state.setStatus("error");
-  };
-  const options = {
-    id: viewId,
-    type,
-    props: live.props ?? {},
-    placement,
-    embedMarker: state.marker,
-  };
-  plugin.create(options).then(created, failed);
+  if (reused) {
+    // The view keeps its state (a video's position, a map's region); it gets this slot's props.
+    plugin.setProps({ id: viewId, props: live.props ?? {} }).catch(() => {});
+    follow();
+  } else {
+    const created = (r: { placement?: NativeViewPlacement } | undefined) => {
+      made = true;
+      used = r?.placement ?? placement;
+      if (gone) return void parkView(identity, plugin, viewId, placement, used);
+      follow();
+    };
+    const failed = (err: unknown) => {
+      if (gone) return;
+      state.setError(messageOf(err));
+      state.setStatus("error");
+    };
+    const props = live.props ?? {};
+    plugin.create({ id: viewId, type, props, placement, embedMarker: state.marker })
+      .then(created, failed);
+  }
   return () => {
     gone = true;
     stopEvents();
     pageTracker(plugin).remove(viewId);
-    if (made) plugin.destroy({ id: viewId }).catch(() => {});
+    if (made) parkView(identity, plugin, viewId, placement, used);
   };
 }
 
@@ -264,10 +282,12 @@ export function useNativeViewSlot(
     props: undefined,
     active: true,
     onEvent: undefined,
+    viewKey: undefined,
   }).current;
   live.props = options.props;
   live.active = options.active !== false;
   live.onEvent = options.onEvent;
+  live.viewKey = options.viewKey;
   const state: SlotState = { id, marker, live, setStatus, setPlacement, setError };
 
   const ref = useCallback((node: Element | null) => setEl(node), []);
@@ -373,6 +393,7 @@ export function NativeViewSlot(props: NativeViewSlotProps): VNode {
     placement: placementOption,
     active,
     onEvent,
+    viewKey,
     onCommand,
     overlay,
     style,
@@ -384,6 +405,7 @@ export function NativeViewSlot(props: NativeViewSlotProps): VNode {
     placement: placementOption,
     active,
     onEvent,
+    viewKey,
   });
   const native = slot.status === "native" || slot.status === "pending";
   useEffect(() => {

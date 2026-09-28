@@ -204,6 +204,10 @@ export function App() {
       <VirtualList<Row>
         data={data}
         keyExtractor={(row) => row.id}
+        // The scroll position survives a reload and a remount (a dev edit, a Fast Refresh).
+        restoreKey="rows"
+        // The playing video stays mounted (and keeps playing) while scrolled out of view.
+        keepMounted={[12]}
         estimatedItemSize={72}
         style={{ flex: "1", minHeight: "0" }}
         renderItem={(row) =>

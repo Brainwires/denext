@@ -380,7 +380,7 @@ final class DenextNativeViewsRouter: UIView {
 final class DenextNativeViewSlot {
     let id: String
     var placement: String
-    let marker: CGFloat
+    var marker: CGFloat
     let factory: DenextNativeViewFactory
     let view: UIView
     let host = DenextNativeViewHost(frame: .zero)
@@ -436,7 +436,8 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         CAPPluginMethod(name: "update", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setProps", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "command", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "destroy", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "destroy", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "reset", returnType: CAPPluginReturnPromise)
     ]
 
     /// Factories denext may install, found by class name when present (native-map).
@@ -455,7 +456,20 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
     /// Main-thread only. contentOffset observations of every scroll view a slot moves with.
     private var observations: [ObjectIdentifier: NSKeyValueObservation] = [:]
 
+    /// The WebView started loading a page (a reload, a navigation, an over-the-air UI switch):
+    /// the page that owned the views is going, so they go too. (A same-document navigation, such
+    /// as the router's pushState, does not load.)
+    private var loading: NSKeyValueObservation?
+
     override public func load() {
+        loading = bridge?.webView?.observe(\\.isLoading, options: [.new]) { [weak self] webView, _ in
+            guard webView.isLoading else {
+                return
+            }
+            DispatchQueue.main.async {
+                self?.removeAllViews(reason: "page load")
+            }
+        }
         if DenextNativeViews.factory(for: "video") == nil {
             DenextNativeViews.register("video", DenextVideoViewFactory())
         }
@@ -481,6 +495,34 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
             return nil
         }
         return cls.init() as? DenextNativeViewFactory
+    }
+
+    /// reset(): a new page starts (the page calls it once, before its first view), so views a
+    /// previous page left behind are removed.
+    @objc func reset(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.removeAllViews(reason: "page start")
+            call.resolve()
+        }
+    }
+
+    /// Destroy every view (factories stop what they run; the video un-contains its controller),
+    /// stop following every scroll view, and re-enable the page's touches. Main thread.
+    private func removeAllViews(reason: String) {
+        if !slots.isEmpty {
+            DenextNativeViewsLog.log("removing \\(slots.count) views (\\(reason))")
+        }
+        for id in order {
+            if let slot = slots[id] {
+                slot.host.removeFromSuperview()
+                slot.factory.destroyView(slot.view)
+            }
+        }
+        slots.removeAll()
+        order.removeAll()
+        observations.removeAll()
+        scrollers.removeAll()
+        router?.resumeWebGestures()
     }
 
     @objc func types(_ call: CAPPluginCall) {
@@ -636,6 +678,23 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         }
     }
 
+    /// Attach an embedded slot again (its scroll view was replaced, or a new slot took it over),
+    /// retrying while WebKit has not made the new scroll view yet.
+    private func reattach(_ slot: DenextNativeViewSlot, attempt: Int) {
+        guard slots[slot.id] === slot, slot.host.superview == nil else {
+            return
+        }
+        if attach(slot) {
+            DenextNativeViewsLog.log("\\(slot.id) re-attached (marker \\(slot.marker))")
+            return
+        }
+        if attempt < Self.embedAttempts {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.reattach(slot, attempt: attempt + 1)
+            }
+        }
+    }
+
     /// Add slot's host to the WebKit scroll view whose content is marker px taller than its box.
     private func attach(_ slot: DenextNativeViewSlot) -> Bool {
         guard let root = bridge?.webView?.scrollView else {
@@ -763,10 +822,16 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         slot.host.interactive = frame["interactive"] as? Bool ?? true
         slot.passthrough = Self.rects(frame["passthrough"])
         if slot.placement == "embed" {
-            // The compositor moves and clips it; only a scroll view WebKit replaced needs work.
+            // The compositor moves and clips it; only a scroll view WebKit replaced, or a new slot
+            // that took the view over (another marker), needs work.
+            let marker = Self.number(frame["embedMarker"])
+            if marker > 0 && marker != slot.marker {
+                slot.marker = marker
+                slot.host.removeFromSuperview()
+            }
             if slot.host.window == nil {
                 slot.host.removeFromSuperview()
-                _ = attach(slot)
+                reattach(slot, attempt: 0)
             }
             slot.host.isHidden = !(frame["active"] as? Bool ?? true)
             slot.host.passthrough = slot.passthrough
@@ -820,11 +885,17 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         } else {
             let key = Int(Self.number(info["id"]))
             let size = CGSize(width: Self.number(info["width"]), height: Self.number(info["height"]))
-            if let cached = scrollers[key]?.view, cached.window != nil, Self.close(cached.bounds.size, size) {
+            let offset = CGPoint(x: Self.number(info["scrollLeft"]), y: Self.number(info["scrollTop"]))
+            if let cached = scrollers[key]?.view, cached.window != nil, Self.close(cached.bounds.size, size),
+               abs(cached.contentOffset.y - offset.y) < 200, abs(cached.contentOffset.x - offset.x) < 200 {
                 slot.scroller = cached
             } else {
-                slot.scroller = findScroller(info, in: webView)
-                scrollers[key] = DenextWeakScrollView(view: slot.scroller)
+                let found = findScroller(info, in: webView)
+                if found !== slot.scroller {
+                    DenextNativeViewsLog.log("\\(slot.id) scroller \\(key) -> \\(found.map { String(describing: type(of: $0)) } ?? "none")")
+                }
+                slot.scroller = found
+                scrollers[key] = DenextWeakScrollView(view: found)
             }
             slot.scrollerIsDocument = false
         }
@@ -857,13 +928,17 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
                 continue
             }
             stack.append(contentsOf: view.subviews)
-            guard let candidate = view as? UIScrollView, candidate !== webView.scrollView,
+            guard let candidate = view as? UIScrollView, candidate !== webView.scrollView, candidate.window != nil,
                   Self.close(candidate.bounds.size, size) else {
                 continue
             }
             let origin = candidate.convert(candidate.bounds.origin, to: webView)
+            // The page measured its scroll offset in the same frame: a scroll view WebKit replaced
+            // (a remount, a reload) or a same-sized sibling scrolled elsewhere scores worse.
+            let offset = abs(candidate.contentOffset.x - Self.number(info["scrollLeft"]))
+                + abs(candidate.contentOffset.y - Self.number(info["scrollTop"]))
             let score = abs(candidate.contentSize.width - content.width) + abs(candidate.contentSize.height - content.height)
-                + abs(origin.x - expected.x) + abs(origin.y - expected.y)
+                + abs(origin.x - expected.x) + abs(origin.y - expected.y) + offset
             if best == nil || score < best!.1 {
                 best = (candidate, score)
             }
@@ -1713,9 +1788,33 @@ public class DenextNativeViewsPlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        removeAllViews();
+        super.handleOnDestroy();
+    }
+
+    /**
+     * The bridge resets between navigations (a reload, a new page): the page that owned the
+     * views is gone, so they go too.
+     */
+    @Override
+    public void removeAllListeners() {
+        super.removeAllListeners();
+        main.post(this::removeAllViews);
+    }
+
+    /** {@code reset()}: a new page starts (it calls this before its first view). */
+    @PluginMethod
+    public void reset(PluginCall call) {
+        main.post(() -> {
+            removeAllViews();
+            call.resolve();
+        });
+    }
+
+    /** Main thread. Destroy every view. */
+    private void removeAllViews() {
         for (Slot slot : new ArrayList<>(slots.values())) remove(slot);
         slots.clear();
-        super.handleOnDestroy();
     }
 
     // Making and placing views (main thread).

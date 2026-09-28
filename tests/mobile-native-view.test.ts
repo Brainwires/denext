@@ -7,6 +7,7 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { NativeViewSlot, useNativeViewSlot } from "../src/mobile/mod.ts";
 import { nativeViewComponent } from "../src/mobile/native-view.ts";
+import { PARK_MS } from "../src/mobile/native-view-park.ts";
 import {
   clippingAncestors,
   clipsContent,
@@ -384,6 +385,14 @@ Deno.test("NativeViewSlot: iOS embeds the view in the slot's scroller; props, ev
 
     root.unmount();
     await tick();
+    const hide = views.calls.filter(([m]) => m === "update").at(-1)![1] as Any;
+    assertEquals([hide.frames[0].id, hide.frames[0].hidden], [create.id, true], "hidden at once");
+    assertEquals(
+      views.calls.filter(([m]) => m === "destroy").length,
+      0,
+      "parked, not yet destroyed",
+    );
+    await new Promise((r) => setTimeout(r, PARK_MS + 20));
     assertEquals(views.calls.filter(([m]) => m === "destroy").map(([, a]) => a), [{
       id: create.id,
     }]);
@@ -561,4 +570,46 @@ Deno.test("tracker: one stray covered sample does not hide the view; two in a ro
   fake.frame(); // the second covered answer in a row
   assertEquals([last().hidden, last().covered, last().interactive], [true, true, false]);
   tracker.remove("nv-a");
+});
+
+Deno.test("NativeViewSlot: a remount of the same slot takes the parked view over (Fast Refresh)", async () => {
+  const views = viewsPlugin(["video"], { placement: "under" });
+  await inShell("ios", { DenextNativeViews: views.plugin }, async () => {
+    pageTracker(views.plugin as Any, fakeEnv().env);
+    let generation = 0;
+    let src = "a.mp4";
+    // A new component each generation: what Fast Refresh does to an edited module.
+    const make = () => {
+      const g = ++generation;
+      return function Player() {
+        return h(NativeViewSlot as Any, { type: "video", props: { src, g } });
+      };
+    };
+    let Player = make();
+    const { rerender } = mount(() => h(Player as Any, null));
+    await tick();
+    await tick();
+    const creates = () => views.calls.filter(([m]) => m === "create");
+    assertEquals(creates().length, 1);
+    const id = (creates()[0][1] as Any).id;
+
+    Player = make();
+    src = "b.mp4";
+    rerender();
+    await tick();
+    await tick();
+    assertEquals(creates().length, 1, "no second view");
+    const props = views.calls.filter(([m]) => m === "setProps").at(-1)![1] as Any;
+    assertEquals(props, { id, props: { src: "b.mp4", g: 2 } }, "the kept view gets the new props");
+    await new Promise((r) => setTimeout(r, PARK_MS + 20));
+    assertEquals(views.calls.filter(([m]) => m === "destroy").length, 0, "never destroyed");
+  });
+});
+
+Deno.test("registeredTypes: a new page resets the plugin once, before asking for the types", async () => {
+  const views = fakePlugin(["types", "reset"], { types: { types: ["video"] } });
+  const { registeredTypes } = await import("../src/mobile/native-view-tracker.ts");
+  assertEquals(await registeredTypes(views.plugin as Any), ["video"]);
+  assertEquals(await registeredTypes(views.plugin as Any), ["video"]);
+  assertEquals(views.calls.map(([m]) => m), ["reset", "types"]);
 });

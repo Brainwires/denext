@@ -72,6 +72,14 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
      * rebuilds it. Always false outside React Native mode.
      */
     depsInvalidated: (changed: string[]) => reactNativeDepsInvalidated(st, changed),
+    /**
+     * A framework source changed (denext run from a checkout): drop the denext pre-bundles, so
+     * the next page load rebuilds them from the edited sources.
+     */
+    invalidateFramework: (): void => {
+      st.depsBuilt = null;
+      st.runtimeBuilt = null;
+    },
     stop: async (): Promise<void> => {
       await esbuild.stop().catch(() => {});
     },

@@ -13,6 +13,7 @@ import {
 } from "./dev-state.ts";
 import { classifySpaChange } from "./shared.ts";
 import { isSelfWrite } from "../self-writes.ts";
+import { isFrameworkPath, linkedFrameworkDir } from "./framework-watch.ts";
 
 function existingPaths(candidates: string[]): string[] {
   return candidates.filter((p) => {
@@ -97,9 +98,19 @@ function broadcastHmr(
 }
 
 /** Invalidate the cached bundle for a batch of edits and tell the clients what to do. */
-async function flushBatch(st: SpaDevState, batch: string[]): Promise<void> {
+async function flushBatch(
+  st: SpaDevState,
+  batch: string[],
+  framework: string | null,
+): Promise<void> {
   st.generation++;
   st.devDir = null;
+  // A framework source (denext run from a checkout): its pre-bundle is rebuilt on the reload.
+  if (batch.some((p) => isFrameworkPath(p, framework))) {
+    st.unbundled?.invalidateFramework();
+    broadcastFrame(st, "reload");
+    return;
+  }
   if (batch.length > 0 && await ensureUnbundled(st) && st.unbundled) {
     await unbundledAction(st, batch);
     return;
@@ -118,7 +129,12 @@ async function flushBatch(st: SpaDevState, batch: string[]): Promise<void> {
  */
 export function watch(st: SpaDevState): void {
   const { paths } = st;
-  const watched = existingPaths([resolve(st.entryPath, ".."), paths.publicDir]);
+  const framework = linkedFrameworkDir();
+  const watched = existingPaths([
+    resolve(st.entryPath, ".."),
+    paths.publicDir,
+    ...(framework ? [framework] : []),
+  ]);
   if (watched.length === 0) return;
   const watcher = Deno.watchFs(watched, { recursive: true });
   installShutdown(st, watcher);
@@ -137,7 +153,7 @@ export function watch(st: SpaDevState): void {
         debounce = setTimeout(() => {
           const batch = [...pending];
           pending.clear();
-          void flushBatch(st, batch);
+          void flushBatch(st, batch, framework);
         }, 60);
       }
     } catch { /* watcher closed on shutdown */ }
