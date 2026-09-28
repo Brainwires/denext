@@ -587,7 +587,9 @@ four documented bounds of the opt-in:
   (the cause is not yet known), and an `"over"` view hides while covered; `"under"` does not hide
   on occlusion (the page paints over it), so it is the placement to use.
   A slot a virtualized list unmounts destroys its view (a map loses its position; a video
-  restarts). Android is compiled, not run on a device or emulator.
+  restarts). A drag that starts on an `"under"` / `"over"` view scrolls the page only on iOS
+  (`scrollPassthrough`); on Android every touch on the view stays the view's. Android is
+  compiled, not run on a device or emulator.
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so

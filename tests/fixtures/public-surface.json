@@ -1368,6 +1368,7 @@
     "NativeSubscription:interface",
     "NativeViewPlacement:typeAlias",
     "NativeViewPlacementOption:typeAlias",
+    "NativeViewScrollPassthrough:typeAlias",
     "NativeViewSlot:function",
     "NativeViewSlotHandle:interface",
     "NativeViewSlotOptions:interface",

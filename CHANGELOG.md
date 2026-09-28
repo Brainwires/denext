@@ -134,7 +134,7 @@ and this project adheres to
   `DenextNativeViews` plugin (Swift + Java, registered with the other denext plugins), a
   registry of view factories (`DenextNativeViews.register(...)` or
   `plugins.DenextNativeViews.factories` in `capacitor.config`) and the built-in `video` view
-  (AVPlayerViewController with the system controls, drawn under the WebView by default on iOS so its controls behave as in any UIKit app; VideoView on Android); `denext mobile add native-map` adds `map` (MapKit /
+  (AVPlayerViewController with the system controls, drawn under the WebView by default on iOS so its controls behave as in any UIKit app; VideoView on Android). `scrollPassthrough` (iOS) lets a vertical drag that starts on a video scroll the list, with native momentum; a native view survives a Fast Refresh remount (`viewKey`), and a page reload removes the previous page's views; `denext mobile add native-map` adds `map` (MapKit /
   osmdroid, no API key). New example: `examples/native-views` (two maps and a video in a
   `VirtualList`). Docs: https://denext.dev/docs/mobile#native-views.
 - **`feature()` now folds on the SPA's denext-native path.** `mode: "spa"` bundled with

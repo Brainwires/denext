@@ -506,6 +506,7 @@ export {
   nativeViewEmbedScroller,
   type NativeViewPlacement,
   type NativeViewPlacementOption,
+  type NativeViewScrollPassthrough,
   NativeViewSlot,
   type NativeViewSlotHandle,
   type NativeViewSlotOptions,

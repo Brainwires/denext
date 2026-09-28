@@ -180,6 +180,195 @@ public enum DenextNativeViews {
     }
 }
 
+/// Scrolls the page from a drag that starts on an "under" or "over" view (scrollPassthrough):
+/// a pan on the host that begins only along the passthrough axis ("vertical": a mostly vertical
+/// drag), so a tap, a horizontal scrub or a pinch stays the native view's. Once it begins, the
+/// view's own touch tracking is cancelled and the drag moves the scroll view the slot follows
+/// (the same one the plugin observes, so the view moves with it in the same frame), with rubber
+/// banding past the ends and, on release, UIScrollView's momentum and bounce.
+final class DenextScrollForwarder: UIPanGestureRecognizer, UIGestureRecognizerDelegate {
+    /// "vertical", "horizontal" or "none".
+    var axis = "none"
+    /// The scroll view to drive (the one the slot follows).
+    var target: () -> UIScrollView? = { nil }
+    private weak var scrolling: UIScrollView?
+    private var start = CGPoint.zero
+    private var link: CADisplayLink?
+    private var velocity = CGPoint.zero
+    private var lastTick: CFTimeInterval = 0
+
+    init() {
+        super.init(target: nil, action: nil)
+        addTarget(self, action: #selector(panned))
+        delegate = self
+        // Cancelling touches in the view is what stops its controls tracking once we scroll.
+        cancelsTouchesInView = true
+        delaysTouchesBegan = false
+    }
+
+    // MARK: Which drags scroll the page
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard axis != "none", let view, let scroller = target() else {
+            return false
+        }
+        let t = translation(in: view)
+        let vertical = abs(t.y) > abs(t.x)
+        guard axis == "vertical" ? vertical : !vertical else {
+            return false
+        }
+        // Only when there is something to scroll along that axis.
+        return axis == "vertical"
+            ? scroller.contentSize.height > scroller.bounds.height
+            : scroller.contentSize.width > scroller.bounds.width
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        return true
+    }
+
+    // MARK: Dragging
+
+    @objc private func panned() {
+        switch state {
+        case .began:
+            stopMomentum()
+            scrolling = target()
+            start = scrolling?.contentOffset ?? .zero
+            cancelViewGestures()
+            DenextNativeViewsLog.log("scroll passthrough began (\\(axis))")
+        case .changed:
+            guard let scroller = scrolling, let view else {
+                return
+            }
+            let t = translation(in: view)
+            var offset = start
+            if axis == "vertical" {
+                offset.y = Self.rubberBand(start.y - t.y, Self.range(scroller, vertical: true), scroller.bounds.height)
+            } else {
+                offset.x = Self.rubberBand(start.x - t.x, Self.range(scroller, vertical: false), scroller.bounds.width)
+            }
+            scroller.contentOffset = offset
+        case .ended:
+            guard let view else {
+                return
+            }
+            let v = velocity(in: view)
+            startMomentum(CGPoint(x: axis == "vertical" ? 0 : -v.x, y: axis == "vertical" ? -v.y : 0))
+        case .cancelled, .failed:
+            startMomentum(.zero)
+        default:
+            break
+        }
+    }
+
+    /// Cancel what the native view is tracking (its own recognizers; its controls get
+    /// touchesCancelled from this recognizer's cancelsTouchesInView).
+    private func cancelViewGestures() {
+        guard let view else {
+            return
+        }
+        var stack: [UIView] = [view]
+        while let current = stack.popLast() {
+            for recognizer in current.gestureRecognizers ?? [] where recognizer !== self && recognizer.isEnabled {
+                if recognizer is DenextTouchWatcher {
+                    continue
+                }
+                recognizer.isEnabled = false
+                recognizer.isEnabled = true
+            }
+            stack.append(contentsOf: current.subviews)
+        }
+    }
+
+    // MARK: Momentum and bounce (UIScrollView's normal deceleration)
+
+    /// Stop a fling in progress (a new touch, or the page's own drag).
+    func stopMomentum() {
+        link?.invalidate()
+        link = nil
+    }
+
+    private func startMomentum(_ v: CGPoint) {
+        stopMomentum()
+        guard scrolling != nil else {
+            return
+        }
+        velocity = v
+        lastTick = CACurrentMediaTime()
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    @objc private func tick(_ link: CADisplayLink) {
+        guard let scroller = scrolling, !scroller.isTracking else {
+            return stopMomentum()
+        }
+        let now = CACurrentMediaTime()
+        let dt = min(max(now - lastTick, 0), 0.05)
+        lastTick = now
+        let vertical = axis == "vertical"
+        let range = Self.range(scroller, vertical: vertical)
+        var position = vertical ? scroller.contentOffset.y : scroller.contentOffset.x
+        var speed = vertical ? velocity.y : velocity.x
+        if position < range.lowerBound || position > range.upperBound {
+            // Past an end: spring back to it (critically damped), dropping the fling.
+            let limit = position < range.lowerBound ? range.lowerBound : range.upperBound
+            position = limit + (position - limit) * CGFloat(exp(-dt * 14))
+            speed = 0
+            if abs(position - limit) < 0.5 {
+                position = limit
+                stopMomentum()
+            }
+        } else {
+            // UIScrollView.DecelerationRate.normal: the speed keeps 0.998 of itself per ms.
+            let decay = CGFloat(pow(Double(UIScrollView.DecelerationRate.normal.rawValue), dt * 1000))
+            position += speed * CGFloat(dt)
+            speed *= decay
+            if position < range.lowerBound || position > range.upperBound {
+                // Overshoot a little, then the bounce above brings it back.
+                speed *= 0.2
+            }
+            if abs(speed) < 5 && position >= range.lowerBound && position <= range.upperBound {
+                stopMomentum()
+            }
+        }
+        velocity = vertical ? CGPoint(x: 0, y: speed) : CGPoint(x: speed, y: 0)
+        var offset = scroller.contentOffset
+        if vertical {
+            offset.y = position
+        } else {
+            offset.x = position
+        }
+        scroller.contentOffset = offset
+    }
+
+    // MARK: Geometry
+
+    /// The offsets a scroll view rests between on one axis.
+    static func range(_ s: UIScrollView, vertical: Bool) -> ClosedRange<CGFloat> {
+        let inset = s.adjustedContentInset
+        if vertical {
+            let low = -inset.top
+            return low...max(low, s.contentSize.height - s.bounds.height + inset.bottom)
+        }
+        let low = -inset.left
+        return low...max(low, s.contentSize.width - s.bounds.width + inset.right)
+    }
+
+    /// UIKit's rubber band: past an end, the offset moves less the further it goes.
+    static func rubberBand(_ offset: CGFloat, _ range: ClosedRange<CGFloat>, _ dimension: CGFloat) -> CGFloat {
+        let limit = offset < range.lowerBound ? range.lowerBound : (offset > range.upperBound ? range.upperBound : offset)
+        let over = offset - limit
+        guard over != 0, dimension > 0 else {
+            return offset
+        }
+        let banded = (1 - 1 / (abs(over) * 0.55 / dimension + 1)) * dimension
+        return limit + (over < 0 ? -banded : banded)
+    }
+}
+
 /// A native view's host: clips it to the slot's visible part and decides which touches it takes.
 final class DenextNativeViewHost: UIView {
     /// Whether touches over the host reach the view (false while page content covers the slot).
@@ -189,6 +378,8 @@ final class DenextNativeViewHost: UIView {
 
     /// Watches the touches on the view (never recognizing) to learn when they end.
     let touchWatcher = DenextTouchWatcher()
+    /// Scrolls the page from a drag along the slot's scrollPassthrough axis ("under" / "over").
+    let scrollForwarder = DenextScrollForwarder()
     /// The slot's id, for the log.
     var slotId = ""
     /// Placed inside WebKit's scroll view ("embed").
@@ -202,6 +393,7 @@ final class DenextNativeViewHost: UIView {
         clipsToBounds = true
         backgroundColor = .clear
         addGestureRecognizer(touchWatcher)
+        addGestureRecognizer(scrollForwarder)
     }
 
     required init?(coder: NSCoder) {
@@ -283,6 +475,12 @@ final class DenextNativeViewsRouter: UIView {
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let touch = event?.type == .touches
+        if touch {
+            // A new touch stops a fling a drag on a view started.
+            for host in hosts() {
+                host.scrollForwarder.stopMomentum()
+            }
+        }
         if covered() {
             if touch {
                 DenextNativeViewsLog.log("router \\(point): a presented controller covers the page, skipped")
@@ -629,6 +827,13 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         let view = factory.makeView(context: context, props: props)
         let slot = DenextNativeViewSlot(id: id, placement: placement, marker: marker, factory: factory, view: view)
         slot.host.slotId = id
+        slot.host.scrollForwarder.axis = placement == "embed" ? "none" : (call.getString("scrollPassthrough") ?? "none")
+        slot.host.scrollForwarder.target = { [weak self, weak slot] in
+            guard let slot, slot.placement != "embed" else {
+                return nil
+            }
+            return slot.scroller ?? self?.bridge?.webView?.scrollView
+        }
         slot.host.touchWatcher.onEnd = { [weak self] in self?.router?.resumeWebGestures() }
         context.resumeTouches = { [weak self] in self?.router?.resumeWebGestures() }
         context.setPresenting = { [weak slot] presenting in
@@ -840,6 +1045,9 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         slot.content = Self.rect(frame["content"] as? JSObject ?? [:])
         slot.localClip = (frame["localClip"] as? JSObject).map(Self.rect)
         slot.hiddenByPage = frame["hidden"] as? Bool ?? false
+        if let axis = frame["scrollPassthrough"] as? String {
+            slot.host.scrollForwarder.axis = axis
+        }
         slot.screenBox = Self.rect(frame)
         slot.screenClip = (frame["clip"] as? JSObject).map(Self.rect)
         if let scroller = frame["scroller"] as? JSObject {

@@ -100,7 +100,16 @@ export interface NativeViewFrame {
   readonly passthrough: readonly Box[];
   /** `"embed"`: the marker of the slot's scroller, which the native side attaches the view to. */
   readonly embedMarker?: number;
+  /** Which drags on the view scroll the page (see {@linkcode NativeViewScrollPassthrough}). */
+  readonly scrollPassthrough?: NativeViewScrollPassthrough;
 }
+
+/**
+ * Which drags that start on an `"under"` / `"over"` view scroll the page instead: `"vertical"`
+ * (a mostly vertical drag; taps and horizontal drags stay the view's), `"horizontal"`, or
+ * `"none"` (every touch is the view's).
+ */
+export type NativeViewScrollPassthrough = "vertical" | "horizontal" | "none";
 
 /** What `create` sends. */
 export interface NativeViewCreateOptions {
@@ -110,6 +119,8 @@ export interface NativeViewCreateOptions {
   readonly placement: NativeViewPlacement;
   /** `"embed"`: the slot's scroller is this many px taller than its box (how iOS finds it). */
   readonly embedMarker?: number;
+  /** Which drags on the view scroll the page. */
+  readonly scrollPassthrough?: NativeViewScrollPassthrough;
 }
 
 /** The JS surface of the native `DenextNativeViews` plugin (`denext mobile add native-views`). */
@@ -184,6 +195,8 @@ export interface TrackedSlot {
   readonly placement: NativeViewPlacement;
   /** `"embed"`: the slot scroller's marker (a view taken over by a new slot re-attaches by it). */
   readonly marker?: number;
+  /** Which drags on the view scroll the page (read each measurement). */
+  scrollPassthrough?(): NativeViewScrollPassthrough;
   /** The DOM overlay container, whose children are passthrough regions. */
   overlay(): GeometryElement | null;
   /** Whether the view should show (the slot's `active` prop). */
@@ -470,6 +483,7 @@ export function measureSlot(
     interactive: active && !covered,
     passthrough: passthroughOf(slot.overlay(), layoutBox),
     ...(slot.placement === "embed" && slot.marker ? { embedMarker: slot.marker } : {}),
+    ...(slot.scrollPassthrough ? { scrollPassthrough: slot.scrollPassthrough() } : {}),
   };
 }
 

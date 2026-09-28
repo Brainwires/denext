@@ -789,6 +789,16 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
         <code>status</code>, <code>placement</code> and <code>command</code>).
       </p>
       <p>
+        <code>scrollPassthrough</code> (iOS) decides which drags that start on an{" "}
+        <code>"under"</code> or <code>"over"</code> view scroll the page instead:{" "}
+        <code>"vertical"</code> (the default for{" "}
+        <code>video</code>: a mostly vertical drag scrolls the list, with the page&apos;s own
+        momentum and bounce, while taps and horizontal scrubs stay the player&apos;s),{" "}
+        <code>"horizontal"</code>, or <code>"none"</code>{" "}
+        (the default otherwise, so a map pans on any drag). The slot gets the matching CSS{" "}
+        <code>touch-action</code>.
+      </p>
+      <p>
         Where the view is drawn (<code>placement</code>, default <code>"auto"</code>):
       </p>
       <ul>

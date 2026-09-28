@@ -21,6 +21,7 @@ import { nativePlatform } from "./bridge.ts";
 import type { GeometryElement } from "./native-view-geometry.ts";
 import {
   type NativeViewPlacement,
+  type NativeViewScrollPassthrough,
   type NativeViewsPlugin,
   nativeViewsPlugin,
   onNativeViewEvent,
@@ -29,7 +30,7 @@ import {
 } from "./native-view-tracker.ts";
 import { parkView, slotIdentity, takeParked } from "./native-view-park.ts";
 
-export type { NativeViewPlacement } from "./native-view-tracker.ts";
+export type { NativeViewPlacement, NativeViewScrollPassthrough } from "./native-view-tracker.ts";
 
 /**
  * Where a slot's native view is drawn: a {@linkcode NativeViewPlacement}, or `"auto"` (`"embed"`
@@ -59,6 +60,12 @@ export interface NativeViewSlotOptions {
    * place in the page is its identity.
    */
   readonly viewKey?: string;
+  /**
+   * Which drags that start on an `"under"` / `"over"` view scroll the page instead (iOS):
+   * `"vertical"` (the default for `video`: taps and horizontal scrubs stay the player's),
+   * `"horizontal"`, or `"none"` (the default otherwise: a map pans on any drag).
+   */
+  readonly scrollPassthrough?: NativeViewScrollPassthrough;
   /** Events the native view sends (`ready`, `ended`, `regionChange`, …). */
   readonly onEvent?: (name: string, data: unknown) => void;
 }
@@ -105,6 +112,22 @@ function resolvePlacement(
   return UNDER_TYPES.has(type) ? "under" : "embed";
 }
 
+/** View types a vertical drag scrolls the page over by default (a player's taps stay its own). */
+const VERTICAL_PASSTHROUGH_TYPES: ReadonlySet<string> = new Set(["video"]);
+
+/** The `scrollPassthrough` in effect for `type`. */
+function scrollPassthroughFor(
+  type: string,
+  option: NativeViewScrollPassthrough | undefined,
+): NativeViewScrollPassthrough {
+  return option ?? (VERTICAL_PASSTHROUGH_TYPES.has(type) ? "vertical" : "none");
+}
+
+/** The CSS `touch-action` that matches a `scrollPassthrough`. */
+function touchActionFor(passthrough: NativeViewScrollPassthrough): string | undefined {
+  return passthrough === "vertical" ? "pan-y" : passthrough === "horizontal" ? "pan-x" : undefined;
+}
+
 /** A rejection's message. */
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -138,6 +161,7 @@ interface Live {
   active: boolean;
   onEvent: NativeViewSlotOptions["onEvent"];
   viewKey: string | undefined;
+  scrollPassthrough: NativeViewScrollPassthrough;
 }
 
 /** A slot's React state, shared by the hooks below. */
@@ -205,6 +229,7 @@ function makeView(
       el: el as unknown as GeometryElement,
       placement: used,
       marker: state.marker,
+      scrollPassthrough: () => live.scrollPassthrough,
       overlay: () => live.overlay as unknown as GeometryElement | null,
       active: () => live.active,
     });
@@ -227,7 +252,15 @@ function makeView(
       state.setStatus("error");
     };
     const props = live.props ?? {};
-    plugin.create({ id: viewId, type, props, placement, embedMarker: state.marker })
+    const scrollPassthrough = live.scrollPassthrough;
+    plugin.create({
+      id: viewId,
+      type,
+      props,
+      placement,
+      embedMarker: state.marker,
+      scrollPassthrough,
+    })
       .then(created, failed);
   }
   return () => {
@@ -283,11 +316,13 @@ export function useNativeViewSlot(
     active: true,
     onEvent: undefined,
     viewKey: undefined,
+    scrollPassthrough: "none",
   }).current;
   live.props = options.props;
   live.active = options.active !== false;
   live.onEvent = options.onEvent;
   live.viewKey = options.viewKey;
+  live.scrollPassthrough = scrollPassthroughFor(type, options.scrollPassthrough);
   const state: SlotState = { id, marker, live, setStatus, setPlacement, setError };
 
   const ref = useCallback((node: Element | null) => setEl(node), []);
@@ -394,6 +429,7 @@ export function NativeViewSlot(props: NativeViewSlotProps): VNode {
     active,
     onEvent,
     viewKey,
+    scrollPassthrough,
     onCommand,
     overlay,
     style,
@@ -406,7 +442,10 @@ export function NativeViewSlot(props: NativeViewSlotProps): VNode {
     active,
     onEvent,
     viewKey,
+    scrollPassthrough,
   });
+  const passthrough = scrollPassthroughFor(type, scrollPassthrough);
+  const touchAction = touchActionFor(passthrough);
   const native = slot.status === "native" || slot.status === "pending";
   useEffect(() => {
     if (slot.status !== "native" || !onCommand) return;
@@ -420,7 +459,13 @@ export function NativeViewSlot(props: NativeViewSlotProps): VNode {
       ref: slot.ref,
       "data-denext-native-view": type,
       "data-status": slot.status,
-      style: { position: "relative", ...(native ? { background: "transparent" } : {}), ...style },
+      "data-scroll-passthrough": passthrough,
+      style: {
+        position: "relative",
+        ...(native ? { background: "transparent" } : {}),
+        ...(touchAction ? { "touch-action": touchAction } : {}),
+        ...style,
+      },
     },
     native ? null : children,
     native && slot.placement === "embed" ? nativeViewEmbedScroller(slot.embedMarker) : null,

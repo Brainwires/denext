@@ -613,3 +613,40 @@ Deno.test("registeredTypes: a new page resets the plugin once, before asking for
   assertEquals(await registeredTypes(views.plugin as Any), ["video"]);
   assertEquals(views.calls.map(([m]) => m), ["reset", "types"]);
 });
+
+Deno.test("NativeViewSlot: scrollPassthrough defaults per type, reaches create and the frames", async () => {
+  const views = viewsPlugin(["video", "map"], { placement: "under" });
+  await inShell("ios", { DenextNativeViews: views.plugin }, async () => {
+    pageTracker(views.plugin as Any, fakeEnv().env);
+    const { container } = mount(() =>
+      h(
+        "div",
+        null,
+        h(NativeViewSlot as Any, { type: "video", placement: "under" }),
+        h(NativeViewSlot as Any, { type: "map", placement: "under" }),
+        h(NativeViewSlot as Any, {
+          type: "map",
+          placement: "under",
+          scrollPassthrough: "horizontal",
+        }),
+      )
+    );
+    await tick();
+    await tick();
+    const creates = views.calls.filter(([m]) => m === "create").map(([, a]) =>
+      (a as Any).scrollPassthrough
+    );
+    assertEquals(creates, ["vertical", "none", "horizontal"]);
+    const [video, map, sideways] = container.firstChild.childNodes;
+    assertEquals(video.getAttribute("data-scroll-passthrough"), "vertical");
+    assertEquals(video.style.getPropertyValue("touch-action"), "pan-y");
+    assertEquals(map.style.getPropertyValue("touch-action"), "");
+    assertEquals(sideways.style.getPropertyValue("touch-action"), "pan-x");
+  });
+  const el = box(0, 0, 100, 100);
+  const frame = measureSlot(fakeEnv(() => el).env, {
+    ...slotOf(el, "under"),
+    scrollPassthrough: () => "vertical",
+  }, []);
+  assertEquals(frame.scrollPassthrough, "vertical");
+});
