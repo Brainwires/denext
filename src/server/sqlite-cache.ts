@@ -403,6 +403,26 @@ class SqliteCache implements CacheStore {
     });
   }
 
+  sweepPages(keep: string): number {
+    const d = this.#getDb();
+    // A prefix compare, not LIKE: no wildcard in the kept prefix can widen the match.
+    const other = "substr(key, 1, ?) <> ?";
+    const params: SqlValue[] = [keep.length, keep];
+    const n = d.query<{ n: number }>(`SELECT COUNT(*) AS n FROM pages WHERE ${other}`, params)[0]
+      ?.n ?? 0;
+    if (n === 0) return 0;
+    // The swept pages' tag rows go with them (the tags table has no cap of its own); the data
+    // table and the kept pages' tags are untouched.
+    tx(d, () => {
+      d.exec(
+        `DELETE FROM tags WHERE ns = 'page' AND key IN (SELECT key FROM pages WHERE ${other})`,
+        params,
+      );
+      d.exec(`DELETE FROM pages WHERE ${other}`, params);
+    });
+    return n;
+  }
+
   deleteByPath(urlPath: string): void {
     const d = this.#getDb();
     // Delete the affected pages' tag rows first (in one tx), then the pages. The `tags`

@@ -48,6 +48,7 @@ interface CacheStore {
   deleteByTag(tag: string): void | Promise<void>;
   deleteByPath(path: string): void | Promise<void>;
   expireByTag?(tag: string, timing: CacheEntryTiming): void | Promise<void>; // SWR soft-expire; optional
+  sweepPages?(keep: string): number | Promise<number>; // drop other builds' pages; optional
 }
 ```
 
@@ -125,6 +126,30 @@ export const redisCacheStore: CacheStore = {
 import { redisCacheStore } from "./lib/redis-cache.ts";
 export default { cache: { store: redisCacheStore } };
 ```
+
+### Page keys and builds
+
+Rendered pages are keyed per build: `denext build` records a `buildId` in
+`.denext/manifest.json` and `denext start` reads and writes page keys of the form
+`v2:<buildId>:<path>?<query>` (the `v2` is the page-cache format). A cached page names its
+build's hashed client chunks, so a new deploy never serves the previous build's pages; data
+entries (`unstable_cache`, `cachedFetch`, `"use cache"`) are not keyed by build. The id is
+random per build unless `DENEXT_BUILD_ID` is set at build time — set it (to the commit sha,
+say) when replicas are built separately and must share one store's pages.
+
+Once after startup, off the request path, `denext start` deletes the pages of other builds
+and older formats from its store, through the store's optional `sweepPages(keep)`: delete every
+**page** whose key does not start with `keep` (this build's `v2:<buildId>:` prefix), never a
+data entry, and return the count. It sweeps the in-memory store and the default
+`.denext/cache.db` always (only this build uses them; `denext build` empties that file anyway,
+so it holds old pages only when it outlived the build, as on a mounted volume), but a store
+other servers may share — a
+custom store, or an explicit `cache.path` — only when the build id was pinned with
+`DENEXT_BUILD_ID`: separately built replicas with random ids would otherwise delete each other's
+live pages on every restart. A store without `sweepPages` is never swept; its other builds'
+pages are unreachable and age out through its own expiry and eviction. In the Redis sketch,
+`sweepPages` would `SCAN` the `page:*` keys and delete those not under `page:<keep>`.
+`DENEXT_DEBUG_CACHE=1` logs the sweep's count.
 
 The sketch shows the _shape_ of a tag index, not a tested driver — `DataEntry`
 is `{ value, expiresAt, staleAt?, tags }` and `CachedPage` is the full HTML

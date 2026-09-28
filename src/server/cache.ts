@@ -114,6 +114,15 @@ export interface CacheStore {
    * this falls back to a hard {@link deleteByTag} (correct, just not SWR).
    */
   expireByTag?(tag: string, timing: CacheEntryTiming): void | Promise<void>;
+  /**
+   * Optional: delete every cached **page** whose key does not start with `keep` — the
+   * entries of other builds and older page-cache formats, which a {@link PageCache} never
+   * reads again. `denext start` passes its own prefix (`v2:<buildId>:`) once, after startup.
+   * Data entries (`unstable_cache` / `"use cache"`) and the kept pages' tags are untouched.
+   * Returns how many pages were deleted. A store that omits this is never swept; its
+   * unreachable pages age out through its own eviction.
+   */
+  sweepPages?(keep: string): number | Promise<number>;
 }
 
 // Bound the in-memory caches so high-cardinality keys (e.g. many distinct query
@@ -291,6 +300,16 @@ class InMemoryCache implements CacheStore {
   expireByTag(tag: string, timing: CacheEntryTiming): void {
     this.#data.expireByTag(tag, timing);
     this.#pages.expireByTag(tag, timing);
+  }
+
+  sweepPages(keep: string): number {
+    let swept = 0;
+    for (const key of [...this.#pages.entries.keys()]) {
+      if (key.startsWith(keep)) continue;
+      this.#pages.delete(key);
+      swept++;
+    }
+    return swept;
   }
 }
 
@@ -1468,6 +1487,27 @@ const PAGE_CACHE_FORMAT = 2;
  */
 export function pageStoreKey(key: string, buildId?: string): string {
   return buildId ? `v${PAGE_CACHE_FORMAT}:${buildId}:${key}` : `v${PAGE_CACHE_FORMAT}:${key}`;
+}
+
+/**
+ * Delete the active store's page-cache entries of every build but `buildId` (and of older
+ * formats) — see {@link CacheStore.sweepPages}. A store without the method is left alone. A
+ * store error is logged, never thrown (the sweep is housekeeping).
+ *
+ * @param buildId The running build's id.
+ * @returns How many pages were deleted, or undefined when the store can't sweep (or failed).
+ */
+export async function sweepOtherBuildPages(buildId: string): Promise<number | undefined> {
+  const store = currentCacheStore;
+  if (!store.sweepPages) return undefined;
+  try {
+    const swept = await store.sweepPages(pageStoreKey("", buildId));
+    if (debugCache()) console.error(`denext: page cache swept ${swept} stale page(s)`);
+    return swept;
+  } catch (err) {
+    logCacheError("sweepPages", err);
+    return undefined;
+  }
 }
 
 /**

@@ -79,7 +79,7 @@ export function createFakeDesktopRuntime(
     if (req.method !== "POST") return fail(405, "forbidden", "POST only");
     if (req.headers.get("origin") !== origin) return fail(403, "forbidden", "origin");
     const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    return type === "application/json" ? undefined : fail(403, "forbidden", "content type");
+    return type === "application/json" ? undefined : fail(415, "forbidden", "content type");
   }
 
   /** The allowlisted method for a parsed body, if any. */

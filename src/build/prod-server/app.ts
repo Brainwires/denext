@@ -6,7 +6,12 @@ import { timed } from "../../runtime/timing.ts";
 import { getPluginRequestHandler } from "../../plugin/mod.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { createApp } from "../../server/app.ts";
-import { PageCache, resolveDefaultCacheStore } from "../../server/cache.ts";
+import {
+  cacheStoreKind,
+  PageCache,
+  resolveDefaultCacheStore,
+  sweepOtherBuildPages,
+} from "../../server/cache.ts";
 import {
   resolveCacheComponents,
   resolveConfigRules,
@@ -90,6 +95,37 @@ async function warmRouteModules(manifest: RouteManifest, load: ModuleLoader): Pr
 }
 
 /**
+ * Whether this server may delete other builds' pages from its page store. Always for a store
+ * only this build uses: the in-memory store, or the default node:sqlite file in this build's
+ * own `.denext`. For a store other servers may share (a custom store, or an explicit
+ * `cache.path`), only when the build id was pinned with `DENEXT_BUILD_ID`: replicas built
+ * separately with random ids would otherwise delete each other's live pages on every
+ * restart. With a pinned id, the replicas of a release share it, so only other releases'
+ * pages go (during a rolling deploy an old replica loses its cache once — misses, never wrong
+ * content).
+ */
+export function mayOwnPageStore(
+  info: Pick<BuildInfo, "buildIdPinned">,
+  kind: ReturnType<typeof cacheStoreKind>,
+  explicitPath: boolean,
+): boolean {
+  if (info.buildIdPinned) return true;
+  return kind === "memory" || (kind === "sqlite" && !explicitPath);
+}
+
+/**
+ * Once, after startup and off the request path (the promise is not awaited): delete the page
+ * cache's entries of other builds and older formats, which this build never reads (see
+ * `PageCache`) but which would otherwise occupy the store until its eviction reached them.
+ * `DENEXT_DEBUG_CACHE=1` logs the count.
+ */
+function sweepStalePagesAfterStartup(paths: ProjectPaths, info: BuildInfo): void {
+  const buildId = info.buildId;
+  if (!buildId || !mayOwnPageStore(info, cacheStoreKind(), !!paths.config?.cache?.path)) return;
+  void Promise.resolve().then(() => sweepOtherBuildPages(buildId));
+}
+
+/**
  * Build the request handler: middleware, instrumentation (`NEXT_RUNTIME`, `register()`
  * once at boot, `onRequestError`, `onRequest`), the denext.config redirect/rewrite/header rules, the
  * durable default cache store (node:sqlite in THIS project's .denext — separate apps never
@@ -120,6 +156,7 @@ export async function createProdApp(
       ? paths.config.cache
       : { ...paths.config?.cache, path: join(paths.outDir, "cache.db") },
   );
+  sweepStalePagesAfterStartup(paths, info);
   const appHandler = createApp({
     getManifest: () => manifest,
     load,

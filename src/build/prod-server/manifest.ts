@@ -43,6 +43,8 @@ export interface BuildInfo {
   boundary?: { routes: Set<string>; manifest: BoundaryManifest };
   /** The build's id (keys its cached pages); absent for a build that predates it. */
   buildId?: string;
+  /** The id came from `DENEXT_BUILD_ID` (deliberate and shared by replicas), not at random. */
+  buildIdPinned?: boolean;
 }
 
 /** Read the build manifest; a missing/invalid one means "nothing static, no compat". */
@@ -63,6 +65,7 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
     info.nextCompat = bm.nextCompat === true;
     if (typeof bm.buildId === "string" && bm.buildId) info.buildId = bm.buildId;
+    info.buildIdPinned = bm.buildIdPinned === true;
     if (bm.boundary && typeof bm.boundary === "object" && Array.isArray(bm.boundaryRoutes)) {
       info.boundary = {
         routes: new Set<string>(bm.boundaryRoutes),

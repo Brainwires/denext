@@ -95,10 +95,13 @@ function buildManifestFor(
   publicEnvKeys: string[],
   fonts: Record<string, string>,
 ) {
+  const pinnedId = envBuildId()?.trim();
   return {
     version: 1,
-    // Keys this build's cached pages (the prod server passes it to `PageCache`).
-    buildId: resolveBuildId(envBuildId()),
+    // Keys this build's cached pages (the prod server passes it to `PageCache`). A pinned id
+    // (`DENEXT_BUILD_ID`) also lets `denext start` sweep other builds from a shared store.
+    buildId: resolveBuildId(pinnedId),
+    ...(pinnedId ? { buildIdPinned: true } : {}),
     generatedRoutes: ctx.routes,
     flight: ctx.hasFlight,
     boundaryRoutes: ctx.boundaryRoutes.map((p) => p.routePath),
