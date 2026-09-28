@@ -27,6 +27,7 @@ import { fsCapability } from "./fs.ts";
 import { sqliteCapability } from "./sqlite.ts";
 import { shellCapability, type ShellCapabilityConfig } from "./shell.ts";
 import { keepAwakeCapability } from "./keep-awake.ts";
+import { secureStoreCapability } from "./secure-store.ts";
 
 /** The app-support subdirectory name when the config gives no identifier (matches the updater). */
 const DEFAULT_APP_ID = "denext-desktop";
@@ -140,6 +141,7 @@ export async function resolveDesktopCapabilities(
   if (caps.sqlite) capabilities.push(sqliteCapability(dirs.data));
   if (caps.shell) capabilities.push(shellCapability({ dirs, config: resolveShell(caps.shell) }));
   if (caps.keepAwake) capabilities.push(keepAwakeCapability());
+  if (caps.secureStore) capabilities.push(secureStoreCapability({ service: appId }));
 
   for (const spec of caps.extensions ?? []) {
     capabilities.push(await loadExtension(spec, options.base));

@@ -11,6 +11,11 @@ import { fsCapability } from "../src/desktop/caps/fs.ts";
 import { sqliteCapability } from "../src/desktop/caps/sqlite.ts";
 import { shellCapability, shellPathCommand } from "../src/desktop/caps/shell.ts";
 import { keepAwakeCapability } from "../src/desktop/caps/keep-awake.ts";
+import {
+  type SecureRunner,
+  secureStoreCapability,
+  secureStoreCommand,
+} from "../src/desktop/caps/secure-store.ts";
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import type { DesktopAppDirs } from "../src/desktop/app-dirs.ts";
 
@@ -400,6 +405,74 @@ Deno.test("keepAwake: one OS assertion is held while any hold is active (ref-cou
   assertEquals(stops, 1);
 });
 
+// --- secureStore -------------------------------------------------------------
+
+Deno.test("secureStoreCommand: per-OS argv; the secret is argv on macOS, stdin on Linux", () => {
+  const mac = secureStoreCommand("darwin", "set", "svc", "tok", "QjY0");
+  assertEquals(mac.cmd, "security");
+  assert(mac.args.includes("add-generic-password") && mac.args.includes("-U"));
+  assertEquals(mac.args[mac.args.indexOf("-w") + 1], "QjY0");
+  assertEquals(mac.stdin, undefined);
+  assertEquals(secureStoreCommand("darwin", "get", "svc", "tok").args[0], "find-generic-password");
+
+  const lin = secureStoreCommand("linux", "set", "svc", "tok", "QjY0");
+  assertEquals(lin.cmd, "secret-tool");
+  assertEquals(lin.args[0], "store");
+  assertEquals(lin.stdin, "QjY0"); // secret on stdin, never argv
+  assert(!lin.args.includes("QjY0"));
+  assertEquals(secureStoreCommand("linux", "get", "svc", "tok").args[0], "lookup");
+});
+
+/** A fake macOS `security` backing an in-memory keychain, for the handler round-trip. */
+function darwinKeychain(): { run: SecureRunner; store: Map<string, string> } {
+  const store = new Map<string, string>();
+  const after = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
+  const run: SecureRunner = (_cmd, args) => {
+    const op = args[0];
+    const key = after(args, "-a");
+    if (op === "add-generic-password") {
+      store.set(key, after(args, "-w"));
+      return Promise.resolve({ code: 0, stdout: "" });
+    }
+    if (op === "find-generic-password") {
+      return Promise.resolve(
+        store.has(key) ? { code: 0, stdout: `${store.get(key)}\n` } : { code: 44, stdout: "" },
+      );
+    }
+    return Promise.resolve({ code: store.delete(key) ? 0 : 44, stdout: "" }); // delete-generic-password
+  };
+  return { run, store };
+}
+
+Deno.test("secureStore: set/get round-trips a value with newlines and unicode (base64-wrapped)", async () => {
+  const { run } = darwinKeychain();
+  const cap = secureStoreCapability({ service: "com.example.app", os: "darwin", run });
+  const secret = 'line1\nline2 🔒 "quotes"';
+  await call(cap, "set", { key: "token", value: secret });
+  assertEquals(await call(cap, "get", { key: "token" }), secret);
+  assertEquals(await call(cap, "get", { key: "absent" }), null);
+  await call(cap, "delete", { key: "token" });
+  assertEquals(await call(cap, "get", { key: "token" }), null);
+});
+
+Deno.test("secureStore SECURITY: Windows fails closed (never a plaintext fallback)", async () => {
+  const cap = secureStoreCapability({
+    service: "svc",
+    os: "windows",
+    run: () => {
+      throw new Error("the runner must not be called on the unsupported platform");
+    },
+  });
+  for (
+    const [m, a] of [["get", { key: "k" }], ["set", { key: "k", value: "v" }], ["delete", {
+      key: "k",
+    }]] as const
+  ) {
+    const err = await assertRejects(() => call(cap, m, a), DesktopCapError);
+    assertEquals(err.code, "unsupported_platform");
+  }
+});
+
 // --- resolver ----------------------------------------------------------------
 
 Deno.test("resolver: no desktop config → no capabilities (default deny)", async () => {
@@ -411,11 +484,18 @@ Deno.test("resolver: no desktop config → no capabilities (default deny)", asyn
 Deno.test("resolver: maps enabled built-ins; echo off unless explicitly true", async () => {
   const r = await resolveDesktopCapabilities({
     desktop: {
-      capabilities: { device: true, fs: true, sqlite: true, shell: true, keepAwake: true },
+      capabilities: {
+        device: true,
+        fs: true,
+        sqlite: true,
+        shell: true,
+        keepAwake: true,
+        secureStore: true,
+      },
     },
   });
   const names = r.capabilities.map((c) => c.name).sort();
-  assertEquals(names, ["device", "fs", "keepAwake", "shell", "sqlite"]);
+  assertEquals(names, ["device", "fs", "keepAwake", "secureStore", "shell", "sqlite"]);
   // echo is a diagnostic — only when capabilities.echo === true.
   const withEcho = await resolveDesktopCapabilities({ desktop: { capabilities: { echo: true } } });
   assertEquals(withEcho.capabilities.map((c) => c.name), ["echo"]);
