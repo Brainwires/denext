@@ -28,8 +28,14 @@ export interface DesktopAppDirs {
   readonly documents: string;
 }
 
-/** Read an env var (trying the lowercase spelling too), or undefined without permission. */
-function env(name: string): string | undefined {
+/** The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling). */
+export type DesktopOsName = "darwin" | "windows" | "linux";
+
+/**
+ * Read an env var (trying the lowercase spelling too), or undefined without permission. The
+ * canonical copy shared by the desktop runtime modules (the updater imports it too).
+ */
+export function env(name: string): string | undefined {
   try {
     return Deno.env.get(name) ?? Deno.env.get(name.toLowerCase()) ?? undefined;
   } catch {
@@ -48,44 +54,66 @@ function nonEmpty(value: string | undefined): string | undefined {
 }
 
 /**
- * The `data` / `cache` / `documents` roots for `appId` on the running OS, each `join`ed with
- * `appId` so two apps never share a folder:
+ * The per-OS app DATA root for `appId` (the app-support parent), the single source of the
+ * layout the updater (`<data>/ui-updates`) and the `fs`/`sqlite` capabilities both build on:
  *
- * - macOS: `~/Library/Application Support/<id>`, `~/Library/Caches/<id>`, `~/Documents/<id>`.
- * - Windows: `%APPDATA%/<id>`, `%LOCALAPPDATA%/<id>/Cache`, `~/Documents/<id>`.
- * - Linux: `$XDG_DATA_HOME|~/.local/share /<id>`, `$XDG_CACHE_HOME|~/.cache /<id>`,
- *   `$XDG_DOCUMENTS_DIR|~/Documents /<id>`.
+ * - macOS: `~/Library/Application Support/<id>`.
+ * - Windows: `%APPDATA%|~/AppData/Roaming /<id>`.
+ * - Linux: `$XDG_DATA_HOME|~/.local/share /<id>`.
+ *
+ * @param appId The app identifier.
+ * @param os The target OS (defaults to the running one; a param so every branch is unit-tested).
+ * @returns The absolute data root (not created).
+ */
+export function osDataDir(
+  appId: string,
+  os: DesktopOsName = Deno.build.os as DesktopOsName,
+): string {
+  const home = homeDir();
+  if (os === "darwin") return join(home, "Library", "Application Support", appId);
+  if (os === "windows") {
+    const appData = env("APPDATA") ?? join(home, "AppData", "Roaming");
+    return join(appData, appId);
+  }
+  const xdg = env("XDG_DATA_HOME");
+  const base = xdg && xdg.trim() ? xdg : join(home, ".local", "share");
+  return join(base, appId);
+}
+
+/**
+ * The `data` / `cache` / `documents` roots for `appId` on `os`, each `join`ed with `appId` so two
+ * apps never share a folder. `data` is {@link osDataDir}; the other two:
+ *
+ * - macOS: `~/Library/Caches/<id>`, `~/Documents/<id>`.
+ * - Windows: `%LOCALAPPDATA%/<id>/Cache`, `~/Documents/<id>`.
+ * - Linux: `$XDG_CACHE_HOME|~/.cache /<id>`, `$XDG_DOCUMENTS_DIR|~/Documents /<id>`.
  *
  * @param appId The app's reverse-DNS identifier (`desktop.app.identifier`), or a fallback name.
+ * @param os The target OS (defaults to the running one; a param so every branch is unit-tested).
  * @returns The three absolute roots (not created; the capabilities `mkdir` on first use).
  */
-// fallow-ignore-next-line complexity -- per-OS path table; branches not unit-tested on every OS, CRAP is coverage-estimated
-export function desktopAppDirs(appId: string): DesktopAppDirs {
+export function desktopAppDirs(
+  appId: string,
+  os: DesktopOsName = Deno.build.os as DesktopOsName,
+): DesktopAppDirs {
   const home = homeDir();
-  const os = Deno.build.os;
+  const data = osDataDir(appId, os);
   if (os === "darwin") {
-    const lib = join(home, "Library");
     return {
-      data: join(lib, "Application Support", appId),
-      cache: join(lib, "Caches", appId),
+      data,
+      cache: join(home, "Library", "Caches", appId),
       documents: join(home, "Documents", appId),
     };
   }
   if (os === "windows") {
-    const appData = nonEmpty(env("APPDATA")) ?? join(home, "AppData", "Roaming");
     const localAppData = nonEmpty(env("LOCALAPPDATA")) ?? join(home, "AppData", "Local");
     return {
-      data: join(appData, appId),
+      data,
       cache: join(localAppData, appId, "Cache"),
       documents: join(home, "Documents", appId),
     };
   }
-  const dataBase = nonEmpty(env("XDG_DATA_HOME")) ?? join(home, ".local", "share");
   const cacheBase = nonEmpty(env("XDG_CACHE_HOME")) ?? join(home, ".cache");
   const docsBase = nonEmpty(env("XDG_DOCUMENTS_DIR")) ?? join(home, "Documents");
-  return {
-    data: join(dataBase, appId),
-    cache: join(cacheBase, appId),
-    documents: join(docsBase, appId),
-  };
+  return { data, cache: join(cacheBase, appId), documents: join(docsBase, appId) };
 }

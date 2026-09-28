@@ -41,6 +41,7 @@ import {
   sha256Hex,
 } from "../mobile/ota-manifest.ts";
 import { parseOtaPublicKey } from "../build/ota-signing.ts";
+import { env, osDataDir } from "./app-dirs.ts";
 
 /** The signed manifest format the feed serves, shared with mobile OTA (`denext/mobile`). */
 export type { OtaManifest, OtaManifestFile } from "../mobile/ota-manifest.ts";
@@ -197,34 +198,14 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Read an env var (trying the lowercase spelling too), or undefined without permission. */
-function env(name: string): string | undefined {
-  try {
-    return Deno.env.get(name) ?? Deno.env.get(name.toLowerCase()) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The user's home directory (best effort). */
-function homeDir(): string {
-  return env("HOME") ?? env("USERPROFILE") ?? ".";
-}
-
-/** The default OS app-support data dir for `appId`. */
-// fallow-ignore-next-line complexity -- per-OS path helper; branches not unit-tested, CRAP is coverage-estimated
+/**
+ * The default OS app-support data dir for `appId`: the shared per-OS data root ({@link osDataDir})
+ * plus `ui-updates`. Unchanged from when the per-OS logic lived here (byte-identical) — it now
+ * delegates so the app-support layout has one source; `tests/desktop-app-dirs.test.ts` pins the
+ * resolved directory for each OS.
+ */
 function defaultDataDir(appId: string): string {
-  const os = Deno.build.os;
-  if (os === "darwin") {
-    return join(homeDir(), "Library", "Application Support", appId, "ui-updates");
-  }
-  if (os === "windows") {
-    const appData = env("APPDATA") ?? join(homeDir(), "AppData", "Roaming");
-    return join(appData, appId, "ui-updates");
-  }
-  const xdg = env("XDG_DATA_HOME");
-  const base = xdg && xdg.trim() ? xdg : join(homeDir(), ".local", "share");
-  return join(base, appId, "ui-updates");
+  return join(osDataDir(appId), "ui-updates");
 }
 
 /** The resolved data dir for `config`. */
