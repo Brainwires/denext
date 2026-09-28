@@ -75,13 +75,14 @@ Deno.test("offload patch: shared values, valueSetter, mappers, styles, converter
       checkInvalidReadDuringRender();
       return value;
     },
+    _isReanimatedSharedValue: true
   };
   Object.defineProperties(mutable, {
   });
 }`,
       [
         "return __denextOffload.readValue(mutable, value);",
-        "__denextOffload.trackMutable(mutable, listeners);Object.defineProperties(mutable, {",
+        "_isReanimatedSharedValue: true\n  };__denextOffload.trackMutable(mutable, listeners);",
       ],
     ],
     [
@@ -148,6 +149,86 @@ import { createReactDOMStyle, createTextShadowValue, createTransformValue } from
     for (const e of expected) assertStringIncludes(out, e, file);
     if (!file.endsWith("index.js")) assertEquals(lineCount(out), lineCount(code), file);
   }
+});
+
+Deno.test("offload patch: Reanimated 4.0 – 4.5's shared value and styleUpdater", () => {
+  // 4.5 (Expo SDK 57): the compiler-safe get/set helper and the UI-runtime decorator come
+  // first, both with `Object.defineProperties(mutable, {` and no `listeners` in scope. The
+  // splices belong in makeMutableWeb; landing in the helper threw `listeners is not defined`
+  // on the first useSharedValue.
+  const mutables = `'use strict';
+function addCompilerSafeGetAndSet(mutable) {
+  'worklet';
+
+  Object.defineProperties(mutable, {
+    get: {}
+  });
+}
+function mutableHostDecorator(mutable, dirtyFlag) {
+  'worklet';
+
+  const listeners = new Map();
+  let value = mutable.value;
+  Object.defineProperties(mutable, {
+    value: {
+      get() {
+        return value;
+      },
+    },
+    _isReanimatedSharedValue: {
+      value: true
+    }
+  });
+}
+function makeMutableWeb(initial) {
+  let value = initial;
+  const listeners = new Map();
+  const mutable = {
+    get value() {
+      checkInvalidReadDuringRender();
+      return value;
+    },
+    _isReanimatedSharedValue: true
+  };
+  addCompilerSafeGetAndSet(mutable);
+  return mutable;
+}
+export function makeMutable(initial) {
+  return makeMutableWeb(initial);
+}`;
+  const m = patchForOffload(RA + "mutables.js", mutables)!;
+  const web = m.slice(m.indexOf("function makeMutableWeb("));
+  assertStringIncludes(web, "return __denextOffload.readValue(mutable, value);");
+  assertStringIncludes(web, "};__denextOffload.trackMutable(mutable, listeners);");
+  const before = m.slice(0, m.indexOf("function makeMutableWeb("));
+  assert(!before.includes("__denextOffload."), "nothing spliced ahead of makeMutableWeb");
+  assertEquals(lineCount(m), lineCount(mutables));
+
+  // styleUpdater lives in useAnimatedStyle.js before 4.6: patched with the mapper splice.
+  const style = `function styleUpdater(viewDescriptors, updater, state) {
+    animation.callStart = timestamp => {
+    };
+  const animations = state.animations ?? {};
+  const newValues = updater() ?? {};
+  if (hasAnimations) {
+    const frame = timestamp => {};
+  }
+}
+    const mapperId = startMapper(fun, inputs);`;
+  const s = patchForOffload(RA + "hook/useAnimatedStyle.js", style)!;
+  assertStringIncludes(s, "__denextOffload.styleMapper(");
+  assertStringIncludes(s, "__denextOffload.noteAnimationStart(");
+  assertStringIncludes(s, "__denextOffload.interruptStyle(state);");
+  assertStringIncludes(s, "if (hasAnimations && __denextOffload.offloadStyle({");
+  // 4.6+: the mapper splice alone (styleUpdater is in useAnimatedStyleCommon.js).
+  const only = patchForOffload(
+    RA + "hook/useAnimatedStyle.js",
+    "    const mapperId = startMapper(fun, inputs);",
+  )!;
+  assertStringIncludes(only, "__denextOffload.styleMapper(");
+  assert(!only.includes("offloadStyle"));
+  // Neither variant: the file is left alone.
+  assertEquals(patchForOffload(RA + "mutables.js", "const listeners = new Map();"), null);
 });
 
 Deno.test("offload patch: a file whose anchors moved is left alone; others untouched", () => {

@@ -1,15 +1,17 @@
 /**
- * `expo-symbols` for denext: SF Symbols and Material Symbols are native-only, so
- * `SymbolView` renders its `fallback` when given one, and otherwise an empty box of the
- * symbol's `size` (so layouts keep their spacing). Apps that need icons on the web pass a
- * `fallback`, as Expo's own web build expects.
+ * `expo-symbols` for denext: `SymbolView` is `denext/mobile`'s {@linkcode SystemIcon}. Inside
+ * the iOS shell with `denext mobile add system-icons` it draws the real SF Symbol (natively
+ * rendered, at the requested `weight`, tinted by `tintColor`, `type` as the rendering mode);
+ * elsewhere it draws the Material Symbol named by `name.android` (or mapped from the SF Symbol
+ * name for the common ones) as inline SVG. A `fallback` is rendered instead off iOS, as Expo's
+ * web and Android builds do with one. `animationSpec`, `resizeMode` and `scale` are ignored.
  *
  * @example
  * ```ts
  * import { SymbolView } from "denext/expo/symbols";
  * import { h } from "denext/jsx-runtime";
  *
- * h(SymbolView, { name: "checkmark", size: 18, fallback: h(CheckIcon, null) });
+ * h(SymbolView, { name: { ios: "checkmark.circle", android: "check_circle" }, size: 18 });
  * ```
  *
  * @module
@@ -17,7 +19,9 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
-import { hostView, viewStyle } from "./internal/common.ts";
+import { nativePlatform } from "../mobile/bridge.ts";
+import { SystemIcon, type SystemIconMode, type SystemIconWeight } from "../mobile/system-icon.ts";
+import { flattenStyle } from "./internal/common.ts";
 
 /** An SF Symbol name. */
 export type SFSymbol = string;
@@ -29,15 +33,17 @@ export type AndroidSymbol = string;
 export interface SymbolViewProps {
   /** The symbol: an SF Symbol name, or `{ ios, android, web }` names. */
   name: SFSymbol | { ios?: SFSymbol; android?: AndroidSymbol; web?: string };
-  /** What to render where the symbol is not available (here: always). */
+  /** What to render off iOS instead of the Material Symbol. */
   fallback?: unknown;
   /** The size in points (default 24). */
   size?: number;
-  /** The tint colour (ignored without a fallback). */
+  /** The tint colour (default: the inherited text colour). */
   tintColor?: string;
-  /** The rendering type (ignored). */
+  /** The rendering type (default `"monochrome"`). */
   type?: "monochrome" | "hierarchical" | "palette" | "multicolor";
-  /** The weight (ignored). */
+  /** `"palette"`'s layer colours. */
+  colors?: string | string[];
+  /** The weight (default `"regular"`). */
   weight?: string;
   /** The style. */
   style?: unknown;
@@ -45,21 +51,48 @@ export interface SymbolViewProps {
   [prop: string]: unknown;
 }
 
+/** The SF Symbol weights {@linkcode SystemIcon} takes. */
+const WEIGHTS: ReadonlySet<string> = new Set([
+  "ultralight",
+  "thin",
+  "light",
+  "regular",
+  "medium",
+  "semibold",
+  "bold",
+  "heavy",
+  "black",
+]);
+
+/** The SF Symbol and Material Symbol names of a `name` prop. */
+function symbolNames(name: SymbolViewProps["name"]): { ios: string; android?: string } {
+  if (typeof name === "string") return { ios: name };
+  const ios = name?.ios ?? name?.web ?? name?.android ?? "";
+  return { ios, ...(name?.android ? { android: name.android } : {}) };
+}
+
 /**
- * A system symbol: its `fallback`, or an empty box of its size.
+ * A system symbol: the SF Symbol in the iOS shell, the Material Symbol (or `fallback`)
+ * elsewhere.
  *
  * @param props The symbol props.
- * @returns The fallback, or the placeholder view.
+ * @returns The icon, or the fallback.
  */
 export function SymbolView(props: SymbolViewProps): VNode {
-  const { fallback, size = 24, style, name, tintColor: _c, type: _t, weight: _w, ...rest } = props;
-  if (fallback !== undefined && fallback !== null) return fallback as VNode;
-  const label = typeof name === "string" ? name : name?.ios ?? name?.web ?? name?.android;
-  return h(hostView(), {
-    ...rest,
-    "aria-hidden": true,
-    "data-symbol": label,
-    style: viewStyle(style, { width: size, height: size }),
+  const { fallback, size = 24, style, name, tintColor, type, weight, colors } = props;
+  if (fallback !== undefined && fallback !== null && nativePlatform() !== "ios") {
+    return fallback as VNode;
+  }
+  const names = symbolNames(name);
+  return h(SystemIcon, {
+    name: names.ios,
+    ...(names.android ? { android: names.android } : {}),
+    size,
+    color: tintColor,
+    mode: (type ?? "monochrome") as SystemIconMode,
+    ...(colors ? { colors: Array.isArray(colors) ? colors : [colors] } : {}),
+    ...(weight && WEIGHTS.has(weight) ? { weight: weight as SystemIconWeight } : {}),
+    style: flattenStyle(style) as Record<string, string | number | undefined>,
   });
 }
 

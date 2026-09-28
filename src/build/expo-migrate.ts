@@ -615,8 +615,9 @@ export interface CapabilitySuggestion {
 }
 
 /**
- * The capabilities each `expo-*` package's shim calls natively. A community package's come
- * from its `COMMUNITY_ALIASES` entry.
+ * The capabilities each `expo-*` package's shim calls natively (only packages with a shim: a
+ * capability an unshimmed package's own web build never reaches is not suggested). A community
+ * package's come from its `COMMUNITY_ALIASES` entry.
  */
 const PACKAGE_CAPABILITIES: Readonly<Record<string, string | readonly string[]>> = {
   "expo-haptics": "haptics",
@@ -650,9 +651,6 @@ const PACKAGE_CAPABILITIES: Readonly<Record<string, string | readonly string[]>>
   "expo-screen-orientation": "screen-orientation",
   "expo-media-library": "media-library",
   "expo-screen-capture": "privacy-screen",
-  "expo-background-task": "background",
-  "expo-background-fetch": "background",
-  "expo-task-manager": "background",
   "expo-status-bar": "system-bars",
   "expo-navigation-bar": "system-bars",
 };
@@ -871,11 +869,27 @@ function schemeArgs(chosen: Map<string, string>, config: ExpoAppConfig): string[
 
 // --- dependencies -------------------------------------------------------------------------
 
+/**
+ * What to do instead, for Expo packages with no shim whose own web build does not do the job
+ * (so no `denext mobile add` capability would reach them).
+ */
+const NO_SHIM_ADVICE: Readonly<Record<string, string>> = {
+  "expo-task-manager": "its web build defines tasks that never run; move the work to " +
+    "background/<name>.ts with denext/mobile's defineBackgroundTask (`denext mobile add " +
+    "background`)",
+  "expo-background-task": "its web build never schedules; use denext/mobile's " +
+    "defineBackgroundTask in background/<name>.ts (`denext mobile add background`)",
+  "expo-background-fetch": "its web build never schedules; use denext/mobile's " +
+    "defineBackgroundTask in background/<name>.ts (`denext mobile add background`)",
+};
+
 /** One `expo-*` / `@expo/*` dependency's standing under denext. */
 export interface ExpoPackageStatus {
   readonly name: string;
   /** `full` / `partial` / `stub`: the `denext/expo` shim; `none`: resolves to the real package. */
   readonly status: "full" | "partial" | "stub" | "none";
+  /** For a package with no shim that will not work as it is: what to use instead. */
+  readonly advice?: string;
   /** Exports the shim does not provide. */
   readonly omitted: number;
   /**
@@ -951,16 +965,26 @@ async function packageDir(dir: string, name: string, spec: string): Promise<stri
   }
 }
 
-/** Whether the package tree carries a `.web.*` module (a web build), searched a few levels deep. */
+/**
+ * Whether the package tree carries a web build, searched a few levels deep: a `.web.*` module,
+ * or a `.native.*` module with a plain sibling (`threads.native.js` next to `threads.js`: Metro
+ * takes the `.native` file on iOS and Android, so the plain one is the web build, as in
+ * react-native-worklets).
+ */
 async function hasWebModule(root: string, depth = 0): Promise<boolean> {
   if (depth > 4) return false;
-  try {
-    for await (const entry of Deno.readDir(root)) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-      if (entry.isFile && /\.web\.[cm]?[jt]sx?$/.test(entry.name)) return true;
-      if (entry.isDirectory && await hasWebModule(join(root, entry.name), depth + 1)) return true;
+  const listing = await listDir(root);
+  if (!listing) return false;
+  for (const name of listing.files) {
+    if (/\.web\.[cm]?[jt]sx?$/.test(name)) return true;
+    const native = /^(.+)\.native(\.[cm]?[jt]sx?)$/.exec(name);
+    if (native && !native[1].endsWith(".d") && listing.files.has(native[1] + native[2])) {
+      return true;
     }
-  } catch { /* unreadable: no */ }
+  }
+  for (const d of listing.dirs) {
+    if (await hasWebModule(join(root, d), depth + 1)) return true;
+  }
   return false;
 }
 
@@ -1095,7 +1119,13 @@ export async function expoDependencyReport(
 function expoPackageStatus(name: string): ExpoPackageStatus | null {
   const own = Object.hasOwn(EXPO_SHIMS, name) ? EXPO_SHIMS[name] : undefined;
   if (/^expo(-|$)/.test(name)) {
-    return { name, status: own?.status ?? "none", omitted: own?.omitted?.length ?? 0 };
+    const advice = own ? undefined : NO_SHIM_ADVICE[name];
+    return {
+      name,
+      status: own?.status ?? "none",
+      omitted: own?.omitted?.length ?? 0,
+      ...(advice ? { advice } : {}),
+    };
   }
   if (!name.startsWith("@expo/")) return null;
   const subKeys = Object.keys(EXPO_SHIMS).filter((key) => key.startsWith(`${name}/`));

@@ -8,7 +8,10 @@
  * - the OS text size (Dynamic Type on iOS, the font scale on Android) as the factor the page
  *   still has to apply itself: {@linkcode getFontScale}, {@linkcode useFontScale} and the opt-in
  *   {@linkcode applyFontScale}. A browser applies its user's text size to `rem` on its own, so
- *   the factor is 1 there.
+ *   the factor is 1 there;
+ * - whether the user asked for reduced motion ({@linkcode useReducedMotion}), which WebKit and
+ *   Chrome report from the OS setting through `prefers-reduced-motion`, in the shell as on the
+ *   web.
  *
  * @module
  */
@@ -120,6 +123,46 @@ export function useScreenReader(): boolean {
     };
   }, []);
   return enabled;
+}
+
+// --- reduced motion ----------------------------------------------------------------------------
+
+/** The `prefers-reduced-motion: reduce` query, or undefined without `matchMedia` (SSR). */
+function reducedMotionQuery(): MediaQueryList | undefined {
+  const mm = (globalThis as { matchMedia?: (q: string) => MediaQueryList }).matchMedia;
+  return typeof mm === "function" ? mm("(prefers-reduced-motion: reduce)") : undefined;
+}
+
+/**
+ * Whether the user asked for reduced motion (iOS Reduce Motion, Android Remove animations, the
+ * desktop setting), updated when it changes: `prefers-reduced-motion`, which the iOS and
+ * Android WebViews report from the OS. `false` during SSR. The same answer as Reanimated's
+ * `useReducedMotion` and React Native's `AccessibilityInfo.isReduceMotionEnabled()` in React
+ * Native mode.
+ *
+ * @returns Whether to cut motion.
+ * @example
+ * ```tsx
+ * "use client";
+ * import { useReducedMotion } from "denext/mobile";
+ *
+ * export function Banner() {
+ *   const reduce = useReducedMotion();
+ *   return <div style={{ transition: reduce ? "none" : "transform 300ms" }} />;
+ * }
+ * ```
+ */
+export function useReducedMotion(): boolean {
+  const [reduce, setReduce] = useState(false);
+  useEffect(() => {
+    const query = reducedMotionQuery();
+    if (!query) return;
+    setReduce(query.matches);
+    const onChange = () => setReduce(query.matches);
+    query.addEventListener?.("change", onChange);
+    return () => query.removeEventListener?.("change", onChange);
+  }, []);
+  return reduce;
 }
 
 // --- font scale --------------------------------------------------------------------------------

@@ -14,11 +14,6 @@
     {
       "target": "@legendapp/list#LegendList",
       "kind": "prop",
-      "name": "onContentSizeChange"
-    },
-    {
-      "target": "@legendapp/list#LegendList",
-      "kind": "prop",
       "name": "onItemSizeChanged"
     },
     {
@@ -40,11 +35,6 @@
       "target": "@shopify/flash-list#FlashList",
       "kind": "prop",
       "name": "automaticallyAdjustKeyboardInsets"
-    },
-    {
-      "target": "@shopify/flash-list#FlashList",
-      "kind": "prop",
-      "name": "onContentSizeChange"
     },
     {
       "target": "@shopify/flash-list#FlashList",
@@ -89,11 +79,6 @@
     {
       "target": "react-native#FlatList",
       "kind": "prop",
-      "name": "onContentSizeChange"
-    },
-    {
-      "target": "react-native#FlatList",
-      "kind": "prop",
       "name": "renderScrollComponent"
     },
     {
@@ -119,22 +104,12 @@
     {
       "target": "react-native#SectionList",
       "kind": "prop",
-      "name": "onContentSizeChange"
-    },
-    {
-      "target": "react-native#SectionList",
-      "kind": "prop",
       "name": "renderScrollComponent"
     },
     {
       "target": "react-native#VirtualizedList",
       "kind": "prop",
       "name": "automaticallyAdjustKeyboardInsets"
-    },
-    {
-      "target": "react-native#VirtualizedList",
-      "kind": "prop",
-      "name": "onContentSizeChange"
     },
     {
       "target": "react-native#VirtualizedList",

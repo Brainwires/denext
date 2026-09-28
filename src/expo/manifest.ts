@@ -54,7 +54,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "return the Capacitor plugin of that name in the iOS/Android shell (the desktop " +
       "extension on Deno Desktop): every function returns a Promise (no synchronous " +
       "functions or constants: no JSI), events arrive through addListener. Elsewhere " +
-      "requireNativeModule throws and requireOptionalNativeModule returns null. " +
+      "requireNativeModule returns a stand-in whose functions throw only when called (a " +
+      "module that asks for it at import time loads in a browser or a test; its addListener " +
+      "does nothing), and requireOptionalNativeModule returns null. " +
       "requireNativeView is a denext/mobile native view slot (`denext mobile add " +
       "native-views`; the children render where the view type is not registered). " +
       "installOnUIRuntime does nothing (no worklets UI runtime). " +
@@ -377,12 +379,52 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   "expo-maps": {
     module: "./maps.ts",
     pinned: "57.0.3",
-    status: "stub",
-    notes: "Apple Maps / Google Maps are native views: AppleMaps.View, GoogleMaps.View and " +
-      "GoogleMaps.StreetView render a labelled placeholder (and warn once), and their ref " +
-      "methods throw a denext error. Importing never throws; the enums are real, and the " +
-      "location permission calls are denext/expo/location's foreground permission. For a " +
-      "real map render a web map (Leaflet / MapLibre GL) in a .web.tsx file.",
+    status: "partial",
+    notes: "AppleMaps.View and GoogleMaps.View are denext/mobile's native map view (MapKit on " +
+      "iOS, osmdroid on Android: `denext mobile add native-map`): cameraPosition, markers " +
+      "(coordinates, title), properties.mapType, uiSettings scroll / zoom, onCameraMove, " +
+      "onMarkerClick and the ref's setCameraPosition / selectMarker. Other props (polylines, " +
+      "circles, user location, …) are ignored. Where the map view is not registered natively " +
+      "(the web) they render a labelled placeholder and the ref methods throw; " +
+      "GoogleMaps.StreetView is always a placeholder and openLookAroundAsync rejects. The enums " +
+      "are real, and the location permission calls are denext/expo/location's foreground " +
+      "permission. For a map on the web render Leaflet / MapLibre GL in a .web.tsx file.",
+  },
+  "expo-media-library": {
+    module: "./media-library.ts",
+    pinned: "57.0.5",
+    status: "partial",
+    notes: "SDK 57's class API over denext/mobile's media library (@capacitor-community/media, " +
+      "`denext mobile add media-library`) and the photos permission: Asset.create saves into " +
+      "the library (a browser downloads the file), Album.create / get / getAll list and make " +
+      "albums, and a Query's limit / offset / album / MEDIA_TYPE filter lists the newest assets " +
+      "on iOS, newest first (other filters and sort orders are ignored). An asset knows what " +
+      "the listing reported (getUri is a thumbnail data: URL, plus its size, media type, " +
+      "creation time and duration); its other getters, deleting, moving, favouriting, " +
+      "exeForMetadata and presentPermissionsPicker reject, and no media subtypes are reported. " +
+      "The deprecated functions work here (Expo's throw), as in expo-media-library/legacy.",
+  },
+  "expo-media-library/legacy": {
+    module: "./media-library-legacy.ts",
+    pinned: "57.0.5",
+    status: "partial",
+    notes: "Expo's function API over the same calls: saveToLibraryAsync / createAssetAsync save " +
+      "into the library (a browser downloads the file), getAlbumsAsync / getAlbumAsync / " +
+      "createAlbumAsync, and getAssetsAsync lists the newest assets on iOS (uri is a thumbnail " +
+      "data: URL; one page, hasNextPage false). Moving, deleting and favouriting assets, " +
+      "getAssetInfoAsync, moments and presentPermissionsPickerAsync reject; the change listener " +
+      "never fires.",
+  },
+  "expo-navigation-bar": {
+    module: "./navigation-bar.ts",
+    pinned: "57.0.2",
+    status: "partial",
+    notes: "Android's navigation bar over denext/mobile's setSystemBars (Capacitor 8's " +
+      "SystemBars, `denext mobile add system-bars`): setStyle (the buttons' color; auto / " +
+      "inverted follow the page's color scheme), setVisibilityAsync and the <NavigationBar> " +
+      "component. The visibility is what the app last set: a swipe that reveals a hidden bar is " +
+      "not reported. Outside the Android shell the calls do nothing and the bar reads hidden, as " +
+      "Expo's web build.",
   },
   "expo-network": {
     module: "./network.ts",
@@ -435,6 +477,28 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     status: "partial",
     notes: "`initial` is always undefined: the cold-start action reaches the first " +
       "addListener subscriber instead.",
+  },
+  "expo-screen-capture": {
+    module: "./screen-capture.ts",
+    pinned: "57.0.3",
+    status: "partial",
+    notes: "Over denext/mobile's setPrivacyScreen (@capacitor/privacy-screen, `denext mobile " +
+      "add privacy-screen`): preventScreenCaptureAsync blocks screenshots and recording on " +
+      "Android (FLAG_SECURE) until every key releases it, and hides the app switcher snapshot " +
+      "on iOS (iOS cannot block a screenshot); enable/disableAppSwitcherProtectionAsync blur the " +
+      "snapshot. The screenshot listener never fires and the permission reads granted. Does " +
+      "nothing outside the shell.",
+  },
+  "expo-screen-orientation": {
+    module: "./screen-orientation.ts",
+    pinned: "57.0.2",
+    status: "partial",
+    notes: "Over denext/mobile's lockOrientation / unlockOrientation / getOrientation / " +
+      "onOrientationChange (@capacitor/screen-orientation, `denext mobile add " +
+      "screen-orientation`; the Screen Orientation API in a browser, which usually locks only " +
+      "in fullscreen). OrientationLock.OTHER / UNKNOWN and lockPlatformAsync's Android constant " +
+      "are not lockable; getOrientationLockAsync reports the lock set through this module; the " +
+      "iOS size classes are UNKNOWN.",
   },
   "expo-secure-store": {
     module: "./secure-store.ts",
@@ -493,12 +557,25 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       '(denext mobile add system-bars); "auto" / "inverted" follow the page\'s color scheme. ' +
       "Does nothing in a browser, as Expo's web build.",
   },
+  "expo-store-review": {
+    module: "./store-review.ts",
+    pinned: "57.0.3",
+    status: "full",
+    notes: "requestReview over denext/mobile's requestReview (the in-app review sheet: `denext " +
+      "mobile add app-review`); isAvailableAsync is true in the shell with the plugin. " +
+      "storeUrl() is the Expo config's ios.appStoreUrl / android.playStoreUrl. Does nothing in " +
+      "a browser, as Expo's web build.",
+  },
   "expo-symbols": {
     module: "./symbols.ts",
     pinned: "57.0.2",
-    status: "stub",
-    notes: "SF Symbols / Material Symbols are native-only: SymbolView renders its fallback, " +
-      "or an empty box of its size.",
+    status: "partial",
+    notes: "SymbolView is denext/mobile's SystemIcon: the real SF Symbol in the iOS shell " +
+      "(`denext mobile add system-icons`; weight, tintColor, type and palette colors apply), " +
+      "the Material Symbol named by name.android (or mapped from the SF Symbol name for the " +
+      "common ones) as inline SVG elsewhere, or the fallback off iOS when one is given. " +
+      "animationSpec, resizeMode and scale are ignored; unstable_getMaterialSymbolSourceAsync " +
+      "resolves null.",
   },
   "expo-tracking-transparency": {
     module: "./tracking-transparency.ts",
@@ -538,8 +615,14 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "57.0.3",
     status: "partial",
     omitted: ["VideoAirPlayButton"],
-    notes: "An HTMLVideoElement player; no thumbnails, Picture in Picture, subtitles or cache. " +
-      "The Android playerBuilderOptions are accepted and ignored.",
+    notes: "Where denext/mobile's native video view is registered (`denext mobile add " +
+      "native-views`: AVPlayer with the system controls on iOS, so Picture in Picture and " +
+      "AirPlay come from AVKit's controls), VideoView shows the source there and the player's " +
+      "play / pause / currentTime / loop / muted drive it; a vertical swipe on it scrolls the " +
+      "page. Elsewhere, and for a file in the app's own storage, an HTMLVideoElement player. " +
+      "volume and playbackRate apply to the HTMLVideoElement only; no thumbnails, subtitles or " +
+      "cache; isPictureInPictureSupported() is false. The Android playerBuilderOptions are " +
+      "accepted and ignored.",
   },
   "expo-web-browser": {
     module: "./web-browser.ts",

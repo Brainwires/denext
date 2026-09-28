@@ -250,7 +250,8 @@ Deno.test("React Native mode: turboModule / NativeModules / NativeEventEmitter",
 });
 
 Deno.test("Expo: requireNativeModule / requireOptionalNativeModule / EventEmitter(module)", async () => {
-  assertThrows(() => requireNativeModule("ExpoScanner"), Error, "Cannot find native module");
+  const missing = requireNativeModule<Record<string, () => unknown>>("ExpoScanner");
+  assertThrows(() => missing.scan(), Error, "Cannot find native module");
   assertEquals(requireOptionalNativeModule("ExpoScanner"), null);
   const fake = fakePlugin((_m, p) => ({ value: (p as { args: number[] }).args.length }));
   await inShell({ ExpoScanner: fake.plugin }, async () => {

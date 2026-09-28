@@ -152,6 +152,11 @@ const BEYOND_T3: Readonly<Record<string, string>> = {
   "expo-application": "57.0.3",
   "expo-maps": "57.0.3",
   "expo-tracking-transparency": "57.0.2",
+  "expo-media-library": "57.0.5",
+  "expo-navigation-bar": "57.0.2",
+  "expo-screen-capture": "57.0.3",
+  "expo-screen-orientation": "57.0.2",
+  "expo-store-review": "57.0.3",
 };
 
 let t3Present = false;

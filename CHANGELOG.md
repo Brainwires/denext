@@ -10,6 +10,46 @@ and this project adheres to
 
 ### Added
 
+- **Maps and video from the packages apps import, drawn natively (React Native mode).**
+  `expo-maps`' `AppleMaps.View` / `GoogleMaps.View` and `react-native-maps`' `MapView` (with its
+  `<Marker>` children, `region` / `initialRegion`, `onRegionChange(Complete)` and the ref's
+  `animateToRegion` / `animateCamera` / `fitToCoordinates` / `getCamera`) are `denext/mobile`'s
+  native `"map"` view (`denext mobile add native-map`: MapKit on iOS, osmdroid on Android),
+  instead of a placeholder or nothing; the web keeps a labelled placeholder. `expo-video`'s
+  `VideoView` and `react-native-video`'s `Video` are the native `"video"` view where it is
+  registered (AVPlayer with the system controls, drawn under the page on iOS, so Picture in
+  Picture and AirPlay come from AVKit's controls; a vertical swipe on it scrolls the page), and
+  an HTML `<video>` elsewhere; the player's `play` / `pause` / `currentTime` / `loop` / `muted`
+  drive either one. `react-native-maps` and `react-native-video` are new community aliases.
+- **`expo-symbols`' `SymbolView` draws real symbols.** It is `<SystemIcon>`: the SF Symbol in
+  the iOS shell (`denext mobile add system-icons`; `weight`, `tintColor`, `type` and palette
+  colors apply), the Material Symbol from `name.android` (or mapped from the SF Symbol name)
+  elsewhere, and the `fallback` off iOS when one is given.
+- **Shims for `expo-store-review`, `expo-screen-orientation`, `expo-navigation-bar`,
+  `expo-screen-capture` and `expo-media-library` (and its `/legacy`)** over the `denext/mobile`
+  capabilities `denext migrate --from expo` already suggested for them (`app-review`,
+  `screen-orientation`, `system-bars`, `privacy-screen`, `media-library`): the Expo API now
+  reaches the native plugin instead of Expo's web build (a no-op, or unavailable).
+  `expo-media-library` is SDK 57's class API (`Asset.create`, `Album.create` / `get` /
+  `getAll`, `Query` with `limit` / `offset` / `album` / a `MEDIA_TYPE` filter, and the
+  `MediaType` / `AssetField` / `MediaSubtype` enums); `/legacy` is the function API.
+- **`react-native-fast-image` renders (React Native mode).** It was a native view that drew
+  nothing; it is now React Native's `Image` with `resizeMode` mapped, `priority` / `cache`
+  ignored, `onLoad` giving `{ width, height }`, children drawn over the image and the statics
+  (`preload` warms the browser cache).
+- **React Native core names that failed the build or drew a red box now work.**
+  `DrawerLayoutAndroid` (a drawer on every platform: `openDrawer` / `closeDrawer`, the scrim,
+  Escape and Android back close it), `Settings` (over `localStorage`, with `watchKeys`),
+  `ProgressBarAndroid` (react-native-web's `ProgressBar`), `TouchableNativeFeedback` (its child
+  takes the presses, no wrapper view; the ripple statics are inert) and
+  `Image.resolveAssetSource` / `getSizeWithHeaders` / `prefetchWithMetadata` (and the deep
+  `react-native/Libraries/Image/resolveAssetSource` import).
+- **`onContentSizeChange` on `FlatList` / `SectionList` / `VirtualizedList`, FlashList and
+  LegendList** (React Native mode): the content's width and height on mount and whenever it
+  changes, the usual cue to keep a chat scrolled to its end.
+- **`useReducedMotion()` in `denext/mobile`**: `prefers-reduced-motion`, live, which the iOS and
+  Android WebViews report from the OS setting (the same answer as Reanimated's hook and
+  `AccessibilityInfo.isReduceMotionEnabled()`).
 - **Reanimated animations on the compositor (React Native mode).** Reanimated's web build steps
   every animation in a main-thread `requestAnimationFrame` loop; the build now patches its
   `lib/module` web modules so declarative `transform` / `opacity` animations run as Web
@@ -731,6 +771,18 @@ and this project adheres to
 
 ### Changed
 
+- **A top-level `requireNativeModule("X")` no longer throws off-device.** In a browser, SSR or a
+  test (or a shell without the plugin) it returns a stand-in whose functions throw only when
+  called (`addListener` does nothing), so a module that asks for its native module at import
+  time loads and the same app can be developed in a desktop browser.
+  `requireOptionalNativeModule` still returns null.
+- **`denext migrate --from expo` recommends a capability only where a shim reaches it.**
+  `expo-task-manager`, `expo-background-task` and `expo-background-fetch` no longer suggest
+  `denext mobile add background` (their web builds never run a task); the report says to move
+  the work to `background/<name>.ts` with `defineBackgroundTask`. The `@react-native-menu/menu`
+  note no longer claims an OS menu on Deno Desktop (there is no desktop context-menu capability).
+- **`@expo/vector-icons` is covered by the Expo Router e2e fixture**: the icon font loads through
+  the `expo-font` shim and the glyph renders at its size.
 - **Desktop packaging is least-privilege.** `scripts/package-*.ts` from `denext create --desktop` /
   `denext migrate --desktop` derive `--allow-*` from `desktop.capabilities` (`desktopPackageFlags`,
   `desktopBuildFlags`, `DESKTOP_BASELINE_FLAGS` from `denext/desktop`) instead of `-A`: the baseline
@@ -797,6 +849,47 @@ and this project adheres to
   pointing at its new place.
 
 ### Fixed
+
+- **A dev edit no longer sends a `VirtualList` back to the top.** An ordinary edit on the
+  default (unbundled) dev loop already reconciles in place, so the list keeps its position, its
+  measured sizes and its rows' state. What still remounted the list or reloaded the page, and so
+  reset its scroll, was a hook-signature edit (Fast Refresh falls back to a reload), a structural
+  edit the dev server answers with a reload, and a whole-entry refresh on the bundled dev paths.
+  On the bundled paths `VirtualList` itself was also re-evaluated inside the app's chunk, so it
+  became a new component type. In dev, a list without `restoreKey` now saves its view (anchor
+  row, gap, sizes around it) under its position in the document and restores it when a hot
+  update remounts it or the page reloads. Any other remount, navigation or back/forward starts
+  where production would. `VirtualList` is also registered as a Fast Refresh family, so a
+  bundled refresh that re-evaluates it reconciles in place. You no longer need `restoreKey` for
+  HMR (`tests/e2e/virtual-list-hmr.e2e.test.ts`).
+- **Fast Refresh keeps component state on the bundled dev paths (`unbundled: false`).** The
+  denext-native SPA, bundled with `deno bundle`, which takes no load plugins, registered no Fast
+  Refresh families at all, so every edit remounted the whole app. The bundled App Router
+  registered only its route-structural components and client-reference exports, so an edit
+  remounted every other component and lost its state. In dev, each app module that declares a
+  component now gets the same `registerFamily` footer the esbuild and unbundled paths add. The
+  module is written ahead of the bundle and substituted through the bundle's import map; on the
+  App Router this is layered over the auto-memo compiler and qrl output. The unbundled loop is
+  unchanged. Modules that use `import.meta` or a relative dynamic `import()` are left as written.
+- **An Expo SDK 57 app crashed on its first shared value (React Native mode).** The compositor
+  pass spliced its shared-value hook into the first `Object.defineProperties(mutable, …)` of
+  Reanimated's `mutables.js`, which in Reanimated 4.0 – 4.5 (Expo SDK 57 pins 4.5.1) is the
+  compiler-safe `get` / `set` helper, not the web shared value: every `useSharedValue` threw
+  `ReferenceError: listeners is not defined` and the app rendered nothing. The splices now
+  anchor in the web variant (`makeMutableWeb`, or 4.6's `makeMutable`), and 4.0 – 4.5's
+  `styleUpdater` (still in `useAnimatedStyle.js` there) gets the style splices too, so those
+  versions run on the compositor as 4.6+ does. Found with Expo's own `expo-template-default`
+  (`examples/expo-app`).
+- **Route and `.web.*` stylesheets were missing from a React Native app's `index.css`.** The
+  SPA's CSS crawl starts at the entry, and in React Native mode it reached neither the
+  expo-router route files (imported only by the generated `expo-router/_ctx`) nor the
+  `.web.*` platform files the bundle picks (`./icon` is `icon.tsx` to the crawl). The Expo
+  template's `@/global.css` (its font variables) and a web component's CSS module were
+  dropped; both now land in `index.css`, in `denext build`, `export` and dev.
+- **`denext migrate --from expo` no longer lists react-native-worklets as native-only.** A
+  codegen package counts as having a web build when it ships `.native.*` modules with plain
+  siblings (the plain file is what the web resolves), as react-native-worklets does; before,
+  only `.web.*` files counted.
 
 - **CSS import redirects no longer leak into a committed `deno.json`.** The absolute
   `file:///…/x.css` → `.denext/css-shims/css_N.js` entries a build / export / dev run adds to

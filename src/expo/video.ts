@@ -1,10 +1,14 @@
 /**
- * `expo-video` for denext: `useVideoPlayer` / `createVideoPlayer` over an
- * `HTMLVideoElement`, shown by `VideoView`.
- *
- * The player owns its `<video>` element; a `VideoView` mounts it (with `nativeControls`,
- * `contentFit` and fullscreen through the element's own controls). Thumbnails, Picture in
- * Picture, AirPlay, subtitles and the video cache are not provided (see the manifest).
+ * `expo-video` for denext: `useVideoPlayer` / `createVideoPlayer` and `VideoView`. Where
+ * `denext/mobile`'s native `"video"` view is registered (`denext mobile add native-views`: an
+ * AVPlayer with the system controls on iOS, drawn under the page, so Picture in Picture and
+ * AirPlay come with AVKit's controls, and a vertical swipe on it scrolls the page), `VideoView`
+ * shows the player's source there and the player's `play` / `pause` / `currentTime` / `loop` /
+ * `muted` drive it. Everywhere else the player owns an `HTMLVideoElement` that `VideoView`
+ * mounts (with `nativeControls`, `contentFit` and fullscreen through the element's own
+ * controls). A file in the app's own storage (`denext/expo/file-system`) always plays in the
+ * `<video>`. Thumbnails, subtitles and the video cache are not provided (see the manifest);
+ * `volume` and `playbackRate` apply to the `<video>` only.
  *
  * @example
  * ```ts
@@ -20,10 +24,12 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
-import { useEffect, useMemo, useRef } from "../runtime/hooks.ts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "../runtime/hooks.ts";
+import { NativeViewSlot, type NativeViewSlotHandle } from "../mobile/native-view.ts";
 import {
   createEmitter,
   type Emitter,
+  flattenStyle,
   hostView,
   type Subscription,
   viewStyle,
@@ -64,13 +70,57 @@ export interface VideoPlayerEvents {
   playToEnd: undefined;
 }
 
-/** A video player over an `HTMLVideoElement`. */
+/** The native video view a player is shown in, while one is. */
+interface NativeLink {
+  /** Run a command of the native view (`play`, `pause`, `seek`). */
+  readonly command: NativeViewSlotHandle["command"];
+  /** Whether it plays, as its last event said. */
+  playing: boolean;
+  /** The position and length, as its last answer said. */
+  time: number;
+  duration: number;
+}
+
+/** What `VideoView` reaches inside a player (kept off the player's public API). */
+interface PlayerInternals {
+  /** The native view it is shown in, or null. */
+  link: NativeLink | null;
+  /** Emit a player event. */
+  emit<K extends keyof VideoPlayerEvents>(event: K, payload: VideoPlayerEvents[K]): void;
+  /** Record and announce a status change. */
+  setStatus(status: VideoPlayerStatus): void;
+  /** Re-render the views showing it (a `loop` / `muted` / source change). */
+  readonly views: Set<() => void>;
+  /** The current source. */
+  source(): VideoSource;
+  /** The `<video>`, when it was made. */
+  element(): HTMLVideoElement | undefined;
+  /** Whether the app asked it to play (and it has not ended or been paused since). */
+  wantPlaying: boolean;
+}
+
+/** Each player's internals (made on first use). */
+let internals: WeakMap<VideoPlayer, PlayerInternals> | undefined;
+
+/** A player's internals. */
+function internalsOf(player: VideoPlayer): PlayerInternals {
+  return internals!.get(player)!;
+}
+
+/** The URL of a source, or "" for none. */
+function sourceUri(source: VideoSource): string {
+  return (typeof source === "string" ? source : source?.uri) ?? "";
+}
+
+/** A video player: an `HTMLVideoElement`, or the native video view it is shown in. */
 export class VideoPlayer {
   #element?: HTMLVideoElement;
   #source: VideoSource = null;
   #objectUrl?: string;
   #status: VideoPlayerStatus = "idle";
   #emitters = new Map<string, Emitter<unknown>>();
+  #loop = false;
+  #muted = false;
   /** How often `timeUpdate` fires, in seconds (0: never). */
   timeUpdateEventInterval = 0;
 
@@ -81,6 +131,26 @@ export class VideoPlayer {
    */
   constructor(source: VideoSource) {
     this.#source = source;
+    const views = new Set<() => void>();
+    (internals ??= new WeakMap()).set(this, {
+      link: null,
+      emit: (event, payload) => this.#emitters.get(event)?.emit(payload),
+      setStatus: (status) => this.#setStatus(status),
+      views,
+      source: () => this.#source,
+      element: () => this.#element,
+      wantPlaying: false,
+    });
+  }
+
+  /** The native view this player is shown in, or null. */
+  get #link(): NativeLink | null {
+    return internalsOf(this).link;
+  }
+
+  /** Tell the views showing this player that a prop they send changed. */
+  #changed(): void {
+    for (const refresh of internalsOf(this).views) refresh();
   }
 
   /** The player's `<video>` element (created on first use). */
@@ -89,6 +159,8 @@ export class VideoPlayer {
     const video = document.createElement("video");
     video.playsInline = true;
     video.preload = "metadata";
+    video.loop = this.#loop;
+    video.muted = this.#muted;
     video.style.width = "100%";
     video.style.height = "100%";
     const emit = <K extends keyof VideoPlayerEvents>(event: K, payload: VideoPlayerEvents[K]) =>
@@ -101,7 +173,10 @@ export class VideoPlayer {
       "pause",
       () => emit("playingChange", { isPlaying: false, oldIsPlaying: true }),
     );
-    video.addEventListener("ended", () => emit("playToEnd", undefined));
+    video.addEventListener("ended", () => {
+      if (!video.loop) internalsOf(this).wantPlaying = false;
+      emit("playToEnd", undefined);
+    });
     video.addEventListener("loadstart", () => this.#setStatus("loading"));
     video.addEventListener("loadeddata", () => this.#setStatus("readyToPlay"));
     video.addEventListener("error", () => this.#setStatus("error"));
@@ -155,23 +230,29 @@ export class VideoPlayer {
 
   /** Whether it is playing. */
   get playing(): boolean {
+    const link = this.#link;
+    if (link) return link.playing;
     return this.#element ? !this.#element.paused && !this.#element.ended : false;
   }
 
   /** Whether it is muted. */
   get muted(): boolean {
-    return this.element.muted;
+    return this.#muted;
   }
   set muted(value: boolean) {
-    this.element.muted = value;
+    this.#muted = value;
+    if (this.#element) this.#element.muted = value;
+    this.#changed();
   }
 
   /** Whether it loops. */
   get loop(): boolean {
-    return this.element.loop;
+    return this.#loop;
   }
   set loop(value: boolean) {
-    this.element.loop = value;
+    this.#loop = value;
+    if (this.#element) this.#element.loop = value;
+    this.#changed();
   }
 
   /** The volume, 0–1. */
@@ -192,26 +273,38 @@ export class VideoPlayer {
 
   /** The position in seconds. */
   get currentTime(): number {
-    return this.#element?.currentTime ?? 0;
+    return this.#link?.time ?? this.#element?.currentTime ?? 0;
   }
   set currentTime(value: number) {
-    this.element.currentTime = value;
+    const link = this.#link;
+    if (link) {
+      link.time = value;
+      link.command("seek", { seconds: value }).catch(() => {});
+    } else this.element.currentTime = value;
   }
 
   /** The duration in seconds (0 until known). */
   get duration(): number {
+    const link = this.#link;
+    if (link) return link.duration;
     const d = this.#element?.duration ?? 0;
     return Number.isFinite(d) ? d : 0;
   }
 
   /** Start or resume playback. */
   play(): void {
-    this.element.play().catch(() => {});
+    internalsOf(this).wantPlaying = true;
+    const link = this.#link;
+    if (link) link.command("play").catch(() => {});
+    else this.element.play().catch(() => {});
   }
 
   /** Pause playback. */
   pause(): void {
-    this.#element?.pause();
+    internalsOf(this).wantPlaying = false;
+    const link = this.#link;
+    if (link) link.command("pause").catch(() => {});
+    else this.#element?.pause();
   }
 
   /** Play `source` instead. */
@@ -225,6 +318,7 @@ export class VideoPlayer {
     this.#source = source;
     this.element;
     await this.#load(source);
+    this.#changed();
     this.#emitters.get("sourceChange")?.emit({ source, oldSource });
   }
 
@@ -298,7 +392,7 @@ export function useVideoPlayer(
   _playerBuilderOptions?: PlayerBuilderOptions,
 ): VideoPlayer {
   const player = useMemo(() => new VideoPlayer(source), []);
-  const key = typeof source === "string" ? source : source?.uri ?? "";
+  const key = sourceUri(source);
   const first = useRef(true);
   useEffect(() => {
     if (first.current) {
@@ -330,13 +424,59 @@ export interface VideoViewProps {
   [prop: string]: unknown;
 }
 
-/**
- * Shows a player's video.
- *
- * @param props The player, controls, fit and style.
- * @returns The view.
- */
-export function VideoView(props: VideoViewProps): VNode {
+/** The `<video>` fallback's style inside the slot: the slot's whole box. */
+const FILL = { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 };
+
+/** Hand the player over to the native view `command` (or back to its `<video>`, when null). */
+function linkNative(player: VideoPlayer, command: NativeLink["command"] | null): void {
+  const inside = internalsOf(player);
+  if (!command) {
+    inside.link = null;
+    return;
+  }
+  // Carry the `<video>`'s position and play state over, and silence it.
+  const element = inside.element();
+  const time = element?.currentTime ?? 0;
+  const playing = inside.wantPlaying;
+  element?.pause();
+  const link: NativeLink = { command, playing: false, time, duration: 0 };
+  inside.link = link;
+  if (time > 0) command("seek", { seconds: time }).catch(() => {});
+  if (playing) command("play").catch(() => {});
+}
+
+/** A native video view event, as the player's own events. */
+function nativeEvent(player: VideoPlayer, name: string, data: unknown): void {
+  const inside = internalsOf(player);
+  const link = inside.link;
+  const d = (data ?? {}) as { duration?: unknown; message?: unknown };
+  if (name === "ready") {
+    if (link && typeof d.duration === "number") link.duration = d.duration;
+    inside.setStatus("readyToPlay");
+  } else if (name === "play" || name === "pause") {
+    const isPlaying = name === "play";
+    if (link) link.playing = isPlaying;
+    inside.emit("playingChange", { isPlaying, oldIsPlaying: !isPlaying });
+  } else if (name === "ended") {
+    if (link) link.playing = false;
+    if (!player.loop) inside.wantPlaying = false;
+    inside.emit("playToEnd", undefined);
+  } else if (name === "error") inside.setStatus("error");
+}
+
+/** Re-render when the player's `loop`, `muted` or source change. */
+function usePlayerRefresh(player: VideoPlayer): void {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const views = internalsOf(player).views;
+    const refresh = () => setTick((n) => n + 1);
+    views.add(refresh);
+    return () => void views.delete(refresh);
+  }, [player]);
+}
+
+/** The `<video>` fallback: the player's own element, mounted in a host view. */
+function WebVideoView(props: VideoViewProps): VNode {
   const {
     player,
     nativeControls = true,
@@ -359,6 +499,48 @@ export function VideoView(props: VideoViewProps): VNode {
     ...rest,
     ref: (node: HTMLElement | null) => void (host.current = node),
     style: viewStyle(style, { backgroundColor: "#000", overflow: "hidden" }),
+  });
+}
+
+/**
+ * Shows a player's video: in the native video view where it is registered, else in the
+ * player's `<video>`.
+ *
+ * @param props The player, controls, fit and style.
+ * @returns The view.
+ */
+export function VideoView(props: VideoViewProps): VNode {
+  const { player, nativeControls = true, contentFit = "contain" } = props;
+  usePlayerRefresh(player);
+  const onCommand = useCallback(
+    (command: NativeLink["command"] | null) => linkNative(player, command),
+    [player],
+  );
+  const onEvent = useCallback((name: string, data: unknown) => nativeEvent(player, name, data), [
+    player,
+  ]);
+  useEffect(() => () => linkNative(player, null), [player]);
+  const src = sourceUri(internalsOf(player).source());
+  // A file in the app's own storage is read through a blob URL the native player cannot open.
+  if (backing(src)) return h(WebVideoView, props);
+  return h(NativeViewSlot, {
+    type: "video",
+    props: {
+      src,
+      controls: nativeControls,
+      fit: contentFit === "contain" ? "contain" : "cover",
+      loop: player.loop,
+      muted: player.muted,
+      autoplay: false,
+    },
+    onEvent,
+    onCommand,
+    style: {
+      backgroundColor: "#000",
+      overflow: "hidden",
+      ...(flattenStyle(props.style) as Record<string, string | number | undefined>),
+    },
+    children: h(WebVideoView, { ...props, style: FILL }),
   });
 }
 

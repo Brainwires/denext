@@ -252,7 +252,10 @@ function reportExpoDeps(d: NonNullable<MigrateResult["expo"]>["deps"]): void {
   for (const p of shimmed) console.log(`      ${p.name.padEnd(24)} ${shimLine(p)}`);
   for (const p of plain) {
     console.log(
-      `      ${p.name.padEnd(24)} no shim (the real package, which must have a web build)`,
+      `      ${p.name.padEnd(24)} ` +
+        (p.advice
+          ? `⚠️  no shim: ${p.advice}`
+          : "no shim (the real package, which must have a web build)"),
     );
   }
   reportCommunityDeps(d.community);

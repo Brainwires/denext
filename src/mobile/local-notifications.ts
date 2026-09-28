@@ -448,8 +448,8 @@ interface WebNotificationCtor {
  * the notification silently. Android 12+ may deliver an exact-time trigger a few minutes late
  * unless the user allowed exact alarms.
  *
- * On the web there is no scheduler: a notification without a trigger shows through the
- * Notifications API (when permission is granted), and one with a trigger rejects.
+ * On the web and on Deno Desktop there is no scheduler: a notification without a trigger shows
+ * through the Notifications API (when permission is granted), and one with a trigger rejects.
  *
  * @param notification What to show, and when.
  * @returns Its id (for {@linkcode cancelNotification}).

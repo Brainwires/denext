@@ -116,6 +116,18 @@
       "hasReadme": true
     },
     {
+      "name": "expo-app",
+      "title": "Expo app in React Native mode (Capacitor)",
+      "blurb": "Expo's own starter, expo-template-default@57.0.27 (Expo SDK 57, the npm tarball sha512-E8P3+6k/6QNGKBZGw02/DachMMRUIT8MG0rXq8+N/J7EYZLO+rNH/0DZmDirU/Qwnj1zz6H40ySyS0AJmtZVBw==, 0BSD, see LICENSE),…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/expo-app",
+      "tags": [
+        "spa",
+        "compat",
+        "mobile"
+      ],
+      "hasReadme": true
+    },
+    {
       "name": "fonts",
       "title": "fonts — self-hosted Google fonts (next/font/google)",
       "blurb": "A one-page app that loads a Google font through the next/font/google compat module and self-hosts it at build time — no runtime request to Google.",

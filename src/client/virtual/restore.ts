@@ -26,6 +26,11 @@ export interface RestoreSnapshot {
   readonly sizes: readonly (readonly [string, number])[];
   /** Whether the view was at the end (a chat list re-pins). */
   readonly atEnd: boolean;
+  /**
+   * An automatic (dev) snapshot's stamp: when it was saved (epoch ms) and by which document.
+   * Absent for a `restoreKey` snapshot. See `dev-restore.ts`.
+   */
+  readonly dev?: { readonly at: number; readonly doc: string };
 }
 
 /** The field of `history.state` holding the entry id. */

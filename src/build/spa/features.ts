@@ -13,29 +13,40 @@ const SKIP_DIRS = new Set(["node_modules", "out", "ios", "android", "dist", "bui
 /** App source extensions. */
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/;
 
-/** Every app source file under `dir` that mentions `feature` (the fold's own pre-filter). */
-async function featureSources(root: string, dir = root): Promise<string[]> {
+/** Every app source file under `dir` (not in `node_modules`, build output or dot-folders). */
+export async function appSourceFiles(root: string, dir = root): Promise<string[]> {
   const out: string[] = [];
   for await (const entry of Deno.readDir(dir)) {
     const path = join(dir, entry.name);
     if (entry.isDirectory) {
       if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue;
-      out.push(...await featureSources(root, path));
-    } else if (entry.isFile && SOURCE.test(entry.name)) {
-      if ((await Deno.readTextFile(path)).includes("feature")) out.push(path);
-    }
+      out.push(...await appSourceFiles(root, path));
+    } else if (entry.isFile && SOURCE.test(entry.name)) out.push(path);
   }
   return out;
 }
 
+/** Every app source file under `root` that mentions `feature` (the fold's own pre-filter). */
+async function featureSources(root: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const path of await appSourceFiles(root)) {
+    if ((await Deno.readTextFile(path)).includes("feature")) out.push(path);
+  }
+  return out;
+}
+
+/** Modules substituted in a `deno bundle` build through its import map. */
+export interface SpaModuleRedirects {
+  /** `original module URL → substituted module URL`, merged into the bundle's import map. */
+  readonly importMap: Record<string, string>;
+  /** Removes the substituted modules (after bundling). */
+  cleanup(): Promise<void>;
+}
+
 /** What the SPA's native bundle needs for `features`. */
-export interface SpaFeatureFold {
+export interface SpaFeatureFold extends SpaModuleRedirects {
   /** Prepended to the entry: seeds the configured flags. Empty without flags. */
   readonly seed: string;
-  /** `original module URL → folded module URL`, merged into the bundle's import map. */
-  readonly importMap: Record<string, string>;
-  /** Removes the folded modules (after bundling). */
-  cleanup(): Promise<void>;
 }
 
 /**

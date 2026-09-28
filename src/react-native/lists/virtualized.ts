@@ -770,6 +770,7 @@ export function CoreList(props: CoreListProps): VNode {
   useHiddenScrollbarRule(list);
   useMountCallback(engine, handle);
   useOnLayout(list, handle);
+  useContentSizeChange(list, handle);
   const control = refreshElement(list, prim);
   const engineRef = (h: VirtualListHandle | null): void => {
     vl.current = h;
@@ -838,6 +839,57 @@ function useOnLayout(list: VirtualizedListProps<unknown>, handle: CoreHandle): v
     ro.observe(node);
     return () => ro.disconnect();
   }, [wanted, handle]);
+}
+
+/** The scroll element's content size, as `onContentSizeChange` reports it. */
+interface ContentBox {
+  scrollWidth?: number;
+  scrollHeight?: number;
+  children?: ArrayLike<Element>;
+}
+
+/**
+ * Hook: React Native's `onContentSizeChange`, from the scroll element's content size after each
+ * commit and whenever one of its children resizes (a row measured, the header or footer
+ * changed), reported only when it differs from the last report.
+ */
+function useContentSizeChange(list: VirtualizedListProps<unknown>, handle: CoreHandle): void {
+  const latest = useRef(list.onContentSizeChange);
+  latest.current = list.onContentSizeChange;
+  const wanted = !!list.onContentSizeChange;
+  const state = useRef<{ last: string; ro: ResizeObserver | null; report: () => void }>({
+    last: "",
+    ro: null,
+    report: () => {},
+  });
+  useLayoutEffect(() => {
+    const node = handle.getScrollableNode() as (ContentBox & Element) | null;
+    if (!wanted || !node) return;
+    const s = state.current;
+    s.report = () => {
+      const width = node.scrollWidth ?? 0;
+      const height = node.scrollHeight ?? 0;
+      const key = `${width}x${height}`;
+      if (key === s.last) return;
+      s.last = key;
+      latest.current?.(width, height);
+    };
+    const RO = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+    s.ro = RO ? new RO(() => s.report()) : null;
+    return () => {
+      s.ro?.disconnect();
+      s.ro = null;
+      s.last = "";
+    };
+  }, [wanted, handle]);
+  // After every commit: observe the current children (observing one twice is a no-op), report.
+  useLayoutEffect(() => {
+    const s = state.current;
+    if (!wanted) return;
+    const node = handle.getScrollableNode() as (ContentBox & Element) | null;
+    for (const child of Array.from(node?.children ?? [])) s.ro?.observe(child);
+    s.report();
+  });
 }
 
 /** Hook: the adapter's `onMount`, once, after the engine's first commit. */

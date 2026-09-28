@@ -236,7 +236,9 @@ export interface VirtualListOptions<T> {
    * Save the view (the anchor row's key, its offset, nearby sizes) when the list unmounts or
    * the page is hidden, and restore it when the list mounts again for the same history entry
    * — back / forward navigation (denext's router, bfcache-less reloads) or a remount on the
-   * same page. A new navigation to the page starts fresh. Unique per list on a page.
+   * same page. A new navigation to the page starts fresh. Unique per list on a page. Not needed
+   * for development: in dev, a list without one lands back on the same row when a hot update
+   * remounts it or the page reloads.
    */
   readonly restoreKey?: string;
   /** When rows count as viewable for `onViewableItemsChanged` (React Native's). */

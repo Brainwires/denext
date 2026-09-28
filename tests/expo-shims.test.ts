@@ -812,7 +812,14 @@ Deno.test("expo-font loads through FontFace; expo-asset wraps bundled URLs", asy
 });
 
 Deno.test("expo core, widgets, dev-client and build-properties answer as Expo's web build", async () => {
-  assertThrows(() => Expo.requireNativeModule("ExpoThing"), Error, "Cannot find native module");
+  // Off-device the module loads; only a call throws (so an import-time lookup is harmless).
+  const thing = Expo.requireNativeModule<Record<string, (...a: unknown[]) => unknown>>("ExpoThing");
+  assertThrows(() => thing.doIt(1), Error, "Cannot find native module 'ExpoThing' (calling doIt)");
+  assertEquals((thing.addListener("x", () => {}) as { remove(): void }).remove(), undefined);
+  assertEquals([(thing as Any).then, String(thing)], [
+    undefined,
+    "[missing native module ExpoThing]",
+  ]);
   assertEquals(Expo.requireOptionalNativeModule("ExpoThing"), null);
   // A native view slot of type "V" (its children render where "V" is not registered natively).
   assertEquals(typeof Expo.requireNativeView("V"), "function");
@@ -860,11 +867,9 @@ Deno.test("expo view shims render DOM views with the CSS they stand for", () => 
   assertEquals(isGlassEffectAPIAvailable(), false);
   const glass = GlassView({ glassEffectStyle: "none", tintColor: "red" }) as VNode;
   assertEquals((glass.props as Any).style.backdropFilter, undefined);
+  // SymbolView is denext/mobile's SystemIcon (a Material Symbol off iOS).
   const symbol = SymbolView({ name: "checkmark", size: 18 }) as VNode;
-  assertEquals([(symbol.props as Any).style.width, (symbol.props as Any)["data-symbol"]], [
-    18,
-    "checkmark",
-  ]);
+  assertEquals([(symbol.props as Any).size, (symbol.props as Any).name], [18, "checkmark"]);
   const fallback = h("b", null);
   assertEquals(SymbolView({ name: "x", fallback }), fallback);
   const pasted: unknown[] = [];

@@ -12,6 +12,12 @@
 # so that false positive doesn't block the commit gate. Each IS declared in deno.json —
 # verify against deno.json's `imports` before adding a new entry.
 ignoreDependencies = [
+  # React Native e2e fixtures import these community packages; RN mode aliases them to
+  # denext implementations at build time, so there is no package.json entry to read.
+  "@expo/vector-icons",
+  "react-native-fast-image",
+  "react-native-maps",
+  "react-native-video",
   "@mdx-js/mdx", # deno.json: npm:@mdx-js/mdx@^3 — MDX compilation on the compat build
   "esbuild", # deno.json: npm:esbuild@^0.24.0 — the compat/SPA bundler
   "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
@@ -199,6 +205,12 @@ ignorePatterns = [
   # package.json + node_modules, bundled by Metro, entry index.js via AppRegistry) that
   # fallow cannot model. examples/scroll-bench/{web,shared,harness} stay analyzed.
   "examples/scroll-bench/native/**",
+  # The Expo app (examples/expo-app): Expo's own `expo-template-default` (SDK 57) migrated with
+  # `denext migrate --from expo`, plus its self-test screens. Its routes are reached through
+  # the `expo-router/_ctx` context React Native mode generates from src/app/ (Metro's
+  # require.context, which fallow cannot see), its packages come from its own node_modules, and
+  # the template's code is upstream's, kept as shipped so the example tests the migrator.
+  "examples/expo-app/**",
   # The scroll bench's device and browser drivers: `harness/measure.ts` drives an Android
   # emulator over adb and `harness/web-smoke.ts` headless Chromium. Every function is I/O
   # against a device/browser, untestable without one, so CRAP-on-zero-coverage is noise

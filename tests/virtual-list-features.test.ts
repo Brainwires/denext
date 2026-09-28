@@ -239,6 +239,69 @@ Deno.test("restoreKey: a chat at its end is restored pinned to the (possibly lon
   sessionStorage.clear();
 });
 
+Deno.test("dev, no restoreKey: a hot update's remount and a reload restore the view; nothing else does", async () => {
+  let state: unknown = null;
+  const history = {
+    get state() {
+      return state;
+    },
+    replaceState: (s: unknown) => void (state = s),
+  };
+  const realPerf = globalThis.performance;
+  let navType = "navigate";
+  const performance = {
+    now: () => realPerf.now(),
+    getEntriesByType: (t: string) => t === "navigation" ? [{ type: navType }] : [],
+  };
+  sessionStorage.clear();
+  const props = { data: rows(5000), getItemSize: () => 40, viewportSize: 400, renderItem: text };
+  const g = globalThis as { __denextHmrAt?: number; __denextVLDoc?: string };
+  // Production (no `__denextDev`): a remount starts at the top.
+  await withTempGlobals({ history, performance }, async () => {
+    const first = await render(list(props));
+    await scrollTo(first, 40 * 1234 + 15);
+    await first.unmount();
+    const again = await render(list(props));
+    assertEquals(indices(again)[0], 0, "production: no automatic restoration");
+    await again.unmount();
+  });
+  await withTempGlobals({
+    history,
+    performance,
+    __denextDev: true,
+    __denextHmrAt: undefined,
+    __denextVLDoc: "doc-a",
+  }, async () => {
+    const first = await render(list(props));
+    await scrollTo(first, 40 * 1234 + 15);
+    // A hot update remounts the list: it lands back on row 1234, 15 px above the top.
+    g.__denextHmrAt = Date.now();
+    await first.unmount();
+    const hot = await render(list(props));
+    assertEquals(visualTops(hot, () => 40).get(1234), -15, "restored after a hot update");
+    // A remount long after that update (a key change, a navigation) starts at the top.
+    g.__denextHmrAt = Date.now() - 60_000;
+    await hot.unmount();
+    const plain = await render(list(props));
+    assertEquals(indices(plain)[0], 0, "a remount no hot update caused starts fresh");
+    await scrollTo(plain, 40 * 300);
+    await plain.unmount(); // saved by this document (like `pagehide` before a reload)
+    // A reload: a new document, loaded as a reload, restores the previous document's view.
+    g.__denextVLDoc = "doc-b";
+    navType = "reload";
+    const reloaded = await render(list(props));
+    assertEquals(visualTops(reloaded, () => 40).get(300), 0, "restored across the reload");
+    await reloaded.unmount();
+    // A new document reached by navigation (not a reload) starts fresh.
+    g.__denextVLDoc = "doc-c";
+    navType = "navigate";
+    const navigated = await render(list(props));
+    assertEquals(indices(navigated)[0], 0, "a navigation starts at the top");
+    await navigated.unmount();
+  });
+  sessionStorage.clear();
+});
+
 // ---- grid (E2, T18) ------------------------------------------------------------------------------
 
 Deno.test("grid: numColumns lines with gaps, item-level a11y and index APIs (E2, T18)", async () => {

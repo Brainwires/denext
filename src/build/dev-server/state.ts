@@ -173,6 +173,12 @@ export interface DevState {
    */
   compilerMap: Record<string, string>;
   qrlMap: Record<string, string>;
+  /**
+   * The bundled client's Fast Refresh registrations (`refresh-modules.ts`), over the compiler +
+   * qrl output: original → instrumented module URLs, and the generation they were built for.
+   */
+  refreshMap: Record<string, string>;
+  refreshGen: number;
   compilerGen: number;
 
   /** Cache Components (opt-in): the `"use cache"` loader wrapper, rebuilt per generation. */
@@ -273,6 +279,8 @@ export function createDevState(options: DevServerOptions): DevState {
     cssHadEntries: false,
     compilerMap: {},
     qrlMap: {},
+    refreshMap: {},
+    refreshGen: -1,
     compilerGen: -1,
     useCacheEnabled: resolveCacheComponents(paths.config) ?? false,
     ucLoad: null,

@@ -294,6 +294,7 @@ Deno.test("patches: react-native-web's real ScrollView / Text / PixelRatio / Dim
       ["ScrollView", "withScrollSnap", "ForwardedScrollView"],
       ["Text", "withFontScaling", "Text"],
       ["PixelRatio", "withFontScaleRatio", "PixelRatio"],
+      ["Image", "withImageStatics", "ImageWithStatics"],
     ];
     for (const [name, wrapper, local] of cases) {
       const source = await Deno.readTextFile(at(name));

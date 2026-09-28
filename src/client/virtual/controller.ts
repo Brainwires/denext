@@ -25,6 +25,7 @@ import { RecyclePool } from "./recycle.ts";
 import { defaultKey, px } from "./shared.ts";
 import { FlipSnapshot, type ItemLayoutAnimationOptions } from "./animate.ts";
 import { historyEntryId, loadSnapshot, type RestoreSnapshot, saveSnapshot } from "./restore.ts";
+import { devRestoreEnabled, devRestoreKey, devSnapshotApplies, devStamp } from "./dev-restore.ts";
 import {
   scrollEvent,
   ScrollSession,
@@ -551,7 +552,8 @@ export class VirtualController<T> {
   /** The current scroll session was started by the list's own write. */
   #sessionProgrammatic = false;
   #trackers: ViewabilityTracker<T>[] = [];
-  #restore: { entry: string; key: string; pending: boolean } | undefined;
+  /** Scroll restoration: `restoreKey`'s, or the automatic dev one (`dev`: see dev-restore.ts). */
+  #restore: { entry: string; key: string; pending: boolean; dev: boolean } | undefined;
   #flip: { snap: FlipSnapshot; oldNear: Set<Key> } | undefined;
   #typeahead = { buffer: "", t: 0 };
   #gridToken: { base: unknown; cols: number; token: object } | undefined;
@@ -1745,11 +1747,17 @@ export class VirtualController<T> {
 
   // ---- scroll restoration ----------------------------------------------------------------
 
+  /**
+   * Set up restoration: under `restoreKey`, or — in dev, without one — automatically under the
+   * list's position in the document, so a dev edit that remounts the list or reloads the page
+   * lands back on the same row (see dev-restore.ts).
+   */
   #initRestore(): void {
-    const key = this.props.restoreKey;
+    const own = this.props.restoreKey;
+    const key = own || (devRestoreEnabled() ? devRestoreKey(this.root) : undefined);
     if (!key) return;
     const entry = historyEntryId();
-    if (entry) this.#restore = { entry, key, pending: true };
+    if (entry) this.#restore = { entry, key, pending: true, dev: !own };
   }
 
   /** Restore a saved view once the list has rows (after hydration: the first commit). */
@@ -1758,7 +1766,7 @@ export class VirtualController<T> {
     if (!r?.pending || this.core.tree.count === 0) return;
     r.pending = false;
     const snap = loadSnapshot(r.entry, r.key);
-    if (snap) this.#applySnapshot(snap);
+    if (snap && (!r.dev || devSnapshotApplies(snap))) this.#applySnapshot(snap);
   }
 
   #applySnapshot(snap: RestoreSnapshot): void {
@@ -1789,7 +1797,7 @@ export class VirtualController<T> {
     if (batch.length > 0) this.core.measure(batch);
   }
 
-  /** Save the view for `restoreKey` (unmount, pagehide). */
+  /** Save the view for `restoreKey` or the dev restore (unmount, pagehide). */
   #saveRestore(): void {
     const r = this.#restore;
     if (!r || !this.#initialized || this.printing) return;
@@ -1807,6 +1815,7 @@ export class VirtualController<T> {
       gap: at.gap,
       sizes,
       atEnd: core.isAtEnd(),
+      ...(r.dev ? { dev: devStamp() } : {}),
     });
   }
 

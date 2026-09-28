@@ -17,7 +17,7 @@ import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { type SseClients, sseSend } from "../sse.ts";
 import { tailwindPaths } from "../tailwind.ts";
-import { bundleSpaInto, spaDefines } from "./bundle.ts";
+import { bundleSpaInto, spaCssRoots, spaDefines } from "./bundle.ts";
 import { CLIENT_PREFIX, spaEntryPath, supportInstall } from "./shared.ts";
 
 export interface SpaDevServerOptions {
@@ -219,7 +219,7 @@ export async function getUnbundledCss(st: SpaDevState): Promise<string> {
       configPath: paths.configPath,
       outDir: paths.outDir,
       minify: false,
-      entryFiles: [st.entryPath],
+      entryFiles: await spaCssRoots(paths, st.entryPath),
       tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
     });
     st.unbundledCss = appCss ? concatCss(appCss.css) : "";

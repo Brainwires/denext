@@ -233,7 +233,7 @@
       "name": "desktop",
       "summary": "Build/run/package the app as a native desktop app",
       "usage": "denext desktop [action] [dir] [options]",
-      "description": "  denext desktop run                     Export + open in a deno desktop window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS",
+      "description": "  denext desktop run                     Export + open in a deno desktop window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template",
       "flags": [
         {
           "name": "entry",
@@ -264,6 +264,11 @@
           "name": "lan",
           "type": "boolean",
           "description": "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)"
+        },
+        {
+          "name": "regenerate-scripts",
+          "type": "boolean",
+          "description": "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), keeping a .bak of any file that differs; adopt the current scripts in an existing project"
         },
         {
           "name": "list",

@@ -35,15 +35,28 @@ const LAYOUT_ANIMATION_RUNTIME = "denext-layout-animation";
 /** The namespace binding the patched modules call the runtime through. */
 const NS = "__denextOffload";
 
-/** One anchored splice: every match of `find` is replaced (`find` must match at least once). */
+/**
+ * One anchored splice: the first match of `find` is replaced (`find` must match). With `after`,
+ * only the code from the first match of `after` on is searched (`after` must match too).
+ */
 interface Splice {
   find: RegExp;
   replace: string;
+  after?: RegExp;
 }
+
+/**
+ * Where the web build's shared value is made: `makeMutableWeb` (Reanimated 4.0 – 4.5, next to
+ * the native and UI-runtime variants and the compiler-safe `get` / `set` helper, which all come
+ * earlier in the file and must not be patched), else `makeMutable` (4.6+, the only variant).
+ */
+const WEB_MUTABLE = /function makeMutableWeb\(|export function makeMutable\(/;
 
 /** What to do to one file. */
 interface FilePatch {
   splices: Splice[];
+  /** Applied as a group after `splices`, only when every one of them matches. */
+  optional?: Splice[];
   /** Appended after the module's code. */
   append?: string;
 }
@@ -60,6 +73,30 @@ function tagged(name: string, kind: string, declaration: "const" | "function"): 
   };
 }
 
+/**
+ * `styleUpdater`'s splices: in `hook/useAnimatedStyleCommon.js` from Reanimated 4.6, in
+ * `hook/useAnimatedStyle.js` before (the function is the same). The first match of each is
+ * `styleUpdater`'s, ahead of the Jest variant that follows it in 4.0 – 4.5.
+ */
+const STYLE_UPDATER_SPLICES: Splice[] = [
+  {
+    find: /animation\.callStart = timestamp => \{/,
+    replace: `${NS}.noteAnimationStart(animation, value, lastAnimation);` +
+      `animation.callStart = timestamp => {`,
+  },
+  {
+    find: /const animations = state\.animations \?\? \{\};(\s*const newValues = updater\(\))/,
+    replace: `${NS}.interruptStyle(state);const animations = state.animations ?? {};$1`,
+  },
+  {
+    find: /if \(hasAnimations\) \{(\s*const frame = )/,
+    replace: `if (hasAnimations && ${NS}.offloadStyle({ viewDescriptors, state, animations, ` +
+      `nonAnimated: nonAnimatedNewValues, hasNonAnimated: hasNonAnimatedValues, ` +
+      `isAnimatedProps, t0: frameTimestamp, animationsActive, updateProps })) ` +
+      `{ state.last = newValues; return; } if (hasAnimations) {$1`,
+  },
+];
+
 /** Reanimated 4's web modules (under `react-native-reanimated/lib/module/`) and their patches. */
 const REANIMATED_PATCHES: Readonly<Record<string, FilePatch>> = {
   "animation/timing.js": tagged("withTiming", "timing", "const"),
@@ -70,12 +107,16 @@ const REANIMATED_PATCHES: Readonly<Record<string, FilePatch>> = {
   "mutables.js": {
     splices: [
       {
+        after: WEB_MUTABLE,
         find: /(get value\(\) \{[^}]*?)return value;/,
         replace: `$1return ${NS}.readValue(mutable, value);`,
       },
       {
-        find: /Object\.defineProperties\(mutable, \{/,
-        replace: `${NS}.trackMutable(mutable, listeners);Object.defineProperties(mutable, {`,
+        // The end of the web shared value's object literal, where `mutable` and its
+        // `listeners` map are both in scope.
+        after: WEB_MUTABLE,
+        find: /_isReanimatedSharedValue: true(\s*)\};/,
+        replace: `_isReanimatedSharedValue: true$1};${NS}.trackMutable(mutable, listeners);`,
       },
     ],
   },
@@ -114,27 +155,11 @@ const REANIMATED_PATCHES: Readonly<Record<string, FilePatch>> = {
       replace: `${NS}.styleMapper(fun, shareableViewDescriptors, updaterFn, isAnimatedProps, ` +
         `IS_JEST);const mapperId = startMapper(fun, inputs);`,
     }],
+    // Reanimated 4.0 – 4.5 keep `styleUpdater` in this file (4.6 moved it to
+    // useAnimatedStyleCommon.js, patched as its own file).
+    optional: STYLE_UPDATER_SPLICES,
   },
-  "hook/useAnimatedStyleCommon.js": {
-    splices: [
-      {
-        find: /animation\.callStart = timestamp => \{/,
-        replace: `${NS}.noteAnimationStart(animation, value, lastAnimation);` +
-          `animation.callStart = timestamp => {`,
-      },
-      {
-        find: /const animations = state\.animations \?\? \{\};(\s*const newValues = updater\(\))/,
-        replace: `${NS}.interruptStyle(state);const animations = state.animations ?? {};$1`,
-      },
-      {
-        find: /if \(hasAnimations\) \{(\s*const frame = )/,
-        replace: `if (hasAnimations && ${NS}.offloadStyle({ viewDescriptors, state, animations, ` +
-          `nonAnimated: nonAnimatedNewValues, hasNonAnimated: hasNonAnimatedValues, ` +
-          `isAnimatedProps, t0: frameTimestamp, animationsActive, updateProps })) ` +
-          `{ state.last = newValues; return; } if (hasAnimations) {$1`,
-      },
-    ],
-  },
+  "hook/useAnimatedStyleCommon.js": { splices: STYLE_UPDATER_SPLICES },
   "ReanimatedModule/js-reanimated/index.js": {
     splices: [{ find: /import \{[^}]*\bcreateTransformValue\b[^}]*\} from/, replace: "$&" }],
     append: `${NS}.setStyleConverter(createReactDOMStyle, createTransformValue);\n`,
@@ -152,14 +177,25 @@ const UI_MANAGER =
 export const OFFLOAD_MODULE_FILTER =
   /[\\/](?:react-native-reanimated[\\/]lib[\\/]module|react-native-web[\\/]dist)[\\/].+\.js$/;
 
-/** Apply `patch` to `code`: null unless every anchor matches. */
-function applyPatch(code: string, patch: FilePatch): string | null {
+/** Apply `splices` to `code` in order: null unless every anchor matches. */
+function applySplices(code: string, splices: readonly Splice[]): string | null {
   let out = code;
-  for (const { find, replace } of patch.splices) {
-    if (!find.test(out)) return null;
-    out = out.replace(find, replace);
+  for (const { find, replace, after } of splices) {
+    const at = after ? out.search(after) : 0;
+    if (at < 0) return null;
+    const tail = out.slice(at);
+    if (!find.test(tail)) return null;
+    out = out.slice(0, at) + tail.replace(find, replace);
   }
-  return patch.append ? `${out}\n${patch.append}` : out;
+  return out;
+}
+
+/** Apply `patch` to `code`: null unless every required anchor matches. */
+function applyPatch(code: string, patch: FilePatch): string | null {
+  const out = applySplices(code, patch.splices);
+  if (out === null) return null;
+  const full = patch.optional ? applySplices(out, patch.optional) ?? out : out;
+  return patch.append ? `${full}\n${patch.append}` : full;
 }
 
 /** Insert `line` after the module's `'use strict';` prologue, on the same line. */

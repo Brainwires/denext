@@ -9,6 +9,8 @@
 //     `Dimensions`' `fontScale` reads `reactNativeFontScale()`: the OS text size (Dynamic Type,
 //     Android's font scale) reaches allowFontScaling / maxFontSizeMultiplier,
 //     PixelRatio.getFontScale() and useWindowDimensions().fontScale (react-native-web reports 1).
+//   - `Image` is passed through `withImageStatics`: the `resolveAssetSource`,
+//     `getSizeWithHeaders` and `prefetchWithMetadata` statics react-native-web lacks.
 //   - An image import (`require("./logo.png")`) with Metro-style `@2x` / `@3x` siblings (the
 //     base file may be missing, as in Metro) resolves to a module that bundles each variant and
 //     exports the URL of the one this screen wants (`pickImageScale`), still a string.
@@ -24,6 +26,7 @@ const OVERLAY = "denext/react-native";
 
 /** The react-native-web modules whose default export is wrapped, and the wrapper. */
 const WRAPPED: Readonly<Record<string, string>> = {
+  Image: "withImageStatics",
   ScrollView: "withScrollSnap",
   Text: "withFontScaling",
   PixelRatio: "withFontScaleRatio",

@@ -6,7 +6,8 @@
 // In headless Chromium, on a production build: the root `Stack` renders denext/navigation's
 // StackView (`data-dnx-stack`), `router.push` adds a screen and `router.back` pops it, a
 // nested `Tabs` renders TabsView (`data-dnx-tabs`) and a tab press switches the panel, with
-// no console errors.
+// no console errors; an @expo/vector-icons icon loads its font through the expo-font shim and
+// renders its glyph.
 //
 // The fixture is copied to a temp dir outside the workspace and its npm packages installed
 // there (`npm install`, NETWORK-REQUIRED; skipped when npm or the network is unavailable).
@@ -117,6 +118,29 @@ Deno.test({
           60_000,
         );
         assertEquals(await screens(page), 1);
+      });
+
+      await t.step("@expo/vector-icons: the font loads and the glyph renders", async () => {
+        await pollFor(page, `!!${el("icon")}`, 10_000);
+        const family = await page.evaluate(
+          `getComputedStyle(${el("icon")}).fontFamily`,
+        ) as string;
+        assert(/ionicons/i.test(family), `font-family: ${family}`);
+        const glyph = await page.evaluate(`${el("icon")}.textContent.codePointAt(0)`) as number;
+        assert(glyph >= 0xe000 && glyph <= 0xf8ff, `a private-use glyph, got ${glyph}`);
+        await pollFor(
+          page,
+          `[...document.fonts].some((f) => /ionicons/i.test(f.family) && f.status === "loaded")`,
+          10_000,
+        );
+        assertEquals(await page.evaluate(`getComputedStyle(${el("icon")}).color`), "rgb(1, 2, 3)");
+        // The glyph's own box (the Text itself stretches across its column).
+        const width = await page.evaluate(
+          `(() => { const r = document.createRange(); r.selectNodeContents(${
+            el("icon")
+          }); return r.getBoundingClientRect().width; })()`,
+        ) as number;
+        assert(width > 10 && width < 40, `one 24px glyph wide, got ${width}`);
       });
 
       await t.step("router.push adds a screen; router.back pops it", async () => {

@@ -48,6 +48,9 @@ const FIXTURE: Record<string, string> = {
   ].map((n) => `export { default as ${n} } from "./exports/${n}";\n`).join(""),
   "node_modules/react-native-web/dist/exports/View/index.js": 'export default "RNW_VIEW";\n',
   "node_modules/react-native-web/dist/exports/Text/index.js": 'export default "RNW_TEXT";\n',
+  // react-native-web's press-event hook, which the TouchableNativeFeedback factory takes.
+  "node_modules/react-native-web/dist/modules/usePressEvents/index.js":
+    'export default "RNW_PRESS";\n',
   "node_modules/react-native-web/dist/exports/ScrollView/index.js":
     'import Platform from "../Platform";\nexport default "SCROLLVIEW_ON_" + Platform;\n',
   ...Object.fromEntries(
@@ -62,6 +65,7 @@ export const result = {
   Keyboard: RN.Keyboard,
   KeyboardAvoidingView: RN.KeyboardAvoidingView,
   RefreshControl: RN.RefreshControl,
+  TouchableNativeFeedback: RN.TouchableNativeFeedback,
   Platform: RN.Platform,
   Alert: RN.Alert,
   StatusBar: RN.StatusBar,
@@ -76,11 +80,11 @@ export const result = {
 
 /**
  * The stand-in for `denext/react-native`: each value export is `DENEXT_<name>`, each
- * `create<name>(View)` returns `DENEXT_<name>(<View>)`, and `CREATED` counts the factory calls.
+ * `create<name>(base)` (over `View`, or the press-event hook) returns `DENEXT_<name>(<base>)`.
  */
 const STAND_IN =
   Object.entries(RN_OVERLAY_EXPORTS).map(([name, kind]) =>
-    kind === "view"
+    kind !== "value"
       ? `export function create${name}(View) { return "DENEXT_${name}(" + View + ")"; }\n`
       : `export const ${name} = "DENEXT_${name}";\n`
   ).join("") +
@@ -137,6 +141,11 @@ Deno.test("reactNative overlay: the mocked modules resolve to denext; the rest t
     "a component is built over react-native-web's own View",
   );
   assertEquals(result.RefreshControl, "DENEXT_RefreshControl(RNW_VIEW)");
+  assertEquals(
+    result.TouchableNativeFeedback,
+    "DENEXT_TouchableNativeFeedback(RNW_PRESS)",
+    "built over react-native-web's own press handling",
+  );
   assertEquals(result.Text, "RNW_TEXT", "a name denext does not replace stays react-native-web's");
   assertEquals(result.View, "RNW_VIEW");
   assertEquals(
@@ -194,6 +203,18 @@ Deno.test("overlayModuleSource: ES re-export, View factory, and the CommonJS sha
     "KAV(ESM_VIEW)",
     "an ES-interop View module's default",
   );
+  // A "press" component: create<Name>(usePressEvents), ES and CommonJS.
+  assertStringIncludes(
+    overlayModuleSource("TouchableNativeFeedback", false),
+    "export default /* @__PURE__ */ createTouchableNativeFeedback(usePressEvents);",
+  );
+  assertEquals(
+    run(overlayModuleSource("TouchableNativeFeedback", true), {
+      [RN_OVERLAY]: { createTouchableNativeFeedback: (h: string) => `TNF(${h})` },
+      "../../modules/usePressEvents": { __esModule: true, default: "HOOK" },
+    }),
+    "TNF(HOOK)",
+  );
 });
 
 Deno.test("reactNative overlay: the overlay is a prebuilt runtime entry with every name", async () => {
@@ -201,7 +222,7 @@ Deno.test("reactNative overlay: the overlay is a prebuilt runtime entry with eve
   assertEquals(entries["react-native"], "file:///fw/src/react-native/mod.ts");
   const overlay = await import("../src/react-native/mod.ts") as Record<string, unknown>;
   for (const [name, kind] of Object.entries(RN_OVERLAY_EXPORTS)) {
-    const exported = kind === "view" ? `create${name}` : name;
+    const exported = kind === "value" ? name : `create${name}`;
     assert(overlay[exported] !== undefined, `denext/react-native exports ${exported}`);
   }
 });

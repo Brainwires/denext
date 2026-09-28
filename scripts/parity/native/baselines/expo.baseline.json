@@ -27,15 +27,20 @@
     "expo-local-authentication": "57.0.3",
     "expo-location": "57.0.20",
     "expo-maps": "57.0.3",
+    "expo-media-library": "57.0.5",
+    "expo-navigation-bar": "57.0.2",
     "expo-network": "57.0.1",
     "expo-notifications": "57.0.15",
     "expo-paste-input": "0.1.15",
     "expo-quick-actions": "6.0.2",
+    "expo-screen-capture": "57.0.3",
+    "expo-screen-orientation": "57.0.2",
     "expo-secure-store": "57.0.2",
     "expo-sharing": "57.0.17",
     "expo-sqlite": "57.0.2",
     "expo-splash-screen": "57.0.8",
     "expo-status-bar": "57.0.1",
+    "expo-store-review": "57.0.3",
     "expo-symbols": "57.0.2",
     "expo-tracking-transparency": "57.0.2",
     "expo-updates": "57.0.19",
@@ -44,7 +49,7 @@
     "expo-widgets": "57.0.15",
     "@expo/ui": "57.0.14"
   },
-  "capturedAt": "2026-09-27T15:38:38.872Z",
+  "capturedAt": "2026-09-28T19:18:59.232Z",
   "surfaces": [
     {
       "specifier": "expo",
@@ -6085,6 +6090,921 @@
       }
     },
     {
+      "specifier": "expo-media-library",
+      "resolved": true,
+      "symbols": {
+        "requestPermissionsAsync": {
+          "name": "requestPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPermissionsAsync": {
+          "name": "getPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "presentPermissionsPicker": {
+          "name": "presentPermissionsPicker",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addListener": {
+          "name": "addListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeAllListeners": {
+          "name": "removeAllListeners",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Query": {
+          "name": "Query",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "prototype"
+          ]
+        },
+        "Asset": {
+          "name": "Asset",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "create",
+            "delete",
+            "prototype"
+          ]
+        },
+        "Album": {
+          "name": "Album",
+          "kind": "class",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "create",
+            "delete",
+            "get",
+            "getAll",
+            "prototype"
+          ]
+        },
+        "usePermissions": {
+          "name": "usePermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        },
+        "AssetField": {
+          "name": "AssetField",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "CREATION_TIME",
+            "DURATION",
+            "HEIGHT",
+            "IS_FAVORITE",
+            "MEDIA_TYPE",
+            "MODIFICATION_TIME",
+            "WIDTH"
+          ]
+        },
+        "MediaSubtype": {
+          "name": "MediaSubtype",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DEPTH_EFFECT",
+            "HDR",
+            "HIGH_FRAME_RATE",
+            "LIVE_PHOTO",
+            "PANORAMA",
+            "SCREENSHOT",
+            "SPATIAL_MEDIA",
+            "STREAM",
+            "TIME_LAPSE",
+            "VIDEO_CINEMATIC"
+          ]
+        },
+        "MediaType": {
+          "name": "MediaType",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "AUDIO",
+            "IMAGE",
+            "UNKNOWN",
+            "VIDEO"
+          ]
+        },
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "presentPermissionsPickerAsync": {
+          "name": "presentPermissionsPickerAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createAssetAsync": {
+          "name": "createAssetAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "saveToLibraryAsync": {
+          "name": "saveToLibraryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addAssetsToAlbumAsync": {
+          "name": "addAssetsToAlbumAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeAssetsFromAlbumAsync": {
+          "name": "removeAssetsFromAlbumAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteAssetsAsync": {
+          "name": "deleteAssetsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAssetInfoAsync": {
+          "name": "getAssetInfoAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAlbumsAsync": {
+          "name": "getAlbumsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAlbumAsync": {
+          "name": "getAlbumAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createAlbumAsync": {
+          "name": "createAlbumAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 4,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteAlbumsAsync": {
+          "name": "deleteAlbumsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAssetsAsync": {
+          "name": "getAssetsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeSubscription": {
+          "name": "removeSubscription",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getMomentsAsync": {
+          "name": "getMomentsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "migrateAlbumIfNeededAsync": {
+          "name": "migrateAlbumIfNeededAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "albumNeedsMigrationAsync": {
+          "name": "albumNeedsMigrationAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setAssetFavoriteAsync": {
+          "name": "setAssetFavoriteAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAssetContentUriAsync": {
+          "name": "getAssetContentUriAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-media-library/legacy",
+      "resolved": true,
+      "symbols": {
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestPermissionsAsync": {
+          "name": "requestPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPermissionsAsync": {
+          "name": "getPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "presentPermissionsPickerAsync": {
+          "name": "presentPermissionsPickerAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createAssetAsync": {
+          "name": "createAssetAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "saveToLibraryAsync": {
+          "name": "saveToLibraryAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addAssetsToAlbumAsync": {
+          "name": "addAssetsToAlbumAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 3,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeAssetsFromAlbumAsync": {
+          "name": "removeAssetsFromAlbumAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteAssetsAsync": {
+          "name": "deleteAssetsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAssetInfoAsync": {
+          "name": "getAssetInfoAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAssetContentUriAsync": {
+          "name": "getAssetContentUriAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAlbumsAsync": {
+          "name": "getAlbumsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAlbumAsync": {
+          "name": "getAlbumAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "createAlbumAsync": {
+          "name": "createAlbumAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 4,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "deleteAlbumsAsync": {
+          "name": "deleteAlbumsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getAssetsAsync": {
+          "name": "getAssetsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addListener": {
+          "name": "addListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeSubscription": {
+          "name": "removeSubscription",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeAllListeners": {
+          "name": "removeAllListeners",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getMomentsAsync": {
+          "name": "getMomentsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "migrateAlbumIfNeededAsync": {
+          "name": "migrateAlbumIfNeededAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "albumNeedsMigrationAsync": {
+          "name": "albumNeedsMigrationAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setAssetFavoriteAsync": {
+          "name": "setAssetFavoriteAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 2,
+              "requiredArity": 2,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        },
+        "MediaType": {
+          "name": "MediaType",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "audio",
+            "photo",
+            "unknown",
+            "video"
+          ]
+        },
+        "SortBy": {
+          "name": "SortBy",
+          "kind": "value",
+          "isValue": true,
+          "isType": false,
+          "members": [
+            "creationTime",
+            "default",
+            "duration",
+            "height",
+            "mediaType",
+            "modificationTime",
+            "width"
+          ]
+        },
+        "usePermissions": {
+          "name": "usePermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-navigation-bar",
+      "resolved": true,
+      "symbols": {
+        "NavigationBar": {
+          "name": "NavigationBar",
+          "kind": "function",
+          "isValue": true,
+          "isType": true,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addVisibilityListener": {
+          "name": "addVisibilityListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setVisibilityAsync": {
+          "name": "setVisibilityAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getVisibilityAsync": {
+          "name": "getVisibilityAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useVisibility": {
+          "name": "useVisibility",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "setStyle": {
+          "name": "setStyle",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
       "specifier": "expo-network",
       "resolved": true,
       "symbols": {
@@ -7083,6 +8003,408 @@
       }
     },
     {
+      "specifier": "expo-screen-capture",
+      "resolved": true,
+      "symbols": {
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "preventScreenCaptureAsync": {
+          "name": "preventScreenCaptureAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "allowScreenCaptureAsync": {
+          "name": "allowScreenCaptureAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "usePreventScreenCapture": {
+          "name": "usePreventScreenCapture",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "enableAppSwitcherProtectionAsync": {
+          "name": "enableAppSwitcherProtectionAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "disableAppSwitcherProtectionAsync": {
+          "name": "disableAppSwitcherProtectionAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addScreenshotListener": {
+          "name": "addScreenshotListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeScreenshotListener": {
+          "name": "removeScreenshotListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "useScreenshotListener": {
+          "name": "useScreenshotListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPermissionsAsync": {
+          "name": "getPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestPermissionsAsync": {
+          "name": "requestPermissionsAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "usePermissions": {
+          "name": "usePermissions",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "PermissionStatus": {
+          "name": "PermissionStatus",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "DENIED",
+            "GRANTED",
+            "UNDETERMINED"
+          ]
+        }
+      }
+    },
+    {
+      "specifier": "expo-screen-orientation",
+      "resolved": true,
+      "symbols": {
+        "lockAsync": {
+          "name": "lockAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "lockPlatformAsync": {
+          "name": "lockPlatformAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "unlockAsync": {
+          "name": "unlockAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getOrientationAsync": {
+          "name": "getOrientationAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getOrientationLockAsync": {
+          "name": "getOrientationLockAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "getPlatformOrientationLockAsync": {
+          "name": "getPlatformOrientationLockAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "supportsOrientationLockAsync": {
+          "name": "supportsOrientationLockAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "addOrientationChangeListener": {
+          "name": "addOrientationChangeListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeOrientationChangeListeners": {
+          "name": "removeOrientationChangeListeners",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "removeOrientationChangeListener": {
+          "name": "removeOrientationChangeListener",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "Orientation": {
+          "name": "Orientation",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "LANDSCAPE_LEFT",
+            "LANDSCAPE_RIGHT",
+            "PORTRAIT_DOWN",
+            "PORTRAIT_UP",
+            "UNKNOWN"
+          ]
+        },
+        "OrientationLock": {
+          "name": "OrientationLock",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ALL",
+            "DEFAULT",
+            "LANDSCAPE",
+            "LANDSCAPE_LEFT",
+            "LANDSCAPE_RIGHT",
+            "OTHER",
+            "PORTRAIT",
+            "PORTRAIT_DOWN",
+            "PORTRAIT_UP",
+            "UNKNOWN"
+          ]
+        },
+        "WebOrientationLock": {
+          "name": "WebOrientationLock",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "ANY",
+            "LANDSCAPE",
+            "LANDSCAPE_PRIMARY",
+            "LANDSCAPE_SECONDARY",
+            "NATURAL",
+            "PORTRAIT",
+            "PORTRAIT_PRIMARY",
+            "PORTRAIT_SECONDARY",
+            "UNKNOWN"
+          ]
+        },
+        "WebOrientation": {
+          "name": "WebOrientation",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "LANDSCAPE_PRIMARY",
+            "LANDSCAPE_SECONDARY",
+            "PORTRAIT_PRIMARY",
+            "PORTRAIT_SECONDARY"
+          ]
+        },
+        "SizeClassIOS": {
+          "name": "SizeClassIOS",
+          "kind": "namespace",
+          "isValue": true,
+          "isType": true,
+          "members": [
+            "COMPACT",
+            "REGULAR",
+            "UNKNOWN"
+          ]
+        }
+      }
+    },
+    {
       "specifier": "expo-secure-store",
       "resolved": true,
       "symbols": {
@@ -7705,6 +9027,68 @@
             {
               "arity": 2,
               "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "expo-store-review",
+      "resolved": true,
+      "symbols": {
+        "isAvailableAsync": {
+          "name": "isAvailableAsync",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "requestReview": {
+          "name": "requestReview",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "storeUrl": {
+          "name": "storeUrl",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "hasAction": {
+          "name": "hasAction",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 0,
+              "requiredArity": 0,
               "restParam": false
             }
           ],
@@ -9003,6 +10387,142 @@
             "trimStart",
             "valueOf"
           ]
+        }
+      }
+    },
+    {
+      "specifier": "@expo/ui/community/datetime-picker",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "DateTimePicker": {
+          "name": "DateTimePicker",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "@expo/ui/community/masked-view",
+      "resolved": true,
+      "symbols": {
+        "MaskedView": {
+          "name": "MaskedView",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "@expo/ui/community/menu",
+      "resolved": true,
+      "symbols": {
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "MenuView": {
+          "name": "MenuView",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        }
+      }
+    },
+    {
+      "specifier": "@expo/ui/community/pager-view",
+      "resolved": true,
+      "symbols": {
+        "PagerView": {
+          "name": "PagerView",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
+        },
+        "default": {
+          "name": "default",
+          "kind": "function",
+          "isValue": true,
+          "isType": false,
+          "callSignatures": [
+            {
+              "arity": 1,
+              "requiredArity": 1,
+              "restParam": false
+            }
+          ],
+          "typeParamCount": 0
         }
       }
     },

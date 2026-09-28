@@ -28,10 +28,11 @@
 //     nothing. React
 //     Native internals a library may import (`CodegenTypes`, `DevMenu`,
 //     `NativeComponentRegistry`, `PushNotificationIOS`, `registerCallableModule`, `Systrace`)
-//     are load-safe no-ops.
+//     are load-safe no-ops; `Libraries/Image/resolveAssetSource` is the overlay's.
 //   - The entry also gains the React Native APIs react-native-web has no module for, from the
 //     shell overlay (`PermissionsAndroid`, `ToastAndroid`, `ActionSheetIOS`, `DevSettings`,
-//     `PlatformColor`, `DynamicColorIOS`, `RootTagContext`), the `useAnimatedValue` family
+//     `PlatformColor`, `DynamicColorIOS`, `RootTagContext`, `DrawerLayoutAndroid`, `Settings`),
+//     `ProgressBarAndroid` as react-native-web's `ProgressBar`, the `useAnimatedValue` family
 //     over its own `Animated`, `InputAccessoryView` and `NativeAppEventEmitter` from its own
 //     modules, and `unstable_batchedUpdates` from `react-dom` (withNativeModuleExports).
 //   - `.web.tsx` / `.web.ts` / `.web.jsx` / `.web.js` are probed first (the bundler's
@@ -45,8 +46,8 @@
 //     named in RN_OVERLAY_EXPORTS (the mocks — Keyboard, KeyboardAvoidingView, BackHandler,
 //     StatusBar, AccessibilityInfo, I18nManager, Alert, RefreshControl — plus Platform,
 //     Linking, AppState, Vibration, Share, Clipboard and SafeAreaView, whose browser-only
-//     versions fall short in the Capacitor shell, and InputAccessoryView, which it leaves
-//     unimplemented) loads as a one-line module that re-exports denext's
+//     versions fall short in the Capacitor shell, and InputAccessoryView and
+//     TouchableNativeFeedback, which it leaves unimplemented) loads as a one-line module that re-exports denext's
 //     implementation from `denext/react-native` (src/react-native/, a prebuilt runtime entry
 //     sharing the app's one denext instance). Replacing the module file, not the `react-native`
 //     entry, reaches every importer: the app, libraries, deep `react-native/Libraries/…`
@@ -132,6 +133,8 @@ const NATIVE_DEEP_IMPORTS: Readonly<Record<string, string>> = {
     "export var isEnabled = S.isEnabled, setEnabled = S.setEnabled, beginEvent = S.beginEvent, " +
     "endEvent = S.endEvent, beginAsyncEvent = S.beginAsyncEvent, " +
     "endAsyncEvent = S.endAsyncEvent, counterEvent = S.counterEvent;\n",
+  "Libraries/Image/resolveAssetSource":
+    `export { resolveAssetSource as default } from "${NATIVE_MODULES}";\n`,
   "Libraries/Core/registerCallableModule":
     `export { registerCallableModule as default } from "${NATIVE_MODULES}";\n`,
   "Libraries/PushNotificationIOS/PushNotificationIOS":
@@ -165,10 +168,12 @@ const NATIVE_ENTRY_EXPORTS = [
 export const OVERLAY_ENTRY_EXPORTS: readonly string[] = [
   "ActionSheetIOS",
   "DevSettings",
+  "DrawerLayoutAndroid",
   "DynamicColorIOS",
   "PermissionsAndroid",
   "PlatformColor",
   "RootTagContext",
+  "Settings",
   "ToastAndroid",
 ];
 
@@ -176,11 +181,14 @@ export const OVERLAY_ENTRY_EXPORTS: readonly string[] = [
  * The names react-native-web's entry gains from its own modules, which it ships but leaves out
  * of its entry: each name's module under `exports/` (its default export). `InputAccessoryView`
  * is then replaced by the overlay (see {@linkcode RN_OVERLAY_EXPORTS}); `NativeAppEventEmitter`
- * is React Native's alias of `DeviceEventEmitter`.
+ * is React Native's alias of `DeviceEventEmitter`, and `ProgressBarAndroid` (deprecated in React
+ * Native, still imported) is react-native-web's `ProgressBar` (`progress`, `indeterminate`,
+ * `color`; `styleAttr` is ignored).
  */
 export const WEB_ENTRY_EXPORTS: Readonly<Record<string, string>> = {
   InputAccessoryView: "InputAccessoryView",
   NativeAppEventEmitter: "DeviceEventEmitter",
+  ProgressBarAndroid: "ProgressBar",
 };
 
 /**
@@ -367,8 +375,13 @@ function hostView(name) {
   var host = __denextOverlay.nativeHostComponent;
   return typeof host === "function" ? host(name) : null;
 }
+function resolveAssetSource(source) {
+  var resolve = __denextOverlay.resolveAssetSource;
+  return typeof resolve === "function" ? resolve(source) : plainAssetSource(source);
+}
 `
-    : "function served(_name) { return null; }\nfunction hostView(_name) { return null; }\n";
+    : "function served(_name) { return null; }\nfunction hostView(_name) { return null; }\n" +
+      "function resolveAssetSource(source) { return plainAssetSource(source); }\n";
   return `${native}function get(name) { return served(name); }
 function getEnforcing(name) {
   var found = served(name);
@@ -390,6 +403,11 @@ function getEnforcing(name) {
   });
 }
 var TurboModuleRegistry = { get: get, getEnforcing: getEnforcing };
+function plainAssetSource(source) {
+  var one = Array.isArray(source) ? source[0] : source;
+  if (typeof one === "string") return one ? { uri: one, scale: 1 } : null;
+  return one && typeof one.uri === "string" ? one : null;
+}
 var warned = /* @__PURE__ */ new Set();
 function nativeComponent(name, via) {
   var view = hostView(name);
@@ -468,7 +486,7 @@ var PushNotificationIOS = /* @__PURE__ */ (function () {
 export {
   TurboModuleRegistry, get, getEnforcing, codegenNativeComponent, codegenNativeCommands,
   requireNativeComponent, NativeComponentRegistry, CodegenTypes, DevMenu, PushNotificationIOS,
-  registerCallableModule, Systrace,
+  registerCallableModule, Systrace, resolveAssetSource,
 };
 `;
 }
@@ -691,9 +709,11 @@ export const RN_OVERLAY = "denext/react-native";
 /**
  * The react-native-web modules the shell overlay replaces, by export name: `"value"` re-exports
  * denext's export of the same name; `"view"` is a component built by denext's
- * `create<Name>(View)` from react-native-web's own `View`.
+ * `create<Name>(View)` from react-native-web's own `View`; `"press"` is one built by
+ * `create<Name>(usePressEvents)` over react-native-web's press handling
+ * (`TouchableNativeFeedback`, an unimplemented view in react-native-web).
  */
-export const RN_OVERLAY_EXPORTS: Readonly<Record<string, "value" | "view">> = {
+export const RN_OVERLAY_EXPORTS: Readonly<Record<string, "value" | "view" | "press">> = {
   AccessibilityInfo: "value",
   Alert: "value",
   AppState: "value",
@@ -709,6 +729,7 @@ export const RN_OVERLAY_EXPORTS: Readonly<Record<string, "value" | "view">> = {
   SafeAreaView: "view",
   Share: "value",
   StatusBar: "value",
+  TouchableNativeFeedback: "press",
   Vibration: "value",
 };
 
@@ -730,6 +751,7 @@ const OVERLAY_MODULE = new RegExp(
  * @returns The module source.
  */
 export function overlayModuleSource(name: string, cjs: boolean): string {
+  if (RN_OVERLAY_EXPORTS[name] === "press") return pressModuleSource(name, cjs);
   const view = RN_OVERLAY_EXPORTS[name] === "view";
   if (!cjs) {
     return view
@@ -743,6 +765,18 @@ export function overlayModuleSource(name: string, cjs: boolean): string {
       `if (View && View.__esModule) View = View.default;\n` +
       `module.exports = ${overlay}.create${name}(View);\n`
     : `"use strict";\nmodule.exports = ${overlay}.${name};\n`;
+}
+
+/** {@linkcode overlayModuleSource} for a `"press"` component: `create<name>(usePressEvents)`. */
+function pressModuleSource(name: string, cjs: boolean): string {
+  const hook = "../../modules/usePressEvents";
+  if (!cjs) {
+    return `import usePressEvents from "${hook}";\nimport { create${name} } from "${RN_OVERLAY}";\n` +
+      `export default /* @__PURE__ */ create${name}(usePressEvents);\n`;
+  }
+  return `"use strict";\nvar usePressEvents = require("${hook}");\n` +
+    "if (usePressEvents && usePressEvents.__esModule) usePressEvents = usePressEvents.default;\n" +
+    `module.exports = require(${JSON.stringify(RN_OVERLAY)}).create${name}(usePressEvents);\n`;
 }
 
 /**
@@ -866,12 +900,15 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
         contents: nativeOnlyStubSource(args.path),
         loader: "js",
       }));
-      build.onLoad({ filter: OVERLAY_MODULE }, (args) => {
+      build.onLoad({ filter: OVERLAY_MODULE }, async (args) => {
+        const resolveDir = dirname(args.path);
+        // Without the overlay (a bare build), react-native-web's own module stays.
+        if (!(await overlayResolves(build, resolveDir))) return undefined;
         const [, cjs, name] = OVERLAY_MODULE.exec(args.path)!;
         return {
           contents: overlayModuleSource(name, cjs !== undefined),
           loader: "js",
-          resolveDir: dirname(args.path),
+          resolveDir,
         };
       });
       build.onLoad({ filter: APPEARANCE_MODULE }, async (args) => ({

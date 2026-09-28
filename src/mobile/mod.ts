@@ -499,6 +499,7 @@ export {
   onFontScaleChange,
   onScreenReaderChange,
   useFontScale,
+  useReducedMotion,
   useScreenReader,
 } from "./accessibility.ts";
 export { type KeyValueBackend, type KeyValueStore, openKeyValueStore } from "./kv-store.ts";

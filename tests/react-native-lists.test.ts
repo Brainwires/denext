@@ -369,6 +369,22 @@ Deno.test("FlatList: the ref methods — scrollToItem, getItemLayout-exact scrol
   await screen.unmount();
 });
 
+Deno.test("FlatList: onContentSizeChange reports the content size on mount, then only changes", async () => {
+  const sizes: Array<[number, number]> = [];
+  const props = {
+    data: items(20),
+    getItemLayout: layout40,
+    onContentSizeChange: (w: number, h: number) => sizes.push([w, h]),
+    renderItem: ({ item }: { item: Item }) => row(item),
+  };
+  const screen = await render(fl(props));
+  assertEquals(sizes.length, 1, "on mount");
+  assert(sizes[0].every((n) => typeof n === "number"));
+  await screen.rerender(fl({ ...props, extraData: 1 }));
+  assertEquals(sizes.length, 1, "the same size is not reported again");
+  await screen.unmount();
+});
+
 Deno.test("SectionList: sticky headers, scrollToLocation below the header, tokens with section", async () => {
   let ref: SectionListRef | null = null;
   const seen: ViewableItemsInfo<unknown>[] = [];

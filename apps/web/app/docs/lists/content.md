@@ -669,6 +669,13 @@ navigation to the page starts at the top. The snapshot is keyed by the history e
 `restoreKey`, and lives in `sessionStorage`. A chat that was at its end comes back at its new
 end.
 
+You don't need `restoreKey` for development. An edit normally updates the list in place, so it
+keeps its position, its measured sizes and its rows' state. When an edit does remount it (a
+change to a component's hooks, which reloads the page, or a whole-entry refresh), a list without
+`restoreKey` lands back on the same row in dev by itself. Its snapshot is keyed by the list's
+position in the page. Other remounts, navigations and back/forward start where they would in
+production.
+
 ### Printing
 
 When the page is printed, the list renders up to `printLimit` rows (default 1000) in normal

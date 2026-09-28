@@ -34,7 +34,12 @@ const RNW: Record<string, string> = {
     module: "dist/index.js",
     sideEffects: false,
   }),
-  "node_modules/react-native-web/dist/index.js": ["View", "Text", "Animated"]
+  "node_modules/react-native-web/dist/index.js": [
+    "View",
+    "Text",
+    "Animated",
+    "TouchableNativeFeedback",
+  ]
     .map((n) => `export { default as ${n} } from "./exports/${n}";\n`).join(""),
   "node_modules/react-native-web/dist/exports/View/index.js": 'export default "RNW_VIEW";\n',
   "node_modules/react-native-web/dist/exports/Text/index.js": 'export default "RNW_TEXT";\n',
@@ -45,15 +50,23 @@ const RNW: Record<string, string> = {
     'export default "RNW_DEVICE_EVENTS";\n',
   "node_modules/react-native-web/dist/exports/InputAccessoryView/index.js":
     'export default "RNW_UNIMPLEMENTED";\n',
+  "node_modules/react-native-web/dist/exports/ProgressBar/index.js":
+    'export default "RNW_PROGRESS_BAR";\n',
+  // react-native-web's unimplemented TouchableNativeFeedback and its press-event hook.
+  "node_modules/react-native-web/dist/exports/TouchableNativeFeedback/index.js":
+    'export default "RNW_UNIMPLEMENTED";\n',
+  "node_modules/react-native-web/dist/modules/usePressEvents/index.js":
+    'export default "RNW_PRESS";\n',
   // react-native-web's own SafeAreaView (replaced by the overlay).
   "node_modules/react-native-web/dist/exports/SafeAreaView/index.js": 'export default "RNW_SAV";\n',
   "all.js": `import * as RN from "react-native";
 import requireDeep from "react-native/Libraries/ReactNative/requireNativeComponent";
 import * as Systrace from "react-native/Libraries/Performance/Systrace";
 import PushDeep from "react-native/Libraries/PushNotificationIOS/PushNotificationIOS";
+import resolveDeep from "react-native/Libraries/Image/resolveAssetSource";
 export const names = Object.keys(RN).sort();
 export const RNs = RN;
-export { requireDeep, Systrace, PushDeep };
+export { requireDeep, Systrace, PushDeep, resolveDeep };
 `,
   "only-text.js": 'import { Text } from "react-native";\nexport const result = Text;\n',
 };
@@ -63,7 +76,7 @@ const STAND_INS: Record<string, string> = {
   "denext/react-native": [
     ...OVERLAY_ENTRY_EXPORTS.map((n) => `export const ${n} = "DENEXT_${n}";\n`),
     ...Object.entries(RN_OVERLAY_EXPORTS).map(([n, kind]) =>
-      kind === "view"
+      kind !== "value"
         ? `export function create${n}(View) { return "DENEXT_${n}(" + View + ")"; }\n`
         : `export const ${n} = "DENEXT_${n}";\n`
     ),
@@ -136,6 +149,19 @@ Deno.test("react-native entry: every added name binds from its source", async ()
     assert(names.includes(name), `react-native exports ${name}`);
   }
   assertEquals(RN.PermissionsAndroid, "DENEXT_PermissionsAndroid");
+  assertEquals(RN.DrawerLayoutAndroid, "DENEXT_DrawerLayoutAndroid", "no longer a build error");
+  assertEquals(RN.Settings, "DENEXT_Settings");
+  assertEquals(RN.ProgressBarAndroid, "RNW_PROGRESS_BAR", "react-native-web's ProgressBar");
+  assertEquals(
+    RN.TouchableNativeFeedback,
+    "DENEXT_TouchableNativeFeedback(RNW_PRESS)",
+    "react-native-web's UnimplementedView is replaced, over its press handling",
+  );
+  // The overlay stand-in has no resolveAssetSource: the plain fallback resolves.
+  const resolve = mod.resolveDeep as (s: unknown) => unknown;
+  assertEquals(resolve("/a.png"), { uri: "/a.png", scale: 1 });
+  assertEquals(resolve([{ uri: "/b.png", width: 2 }]), { uri: "/b.png", width: 2 });
+  assertEquals(resolve(7), null);
   assertEquals(RN.NativeAppEventEmitter, "RNW_DEVICE_EVENTS", "RN's alias of DeviceEventEmitter");
   assertEquals(
     RN.InputAccessoryView,

@@ -8,7 +8,10 @@
 //   3. ToastAndroid shows an in-page status toast; ActionSheetIOS opens the in-page dialog and
 //      reports the pressed index; NativeAppEventEmitter and unstable_batchedUpdates work;
 //   4. InputAccessoryView appears while the text field is focused;
-//   5. the shell's viewport has viewport-fit=cover and SafeAreaView pads with the insets.
+//   5. the shell's viewport has viewport-fit=cover and SafeAreaView pads with the insets;
+//   6. TouchableNativeFeedback (react-native-web's is unimplemented) presses its child,
+//      Settings / DrawerLayoutAndroid / ProgressBarAndroid / Image.resolveAssetSource work, and
+//      react-native-fast-image / -maps / -video (not installed) render their web fallbacks.
 //
 // The fixture is copied to a temp dir outside the workspace and its npm packages installed
 // there (`npm install`, NETWORK-REQUIRED; skipped when npm or the network is unavailable).
@@ -65,7 +68,10 @@ async function setup(): Promise<string | null> {
       signal: AbortSignal.timeout(INSTALL_TIMEOUT_MS),
     }).output();
     if (out.success) return dir;
-    console.warn("e2e: npm install failed — skipping.\n" + new TextDecoder().decode(out.stderr));
+    console.warn(
+      "e2e: npm install failed — skipping.\n" +
+        new TextDecoder().decode(out.stderr),
+    );
   } catch (e) {
     console.warn(`e2e: npm install unavailable (${e}) — skipping.`);
   }
@@ -109,14 +115,22 @@ Deno.test({
       await page.goto(server.origin + "/");
 
       await t.step("renders; the web values", async () => {
-        await pollFor(page, `${el("root-tag")} && ${el("perm")}.textContent !== "pending"`, 60_000);
+        await pollFor(
+          page,
+          `${el("root-tag")} && ${el("perm")}.textContent !== "pending"`,
+          60_000,
+        );
         assertEquals(await text(page, "root-tag"), "1");
         assertEquals(
           await page.evaluate(`getComputedStyle(${el("animated")}).opacity`),
           "0.5",
           "useAnimatedValue(0.5) drives the style",
         );
-        assertEquals(await text(page, "select"), "default", "a browser: default");
+        assertEquals(
+          await text(page, "select"),
+          "default",
+          "a browser: default",
+        );
         assertEquals(await text(page, "shell"), "web");
         assertEquals(
           await page.evaluate(`getComputedStyle(${el("color")}).color`),
@@ -127,7 +141,11 @@ Deno.test({
           await page.evaluate(`getComputedStyle(${el("dynamic")}).color`),
           "rgb(1, 2, 3)",
         );
-        assertEquals(await text(page, "perm"), "false", "no web equivalent for Bluetooth");
+        assertEquals(
+          await text(page, "perm"),
+          "false",
+          "no web equivalent for Bluetooth",
+        );
         assertEquals(await text(page, "systrace"), "false");
         assertEquals(await text(page, "turbo"), "null");
         assertEquals(await text(page, "internals"), "object:function");
@@ -146,50 +164,136 @@ Deno.test({
           5_000,
         );
         assertEquals(
-          await page.evaluate(`document.querySelector("[data-denext-toast]").getAttribute("role")`),
+          await page.evaluate(
+            `document.querySelector("[data-denext-toast]").getAttribute("role")`,
+          ),
           "status",
         );
       });
 
-      await t.step("ActionSheetIOS: the in-page dialog reports the pressed index", async () => {
-        await page.evaluate(`${el("sheet")}.click()`);
-        await pollFor(page, `!!document.querySelector('[role="alertdialog"]')`, 5_000);
-        await page.evaluate(
-          `[...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === "Pick me").click()`,
-        );
-        await pollFor(page, `${el("picked")}.textContent === "1"`, 5_000);
-      });
-
-      await t.step("NativeAppEventEmitter and unstable_batchedUpdates", async () => {
-        await page.evaluate(`${el("emit")}.click()`);
-        await pollFor(page, `${el("events")}.textContent === "1"`, 5_000);
-        await page.evaluate(`${el("batch")}.click()`);
-        await pollFor(page, `${el("batched")}.textContent === "yes"`, 5_000);
-      });
-
-      await t.step("InputAccessoryView shows while the text field is edited", async () => {
-        assertEquals(await page.evaluate(`${el("accessory")}`), null, "hidden at first");
-        await page.evaluate(`${el("input")}.focus()`);
-        await pollFor(page, `!!${el("accessory")}`, 5_000);
-        assertEquals(
+      await t.step(
+        "ActionSheetIOS: the in-page dialog reports the pressed index",
+        async () => {
+          await page.evaluate(`${el("sheet")}.click()`);
+          await pollFor(
+            page,
+            `!!document.querySelector('[role="alertdialog"]')`,
+            5_000,
+          );
           await page.evaluate(
-            `getComputedStyle(document.querySelector("[data-denext-input-accessory]")).position`,
-          ),
-          "fixed",
-        );
-        await page.evaluate(`${el("input")}.blur()`);
-        await pollFor(page, `!${el("accessory")}`, 5_000);
-      });
+            `[...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === "Pick me").click()`,
+          );
+          await pollFor(page, `${el("picked")}.textContent === "1"`, 5_000);
+        },
+      );
 
-      await t.step("safe areas: viewport-fit=cover and SafeAreaView's inset padding", async () => {
-        const viewport = await page.evaluate(
-          `document.querySelector('meta[name="viewport"]').getAttribute("content")`,
-        ) as string;
-        assertStringIncludes(viewport, "viewport-fit=cover");
-        assertEquals(await page.evaluate(`getComputedStyle(${el("safe")}).paddingTop`), "0px");
-        const html = await page.evaluate(`document.documentElement.outerHTML`) as string;
-        assert(/safe-area-inset-top/.test(html), "the padding is the inset expression");
-      });
+      await t.step(
+        "NativeAppEventEmitter and unstable_batchedUpdates",
+        async () => {
+          await page.evaluate(`${el("emit")}.click()`);
+          await pollFor(page, `${el("events")}.textContent === "1"`, 5_000);
+          await page.evaluate(`${el("batch")}.click()`);
+          await pollFor(page, `${el("batched")}.textContent === "yes"`, 5_000);
+        },
+      );
+
+      await t.step(
+        "InputAccessoryView shows while the text field is edited",
+        async () => {
+          assertEquals(
+            await page.evaluate(`${el("accessory")}`),
+            null,
+            "hidden at first",
+          );
+          await page.evaluate(`${el("input")}.focus()`);
+          await pollFor(page, `!!${el("accessory")}`, 5_000);
+          assertEquals(
+            await page.evaluate(
+              `getComputedStyle(document.querySelector("[data-denext-input-accessory]")).position`,
+            ),
+            "fixed",
+          );
+          await page.evaluate(`${el("input")}.blur()`);
+          await pollFor(page, `!${el("accessory")}`, 5_000);
+        },
+      );
+
+      await t.step(
+        "round 4: TouchableNativeFeedback, Settings, DrawerLayoutAndroid, aliases",
+        async () => {
+          await pollFor(page, `!!${el("tnf")}`, 10_000);
+          assertEquals(
+            await page.evaluate(
+              `${el("tnf")}.parentElement.getAttribute("data-testid")`,
+            ),
+            null,
+            "no wrapper view: the child itself takes the press",
+          );
+          await page.evaluate(`${el("tnf")}.click()`);
+          await pollFor(page, `${el("taps")}.textContent === "1"`, 5_000);
+          assertEquals(
+            await text(page, "settings"),
+            "1",
+            "Settings over localStorage",
+          );
+          assertEquals(
+            await text(page, "resolved"),
+            "true",
+            "Image.resolveAssetSource",
+          );
+          assert(
+            await page.evaluate(`!!${el("progress")}`),
+            "ProgressBarAndroid renders",
+          );
+          assertEquals(await text(page, "drawer-screen"), "screen");
+          assert(
+            await page.evaluate(`!!${el("drawer-menu")}`),
+            "the drawer is in the page",
+          );
+          assertEquals(
+            await page.evaluate(
+              `${el("fast-image")}?.querySelector("img") !== null ||
+            ${el("fast-image")}?.tagName === "IMG" ||
+            getComputedStyle(${el("fast-image")}).backgroundImage.startsWith("url(")`,
+            ),
+            true,
+            "react-native-fast-image draws the image",
+          );
+          assertStringIncludes(
+            await page.evaluate(`${el("map")}.textContent`) as string,
+            "Map unavailable",
+            "react-native-maps: the placeholder on the web",
+          );
+          assertEquals(
+            await page.evaluate(
+              `${el("video")}.querySelector("video")?.controls`,
+            ),
+            true,
+            "react-native-video: a <video> on the web",
+          );
+        },
+      );
+
+      await t.step(
+        "safe areas: viewport-fit=cover and SafeAreaView's inset padding",
+        async () => {
+          const viewport = await page.evaluate(
+            `document.querySelector('meta[name="viewport"]').getAttribute("content")`,
+          ) as string;
+          assertStringIncludes(viewport, "viewport-fit=cover");
+          assertEquals(
+            await page.evaluate(`getComputedStyle(${el("safe")}).paddingTop`),
+            "0px",
+          );
+          const html = await page.evaluate(
+            `document.documentElement.outerHTML`,
+          ) as string;
+          assert(
+            /safe-area-inset-top/.test(html),
+            "the padding is the inset expression",
+          );
+        },
+      );
 
       await t.step("no console errors", () => {
         assert(errors.length === 0, `console errors:\n${errors.join("\n")}`);

@@ -18,6 +18,8 @@ import { setFamilyMatch } from "../src/client/vnode-utils.ts";
 import { classifySpaChange, generateSpaEntry } from "../src/build/spa.ts";
 import { collectComponents, refreshFooter } from "../src/build/spa-refresh-plugin.ts";
 import { parseModule } from "../src/build/swc-ast.ts";
+import { compileRefreshModules, spaNativeRefresh } from "../src/build/refresh-modules.ts";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { makeDom } from "./helpers/dom.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
@@ -205,4 +207,59 @@ Deno.test("production: createRoot always makes a fresh root (no retained-root re
   const r1 = createRoot(container as Any);
   const r2 = createRoot(container as Any);
   assert(r1 !== r2, "without Fast Refresh, each createRoot is an independent root");
+});
+
+Deno.test("bundled (deno bundle) dev: component modules are instrumented and redirected", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_refresh_mods_" });
+  try {
+    await Deno.mkdir(join(dir, "src"));
+    await Deno.mkdir(join(dir, "node_modules"));
+    const write = (rel: string, code: string) => Deno.writeTextFile(join(dir, rel), code);
+    await write(
+      "src/app.tsx",
+      `import { util } from "./util.ts";\nexport function App() { return util; }\n`,
+    );
+    await write("src/hooks.tsx", `export function useThing() { return 1; }\n`);
+    await write(
+      "src/pinned.tsx",
+      `export const url = import.meta.url;\nexport function P() { return url; }\n`,
+    );
+    await write("src/util.ts", `export const util = null;\n`);
+    await write("node_modules/dep.tsx", `export function Dep() { return null; }\n`);
+    const redirects = await spaNativeRefresh(dir);
+    try {
+      const app = toFileUrl(join(dir, "src/app.tsx")).href;
+      // Only the component module moves: hook-only, import.meta, .ts and node_modules stay put.
+      assertEquals(Object.keys(redirects.importMap), [app]);
+      const code = await Deno.readTextFile(fromFileUrl(redirects.importMap[app]));
+      assertStringIncludes(code, `__dnxRegisterFamily(App, ${JSON.stringify(`${app}#App`)});`);
+      assertStringIncludes(code, JSON.stringify(toFileUrl(join(dir, "src/util.ts")).href));
+    } finally {
+      await redirects.cleanup();
+    }
+    // Over an earlier pass: its output is read, and its relative imports resolve from there.
+    const out = await Deno.makeTempDir({ prefix: "denext_refresh_prior_" });
+    try {
+      const app = toFileUrl(join(dir, "src/app.tsx")).href;
+      await Deno.mkdir(join(out, "compiled"));
+      const compiled = join(out, "compiled/app.tsx");
+      await Deno.writeTextFile(
+        compiled,
+        `import { seg } from "./seg.tsx";\nexport function App() { return seg; }\n`,
+      );
+      const map = await compileRefreshModules(
+        [join(dir, "src/app.tsx"), join(dir, "src/hooks.tsx")],
+        { [app]: toFileUrl(compiled).href, other: "x" },
+        { outDir: out },
+      );
+      assertEquals(map.other, "x", "the earlier pass's other redirects are kept");
+      const code = await Deno.readTextFile(fromFileUrl(map[app]));
+      assertStringIncludes(code, JSON.stringify(toFileUrl(join(out, "compiled/seg.tsx")).href));
+      assertStringIncludes(code, `${app}#App`);
+    } finally {
+      await Deno.remove(out, { recursive: true });
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

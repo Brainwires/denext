@@ -14,6 +14,7 @@ import {
   readStaticAppConfig,
 } from "../src/build/expo-migrate.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
+import { EXPO_SHIMS } from "../src/expo/manifest.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
 
 /** Write `files` (relative path → contents; objects are JSON) under `root`. */
@@ -56,6 +57,7 @@ const T3_LIKE: Record<string, unknown> = {
       "react-native-nitro-markdown": "^0.5.0",
       "react-native-webview": "^13.16.1",
       "react-native-reanimated": "4.5.5",
+      "react-native-worklets": "0.10.1",
       "@acme/terminal-native": "file:./modules/terminal",
       "@acme/pure-js": "1.0.0",
       "react-native-image-viewing": "^0.2.2",
@@ -115,6 +117,14 @@ export default config;
     codegenConfig: { name: "rnreanimated" },
   },
   "node_modules/react-native-reanimated/lib/module/js-reanimated/index.web.js": "export {};\n",
+  // Codegen too, and no `.web.*` file: its web build is the plain module beside each
+  // `.native.*` one (react-native-worklets). Not flagged.
+  "node_modules/react-native-worklets/package.json": {
+    name: "react-native-worklets",
+    codegenConfig: { name: "rnworklets" },
+  },
+  "node_modules/react-native-worklets/lib/module/threads.native.js": "export {};\n",
+  "node_modules/react-native-worklets/lib/module/threads.js": "export {};\n",
   "modules/terminal/package.json": { name: "@acme/terminal-native" },
   "modules/terminal/expo-module.config.json": { platforms: ["apple", "android"] },
   "node_modules/@acme/pure-js/package.json": { name: "@acme/pure-js" },
@@ -598,5 +608,45 @@ Deno.test("expoDependencyReport: @expo/ui is an Expo package with per-subpath sh
     assert(!report.expo.some((p) => p.name === "@expo/vector-icons"), "a plain @expo package");
     assertEquals(report.nativeOnly, [], "@expo/ui is not native-only");
     assertEquals(report.community.map((p) => p.name), ["react-native-keychain"]);
+  });
+});
+
+Deno.test("expoMobilePlan: a capability is suggested only where a shim reaches it", () => {
+  const plan = expoMobilePlan(
+    {
+      "expo-media-library": "1",
+      "expo-store-review": "1",
+      "expo-screen-orientation": "1",
+      "expo-screen-capture": "1",
+      "expo-navigation-bar": "1",
+      "expo-task-manager": "1",
+      "expo-background-task": "1",
+      "expo-background-fetch": "1",
+    },
+    NO_CONFIG,
+  );
+  const caps = plan.capabilities.map((c) => c.capability);
+  for (const cap of ["media-library", "app-review", "screen-orientation", "privacy-screen"]) {
+    assert(caps.includes(cap), `${cap} in ${caps.join(" ")}`);
+  }
+  assert(caps.includes("system-bars"), "expo-navigation-bar's shim drives SystemBars");
+  assert(!caps.includes("background"), "no shim runs Expo's background tasks");
+  for (const pkg of ["expo-media-library", "expo-store-review", "expo-screen-orientation"]) {
+    assert(pkg in EXPO_SHIMS, `${pkg} has a shim`);
+  }
+});
+
+Deno.test("expoDependencyReport: an unshimmed background package says what to use instead", async () => {
+  await withApp({ "package.json": { name: "p" } }, async (dir) => {
+    const report = await expoDependencyReport(dir, {
+      "expo-task-manager": "57.0.20",
+      "expo-store-review": "57.0.3",
+    });
+    const tasks = report.expo.find((p) => p.name === "expo-task-manager")!;
+    assertEquals(tasks.status, "none");
+    assertStringIncludes(tasks.advice!, "defineBackgroundTask");
+    const review = report.expo.find((p) => p.name === "expo-store-review")!;
+    assertEquals(review.status, "full");
+    assertEquals(review.advice, undefined);
   });
 });

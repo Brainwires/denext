@@ -25,6 +25,7 @@ import {
   useAnimatedValue,
   View,
 } from "react-native";
+import { Round4 } from "./round4.tsx";
 
 /** A native component (react-native-fast-image style): renders nothing on the web. */
 const FastImage = requireNativeComponent<{ testID?: string }>("FastImageView");
@@ -119,6 +120,7 @@ export function App() {
           <Text>batch</Text>
         </Pressable>
         <TextInput testID="input" inputAccessoryViewID="acc" />
+        <Round4 />
       </View>
       <InputAccessoryView nativeID="acc">
         <Text testID="accessory">accessory</Text>

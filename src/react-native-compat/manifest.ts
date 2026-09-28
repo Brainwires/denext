@@ -530,10 +530,60 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
     status: "partial",
     implementation: "denext/mobile showContextMenu",
     notes: "MenuView opens its actions through showContextMenu (the app's DenextContextMenu " +
-      "plugin in the Capacitor shell, the OS menu on Deno Desktop, else an in-page menu) on a " +
+      "plugin in the Capacitor shell, else an in-page menu) on a " +
       "tap, or a long press / right click with shouldOpenOnLongPress. One level deep: " +
       "displayInline sections are spliced in, submenus listed after their parent's title; " +
       "images, subtitles and title colours are not drawn.",
+  },
+  "react-native-maps": {
+    kind: "runtime",
+    module: "./maps.ts",
+    pinned: "1.29.11",
+    status: "partial",
+    implementation: "denext/mobile native map view (MapKit / osmdroid)",
+    capabilities: ["native-map"],
+    omitted: ["AnimatedRegion", "MapView.Animated", "Marker.Animated", "enableLatestRenderer"],
+    notes: "MapView is the native map view (`denext mobile add native-map`: MapKit on iOS, " +
+      "OpenStreetMap through osmdroid on Android) and a labelled placeholder where it is not " +
+      "registered (the web). region / initialRegion set the center, and the zoom level from " +
+      "longitudeDelta for the window's width; onRegionChange / onRegionChangeComplete report " +
+      "the region back (both after each move); mapType standard / satellite / hybrid, " +
+      "scrollEnabled / zoomEnabled, and the Markers that are MapView's direct children (or in " +
+      "fragments and arrays: a Marker inside another component is not seen) with coordinate, " +
+      "title and onPress. The ref's animateToRegion, animateCamera, setCamera, " +
+      "fitToCoordinates, fitToElements and getCamera work (heading and pitch are 0). Callout, " +
+      "Polyline, Polygon, Circle, Overlay, Heatmap, Geojson and the tile layers render " +
+      "nothing; provider, showsUserLocation, onPress and custom marker views are ignored.",
+  },
+  "react-native-video": {
+    kind: "runtime",
+    module: "./video.ts",
+    pinned: "6.19.3",
+    status: "partial",
+    implementation: "denext/mobile native video view (AVPlayer), else <video>",
+    capabilities: ["native-views"],
+    notes: "Video is the native video view where it is registered (`denext mobile add " +
+      "native-views`: AVPlayer with the system controls on iOS, drawn under the page; a " +
+      "vertical swipe on it scrolls the page) and an HTML <video> elsewhere. source (a URL or " +
+      "{ uri }; a bundled asset number has no URL here), paused, muted, repeat, controls, " +
+      "resizeMode (stretch draws cover), onLoad (duration), onEnd, onError and " +
+      "onPlaybackStateChanged work on both; onProgress, volume, rate and poster on the <video> " +
+      "only. The ref's seek / pause / resume / getCurrentPosition reach either player; " +
+      "presentFullscreenPlayer asks the <video> for fullscreen. Text tracks, DRM, ads, " +
+      "Picture in Picture props and source headers are ignored.",
+  },
+  "react-native-fast-image": {
+    kind: "runtime",
+    module: "./fast-image.ts",
+    pinned: "8.6.3",
+    status: "partial",
+    implementation: "React Native's Image (react-native-web)",
+    notes: "FastImage is React Native's Image (the browser's image cache) instead of a native " +
+      "view that rendered nothing: source { uri, headers } or a bundled image, resizeMode " +
+      "(contain, cover, stretch, center), tintColor, defaultSource, onLoadStart / onLoad " +
+      "(nativeEvent { width, height }) / onError / onLoadEnd, and children drawn over the " +
+      "image. priority and cache are ignored, onProgress never fires, preload() warms the " +
+      "browser cache and clearMemoryCache / clearDiskCache resolve at once.",
   },
   "nativewind": {
     kind: "transform",

@@ -132,7 +132,7 @@ async function checkShellOverlay(): Promise<boolean> {
   const backed = (name: string) => {
     const kind = RN_OVERLAY_EXPORTS[name];
     if (kind === undefined) return false;
-    return overlay[kind === "view" ? `create${name}` : name] !== undefined;
+    return overlay[kind === "value" ? name : `create${name}`] !== undefined;
   };
   const mocked = REACT_NATIVE_WEB_MOCKS.filter((name) => !backed(name));
   const extra = Object.keys(RN_OVERLAY_EXPORTS).filter((n) => !REACT_NATIVE_WEB_MOCKS.includes(n));

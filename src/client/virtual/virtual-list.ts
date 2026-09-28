@@ -22,6 +22,7 @@ import {
   snapWindow,
 } from "./snap.ts";
 import { useVirtualController } from "./use-virtual-list.ts";
+import { devFamily } from "../dev-family.ts";
 import type { VirtualListProps } from "./types.ts";
 
 /** Default cap on find-in-page stubs. */
@@ -56,9 +57,12 @@ interface RowBodyProps<T> {
  * props are shallow-equal, so a row re-renders only when its item, index, type or
  * `renderItem` changes — scrolling and data changes elsewhere leave it alone.
  */
-function RowBody<T>(props: RowBodyProps<T>): VNode {
-  return props.render(props.item, props.index, { type: props.type }) as VNode;
-}
+const RowBody = /* @__PURE__ */ devFamily(
+  function RowBody<T>(props: RowBodyProps<T>): VNode {
+    return props.render(props.item, props.index, { type: props.type }) as VNode;
+  },
+  "denext:virtual-list#RowBody",
+);
 
 /** Whether `hidden="until-found"` + `beforematch` are supported (Chromium 102+). */
 function findSupported(): boolean {
@@ -232,6 +236,8 @@ function findStubs<T>(ctl: VirtualController<T>, props: VirtualListProps<T>): VN
   return out;
 }
 
+// `devFamily`: a bundled dev Fast Refresh that re-evaluates this module reconciles the list
+// (and its rows) in place instead of remounting them at the top (see dev-family.ts).
 /**
  * A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast
  * as 100. Rows are measured as they render (`estimatedItemSize` is only a hint), rows keep
@@ -280,35 +286,40 @@ function findStubs<T>(ctl: VirtualController<T>, props: VirtualListProps<T>): VN
  * }
  * ```
  */
-export function VirtualList<T>(props: VirtualListProps<T>): VNode {
-  const ctl = useVirtualController(props, "flow");
-  const [findReady, setFindReady] = useState(false);
-  const wantFind = !!props.findInPage;
-  useEffect(() => {
-    setFindReady(wantFind && findSupported());
-  }, [wantFind]);
-  useRootListeners(ctl);
-  const announcement = useCountAnnouncement(
-    ctl.itemCount(),
-    props.announceChanges as VirtualListProps<unknown>["announceChanges"],
-  );
-  const self = props.scrollElement === undefined || props.scrollElement === "self";
-  const control = props.refreshControl;
-  const scroller = h(
-    "div",
-    {
-      ref: ctl.rootRef,
-      class: control ? undefined : props.class ?? props.className,
-      "data-denext-virtual-list": "",
-      ...(ctl.printing ? { "data-vl-printing": "" } : {}),
-      style: outerStyle(props, self, ctl.printing, !!control),
-    },
-    contentContainer(props, scrollContent(ctl, props, self, findReady)),
-    ...snapNodes(ctl, props, self),
-    props.announceChanges ? announceRegion(announcement) : null,
-  );
-  return control ? refreshWrapper(control, props, scroller) : scroller;
-}
+export const VirtualList: <T>(props: VirtualListProps<T>) => VNode = /* @__PURE__ */ devFamily(
+  function VirtualList<T>(
+    props: VirtualListProps<T>,
+  ): VNode {
+    const ctl = useVirtualController(props, "flow");
+    const [findReady, setFindReady] = useState(false);
+    const wantFind = !!props.findInPage;
+    useEffect(() => {
+      setFindReady(wantFind && findSupported());
+    }, [wantFind]);
+    useRootListeners(ctl);
+    const announcement = useCountAnnouncement(
+      ctl.itemCount(),
+      props.announceChanges as VirtualListProps<unknown>["announceChanges"],
+    );
+    const self = props.scrollElement === undefined || props.scrollElement === "self";
+    const control = props.refreshControl;
+    const scroller = h(
+      "div",
+      {
+        ref: ctl.rootRef,
+        class: control ? undefined : props.class ?? props.className,
+        "data-denext-virtual-list": "",
+        ...(ctl.printing ? { "data-vl-printing": "" } : {}),
+        style: outerStyle(props, self, ctl.printing, !!control),
+      },
+      contentContainer(props, scrollContent(ctl, props, self, findReady)),
+      ...snapNodes(ctl, props, self),
+      props.announceChanges ? announceRegion(announcement) : null,
+    );
+    return control ? refreshWrapper(control, props, scroller) : scroller;
+  },
+  "denext:virtual-list#VirtualList",
+);
 
 /** An element whose size moves the list (header, footer, bottom-align spacer). */
 function metricsSlot<T>(

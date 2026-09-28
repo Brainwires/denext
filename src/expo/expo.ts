@@ -80,19 +80,59 @@ export function registerRootComponent<P extends Record<string, unknown>>(
   createRoot(rootTag).render(h(component as Component<Record<string, unknown>>, {}));
 }
 
+/** Keys a missing module answers `undefined` for, so logging and interop checks never throw. */
+const INTROSPECTION = new Set([
+  "then",
+  "$$typeof",
+  "__esModule",
+  "inspect",
+  "nodeType",
+  "asymmetricMatch",
+  "toJSON",
+]);
+
+/**
+ * A stand-in for the native module `moduleName` where there is none (a browser, SSR, a test, a
+ * shell without the plugin): importing the module that asks for it works, and it throws only
+ * when one of its functions is called. Its listener functions do nothing, so an event
+ * subscription at import time is harmless too.
+ */
+function missingNativeModule(moduleName: string): unknown {
+  const fail = (member: string) => () => {
+    throw new Error(
+      `Cannot find native module '${moduleName}' (calling ${member}): it runs only in the ` +
+        "native shell with its plugin. Guard the call, or give the importing module a " +
+        ".web.ts variant.",
+    );
+  };
+  const inert = () => ({ remove() {} });
+  return new Proxy({}, {
+    get(_target, key) {
+      if (typeof key === "symbol" || key.startsWith("@@") || INTROSPECTION.has(key)) {
+        return undefined;
+      }
+      if (key === "toString") return () => `[missing native module ${moduleName}]`;
+      if (key === "addListener" || key === "removeListeners" || key === "removeAllListeners") {
+        return inert;
+      }
+      return fail(key);
+    },
+  });
+}
+
 /**
  * The native module `moduleName`: the Capacitor plugin of that name inside the iOS/Android
  * shell, or the desktop extension of that name on Deno Desktop. Its functions take Expo's
- * positional arguments and return Promises. Where neither exists it throws, as Expo's web
- * build does for a module with no web implementation.
+ * positional arguments and return Promises. Where neither exists (a browser, a test) it returns
+ * a stand-in whose functions throw when called, so a module that asks for it at import time
+ * still loads (Expo's web build throws at the `requireNativeModule` call itself).
  *
  * @param moduleName The module's name (`Name("…")` in the module definition).
- * @returns The module client.
+ * @returns The module client, or the stand-in.
  */
 export function requireNativeModule<T = unknown>(moduleName: string): T {
   const found = requireOptionalNativeModule<T>(moduleName);
-  if (found === null) throw new Error(`Cannot find native module '${moduleName}'`);
-  return found;
+  return found === null ? missingNativeModule(moduleName) as T : found;
 }
 
 /**
