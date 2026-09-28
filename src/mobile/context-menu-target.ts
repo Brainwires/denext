@@ -57,21 +57,33 @@ interface ArmablePlugin {
 }
 
 /** The pointer / mouse event fields this module reads. */
-interface PressEvent {
+/** The slice of a pointer / mouse event a bound menu reads. */
+export interface PressEvent {
+  /** The pointer's id (pointer events). */
   readonly pointerId?: number;
+  /** `"touch"`, `"pen"` or `"mouse"`. */
   readonly pointerType?: string;
+  /** The mouse button (2 = secondary). */
   readonly button?: number;
+  /** Viewport x of the press. */
   readonly clientX: number;
+  /** Viewport y of the press. */
   readonly clientY: number;
+  /** Suppress the default action (the browser's own menu). */
   preventDefault?(): void;
+  /** Stop the event reaching ancestors. */
   stopPropagation?(): void;
 }
 
 /** The slice of an element a bound menu uses (real DOM and the test DOM both satisfy it). */
 export interface ContextMenuElement {
+  /** Listen for press events on the element. */
   addEventListener(type: string, fn: (e: PressEvent) => void, options?: unknown): void;
+  /** Stop listening. */
   removeEventListener(type: string, fn: (e: PressEvent) => void, options?: unknown): void;
+  /** The element's box (the native menu's preview and anchor). */
   getBoundingClientRect?(): { left: number; top: number; width: number; height: number };
+  /** Inline style access (the lift preview's corner radius). */
   readonly style?: {
     getPropertyValue?(name: string): string;
     setProperty?(name: string, value: string): void;

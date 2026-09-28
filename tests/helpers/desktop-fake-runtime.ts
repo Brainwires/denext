@@ -218,3 +218,163 @@ export async function until(check: () => boolean, ms = 2000): Promise<void> {
     await new Promise((r) => setTimeout(r, 5));
   }
 }
+
+// --- picked handles (the "picked handle" file-access contract) --------------------------------
+//
+// A dialog returns `{ path, handle }`; `path` is display-only. `fs` takes
+// `directory: "data" | "cache" | "documents" | { picked: handle }` (a picked file with the path
+// ""), `shell` takes `{ path }` or `{ handle }`. An unknown handle, a write through a read-only
+// (openFile) handle, a sub-path under a file handle, or a `..` escape → `forbidden`. listDir on a
+// picked folder answers entry names (no absolute paths).
+
+/** How much a fake picked handle grants (the runtime's modes). */
+export type FakePickMode = "read" | "readwrite" | "folder";
+
+/** A fake disk + dialogs + the `fs` / `shell` / `dialogs` capabilities over picked handles. */
+export interface FakePickedFs {
+  /** Absolute path → text contents (folders are implied by their files' paths). */
+  readonly disk: Map<string, string>;
+  /** Live handle → the picked absolute path and its mode. */
+  readonly handles: Map<string, { path: string; mode: FakePickMode }>;
+  /** What the shell capability was asked to act on (resolved absolute paths). */
+  readonly shellTargets: Array<{ action: string; path: string }>;
+  /** Issue a handle for `path` (what a dialog does); returns it. */
+  pick(path: string, mode: FakePickMode): string;
+  /** The capability methods to hand to {@linkcode createFakeDesktopRuntime}. */
+  readonly caps: Record<"fs" | "shell" | "dialogs", Record<string, FakeMethod>>;
+}
+
+/** The app's own folders on the fake disk. */
+const FAKE_APP_ROOT = "/app";
+
+/** A `{ code, message }` failure, as the fake maps thrown values to the error envelope. */
+const refuse = (code: string, message: string) => ({ code, message });
+
+/**
+ * Create a fake picked-handle filesystem.
+ *
+ * @param dialogs What the fake dialogs answer: the file `openFile` picks, the path `saveFile`
+ * writes, the folder `pickFolder` picks (`null`: cancelled).
+ */
+export function createFakePickedFs(
+  dialogs: { openFile?: string | null; saveFile?: string | null; pickFolder?: string | null } = {},
+): FakePickedFs {
+  const disk = new Map<string, string>();
+  const handles = new Map<string, { path: string; mode: FakePickMode }>();
+  const shellTargets: Array<{ action: string; path: string }> = [];
+  let next = 1;
+  const pick = (path: string, mode: FakePickMode) => {
+    const handle = `h-${next++}-${mode}`;
+    handles.set(handle, { path, mode });
+    return handle;
+  };
+
+  /** `rel` under `base`, refusing absolute paths and `..` escapes. */
+  const confine = (base: string, rel: string) => {
+    const parts = rel.split("/").filter((p) => p !== "" && p !== ".");
+    if (rel.startsWith("/") || parts.includes("..")) throw refuse("forbidden", "escapes");
+    return parts.length ? `${base}/${parts.join("/")}` : base;
+  };
+
+  /** Resolve an fs `(directory, path)` for the given access to an absolute path. */
+  const target = (directory: unknown, path: unknown, write: boolean): string => {
+    const rel = typeof path === "string" ? path : "";
+    if (typeof directory === "string") {
+      if (!["data", "cache", "documents"].includes(directory)) {
+        throw refuse("validation", "unknown directory");
+      }
+      return confine(`${FAKE_APP_ROOT}/${directory}`, rel);
+    }
+    const handle = (directory as { picked?: unknown } | null)?.picked;
+    const entry = typeof handle === "string" ? handles.get(handle) : undefined;
+    if (!entry) throw refuse("forbidden", "unknown or expired picked handle");
+    if (write && entry.mode === "read") throw refuse("forbidden", "read-only handle");
+    if (entry.mode === "folder") return confine(entry.path, rel);
+    if (rel !== "") throw refuse("forbidden", "a picked file takes no sub-path");
+    return entry.path;
+  };
+
+  const args = (a: unknown) => (a ?? {}) as Record<string, unknown>;
+  const fileName = (p: string) => p.split("/").pop() ?? p;
+  const shellAction = (action: string) => (raw: unknown) => {
+    const a = args(raw);
+    const path = typeof a.handle === "string"
+      ? target({ picked: a.handle }, "", action === "trash")
+      : typeof a.path === "string" && a.path.startsWith(FAKE_APP_ROOT + "/")
+      ? a.path
+      : undefined;
+    if (path === undefined) throw refuse("forbidden", "outside the app's folders");
+    shellTargets.push({ action, path });
+    return { ok: true };
+  };
+
+  const caps: FakePickedFs["caps"] = {
+    fs: {
+      readFile: (raw) => {
+        const a = args(raw);
+        const text = disk.get(target(a.directory, a.path, false));
+        if (text === undefined) throw refuse("not_found", "no such file");
+        return a.encoding === "base64" ? btoa(text) : text;
+      },
+      writeFile: (raw) => {
+        const a = args(raw);
+        const at = target(a.directory, a.path, true);
+        disk.set(at, a.encoding === "base64" ? atob(String(a.data)) : String(a.data));
+        return { path: at };
+      },
+      deleteFile: (raw) => {
+        const a = args(raw);
+        disk.delete(target(a.directory, a.path, true));
+        return { ok: true };
+      },
+      listDir: (raw) => {
+        const a = args(raw);
+        const dir = target(a.directory, a.path, false) + "/";
+        const names = new Map<string, "file" | "directory">();
+        for (const p of disk.keys()) {
+          if (!p.startsWith(dir)) continue;
+          const [first, ...rest] = p.slice(dir.length).split("/");
+          names.set(first, rest.length ? "directory" : "file");
+        }
+        return [...names].map(([name, type]) => ({
+          name,
+          type,
+          size: type === "file" ? (disk.get(dir + name)?.length ?? 0) : 0,
+        }));
+      },
+    },
+    shell: {
+      openPath: shellAction("open"),
+      reveal: shellAction("reveal"),
+      trash: shellAction("trash"),
+    },
+    dialogs: {
+      openFile: () => {
+        const path = dialogs.openFile;
+        if (!path) return { files: [] };
+        const text = disk.get(path) ?? "";
+        return {
+          files: [{
+            name: fileName(path),
+            mimeType: "text/plain",
+            size: text.length,
+            path,
+            handle: pick(path, "read"),
+          }],
+        };
+      },
+      saveFile: (raw) => {
+        const path = dialogs.saveFile;
+        if (!path) return null;
+        const a = args(raw);
+        disk.set(path, a.encoding === "base64" ? atob(String(a.data)) : String(a.data));
+        return { path, handle: pick(path, "readwrite") };
+      },
+      pickFolder: () => {
+        const path = dialogs.pickFolder;
+        return path ? { path, handle: pick(path, "folder") } : null;
+      },
+    },
+  };
+  return { disk, handles, shellTargets, pick, caps };
+}

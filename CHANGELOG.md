@@ -158,6 +158,17 @@ and this project adheres to
   function keeps its web path). New `openPath`,
   `revealInFileManager`, `moveToTrash`, `saveFile` and `pickFolder`. A capability that is not
   enabled keeps the web path (storage ones warn once: browser storage is wiped per launch).
+- **Picked files and folders (`denext/mobile`).** `pickDocument`, `saveFile` and `pickFolder`
+  resolve `{ path, handle }`: `handle` is an opaque string for exactly the item the user chose,
+  and `path` is display-only (never accepted back as authority). The file functions take
+  `directory: { picked: handle }` (a new `FileDirectory` variant; paths relative to a picked
+  folder, `""` for a picked file; `listDir` answers entry names only), and `openPath` /
+  `revealInFileManager` / `moveToTrash` take `{ handle }`. A forged, expired or read-only-for-write
+  handle rejects with code `forbidden`. In a browser with the File System Access API the dialogs
+  use `showDirectoryPicker` / `showOpenFilePicker` / `showSaveFilePicker` and issue page-lifetime
+  handles; elsewhere the file input / download / `unavailable` fallbacks stay. Inside the
+  iOS/Android shell a `{ picked }` directory rejects `unavailable`. New types `PickedHandle`,
+  `PickedDirectory`, `AppFileDirectory` and `ShellItem`; `PickedFolder.handle` is now that string.
 - **`denext desktop add <capability...>`** (`--list`, `--dry-run`) writes `desktop.capabilities`
   in `denext.config.ts` (the runtime's allowlist) and prints the Deno permissions each capability
   needs per OS, with its trust level.

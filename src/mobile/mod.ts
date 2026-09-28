@@ -17,7 +17,10 @@
  *   notifications, `useKeepAwake`, the clipboard and `deviceInfo` go through the desktop
  *   runtime's capabilities (`denext desktop add <capability>`); {@linkcode openPath},
  *   {@linkcode revealInFileManager}, {@linkcode moveToTrash}, {@linkcode saveFile} and
- *   {@linkcode pickFolder} are the desktop file-manager and dialog extras.
+ *   {@linkcode pickFolder} are the desktop file-manager and dialog extras. A picked file or
+ *   folder comes back with an opaque `handle` ({@linkcode PickedHandle}): the file functions
+ *   reach it as `{ directory: { picked: handle } }` (a browser with the File System Access API
+ *   issues page-lifetime handles too); its `path` is display-only.
  * - {@linkcode installKeyboardInset} / {@linkcode useKeyboardInset}: the keyboard height as
  *   `--denext-keyboard-inset`, for shells with Keyboard `resize: "none"`.
  * - {@linkcode useBackSwipe} / {@linkcode isBackSwipe}: swipe right to go back.
@@ -255,6 +258,7 @@ export {
   usePushTapped,
 } from "./push.ts";
 export {
+  type AppFileDirectory,
   deleteFile,
   downloadToFile,
   type FileDirectory,
@@ -262,6 +266,8 @@ export {
   type FileEntry,
   type FileLocationOptions,
   listDir,
+  type PickedDirectory,
+  type PickedHandle,
   readFile,
   type ReadFileOptions,
   writeFile,
@@ -283,7 +289,7 @@ export {
   saveFile,
   type SaveFileOptions,
 } from "./file-dialogs.ts";
-export { moveToTrash, openPath, revealInFileManager } from "./shell.ts";
+export { moveToTrash, openPath, revealInFileManager, type ShellItem } from "./shell.ts";
 export {
   type BarcodeFormat,
   type BarcodeScanError,
@@ -321,6 +327,7 @@ export {
   type ContextMenuElement,
   type ContextMenuItems,
   type ContextMenuTargetOptions,
+  type PressEvent,
   useContextMenu,
 } from "./context-menu-target.ts";
 export {

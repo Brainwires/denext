@@ -18,7 +18,7 @@
  */
 
 import { base64ToBytes, bytesToBase64 } from "../mobile/base64.ts";
-import type { FileDirectory, FileEncoding, FileEntry } from "../mobile/filesystem.ts";
+import type { FileDirectory, FileEncoding, FileEntry, PickedHandle } from "../mobile/filesystem.ts";
 import type { PickedDocument } from "../mobile/pickers.ts";
 import type {
   SqliteBindValue,
@@ -67,7 +67,10 @@ export async function secureDelete(key: string): Promise<void> {
 
 // --- files (cap "fs") -------------------------------------------------------
 
-/** `readFile` on desktop: a file under the app's directory in the OS app-support folder. */
+/**
+ * `readFile` on desktop: a file under the app's directory in the OS app-support folder, or under
+ * a picked item (`directory: { picked }`, the RPC's `directory` field as given).
+ */
 export async function fsReadFile(
   path: string,
   directory: FileDirectory,
@@ -251,24 +254,35 @@ export async function showNativeContextMenu(
 
 // --- shell (cap "shell") ----------------------------------------------------
 
+/**
+ * What a shell call acts on: an absolute path inside the app's folders, or a picked item's
+ * handle (the RPC carries exactly one of `path` / `handle`).
+ */
+export type ShellTarget = { readonly path: string } | { readonly handle: PickedHandle };
+
+/** The RPC arguments for a {@linkcode ShellTarget}. */
+function shellArgs(target: ShellTarget): { path: string } | { handle: string } {
+  return "handle" in target ? { handle: target.handle } : { path: target.path };
+}
+
 /** `openExternal` on desktop: the system browser / mail client (the runtime re-checks the scheme). */
 export async function shellOpenExternal(url: string): Promise<void> {
   await desktopRpc("shell", "openExternal", { url });
 }
 
 /** `openPath` on desktop: open a file or folder with its default app. */
-export async function shellOpenPath(path: string): Promise<void> {
-  await desktopRpc("shell", "openPath", { path });
+export async function shellOpenPath(target: ShellTarget): Promise<void> {
+  await desktopRpc("shell", "openPath", shellArgs(target));
 }
 
 /** `revealInFileManager` on desktop: show the item selected in Finder / Explorer / the file manager. */
-export async function shellReveal(path: string): Promise<void> {
-  await desktopRpc("shell", "reveal", { path });
+export async function shellReveal(target: ShellTarget): Promise<void> {
+  await desktopRpc("shell", "reveal", shellArgs(target));
 }
 
 /** `moveToTrash` on desktop: move the item to the Trash / Recycle Bin. */
-export async function shellTrash(path: string): Promise<void> {
-  await desktopRpc("shell", "trash", { path });
+export async function shellTrash(target: ShellTarget): Promise<void> {
+  await desktopRpc("shell", "trash", shellArgs(target));
 }
 
 // --- dialogs (cap "dialogs") ------------------------------------------------
@@ -280,6 +294,7 @@ function toPicked(raw: unknown): PickedDocument {
     mimeType?: unknown;
     size?: unknown;
     path?: unknown;
+    handle?: unknown;
     data?: unknown;
   };
   const picked: PickedDocument = {
@@ -289,13 +304,14 @@ function toPicked(raw: unknown): PickedDocument {
       : "application/octet-stream",
     size: typeof f.size === "number" ? f.size : 0,
     ...(typeof f.path === "string" ? { path: f.path } : {}),
+    ...(typeof f.handle === "string" && f.handle ? { handle: f.handle } : {}),
   };
   return typeof f.data === "string" ? { ...picked, data: f.data } : picked;
 }
 
 /**
- * `pickDocument` on desktop: the native open panel. The chosen path is added to the runtime's
- * per-session picked-path allowlist; `data` (base64) only with `readData`.
+ * `pickDocument` on desktop: the native open panel. The runtime issues a per-session `handle`
+ * for the chosen file (the `path` is for display); `data` (base64) only with `readData`.
  */
 export async function dialogOpenFile(
   types: readonly string[] | undefined,
@@ -317,8 +333,8 @@ export async function dialogSaveFile(
   encoding: FileEncoding,
   suggestedName: string | undefined,
   types: readonly string[] | undefined,
-): Promise<{ path: string; name: string } | null> {
-  const out = await desktopRpc<{ path?: unknown }>(
+): Promise<{ path: string; name: string; handle?: PickedHandle } | null> {
+  const out = await desktopRpc<{ path?: unknown; handle?: unknown }>(
     "dialogs",
     "saveFile",
     {
@@ -330,16 +346,28 @@ export async function dialogSaveFile(
     { timeoutMs: false },
   );
   if (typeof out?.path !== "string") return null;
-  return { path: out.path, name: out.path.split(/[\\/]/).pop() ?? out.path };
+  const name = out.path.split(/[\\/]/).pop() ?? out.path;
+  return typeof out.handle === "string" && out.handle
+    ? { path: out.path, name, handle: out.handle }
+    : { path: out.path, name };
 }
 
-/** `pickFolder` on desktop: the native folder panel (added to the picked-path allowlist). */
-export async function dialogPickFolder(): Promise<{ path: string; name: string } | null> {
-  const out = await desktopRpc<{ path?: unknown }>("dialogs", "pickFolder", {}, {
+/**
+ * `pickFolder` on desktop: the native folder panel. The runtime issues a per-session `handle`
+ * for the folder (the `path` is for display).
+ */
+export async function dialogPickFolder(): Promise<
+  { path: string; name: string; handle: PickedHandle } | null
+> {
+  const out = await desktopRpc<{ path?: unknown; handle?: unknown }>("dialogs", "pickFolder", {}, {
     timeoutMs: false,
   });
   if (typeof out?.path !== "string") return null;
-  return { path: out.path, name: out.path.split(/[\\/]/).filter(Boolean).pop() ?? out.path };
+  if (typeof out.handle !== "string" || out.handle === "") {
+    throw desktopError("dialogs", "pickFolder", "bridge_error", "the runtime returned no handle");
+  }
+  const name = out.path.split(/[\\/]/).filter(Boolean).pop() ?? out.path;
+  return { path: out.path, name, handle: out.handle };
 }
 
 // --- notifications (cap "notifications") ------------------------------------

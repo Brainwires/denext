@@ -644,6 +644,63 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         storage and warn once.
       </p>
 
+      <h3 id="picked-files-and-folders">Picked files and folders</h3>
+      <p>
+        A page never reaches a file outside the app&apos;s own folders by path. The dialogs{" "}
+        <code>pickDocument</code>, <code>saveFile</code> and <code>pickFolder</code> resolve{" "}
+        <code>{"{ path, handle }"}</code> (or <code>null</code> when cancelled): the{" "}
+        <code>handle</code>{" "}
+        is an opaque string the runtime issued for exactly the item the user chose, and the{" "}
+        <code>path</code> is for display only; it is never accepted back as authority. Pass{" "}
+        <code>{"{ picked: handle }"}</code> as the <code>directory</code> of <code>readFile</code> /
+        {" "}
+        <code>writeFile</code> / <code>deleteFile</code> / <code>listDir</code> /{" "}
+        <code>downloadToFile</code> (paths relative to a picked folder, <code>""</code>{" "}
+        for a picked file), and the result or <code>{"{ handle }"}</code> to <code>openPath</code> /
+        {" "}
+        <code>revealInFileManager</code> / <code>moveToTrash</code>.
+      </p>
+      <Code lang="ts">
+        {`import { listDir, openPath, pickFolder, writeFile } from "denext/mobile";
+
+const folder = await pickFolder(); // { name, path (display only), handle } | null
+if (folder) {
+  const directory = { picked: folder.handle };
+  await writeFile("export/report.csv", csv, { directory, recursive: true });
+  const names = (await listDir("export", { directory })).map((e) => e.name);
+  await openPath(folder); // the handle travels, not the path
+}`}
+      </Code>
+      <ul>
+        <li>
+          An open-panel handle (<code>pickDocument</code>) is read-only; a <code>saveFile</code>
+          {" "}
+          handle reads and writes that one file; a <code>pickFolder</code>{" "}
+          handle reads and writes inside the folder (a <code>..</code>{" "}
+          or a symlink out of it is refused). Trashing needs a writable handle.
+        </li>
+        <li>
+          <code>listDir</code> on a picked folder returns entry names, never absolute paths.
+        </li>
+        <li>
+          Handles last for the launch. An unknown, forged or expired handle, or a write through a
+          read-only one, rejects with code <code>forbidden</code>; narrow it with{" "}
+          <code>isDesktopBridgeError</code> from <code>denext/desktop/client</code>. Without the
+          {" "}
+          <code>fs</code> capability a picked handle rejects <code>unavailable</code>{" "}
+          rather than falling back to browser storage.
+        </li>
+        <li>
+          In a browser with the File System Access API (Chromium), the same calls use{" "}
+          <code>showDirectoryPicker</code> / <code>showOpenFilePicker</code> /{" "}
+          <code>showSaveFilePicker</code>{" "}
+          and the handle lasts until the page unloads (the browser asks once before the first
+          write). Elsewhere the old fallbacks run: a file input, a download, and{" "}
+          <code>unavailable</code> for <code>pickFolder</code>. Inside the iOS/Android shell{" "}
+          <code>{"{ picked }"}</code> rejects <code>unavailable</code>.
+        </li>
+      </ul>
+
       <h2 id="desktop-extensions">Your own native extensions</h2>
       <p>
         When a built-in is not enough, write an extension: TypeScript that runs in the Deno process,

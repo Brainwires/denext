@@ -1521,6 +1521,8 @@ export class PageCache {
   readonly #buildId: string | undefined;
 
   /**
+   * Create the page cache over the active {@link CacheStore}.
+   *
    * @param buildId The build whose pages this cache holds — `denext start` passes the id
    *   `denext build` wrote. A cached page references that build's hashed client chunks, which
    *   the next deploy no longer serves, so each build reads and writes only its own entries

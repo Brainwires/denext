@@ -233,8 +233,8 @@ Deno.test("dialogs: pickDocument / saveFile / pickFolder on desktop", async () =
       openFile: () => ({
         files: [{ name: "a.pdf", mimeType: "application/pdf", size: 3, path: "/x/a.pdf" }],
       }),
-      saveFile: () => ({ path: "/Users/me/export.csv" }),
-      pickFolder: () => ({ path: "/Users/me/Projects/" }),
+      saveFile: () => ({ path: "/Users/me/export.csv", handle: "h-save" }),
+      pickFolder: () => ({ path: "/Users/me/Projects/", handle: "h-folder" }),
     },
   }, async (rt) => {
     assertEquals(await pickDocument({ types: ["application/pdf"] }), {
@@ -246,8 +246,13 @@ Deno.test("dialogs: pickDocument / saveFile / pickFolder on desktop", async () =
     assertEquals(await saveFile("a,b", { suggestedName: "export.csv" }), {
       path: "/Users/me/export.csv",
       name: "export.csv",
+      handle: "h-save",
     });
-    assertEquals(await pickFolder(), { path: "/Users/me/Projects/", name: "Projects" });
+    assertEquals(await pickFolder(), {
+      path: "/Users/me/Projects/",
+      name: "Projects",
+      handle: "h-folder",
+    });
     assertEquals(rt.calls[0].args, {
       multiple: false,
       readData: false,

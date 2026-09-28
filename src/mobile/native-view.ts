@@ -61,6 +61,7 @@ export interface NativeViewSlotHandle {
   readonly ref: (el: Element | null) => void;
   /** Put on the element holding the DOM drawn over the native view (a callback ref). */
   readonly overlayRef: (el: Element | null) => void;
+  /** Where the native view is: pending, drawn natively, or the web fallback. */
   readonly status: NativeViewStatus;
   /** The placement in use once `status` is `"pending"` or `"native"`, else null. */
   readonly placement: NativeViewPlacement | null;

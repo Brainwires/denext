@@ -52,18 +52,32 @@ export async function viaDesktop<T>(
 }
 
 /**
- * The rejection for a desktop-only function called elsewhere: the same shape (`name`
- * `"DesktopBridgeError"`, `code` `"unavailable"`) the bridge client produces, so
- * `isDesktopBridgeError` from `denext/desktop/client` narrows it, without loading that module.
+ * A rejection shaped like the bridge client's errors (`name` `"DesktopBridgeError"`, a `code`),
+ * so `isDesktopBridgeError` from `denext/desktop/client` narrows it without loading that module.
+ *
+ * @param fn The function's name, for the message.
+ * @param code The machine-readable code (`"unavailable"`, `"forbidden"`, …).
+ * @param message What went wrong.
+ * @returns The error to throw.
+ */
+export function capabilityError<C extends string>(
+  fn: string,
+  code: C,
+  message: string,
+): Error & { code: C } {
+  const err = new Error(`${fn}: ${code}: ${message}`) as Error & { code: C };
+  err.name = "DesktopBridgeError";
+  err.code = code;
+  return err;
+}
+
+/**
+ * The rejection for a desktop-only function called elsewhere: code `"unavailable"` (see
+ * {@linkcode capabilityError}).
  *
  * @param fn The function's name, for the message.
  * @returns The error to throw.
  */
 export function desktopOnlyError(fn: string): Error & { code: "unavailable" } {
-  const err = new Error(`${fn}: unavailable: only in a Deno Desktop window`) as Error & {
-    code: "unavailable";
-  };
-  err.name = "DesktopBridgeError";
-  err.code = "unavailable";
-  return err;
+  return capabilityError(fn, "unavailable", "only in a Deno Desktop window");
 }

@@ -476,6 +476,18 @@ denext mobile add haptics share network secure-store`}
           <code>pickDocument({"{ types }"})</code> (<code>document-picker</code>): resolve{" "}
           <code>null</code> when the user cancels; a hidden file input on the web.
         </li>
+        <li id="picked-files-and-folders">
+          Picked files and folders: in a Deno Desktop window and in browsers with the File System
+          Access API, <code>pickDocument</code>, <code>saveFile</code> and <code>pickFolder</code>
+          {" "}
+          return an opaque <code>handle</code> (the <code>path</code>{" "}
+          is display-only), and the file functions reach the item with{" "}
+          <code>{"{ directory: { picked: handle } }"}</code> (see{" "}
+          <a href="/docs/desktop#picked-files-and-folders">Picked files and folders</a>). The
+          iOS/Android pickers return a copy's <code>path</code> and no handle, and a{" "}
+          <code>{"{ picked }"}</code> directory rejects <code>unavailable</code>{" "}
+          in the shell: read a picked document with <code>readData: true</code>.
+        </li>
         <li>
           <code>scanBarcode({"{ formats }"})</code>{" "}
           (<code>barcode</code>): the value and format of one code; <code>BarcodeDetector</code>

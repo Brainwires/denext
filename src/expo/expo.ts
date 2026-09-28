@@ -152,6 +152,8 @@ export class EventEmitter<
   #nativeSubs = new Map<keyof Events, Map<(...args: never[]) => void, { remove(): void }>>();
 
   /**
+   * Create an emitter.
+   *
    * @param nativeModule A native module (from {@linkcode requireNativeModule}) whose events
    * this emitter's listeners also receive (Expo's pre-SDK 52 `new EventEmitter(module)`).
    */
