@@ -92,6 +92,7 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "cache.store.getPage",
     "cache.store.setData",
     "cache.store.setPage",
+    "cache.store.sweepPages",
     // A project command's handler (its `flags`/`positionals` are typed lists).
     "commands[].run",
     // A message catalogue: `Record<string, unknown>` — a map whose values are opaque.
@@ -158,6 +159,8 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     optimizePackageImports: "union", // `string[] | false`: a chips branch + a `false` branch
     momentumSafeScroll: "toggle",
     reactNative: "union", // `boolean | ReactNativeConfig`: a toggle branch + an options group
+    mobile: "group",
+    desktop: "group",
     experimental: "group",
     classComponents: "toggle",
     compatibilityMode: "segmented",

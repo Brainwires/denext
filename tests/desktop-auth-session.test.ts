@@ -215,7 +215,7 @@ Deno.test("injectDesktopGlobal: inserts the script with the token after <head>",
   const out = await injectDesktopGlobal(html, "tok-123");
   assertStringIncludes(
     out,
-    '<script>globalThis.__denext={"desktop":true,"token":"tok-123"}</script>',
+    `<script>globalThis.__denext={"desktop":true,"token":"tok-123","os":"${Deno.build.os}"}</script>`,
   );
   // Injected immediately after the opening <head>, before the first meta.
   const scriptAt = out.indexOf("<script>globalThis.__denext");
@@ -229,7 +229,7 @@ Deno.test("injectDesktopGlobal: adds the script's sha256 to a strict CSP meta's 
     `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}" />` +
     "<title>x</title></head><body></body></html>";
   const out = await injectDesktopGlobal(html, "tok-abc");
-  const body = 'globalThis.__denext={"desktop":true,"token":"tok-abc"}';
+  const body = `globalThis.__denext={"desktop":true,"token":"tok-abc","os":"${Deno.build.os}"}`;
   const hash = `'sha256-${await sha256Base64(body)}'`;
   // The injected script is present …
   assertStringIncludes(out, `<script>${body}</script>`);
@@ -241,6 +241,9 @@ Deno.test("injectDesktopGlobal: adds the script's sha256 to a strict CSP meta's 
 Deno.test("injectDesktopGlobal: no CSP meta ⇒ script injected, nothing to patch", async () => {
   const html = "<!doctype html><html><head></head><body></body></html>";
   const out = await injectDesktopGlobal(html, "t");
-  assertStringIncludes(out, '<script>globalThis.__denext={"desktop":true,"token":"t"}</script>');
+  assertStringIncludes(
+    out,
+    `<script>globalThis.__denext={"desktop":true,"token":"t","os":"${Deno.build.os}"}</script>`,
+  );
   assert(!out.includes("sha256-"));
 });

@@ -551,6 +551,9 @@
                 },
                 "expireByTag": {
                   "description": "Optional: **soft-expire** every entry carrying `tag` — rewrite its `staleAt`/`expiresAt` (stale-while-revalidate) instead of deleting it, so a `revalidateTag(tag, profile)` serves stale while refreshing. A store that omits this falls back to a hard deleteByTag (correct, just not SWR)."
+                },
+                "sweepPages": {
+                  "description": "Optional: delete every cached **page** whose key does not start with `keep` — the entries of other builds and older page-cache formats, which a PageCache never reads again. `denext start` passes its own prefix (`v2:<buildId>:`) once, after startup. Data entries (`unstable_cache` / `\"use cache\"`) and the kept pages' tags are untouched. Returns how many pages were deleted. A store that omits this is never swept; its unreachable pages age out through its own eviction."
                 }
               },
               "required": [
@@ -987,6 +990,170 @@
       "description": "Keep iOS momentum scrolling alive while scroll-anchoring code corrects the scroll offset — default ON. In iOS WebKit (Safari, WKWebView, Capacitor) any programmatic scroll write during a touch fling (`scrollBy`, `scrollTo`, assigning `scrollTop`) stops the fling dead, and virtualized lists (LegendList, react-virtuoso, TanStack Virtual) issue exactly such writes to compensate for rows measured taller or shorter than estimated. The client runtime therefore defers those writes during a gesture (see `installMomentumSafeScroll` in `denext/mobile`) and applies them in one step once the scroller comes to rest.",
       "type": "boolean",
       "default": true
+    },
+    "mobile": {
+      "description": "Capacitor shell settings for `denext mobile build` and `denext mobile assets`: build flavors (per-flavor app id, name, server URL, icon and splash). See https://denext.dev/docs/mobile-build.",
+      "type": "object",
+      "properties": {
+        "flavors": {
+          "description": "Named build flavors (`staging`, `beta`, …), picked with `denext mobile build --flavor`. Names are lowercase letters, digits and `-`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "appId": {
+                "description": "The bundle id / applicationId for this flavor, replacing the app's (`com.example.app.beta`).",
+                "type": "string"
+              },
+              "appIdSuffix": {
+                "description": "Appended to the app's id when `appId` is not set (`\".staging\"` → `com.example.app.staging`).",
+                "type": "string"
+              },
+              "appName": {
+                "description": "The home-screen name (CFBundleDisplayName, Android's `app_name`).",
+                "type": "string"
+              },
+              "serverUrl": {
+                "description": "`server.url` in the Capacitor config: the app loads this origin instead of the bundled UI.",
+                "type": "string"
+              },
+              "icon": {
+                "description": "Icon source for `denext mobile assets` (relative to the Capacitor project).",
+                "type": "string"
+              },
+              "splash": {
+                "description": "Splash source for `denext mobile assets` (relative to the Capacitor project).",
+                "type": "string"
+              },
+              "backgroundColor": {
+                "description": "Icon and splash background, `#rrggbb`.",
+                "type": "string"
+              },
+              "env": {
+                "description": "Environment variables for the flavor's `denext export` (e.g. `{ API_URL: \"…\" }`).",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "desktop": {
+      "description": "Deno Desktop native capabilities: the allowlist the desktop runtime's capability bridge serves (default deny) and the source the package scripts derive least-privilege `--allow-*` from. Written by `denext desktop add <cap>`. Distinct from SpaConfig.desktop (packaging settings such as the icon); the two may be unified in a later release. Docs: https://denext.dev/docs/desktop",
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "description": "The capability allowlist (default deny).",
+          "type": "object",
+          "properties": {
+            "secureStore": {
+              "description": "OS keychain (Keychain / Credential Manager / libsecret).",
+              "type": "boolean"
+            },
+            "fs": {
+              "description": "App files under the OS app-support / cache folders.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "read": {
+                      "description": "Roots the app may read.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "write": {
+                      "description": "Roots the app may write.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "sqlite": {
+              "description": "An app SQLite database under the app-support folder.",
+              "type": "boolean"
+            },
+            "contextMenu": {
+              "description": "Native context menus (`showContextMenu`).",
+              "type": "boolean"
+            },
+            "shell": {
+              "description": "Open external URLs / paths / reveal / trash (scoped).",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "openExternal": {
+                      "description": "URL schemes `openExternal` may hand to the system browser (e.g. `[\"https:\", \"mailto:\"]`).",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "openPath": {
+                      "description": "Allow `openPath` (open a path with its default app).",
+                      "type": "boolean"
+                    },
+                    "reveal": {
+                      "description": "Allow `reveal` (show a path in the file manager).",
+                      "type": "boolean"
+                    },
+                    "trash": {
+                      "description": "Allow `trash` (move a path to the OS trash).",
+                      "type": "boolean"
+                    }
+                  }
+                }
+              ]
+            },
+            "dialogs": {
+              "description": "Native open/save/folder dialogs returning paths.",
+              "type": "boolean"
+            },
+            "notifications": {
+              "description": "Local notifications (click focuses the window and routes).",
+              "type": "boolean"
+            },
+            "keepAwake": {
+              "description": "Prevent the machine from sleeping while held.",
+              "type": "boolean"
+            },
+            "clipboard": {
+              "description": "Read/write the system clipboard text.",
+              "type": "boolean"
+            },
+            "device": {
+              "description": "Device info (`os`, `osVersion`, `model?`).",
+              "type": "boolean"
+            },
+            "echo": {
+              "description": "The `echo` diagnostic capability (bridge connectivity check).",
+              "type": "boolean"
+            },
+            "extensions": {
+              "description": "User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     },
     "reactNative": {
       "description": "Build a React Native / Expo app's source for the web through `react-native-web` — SPA mode only (`mode: \"spa\"`). `true` turns on the defaults; an object sets options.",

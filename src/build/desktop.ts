@@ -18,6 +18,18 @@ import { wantsShell } from "./spa/shared.ts";
 import { handleDesktopAuthSession, timingSafeEqual } from "../desktop/auth-session-runtime.ts";
 import { sha256Base64 } from "../server/csp.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
+import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
+import type { DesktopCapability } from "../desktop/extension.ts";
+
+// The desktop native-extension authoring API is served from `denext/desktop` (this module).
+export {
+  defineDesktopExtension,
+  type DesktopCapability,
+  type DesktopCapabilityMethod,
+  type DesktopCapCtx,
+  DesktopCapError,
+  type DesktopPermissions,
+} from "../desktop/extension.ts";
 
 type ProxyModule = typeof import("./dev-proxy.ts");
 
@@ -203,6 +215,20 @@ export interface RunDesktopOptions {
    * existing behavior (serve the bundled export only).
    */
   updater?: DesktopUpdaterConfig;
+  /**
+   * The enabled desktop capabilities — the compiled allowlist the {@link createDesktopBridge}
+   * dispatcher serves (built-ins from `src/desktop/caps`, plus `defineDesktopExtension` modules).
+   * Generated `desktop.ts` passes the set derived from `desktop.capabilities`. Omit for none, in
+   * which case every bridge RPC answers `unavailable` and the page uses its web fallback.
+   */
+  capabilities?: readonly DesktopCapability[];
+  /**
+   * The OS per-app support directory handed to capability handlers
+   * ({@link DesktopCapCtx.appSupportDir}) for state that must survive relaunch — browser storage
+   * does not on desktop, because the runtime picks a new loopback origin each launch. Generated
+   * `desktop.ts` computes it from the app id.
+   */
+  appSupportDir?: string;
 }
 
 // The SPA entry is stably named (`/_denext/client/index.js`), so the WebView would
@@ -267,7 +293,9 @@ export async function injectDesktopGlobal(
   // A null token marks the window desktop WITHOUT handing it the per-launch token (the --lan
   // live-reload case): runtimePlatform() reads "desktop", but the token-gated endpoints stay
   // unreachable, and the boot beacon (which needs the token) is not injected.
-  const globals = token !== null ? { desktop: true, token } : { desktop: true };
+  const globals = token !== null
+    ? { desktop: true, token, os: Deno.build.os }
+    : { desktop: true, os: Deno.build.os };
   const body = `globalThis.__denext=${JSON.stringify(globals)}` +
     (token !== null && beacon ? BOOT_BEACON_JS : "");
   const scriptTag = `<script>${body}</script>`;
@@ -354,21 +382,54 @@ export function createDesktopHandler(
   onBooted?: () => void | Promise<void>,
   devProxy?: DesktopProxyFn,
   devInjectToken = false,
+  bridge?: DesktopBridge,
 ): (request: Request, url: URL) => Promise<Response> {
   const proxyCfg = options.proxy;
   const indexHtmlPath = join(outDir, "index.html");
 
   /** Serve the export's `index.html` shell with the desktop global (and, with the updater on, the
-   * boot-confirm beacon) injected. */
-  const serveShell = async (isHead: boolean): Promise<Response | null> => {
+   * boot-confirm beacon) injected. `injectToken` gates the per-launch TOKEN: a subframe or a
+   * DNS-rebinding `Host` still learns it is desktop (runtimePlatform()) but gets NO token, so it
+   * cannot reach the bridge. */
+  const serveShell = async (isHead: boolean, injectToken: boolean): Promise<Response | null> => {
     const html = await Deno.readTextFile(indexHtmlPath).catch(() => null);
     if (html === null) return null;
-    const injected = await injectDesktopGlobal(html, token, onBooted !== undefined);
+    const injected = await injectDesktopGlobal(
+      html,
+      injectToken ? token : null,
+      onBooted !== undefined,
+    );
     return noStore(
       new Response(isHead ? null : injected, {
         headers: { "content-type": "text/html; charset=utf-8" },
       }),
     );
+  };
+
+  /** The backend proxy (when configured + matched), then the static export, its `index.html` shell
+   * for navigations, else 404. Split out so the top-level handler stays simple. */
+  const serveBackendOrExport = async (
+    request: Request,
+    url: URL,
+    injectToken: boolean,
+  ): Promise<Response> => {
+    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
+      return await proxy.proxyToBackend(request, url, proxyCfg);
+    }
+    // The served-asset index.html path: inject the desktop global (re-read from disk so the
+    // injection is not fighting content-encoding on the static response).
+    if (url.pathname === "/index.html") {
+      const shell = await serveShell(request.method === "HEAD", injectToken);
+      if (shell) return shell;
+    }
+    const accEnc = request.headers.get("accept-encoding") ?? undefined;
+    const asset = await serveStatic(outDir, url.pathname, accEnc, request);
+    if (asset) return noStore(asset);
+    if (wantsShell(request, url.pathname)) {
+      const shell = await serveShell(request.method === "HEAD", injectToken);
+      if (shell) return shell;
+    }
+    return new Response("not found", { status: 404 });
   };
 
   return async (request, url) => {
@@ -380,30 +441,25 @@ export function createDesktopHandler(
     // proxy AND the backend proxy/static, so they are always served locally (never proxied).
     const endpoint = await handleLocalEndpoint(request, url, token, onBooted);
     if (endpoint) return endpoint;
+    // The capability bridge (RPC + events) — gated, and like the local endpoints it runs BEFORE any
+    // proxy so it is always served locally and never forwarded.
+    if (bridge) {
+      const bridged = await bridge.handle(request, url, token);
+      if (bridged) return bridged;
+    }
+    // The per-launch token is injected only into a TOP-LEVEL document (Sec-Fetch-Dest, default
+    // document when absent) served to a LOOPBACK Host — so a subframe AND a DNS-rebinding Host each
+    // get the desktop global without the token, and cannot reach the bridge.
+    const injectToken = (request.headers.get("sec-fetch-dest") ?? "document") === "document" &&
+      isLoopbackHost(url.hostname);
     // Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`,
-    // with the per-launch desktop token stripped so it never reaches the dev server. An HTML
-    // navigation is buffered so `__denext` can be injected (platform fidelity — runtimePlatform()
-    // reads "desktop" as in a real window); the token goes in only for a loopback target
-    // (`devInjectToken`), never in --lan mode. Compressed or non-HTML responses stream through
-    // untouched (injecting into a gzipped body would corrupt it).
-    if (devProxy) return await devProxyResponse(request, url, devProxy, token, devInjectToken);
-    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
-      return await proxy.proxyToBackend(request, url, proxyCfg);
+    // with the per-launch desktop token stripped so it never reaches the dev server. The token is
+    // injected into a buffered HTML navigation only for a loopback dev target (`devInjectToken`)
+    // that is also a top-level loopback-Host document, never in --lan mode.
+    if (devProxy) {
+      return await devProxyResponse(request, url, devProxy, token, devInjectToken && injectToken);
     }
-    // The served-asset index.html path: inject the desktop global (re-read from disk so the
-    // injection is not fighting content-encoding on the static response).
-    if (url.pathname === "/index.html") {
-      const shell = await serveShell(request.method === "HEAD");
-      if (shell) return shell;
-    }
-    const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const asset = await serveStatic(outDir, url.pathname, accEnc, request);
-    if (asset) return noStore(asset);
-    if (wantsShell(request, url.pathname)) {
-      const shell = await serveShell(request.method === "HEAD");
-      if (shell) return shell;
-    }
-    return new Response("not found", { status: 404 });
+    return await serveBackendOrExport(request, url, injectToken);
   };
 }
 
@@ -467,6 +523,13 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
         allowNonLoopback: devDecision.proxy && devDecision.allowNonLoopback,
       })
     : undefined;
+  // The capability bridge over the compiled allowlist (default deny — no capabilities means every
+  // RPC answers `unavailable`). `dev` (live-reload mode) lets an unexpected handler error include
+  // its message; a packaged build stays generic.
+  const bridge = createDesktopBridge(options.capabilities ?? [], {
+    appSupportDir: options.appSupportDir,
+    dev: devDecision.proxy,
+  });
   const handle = createDesktopHandler(
     options,
     outDir,
@@ -475,6 +538,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
     onBooted,
     devProxy,
     devInjectToken,
+    bridge,
   );
   Deno.serve({
     port,

@@ -257,3 +257,49 @@ Deno.test("validateDenextConfig: spa.ota must be a boolean", () => {
   validateDenextConfig(spa(undefined));
   assertThrows(() => validateDenextConfig(spa("yes")), Error, "`spa.ota` must be a boolean");
 });
+
+Deno.test("desktop.capabilities: valid shapes pass; bad shapes throw a field-scoped error", () => {
+  // Valid: booleans, an fs options object, a shell options object, an extensions list, or absent.
+  validateDenextConfig({
+    desktop: {
+      capabilities: {
+        secureStore: true,
+        fs: { read: ["$APPDATA"], write: ["$APPDATA"] },
+        shell: { openExternal: ["https:"] },
+        extensions: ["./desktop/extensions/scanner.ts"],
+      },
+    },
+  });
+  validateDenextConfig({ desktop: { capabilities: {} } });
+  validateDenextConfig({ desktop: {} });
+  validateDenextConfig({});
+
+  // Invalid shapes.
+  assertThrows(
+    () => validateDenextConfig({ desktop: [] as unknown as Record<never, never> }),
+    Error,
+    "`desktop` must be an object",
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig({ desktop: { capabilities: true } as unknown as Record<never, never> }),
+    Error,
+    "`desktop.capabilities`",
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig(
+        { desktop: { capabilities: { extensions: ["", 1] } } } as unknown as Record<never, never>,
+      ),
+    Error,
+    "`desktop.capabilities.extensions`",
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig(
+        { desktop: { capabilities: { fs: 5 } } } as unknown as Record<never, never>,
+      ),
+    Error,
+    "`desktop.capabilities.fs`",
+  );
+});

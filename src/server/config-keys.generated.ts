@@ -52,6 +52,8 @@ export const CONFIG_KEYS = [
   "features",
   "optimizePackageImports",
   "momentumSafeScroll",
+  "mobile",
+  "desktop",
   "reactNative",
   "experimental",
   "classComponents",

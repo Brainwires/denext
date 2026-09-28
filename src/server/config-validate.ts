@@ -162,6 +162,35 @@ function numArray(fail: Fail, field: string, v: unknown, opts: NumOpts): void {
   else (v as unknown[]).forEach((el, i) => num(fail, `${field}[${i}]`, el, opts));
 }
 
+/**
+ * The `desktop` block: the capability allowlist's shape. Light — the runtime enforces the
+ * allowlist itself; this only catches obvious mistakes (a non-object, or a bad `extensions` list /
+ * `fs`/`shell` option). Unknown capability keys are allowed (forward-compat with `desktop add`).
+ */
+function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
+  if (desktop === undefined) return;
+  if (typeof desktop !== "object" || Array.isArray(desktop)) {
+    fail("desktop", "must be an object");
+  }
+  const caps = (desktop as { capabilities?: unknown }).capabilities;
+  if (caps === undefined) return;
+  if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {
+    fail("desktop.capabilities", "must be an object of capability names to `true` or options");
+  }
+  const c = caps as Record<string, unknown>;
+  if (c.extensions !== undefined) {
+    const ok = Array.isArray(c.extensions) &&
+      c.extensions.every((p) => typeof p === "string" && p !== "");
+    if (!ok) fail("desktop.capabilities.extensions", "must be an array of module paths");
+  }
+  for (const key of ["fs", "shell"]) {
+    const v = c[key];
+    const ok = v === undefined || typeof v === "boolean" ||
+      (typeof v === "object" && v !== null && !Array.isArray(v));
+    if (!ok) fail(`desktop.capabilities.${key}`, "must be a boolean or an options object");
+  }
+}
+
 /** `mode` and, in SPA mode, the required `spa.entry`. */
 function validateMode(config: DenextConfig, fail: Fail): void {
   if (config.mode !== undefined && config.mode !== "spa") {
@@ -511,6 +540,71 @@ function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   }
 }
 
+/** The string fields of a `mobile.flavors` entry. */
+const FLAVOR_STRINGS = [
+  "appId",
+  "appIdSuffix",
+  "appName",
+  "serverUrl",
+  "icon",
+  "splash",
+  "backgroundColor",
+] as const;
+
+/** A value-shape rule for one `mobile.flavors` field: the problem, or null. */
+const FLAVOR_RULES: Record<string, (v: string) => string | null> = {
+  appId: (v) =>
+    /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(v)
+      ? null
+      : "must be a reverse-DNS id like com.example.app.beta",
+  appIdSuffix: (v) =>
+    /^(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(v) ? null : 'must start with "." (e.g. ".staging")',
+  serverUrl: (v) => (URL.canParse(v) ? null : "must be an absolute URL"),
+  backgroundColor: (v) =>
+    /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? null : "must be a hex colour like #0f172a",
+};
+
+/** Whether `value` is a plain object of strings. */
+function isStringRecord(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.values(value).every((v) => typeof v === "string");
+}
+
+/** One `mobile.flavors.<name>` entry. */
+function validateMobileFlavor(name: string, value: unknown, fail: Fail): void {
+  const at = `mobile.flavors.${name}`;
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+    return fail(at, "names a flavor with lowercase letters, digits and `-` only");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return fail(at, "must be an object");
+  }
+  const flavor = value as Record<string, unknown>;
+  for (const key of FLAVOR_STRINGS) {
+    const field = flavor[key];
+    if (field === undefined) continue;
+    const problem = typeof field === "string" ? FLAVOR_RULES[key]?.(field) : "must be a string";
+    if (problem) fail(`${at}.${key}`, problem);
+  }
+  if (flavor.env !== undefined && !isStringRecord(flavor.env)) {
+    fail(`${at}.env`, "must be an object of string values");
+  }
+}
+
+/** `mobile`: `{ flavors?: { <name>: flavor } }`. */
+function validateMobile(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return fail("mobile", "must be an object");
+  }
+  const flavors = (value as Record<string, unknown>).flavors;
+  if (flavors === undefined) return;
+  if (typeof flavors !== "object" || flavors === null || Array.isArray(flavors)) {
+    return fail("mobile.flavors", "must be an object of flavor name → settings");
+  }
+  for (const [name, flavor] of Object.entries(flavors)) validateMobileFlavor(name, flavor, fail);
+}
+
 /**
  * `reactNative`: `true`/`false` or an options object, and only in SPA mode — the resolve mode
  * applies to the SPA bundle, so anywhere else it would be silently ignored.
@@ -661,6 +755,8 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
+  validateMobile(config.mobile, fail);
+  validateDesktop(config.desktop, fail);
   validateAllowedDevOrigins(config.allowedDevOrigins, fail);
   validateReactNative(config, fail);
   validateRouting(config, fail);

@@ -310,6 +310,39 @@ export interface SpaConfig {
   desktop?: SpaDesktopConfig;
 }
 
+/**
+ * One build flavor of the Capacitor shell under {@link MobileConfig.flavors}: what
+ * `denext mobile build --flavor <name>` changes for that build only. Every change is undone when
+ * the build ends (the native sources and `capacitor.config.*` are restored byte for byte).
+ */
+export interface MobileFlavorConfig {
+  /** The bundle id / applicationId for this flavor, replacing the app's (`com.example.app.beta`). */
+  appId?: string;
+  /** Appended to the app's id when `appId` is not set (`".staging"` → `com.example.app.staging`). */
+  appIdSuffix?: string;
+  /** The home-screen name (CFBundleDisplayName, Android's `app_name`). */
+  appName?: string;
+  /** `server.url` in the Capacitor config: the app loads this origin instead of the bundled UI. */
+  serverUrl?: string;
+  /** Icon source for `denext mobile assets` (relative to the Capacitor project). */
+  icon?: string;
+  /** Splash source for `denext mobile assets` (relative to the Capacitor project). */
+  splash?: string;
+  /** Icon and splash background, `#rrggbb`. */
+  backgroundColor?: string;
+  /** Environment variables for the flavor's `denext export` (e.g. `{ API_URL: "…" }`). */
+  env?: Record<string, string>;
+}
+
+/** Settings for `denext mobile build` / `denext mobile assets` (the Capacitor shell). */
+export interface MobileConfig {
+  /**
+   * Named build flavors (`staging`, `beta`, …), picked with `denext mobile build --flavor`.
+   * Names are lowercase letters, digits and `-`.
+   */
+  flavors?: Record<string, MobileFlavorConfig>;
+}
+
 /** `deno desktop` packaging settings under {@link SpaConfig.desktop}. */
 export interface SpaDesktopConfig {
   /**
@@ -600,6 +633,74 @@ export interface DenextCommand {
   positionals?: PositionalSpec[];
   /** The implementation, handed the parsed invocation. */
   run(ctx: CommandContext): void | Promise<void>;
+}
+
+/** The `shell` desktop capability's scoped options (an allowlist per action). */
+export interface DesktopShellConfig {
+  /** URL schemes `openExternal` may hand to the system browser (e.g. `["https:", "mailto:"]`). */
+  openExternal?: string[];
+  /** Allow `openPath` (open a path with its default app). */
+  openPath?: boolean;
+  /** Allow `reveal` (show a path in the file manager). */
+  reveal?: boolean;
+  /** Allow `trash` (move a path to the OS trash). */
+  trash?: boolean;
+}
+
+/**
+ * The `fs` desktop capability's scoped roots (path tokens `$APPDATA` / `$CACHE` / `$DOCUMENTS`,
+ * plus the per-session `$PICKED` set the user grows through native dialogs).
+ */
+export interface DesktopFsConfig {
+  /** Roots the app may read. */
+  read?: string[];
+  /** Roots the app may write. */
+  write?: string[];
+}
+
+/**
+ * `desktop.capabilities`: which native capabilities the page may reach, keyed by the name
+ * `denext desktop add <name>` writes. `true` enables a capability with its defaults; an object
+ * scopes it. Anything absent is denied. An unknown key is allowed (a newer `desktop add`) and the
+ * validator warns on it.
+ */
+export interface DesktopCapabilitiesConfig {
+  /** OS keychain (Keychain / Credential Manager / libsecret). */
+  secureStore?: boolean;
+  /** App files under the OS app-support / cache folders. */
+  fs?: boolean | DesktopFsConfig;
+  /** An app SQLite database under the app-support folder. */
+  sqlite?: boolean;
+  /** Native context menus (`showContextMenu`). */
+  contextMenu?: boolean;
+  /** Open external URLs / paths / reveal / trash (scoped). */
+  shell?: boolean | DesktopShellConfig;
+  /** Native open/save/folder dialogs returning paths. */
+  dialogs?: boolean;
+  /** Local notifications (click focuses the window and routes). */
+  notifications?: boolean;
+  /** Prevent the machine from sleeping while held. */
+  keepAwake?: boolean;
+  /** Read/write the system clipboard text. */
+  clipboard?: boolean;
+  /** Device info (`os`, `osVersion`, `model?`). */
+  device?: boolean;
+  /** The `echo` diagnostic capability (bridge connectivity check). */
+  echo?: boolean;
+  /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
+  extensions?: string[];
+}
+
+/**
+ * The `desktop` block of `denext.config.ts`: Deno Desktop native capabilities. The allowlist the
+ * desktop runtime's capability bridge serves (default deny), and the source the package scripts
+ * derive least-privilege `--allow-*` from. Written by `denext desktop add <cap>`. Distinct from
+ * {@link SpaDesktopConfig} (`spa.desktop`, packaging settings such as the icon); the two may be
+ * unified later. Docs: https://denext.dev/docs/desktop
+ */
+export interface DesktopConfig {
+  /** The capability allowlist (default deny). */
+  capabilities?: DesktopCapabilitiesConfig;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -979,6 +1080,20 @@ export interface DenextConfig {
    * @default true
    */
   momentumSafeScroll?: boolean;
+  /**
+   * Capacitor shell settings for `denext mobile build` and `denext mobile assets`: build flavors
+   * (per-flavor app id, name, server URL, icon and splash). See
+   * {@link https://denext.dev/docs/mobile-build}.
+   */
+  mobile?: MobileConfig;
+  /**
+   * Deno Desktop native capabilities: the allowlist the desktop runtime's capability bridge
+   * serves (default deny) and the source the package scripts derive least-privilege `--allow-*`
+   * from. Written by `denext desktop add <cap>`. Distinct from {@link SpaConfig.desktop} (packaging
+   * settings such as the icon); the two may be unified in a later release. Docs:
+   * https://denext.dev/docs/desktop
+   */
+  desktop?: DesktopConfig;
   /**
    * Build a React Native / Expo app's source for the web through `react-native-web` — SPA
    * mode only (`mode: "spa"`). `true` turns on the defaults; an object sets options.
