@@ -579,6 +579,13 @@ four documented bounds of the opt-in:
   `"under"` needs every ancestor transparent over the slot. `"embed"` (iOS) depends on WebKit
   backing the slot's `overflow: scroll` element with a native scroll view (as
   `@capacitor/google-maps` does); if it does not within 2 s the view falls back to `"over"`.
+  UIKit controls inside an `"embed"` view (buttons, sliders) do not complete a tap there, since
+  the touch belongs to WebKit's scroll view: gesture-driven views (a map's pan, pinch and markers)
+  work, which is why the built-in `video` is drawn `"under"` by default. Give your own view type
+  with controls `placement="under"` (or `"over"`). An `"over"` view near the edge of a scrolling
+  list can flicker on iOS: the page's occlusion samples intermittently report it covered there
+  (the cause is not yet known), and an `"over"` view hides while covered; `"under"` does not hide
+  on occlusion (the page paints over it), so it is the placement to use.
   A slot a virtualized list unmounts destroys its view (a map loses its position; a video
   restarts). Android is compiled, not run on a device or emulator.
 

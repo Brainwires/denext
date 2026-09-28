@@ -26,7 +26,11 @@
     "denext/server": "../../src/server/mod.ts",
     "denext/client": "../../src/client/mod.ts",
     "denext/mobile": "../../src/mobile/mod.ts",
-    "denext/feature": "../../src/feature.ts"
+    "denext/feature": "../../src/feature.ts",
+    "file:///Users/nightness/Source/Brainwires/denext/examples/native-views/ios/App/App/public/_denext/client/index.css": "file:///Users/nightness/Source/Brainwires/denext/examples/native-views/.denext/css-shims/css_1.js",
+    "file:///Users/nightness/Source/Brainwires/denext/examples/native-views/src/styles.css": "file:///Users/nightness/Source/Brainwires/denext/examples/native-views/.denext/css-shims/css_3.js",
+    "file:///Users/nightness/Source/Brainwires/denext/examples/native-views/android/app/src/main/assets/public/_denext/client/index.css": "file:///Users/nightness/Source/Brainwires/denext/examples/native-views/.denext/css-shims/css_0.js",
+    "file:///Users/nightness/Source/Brainwires/denext/examples/native-views/out/_denext/client/index.css": "file:///Users/nightness/Source/Brainwires/denext/examples/native-views/.denext/css-shims/css_2.js"
   },
   "lint": {
     "plugins": [

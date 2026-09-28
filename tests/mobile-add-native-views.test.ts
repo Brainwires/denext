@@ -117,6 +117,12 @@ Deno.test("mobile add native-views: the plugin on iOS + Android, registered; no 
     assertStringIncludes(plugin, 'jsName = "DenextNativeViews"');
     assertStringIncludes(plugin, "public protocol DenextNativeViewFactory");
     assertStringIncludes(await read(dir, IOS_VIDEO), "player.observe(\\.timeControlStatus");
+    for (const file of [IOS_PLUGIN, IOS_VIDEO]) {
+      // Every Swift string interpolation survived the template literal (a lost backslash would
+      // log "(id)" literally).
+      assert(!/log\("\((?!\\)/.test(await read(dir, file)), file);
+      assertStringIncludes(await read(dir, file), 'log("\\(');
+    }
     assertStringIncludes(
       await read(dir, `${ANDROID_DIR}/DenextNativeViewsPlugin.java`),
       '@CapacitorPlugin(name = "DenextNativeViews")',

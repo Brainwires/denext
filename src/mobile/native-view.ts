@@ -32,7 +32,8 @@ export type { NativeViewPlacement } from "./native-view-tracker.ts";
 
 /**
  * Where a slot's native view is drawn: a {@linkcode NativeViewPlacement}, or `"auto"` (`"embed"`
- * on iOS, `"over"` on Android).
+ * on iOS, except `"under"` for `video`, whose system controls need a plain UIKit hierarchy;
+ * `"over"` on Android).
  */
 export type NativeViewPlacementOption = NativeViewPlacement | "auto";
 
@@ -78,10 +79,23 @@ export interface NativeViewSlotHandle {
 
 let nextId = 0;
 
-/** The placement `"auto"` resolves to on this platform. */
-function resolvePlacement(option: NativeViewPlacementOption | undefined): NativeViewPlacement {
+/**
+ * View types whose own controls must get touches as in any UIKit app (the system video player,
+ * its full-screen button): on iOS `"auto"` draws them `"under"` the WebView (a plain UIKit
+ * hierarchy inside the bridge's view, the approach of `@capacitor/google-maps`), not inside
+ * WebKit's scroll view, where controls do not complete a tap. The page paints over them, so DOM
+ * on top covers them with no occlusion check.
+ */
+const UNDER_TYPES: ReadonlySet<string> = new Set(["video"]);
+
+/** The placement `"auto"` resolves to for `type` on this platform. */
+function resolvePlacement(
+  option: NativeViewPlacementOption | undefined,
+  type: string,
+): NativeViewPlacement {
   if (option && option !== "auto") return option;
-  return nativePlatform() === "ios" ? "embed" : "over";
+  if (nativePlatform() !== "ios") return "over";
+  return UNDER_TYPES.has(type) ? "under" : "embed";
 }
 
 /** A rejection's message. */
@@ -141,7 +155,7 @@ function usePlacement(
     registeredTypes(plugin).then((types) => {
       if (cancelled || !types.includes(type)) return;
       state.live.plugin = plugin;
-      state.setPlacement(resolvePlacement(option));
+      state.setPlacement(resolvePlacement(option, type));
       state.setStatus("pending");
     });
     return () => {

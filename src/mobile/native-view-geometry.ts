@@ -169,21 +169,36 @@ export function samplePoints(box: Box): Array<readonly [number, number]> {
 }
 
 /**
- * Whether page content covers part of the slot `el`: some sample point of `visible` hits an
- * element that is neither `el` nor inside it (a modal, a sheet, a sticky header). Points the hit
- * test cannot answer (`null`, e.g. outside the layout viewport) do not count.
+ * Whether the hit-test stack at one point (topmost first) shows page content over the slot `el`:
+ * the first element that is neither `el`, inside it, nor one of its ancestors (an ancestor never
+ * paints over its descendants; a stack can list one first when the slot itself takes no hits).
+ */
+function coveredAt(el: GeometryElement, stack: readonly unknown[]): boolean {
+  for (const hit of stack) {
+    if (hit === null || hit === undefined) continue;
+    if (hit === el || (el.contains?.(hit) ?? false)) return false;
+    const ancestor = (hit as GeometryElement).contains?.(el) ?? false;
+    if (!ancestor) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether page content covers part of the slot `el`: at some sample point of `visible`, an element
+ * that is not the slot, inside it, or one of its ancestors is on top (a modal, a sheet, a sticky
+ * header). Points the hit test cannot answer (an empty stack) do not count.
+ *
+ * @param el The slot element.
+ * @param visible The slot's visible part (layout viewport coordinates).
+ * @param hitTest The elements at a point, topmost first (`document.elementsFromPoint`).
+ * @returns Whether page content covers the slot.
  */
 export function isOccluded(
   el: GeometryElement,
   visible: Box,
-  hitTest: (x: number, y: number) => unknown,
+  hitTest: (x: number, y: number) => readonly unknown[],
 ): boolean {
-  for (const [x, y] of samplePoints(visible)) {
-    const hit = hitTest(x, y);
-    if (hit === null || hit === undefined) continue;
-    if (hit !== el && !(el.contains?.(hit) ?? false)) return true;
-  }
-  return false;
+  return samplePoints(visible).some(([x, y]) => coveredAt(el, hitTest(x, y)));
 }
 
 /** A box rounded to 1/100 px, for comparing frames without float noise. */

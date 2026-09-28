@@ -57,12 +57,43 @@ function rows(): Row[] {
   );
 }
 
-function MapCard({ row }: { row: Extract<Row, { kind: "map" }> }) {
+type MapRow = Extract<Row, { kind: "map" }>;
+
+/** A regionChange event as one line. */
+function regionText(data: unknown): string {
+  const r = data as { latitude: number; longitude: number; zoom: number };
+  return `${r.latitude.toFixed(3)}, ${r.longitude.toFixed(3)} @ ${r.zoom.toFixed(1)}`;
+}
+
+/** The zoom buttons under a map. */
+function ZoomControls(
+  { zoom, setZoom }: { zoom: number; setZoom: (z: number) => void },
+) {
+  return (
+    <div class="controls">
+      <button type="button" onClick={() => setZoom(Math.max(2, zoom - 1))}>
+        −
+      </button>
+      <span>zoom {zoom}</span>
+      <button type="button" onClick={() => setZoom(Math.min(19, zoom + 1))}>
+        +
+      </button>
+    </div>
+  );
+}
+
+function MapCard({ row }: { row: MapRow }) {
   const [zoom, setZoom] = useState(12);
   const [region, setRegion] = useState("");
-  const [command, setCommand] = useState<
-    ((name: string, args?: Record<string, unknown>) => Promise<unknown>) | null
-  >(null);
+  const [command, setCommand] = useState<Command | null>(null);
+  const name = `map${row.id}`;
+  const recenter = () =>
+    command?.("setRegion", {
+      latitude: row.lat,
+      longitude: row.lon,
+      zoom,
+      animated: true,
+    });
   return (
     <section class="card">
       <h2>{row.title}</h2>
@@ -70,7 +101,7 @@ function MapCard({ row }: { row: Extract<Row, { kind: "map" }> }) {
         type="map"
         placement={row.placement}
         class="slot"
-        data-probe={`map${row.id}`}
+        data-probe={name}
         props={{
           latitude: row.lat,
           longitude: row.lon,
@@ -81,36 +112,17 @@ function MapCard({ row }: { row: Extract<Row, { kind: "map" }> }) {
             title: row.title,
           }],
         }}
-        onEvent={(name, data) => {
-          probe(`map${row.id}:${name}`, data);
-          if (name === "regionChange") {
-            const r = data as {
-              latitude: number;
-              longitude: number;
-              zoom: number;
-            };
-            setRegion(
-              `${r.latitude.toFixed(3)}, ${r.longitude.toFixed(3)} @ ${r.zoom.toFixed(1)}`,
-            );
-          }
+        onEvent={(event, data) => {
+          probe(`${name}:${event}`, data);
+          if (event === "regionChange") setRegion(regionText(data));
         }}
         onCommand={(c) => {
           setCommand(() => c);
-          if (c) commands.set(`map${row.id}`, c);
-          else commands.delete(`map${row.id}`);
+          if (c) commands.set(name, c);
+          else commands.delete(name);
         }}
         overlay={
-          <button
-            type="button"
-            class="overlay-button"
-            onClick={() =>
-              command?.("setRegion", {
-                latitude: row.lat,
-                longitude: row.lon,
-                zoom,
-                animated: true,
-              })}
-          >
+          <button type="button" class="overlay-button" onClick={recenter}>
             Recenter
           </button>
         }
@@ -119,21 +131,7 @@ function MapCard({ row }: { row: Extract<Row, { kind: "map" }> }) {
           Map of {row.title} (a native map in the iOS / Android app)
         </div>
       </NativeViewSlot>
-      <div class="controls">
-        <button
-          type="button"
-          onClick={() => setZoom((z) => Math.max(2, z - 1))}
-        >
-          −
-        </button>
-        <span>zoom {zoom}</span>
-        <button
-          type="button"
-          onClick={() => setZoom((z) => Math.min(19, z + 1))}
-        >
-          +
-        </button>
-      </div>
+      <ZoomControls zoom={zoom} setZoom={setZoom} />
       <p class="muted">{region || "Pan the map: its region shows here."}</p>
     </section>
   );

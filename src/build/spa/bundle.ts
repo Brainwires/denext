@@ -23,6 +23,7 @@ import { detectNextCompat } from "../next-compat-detect.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
+import { spaFeatureFold } from "./features.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
 import { optimizePackageImportsList } from "../optimize-package-imports.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
@@ -195,6 +196,33 @@ function spaBundlePlugins(
 }
 
 /**
+ * The denext-native SPA bundle: plain `deno bundle` (fast, no esbuild). The app already imports
+ * denext directly, so there is no react alias to rewrite; `features` are seeded and folded here
+ * (`deno bundle` has no define and no load plugins).
+ */
+async function bundleNativeSpa(
+  paths: ProjectPaths,
+  entrySource: string,
+  clientDir: string,
+  css: AppCss | null | undefined,
+  minify: boolean,
+  dev: boolean,
+): Promise<void> {
+  const fold = await spaFeatureFold(paths.projectDir, featureFlags(paths.config), !dev);
+  try {
+    const bundle = await bundleSourceFiles(fold.seed + entrySource, {
+      configPath: paths.configPath,
+      minify,
+      importMap: { ...css?.importMap, ...fold.importMap },
+      dev,
+    });
+    await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
+  } finally {
+    await fold.cleanup();
+  }
+}
+
+/**
  * Bundle the SPA entry and extract its stylesheet. Writes the entry bundle (+ split
  * chunks) into `clientDir` as `index.js`, and — when the app has CSS reachable from the
  * entry graph — `index.css`.
@@ -244,15 +272,7 @@ export async function bundleSpaInto(
   if (compat) {
     await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev);
   } else {
-    // denext-native path: plain `deno bundle` (fast, no esbuild). The app already
-    // imports denext directly, so there is no react alias to rewrite.
-    const bundle = await bundleSourceFiles(entrySource, {
-      configPath: paths.configPath,
-      minify,
-      importMap: css?.importMap,
-      dev,
-    });
-    await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
+    await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev);
   }
   if (!css) return { hasStyles: false };
   const text = await extractRouteCss([entryPath], css);

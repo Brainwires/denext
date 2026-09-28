@@ -55,10 +55,13 @@ Build with `deno task cap:sync` then `deno task ios`, and on the phone:
 3. **Region events.** After a pan, the line under the map shows the new
    latitude, longitude and zoom. The −/+ buttons change the zoom.
 4. **Video.** Row 12 starts the flower clip by itself (muted autoplay, looping)
-   with the system controls; the status line shows `ready` then `play`. Tap
-   pause / play and the full-screen button: the controls get the taps. A drag
-   that starts on the video still scrolls the list. Full screen from the
-   controls and back works. Scroll it off and back: it is made again (restarts).
+   with the system controls. It is drawn under the WebView (the default for
+   `video` on iOS; the page is transparent over it) and stays on its card while
+   the list scrolls or flings, with no flicker at the screen edges. Tap it: the
+   system controls show; play/pause, scrubbing and full screen work, and closing
+   full screen (the button or a swipe down) returns to the inline player with
+   its controls working. The sheet draws over it (and takes the touches there).
+   The status line shows `ready` then `play`.
 5. **Under.** Scroll to row 40 (Lisbon): the map shows through the transparent
    page with the "Recenter" button above it; pan works, the button works, and
    the text rows above and below cover it cleanly as it scrolls out (no map

@@ -25,6 +25,7 @@ import {
   nearestScroller,
   paddingBox,
   roundBox,
+  samplePoints,
   toScreen,
   type ViewportLike,
   visiblePart,
@@ -157,7 +158,8 @@ export interface TrackerEnv {
   viewport(): Box;
   visualViewport(): ViewportLike | undefined;
   styleOf(el: GeometryElement): ClipStyle | undefined;
-  hitTest(x: number, y: number): unknown;
+  /** The elements at a point, topmost first. */
+  hitTest(x: number, y: number): readonly unknown[];
   dpr(): number;
   /** The document's scroll offset and size. */
   pageScroll(): { x: number; y: number; width: number; height: number };
@@ -189,6 +191,88 @@ interface Entry {
   clippers: GeometryElement[] | null;
   last: string;
   stopResize: () => void;
+  /** The covered answer in effect, and how many measurements in a row said otherwise. */
+  covered: boolean | undefined;
+  flips: number;
+  /** The last raw (undebounced) covered answer, for the diagnostics. */
+  raw?: boolean;
+}
+
+/**
+ * Device-test diagnostics: with `globalThis.__DENEXT_NV_DEBUG__` set (a probe build sets it),
+ * every change of a slot's raw covered answer is logged with the evidence (the visible part, the
+ * sample points and the top of each point's hit-test stack). Off otherwise.
+ */
+function logOcclusion(env: TrackerEnv, entry: Entry, covered: boolean): void {
+  if (!(globalThis as { __DENEXT_NV_DEBUG__?: boolean }).__DENEXT_NV_DEBUG__) return;
+  const el = entry.slot.el;
+  const visible = visiblePart(
+    boxOf(el.getBoundingClientRect()),
+    entry.clippers ?? [],
+    env.viewport(),
+  );
+  const describe = (hit: unknown) => {
+    const e = hit as { tagName?: string; className?: unknown; contains?: (o: unknown) => boolean };
+    const cls = typeof e?.className === "string" && e.className
+      ? `.${e.className.replaceAll(" ", ".")}`
+      : "";
+    const rel = hit === el
+      ? "slot"
+      : el.contains?.(hit)
+      ? "inside"
+      : e?.contains?.(el)
+      ? "ancestor"
+      : "OTHER";
+    return `${(e?.tagName ?? "?").toLowerCase()}${cls}(${rel})`;
+  };
+  const points = visible
+    ? samplePoints(visible).map(([x, y]) => ({
+      x,
+      y,
+      stack: env.hitTest(x, y).slice(0, 4).map(describe),
+    }))
+    : [];
+  console.log(
+    "[nv-occ]",
+    entry.slot.id,
+    covered ? "covered" : "clear",
+    JSON.stringify({
+      viewport: env.viewport(),
+      visible,
+      points,
+    }),
+  );
+}
+
+/** How many measurements in a row must disagree before the covered answer changes. */
+const COVER_CONFIRMATIONS = 2;
+
+/**
+ * `frame` with the covered answer debounced: it changes only after {@linkcode COVER_CONFIRMATIONS}
+ * measurements in a row agree (a stray sample during a scroll, a row laid out for a frame over
+ * the slot, never flickers the view). The first measurement is taken as is.
+ */
+function debounceCover(entry: Entry, frame: NativeViewFrame, placement: NativeViewPlacement) {
+  if (entry.covered === undefined || frame.covered === entry.covered) {
+    entry.covered = frame.covered;
+    entry.flips = 0;
+    return frame;
+  }
+  if (++entry.flips >= COVER_CONFIRMATIONS) {
+    entry.covered = frame.covered;
+    entry.flips = 0;
+    return frame;
+  }
+  const covered = entry.covered;
+  const over = placement === "over";
+  // Hidden for another reason (inactive, off-screen) stays hidden.
+  const otherwise = frame.hidden && !(frame.covered && over);
+  return {
+    ...frame,
+    covered,
+    interactive: frame.active && !covered,
+    hidden: otherwise || (covered && over),
+  };
 }
 
 /** How long the tracker keeps measuring every frame after the page last moved. */
@@ -230,15 +314,21 @@ function browserEnv(): TrackerEnv {
     caf: (id) => callOn(w, "cancelAnimationFrame", [id], undefined),
     setTimeout: (cb, ms) => Number(setTimeout(cb, ms)),
     clearTimeout: (id) => clearTimeout(id),
-    viewport: () => ({
-      x: 0,
-      y: 0,
-      width: Number(w.innerWidth) || 0,
-      height: Number(w.innerHeight) || 0,
-    }),
+    viewport: () => {
+      // What is on screen: the visual viewport (in layout viewport coordinates) where there is
+      // one; innerHeight can include what the keyboard or the browser's chrome covers.
+      const vv = w.visualViewport as ViewportLike | undefined;
+      if (vv && vv.width > 0 && vv.height > 0) {
+        return { x: vv.offsetLeft, y: vv.offsetTop, width: vv.width, height: vv.height };
+      }
+      return { x: 0, y: 0, width: Number(w.innerWidth) || 0, height: Number(w.innerHeight) || 0 };
+    },
     visualViewport: () => w.visualViewport as ViewportLike | undefined,
     styleOf: (el) => callOn(w, "getComputedStyle", [el], undefined),
-    hitTest: (x, y) => callOn(doc, "elementFromPoint", [x, y], null),
+    hitTest: (x, y) => {
+      const all = callOn<unknown[] | undefined>(doc, "elementsFromPoint", [x, y], undefined);
+      return all ?? [callOn(doc, "elementFromPoint", [x, y], null)];
+    },
     dpr: () => Number(w.devicePixelRatio) || 1,
     pageScroll: () => {
       const root = (doc?.scrollingElement ?? doc?.documentElement) as GeometryElement | undefined;
@@ -403,7 +493,14 @@ export class NativeViewTracker {
   /** Follow `slot`, measuring it right away. */
   add(slot: TrackedSlot): void {
     if (this.#entries.size === 0) this.#listen();
-    const entry: Entry = { slot, clippers: null, last: "", stopResize: () => {} };
+    const entry: Entry = {
+      slot,
+      clippers: null,
+      last: "",
+      stopResize: () => {},
+      covered: undefined,
+      flips: 0,
+    };
     entry.stopResize = this.env.observeResize(slot.el, () => {
       entry.clippers = null;
       this.kick();
@@ -440,7 +537,12 @@ export class NativeViewTracker {
     const changed: NativeViewFrame[] = [];
     for (const entry of this.#entries.values()) {
       entry.clippers ??= clippingAncestors(entry.slot.el, (el) => this.env.styleOf(el));
-      const frame = measureSlot(this.env, entry.slot, entry.clippers, this.#scrollerIds);
+      const measured = measureSlot(this.env, entry.slot, entry.clippers, this.#scrollerIds);
+      if (measured.covered !== entry.raw) {
+        entry.raw = measured.covered;
+        logOcclusion(this.env, entry, measured.covered);
+      }
+      const frame = debounceCover(entry, measured, entry.slot.placement);
       const key = frameKey(this.env, frame);
       if (key === entry.last) continue;
       entry.last = key;

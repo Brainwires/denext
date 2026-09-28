@@ -134,9 +134,13 @@ and this project adheres to
   `DenextNativeViews` plugin (Swift + Java, registered with the other denext plugins), a
   registry of view factories (`DenextNativeViews.register(...)` or
   `plugins.DenextNativeViews.factories` in `capacitor.config`) and the built-in `video` view
-  (AVPlayerViewController / VideoView); `denext mobile add native-map` adds `map` (MapKit /
+  (AVPlayerViewController with the system controls, drawn under the WebView by default on iOS so its controls behave as in any UIKit app; VideoView on Android); `denext mobile add native-map` adds `map` (MapKit /
   osmdroid, no API key). New example: `examples/native-views` (two maps and a video in a
   `VirtualList`). Docs: https://denext.dev/docs/mobile#native-views.
+- **`feature()` now folds on the SPA's denext-native path.** `mode: "spa"` bundled with
+  `deno bundle` (no npm React) neither seeded `__DENEXT_FEATURES__` nor folded `feature("KEY")`,
+  so every flag read `false` at run time whatever `features` said. The flags are now seeded at the
+  top of the entry and each app module that calls `feature()` is folded (production builds).
 - **Response compression (`compress`, on by default — Next.js's `compress`).** `denext start`,
   `denext dev` (App Router and SPA mode) and any `createApp()` handler now compress dynamic
   responses — rendered HTML,

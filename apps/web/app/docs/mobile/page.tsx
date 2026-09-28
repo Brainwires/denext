@@ -836,12 +836,20 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
         (default true), <code>fit</code> (<code>"contain"</code> or{" "}
         <code>"cover"</code>, iOS); events <code>ready</code>, <code>play</code>,{" "}
         <code>pause</code>, <code>ended</code>, <code>error</code>; commands <code>play</code>,{" "}
-        <code>pause</code>, <code>seek</code>, <code>status</code>. <code>map</code>: props{" "}
-        <code>latitude</code>, <code>longitude</code>, <code>zoom</code> (0 to 20),{" "}
-        <code>markers</code>, <code>mapType</code> (iOS), <code>interactive</code>; events{" "}
-        <code>regionChange</code>, <code>markerPress</code>; command{" "}
-        <code>setRegion</code>. The map moves only when <code>latitude</code>,{" "}
-        <code>longitude</code> or <code>zoom</code>{" "}
+        <code>pause</code>, <code>seek</code>, <code>status</code>. On iOS it is an{" "}
+        <code>AVPlayerViewController</code>{" "}
+        with the system controls, contained in the app&apos;s view controller, and{" "}
+        <code>"auto"</code> draws it <code>"under"</code>{" "}
+        the WebView (a plain UIKit hierarchy that follows the page&apos;s scrolling in the same
+        frame), so page content drawn over the slot covers it and its full-screen button and exit
+        are AVKit&apos;s own; controls inside WebKit&apos;s scroll view (<code>"embed"</code>) do
+        not complete a tap. The slot and its ancestors must be transparent there (a dev warning
+        names an opaque one). On Android it is a <code>VideoView</code> with the system{" "}
+        <code>MediaController</code>. <code>map</code>: props <code>latitude</code>,{" "}
+        <code>longitude</code>, <code>zoom</code> (0 to 20), <code>markers</code>,{" "}
+        <code>mapType</code> (iOS), <code>interactive</code>; events <code>regionChange</code>,{" "}
+        <code>markerPress</code>; command <code>setRegion</code>. The map moves only when{" "}
+        <code>latitude</code>, <code>longitude</code> or <code>zoom</code>{" "}
         change, so a pan is not undone by other props. OpenStreetMap&apos;s tile servers are for
         light use: point a production Android app at its own tile source.
       </p>

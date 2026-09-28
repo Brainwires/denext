@@ -112,16 +112,30 @@ Deno.test("geometry: screen coordinates follow the visual viewport's offset and 
 });
 
 Deno.test("geometry: occlusion samples the center and inset corners", () => {
-  const slot = box(0, 0, 100, 100);
+  const card = box(0, 0, 400, 400);
+  const slot = box(0, 0, 100, 100, card);
   const inner = box(0, 0, 10, 10, slot);
   const modal = box(0, 0, 400, 400);
   const visible = { x: 0, y: 0, width: 100, height: 100 };
   assertEquals(samplePoints(visible).length, 5);
   assertEquals(samplePoints(visible)[1], [2, 2]);
-  assert(!isOccluded(slot, visible, () => slot));
-  assert(!isOccluded(slot, visible, () => inner), "the slot's own overlay is not a cover");
-  assert(!isOccluded(slot, visible, () => null), "unanswered points do not count");
-  assert(isOccluded(slot, visible, (x, y) => (x > 90 && y > 90 ? modal : slot)));
+  assert(!isOccluded(slot, visible, () => [slot, card]));
+  assert(!isOccluded(slot, visible, () => [inner, slot]), "the slot's own overlay is not a cover");
+  assert(!isOccluded(slot, visible, () => []), "unanswered points do not count");
+  assert(isOccluded(slot, visible, (x, y) => (x > 90 && y > 90 ? [modal, slot] : [slot])));
+});
+
+Deno.test("geometry: an ancestor on top of the stack is not a cover (false positive)", () => {
+  // The slot takes no hits (a transparent box drawn over by a native view, a list that turns
+  // pointer events off while scrolling): the stack starts with its card or the list.
+  const list = box(0, 0, 400, 800);
+  const card = box(0, 0, 400, 300, list);
+  const slot = box(16, 40, 358, 220, card);
+  const visible = { x: 16, y: 40, width: 358, height: 220 };
+  assert(!isOccluded(slot, visible, () => [card, list]), "ancestors only");
+  assert(!isOccluded(slot, visible, () => [card, slot, list]), "an ancestor listed above the slot");
+  const sheet = box(0, 0, 400, 800);
+  assert(isOccluded(slot, visible, () => [sheet, card, slot]), "a real cover still counts");
 });
 
 // ---- the tracker -----------------------------------------------------------------
@@ -146,7 +160,10 @@ function fakeEnv(
     viewport: () => ({ x: 0, y: 0, width: 400, height: 800 }),
     visualViewport: () => undefined,
     styleOf: (el) => styles.get(el) ?? {},
-    hitTest: (x, y) => hit(x, y),
+    hitTest: (x, y) => {
+      const top = hit(x, y);
+      return Array.isArray(top) ? top : [top];
+    },
     dpr: () => 3,
     pageScroll: () => ({ x: 0, y: 0, width: 400, height: 800 }),
     nativeFollows: () => follows,
@@ -507,4 +524,41 @@ Deno.test("tracker: a slot in a scrolling element is sent in its content coordin
   assertEquals(other.calls.length, 2);
   tracker.remove("nv-a");
   t2.remove("nv-a");
+});
+
+Deno.test("NativeViewSlot: iOS draws the video under the page by default (its controls need UIKit)", async () => {
+  const views = viewsPlugin(["video"], { placement: "under" });
+  await inShell("ios", { DenextNativeViews: views.plugin }, async () => {
+    pageTracker(views.plugin as Any, fakeEnv().env);
+    const { container } = mount(() => h(NativeViewSlot as Any, { type: "video" }, "fallback"));
+    await tick();
+    await tick();
+    assertEquals((views.calls.find(([m]) => m === "create")![1] as Any).placement, "under");
+    assertEquals(container.firstChild.childNodes.length, 0, "no embed scroller");
+  });
+});
+
+Deno.test("tracker: one stray covered sample does not hide the view; two in a row do", async () => {
+  const plugin = fakePlugin(["update"]);
+  const el = box(20, 100, 200, 120);
+  const sheet = box(0, 0, 400, 800);
+  let covering = false;
+  const fake = fakeEnv(() => (covering ? [sheet, el] : [el]), true);
+  const tracker = new NativeViewTracker(plugin.plugin as Any, fake.env);
+  tracker.add(slotOf(el, "over"));
+  fake.frame();
+  await settle();
+  const last = () => (plugin.calls.at(-1)![1] as Any).frames[0];
+  assertEquals([last().hidden, last().covered], [false, false]);
+  covering = true;
+  fake.frame(); // first covered answer: held back
+  assertEquals(plugin.calls.length, 1, "nothing sent for a single covered sample");
+  covering = false;
+  fake.frame(); // back to uncovered: the streak resets
+  covering = true;
+  fake.frame();
+  assertEquals(plugin.calls.length, 1);
+  fake.frame(); // the second covered answer in a row
+  assertEquals([last().hidden, last().covered, last().interactive], [true, true, false]);
+  tracker.remove("nv-a");
 });
