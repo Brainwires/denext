@@ -4,8 +4,17 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
-import type { DesktopCapCtx } from "../src/desktop/extension.ts";
+import type {
+  DesktopCapability,
+  DesktopCapCtx,
+  DesktopPermissions,
+} from "../src/desktop/extension.ts";
 import { DesktopCapError } from "../src/desktop/extension.ts";
+import {
+  DESKTOP_CAPABILITIES,
+  type DesktopOs,
+  desktopPermissionFlags,
+} from "../src/build/desktop-capabilities.ts";
 import { deviceCapability } from "../src/desktop/caps/device.ts";
 import { fsCapability } from "../src/desktop/caps/fs.ts";
 import { sqliteCapability } from "../src/desktop/caps/sqlite.ts";
@@ -811,4 +820,100 @@ Deno.test("resolver: a bad extension path fails fast", async () => {
     Error,
     "cannot load extension",
   );
+});
+
+// --- catalog ⇄ runtime permission drift --------------------------------------
+
+// The `denext desktop add` catalog (src/build/desktop-capabilities.ts) declares the per-OS
+// `--allow-*` the package scripts bake in; the runtime caps declare the SAME permissions per
+// method (which `doctor` reports). These two must not drift: if a cap's runtime factory starts
+// spawning a program its catalog entry doesn't list (or vice-versa), the packaged binary would
+// either refuse the call at run time or over-grant. This test builds each runtime cap for each OS
+// and asserts the union of its method permissions equals what `desktopPermissionFlags` derives.
+
+/** Caps with no runtime cap (WebView-backed on Deno Desktop) — nothing to compare against. */
+const WEBVIEW_ONLY = new Set(["clipboard", "context-menu", "notifications"]);
+
+/** A dummy DesktopAppDirs — only the permission DECLARATIONS matter here, no I/O runs. */
+const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
+
+/** Build each catalog cap's runtime twin for `os` (injected no-op backends; nothing spawns). */
+const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
+  device: () => deviceCapability,
+  fs: () => {
+    const all = DESKTOP_CAPABILITIES.fs.all!;
+    return fsCapability({ dirs: DRIFT_DIRS, read: new Set(all.read), write: new Set(all.write) });
+  },
+  sqlite: () => sqliteCapability(DRIFT_DIRS.data),
+  shell: (os) =>
+    shellCapability({
+      dirs: DRIFT_DIRS,
+      config: { openExternal: ["https:"], openPath: true, reveal: true, trash: true },
+      os,
+      spawn: () => Promise.resolve(),
+    }),
+  "keep-awake": (os) => keepAwakeCapability({ os }),
+  "secure-store": (os) =>
+    secureStoreCapability({
+      service: "svc",
+      os,
+      run: () => Promise.resolve({ code: 0, stdout: "" }),
+    }),
+  dialogs: (os) =>
+    dialogsCapability({
+      picked: new PickedPaths(),
+      os,
+      run: () => Promise.resolve({ code: 0, stdout: "" }),
+    }),
+};
+
+/**
+ * Format the union of `perms` to `--allow-*` flags exactly as `desktopPermissionFlags` does, but
+ * excluding `net`: the only net the runtime declares is `fs.download`'s unscoped `net: ["*"]`, and
+ * the catalog deliberately omits it (network hosts are the loopback baseline plus the documented
+ * per-host `downloadToFile` grant, never `*` baked into the binary). So `net` is out of scope for
+ * this drift check; every other kind must match.
+ */
+function driftFlags(perms: (DesktopPermissions | undefined)[]): string[] {
+  const KINDS = ["read", "write", "env", "sys", "run", "ffi"] as const;
+  const union = new Map<string, Set<string>>();
+  for (const p of perms) {
+    for (const kind of KINDS) {
+      for (const v of p?.[kind] ?? []) {
+        const set = union.get(kind) ?? new Set<string>();
+        set.add(v);
+        union.set(kind, set);
+      }
+    }
+  }
+  return KINDS.filter((k) => union.has(k)).map((kind) => {
+    const values = [...union.get(kind)!].sort();
+    return values.includes("*") ? `--allow-${kind}` : `--allow-${kind}=${values.join(",")}`;
+  });
+}
+
+Deno.test("catalog per-OS permissions == the runtime caps' declared method permissions", () => {
+  const oses: DesktopOs[] = ["darwin", "windows", "linux"];
+  for (const name of Object.keys(DESKTOP_CAPABILITIES)) {
+    if (WEBVIEW_ONLY.has(name)) continue;
+    const make = DRIFT_FACTORIES[name];
+    assert(
+      make,
+      `catalog cap "${name}" has no runtime factory in the drift test — add it to DRIFT_FACTORIES ` +
+        `(or to WEBVIEW_ONLY if it has no runtime cap).`,
+    );
+    for (const os of oses) {
+      const cap = make(os);
+      const actual = driftFlags(Object.values(cap.methods).map((m) => m.permissions)).sort();
+      const expected = desktopPermissionFlags([name], os)
+        .filter((f) => !f.startsWith("--allow-net"))
+        .sort();
+      assertEquals(
+        actual,
+        expected,
+        `${name} on ${os}: runtime method permissions and the desktop-capabilities catalog have ` +
+          `drifted — reconcile src/desktop/caps/${name}.ts with src/build/desktop-capabilities.ts.`,
+      );
+    }
+  }
 });

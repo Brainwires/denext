@@ -89,14 +89,17 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
     value: true,
     api: ["secureStore"],
     os: {
-      darwin: { ffi: ["/System/Library/Frameworks/Security.framework/Security"] },
-      windows: { ffi: ["advapi32.dll"] },
-      linux: { ffi: ["libsecret-1.so.0"] },
+      // The runtime drives the OS credential CLIs (argv, no shell), not raw FFI. Windows has no
+      // backend yet — the runtime fails closed (never a plaintext fallback), so it adds nothing.
+      darwin: { run: ["security"] },
+      linux: { run: ["secret-tool"] },
     },
     trust: "full",
-    notes: "OS keychain (Keychain / Credential Manager / libsecret) over FFI",
+    notes:
+      "OS keychain via CLI (Keychain `security` / libsecret `secret-tool`; not yet on Windows)",
     manual: [
       "secure-store: Linux users need libsecret and a running Secret Service (GNOME Keyring, KWallet); without one the runtime refuses rather than writing a plain file.",
+      "secure-store: Windows is not yet supported — the runtime fails closed (a real error, never a plaintext fallback), so the packaged app grants nothing for it.",
     ],
   },
   fs: {
@@ -147,8 +150,10 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
     api: ["pickDocument", "saveFile", "pickFolder"],
     all: { read: ["*"], write: ["*"] },
     os: {
+      // Native panels are driven as subprocesses (osascript / PowerShell / zenity|kdialog), not
+      // FFI — the same argv-only pattern the other caps use.
       darwin: { run: ["osascript"] },
-      windows: { ffi: ["comdlg32.dll", "shell32.dll", "ole32.dll"] },
+      windows: { run: ["powershell.exe"] },
       linux: { run: ["zenity", "kdialog"] },
     },
     trust: "broad",
@@ -239,6 +244,89 @@ export function desktopPermissionFlags(names: readonly string[], os: DesktopOs):
     const values = [...union.get(kind)!].sort();
     return values.includes("*") ? `--allow-${kind}` : `--allow-${kind}=${values.join(",")}`;
   });
+}
+
+/**
+ * The permissions every packaged desktop binary needs regardless of capabilities, and which the
+ * per-capability flags widen rather than replace:
+ * - `--allow-net=127.0.0.1,localhost`: `runDesktop` binds loopback and any `spa.proxy` targets a
+ *   loopback backend, so the distributed binary can't reach the wider network.
+ * - `--allow-read` (broad): serve the embedded `out/` AND the per-user OS app-support directory —
+ *   a path only known on the end-user's machine, so it can't be baked; the runtime's fs/sqlite
+ *   caps confine what the page can actually reach.
+ * - `--allow-env` (broad): `PORT` plus the app's own environment.
+ *
+ * This mirrors the flags a migrated SPA's `deno task desktop` already bakes (see `src/build/migrate.ts`).
+ */
+export const DESKTOP_BASELINE_FLAGS: readonly string[] = [
+  "--allow-net=127.0.0.1,localhost",
+  "--allow-read",
+  "--allow-env",
+];
+
+/** The capability keys enabled in a `desktop.capabilities` object (truthy; `extensions` is a
+ * module list, not a capability, and a `false` value disables one). */
+function enabledCapabilityKeys(capabilities: unknown): string[] {
+  if (typeof capabilities !== "object" || capabilities === null) return [];
+  return Object.entries(capabilities as Record<string, unknown>)
+    .filter(([key, value]) => key !== "extensions" && value !== false && value != null)
+    .map(([key]) => key);
+}
+
+/**
+ * The full `--allow-*` flag list to bake into the `deno desktop` binary for `os`, given a
+ * project's `desktop.capabilities` — the least-privilege replacement for `-A` in the package
+ * scripts. It is {@linkcode DESKTOP_BASELINE_FLAGS} plus, from the enabled capabilities:
+ * - `run` / `ffi` / `sys` — kept exactly (the real least-privilege wins: only the programs,
+ *   libraries and system APIs the enabled capabilities use);
+ * - `read` / `env` — dropped (already broad in the baseline);
+ * - `net` — dropped (the baseline's loopback stands; `downloadToFile`'s per-host access is a
+ *   documented manual grant, never `*` baked into the binary);
+ * - `write` — collapsed to a single broad `--allow-write` when any capability needs it (the
+ *   target is a per-user or user-picked path that can't be baked; the runtime cap layer confines it).
+ *
+ * User `extensions` declare their own method permissions in code the catalog can't see; add their
+ * `--allow-*` by hand.
+ *
+ * @param capabilities The project's `desktop.capabilities` (or `undefined` — baseline only).
+ * @param os The target OS.
+ * @returns The flags, e.g. `["--allow-net=127.0.0.1,localhost", "--allow-read", "--allow-env",
+ * "--allow-write", "--allow-run=caffeinate,open"]`.
+ */
+export function desktopBuildFlags(capabilities: unknown, os: DesktopOs): string[] {
+  const capFlags = desktopPermissionFlags(enabledCapabilityKeys(capabilities), os);
+  const kindOf = (flag: string) => flag.split("=", 1)[0];
+  const bakeable = capFlags.filter((f) =>
+    kindOf(f) === "--allow-sys" || kindOf(f) === "--allow-run" || kindOf(f) === "--allow-ffi"
+  );
+  const needsWrite = capFlags.some((f) => kindOf(f) === "--allow-write");
+  return [...DESKTOP_BASELINE_FLAGS, ...(needsWrite ? ["--allow-write"] : []), ...bakeable];
+}
+
+/**
+ * The `deno desktop` `--allow-*` flags for a scaffolded packaging script: read the project's
+ * `denext.config.ts` (next to `entryUrl` — a packaging script lives in `scripts/`, so the config
+ * is `../denext.config.ts`) and derive the least-privilege flags for `os` via {@linkcode
+ * desktopBuildFlags}. A project without a config (or one that exports none) gets the baseline. The
+ * config is imported dynamically at run time from a caller-supplied URL, so it is never part of
+ * this module's own dependency graph (nor a build-time import of user code).
+ *
+ * @param entryUrl The packaging script's `import.meta.url`.
+ * @param os The target OS.
+ * @returns The `--allow-*` flags, ready to splice into the `deno desktop` argv.
+ */
+export async function desktopPackageFlags(entryUrl: string, os: DesktopOs): Promise<string[]> {
+  let capabilities: unknown;
+  try {
+    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
+    const config = (mod as { default?: unknown }).default as
+      | { desktop?: { capabilities?: unknown } }
+      | undefined;
+    capabilities = config?.desktop?.capabilities;
+  } catch {
+    // no denext.config.ts (or it exports no config) → baseline only
+  }
+  return desktopBuildFlags(capabilities, os);
 }
 
 /**

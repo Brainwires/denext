@@ -1171,6 +1171,7 @@
     "subscribeBoundaries:function"
   ],
   "denext/desktop": [
+    "DESKTOP_BASELINE_FLAGS:variable",
     "DESKTOP_DEV_LAN_ENV:variable",
     "DESKTOP_DEV_URL_ENV:variable",
     "DesktopCapCtx:interface",
@@ -1178,6 +1179,7 @@
     "DesktopCapability:interface",
     "DesktopCapabilityMethod:interface",
     "DesktopDevProxyDecision:typeAlias",
+    "DesktopOs:typeAlias",
     "DesktopPermissions:interface",
     "DesktopProxyFn:typeAlias",
     "ProxyModule:typeAlias",
@@ -1186,7 +1188,9 @@
     "RunDesktopOptions:interface",
     "createDesktopHandler:function",
     "defineDesktopExtension:function",
+    "desktopBuildFlags:function",
     "desktopDevProxyDecision:function",
+    "desktopPackageFlags:function",
     "injectDesktopGlobal:function",
     "isDenoCliExecPath:function",
     "resolveDesktopCapabilities:function",

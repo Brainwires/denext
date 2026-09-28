@@ -26,7 +26,7 @@
  */
 
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
-import { type DesktopCapability, DesktopCapError } from "../extension.ts";
+import { type DesktopCapability, DesktopCapError, type DesktopPermissions } from "../extension.ts";
 
 /** The running OS spelling the command builder branches on. */
 type Os = "darwin" | "windows" | "linux";
@@ -160,7 +160,12 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
   const service = deps.service;
 
   // One permission descriptor + one Windows-refuse-and-read-key preamble, shared by all methods.
-  const permissions = os === "darwin" ? { run: ["security"] } : { run: ["secret-tool"] };
+  // Windows has no backend (fails closed, spawns nothing) so it declares NO `--allow-run`.
+  const permissions: DesktopPermissions = os === "darwin"
+    ? { run: ["security"] }
+    : os === "linux"
+    ? { run: ["secret-tool"] }
+    : {};
   const keyArg = (args: unknown): string => {
     refuseWindows(os);
     return str((args as { key?: unknown })?.key, "key");

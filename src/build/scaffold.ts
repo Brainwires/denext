@@ -729,6 +729,8 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * Developer ID Application certificate, storing notarytool credentials, Gatekeeper).
  */
 
+import { desktopPackageFlags } from "denext/desktop";
+
 const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
   x86_64: "x86_64-apple-darwin",
@@ -793,7 +795,13 @@ async function appName(): Promise<string> {
  * ad-hoc; the caller re-signs with the real identity afterwards. */
 async function buildApp(out: string, target?: string): Promise<void> {
   await Deno.remove(out, { recursive: true }).catch(() => {});
-  const cmd = ["deno", "desktop", "-A", "--include", "out"];
+  const cmd = [
+    "deno",
+    "desktop",
+    ...await desktopPackageFlags(import.meta.url, "darwin"),
+    "--include",
+    "out",
+  ];
   if (target) cmd.push("--target", target);
   cmd.push("--output", out, "desktop.ts");
   await run(cmd);
@@ -1091,6 +1099,8 @@ const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * that is a deploy-environment dependency, not baked into the bundle. Outputs into ./dist/.
  */
 
+import { desktopPackageFlags } from "denext/desktop";
+
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-unknown-linux-gnu",
   arm64: "aarch64-unknown-linux-gnu",
@@ -1161,7 +1171,7 @@ async function buildBundle(
   const cmd = [
     "deno",
     "desktop",
-    "-A",
+    ...await desktopPackageFlags(import.meta.url, "linux"),
     "--include",
     "out",
     "--target",
@@ -1292,6 +1302,8 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * baked into the bundle. Outputs into ./dist/.
  */
 
+import { desktopPackageFlags } from "denext/desktop";
+
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-pc-windows-msvc",
   arm64: "aarch64-pc-windows-msvc",
@@ -1373,7 +1385,7 @@ async function buildBundle(
   const cmd = [
     "deno",
     "desktop",
-    "-A",
+    ...await desktopPackageFlags(import.meta.url, "windows"),
     "--include",
     "out",
     "--target",

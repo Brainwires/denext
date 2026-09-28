@@ -38,6 +38,15 @@ export {
   type ResolveDesktopOptions,
 } from "../desktop/caps/mod.ts";
 
+// The least-privilege packaging flags the scaffolded package scripts bake into `deno desktop`
+// (in place of `-A`), derived from the project's `desktop.capabilities`.
+export {
+  DESKTOP_BASELINE_FLAGS,
+  desktopBuildFlags,
+  type DesktopOs,
+  desktopPackageFlags,
+} from "./desktop-capabilities.ts";
+
 type ProxyModule = typeof import("./dev-proxy.ts");
 
 /** The token-gated loopback OAuth endpoint the desktop client half POSTs to. */

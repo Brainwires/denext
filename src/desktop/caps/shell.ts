@@ -49,6 +49,9 @@ export interface ShellCapabilityDeps {
   readonly dirs: DesktopAppDirs;
   /** The resolved allowlist. */
   readonly config: ShellCapabilityConfig;
+  /** The OS (defaults to the running one) — fixes which program each method spawns, so the method
+   * `permissions` (`--allow-run`) it declares are exactly the binaries it can launch on that OS. */
+  readonly os?: Os;
   /** The per-launch picked-path set, for a `{ handle }` from a native dialog. */
   readonly picked?: PickedPaths;
   /** The spawner (defaults to a real {@link Deno.Command}); tests inject a fake. */
@@ -140,13 +143,20 @@ function requireEnabled(enabled: boolean, name: string): void {
  */
 export function shellCapability(deps: ShellCapabilityDeps): DesktopCapability {
   const spawn = deps.spawn ?? defaultSpawn;
+  const os = deps.os ?? (Deno.build.os as Os);
   const roots = [deps.dirs.data, deps.dirs.cache, deps.dirs.documents];
+
+  // The exact program each method spawns on this OS, so its `permissions` name only that binary.
+  // `--allow-run` is full trust over the named program, so keeping the list tight matters.
+  const openerBin = browserLaunchArgs(os, "")[0]; // openExternal (open / rundll32.exe / xdg-open)
+  const openBin = shellPathCommand(os, "open", "/")[0];
+  const revealBin = shellPathCommand(os, "reveal", "/")[0];
+  const trashBin = shellPathCommand(os, "trash", "/")[0];
 
   const openPathLike = async (
     action: "open" | "reveal" | "trash",
     enabled: boolean,
     args: unknown,
-    os: Os,
   ) => {
     requireEnabled(
       enabled,
@@ -172,8 +182,8 @@ export function shellCapability(deps: ShellCapabilityDeps): DesktopCapability {
     name: "shell",
     methods: {
       openExternal: {
-        permissions: { run: ["open", "xdg-open", "rundll32.exe"] },
-        handler: async (args, ctx) => {
+        permissions: { run: [openerBin] },
+        handler: async (args) => {
           const url = (args as { url?: unknown })?.url;
           if (typeof url !== "string") {
             throw new DesktopCapError("validation", "url must be a string");
@@ -189,19 +199,22 @@ export function shellCapability(deps: ShellCapabilityDeps): DesktopCapability {
               status: 403,
             });
           }
-          const [cmd, cmdArgs] = browserLaunchArgs(ctx.os, url);
+          const [cmd, cmdArgs] = browserLaunchArgs(os, url);
           await spawn(cmd, cmdArgs);
           return { ok: true };
         },
       },
       openPath: {
-        handler: (args, ctx) => openPathLike("open", deps.config.openPath, args, ctx.os),
+        permissions: { run: [openBin] },
+        handler: (args) => openPathLike("open", deps.config.openPath, args),
       },
       reveal: {
-        handler: (args, ctx) => openPathLike("reveal", deps.config.reveal, args, ctx.os),
+        permissions: { run: [revealBin] },
+        handler: (args) => openPathLike("reveal", deps.config.reveal, args),
       },
       trash: {
-        handler: (args, ctx) => openPathLike("trash", deps.config.trash, args, ctx.os),
+        permissions: { run: [trashBin] },
+        handler: (args) => openPathLike("trash", deps.config.trash, args),
       },
     },
   };

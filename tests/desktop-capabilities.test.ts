@@ -6,7 +6,10 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { join } from "@std/path";
 import {
   addDesktopCapabilities,
+  DESKTOP_BASELINE_FLAGS,
   DESKTOP_CAPABILITIES,
+  desktopBuildFlags,
+  desktopPackageFlags,
   desktopPermissionFlags,
   formatDesktopAddReport,
   formatDesktopCapabilityTable,
@@ -139,5 +142,97 @@ Deno.test("docs: the desktop page lists every capability `denext desktop add` kn
   );
   for (const name of Object.keys(DESKTOP_CAPABILITIES)) {
     assertStringIncludes(page, `<code>${name}</code>`, `docs/desktop is missing ${name}`);
+  }
+});
+
+Deno.test("desktopBuildFlags: no capabilities → only the loopback + read + env baseline (never -A)", () => {
+  for (const caps of [undefined, {}, { extensions: ["./ext.ts"] }]) {
+    const flags = desktopBuildFlags(caps, "darwin");
+    assertEquals(flags, [...DESKTOP_BASELINE_FLAGS]);
+    assert(!flags.includes("-A") && !flags.includes("--allow-all"));
+  }
+});
+
+Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay the baseline", () => {
+  // Scoped caps add only their exact run + sys; no write, no per-token read/write leaks.
+  assertEquals(desktopBuildFlags({ secureStore: true, device: true }, "darwin"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-sys=osRelease",
+    "--allow-run=security",
+  ]);
+  // secure-store is unsupported on Windows → it bakes nothing there (baseline only).
+  assertEquals(desktopBuildFlags({ secureStore: true }, "windows"), [...DESKTOP_BASELINE_FLAGS]);
+  // keep-awake's Windows backend is FFI, not a program.
+  assertEquals(desktopBuildFlags({ keepAwake: true }, "windows"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-ffi=kernel32.dll",
+  ]);
+});
+
+Deno.test("desktopBuildFlags: a capability that writes collapses to one broad --allow-write", () => {
+  // fs/sqlite/dialogs write to per-user (or picked) paths that can't be baked, so packaging grants
+  // a broad --allow-write once; the runtime cap layer confines it. No `--allow-write=$APPDATA` leaks.
+  const flags = desktopBuildFlags(
+    { fs: { read: ["$APPDATA"], write: ["$APPDATA"] }, sqlite: true },
+    "linux",
+  );
+  assert(flags.includes("--allow-write"), flags.join(" "));
+  assert(!flags.some((f) => f.startsWith("--allow-write=")), flags.join(" "));
+  // read is covered by the broad baseline, so no capability-scoped --allow-read is added.
+  assertEquals(flags.filter((f) => f.startsWith("--allow-read")), ["--allow-read"]);
+});
+
+Deno.test("desktopBuildFlags: the full capability set on Windows, least-privilege", () => {
+  const caps = {
+    device: true,
+    fs: true,
+    sqlite: true,
+    shell: true,
+    keepAwake: true,
+    secureStore: true,
+    dialogs: true,
+    clipboard: true, // WebView-backed: contributes no flags
+    contextMenu: true, // WebView-backed
+    notifications: true, // WebView-backed
+  };
+  assertEquals(desktopBuildFlags(caps, "windows"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-write",
+    "--allow-sys=osRelease",
+    "--allow-run=explorer.exe,powershell.exe,rundll32.exe",
+    "--allow-ffi=kernel32.dll",
+  ]);
+});
+
+Deno.test("desktopBuildFlags: a `false` value disables a capability", () => {
+  assertEquals(desktopBuildFlags({ device: false, keepAwake: true }, "darwin"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-run=caffeinate",
+  ]);
+});
+
+Deno.test("desktopPackageFlags: reads denext.config.ts next to the script (missing → baseline)", async () => {
+  // No config next to the script → baseline only (the examples/native case).
+  const bare = await Deno.makeTempDir({ prefix: "denext-pkgflags-bare-" });
+  // A config with capabilities → baseline + their least-privilege flags.
+  const withCfg = await Deno.makeTempDir({ prefix: "denext-pkgflags-cfg-" });
+  try {
+    await Deno.mkdir(join(bare, "scripts"));
+    await Deno.mkdir(join(withCfg, "scripts"));
+    await Deno.writeTextFile(
+      join(withCfg, "denext.config.ts"),
+      "export default { desktop: { capabilities: { device: true, shell: true } } };\n",
+    );
+    assertEquals(
+      await desktopPackageFlags(`file://${join(bare, "scripts", "package-macos.ts")}`, "darwin"),
+      [...DESKTOP_BASELINE_FLAGS],
+    );
+    assertEquals(
+      await desktopPackageFlags(`file://${join(withCfg, "scripts", "package-macos.ts")}`, "darwin"),
+      [...DESKTOP_BASELINE_FLAGS, "--allow-sys=osRelease", "--allow-run=open,osascript"],
+    );
+  } finally {
+    await Deno.remove(bare, { recursive: true });
+    await Deno.remove(withCfg, { recursive: true });
   }
 });

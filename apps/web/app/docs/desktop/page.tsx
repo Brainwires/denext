@@ -130,7 +130,8 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
         <code>--allow-net=127.0.0.1,localhost</code> a migrated SPA bakes into its{" "}
         <code>deno task desktop</code>{" "}
         already grants, because the window talks only to the local dev server. (The scaffolded
-        packaging scripts still build with <code>-A</code>; see{" "}
+        packaging scripts derive the app's <code>--allow-*</code> from its enabled capabilities; see
+        {" "}
         <a href="#desktop-capabilities">Native capabilities</a>.)
       </Callout>
       <Callout kind="note">
@@ -493,15 +494,21 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         <code>unavailable</code>, and the function keeps its web path) and the source the package
         scripts will derive the app's <code>--allow-*</code> flags from.
       </p>
-      <Callout kind="warn">
+      <Callout kind="note">
         <strong>The desktop runtime lands in 2.11.</strong> The page side described here (the{" "}
         <code>denext/mobile</code> desktop branches, <code>denext desktop add</code> and{" "}
-        <code>denext/desktop/client</code>) has shipped and is tested against a fake of the bridge.
-        The runtime that answers it is still being built. Until it ships, a real window answers{" "}
-        <code>unavailable</code>{" "}
-        and every function keeps its web path, so browser storage is still wiped on every relaunch,
-        and the scaffolded packaging scripts build with <code>-A</code>{" "}
-        instead of the permissions in the table below.
+        <code>denext/desktop/client</code>) and the runtime that answers it — the gated bridge, the
+        built-in capabilities, and the config→capabilities resolver — are implemented and land
+        together in 2.11. A real window serves each enabled capability (falling back to the web path
+        only for one you have not enabled, and for the WebView-backed rows below), so app data
+        survives relaunch. The scaffolded packaging scripts derive the app's <code>--allow-*</code>
+        {" "}
+        from its enabled capabilities (the table below) in place of <code>-A</code>: a loopback{" "}
+        <code>--allow-net</code>, broad <code>--allow-read</code> / <code>--allow-env</code>{" "}
+        for the app's own bundle and support directory, and only the <code>--allow-run</code> /{" "}
+        <code>--allow-ffi</code> / <code>--allow-sys</code> (plus a broad <code>--allow-write</code>
+        {" "}
+        when a capability writes) that the enabled capabilities actually need.
       </Callout>
       <table class="table">
         <thead>

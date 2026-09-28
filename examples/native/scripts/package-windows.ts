@@ -27,6 +27,8 @@
  * baked into the bundle. Outputs into ./dist/.
  */
 
+import { desktopPackageFlags } from "denext/desktop";
+
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-pc-windows-msvc",
   arm64: "aarch64-pc-windows-msvc",
@@ -108,7 +110,7 @@ async function buildBundle(
   const cmd = [
     "deno",
     "desktop",
-    "-A",
+    ...await desktopPackageFlags(import.meta.url, "windows"),
     "--include",
     "out",
     "--target",
