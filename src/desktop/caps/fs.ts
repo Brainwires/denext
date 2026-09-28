@@ -25,13 +25,18 @@
 
 import { dirname, join } from "@std/path";
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
-import type { FileDirectory, FileEntry } from "../../mobile/filesystem.ts";
+import type { FileEntry } from "../../mobile/filesystem.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import { confineRelative } from "../path-scope.ts";
+import type { PickedPaths } from "../picked-paths.ts";
 
-/** The config path token each {@link FileDirectory} resolves to (for the read/write scope check). */
-const DIRECTORY_TOKEN: Readonly<Record<FileDirectory, string>> = {
+/** An app-directory name (the string forms of a `FileDirectory`; kept local so this cap doesn't
+ * couple to the page-side `FileDirectory` union, which also carries the `{ picked }` variant). */
+type AppDirName = "data" | "cache" | "documents";
+
+/** The config path token each {@link AppDirName} resolves to (for the read/write scope check). */
+const DIRECTORY_TOKEN: Readonly<Record<AppDirName, string>> = {
   data: "$APPDATA",
   cache: "$CACHE",
   documents: "$DOCUMENTS",
@@ -45,6 +50,14 @@ export interface FsCapabilityConfig {
   readonly read: ReadonlySet<string>;
   /** The path tokens the page may WRITE to (also gates delete and download). */
   readonly write: ReadonlySet<string>;
+  /** The per-launch picked-path set, for a `directory: { picked: handle }` from a native dialog. */
+  readonly picked?: PickedPaths;
+}
+
+/** A `directory` arg that names a picked handle (`{ picked: "<handle>" }`) instead of a token. */
+function pickedHandle(directory: unknown): string | undefined {
+  const p = (directory as { picked?: unknown } | null | undefined)?.picked;
+  return typeof p === "string" ? p : undefined;
 }
 
 /** A validation error (a bad `directory`, absolute path, or malformed arg). */
@@ -76,6 +89,26 @@ function scopedPath(base: string, path: unknown): Promise<string> {
     throw badInput("path must be a non-empty string");
   }
   return confineRelative(base, path);
+}
+
+/**
+ * Resolve `(directory, path)` to a confined `{ target, root }` for the given access — a
+ * {@link FileDirectory} token (scope-checked) or a `{ picked: handle }` directory (resolved through
+ * the picked-path set). `root` is the directory to ensure before a write.
+ */
+async function resolveTarget(
+  cfg: FsCapabilityConfig,
+  directory: unknown,
+  path: unknown,
+  write: boolean,
+): Promise<{ target: string; root: string }> {
+  const handle = pickedHandle(directory);
+  if (handle !== undefined) {
+    if (!cfg.picked) throw badInput("picked directories are not available");
+    return cfg.picked.resolve(handle, typeof path === "string" ? path : "", write);
+  }
+  const base = baseFor(cfg, directory, write);
+  return { target: await scopedPath(base, path), root: base };
 }
 
 /** `mkdir -p path`, treating an existing directory as success (used for the base and write parents). */
@@ -120,9 +153,8 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         permissions: { read: [...cfg.read] },
         handler: async (args) => {
           const a = (args ?? {}) as { path?: unknown; directory?: unknown; encoding?: unknown };
-          const base = baseFor(cfg, a.directory, false);
           const encoding = encodingOf(a.encoding);
-          const target = await scopedPath(base, a.path);
+          const { target } = await resolveTarget(cfg, a.directory, a.path, false);
           if (encoding === "utf8") return await Deno.readTextFile(target);
           return bytesToBase64(await Deno.readFile(target));
         },
@@ -137,11 +169,10 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
             encoding?: unknown;
             recursive?: unknown;
           };
-          const base = baseFor(cfg, a.directory, true);
           const encoding = encodingOf(a.encoding);
           if (typeof a.data !== "string") throw badInput("data must be a string");
-          await mkdirp(base);
-          const target = await scopedPath(base, a.path);
+          const { target, root } = await resolveTarget(cfg, a.directory, a.path, true);
+          await mkdirp(root);
           if (a.recursive === true) await mkdirp(dirname(target));
           if (encoding === "utf8") await Deno.writeTextFile(target, a.data);
           else await Deno.writeFile(target, base64ToBytes(a.data));
@@ -152,8 +183,7 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         permissions: { write: [...cfg.write] },
         handler: async (args) => {
           const a = (args ?? {}) as { path?: unknown; directory?: unknown };
-          const base = baseFor(cfg, a.directory, true);
-          const target = await scopedPath(base, a.path);
+          const { target } = await resolveTarget(cfg, a.directory, a.path, true);
           await Deno.remove(target).catch((err) => {
             if (!(err instanceof Deno.errors.NotFound)) throw err;
           });
@@ -164,8 +194,7 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         permissions: { read: [...cfg.read] },
         handler: async (args) => {
           const a = (args ?? {}) as { path?: unknown; directory?: unknown };
-          const base = baseFor(cfg, a.directory, false);
-          const target = await scopedPath(base, a.path);
+          const { target } = await resolveTarget(cfg, a.directory, a.path, false);
           const entries: FileEntry[] = [];
           try {
             for await (const e of Deno.readDir(target)) {
@@ -185,9 +214,8 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         handler: async (args, ctx) => {
           const a = (args ?? {}) as { url?: unknown; path?: unknown; directory?: unknown };
           if (typeof a.url !== "string") throw badInput("url must be a string");
-          const base = baseFor(cfg, a.directory, true);
-          await mkdirp(base);
-          const target = await scopedPath(base, a.path);
+          const { target, root } = await resolveTarget(cfg, a.directory, a.path, true);
+          await mkdirp(root);
           const res = await fetch(a.url, { signal: ctx.signal });
           if (!res.ok) {
             throw new DesktopCapError(

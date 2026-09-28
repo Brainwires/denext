@@ -28,6 +28,7 @@ import { sqliteCapability } from "./sqlite.ts";
 import { shellCapability, type ShellCapabilityConfig } from "./shell.ts";
 import { keepAwakeCapability } from "./keep-awake.ts";
 import { secureStoreCapability } from "./secure-store.ts";
+import { PickedPaths } from "../picked-paths.ts";
 
 /** The app-support subdirectory name when the config gives no identifier (matches the updater). */
 const DEFAULT_APP_ID = "denext-desktop";
@@ -132,14 +133,19 @@ export async function resolveDesktopCapabilities(
 
   if (!caps) return { capabilities, appSupportDir: dirs.data };
 
+  // One per-launch picked-path set, shared by dialogs (adds picks) and fs/shell (consult handles).
+  const picked = new PickedPaths();
+
   if (caps.echo === true) capabilities.push(echoCapability);
   if (caps.device) capabilities.push(deviceCapability);
   if (caps.fs) {
     const { read, write } = fsTokens(caps.fs);
-    capabilities.push(fsCapability({ dirs, read, write }));
+    capabilities.push(fsCapability({ dirs, read, write, picked }));
   }
   if (caps.sqlite) capabilities.push(sqliteCapability(dirs.data));
-  if (caps.shell) capabilities.push(shellCapability({ dirs, config: resolveShell(caps.shell) }));
+  if (caps.shell) {
+    capabilities.push(shellCapability({ dirs, config: resolveShell(caps.shell), picked }));
+  }
   if (caps.keepAwake) capabilities.push(keepAwakeCapability());
   if (caps.secureStore) capabilities.push(secureStoreCapability({ service: appId }));
 

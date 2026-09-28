@@ -23,6 +23,7 @@ import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import { browserLaunchArgs } from "../auth-session-runtime.ts";
 import { confineWithinRoots } from "../path-scope.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
+import type { PickedPaths } from "../picked-paths.ts";
 
 /** The OS spelling the command builders branch on. */
 type Os = "darwin" | "windows" | "linux";
@@ -48,6 +49,8 @@ export interface ShellCapabilityDeps {
   readonly dirs: DesktopAppDirs;
   /** The resolved allowlist. */
   readonly config: ShellCapabilityConfig;
+  /** The per-launch picked-path set, for a `{ handle }` from a native dialog. */
+  readonly picked?: PickedPaths;
   /** The spawner (defaults to a real {@link Deno.Command}); tests inject a fake. */
   readonly spawn?: ShellSpawn;
 }
@@ -149,9 +152,17 @@ export function shellCapability(deps: ShellCapabilityDeps): DesktopCapability {
       enabled,
       action === "open" ? "openPath" : action === "reveal" ? "reveal" : "trash",
     );
-    const path = (args as { path?: unknown })?.path;
-    if (typeof path !== "string") throw new DesktopCapError("validation", "path must be a string");
-    const confined = await confineWithinRoots(path, roots);
+    const a = (args ?? {}) as { path?: unknown; handle?: unknown };
+    let confined: string;
+    if (typeof a.handle === "string") {
+      // A user-picked file/folder (a dialog handle): trash writes, open/reveal read.
+      if (!deps.picked) throw new DesktopCapError("validation", "picked handles are not available");
+      confined = (await deps.picked.resolve(a.handle, "", action === "trash")).target;
+    } else if (typeof a.path === "string") {
+      confined = await confineWithinRoots(a.path, roots);
+    } else {
+      throw new DesktopCapError("validation", "a path or handle is required");
+    }
     const [cmd, cmdArgs] = shellPathCommand(os, action, confined);
     await spawn(cmd, cmdArgs);
     return { ok: true };

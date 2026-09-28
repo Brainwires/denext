@@ -16,6 +16,7 @@ import {
   secureStoreCapability,
   secureStoreCommand,
 } from "../src/desktop/caps/secure-store.ts";
+import { PickedPaths } from "../src/desktop/picked-paths.ts";
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import type { DesktopAppDirs } from "../src/desktop/app-dirs.ts";
 
@@ -470,6 +471,165 @@ Deno.test("secureStore SECURITY: Windows fails closed (never a plaintext fallbac
   ) {
     const err = await assertRejects(() => call(cap, m, a), DesktopCapError);
     assertEquals(err.code, "unsupported_platform");
+  }
+});
+
+// --- picked paths (capability handles) --------------------------------------
+
+Deno.test("PickedPaths: a folder handle grants confined recursive access; escapes are refused", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-picked-" });
+  try {
+    await Deno.mkdir(join(root, "src"));
+    await Deno.writeTextFile(join(root, "src", "app.ts"), "x");
+    const picked = new PickedPaths();
+    const h = picked.add(await Deno.realPath(root), "folder");
+    const { target, root: r } = await picked.resolve(h, "src/app.ts", false);
+    assertEquals(target, join(await Deno.realPath(root), "src", "app.ts"));
+    assertEquals(r, await Deno.realPath(root));
+    // A relative "" resolves to the folder itself (for listDir).
+    assertEquals((await picked.resolve(h, "", false)).target, await Deno.realPath(root));
+    // `..` escape and an unknown handle are refused.
+    assertEquals(
+      (await assertRejects(() => picked.resolve(h, "../../etc/passwd", false), DesktopCapError))
+        .code,
+      "forbidden",
+    );
+    assertEquals(
+      (await assertRejects(() => picked.resolve("forged", "x", false), DesktopCapError)).code,
+      "forbidden",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("PickedPaths SECURITY: a symlink out of a picked folder is refused", async () => {
+  if (OS === "windows") return;
+  const root = await Deno.makeTempDir({ prefix: "denext-picked-" });
+  try {
+    const outside = join(root, "outside");
+    await Deno.mkdir(outside);
+    await Deno.writeTextFile(join(outside, "secret"), "s");
+    const folder = join(root, "proj");
+    await Deno.mkdir(folder);
+    await Deno.symlink(outside, join(folder, "escape"));
+    const picked = new PickedPaths();
+    const h = picked.add(await Deno.realPath(folder), "folder");
+    const err = await assertRejects(
+      () => picked.resolve(h, "escape/secret", false),
+      DesktopCapError,
+    );
+    assertEquals(err.code, "forbidden");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("PickedPaths: mode gates write; a file handle rejects a sub-path; the set is capped", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-picked-" });
+  try {
+    const real = await Deno.realPath(dir);
+    const picked = new PickedPaths(2); // small cap for the eviction check
+    const ro = picked.add(join(real, "a.txt"), "read");
+    assertEquals(
+      (await assertRejects(() => picked.resolve(ro, "", true), DesktopCapError)).code,
+      "forbidden",
+    );
+    assertEquals((await picked.resolve(ro, "", false)).target, join(real, "a.txt"));
+    // A file handle rejects a relative sub-path.
+    assertEquals(
+      (await assertRejects(() => picked.resolve(ro, "sub", false), DesktopCapError)).code,
+      "forbidden",
+    );
+    // Adding past the cap (2) evicts the oldest (ro).
+    picked.add(join(real, "b.txt"), "readwrite");
+    picked.add(join(real, "c.txt"), "readwrite");
+    assertEquals(picked.size, 2);
+    assertEquals(
+      (await assertRejects(() => picked.resolve(ro, "", false), DesktopCapError)).code,
+      "forbidden",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("fs: a { picked } directory reads/writes/lists inside a picked folder handle", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-fs-picked-" });
+  try {
+    await Deno.writeTextFile(join(root, "readme.md"), "hi");
+    const picked = new PickedPaths();
+    const fs = fsCapability({
+      dirs: { data: root, cache: root, documents: root },
+      read: new Set(["$APPDATA"]),
+      write: new Set(["$APPDATA"]),
+      picked,
+    });
+    const folder = picked.add(await Deno.realPath(root), "folder");
+    assertEquals(
+      await call(fs, "readFile", {
+        path: "readme.md",
+        directory: { picked: folder },
+        encoding: "utf8",
+      }),
+      "hi",
+    );
+    await call(fs, "writeFile", {
+      path: "note.txt",
+      data: "x",
+      directory: { picked: folder },
+      encoding: "utf8",
+    });
+    const names = (await call(fs, "listDir", { path: "", directory: { picked: folder } }) as Array<
+      { name: string }
+    >)
+      .map((e) => e.name).sort();
+    assertEquals(names, ["note.txt", "readme.md"]);
+    // A read-only file handle refuses a write.
+    const ro = picked.add(join(await Deno.realPath(root), "readme.md"), "read");
+    const err = await assertRejects(
+      () =>
+        call(fs, "writeFile", {
+          path: "",
+          data: "no",
+          directory: { picked: ro },
+          encoding: "utf8",
+        }),
+      DesktopCapError,
+    );
+    assertEquals(err.code, "forbidden");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("shell: openPath/trash accept a picked handle (trash needs a writable mode)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-shell-picked-" });
+  try {
+    await Deno.writeTextFile(join(root, "f.txt"), "x");
+    const picked = new PickedPaths();
+    const spawned: Array<[string, string[]]> = [];
+    const cap = shellCapability({
+      dirs: { data: "/nope", cache: "/nope", documents: "/nope" }, // path (non-handle) can't reach it
+      config: { openExternal: [], openPath: true, reveal: true, trash: true },
+      picked,
+      spawn: (cmd, args) => {
+        spawned.push([cmd, args]);
+        return Promise.resolve();
+      },
+    });
+    const ro = picked.add(join(await Deno.realPath(root), "f.txt"), "read");
+    await call(cap, "openPath", { handle: ro }); // read handle → open OK
+    assertEquals(spawned.length, 1);
+    // trash on a read-only handle is refused (no destructive access).
+    const err = await assertRejects(() => call(cap, "trash", { handle: ro }), DesktopCapError);
+    assertEquals(err.code, "forbidden");
+    // A readwrite handle may be trashed.
+    const rw = picked.add(join(await Deno.realPath(root), "f.txt"), "readwrite");
+    await call(cap, "trash", { handle: rw });
+    assertEquals(spawned.length, 2);
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });
 
