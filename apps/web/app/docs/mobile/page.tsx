@@ -818,14 +818,17 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
       </ul>
       <p>
         For <code>"under"</code> and <code>"over"</code>{" "}
-        the page measures each slot and sends the native side its box, its visible part, whether it
-        is covered and where its overlays are, once per animation frame while the page moves (a
-        scroll, a resize, the keyboard, a CSS transition or animation, a touch drag; for 500 ms
-        after the last one) and every 250 ms while it is still, and only when something changed. The
-        native move lands one frame after the page&apos;s, so a fast fling shows the view trailing
-        its slot by a frame; see{" "}
-        <a href="/docs/limitations">Known limitations</a>. A slot unmounted by a virtualized list
-        destroys its view, and a new one is made when it scrolls back.
+        the page sends each slot&apos;s box in the content coordinates of the container it scrolls
+        with (its nearest scrolling ancestor, or the document), which scrolling does not change. On
+        iOS the plugin finds that container&apos;s native scroll view and follows its offset itself,
+        in the same frame as the scroll, so fling and momentum keep the view on its slot with no
+        message from the page. On Android the WebView&apos;s own scroll is followed the same way,
+        but a scrolling element inside the page has no native scroll view there: the page sends its
+        measurement each frame it scrolls, and the view trails its slot by a frame or two (see{" "}
+        <a href="/docs/limitations">Known limitations</a>). Layout changes (a resize, the keyboard,
+        content inserted above, a CSS transition) are measured each animation frame while they
+        happen and every 250 ms otherwise. A slot unmounted by a virtualized list destroys its view,
+        and a new one is made when it scrolls back.
       </p>
       <p>
         The built-in views. <code>video</code>: props <code>src</code> (an absolute URL),{" "}

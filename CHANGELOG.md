@@ -124,8 +124,10 @@ and this project adheres to
   `denext/mobile` keep a native view on a box in the page: on iOS embedded in the page's own
   layer tree (the native scroll view WebKit backs an `overflow: scroll` element with, as
   `@capacitor/google-maps` does), so the compositor scrolls, clips and transforms it; elsewhere
-  drawn under a transparent WebView or over it and moved to the slot each frame the page moves
-  (scroll, resize, keyboard, CSS transitions and animations, touch drags), clipped to what its
+  drawn under a transparent WebView or over it, following the page's scroll natively in the
+  same frame (iOS observes the WebKit scroll view the slot scrolls with; Android the WebView's
+  own scroll) and re-measured on layout changes (resize, keyboard, CSS transitions and
+  animations), clipped to what its
   scrolling ancestors leave visible, hidden off-screen and while covered (`over`), with touches
   over the visible part routed to the view and those on the slot's DOM `overlay` kept by the
   page. Its children are the web fallback. `denext mobile add native-views` writes the
@@ -724,6 +726,14 @@ and this project adheres to
   is the URL of the one the screen's pixel ratio wants.
 
 ### Changed
+
+- **Desktop packaging is least-privilege.** `scripts/package-*.ts` from `denext create --desktop` /
+  `denext migrate --desktop` derive `--allow-*` from `desktop.capabilities` (`desktopPackageFlags`,
+  `desktopBuildFlags`, `DESKTOP_BASELINE_FLAGS` from `denext/desktop`) instead of `-A`: the baseline
+  is loopback net + read + env; a capability adds exactly the OS programs / FFI it uses (the
+  catalog is pinned to the runtime caps' declared permissions by a drift test). Read stays broad
+  (per-user app-support and the served bundle are only known at run time); the runtime caps
+  confine file access. Existing projects keep their generated scripts until those are replaced.
 
 - **The ISR / PPR page cache is keyed per build.** `denext build` records a `buildId` in
   `.denext/manifest.json` (random, or `DENEXT_BUILD_ID` for separately built replicas sharing

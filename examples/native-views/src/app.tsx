@@ -3,8 +3,16 @@
 // other box. Everything else in a row is plain DOM. Off the shell (a desktop browser) each slot
 // renders its children, the web fallback.
 "use client";
-import { useState, VirtualList } from "denext";
+import { useEffect, useState, VirtualList } from "denext";
 import { nativePlatform, type NativeViewPlacementOption, NativeViewSlot } from "denext/mobile";
+import { probe, startRectProbe } from "./probe.ts";
+
+type Command = (
+  name: string,
+  args?: Record<string, unknown>,
+) => Promise<unknown>;
+/** Each slot's command, by its probe name (the probe build asks each for its native frame). */
+const commands = new Map<string, Command>();
 
 type Row =
   | { kind: "text"; id: number }
@@ -62,6 +70,7 @@ function MapCard({ row }: { row: Extract<Row, { kind: "map" }> }) {
         type="map"
         placement={row.placement}
         class="slot"
+        data-probe={`map${row.id}`}
         props={{
           latitude: row.lat,
           longitude: row.lon,
@@ -73,6 +82,7 @@ function MapCard({ row }: { row: Extract<Row, { kind: "map" }> }) {
           }],
         }}
         onEvent={(name, data) => {
+          probe(`map${row.id}:${name}`, data);
           if (name === "regionChange") {
             const r = data as {
               latitude: number;
@@ -84,7 +94,11 @@ function MapCard({ row }: { row: Extract<Row, { kind: "map" }> }) {
             );
           }
         }}
-        onCommand={(c) => setCommand(() => c)}
+        onCommand={(c) => {
+          setCommand(() => c);
+          if (c) commands.set(`map${row.id}`, c);
+          else commands.delete(`map${row.id}`);
+        }}
         overlay={
           <button
             type="button"
@@ -133,14 +147,27 @@ function VideoCard() {
       <NativeViewSlot
         type="video"
         class="slot video"
-        props={{ src: VIDEO, controls: true, muted: true, loop: true }}
-        onEvent={(name) => setStatus(name)}
+        data-probe="video"
+        // Muted autoplay (allowed without a tap); the system controls pause and resume it.
+        props={{
+          src: VIDEO,
+          controls: true,
+          muted: true,
+          loop: true,
+          autoplay: true,
+        }}
+        onEvent={(name, data) => {
+          probe(`video:${name}`, data);
+          setStatus(name);
+        }}
+        onCommand={(c) => c ? commands.set("video", c) : commands.delete("video")}
       >
         <video
           src={VIDEO}
           controls
           muted
           loop
+          autoPlay
           playsInline
           class="fallback-video"
         />
@@ -168,6 +195,7 @@ function Sheet({ onClose }: { onClose: () => void }) {
 export function App() {
   const [data] = useState(rows);
   const [sheet, setSheet] = useState(false);
+  useEffect(() => startRectProbe(commands), []);
   return (
     <main class="app">
       <header class="bar">

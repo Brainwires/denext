@@ -127,7 +127,11 @@ Deno.test("geometry: occlusion samples the center and inset corners", () => {
 // ---- the tracker -----------------------------------------------------------------
 
 /** A fake environment: a manual frame queue and timers, a clock, listeners, hit testing. */
-function fakeEnv(hit: (x: number, y: number) => unknown = () => null) {
+function fakeEnv(
+  hit: (x: number, y: number) => unknown = () => null,
+  follows = false,
+  styles: Map<unknown, Record<string, string>> = new Map(),
+) {
   const frames: Array<() => void> = [];
   const timers = new Map<number, () => void>();
   const listeners = new Map<string, () => void>();
@@ -141,9 +145,11 @@ function fakeEnv(hit: (x: number, y: number) => unknown = () => null) {
     clearTimeout: (id) => void timers.delete(id),
     viewport: () => ({ x: 0, y: 0, width: 400, height: 800 }),
     visualViewport: () => undefined,
-    styleOf: () => ({}),
+    styleOf: (el) => styles.get(el) ?? {},
     hitTest: (x, y) => hit(x, y),
     dpr: () => 3,
+    pageScroll: () => ({ x: 0, y: 0, width: 400, height: 800 }),
+    nativeFollows: () => follows,
     listen: (target, type, fn) => {
       listeners.set(`${target}:${type}`, fn);
       return () => void listeners.delete(`${target}:${type}`);
@@ -205,8 +211,23 @@ Deno.test("tracker: sends a frame when the slot moves, nothing while it is still
     width: 200,
     height: 120,
     clip: { x: 20, y: 100, width: 200, height: 120 },
+    scroller: {
+      id: 0,
+      kind: "document",
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 800,
+      scrollLeft: 0,
+      scrollTop: 0,
+      scrollWidth: 400,
+      scrollHeight: 800,
+    },
+    content: { x: 20, y: 100, width: 200, height: 120 },
+    localClip: { x: 0, y: 0, width: 200, height: 120 },
     hidden: false,
     active: true,
+    covered: false,
     interactive: true,
     passthrough: [],
   }]);
@@ -227,7 +248,11 @@ Deno.test("tracker: sends a frame when the slot moves, nothing while it is still
   el.rect = { left: 20, top: -500, width: 200, height: 120 };
   fake.idle();
   const off = (plugin.calls.at(-1)![1] as Any).frames[0];
-  assertEquals([off.hidden, off.clip, off.interactive], [true, null, false]);
+  assertEquals(
+    [off.hidden, off.clip],
+    [true, null],
+    "off-screen (the native side does not follow here)",
+  );
   tracker.remove("nv-a");
   assertEquals(fake.listeners.size, 0, "every listener removed with the last slot");
   assertEquals(fake.idle() + fake.frame(), 0);
@@ -255,9 +280,9 @@ Deno.test("tracker: the overlay's children are passthrough regions, clipped to t
   const overlay = { ...box(0, 100, 300, 200, el), children: [button, badge] };
   const frame = measureSlot(fakeEnv(() => el).env, slotOf(el, "under", overlay), []);
   assertEquals(frame.passthrough, [
-    { x: 10, y: 110, width: 80, height: 30 },
-    { x: 250, y: 280, width: 50, height: 20 },
-  ]);
+    { x: 10, y: 10, width: 80, height: 30 },
+    { x: 250, y: 180, width: 50, height: 20 },
+  ], "slot coordinates, clipped to the slot");
 });
 
 // ---- the component ---------------------------------------------------------------
@@ -436,4 +461,50 @@ Deno.test("nativeViewComponent: React Native's host-component shape over a slot"
     views.fire("nativeViewEvent", { id: create.id, name: "select", data: { index: 1 } });
     assertEquals(selected, [{ nativeEvent: { index: 1 } }]);
   });
+});
+
+Deno.test("tracker: a slot in a scrolling element is sent in its content coordinates, once", async () => {
+  const plugin = fakePlugin(["update"]);
+  const list = Object.assign(box(0, 50, 400, 600), {
+    scrollTop: 300,
+    scrollLeft: 0,
+    scrollHeight: 5000,
+    scrollWidth: 400,
+    clientWidth: 400,
+    clientHeight: 600,
+  });
+  const card = Object.assign(box(0, 0, 400, 300, list), { clientWidth: 380, clientHeight: 280 });
+  const el = box(10, 120, 200, 100, card);
+  const styles = new Map<unknown, Record<string, string>>([
+    [list, { overflowY: "auto" }],
+    [card, { overflow: "hidden" }],
+  ]);
+  const fake = fakeEnv(() => el, true, styles);
+  const tracker = new NativeViewTracker(plugin.plugin as Any, fake.env);
+  tracker.add(slotOf(el, "under"));
+  fake.frame();
+  await settle();
+  const frame = (plugin.calls[0][1] as Any).frames[0];
+  assertEquals(frame.scroller.kind, "element");
+  assertEquals(frame.scroller.id, 1);
+  assertEquals(frame.content, { x: 10, y: 370, width: 200, height: 100 }, "120 - 50 + 300");
+  assertEquals(frame.localClip, { x: 0, y: 0, width: 200, height: 100 });
+  // The list scrolls by 40: the content box is the same, so nothing is sent (native follows it).
+  list.scrollTop = 340;
+  el.rect = { left: 10, top: 80, width: 200, height: 100 };
+  fake.listeners.get("document:scroll")!();
+  fake.frame();
+  assertEquals(plugin.calls.length, 1);
+  // Without native following (an Android inner scroller), the scroll is sent.
+  const android = fakeEnv(() => el, false, styles);
+  const other = fakePlugin(["update"]);
+  const t2 = new NativeViewTracker(other.plugin as Any, android.env);
+  t2.add(slotOf(el, "over"));
+  android.frame();
+  el.rect = { left: 10, top: 40, width: 200, height: 100 };
+  android.listeners.get("document:scroll")!();
+  android.frame();
+  assertEquals(other.calls.length, 2);
+  tracker.remove("nv-a");
+  t2.remove("nv-a");
 });

@@ -33,6 +33,10 @@ export interface GeometryElement {
   readonly clientWidth?: number;
   readonly clientHeight?: number;
   contains?(other: unknown): boolean;
+  readonly scrollLeft?: number;
+  readonly scrollTop?: number;
+  readonly scrollWidth?: number;
+  readonly scrollHeight?: number;
 }
 
 /** The computed style properties that make an element clip its descendants. */
@@ -186,4 +190,33 @@ export function isOccluded(
 export function roundBox(b: Box): Box {
   const r = (n: number) => Math.round(n * 100) / 100;
   return { x: r(b.x), y: r(b.y), width: r(b.width), height: r(b.height) };
+}
+
+/** Whether an `overflow*` value lets the element scroll. */
+function scrollsAxis(value: string | undefined): boolean {
+  return value === "auto" || value === "scroll" || value === "overlay";
+}
+
+/** Whether `el` (computed style `s`) is a scroll container with something to scroll. */
+function isScroller(el: GeometryElement, s: ClipStyle): boolean {
+  const y = scrollsAxis(s.overflowY ?? s.overflow) &&
+    (el.scrollHeight ?? 0) > (el.clientHeight ?? 0);
+  const x = scrollsAxis(s.overflowX ?? s.overflow) &&
+    (el.scrollWidth ?? 0) > (el.clientWidth ?? 0);
+  return x || y;
+}
+
+/**
+ * The nearest of `clippers` (the slot's clipping ancestors, nearest first) that scrolls, or null
+ * when the slot scrolls with the document. The native side follows this scroller's offset itself.
+ */
+export function nearestScroller(
+  clippers: readonly GeometryElement[],
+  styleOf: (el: GeometryElement) => ClipStyle | undefined,
+): GeometryElement | null {
+  for (const c of clippers) {
+    const s = styleOf(c);
+    if (s && isScroller(c, s)) return c;
+  }
+  return null;
 }

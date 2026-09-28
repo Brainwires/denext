@@ -7,6 +7,9 @@ import type { DenextConfig } from "denext/server";
 // which capacitor.config.json's `webDir` points at.
 export default {
   mode: "spa",
+  // NV_PROBE=1 deno task export: a device-test build that posts the native views' events and
+  // positions to a LAN collector (src/probe.ts). Off otherwise, and dead-code eliminated.
+  features: { NV_PROBE: Deno.env.get("NV_PROBE") === "1" },
   spa: {
     entry: "./src/main.tsx",
     title: "denext native views",

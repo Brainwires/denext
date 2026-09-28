@@ -12,7 +12,12 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "denext",
-    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ]
   },
   "imports": {
     "denext": "../../mod.ts",
@@ -20,10 +25,19 @@
     "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
     "denext/server": "../../src/server/mod.ts",
     "denext/client": "../../src/client/mod.ts",
-    "denext/mobile": "../../src/mobile/mod.ts"
+    "denext/mobile": "../../src/mobile/mod.ts",
+    "denext/feature": "../../src/feature.ts"
   },
   "lint": {
-    "plugins": ["../../src/lint/denext-plugin.ts"]
+    "plugins": [
+      "../../src/lint/denext-plugin.ts"
+    ]
   },
-  "exclude": ["ios/", "android/", "node_modules/", "out/", ".denext/"]
+  "exclude": [
+    "ios/",
+    "android/",
+    "node_modules/",
+    "out/",
+    ".denext/"
+  ]
 }

@@ -22,12 +22,15 @@ import {
   type GeometryElement,
   intersect,
   isOccluded,
+  nearestScroller,
+  paddingBox,
   roundBox,
   toScreen,
   type ViewportLike,
   visiblePart,
 } from "./native-view-geometry.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
+import { nativePlatform } from "./bridge.ts";
 
 /**
  * Where a native view is drawn relative to the WebView.
@@ -42,22 +45,57 @@ import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts
  */
 export type NativeViewPlacement = "embed" | "under" | "over";
 
-/** One slot's position, as the native side applies it (visual viewport CSS px). */
-export interface NativeViewFrame {
-  readonly id: string;
+/**
+ * The scroll container a slot scrolls with: the document, or its nearest scrolling ancestor. The
+ * native side follows its offset itself, in the same frame as the scroll (iOS: every
+ * UIScrollView; Android: the document only), so a scroll needs no message from the page.
+ */
+export interface NativeViewScroller {
+  /** Stable per scroll container on the page (the document is 0). */
+  readonly id: number;
+  readonly kind: "document" | "element";
+  /** Its padding box on screen (visual viewport CSS px; the viewport for the document). */
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
-  /** The visible part of the slot, or null when none of it is visible. */
+  readonly scrollLeft: number;
+  readonly scrollTop: number;
+  readonly scrollWidth: number;
+  readonly scrollHeight: number;
+}
+
+/** One slot's position, as the native side applies it. */
+export interface NativeViewFrame {
+  readonly id: string;
+  /** The slot's box on screen (visual viewport CSS px), as of this measurement. */
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  /** The visible part of the slot on screen, or null when none of it is visible. */
   readonly clip: Box | null;
-  /** Draw nothing (off-screen, inactive, or covered while drawn over the page). */
+  /** The scroll container the slot scrolls with. */
+  readonly scroller: NativeViewScroller;
+  /** The slot's box in that container's content coordinates (unchanged by scrolling it). */
+  readonly content: Box;
+  /**
+   * The part of the slot (slot coordinates) that clipping boxes between it and its scroller
+   * leave visible, or null when they hide all of it. The scrollers' own clips are native.
+   */
+  readonly localClip: Box | null;
+  /**
+   * Draw nothing: inactive, covered while drawn over the page, or (where the native side does not
+   * follow the scroller) scrolled out of view.
+   */
   readonly hidden: boolean;
-  /** The slot's `active` prop (an embedded view, which the compositor clips, hides only for it). */
+  /** The slot's `active` prop. */
   readonly active: boolean;
+  /** Page content covers part of the slot (a modal, a sheet, a sticky header). */
+  readonly covered: boolean;
   /** Whether touches over the visible part go to the native view (false while covered). */
   readonly interactive: boolean;
-  /** Regions over the slot that belong to the page (its DOM overlays): touches there go to it. */
+  /** Regions (slot coordinates) that belong to the page: its DOM overlays. */
   readonly passthrough: readonly Box[];
 }
 
@@ -121,6 +159,10 @@ export interface TrackerEnv {
   styleOf(el: GeometryElement): ClipStyle | undefined;
   hitTest(x: number, y: number): unknown;
   dpr(): number;
+  /** The document's scroll offset and size. */
+  pageScroll(): { x: number; y: number; width: number; height: number };
+  /** Whether the native side follows a scroller of `kind` itself (no message per scroll). */
+  nativeFollows(kind: NativeViewScroller["kind"]): boolean;
   /** Add a listener to the document (capture), the window or the visual viewport. */
   listen(
     target: "document" | "window" | "visualViewport",
@@ -198,6 +240,16 @@ function browserEnv(): TrackerEnv {
     styleOf: (el) => callOn(w, "getComputedStyle", [el], undefined),
     hitTest: (x, y) => callOn(doc, "elementFromPoint", [x, y], null),
     dpr: () => Number(w.devicePixelRatio) || 1,
+    pageScroll: () => {
+      const root = (doc?.scrollingElement ?? doc?.documentElement) as GeometryElement | undefined;
+      return {
+        x: Number(w.scrollX) || 0,
+        y: Number(w.scrollY) || 0,
+        width: root?.scrollWidth ?? 0,
+        height: root?.scrollHeight ?? 0,
+      };
+    },
+    nativeFollows: (kind) => nativePlatform() === "ios" || kind === "document",
     listen: (target, type, fn) => {
       const t = target === "document" ? doc : target === "window" ? w : w.visualViewport;
       const opts = { capture: target === "document", passive: true };
@@ -214,16 +266,83 @@ function browserEnv(): TrackerEnv {
   };
 }
 
-/** The passthrough regions of `overlay` (each child's box), clipped to `clip`. */
-function passthroughOf(overlay: GeometryElement | null, clip: Box, vv?: ViewportLike): Box[] {
+/** The passthrough regions of `overlay` (each child's box), in slot coordinates. */
+function passthroughOf(overlay: GeometryElement | null, slotBox: Box): Box[] {
   const children = (overlay as { children?: ArrayLike<GeometryElement> } | null)?.children;
   if (!children) return [];
   const out: Box[] = [];
+  const whole = { x: 0, y: 0, width: slotBox.width, height: slotBox.height };
   for (const child of Array.from(children)) {
-    const r = intersect(toScreen(boxOf(child.getBoundingClientRect()), vv), clip);
+    const b = boxOf(child.getBoundingClientRect());
+    const r = intersect({ ...b, x: b.x - slotBox.x, y: b.y - slotBox.y }, whole);
     if (r) out.push(roundBox(r));
   }
   return out;
+}
+
+/** `b` moved into the coordinates of a space whose origin is at `origin`. */
+function relativeTo(b: Box, origin: { x: number; y: number }): Box {
+  return { x: b.x - origin.x, y: b.y - origin.y, width: b.width, height: b.height };
+}
+
+/** Ids for scroll containers (the document is 0), one set per tracker. */
+type ScrollerIds = WeakMap<object, number> & { next?: number };
+
+/** The scroller a slot scrolls with, and the slot's box in its content coordinates. */
+function scrollerOf(
+  env: TrackerEnv,
+  ids: ScrollerIds,
+  scroller: GeometryElement | null,
+  layoutBox: Box,
+): { info: NativeViewScroller; content: Box } {
+  const vv = env.visualViewport();
+  if (!scroller) {
+    const page = env.pageScroll();
+    const view = toScreen(env.viewport(), vv);
+    return {
+      info: {
+        id: 0,
+        kind: "document",
+        ...roundBox(view),
+        scrollLeft: page.x,
+        scrollTop: page.y,
+        scrollWidth: page.width,
+        scrollHeight: page.height,
+      },
+      content: roundBox({ ...layoutBox, x: layoutBox.x + page.x, y: layoutBox.y + page.y }),
+    };
+  }
+  let id = ids.get(scroller);
+  if (id === undefined) ids.set(scroller, id = ids.next = (ids.next ?? 0) + 1);
+  const pad = paddingBox(scroller);
+  const left = scroller.scrollLeft ?? 0;
+  const top = scroller.scrollTop ?? 0;
+  return {
+    info: {
+      id,
+      kind: "element",
+      ...roundBox(toScreen(pad, vv)),
+      scrollLeft: left,
+      scrollTop: top,
+      scrollWidth: scroller.scrollWidth ?? pad.width,
+      scrollHeight: scroller.scrollHeight ?? pad.height,
+    },
+    content: roundBox({
+      ...relativeTo(layoutBox, pad),
+      x: layoutBox.x - pad.x + left,
+      y: layoutBox.y - pad.y + top,
+    }),
+  };
+}
+
+/** The part of the slot the clippers inside its scroller leave, in slot coordinates. */
+function localClipOf(layoutBox: Box, inner: readonly GeometryElement[]): Box | null {
+  let visible: Box | null = layoutBox;
+  for (const c of inner) {
+    if (!visible) return null;
+    visible = intersect(visible, paddingBox(c));
+  }
+  return visible && roundBox(relativeTo(visible, layoutBox));
 }
 
 /** Measure one slot into the frame the native side applies. */
@@ -231,31 +350,49 @@ export function measureSlot(
   env: TrackerEnv,
   slot: TrackedSlot,
   clippers: readonly GeometryElement[],
+  ids: ScrollerIds = new WeakMap(),
 ): NativeViewFrame {
   const vv = env.visualViewport();
   const layoutBox = boxOf(slot.el.getBoundingClientRect());
   const visibleLayout = visiblePart(layoutBox, clippers, env.viewport());
-  const box = roundBox(toScreen(layoutBox, vv));
+  const scrollerEl = nearestScroller(clippers, (el) => env.styleOf(el));
+  const inner = scrollerEl ? clippers.slice(0, clippers.indexOf(scrollerEl)) : clippers;
+  const { info, content } = scrollerOf(env, ids, scrollerEl, layoutBox);
   const active = slot.active();
-  const base = { id: slot.id, ...box, active };
-  if (!visibleLayout || !active) {
-    return { ...base, clip: null, hidden: true, interactive: false, passthrough: [] };
-  }
-  const clip = roundBox(toScreen(visibleLayout, vv));
-  const covered = isOccluded(slot.el, visibleLayout, (x, y) => env.hitTest(x, y));
+  const covered = visibleLayout !== null && active &&
+    isOccluded(slot.el, visibleLayout, (x, y) => env.hitTest(x, y));
+  const follows = env.nativeFollows(info.kind);
   return {
-    ...base,
-    clip,
+    id: slot.id,
+    ...roundBox(toScreen(layoutBox, vv)),
+    clip: visibleLayout && roundBox(toScreen(visibleLayout, vv)),
+    scroller: info,
+    content,
+    localClip: localClipOf(layoutBox, inner),
     // Drawn over the page, a covered view would draw over what covers it: hide it instead.
-    hidden: covered && slot.placement === "over",
-    interactive: !covered,
-    passthrough: passthroughOf(slot.overlay(), clip, vv),
+    hidden: !active || (covered && slot.placement === "over") || (!follows && !visibleLayout),
+    active,
+    covered,
+    interactive: active && !covered,
+    passthrough: passthroughOf(slot.overlay(), layoutBox),
   };
+}
+
+/**
+ * What decides whether a frame must be sent: everything but the scroll-driven fields when the
+ * native side follows the scroller itself (then a scroll sends nothing).
+ */
+function frameKey(env: TrackerEnv, f: NativeViewFrame): string {
+  if (!env.nativeFollows(f.scroller.kind)) return JSON.stringify(f);
+  const { x: _x, y: _y, clip: _clip, scroller, ...rest } = f;
+  const { x: _sx, y: _sy, scrollLeft: _l, scrollTop: _t, ...size } = scroller;
+  return JSON.stringify({ ...rest, size });
 }
 
 /** Keeps every mounted slot's native view on its slot. */
 export class NativeViewTracker {
   readonly #entries = new Map<string, Entry>();
+  readonly #scrollerIds: ScrollerIds = new WeakMap();
   readonly #stops: Array<() => void> = [];
   #hotUntil = 0;
   #frame: number | undefined;
@@ -303,8 +440,8 @@ export class NativeViewTracker {
     const changed: NativeViewFrame[] = [];
     for (const entry of this.#entries.values()) {
       entry.clippers ??= clippingAncestors(entry.slot.el, (el) => this.env.styleOf(el));
-      const frame = measureSlot(this.env, entry.slot, entry.clippers);
-      const key = JSON.stringify(frame);
+      const frame = measureSlot(this.env, entry.slot, entry.clippers, this.#scrollerIds);
+      const key = frameKey(this.env, frame);
       if (key === entry.last) continue;
       entry.last = key;
       changed.push(frame);

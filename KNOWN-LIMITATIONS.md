@@ -565,24 +565,22 @@ four documented bounds of the opt-in:
   advisory.** Anything in `out/` can be read from the app package; keep secrets and
   authorization on the server.
 - **Enterprise MDM (managed app configuration) is not wrapped.** Use a community plugin.
-- **`NativeViewSlot` cannot track its slot perfectly outside iOS's `"embed"` placement.**
-  `"under"` and `"over"` views are moved by the page: it measures each slot per animation frame
-  while the page moves and every 250 ms while it is still, and the native move lands a frame
-  after the page's, so during a fast fling (and on Android's slower bridge, possibly two) the
-  view trails its slot. A CSS transform or animation on an ancestor is followed only as the
-  rect it produces (a rotation or skew is drawn as its bounding box, a scale as the scaled
-  box), a clip other than an `overflow` / `contain: paint` box (`clip-path`, a rounded
-  `border-radius` corner, `mask`) is not applied, and an `"over"` view hides whole while page
-  content covers any part of it (occlusion is sampled at five points, so a cover smaller than
-  the gaps between them is missed). A layout change with no event (content inserted above the
-  slot) is caught within 250 ms. `"under"` needs every ancestor transparent over the slot.
-  `"embed"` (iOS) depends on WebKit backing the slot's `overflow: scroll` element with a native
-  scroll view (as `@capacitor/google-maps` does); if it does not within 2 s the view falls back
-  to `"over"`, and a DOM overlay over an embedded view receives touches only where the page
-  reports it (the slot's `overlay` children). A slot a virtualized list unmounts destroys its
-  view (a map loses its position; a video restarts). Android is compiled, not yet run: the
-  touch routing and the frame math have not run on a device or emulator. iOS awaits its first
-  device run.
+- **`NativeViewSlot` tracks some layout changes a frame late.** On iOS a scroll is followed
+  natively in the same frame (the plugin observes the WebKit scroll view the slot scrolls with).
+  On Android only the document's scroll is: a slot inside a scrolling element (a `VirtualList`)
+  is moved from the page's per-frame measurement and trails it by a frame or two during a
+  fling. Everywhere, a change that is not a scroll (a CSS transform or animation on an
+  ancestor, a resize, content inserted above) reaches `"under"` / `"over"` views a frame late,
+  or within 250 ms when no event announces it. A transformed ancestor is followed only as the
+  rect it produces (a rotation or skew is drawn as its bounding box). A clip other than an
+  `overflow` / `contain: paint` box (`clip-path`, a rounded `border-radius` corner, `mask`) is
+  not applied. An `"over"` view hides whole while page content covers any part of it (occlusion
+  is sampled at five points, so a cover smaller than the gaps between them is missed).
+  `"under"` needs every ancestor transparent over the slot. `"embed"` (iOS) depends on WebKit
+  backing the slot's `overflow: scroll` element with a native scroll view (as
+  `@capacitor/google-maps` does); if it does not within 2 s the view falls back to `"over"`.
+  A slot a virtualized list unmounts destroys its view (a map loses its position; a video
+  restarts). Android is compiled, not run on a device or emulator.
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so

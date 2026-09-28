@@ -150,16 +150,38 @@ final class DenextNativeViewHost: UIView {
 
 /// The layer above the WebView: it draws the "over" views and routes a touch over any visible
 /// "under" or "over" view to it. Everywhere else it takes no touch, so the WebView gets it.
+///
+/// It routes embedded views too: WebKit's own hit testing stops at the scroll view it made for
+/// the slot and never reaches views it did not make, so without the router an embedded view's
+/// controls would get no touch. The view's ancestors (the page's scroll views) still see the
+/// touch, so a drag that starts on it scrolls the page.
 final class DenextNativeViewsRouter: UIView {
     var hosts: () -> [DenextNativeViewHost] = { [] }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        for host in hosts() where host.window != nil {
-            if let hit = host.hitTest(convert(point, to: host), with: event) {
+        for host in hosts() where host.window != nil && !host.isHidden {
+            let local = convert(point, to: host)
+            guard Self.unclipped(host, local) else {
+                continue
+            }
+            if let hit = host.hitTest(local, with: event) {
                 return hit
             }
         }
         return nil
+    }
+
+    /// Whether point (host coordinates) is inside every clipping ancestor of host: the part of an
+    /// embedded view a scrolled page leaves visible.
+    static func unclipped(_ host: UIView, _ point: CGPoint) -> Bool {
+        var view = host.superview
+        while let ancestor = view {
+            if ancestor.clipsToBounds && !ancestor.bounds.contains(host.convert(point, to: ancestor)) {
+                return false
+            }
+            view = ancestor.superview
+        }
+        return true
     }
 }
 
@@ -171,6 +193,20 @@ final class DenextNativeViewSlot {
     let factory: DenextNativeViewFactory
     let view: UIView
     let host = DenextNativeViewHost(frame: .zero)
+    /// "under" / "over": the slot's box in its scroller's content coordinates (CSS px).
+    var content = CGRect.zero
+    /// The part of the slot (slot coordinates) left by clips between it and its scroller.
+    var localClip: CGRect?
+    /// The page asks for nothing to be drawn (inactive, or covered while "over").
+    var hiddenByPage = true
+    /// The page's overlays over the slot (slot coordinates): touches there go to the page.
+    var passthrough: [CGRect] = []
+    /// The UIScrollView the slot scrolls with (the WebView's own for the document).
+    weak var scroller: UIScrollView?
+    var scrollerIsDocument = false
+    /// The last measured box and visible part on screen: used while the scroller is not found.
+    var screenBox = CGRect.zero
+    var screenClip: CGRect?
 
     init(id: String, placement: String, marker: CGFloat, factory: DenextNativeViewFactory, view: UIView) {
         self.id = id
@@ -181,14 +217,20 @@ final class DenextNativeViewSlot {
     }
 }
 
+/// A scroll view held weakly (WebKit replaces the ones it makes).
+struct DenextWeakScrollView {
+    weak var view: UIScrollView?
+}
+
 /// The native side of NativeViewSlot / useNativeViewSlot from denext/mobile, reached from the web
 /// app as window.Capacitor.Plugins.DenextNativeViews. DenextBridgeViewController registers it.
 ///
 /// - types() -> { types }: the registered view types.
 /// - create({ id, type, props, placement, embedMarker }) -> { placement }: makes the view.
 ///   "embed" falls back to "over" when the slot's scroll view is not found within 2 s.
-/// - update({ frames, dpr }): moves, clips and hides the views (visual viewport CSS px, which
-///   are points on iOS).
+/// - update({ frames, dpr }): each slot's box in its scroller's content coordinates, with the
+///   scroller identified; the plugin follows that UIScrollView's contentOffset itself (KVO, in the
+///   same frame as the scroll), so a scroll sends nothing.
 /// - setProps({ id, props }), command({ id, name, args }) -> result, destroy({ id }).
 /// - Event nativeViewEvent { id, name, data }: what a view emits.
 @objc(DenextNativeViewsPlugin)
@@ -215,6 +257,10 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
     private var order: [String] = []
     private var underLayer: UIView?
     private var router: DenextNativeViewsRouter?
+    /// Main-thread only. The page's scroll containers by the page's id for them.
+    private var scrollers: [Int: DenextWeakScrollView] = [:]
+    /// Main-thread only. contentOffset observations of every scroll view a slot moves with.
+    private var observations: [ObjectIdentifier: NSKeyValueObservation] = [:]
 
     override public func load() {
         if DenextNativeViews.factory(for: "video") == nil {
@@ -298,6 +344,10 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
                 call.reject("no native view " + id, "not-found")
                 return
             }
+            if name == "__frame" {
+                call.resolve(self.debugFrame(slot))
+                return
+            }
             call.resolve(slot.factory.command(slot.view, name: name, args: args) ?? [:])
         }
     }
@@ -309,6 +359,10 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
                 self.order.removeAll { $0 == id }
                 slot.host.removeFromSuperview()
                 slot.factory.destroyView(slot.view)
+            }
+            if self.slots.isEmpty {
+                self.observations.removeAll()
+                self.scrollers.removeAll()
             }
             call.resolve()
         }
@@ -351,6 +405,7 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
             return
         }
         if attach(slot) {
+            ensureRouter()
             call.resolve(["placement": "embed"])
             return
         }
@@ -399,14 +454,7 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         guard let webView = bridge?.webView, let parent = webView.superview else {
             return
         }
-        if router == nil {
-            let top = DenextNativeViewsRouter(frame: parent.bounds)
-            top.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            top.backgroundColor = .clear
-            top.hosts = { [weak self] in self?.routedHosts() ?? [] }
-            parent.insertSubview(top, aboveSubview: webView)
-            router = top
-        }
+        ensureRouter()
         slot.host.isHidden = true
         slot.view.autoresizingMask = []
         if slot.placement == "under" {
@@ -426,14 +474,22 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         }
     }
 
-    /// The "under" and "over" hosts, top-most first.
-    private func routedHosts() -> [DenextNativeViewHost] {
-        return order.reversed().compactMap { id in
-            guard let slot = slots[id], slot.placement != "embed" else {
-                return nil
-            }
-            return slot.host
+    /// The touch router above the WebView, added the first time a view is placed.
+    private func ensureRouter() {
+        guard router == nil, let webView = bridge?.webView, let parent = webView.superview else {
+            return
         }
+        let top = DenextNativeViewsRouter(frame: parent.bounds)
+        top.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        top.backgroundColor = .clear
+        top.hosts = { [weak self] in self?.routedHosts() ?? [] }
+        parent.insertSubview(top, aboveSubview: webView)
+        router = top
+    }
+
+    /// Every host, top-most first.
+    private func routedHosts() -> [DenextNativeViewHost] {
+        return order.reversed().compactMap { slots[$0]?.host }
     }
 
     /// Apply one frame from the page.
@@ -441,11 +497,8 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
         guard let id = frame["id"] as? String, let slot = slots[id] else {
             return
         }
-        let box = Self.rect(frame)
-        let clip = (frame["clip"] as? JSObject).map(Self.rect)
-        let hidden = (frame["hidden"] as? Bool ?? false) || clip == nil
-        let passthrough = (frame["passthrough"] as? JSArray ?? []).compactMap { ($0 as? JSObject).map(Self.rect) }
         slot.host.interactive = frame["interactive"] as? Bool ?? true
+        slot.passthrough = Self.rects(frame["passthrough"])
         if slot.placement == "embed" {
             // The compositor moves and clips it; only a scroll view WebKit replaced needs work.
             if slot.host.window == nil {
@@ -453,19 +506,166 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
                 _ = attach(slot)
             }
             slot.host.isHidden = !(frame["active"] as? Bool ?? true)
-            slot.host.passthrough = passthrough.map { $0.offsetBy(dx: -box.minX, dy: -box.minY) }
+            slot.host.passthrough = slot.passthrough
             return
         }
-        guard let webView = bridge?.webView, let container = slot.host.superview, let clip = clip, !hidden else {
+        slot.content = Self.rect(frame["content"] as? JSObject ?? [:])
+        slot.localClip = (frame["localClip"] as? JSObject).map(Self.rect)
+        slot.hiddenByPage = frame["hidden"] as? Bool ?? false
+        slot.screenBox = Self.rect(frame)
+        slot.screenClip = (frame["clip"] as? JSObject).map(Self.rect)
+        if let scroller = frame["scroller"] as? JSObject {
+            resolveScroller(slot, scroller)
+        }
+        layout(slot)
+    }
+
+    /// The "__frame" command (device tests): where the view is, in the page's coordinates, to
+    /// compare with the slot's DOM box.
+    private func debugFrame(_ slot: DenextNativeViewSlot) -> [String: Any] {
+        var out: [String: Any] = [
+            "placement": slot.placement,
+            "hidden": slot.host.isHidden,
+            "attached": slot.host.window != nil,
+            "scrollerFound": slot.scroller != nil
+        ]
+        if let webView = bridge?.webView {
+            let inset = webView.scrollView.adjustedContentInset
+            let r = slot.view.convert(slot.view.bounds, to: webView).offsetBy(dx: -inset.left, dy: -inset.top)
+            out["x"] = r.minX
+            out["y"] = r.minY
+            out["width"] = r.width
+            out["height"] = r.height
+        }
+        return out
+    }
+
+    // MARK: - Following the page's scrolling (main thread)
+
+    /// Find the UIScrollView the slot scrolls with, and observe it and every scroll view above it.
+    private func resolveScroller(_ slot: DenextNativeViewSlot, _ info: JSObject) {
+        guard let webView = bridge?.webView else {
+            return
+        }
+        if info["kind"] as? String == "document" {
+            slot.scroller = webView.scrollView
+            slot.scrollerIsDocument = true
+        } else {
+            let key = Int(Self.number(info["id"]))
+            let size = CGSize(width: Self.number(info["width"]), height: Self.number(info["height"]))
+            if let cached = scrollers[key]?.view, cached.window != nil, Self.close(cached.bounds.size, size) {
+                slot.scroller = cached
+            } else {
+                slot.scroller = findScroller(info, in: webView)
+                scrollers[key] = DenextWeakScrollView(view: slot.scroller)
+            }
+            slot.scrollerIsDocument = false
+        }
+        var view: UIView? = slot.scroller
+        while let current = view {
+            if let scrollView = current as? UIScrollView, observations[ObjectIdentifier(scrollView)] == nil {
+                observations[ObjectIdentifier(scrollView)] = scrollView.observe(\\.contentOffset, options: []) { [weak self] _, _ in
+                    // Called synchronously with the scroll: the views move in the same frame.
+                    self?.layoutAll()
+                }
+            }
+            if current === webView {
+                break
+            }
+            view = current.superview
+        }
+    }
+
+    /// The WebKit scroll view for a page scroll container: the one of its size whose content size
+    /// and position are closest to what the page measured.
+    private func findScroller(_ info: JSObject, in webView: WKWebView) -> UIScrollView? {
+        let size = CGSize(width: Self.number(info["width"]), height: Self.number(info["height"]))
+        let content = CGSize(width: Self.number(info["scrollWidth"]), height: Self.number(info["scrollHeight"]))
+        let inset = webView.scrollView.adjustedContentInset
+        let expected = CGPoint(x: Self.number(info["x"]) + inset.left, y: Self.number(info["y"]) + inset.top)
+        var best: (UIScrollView, CGFloat)?
+        var stack: [UIView] = [webView.scrollView]
+        while let view = stack.popLast() {
+            if view is DenextNativeViewHost {
+                continue
+            }
+            stack.append(contentsOf: view.subviews)
+            guard let candidate = view as? UIScrollView, candidate !== webView.scrollView,
+                  Self.close(candidate.bounds.size, size) else {
+                continue
+            }
+            let origin = candidate.convert(candidate.bounds.origin, to: webView)
+            let score = abs(candidate.contentSize.width - content.width) + abs(candidate.contentSize.height - content.height)
+                + abs(origin.x - expected.x) + abs(origin.y - expected.y)
+            if best == nil || score < best!.1 {
+                best = (candidate, score)
+            }
+        }
+        return best?.0
+    }
+
+    /// Re-place every "under" and "over" view (a scroll view moved).
+    private func layoutAll() {
+        for id in order {
+            if let slot = slots[id], slot.placement != "embed" {
+                layout(slot)
+            }
+        }
+    }
+
+    /// Place a view from its content box and its scroller's current offset.
+    private func layout(_ slot: DenextNativeViewSlot) {
+        guard let webView = bridge?.webView, let container = slot.host.superview else {
+            return
+        }
+        guard let scroller = slot.scroller, scroller.window != nil else {
+            // Not found: the page's last measurement (a frame behind a scroll).
+            let inset = webView.scrollView.adjustedContentInset
+            let origin = webView.convert(CGPoint(x: inset.left, y: inset.top), to: container)
+            let box = slot.screenBox.offsetBy(dx: origin.x, dy: origin.y)
+            place(slot, box: box, visible: slot.screenClip?.offsetBy(dx: origin.x, dy: origin.y) ?? .null)
+            return
+        }
+        var content = slot.content
+        if slot.scrollerIsDocument {
+            let zoom = scroller.zoomScale
+            content = CGRect(x: content.minX * zoom, y: content.minY * zoom, width: content.width * zoom, height: content.height * zoom)
+        }
+        let box = scroller.convert(content, to: container)
+        var visible = slot.localClip.map { $0.offsetBy(dx: box.minX, dy: box.minY).intersection(box) } ?? .null
+        var view: UIView? = scroller
+        while let current = view, !visible.isNull {
+            if current.clipsToBounds || current is UIScrollView {
+                visible = visible.intersection(current.convert(current.bounds, to: container))
+            }
+            if current === webView {
+                break
+            }
+            view = current.superview
+        }
+        place(slot, box: box, visible: visible)
+    }
+
+    private func place(_ slot: DenextNativeViewSlot, box: CGRect, visible: CGRect) {
+        if slot.hiddenByPage || visible.isNull || visible.isEmpty {
             slot.host.isHidden = true
             return
         }
-        let inset = webView.scrollView.adjustedContentInset
-        let origin = webView.convert(CGPoint(x: inset.left, y: inset.top), to: container)
-        slot.host.frame = clip.offsetBy(dx: origin.x, dy: origin.y)
-        slot.view.frame = CGRect(x: box.minX - clip.minX, y: box.minY - clip.minY, width: box.width, height: box.height)
-        slot.host.passthrough = passthrough.map { $0.offsetBy(dx: -clip.minX, dy: -clip.minY) }
+        slot.host.frame = visible
+        slot.view.frame = box.offsetBy(dx: -visible.minX, dy: -visible.minY)
+        slot.host.passthrough = slot.passthrough.map {
+            $0.offsetBy(dx: box.minX - visible.minX, dy: box.minY - visible.minY)
+        }
         slot.host.isHidden = false
+    }
+
+    private static func close(_ a: CGSize, _ b: CGSize) -> Bool {
+        return abs(a.width - b.width) < 2 && abs(a.height - b.height) < 2
+    }
+
+    /// A JS array of { x, y, width, height } as CGRects.
+    static func rects(_ value: Any?) -> [CGRect] {
+        return (value as? JSArray ?? []).compactMap { ($0 as? JSObject).map(rect) }
     }
 
     // MARK: - JSON helpers
@@ -982,6 +1182,9 @@ public class DenextNativeViewsPlugin extends Plugin {
         boolean visible = false;
         boolean interactive = true;
         final List<RectF> passthrough = new ArrayList<>();
+        /** The last frame from the page, re-applied when the document scrolls. */
+        @Nullable
+        JSONObject frame;
 
         Slot(String id, String placement, DenextNativeViewFactory factory, View view, FrameLayout host) {
             this.id = id;
@@ -1033,6 +1236,8 @@ public class DenextNativeViewsPlugin extends Plugin {
     private FrameLayout underLayer;
     @Nullable
     private Router router;
+    /** Main-thread only. The page's device pixel ratio, from its last update. */
+    private float dpr = 1f;
     /** Main-thread only. The "under" view the current WebView gesture goes to. */
     @Nullable
     private Slot touchTarget;
@@ -1210,6 +1415,11 @@ public class DenextNativeViewsPlugin extends Plugin {
             router = new Router(activity);
             parent.addView(router, parent.indexOfChild(web) + 1, new ViewGroup.LayoutParams(fill));
             web.setOnTouchListener((v, event) -> routeUnder(web, event));
+            // A document scroll moves the views in the same frame (a scrolling element inside the
+            // page has no native scroll view here: the page's measurements place those).
+            web.setOnScrollChangeListener((v, x, y, oldX, oldY) -> {
+                for (Slot slot : slots.values()) place(slot);
+            });
         }
     }
 
@@ -1245,38 +1455,73 @@ public class DenextNativeViewsPlugin extends Plugin {
     private void apply(JSONObject frame, float dpr) {
         Slot slot = slots.get(frame.optString("id"));
         if (slot == null) return;
-        JSONObject clip = frame.optJSONObject("clip");
+        slot.frame = frame;
+        this.dpr = dpr;
+        place(slot);
+    }
+
+    /**
+     * Place a view from its last frame. A slot that scrolls with the document is placed from its
+     * content box and the WebView's own scroll offset (so it follows a document scroll in the same
+     * frame, from onScrollChange); one inside a scrolling element from the box the page measured.
+     */
+    private void place(Slot slot) {
+        JSONObject frame = slot.frame;
+        if (frame == null) return;
+        WebView web = bridge.getWebView();
+        JSONObject scroller = frame.optJSONObject("scroller");
+        boolean document = scroller != null && "document".equals(scroller.optString("kind"));
         slot.interactive = frame.optBoolean("interactive", true);
-        slot.visible = clip != null && !frame.optBoolean("hidden", false);
+        RectF box;
+        RectF visible;
+        if (document) {
+            JSONObject content = frame.optJSONObject("content");
+            box = scaled(content, dpr);
+            box.offset(-web.getScrollX(), -web.getScrollY());
+            JSONObject local = frame.optJSONObject("localClip");
+            visible = local == null ? null : scaled(local, dpr);
+            if (visible != null) {
+                visible.offset(box.left, box.top);
+                if (!visible.intersect(box) || !visible.intersect(0, 0, web.getWidth(), web.getHeight())) visible = null;
+            }
+        } else {
+            box = scaled(frame, dpr);
+            JSONObject clip = frame.optJSONObject("clip");
+            visible = clip == null ? null : scaled(clip, dpr);
+        }
+        slot.visible = visible != null && !frame.optBoolean("hidden", false);
         if (!slot.visible) {
             slot.host.setVisibility(View.INVISIBLE);
             return;
         }
-        WebView web = bridge.getWebView();
-        float cx = (float) clip.optDouble("x", 0) * dpr;
-        float cy = (float) clip.optDouble("y", 0) * dpr;
-        float bx = (float) frame.optDouble("x", 0) * dpr;
-        float by = (float) frame.optDouble("y", 0) * dpr;
-        resize(slot.host, clip.optDouble("width", 0) * dpr, clip.optDouble("height", 0) * dpr);
-        resize(slot.view, frame.optDouble("width", 0) * dpr, frame.optDouble("height", 0) * dpr);
-        slot.host.setX(web.getLeft() + cx);
-        slot.host.setY(web.getTop() + cy);
-        slot.view.setX(bx - cx);
-        slot.view.setY(by - cy);
+        resize(slot.host, visible.width(), visible.height());
+        resize(slot.view, box.width(), box.height());
+        slot.host.setX(web.getLeft() + visible.left);
+        slot.host.setY(web.getTop() + visible.top);
+        slot.view.setX(box.left - visible.left);
+        slot.view.setY(box.top - visible.top);
         slot.passthrough.clear();
         JSONArray passthrough = frame.optJSONArray("passthrough");
         for (int i = 0; passthrough != null && i < passthrough.length(); i++) {
             JSONObject r = passthrough.optJSONObject(i);
             if (r == null) continue;
-            float x = (float) r.optDouble("x", 0) * dpr - cx;
-            float y = (float) r.optDouble("y", 0) * dpr - cy;
-            slot.passthrough.add(new RectF(x, y, x + (float) r.optDouble("width", 0) * dpr, y + (float) r.optDouble("height", 0) * dpr));
+            RectF local = scaled(r, dpr);
+            local.offset(box.left - visible.left, box.top - visible.top);
+            slot.passthrough.add(local);
         }
         slot.host.setVisibility(View.VISIBLE);
     }
 
+    /** {@code { x, y, width, height }} (CSS px) times {@code dpr}. */
+    private static RectF scaled(@Nullable JSONObject o, float dpr) {
+        if (o == null) return new RectF();
+        float x = (float) o.optDouble("x", 0) * dpr;
+        float y = (float) o.optDouble("y", 0) * dpr;
+        return new RectF(x, y, x + (float) o.optDouble("width", 0) * dpr, y + (float) o.optDouble("height", 0) * dpr);
+    }
+
     /** Set {@code view}'s layout size (px), re-laying it out only when it changed. */
-    private static void resize(View view, double width, double height) {
+    private static void resize(View view, float width, float height) {
         ViewGroup.LayoutParams lp = view.getLayoutParams();
         int w = Math.max(1, (int) Math.round(width));
         int h = Math.max(1, (int) Math.round(height));

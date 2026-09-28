@@ -54,8 +54,10 @@ Build with `deno task cap:sync` then `deno task ios`, and on the phone:
    crashes (the `markerPress` event).
 3. **Region events.** After a pan, the line under the map shows the new
    latitude, longitude and zoom. The −/+ buttons change the zoom.
-4. **Video.** Row 12 plays the flower clip with the system controls (muted,
-   looping); the status line shows `ready` then `play`. Full screen from the
+4. **Video.** Row 12 starts the flower clip by itself (muted autoplay, looping)
+   with the system controls; the status line shows `ready` then `play`. Tap
+   pause / play and the full-screen button: the controls get the taps. A drag
+   that starts on the video still scrolls the list. Full screen from the
    controls and back works. Scroll it off and back: it is made again (restarts).
 5. **Under.** Scroll to row 40 (Lisbon): the map shows through the transparent
    page with the "Recenter" button above it; pan works, the button works, and
@@ -75,3 +77,10 @@ Build with `deno task cap:sync` then `deno task ios`, and on the phone:
 Android (emulator or device): the same list; row 3 is `"over"` there (it hides
 while the sheet covers it), row 40 is `"under"`. Expect the view to trail its
 card by a frame or two during a fast fling.
+
+## Probe build (device tests)
+
+`NV_PROBE=1 deno task export` builds a version that posts every native view
+event and, each second, each slot's DOM box next to where the native side put
+its view (the plugin's `__frame` debug command) to `http://172.20.10.2:3999/nv`
+(`src/probe.ts`). A normal build compiles the probe out (`feature("NV_PROBE")`).
