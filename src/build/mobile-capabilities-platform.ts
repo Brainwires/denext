@@ -1,6 +1,6 @@
 // The 2.11 platform capabilities of `denext mobile add`: app-review, app-update,
 // screen-orientation, media-library, privacy-screen, tracking, background, restore,
-// accessibility, background-location and application. Kept
+// accessibility, storage, background-location and application. Kept
 // apart from the main table in ./mobile-capabilities.ts (which spreads them in) so each
 // capability's plugin pin, plist keys and native wiring sit together. Every plugin below was
 // checked against its published package: a `@capacitor/core` peer range admitting 8 and (for
@@ -18,6 +18,8 @@ import {
 import { BACKGROUND_RUNNER_EVENT, BACKGROUND_RUNNER_FILE } from "./background-runner.ts";
 import { BACKGROUND_RUNNER_LABEL } from "../mobile/background.ts";
 import { ACCESSIBILITY_INSTALL } from "./mobile-accessibility-install.ts";
+import { CONTEXT_MENU_INSTALL, SYSTEM_ICONS_INSTALL } from "./mobile-context-menu-install.ts";
+import { STORAGE_INSTALL } from "./mobile-storage-install.ts";
 import { SETTINGS_INSTALL } from "./mobile-settings-install.ts";
 
 /** The Capacitor major these pins target. */
@@ -387,8 +389,29 @@ export const PLATFORM_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   accessibility: {
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "isScreenReaderEnabled() / onScreenReaderChange(cb) / useScreenReader() (VoiceOver, " +
-      "TalkBack; React Native mode's AccessibilityInfo reads it too)",
+      "TalkBack; React Native mode's AccessibilityInfo reads it too) and getFontScale() / " +
+      "useFontScale() / applyFontScale() (Dynamic Type, Android's font scale; React Native " +
+      "mode's PixelRatio.getFontScale() and Text)",
     configure: () => ({ install: ACCESSIBILITY_INSTALL }),
+  },
+  storage: {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "openKeyValueStore(name) (durable key-value storage in the app's data folder, which " +
+      "the OS does not evict like WebView storage; React Native mode's AsyncStorage and MMKV use it)",
+    configure: () => ({ install: STORAGE_INSTALL }),
+  },
+  "context-menu": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "showContextMenu(items, { x, y }) / useContextMenu(items, onSelect) (UIMenu with the " +
+      "lifted long-press preview, SF Symbols and submenus on iOS; PopupMenu on Android; an " +
+      "in-page popover on the web)",
+    configure: () => ({ install: CONTEXT_MENU_INSTALL }),
+  },
+  "system-icons": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: '<SystemIcon name="square.and.arrow.up" android="share" /> (the SF Symbol ' +
+      "rendered natively on iOS; Material Symbols on Android and the web)",
+    configure: () => ({ install: SYSTEM_ICONS_INSTALL }),
   },
   "background-location": {
     npm: "@capgo/background-geolocation",

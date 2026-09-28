@@ -1,18 +1,26 @@
 // The native half of `isScreenReaderEnabled()` / `onScreenReaderChange()` (denext/mobile, and
-// React Native mode's `AccessibilityInfo`), embedded as text so it ships inside the JSR package:
-// `denext mobile add accessibility` writes it into a Capacitor project.
+// React Native mode's `AccessibilityInfo`) and of `getFontScale()` / `useFontScale()` (the OS
+// text size: Dynamic Type on iOS, the font scale on Android), embedded as text so it ships inside
+// the JSR package: `denext mobile add accessibility` writes it into a Capacitor project.
 //
 // - iOS: `ios/App/App/DenextAccessibilityPlugin.swift`, registered by
 //   `DenextBridgeViewController`. `isScreenReaderEnabled()` reads
 //   `UIAccessibility.isVoiceOverRunning`; `voiceOverStatusDidChangeNotification` fires
-//   `screenReaderChanged`.
+//   `screenReaderChanged`. `getFontScale()` maps `preferredContentSizeCategory` to React
+//   Native's font scale table (large = 1.0); `UIContentSizeCategory.didChangeNotification` fires
+//   `fontScaleChanged`. A WKWebView does not apply Dynamic Type to the page itself.
 // - Android: `dev/denext/accessibility/DenextAccessibilityPlugin.java`, registered from
 //   `MainActivity`. `isScreenReaderEnabled()` reads `AccessibilityManager.isTouchExplorationEnabled`
 //   (TalkBack and the other touch-exploration services, as React Native reports it); a
-//   `TouchExplorationStateChangeListener` fires `screenReaderChanged`.
+//   `TouchExplorationStateChangeListener` fires `screenReaderChanged`. `getFontScale()` answers
+//   `Configuration.fontScale` and the WebView's `textZoom` (the part of it the WebView already
+//   applies to the page); a configuration change the activity handles fires `fontScaleChanged`.
 //
 // Both answer `{ value: boolean }` and send `{ value: boolean }` with the event: the contract
-// React Native mode's AccessibilityInfo overlay already reads.
+// React Native mode's AccessibilityInfo overlay already reads. The font scale answers and sends
+// `{ value: number, textZoom?: number }` (`textZoom` in percent, Android only).
+//
+// Generation 2 (denext 2.11) added the font scale; an unedited generation-1 file is upgraded.
 //
 // Edit these as source: they are compiled only in an app (against Capacitor 8). Every `\``
 // below is an escaped template-literal character.
@@ -25,7 +33,7 @@
 import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-marker.ts";
 
 /** The generation of the templates below, stamped into every file the installer writes. */
-export const ACCESSIBILITY_TEMPLATE_VERSION = 1;
+export const ACCESSIBILITY_TEMPLATE_VERSION = 2;
 
 /**
  * A template as the installer writes it: a first line
@@ -65,19 +73,49 @@ import UIKit
 ///
 /// - \`isScreenReaderEnabled()\`: resolves \`{ value }\`, whether VoiceOver is running.
 /// - \`screenReaderChanged\` event: \`{ value }\`, sent when VoiceOver is turned on or off.
+/// - \`getFontScale()\`: resolves \`{ value }\`, the Dynamic Type size as React Native's font scale
+///   (1.0 at the default size, "Large").
+/// - \`fontScaleChanged\` event: \`{ value }\`, sent when the user changes the text size.
 @objc(DenextAccessibilityPlugin)
 public class DenextAccessibilityPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     public let identifier = "DenextAccessibilityPlugin"
     public let jsName = "DenextAccessibility"
     public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "isScreenReaderEnabled", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "isScreenReaderEnabled", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getFontScale", returnType: CAPPluginReturnPromise)
     ]
+
+    /// React Native's table (RCTFontSizeMultiplier): each content size category's multiplier.
+    private static let fontScales: [UIContentSizeCategory: Double] = [
+        .extraSmall: 0.823,
+        .small: 0.882,
+        .medium: 0.941,
+        .large: 1.0,
+        .extraLarge: 1.118,
+        .extraExtraLarge: 1.235,
+        .extraExtraExtraLarge: 1.353,
+        .accessibilityMedium: 1.786,
+        .accessibilityLarge: 2.143,
+        .accessibilityExtraLarge: 2.643,
+        .accessibilityExtraExtraLarge: 3.143,
+        .accessibilityExtraExtraExtraLarge: 3.571
+    ]
+
+    private static func currentFontScale() -> Double {
+        fontScales[UIApplication.shared.preferredContentSizeCategory] ?? 1.0
+    }
 
     override public func load() {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(voiceOverStatusDidChange),
             name: UIAccessibility.voiceOverStatusDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(contentSizeCategoryDidChange),
+            name: UIContentSizeCategory.didChangeNotification,
             object: nil
         )
     }
@@ -97,6 +135,18 @@ public class DenextAccessibilityPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked 
             call.resolve(["value": UIAccessibility.isVoiceOverRunning])
         }
     }
+
+    @objc func contentSizeCategoryDidChange() {
+        DispatchQueue.main.async {
+            self.notifyListeners("fontScaleChanged", data: ["value": DenextAccessibilityPlugin.currentFontScale()])
+        }
+    }
+
+    @objc func getFontScale(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            call.resolve(["value": DenextAccessibilityPlugin.currentFontScale()])
+        }
+    }
 }
 `,
 };
@@ -110,7 +160,9 @@ export const ACCESSIBILITY_ANDROID_FILES: Readonly<Record<string, string>> = {
 package dev.denext.accessibility;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.view.accessibility.AccessibilityManager;
+import android.webkit.WebView;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -126,12 +178,18 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * <p>{@code isScreenReaderEnabled()} resolves {@code { value }}: whether a touch-exploration
  * service (TalkBack, Select to Speak's explore mode) is on, which is what React Native reports.
  * The {@code screenReaderChanged} event sends {@code { value }} whenever that changes.
+ *
+ * <p>{@code getFontScale()} resolves {@code { value, textZoom }}: the system font scale
+ * ({@code Configuration.fontScale}, 1.0 at the default size) and the WebView's text zoom in
+ * percent (what of it the WebView already applies to the page). {@code fontScaleChanged} sends
+ * the same when a configuration change reaches the activity without recreating it.
  */
 @CapacitorPlugin(name = "DenextAccessibility")
 public class DenextAccessibilityPlugin extends Plugin {
 
     private AccessibilityManager manager;
     private AccessibilityManager.TouchExplorationStateChangeListener listener;
+    private float fontScale = -1f;
 
     @Override
     public void load() {
@@ -157,6 +215,32 @@ public class DenextAccessibilityPlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("value", manager != null && manager.isEnabled() && manager.isTouchExplorationEnabled());
         call.resolve(result);
+    }
+
+    /** The font scale answer; WebView settings are read on the UI thread. */
+    private void withFontScale(float scale, java.util.function.Consumer<JSObject> done) {
+        getActivity().runOnUiThread(() -> {
+            JSObject result = new JSObject();
+            result.put("value", (double) scale);
+            WebView webView = getBridge() != null ? getBridge().getWebView() : null;
+            if (webView != null) result.put("textZoom", webView.getSettings().getTextZoom());
+            done.accept(result);
+        });
+    }
+
+    @PluginMethod
+    public void getFontScale(PluginCall call) {
+        float scale = getContext().getResources().getConfiguration().fontScale;
+        fontScale = scale;
+        withFontScale(scale, call::resolve);
+    }
+
+    @Override
+    protected void handleOnConfigurationChanged(Configuration newConfig) {
+        super.handleOnConfigurationChanged(newConfig);
+        if (newConfig.fontScale == fontScale) return;
+        fontScale = newConfig.fontScale;
+        withFontScale(newConfig.fontScale, data -> notifyListeners("fontScaleChanged", data));
     }
 }
 `,

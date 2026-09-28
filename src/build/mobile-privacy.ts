@@ -228,6 +228,8 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
     },
   ],
   "live-activity": [],
+  // The generated Swift sample calls no required-reason API (the app's own code may).
+  "native-module": [],
   keyboard: [],
   back: [],
   "system-bars": [],
@@ -276,6 +278,12 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   restore: [],
   // UIAccessibility.isVoiceOverRunning and its notification are not required-reason APIs.
   accessibility: [],
+  // The system SQLite and FileManager's Application Support URL: no required-reason API (no
+  // file timestamps, disk space or UserDefaults).
+  storage: [],
+  // UIContextMenuInteraction / UIMenu and UIImage(systemName:) use no required-reason API.
+  "context-menu": [],
+  "system-icons": [],
   // The fixes themselves are the app's data to declare (Precise Location, when they leave the
   // device); the plugin's own API use is UserDefaults.
   "background-location": [{
@@ -286,6 +294,9 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   }],
   // @capacitor/app's getInfo() reads the bundle; @capacitor/device is `device` above.
   application: [],
+  // AVPlayer, MapKit and the view layering use no required-reason API.
+  "native-views": [],
+  "native-map": [],
 };
 
 /**

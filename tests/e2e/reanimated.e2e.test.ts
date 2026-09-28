@@ -11,13 +11,20 @@
 //   3. a worklet that captures React state re-runs when that state changes (the closure is
 //      the dependency list);
 //   4. `useAnimatedScrollHandler` follows the scroll offset;
-//   5. a gesture-handler `Gesture.Pan()` worklet callback moves the view under the mouse.
+//   5. a gesture-handler `Gesture.Pan()` worklet callback moves the view under the mouse;
+//   6. the compositor pass (src/build/reanimated-offload.ts): a shared value animated into
+//      transform / opacity, a style-returned animation, a `withSequence`, a forever `withRepeat`
+//      and a `FadeIn` entering animation run as Web Animations — and the shared-value one and the
+//      entering one keep producing frames while the main thread is blocked for 500 ms (CDP
+//      screencast frames, which the compositor draws; with nothing animating there are none,
+//      and the same animation on Reanimated's own loop — the pass turned off — draws none
+//      either) — and `LayoutAnimation.configureNext` animates the views a commit moves.
 //
 // The fixture is copied to a temp dir outside the workspace (like spa-compat) and its npm
 // packages installed there (`npm install`, NETWORK-REQUIRED; skipped when npm or the network
 // is unavailable). Opt-in: `deno task test:e2e`.
 
-import { assert, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
 import type { Page } from "@astral/astral";
@@ -127,6 +134,44 @@ function collectErrors(page: Page): string[] {
   return errors;
 }
 
+/**
+ * How many distinct frames the compositor drew while the main thread was blocked for `ms`,
+ * with the element `id` scrolled into view (an animation off screen draws nothing).
+ */
+async function framesWhileBlocked(page: Page, id: string, ms = 500): Promise<number> {
+  await page.evaluate(`${el(id)}.scrollIntoView({ block: "center" })`);
+  // deno-lint-ignore no-explicit-any
+  const cdp = page.unsafelyGetCelestialBindings() as any;
+  const frames: { t: number; data: string }[] = [];
+  const onFrame = (e: CustomEvent) => {
+    frames.push({ t: performance.now(), data: e.detail.data });
+    cdp.Page.screencastFrameAck({ sessionId: e.detail.sessionId }).catch(() => {});
+  };
+  cdp.addEventListener("Page.screencastFrame", onFrame);
+  await cdp.Page.startScreencast({ format: "jpeg", quality: 60, everyNthFrame: 1 });
+  await new Promise((r) => setTimeout(r, 150));
+  const from = performance.now();
+  await page.evaluate(
+    `(() => { const end = performance.now() + ${ms}; while (performance.now() < end) {} })()`,
+  );
+  const to = performance.now();
+  await cdp.Page.stopScreencast();
+  cdp.removeEventListener("Page.screencastFrame", onFrame);
+  // The frames that arrived inside the block (a margin at each end for the round trips).
+  return new Set(frames.filter((f) => f.t > from + 50 && f.t < to - 30).map((f) => f.data)).size;
+}
+
+/** The element's running animations: count, and the first one's kind and iterations. */
+const anims = (id: string) =>
+  `(() => { const a = ${el(id)}.getAnimations(); return { n: a.length, ` +
+  `kind: a[0]?.constructor.name, iterations: String(a[0]?.effect.getComputedTiming().iterations) }; })()`;
+
+/** The y translation of the test element `id`'s computed transform (0 when none). */
+const translateY = (id: string) =>
+  `(new DOMMatrixReadOnly(getComputedStyle(${
+    el(id)
+  }).transform === "none" ? undefined : getComputedStyle(${el(id)}).transform)).m42`;
+
 /** The whole scenario against one running server. */
 async function exercise(t: Deno.TestContext, server: RunningServer, label: string): Promise<void> {
   await t.step(`${label}: the bundle carries stamped worklets`, async () => {
@@ -180,6 +225,85 @@ async function exercise(t: Deno.TestContext, server: RunningServer, label: strin
       await page.mouse.move(box.x + 120, box.y, { steps: 6 });
       await pollFor(page, `${translateX("pan")} > 60`, 10_000);
       await page.mouse.up();
+    });
+
+    await t.step(`${label}: nothing on screen changes while an idle page is blocked`, async () => {
+      await pollFor(page, `${el("move-box")} && ${el("move-box")}.getAnimations().length === 0`);
+      await new Promise((r) => setTimeout(r, 1700)); // the mount-time dim animation settles
+      const idle = await framesWhileBlocked(page, "move-box");
+      assert(idle <= 2, `an idle page drew ${idle} frames while blocked`);
+    });
+
+    await t.step(
+      `${label}: sv = withTiming → a compositor animation that runs through a 500 ms block`,
+      async () => {
+        await page.evaluate(`${el("move")}.click()`);
+        const a = await page.evaluate(anims("move-box")) as { n: number; kind: string };
+        assertEquals([a.n, a.kind], [1, "Animation"]);
+        const frames = await framesWhileBlocked(page, "move-box");
+        assert(frames >= 5, `only ${frames} frames while the main thread was blocked`);
+        // The completion callback (runOnJS) fires; the final value lands inline.
+        await pollFor(page, `${el("moved")}.textContent === "moved"`, 10_000);
+        await pollFor(page, `Math.abs(${translateX("move-box")} - 200) < 0.5`);
+        await pollFor(page, `${style("move-box", "opacity")} === "0.5"`);
+        assertEquals((await page.evaluate(anims("move-box")) as { n: number }).n, 0);
+      },
+    );
+
+    await t.step(
+      `${label}: the same animation on Reanimated's own loop stops while blocked`,
+      async () => {
+        // The pass's opt-out: Reanimated's requestAnimationFrame loop, as without the pass.
+        await page.evaluate("globalThis.__DENEXT_REANIMATED_WAAPI = false");
+        await page.evaluate(`${el("move-back")}.click()`);
+        assertEquals((await page.evaluate(anims("move-box")) as { n: number }).n, 0);
+        const frames = await framesWhileBlocked(page, "move-box");
+        assert(frames <= 2, `the main-thread loop drew ${frames} frames while blocked`);
+        await pollFor(page, `Math.abs(${translateX("move-box")}) < 0.5`, 10_000);
+        await page.evaluate("delete globalThis.__DENEXT_REANIMATED_WAAPI");
+      },
+    );
+
+    await t.step(
+      `${label}: an animation returned from the style runs on the compositor`,
+      async () => {
+        await page.evaluate(`${el("dim")}.click()`);
+        await pollFor(page, `${el("dim-box")}.getAnimations().length === 1`);
+        await pollFor(page, `${style("dim-box", "opacity")} === "0.3"`, 10_000);
+        await pollFor(page, `${el("dim-box")}.getAnimations().length === 0`, 10_000);
+      },
+    );
+
+    await t.step(`${label}: withSequence out and back, and a forever withRepeat`, async () => {
+      await page.evaluate(`${el("seq")}.click()`);
+      await pollFor(page, `${el("seq-box")}.getAnimations().length === 1`);
+      await pollFor(page, `${translateY("seq-box")} > 10`, 10_000);
+      await pollFor(page, `${el("seq-box")}.getAnimations().length === 0`, 10_000);
+      assertEquals(await page.evaluate(translateY("seq-box")), 0);
+      await page.evaluate(`${el("spin-toggle")}.click()`);
+      await pollFor(page, `${el("spin-box")} && ${el("spin-box")}.getAnimations().length === 1`);
+      const spin = await page.evaluate(anims("spin-box")) as { iterations: string };
+      assertEquals(spin.iterations, "Infinity"); // (a number would not survive the JSON trip)
+      await page.evaluate(`${el("spin-toggle")}.click()`);
+      await pollFor(page, `!${el("spin-box")}`);
+    });
+
+    await t.step(
+      `${label}: a FadeIn entering animation is CSS, and runs through a block`,
+      async () => {
+        await page.evaluate(`${el("enter-toggle")}.click()`);
+        await pollFor(page, `${el("enter-box")} && ${el("enter-box")}.getAnimations().length > 0`);
+        const a = await page.evaluate(anims("enter-box")) as { kind: string };
+        assertEquals(a.kind, "CSSAnimation");
+        const frames = await framesWhileBlocked(page, "enter-box");
+        assert(frames >= 5, `only ${frames} frames while the main thread was blocked`);
+      },
+    );
+
+    await t.step(`${label}: LayoutAnimation.configureNext animates the moved views`, async () => {
+      await page.evaluate(`${el("la-add")}.click()`);
+      await pollFor(page, `${el("la-a")} && ${el("la-b")}.getAnimations().length === 1`);
+      await pollFor(page, `${el("la-b")}.getAnimations().length === 0`, 10_000);
     });
 
     await t.step(`${label}: no console errors`, () => {

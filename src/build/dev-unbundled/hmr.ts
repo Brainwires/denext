@@ -50,6 +50,7 @@ export interface HmrChange {
  */
 export function onChange(st: UnbundledState, changedRaw: string[]): HmrChange {
   const boundaries = new Set<string>();
+  st.graphEpoch++;
   let anyKnown = false;
   let structuralReload = false;
   for (const abs of changedRaw.map(norm)) {

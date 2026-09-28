@@ -1,10 +1,12 @@
 // Unbundled dev: HTTP handling — one function per URL class under `/_denext/`.
 
-import { join } from "@std/path";
+import { extname, join } from "@std/path";
+import { contentType } from "@std/media-types";
 import { withinDir } from "../dev-server/dev-endpoints.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { ensureClientDeps, ensureNpmBundle } from "./deps.ts";
 import { serveEntry, serveSpaEntry } from "./entries.ts";
+import { rewriteRuntimeBridges } from "./react-native.ts";
 import {
   DEP_PREFIX,
   EMPTY_MODULE,
@@ -39,10 +41,25 @@ async function serveJs(what: string, produce: () => Promise<string>): Promise<Re
   }
 }
 
-/** Serve a pre-bundled file from `dir`, 404 when absent. */
-async function serveBundled(dir: string, name: string, kind: string): Promise<Response> {
+/**
+ * Serve a pre-bundled file from `dir`, 404 when absent. A module passes through `rewrite`; a
+ * non-module file (an asset the dependency bundle emitted) is served as bytes with its type.
+ */
+async function serveBundled(
+  dir: string,
+  name: string,
+  kind: string,
+  rewrite?: (code: string) => string,
+): Promise<Response> {
   try {
-    return js(await Deno.readTextFile(join(dir, name)));
+    if (!name.endsWith(".js")) {
+      const type = contentType(extname(name)) ?? "application/octet-stream";
+      return new Response(await Deno.readFile(join(dir, name)), {
+        headers: { "content-type": type, "cache-control": "no-store" },
+      });
+    }
+    const code = await Deno.readTextFile(join(dir, name));
+    return js(rewrite ? rewrite(code) : code);
   } catch {
     return js(`// ${kind} not found: ${name}`, 404);
   }
@@ -60,7 +77,9 @@ async function serveDep(st: UnbundledState, path: string): Promise<Response> {
     return js(errStub("dep prebundle", err), 500);
   }
   const name = path.slice(DEP_PREFIX.length);
-  return serveBundled(st.compat ? st.runtimeDir : st.depDir, name, "dep");
+  // React Native mode: the runtime's bare react-native-web bridge → the dependency bundle.
+  const rewrite = st.opts.reactNative ? rewriteRuntimeBridges : undefined;
+  return serveBundled(st.compat ? st.runtimeDir : st.depDir, name, "dep", rewrite);
 }
 
 /** `/_denext/@npm/<name>`: the compat on-demand npm bundle. */

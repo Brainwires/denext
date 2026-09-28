@@ -814,7 +814,9 @@ Deno.test("expo-font loads through FontFace; expo-asset wraps bundled URLs", asy
 Deno.test("expo core, widgets, dev-client and build-properties answer as Expo's web build", async () => {
   assertThrows(() => Expo.requireNativeModule("ExpoThing"), Error, "Cannot find native module");
   assertEquals(Expo.requireOptionalNativeModule("ExpoThing"), null);
-  assertEquals((Expo.requireNativeView("V") as Any)({}), null);
+  // A native view slot of type "V" (its children render where "V" is not registered natively).
+  assertEquals(typeof Expo.requireNativeView("V"), "function");
+  assertEquals((Expo.requireNativeView("V") as Any).displayName, "V");
   class Mod extends Expo.NativeModule<{ change: (v: number) => void }> {}
   const mod = Expo.registerWebModule(Mod);
   const seen: number[] = [];

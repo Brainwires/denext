@@ -333,8 +333,10 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(on.platformExtensions, [".web.tsx", ".web.ts", ".web.jsx", ".web.js"]);
   assertEquals(on.jsxInJs, true);
   assertEquals(on.plugins.map((p) => p.name), [
+    "denext-native-module-scan",
     "denext-react-native-desktop",
     "denext-react-native-web",
+    "denext-react-native-patches",
     "denext-expo-router-ctx",
     "denext-expo-router-navigators",
     "denext-expo-shims",
@@ -347,8 +349,10 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(
     off.plugins.map((p) => p.name),
     [
+      "denext-native-module-scan",
       "denext-react-native-desktop",
       "denext-react-native-web",
+      "denext-react-native-patches",
       "denext-expo-router-ctx",
       "denext-expo-router-navigators",
       "denext-react-native-lists",
@@ -667,7 +671,7 @@ Deno.test("withAppearancePolyfill: inserted ahead of the default export; left al
   assertEquals(withAppearancePolyfill("module.exports = {};"), "module.exports = {};");
 });
 
-Deno.test("reactNative dev: an explicit unbundled: true is refused (the bundled loop is required)", async () => {
+Deno.test("reactNative dev: the per-module (unbundled) loop is the default, like any SPA", async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_rn_unbundled_" }));
   try {
     await writeTree(dir, {
@@ -677,13 +681,10 @@ Deno.test("reactNative dev: an explicit unbundled: true is refused (the bundled 
       "deno.json": "{}\n",
     });
     const paths = await resolveProject(dir);
-    assertThrows(
-      () => createSpaDevState({ paths, unbundled: true }),
-      Error,
-      "`reactNative` apps develop on the bundled dev loop",
-    );
-    assertEquals(createSpaDevState({ paths }).unbundledOptIn, false, "the default is bundled");
+    assertEquals(createSpaDevState({ paths, unbundled: true }).unbundledOptIn, true);
     assertEquals(createSpaDevState({ paths, unbundled: false }).unbundledOptIn, false);
+    const optOut = Deno.env.get("DENEXT_DEV_UNBUNDLED") === "0";
+    assertEquals(createSpaDevState({ paths }).unbundledOptIn, !optOut, "on unless opted out");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

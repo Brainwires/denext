@@ -14,6 +14,13 @@ import type { Component, VNode, VNodeChild, VNodeChildren } from "../../jsx/type
 import { useEffect, useLayoutEffect, useRef, useState } from "../../runtime/hooks.ts";
 import type { RowView, VirtualController } from "./controller.ts";
 import { px, slot } from "./shared.ts";
+import {
+  hasSnapPoints,
+  snapContainerStyle,
+  snapMarkers,
+  snapPositions,
+  snapWindow,
+} from "./snap.ts";
 import { useVirtualController } from "./use-virtual-list.ts";
 import type { VirtualListProps } from "./types.ts";
 
@@ -297,6 +304,7 @@ export function VirtualList<T>(props: VirtualListProps<T>): VNode {
       style: outerStyle(props, self, ctl.printing, !!control),
     },
     contentContainer(props, scrollContent(ctl, props, self, findReady)),
+    ...snapNodes(ctl, props, self),
     props.announceChanges ? announceRegion(announcement) : null,
   );
   return control ? refreshWrapper(control, props, scroller) : scroller;
@@ -372,6 +380,25 @@ function contentContainer<T>(props: VirtualListProps<T>, content: VNodeChild[]):
   }, ...content);
 }
 
+/**
+ * The snap markers of `scrollSnap` near the viewport, in scroller coordinates (a content offset
+ * sits `delta` px earlier in the scroller). None while printing, for an external scroller, or
+ * when the scroll space is scaled (offsets there are not 1:1).
+ */
+function snapNodes<T>(
+  ctl: VirtualController<T>,
+  props: VirtualListProps<T>,
+  self: boolean,
+): VNode[] {
+  const opts = props.scrollSnap;
+  const core = ctl.core;
+  if (!opts || !hasSnapPoints(opts) || !self || ctl.printing || core.scaled) return [];
+  const content = core.lead + core.total + core.tail;
+  const [from, to] = snapWindow(core.v + core.lead, core.vp);
+  const positions = snapPositions(opts, content, from, to);
+  return snapMarkers(opts, positions, content, !!props.horizontal, -core.delta, startSide(ctl));
+}
+
 /** The polite live region of `announceChanges`. */
 function announceRegion(message: string): VNode {
   return h("div", {
@@ -430,6 +457,7 @@ function outerStyle<T>(
     [horizontal ? "overflowX" : "overflowY"]: "auto",
     overflowAnchor: "none",
     position: "relative",
+    ...(hasSnapPoints(props.scrollSnap) ? snapContainerStyle(horizontal) : {}),
     ...flex,
     [horizontal ? "width" : "height"]: "100%",
     ...(wrapped ? { flex: "1 1 auto", minHeight: "0", minWidth: "0" } : {}),

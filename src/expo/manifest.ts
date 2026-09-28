@@ -50,8 +50,13 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "57.0.18",
     status: "partial",
     notes: "registerRootComponent mounts through react-native-web's AppRegistry, so the app's " +
-      "own index.ts is the web entry. No native modules: requireNativeModule throws, " +
-      "requireOptionalNativeModule returns null, requireNativeView renders nothing. " +
+      "own index.ts is the web entry. requireNativeModule / requireOptionalNativeModule " +
+      "return the Capacitor plugin of that name in the iOS/Android shell (the desktop " +
+      "extension on Deno Desktop): every function returns a Promise (no synchronous " +
+      "functions or constants: no JSI), events arrive through addListener. Elsewhere " +
+      "requireNativeModule throws and requireOptionalNativeModule returns null. " +
+      "requireNativeView is a denext/mobile native view slot (`denext mobile add " +
+      "native-views`; the children render where the view type is not registered). " +
       "installOnUIRuntime does nothing (no worklets UI runtime). " +
       "`expo/fetch` resolves here too (the platform fetch).",
   },

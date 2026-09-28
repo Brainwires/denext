@@ -1,0 +1,140 @@
+name: Mobile build (nightly)
+
+# The Capacitor build pipeline, run for real on examples/mobile: `denext mobile build` exports
+# the web UI, runs `cap sync`, and builds the native app, the same commands an app runs locally
+# or in its own CI (examples/capacitor-ci is the recipe for an app repository).
+#
+#   android  a debug .apk, then a signed release .aab of the `staging` flavor (a throwaway
+#            upload keystore made in the job) and `mobile submit android --dry-run --offline`
+#            against it; the artifacts are uploaded
+#   ios      an unsigned Release archive packaged as an .ipa (`--unsigned`: no certificates on
+#            the runner); uploaded as an artifact
+#
+# Not on the push / pull_request path (the native builds take minutes and download Gradle and
+# the Swift packages): nightly on `development`, and on manual dispatch.
+on:
+  schedule:
+    - cron: "30 7 * * *" # 07:30 UTC daily, after e2e.yml
+  workflow_dispatch:
+    inputs:
+      ios:
+        description: Also build iOS (macOS runner minutes)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The CLI from this checkout. --node-modules-dir=none: next to the example's package.json,
+  # Deno would otherwise resolve the CLI's own npm: imports from its node_modules.
+  DENEXT: deno run -A --node-modules-dir=none ../../cli.ts
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: examples/mobile
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.6" # match ci.yml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Cache Deno and Gradle
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/deno
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-mobile-${{ hashFiles('deno.lock', 'examples/mobile/android/**/*.gradle', 'examples/mobile/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-mobile-
+      - name: Install the Capacitor packages
+        run: npm ci --no-audit --no-fund
+      # Every icon and splash the committed sources would get (nothing is written).
+      - name: Plan the icons and splash
+        run: $DENEXT mobile assets --dry-run --icon ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png
+      - name: Debug build (.apk)
+        run: $DENEXT mobile build android --jobs 2
+      # A throwaway upload keystore proves the signing path; its passwords reach Gradle through
+      # the environment only (the build prints `[env: GRADLE_OPTS]`, never a value).
+      - name: Signed release build of the staging flavor (.aab)
+        run: |
+          keytool -genkeypair -keystore "$RUNNER_TEMP/upload.jks" -alias upload -keyalg RSA \
+            -keysize 2048 -validity 2 -storepass "$DENEXT_ANDROID_KEYSTORE_PASSWORD" \
+            -keypass "$DENEXT_ANDROID_KEYSTORE_PASSWORD" -dname "CN=denext CI"
+          DENEXT_ANDROID_KEYSTORE="$RUNNER_TEMP/upload.jks" \
+            $DENEXT mobile build android --release --flavor staging --skip-export \
+            --build-number "${{ github.run_number }}" --jobs 2
+          jarsigner -verify dist/mobile/android-staging/*.aab
+        env:
+          DENEXT_ANDROID_KEY_ALIAS: upload
+          DENEXT_ANDROID_KEYSTORE_PASSWORD: ci-${{ github.run_id }}
+      # The store checks without a store: the bundle's structure and signature, and a
+      # service-account key (a throwaway one) that signs a token. Nothing is uploaded.
+      - name: Submit dry run
+        run: |
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$RUNNER_TEMP/sa.pem"
+          jq -n --rawfile key "$RUNNER_TEMP/sa.pem" \
+            '{type: "service_account", client_email: "ci@example.iam.gserviceaccount.com", private_key: $key}' \
+            > "$RUNNER_TEMP/sa.json"
+          $DENEXT mobile submit android --flavor staging --dry-run --offline \
+            --service-account "$RUNNER_TEMP/sa.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: examples/mobile/dist/mobile/
+      - name: Remove the keys
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks" "$RUNNER_TEMP/sa.pem" "$RUNNER_TEMP/sa.json"
+
+  ios:
+    if: github.event_name == 'schedule' || inputs.ios
+    runs-on: macos-15
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: examples/mobile
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.6"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Cache Deno and Swift packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/Library/Caches/deno
+            examples/mobile/.denext/mobile-build/ios/DerivedData/SourcePackages
+          key: ${{ runner.os }}-mobile-${{ hashFiles('deno.lock', 'examples/mobile/package-lock.json') }}
+          restore-keys: ${{ runner.os }}-mobile-
+      - name: Install the Capacitor packages
+        run: npm ci --no-audit --no-fund
+      # Unsigned: no certificate or provisioning profile on the runner. A signed build adds
+      # --team and the App Store Connect API key (see /docs/mobile-build).
+      - name: Unsigned Release build (.ipa)
+        run: $DENEXT mobile build ios --release --unsigned
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: examples/mobile/dist/mobile/

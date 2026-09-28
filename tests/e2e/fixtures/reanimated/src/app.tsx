@@ -1,8 +1,10 @@
 // Every worklet here is written the way a React Native app writes it for Metro + the Babel
 // plugin: no dependency arrays, no 'worklet' directives on hook callbacks.
-import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { LayoutAnimation, Pressable, Text, View } from "react-native";
 import Animated, {
+  Easing,
+  FadeIn,
   runOnJS,
   type SharedValue,
   useAnimatedReaction,
@@ -10,6 +12,8 @@ import Animated, {
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
+  withRepeat,
+  withSequence,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
@@ -118,6 +122,99 @@ function Scroller({ scrollY }: { scrollY: SharedValue<number> }) {
   );
 }
 
+/** A button. */
+function Button({ id, onPress }: { id: string; onPress: () => void }) {
+  return (
+    <Pressable testID={id} onPress={onPress}>
+      <Text>{id}</Text>
+    </Pressable>
+  );
+}
+
+/** A forever spinner started on mount (its style mapper's first run is still due then). */
+function Spinner() {
+  const rot = useSharedValue(0);
+  const spinStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${rot.value}deg` }] }));
+  useEffect(() => {
+    rot.value = withRepeat(withTiming(360, { duration: 1000, easing: Easing.linear }), -1);
+  }, []);
+  return (
+    <Animated.View
+      testID="spin-box"
+      style={[{ width: 40, height: 40, backgroundColor: "orange" }, spinStyle]}
+    />
+  );
+}
+
+/**
+ * The compositor cases: transform / opacity animations Reanimated would step on the main
+ * thread, which React Native mode runs as Web Animations instead.
+ */
+function Compositor() {
+  // A shared value animated to 200 whose only reader maps it to transform + opacity.
+  const x = useSharedValue(0);
+  const [moved, setMoved] = useState(false);
+  const moveStyle = useAnimatedStyle(() => ({
+    opacity: 1 - x.value / 400,
+    transform: [{ translateX: x.value }],
+  }));
+  const move = () => {
+    x.value = withTiming(200, { duration: 2000 }, (finished) => {
+      if (finished) runOnJS(setMoved)(true);
+    });
+  };
+  const moveBack = () => {
+    x.value = withTiming(0, { duration: 2000 });
+  };
+  // An animation returned from the style, re-created when React state changes.
+  const [dim, setDim] = useState(false);
+  const dimStyle = useAnimatedStyle(() => ({
+    opacity: withTiming(dim ? 0.3 : 1, { duration: 1500 }),
+  }));
+  // withSequence out and back.
+  const y = useSharedValue(0);
+  const seqStyle = useAnimatedStyle(() => ({ transform: [{ translateY: y.value }] }));
+  const sequence = () => {
+    y.value = withSequence(
+      withTiming(40, { duration: 400 }),
+      withTiming(0, { duration: 400 }),
+    );
+  };
+  // A forever spinner, mounted and unmounted on demand.
+  const [spin, setSpin] = useState(false);
+  // An entering layout animation.
+  const [shown, setShown] = useState(false);
+  // LayoutAnimation over a list that grows at the top.
+  const [items, setItems] = useState(["b", "c"]);
+  const add = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setItems(["a", ...items]);
+  };
+  const box = { width: 40, height: 40, backgroundColor: "teal" };
+  return (
+    <View>
+      <Button id="move" onPress={move} />
+      <Button id="move-back" onPress={moveBack} />
+      <Button id="dim" onPress={() => setDim(true)} />
+      <Button id="seq" onPress={sequence} />
+      <Button id="enter-toggle" onPress={() => setShown(true)} />
+      <Button id="la-add" onPress={add} />
+      <Text testID="moved">{moved ? "moved" : "idle"}</Text>
+      <Animated.View testID="move-box" style={[box, moveStyle]} />
+      <Animated.View testID="dim-box" style={[box, dimStyle]} />
+      <Animated.View testID="seq-box" style={[box, seqStyle]} />
+      <Button id="spin-toggle" onPress={() => setSpin(!spin)} />
+      {spin && <Spinner />}
+      {shown && <Animated.View testID="enter-box" entering={FadeIn.duration(2000)} style={box} />}
+      {items.map((id) => (
+        <View key={id} testID={`la-${id}`} style={{ height: 30 }}>
+          <Text>{id}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 export function App() {
   const [factor, setFactor] = useState(1);
   const scrollY = useSharedValue(0);
@@ -137,6 +234,7 @@ export function App() {
         />
         <PanBox />
         <Scroller scrollY={scrollY} />
+        <Compositor />
       </View>
     </GestureHandlerRootView>
   );

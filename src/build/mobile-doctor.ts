@@ -584,7 +584,7 @@ const splash: Check = {
 };
 
 /** The app's own source files (not dependencies, builds, native projects or the export). */
-async function* appSources(dir: string): AsyncGenerator<string> {
+async function* appSources(dir: string): AsyncGenerator<{ rel: string; text: string }> {
   const skip = [
     /node_modules/,
     /(^|\/)\.denext(\/|$)/,
@@ -594,7 +594,7 @@ async function* appSources(dir: string): AsyncGenerator<string> {
     const e of walk(dir, { includeDirs: false, exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"], skip })
   ) {
     if ((await Deno.stat(e.path)).size > 1024 * 1024) continue;
-    yield await Deno.readTextFile(e.path);
+    yield { rel: relative(dir, e.path), text: await Deno.readTextFile(e.path) };
   }
 }
 
@@ -603,7 +603,7 @@ async function authFacts(
   dir: string,
 ): Promise<{ auth: boolean; deletion: boolean; google: boolean; apple: boolean }> {
   const facts = { auth: false, deletion: false, google: false, apple: false };
-  for await (const text of appSources(dir)) {
+  for await (const { text } of appSources(dir)) {
     facts.auth ||=
       /\b(?:denextAuth|nativeSession|signInWithApple|signInWithGoogle|signInNative)\s*\(/.test(
         text,
@@ -646,6 +646,87 @@ const accountDeletion: Check = {
   },
 };
 
+// ---- storage ----------------------------------------------------------------------------------
+
+/**
+ * Web storage an app keeps data in: `localStorage`, IndexedDB, and redux-persist's web storage
+ * (localStorage). iOS and Android may clear a WebView's storage under disk pressure
+ * (https://capacitorjs.com/docs/guides/storage: "must be considered transient").
+ */
+const WEB_STORAGE =
+  /\blocalStorage\b|\bindexedDB\s*\.\s*open\s*\(|["']redux-persist\/lib\/storage["']/;
+
+/** Where `denext mobile add storage` puts the DenextStorage plugin. */
+const IOS_STORAGE_PLUGIN = "ios/App/App/DenextStoragePlugin.swift";
+const ANDROID_STORAGE_PLUGIN =
+  "android/app/src/main/java/dev/denext/storage/DenextStoragePlugin.java";
+
+/** Packages whose data denext keeps in its durable store when one is installed. */
+const DURABLE_STORE_USERS = ["@react-native-async-storage/async-storage", "react-native-mmkv"];
+
+/** Whether the project has a durable native store: DenextStorage, or @capacitor-community/sqlite. */
+async function hasDurableStore(p: MobileProject): Promise<boolean> {
+  if (await isFile(join(p.root, IOS_STORAGE_PLUGIN))) return true;
+  if (await isFile(join(p.root, ANDROID_STORAGE_PLUGIN))) return true;
+  return (await detectInstalledCapabilities(p.root, MOBILE_CAPABILITIES)).includes("sqlite");
+}
+
+/** The dependency names of the project's (and the app's) `package.json`. */
+async function dependencies(p: MobileProject): Promise<Set<string>> {
+  const names = new Set<string>();
+  for (const dir of new Set([p.root, p.appDir])) {
+    const text = await readText(join(dir, "package.json"));
+    try {
+      const pkg = JSON.parse(text ?? "{}") as Record<string, unknown>;
+      for (const deps of [pkg.dependencies, pkg.devDependencies]) {
+        if (deps && typeof deps === "object") Object.keys(deps).forEach((n) => names.add(n));
+      }
+    } catch {
+      // An unreadable package.json lists nothing.
+    }
+  }
+  return names;
+}
+
+const webStorage: Check = {
+  id: "web-storage",
+  profiles: ["store", "release"],
+  run: async (p) => {
+    const files: string[] = [];
+    let kvStore = false;
+    for await (const { rel, text } of appSources(p.appDir)) {
+      if (WEB_STORAGE.test(text)) files.push(rel);
+      kvStore ||= /\bopenKeyValueStore\s*\(/.test(text);
+    }
+    const out: MobileDoctorFinding[] = [];
+    if (files.length > 0) {
+      out.push({
+        check: "web-storage",
+        level: "warning",
+        message: `${files.slice(0, 5).join(", ")}${files.length > 5 ? ", …" : ""} keep data in ` +
+          "localStorage / IndexedDB, which iOS and Android may clear from the WebView under " +
+          'storage pressure (Capacitor: WebView storage "must be considered transient")',
+        fix: "keep what must survive in openKeyValueStore() from denext/mobile (`denext mobile " +
+          "add storage`: a SQLite file in the app's data folder), or AsyncStorage / MMKV in " +
+          "React Native mode, which run on it; secrets go in secureStore",
+      });
+    }
+    const deps = await dependencies(p);
+    const needs = DURABLE_STORE_USERS.filter((n) => deps.has(n));
+    if (kvStore) needs.push("openKeyValueStore()");
+    if (needs.length > 0 && !(await hasDurableStore(p))) {
+      out.push({
+        check: "web-storage",
+        level: "warning",
+        message: `${needs.join(", ")} fall back to the WebView's IndexedDB (evictable): the ` +
+          "project has no durable native store",
+        fix: "run `denext mobile add storage` (the DenextStorage plugin), then rebuild the app",
+      });
+    }
+    return out;
+  },
+};
+
 /** Every check, in report order. */
 const CHECKS: readonly Check[] = [
   serverUrl,
@@ -663,6 +744,7 @@ const CHECKS: readonly Check[] = [
   appIcons,
   splash,
   accountDeletion,
+  webStorage,
 ];
 
 /** The ids of the checks a profile runs (for docs and `--json`). */

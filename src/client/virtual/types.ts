@@ -14,6 +14,7 @@ import type {
 } from "./viewability.ts";
 import type { VirtualListScrollEvent } from "./scroll-events.ts";
 import type { ItemLayoutAnimationOptions } from "./animate.ts";
+import type { ScrollSnapOptions } from "./snap.ts";
 
 export type { TextEstimateOptions } from "./text-estimate.ts";
 export type {
@@ -386,6 +387,14 @@ export interface VirtualListProps<T> extends VirtualListOptions<T> {
   readonly className?: string;
   /** Inline style of the outer element (give it a height when the list scrolls itself). */
   readonly style?: Readonly<Record<string, string | number>>;
+  /**
+   * Snap points (CSS scroll snap), React Native's way: every `interval` px (`snapToInterval`,
+   * aligned by `align`, `snapToAlignment`) or at `offsets` (`snapToOffsets`), with `stop:
+   * "always"` for one snap point per fling (`decelerationRate="fast"`). Offsets are content
+   * px from the scroller's start (the header included). Only the markers near the viewport are
+   * drawn; ignored while the scroll space is scaled (lists past ~8M px).
+   */
+  readonly scrollSnap?: ScrollSnapOptions;
   /** Accessible name of the list. */
   readonly "aria-label"?: string;
   /** Id of the element naming the list. */

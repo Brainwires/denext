@@ -24,7 +24,11 @@ import {
 } from "../client/navigation.ts";
 import { detectPlatform } from "./animation.ts";
 import { navigationContexts, type TabScope, type TabStackHandle } from "./context.ts";
+import { useRouteAnnouncer } from "./announcer.ts";
 import { suspendViewTransitions } from "./vt-hold.ts";
+import { type NavigationThemeProps, themeAttributes, useNavigationTheme } from "./theme.ts";
+import { isNativeShell } from "../mobile/bridge.ts";
+import { haptic } from "../mobile/haptics.ts";
 import type { NavigationPlatform } from "./types.ts";
 
 /** One tab of a {@linkcode TabsLayout}. */
@@ -51,8 +55,11 @@ export interface TabDefinition {
   readonly unmountOnBlur?: boolean;
 }
 
-/** Props of {@linkcode TabsView}. */
-export interface TabsViewProps {
+/**
+ * Props of {@linkcode TabsView}. `theme`, `material` and `accentColor` pick the look (see
+ * {@linkcode NavigationThemeProps}).
+ */
+export interface TabsViewProps extends NavigationThemeProps {
   /** The tabs, in bar order. */
   readonly tabs: readonly TabDefinition[];
   /** The shown tab's name. */
@@ -69,6 +76,11 @@ export interface TabsViewProps {
   readonly platform?: NavigationPlatform;
   /** Hide the bar (e.g. while the on-screen keyboard is up). */
   readonly tabBarHidden?: boolean;
+  /**
+   * A selection haptic when a press switches tabs, inside the native shell only (default
+   * `true`; the web never vibrates for it).
+   */
+  readonly tabHaptics?: boolean;
   /** Receives each tab's stack registry, so a press on the active tab can pop it. */
   readonly scopeFor?: (name: string) => TabScope;
   /** Extra style for the container (its height defaults to `100dvh`). */
@@ -77,6 +89,11 @@ export interface TabsViewProps {
   readonly tabBarStyle?: Readonly<Record<string, string | number | undefined>>;
   /** A class for the container. */
   readonly className?: string;
+  /**
+   * Announce the new tab's title to screen readers when the tab changes (an `aria-live`
+   * region). Default `true`.
+   */
+  readonly announceRouteChanges?: boolean;
 }
 
 /** Whether `pathname` belongs to `tab`. */
@@ -174,13 +191,13 @@ function tabButtonStyle(platform: NavigationPlatform, focused: boolean): Record<
     alignItems: "center",
     justifyContent: "center",
     gap: ios ? 2 : 4,
-    minHeight: ios ? 49 : 64,
+    minHeight: `var(--dnx-tab-min-height, ${ios ? 49 : 64}px)`,
     textDecoration: "none",
     color: focused ? "var(--dnx-tab-active, LinkText)" : "var(--dnx-tab-inactive, GrayText)",
     fontSize: ios ? 10 : 12,
     fontWeight: focused ? 600 : 500,
     fontFamily: "inherit",
-    background: "none",
+    background: "var(--dnx-tab-bg, none)",
     border: 0,
     cursor: "pointer",
   };
@@ -193,6 +210,7 @@ function tabIcon(tab: TabDefinition, focused: boolean, platform: NavigationPlatf
   const pill = platform === "android";
   return h("span", {
     "aria-hidden": "true",
+    "data-dnx-tab-icon": "",
     style: {
       display: "inline-flex",
       alignItems: "center",
@@ -221,7 +239,12 @@ function tabButton(props: TabsViewProps, tab: TabDefinition, platform: Navigatio
       "aria-selected": focused ? "true" : "false",
       "aria-controls": `dnx-tabpanel-${tab.name}`,
       "data-dnx-tab": tab.name,
-      onClick: (event: MouseEvent) => props.onTabPress(tab.name, event),
+      onClick: (event: MouseEvent) => {
+        if (!focused && props.tabHaptics !== false && isNativeShell()) {
+          haptic("selection").catch(() => {});
+        }
+        props.onTabPress(tab.name, event);
+      },
       style: tabButtonStyle(platform, focused),
     },
     tabIcon(tab, focused, platform),
@@ -248,9 +271,13 @@ function tabBar(
         display: props.tabBarHidden ? "none" : "flex",
         alignItems: "stretch",
         background: "var(--dnx-tabbar-bg, Canvas)",
-        borderTop: position === "bottom" && platform === "ios" ? hairline : "none",
+        borderTop: position === "bottom" && platform === "ios"
+          ? `var(--dnx-tabbar-border-top, ${hairline})`
+          : "none",
         borderBottom: position === "top" ? hairline : "none",
-        paddingBottom: position === "bottom" ? "env(safe-area-inset-bottom, 0px)" : 0,
+        paddingBottom: position === "bottom"
+          ? "var(--dnx-tabbar-pad-bottom, env(safe-area-inset-bottom, 0px))"
+          : 0,
         ...(props.tabBarStyle ?? {}),
       },
     },
@@ -264,6 +291,11 @@ export function TabsView(props: TabsViewProps): VNode {
   const platform = props.platform ?? detectPlatform();
   const position = props.position ?? "bottom";
   const ctx = navigationContexts();
+  useRouteAnnouncer(
+    active,
+    tabs.find((t) => t.name === active)?.title,
+    props.announceRouteChanges !== false,
+  );
   const panelEls = useRef(new Map<string, HTMLElement>());
   const scrollMemo = useRef(new Map<string, number>());
 
@@ -314,15 +346,19 @@ export function TabsView(props: TabsViewProps): VNode {
     ...tabs.filter((tab) => panels.has(tab.name)).map(panel),
   );
   const bar = tabBar(props, platform, position);
+  useNavigationTheme(props.theme ?? "auto");
+  const themed = themeAttributes(props, platform);
   return h(
     "div",
     {
       "data-dnx-tabs": position,
+      ...themed.attrs,
       className: props.className,
       style: {
         display: "flex",
         flexDirection: "column",
         height: "var(--dnx-tabs-height, 100dvh)",
+        ...themed.style,
         ...(props.style ?? {}),
       },
     },
@@ -330,8 +366,11 @@ export function TabsView(props: TabsViewProps): VNode {
   );
 }
 
-/** Props of {@linkcode TabsLayout}. */
-export interface TabsLayoutProps {
+/**
+ * Props of {@linkcode TabsLayout}. `theme` (default `"auto"`: the platform theme inside the
+ * native shell), `material` and `accentColor` pick the look (see {@linkcode NavigationThemeProps}).
+ */
+export interface TabsLayoutProps extends NavigationThemeProps {
   /** The tabs, in bar order. */
   readonly tabs: readonly TabDefinition[];
   /** The layout's `children` (the current route under the tabs). */
@@ -352,6 +391,8 @@ export interface TabsLayoutProps {
   readonly platform?: NavigationPlatform;
   /** Called on every tab press, before the layout acts on it. */
   readonly onTabPress?: (name: string) => void;
+  /** A selection haptic on a tab switch, in the native shell only (default `true`). */
+  readonly tabHaptics?: boolean;
   /** Extra style for the container. */
   readonly style?: Readonly<Record<string, string | number | undefined>>;
   /** Extra style for the bar. */
@@ -561,6 +602,10 @@ export function TabsLayout(props: TabsLayoutProps): VNode {
     position: props.position,
     platform: props.platform,
     tabBarHidden: hideOnKeyboard && keyboardUp,
+    tabHaptics: props.tabHaptics,
+    theme: props.theme,
+    material: props.material,
+    accentColor: props.accentColor,
     scopeFor,
     style: props.style,
     tabBarStyle: props.tabBarStyle,

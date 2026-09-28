@@ -38,7 +38,9 @@ import { EdgeSwipeTracker, type SwipeRelease } from "./gesture.ts";
 import { LARGE_TITLE_COLLAPSE, LargeTitle, StackHeader } from "./header.ts";
 import { Sheet } from "./sheet.ts";
 import { navigationContexts } from "./context.ts";
+import { useRouteAnnouncer } from "./announcer.ts";
 import { listenAll, type ListenerTarget } from "./listen.ts";
+import { type NavigationThemeProps, themeAttributes, useNavigationTheme } from "./theme.ts";
 import type { NavigationPlatform, ScreenOptions, StackViewEntry } from "./types.ts";
 
 /**
@@ -47,8 +49,11 @@ import type { NavigationPlatform, ScreenOptions, StackViewEntry } from "./types.
  */
 export type StackViewAnimate = "auto" | "external" | "none";
 
-/** Props of {@linkcode StackView}. */
-export interface StackViewProps {
+/**
+ * Props of {@linkcode StackView}. The theme props (`theme`, `material`, `accentColor`) pick the
+ * platform look: see {@linkcode NavigationThemeProps}.
+ */
+export interface StackViewProps extends NavigationThemeProps {
   /** The screens, bottom first. */
   readonly entries: readonly StackViewEntry[];
   /**
@@ -74,6 +79,11 @@ export interface StackViewProps {
   readonly containerRef?: (el: HTMLElement | null) => void;
   /** Receives the stack's handle for a tab bar (pop to root, scroll to top). */
   readonly onHandle?: (handle: StackViewHandle | null) => void;
+  /**
+   * Announce the new top screen's title to screen readers on a push or pop (an
+   * `aria-live` region; the `title` option, else the document title). Default `true`.
+   */
+  readonly announceRouteChanges?: boolean;
 }
 
 /** What {@linkcode StackView} lets its owner do. */
@@ -697,7 +707,9 @@ function cardScreen(rt: StackRt, item: ScreenItem): VNode {
         onScroll: (event: Event) => {
           const top = (event.currentTarget as HTMLElement).scrollTop;
           rt.scrollMemo.set(entry.id, top);
-          if (large) collapseLargeTitle(rt.sections.get(entry.id), top);
+          const section = rt.sections.get(entry.id);
+          markScrolled(section, top);
+          if (large) collapseLargeTitle(section, top);
         },
         style: {
           flex: 1,
@@ -774,6 +786,18 @@ function createRuntime(props: StackViewProps): StackRt {
   };
 }
 
+/** Announce the top screen when it changes (`announceRouteChanges`). */
+function useStackAnnouncer(rt: StackRt, props: StackViewProps): void {
+  const top = props.entries[props.entries.length - 1];
+  const o = top ? optionsOf(rt, top) : undefined;
+  const title = typeof o?.title === "string"
+    ? o.title
+    : typeof o?.headerTitle === "string"
+    ? o.headerTitle
+    : undefined;
+  useRouteAnnouncer(top?.id ?? "", title, props.announceRouteChanges !== false);
+}
+
 /**
  * The router-independent stack view; see the module docs. {@linkcode StackLayout} is the App
  * Router binding most apps use.
@@ -795,8 +819,11 @@ export function StackView(props: StackViewProps): VNode {
     onHandle?.(ownerHandle(rt));
     return () => onHandle?.(null);
   }, []);
+  useStackAnnouncer(rt, props);
   useEdgeSwipe(rt, props.swipeBack ?? rt.platform === "ios");
   useAndroidBack(rt, props.entries.length > 1);
+  useNavigationTheme(props.theme ?? "auto");
+  const themed = themeAttributes(props, rt.platform);
 
   return h(
     "div",
@@ -806,12 +833,14 @@ export function StackView(props: StackViewProps): VNode {
         rt.props.containerRef?.(el);
       },
       "data-dnx-stack": rt.platform,
+      ...themed.attrs,
       className: props.className,
       style: {
         position: "relative",
         height: "var(--dnx-stack-height, 100dvh)",
         overflow: "hidden",
         isolation: "isolate",
+        ...themed.style,
         ...(props.style ?? {}),
       },
     },
@@ -819,13 +848,36 @@ export function StackView(props: StackViewProps): VNode {
   );
 }
 
-/** Fade the iOS header's small title in as the large title scrolls under the bar. */
+/**
+ * Mark a screen `data-dnx-scrolled` while its content is scrolled off the top (the platform
+ * theme's bars switch from the scroll-edge look to their material on it).
+ */
+function markScrolled(section: HTMLElement | undefined, scrollTop: number): void {
+  if (typeof section?.setAttribute !== "function") return;
+  const scrolled = scrollTop > 0;
+  if (section.hasAttribute?.("data-dnx-scrolled") === scrolled) return;
+  if (scrolled) section.setAttribute("data-dnx-scrolled", "");
+  else section.removeAttribute?.("data-dnx-scrolled");
+}
+
+/**
+ * The iOS large title as the screen scrolls: the bar's small title fades in over the last
+ * 20 px before the large one has scrolled under the bar, and pulling down past the top
+ * stretches the large title (as UINavigationBar does).
+ */
 function collapseLargeTitle(section: HTMLElement | undefined, scrollTop: number): void {
-  const title = section?.querySelector?.("[data-dnx-header-title]") as
-    | HTMLElement
-    | null
-    | undefined;
-  if (title?.style) title.style.opacity = scrollTop >= LARGE_TITLE_COLLAPSE ? "1" : "0";
+  const title = section?.querySelector?.("[data-dnx-header-title]") as HTMLElement | null;
+  if (title?.style) {
+    const fade = (scrollTop - (LARGE_TITLE_COLLAPSE - 20)) / 20;
+    title.style.setProperty("opacity", String(Math.min(1, Math.max(0, fade))));
+  }
+  const large = section?.querySelector?.("[data-dnx-large-title]") as HTMLElement | null;
+  if (!large?.style) return;
+  const stretch = scrollTop < 0 ? 1 + Math.min(-scrollTop, 120) / 480 : 1;
+  const transform = stretch === 1 ? "" : `scale(${stretch.toFixed(3)})`;
+  if (large.style.getPropertyValue("transform") === transform) return;
+  if (transform) large.style.setProperty("transform", transform);
+  else large.style.removeProperty("transform");
 }
 
 /**

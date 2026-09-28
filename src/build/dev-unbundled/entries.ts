@@ -7,7 +7,7 @@ import { scanDirective } from "../directives.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { type BoundaryManifest, crawlLocalModules, isFrameworkSource } from "../module-graph.ts";
 import { findServerOnlyLeaks, formatServerOnlyLeaks } from "../server-only-scan.ts";
-import { ensureClientDeps } from "./deps.ts";
+import { ensureClientDeps, ensureNpmBundle } from "./deps.ts";
 import { ENTRY_PATH, norm, type UnbundledState } from "./state.ts";
 import { transformGeneratedEntry } from "./transform.ts";
 
@@ -138,11 +138,15 @@ export async function serveFlightEntry(
  */
 export async function serveSpaEntry(st: UnbundledState): Promise<string> {
   await ensureClientDeps(st);
+  // React Native mode: start the dependency bundle now, while the page fetches the app modules.
+  if (st.opts.reactNative) void ensureNpmBundle(st).catch(() => {});
   const abs = norm(st.opts.spaEntry!);
   // `__denextDev` FIRST: `installDevtools()` no-ops unless the flag is set, and the SPA
   // shell's dev script (which sets it for the App Router) runs after this module.
   const src = `// denext generated SPA entry (dev, unbundled) — do not edit.\n` +
     `globalThis.__denextDev = true;\n` +
+    // The reconciler-seam installs (class components, Activity, …) the bundled entry runs.
+    (st.opts.spaInstall ?? "") +
     `import { enablePerModuleRefresh } from "denext/client-runtime";\n` +
     `import { installDevtools } from "denext/devtools";\n` +
     `enablePerModuleRefresh();\ninstallDevtools();\n` +

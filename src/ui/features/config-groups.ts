@@ -80,6 +80,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "compatibilityMode",
     // The React Native resolve mode is a bundler switch too.
     "reactNative",
+    // `denext mobile build` flavors and asset settings for the Capacitor shell.
+    "mobile",
     "plugins",
     "commands",
   ],

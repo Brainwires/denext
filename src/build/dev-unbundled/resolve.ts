@@ -4,7 +4,13 @@
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
 import { frameworkImports, readAliasPrefixes } from "../bundle.ts";
-import { NEXT_ALIASES, probeSourceFile, REACT_ALIASES } from "../next-compat.ts";
+import {
+  DENEXT_RUNTIME_FILES,
+  NEXT_ALIASES,
+  probeSourceFile,
+  REACT_ALIASES,
+  SOURCE_EXTS,
+} from "../next-compat.ts";
 import {
   DENEXT_RUNTIME_FILE,
   DEP_PREFIX,
@@ -53,7 +59,16 @@ export async function resolveFirstParty(
   spec: string,
   importerAbs: string,
 ): Promise<string | null> {
-  return resolveWith(await ensureAliases(st), spec, importerAbs);
+  return resolveWith(await ensureAliases(st), spec, importerAbs, probeExtensions(st));
+}
+
+/**
+ * The extensions an extensionless first-party import probes: React Native mode's `.web.*`
+ * ahead of the defaults (so `./button` finds `button.web.tsx` first), else the defaults.
+ */
+function probeExtensions(st: UnbundledState): readonly string[] | undefined {
+  const web = st.opts.reactNative?.platformExtensions;
+  return web && web.length > 0 ? [...web, ...SOURCE_EXTS] : undefined;
 }
 
 /**
@@ -70,7 +85,8 @@ export async function firstPartyResolver(
   importerAbs: string,
 ): Promise<(spec: string) => string | null> {
   const aliases = await ensureAliases(st);
-  return (spec) => resolveWith(aliases, spec, importerAbs);
+  const exts = probeExtensions(st);
+  return (spec) => resolveWith(aliases, spec, importerAbs, exts);
 }
 
 /** {@link resolveFirstParty} against an already loaded alias table. */
@@ -78,14 +94,15 @@ function resolveWith(
   aliases: Array<[string, string]>,
   spec: string,
   importerAbs: string,
+  exts?: readonly string[],
 ): string | null {
   let hit: string | null = null;
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
-    hit = probeSourceFile(resolve(dirname(importerAbs), spec));
+    hit = probeSourceFile(resolve(dirname(importerAbs), spec), exts);
   } else {
     for (const [key, absDir] of aliases) {
       if (spec === key.slice(0, -1) || spec.startsWith(key)) {
-        hit = probeSourceFile(resolve(absDir, spec.slice(key.length)));
+        hit = probeSourceFile(resolve(absDir, spec.slice(key.length)), exts);
         break;
       }
     }
@@ -93,9 +110,17 @@ function resolveWith(
   return hit ? norm(hit) : null;
 }
 
+/** A module the per-module transform can serve (JS/TS/JSX/TSX/JSON), not an asset. */
+export const CODE_FILE = /\.(?:[cm]?[jt]sx?|json)$/;
+
 /** compat: record an npm bare specifier for the on-demand bundle; returns its URL slug. */
-function noteNpm(st: UnbundledState, spec: string): string {
+function noteNpm(st: UnbundledState, spec: string, names?: Iterable<string>): string {
   st.npmSpecs.add(spec);
+  if (names) {
+    let set = st.npmNames.get(spec);
+    if (!set) st.npmNames.set(spec, set = new Set());
+    for (const n of names) set.add(n);
+  }
   return depSlug(spec);
 }
 
@@ -105,7 +130,23 @@ function noteNpm(st: UnbundledState, spec: string): string {
  * runtime; an npm package → the on-demand npm bundle under {@link NPM_PREFIX}.
  * Returns null to fall through (unmapped `next/*` server surface, `node:`/scheme).
  */
-export function compatDepUrl(st: UnbundledState, spec: string): string | null {
+export function compatDepUrl(
+  st: UnbundledState,
+  spec: string,
+  names?: Iterable<string>,
+): string | null {
+  const runtime = runtimeDepUrl(spec);
+  if (runtime !== undefined) return runtime;
+  if (/^(node:|data:|https?:)/.test(spec)) return null;
+  return `${NPM_PREFIX}${noteNpm(st, spec, names)}.js`;
+}
+
+/**
+ * The prebuilt-runtime URL (under {@link DEP_PREFIX}) of a react-family, `next/*` or
+ * `denext/*` specifier; `null` for an unmapped `next/*` (the server surface, left alone);
+ * `undefined` when the specifier is not one of those (a package, `node:`, a URL).
+ */
+export function runtimeDepUrl(spec: string): string | null | undefined {
   if (/^react$|^react\//.test(spec) || /^react-dom$|^react-dom\//.test(spec)) {
     const f = REACT_ALIASES[spec] ?? (spec.startsWith("react-dom") ? "react-dom.js" : "react.js");
     return `${DEP_PREFIX}${f}`;
@@ -115,35 +156,43 @@ export function compatDepUrl(st: UnbundledState, spec: string): string | null {
     const f = NEXT_ALIASES[spec];
     return f ? `${DEP_PREFIX}${f}` : null;
   }
-  const dfile = DENEXT_RUNTIME_FILE[spec];
+  // The compat runtime also prebuilds `denext/navigation`, the `denext/expo/*` shims and React
+  // Native mode's overlay, which the shared inventory (native @dep too) does not list.
+  const dfile = DENEXT_RUNTIME_FILE[spec] ?? DENEXT_RUNTIME_FILES[spec];
   if (dfile) return `${DEP_PREFIX}${dfile}`;
   if (spec === "denext") return `${DEP_PREFIX}react.js`; // bare denext API == the react shim
-  if (/^(node:|data:|https?:)/.test(spec)) return null;
-  return `${NPM_PREFIX}${noteNpm(st, spec)}.js`;
+  return undefined;
 }
 
 /**
  * Dev URL for a resolved import. First-party paths → `/_denext/@fs<abs>?v=<version>`
  * (records the graph edge + baked version); `denext`/`denext/*` → a pre-bundled dep;
  * a stylesheet, first-party or not → the empty shim (CSS is linked separately); anything else
- * (node:/data:/http:) passes through unchanged.
+ * (node:/data:/http:) passes through unchanged. `names` are the bindings the importing module
+ * takes from `spec`, recorded for a dependency-bundle entry (React Native mode re-exports them).
  */
 export function rewriteSpecifier(
   st: UnbundledState,
   spec: string,
   firstParty: string | null,
   entry: TransformEntry,
+  names?: Iterable<string>,
 ): string {
   // A stylesheet is linked separately, so even the app's own `./styles.css` must not reach
   // the JS transform (it would 500 the module and the whole page with it).
   if (/\.(css|scss|sass)(?:[?#].*)?$/i.test(spec)) return EMPTY_MODULE;
+  // React Native mode: an image / font / other asset of the app's rides the dependency bundle,
+  // whose asset loaders give it the URL (or module) a build gives it.
+  if (firstParty && st.opts.reactNative && !CODE_FILE.test(firstParty)) {
+    return `${NPM_PREFIX}${noteNpm(st, firstParty, names)}.js`;
+  }
   if (firstParty) {
     const v = versionOf(st, firstParty);
     entry.deps.push({ abs: firstParty, v });
     return `${FS_PREFIX}${firstParty}?v=${v}`;
   }
   if (st.compat) {
-    const u = compatDepUrl(st, spec);
+    const u = compatDepUrl(st, spec, names);
     if (u) return u;
     // fall through: unmapped next/* server surface, node:/scheme — leave to the browser.
   }

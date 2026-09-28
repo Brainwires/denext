@@ -458,6 +458,41 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
       "reachability probe runs, so configure() is accepted and ignored.",
   },
 
+  "@react-native-async-storage/async-storage": {
+    kind: "runtime",
+    module: "./async-storage.ts",
+    pinned: "2.2.0",
+    status: "full",
+    implementation: "denext/mobile openKeyValueStore (durable native storage)",
+    capabilities: ["storage"],
+    notes: "The 2.x API (getItem / setItem / removeItem / mergeItem / clear / getAllKeys / " +
+      "multiGet / multiSet / multiRemove / multiMerge, the callbacks, useAsyncStorage) plus " +
+      "3.x's getMany / setMany / removeMany, createAsyncStorage and AsyncStorageError. In the " +
+      "Capacitor shell the data is a SQLite file in the app's data folder (the DenextStorage " +
+      "plugin), which the OS does not evict as it may the WebView's localStorage, the package's " +
+      "web backing; without it, @capacitor-community/sqlite when installed, else IndexedDB with " +
+      "a warning. Deno Desktop: the runtime's SQLite (`denext desktop add sqlite`). Browser: " +
+      "IndexedDB. The first call copies what the package's web build left in localStorage, " +
+      "once. mergeItem deep-merges objects as the native modules do (arrays are replaced).",
+  },
+
+  "react-native-mmkv": {
+    kind: "runtime",
+    module: "./mmkv.ts",
+    pinned: "4.3.2",
+    status: "partial",
+    implementation: "denext/mobile openKeyValueStore behind a synchronous mirror",
+    capabilities: ["storage"],
+    notes: "4.x (createMMKV, remove, existsMMKV, deleteMMKV, the useMMKV* hooks, useMMKVKeys) " +
+      "and 3.x (new MMKV(), delete, Mode). No JSI, so reads come from an in-memory mirror " +
+      "seeded synchronously from localStorage (the package's web format) and reconciled with " +
+      "the durable store in the background; writes reach the durable store a moment after the " +
+      "call returns. After the OS evicts the WebView's storage, reads miss the evicted keys " +
+      "until mmkvReady() (a denext addition) resolves, then the listeners fire. encryptionKey, " +
+      "encrypt and recrypt throw (the store is not encrypted; use expo-secure-store / secureStore); path and mode " +
+      "are ignored.",
+  },
+
   "react-native-device-info": {
     kind: "runtime",
     module: "./device-info.ts",

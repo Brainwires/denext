@@ -1,5 +1,8 @@
-# harness output (harness/measure.ts matrix writes results/<stamp>/)
-results/
+# harness output (harness/measure.ts matrix writes results/<stamp>/), except the
+# server-rendered bench's report (results/ssr-<date>/results.{md,json}, cited by the docs)
+results/*
+!results/ssr-20*/
+results/ssr-20*/cells/
 # throwaway signing keys: never commit a keystore
 *.jks
 *.keystore

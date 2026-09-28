@@ -361,7 +361,7 @@ export function splitRules(css: string): string[] {
 }
 
 /** Add `css` to the stack's stylesheet once per `key` (no-op on the server). */
-function ensureStyles(key: string, css: () => string): void {
+export function ensureStyles(key: string, css: () => string): void {
   installed ??= new Set();
   if (installed.has(key)) return;
   const target = stackSheet();

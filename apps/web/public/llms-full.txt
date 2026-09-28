@@ -300,7 +300,11 @@ unless the app registers a native one); `denext mobile add <capability...> [--dr
 installs their plugins, and `deep-links --scheme/--domain` / `push` add
 `onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
 `requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via
-APNs/FCM; Android needs `google-services.json`). `auth-session --scheme myapp` adds
+APNs/FCM; Android needs `google-services.json`). Your own native code: `nativeModule<Spec,
+Events>(name)` is a typed async client for the Capacitor plugin `name` (the desktop extension on
+Deno Desktop, `null` on the web), `native-module --name <Name>` generates one (Swift + Kotlin +
+`native/Native<Name>.ts`), and React Native mode's `TurboModuleRegistry` / `NativeModules` /
+Expo `requireNativeModule` resolve to it (every call async; no JSI). `auth-session --scheme myapp` adds
 `openAuthSession(url, { callbackScheme })` (OAuth in an iOS ASWebAuthenticationSession / Android
 Custom Tab / web popup finished by `completeAuthSession()`, and in a Deno Desktop window the
 system browser with a loopback redirect; resolves the callback URL, PKCE + `state` are yours).
@@ -329,7 +333,11 @@ prompt | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleN
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
 `accessibility` (`useScreenReader`), `sentry` (`initCrashReporting`) and `offline-screen`.
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy
-manifest), `denext mobile doctor --store | --release`, `denext mobile inspect`. App backend:
+manifest), `denext mobile doctor --store | --release`, `denext mobile inspect`.
+Ship without a hosted service: `denext mobile assets` (every icon + splash from one image),
+`denext mobile build ios|android [--release] [--flavor <name>]` (export → `cap sync` → a signed
+`.ipa` / `.aab` in `dist/mobile/`; flavors in `mobile.flavors`), `denext mobile submit
+ios|android [--dry-run]` (App Store Connect / Google Play). App backend:
 `cors` in config, `denextAuth({ native })` sessions, `createApiClient({ base, auth:
 nativeSession(…) })`, `sendPush` from `denext/server`. Docs: https://denext.dev/docs/mobile,
 https://denext.dev/docs/app-backend

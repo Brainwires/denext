@@ -50,6 +50,11 @@
 // itself; the production auto-memo compiler and feature-flag fold do not run on it (the
 // Babel plugin marks worklets "use no memo" anyway, and an unfolded `feature()` call still
 // works through the runtime shim).
+//
+// The same plugin applies the compositor pass (reanimated-offload.ts): after the worklets pass,
+// Reanimated 4's own web modules get the splices that move `transform` / `opacity` animations
+// to Web Animations, and react-native-web's UIManager routes `LayoutAnimation.configureNext`
+// to a FLIP runtime. Both runtimes load from their own namespace.
 
 import { basename, dirname, extname, SEPARATOR, toFileUrl } from "@std/path";
 import type * as esbuild from "esbuild";
@@ -58,11 +63,11 @@ import {
   type Ctx,
   type Edit,
   encoder,
-  MARKER,
   type Node,
   parseModule,
   txt,
 } from "./swc-ast.ts";
+import { parseModuleForPath } from "./swc-parse.ts";
 import {
   analyzeScopes,
   type Binding,
@@ -74,6 +79,12 @@ import {
   scopeWithin,
 } from "./worklet-scope.ts";
 import { collectComponents, refreshFooter } from "./spa-refresh-plugin.ts";
+import {
+  OFFLOAD_MODULE_FILTER,
+  patchForOffload,
+  RUNTIME_FILTER as OFFLOAD_RUNTIME_FILTER,
+  runtimeSource,
+} from "./reanimated-offload.ts";
 
 /** A module the pass looks at: it names a worklet-using package or has a worklet directive. */
 export const WORKLETS_GATE = /react-native-(?:reanimated|worklets|gesture-handler)|["']worklet["']/;
@@ -266,41 +277,8 @@ interface Worklet {
   site: FunctionSite;
 }
 
-type SwcModule = typeof import("@denext/swc");
-let swc: Promise<SwcModule> | null = null;
-
 /** Parse `source` for `path`'s dialect; null when it does not parse. */
-async function parseFor(
-  path: string,
-  source: string,
-): Promise<{ ctx: Ctx; body: Node[] } | null> {
-  swc ??= import("@denext/swc");
-  const mod = await swc;
-  const ext = extname(path);
-  const options = ext === ".ts" || ext === ".mts" || ext === ".cts"
-    ? { syntax: "typescript" as const, tsx: false }
-    : ext === ".tsx"
-    ? { syntax: "typescript" as const, tsx: true }
-    : {
-      syntax: "ecmascript" as const,
-      jsx: true,
-      isModule: "unknown" as const,
-    };
-  let ast: Node;
-  try {
-    ast = await mod.parse(MARKER + source, { ...options, target: "es2022" });
-  } catch {
-    return null;
-  }
-  if (!ast.body || ast.body.length === 0) return null;
-  return {
-    ctx: {
-      bytes: encoder.encode(source),
-      base: ast.body[0].span.start + MARKER.length,
-    },
-    body: ast.body.slice(1),
-  };
-}
+const parseFor = (path: string, source: string) => parseModuleForPath(path, source);
 
 /** Strip parentheses: `((fn))` → `fn` (Babel's AST has no parenthesis nodes). */
 function unparen(node: Node): Node {
@@ -796,6 +774,9 @@ function loaderFor(path: string): esbuild.Loader {
 const RUNTIME_FILTER = new RegExp(`^${WORKLETS_RUNTIME}$`);
 const RUNTIME_NAMESPACE = "denext-worklets";
 
+/** The namespace the compositor pass's runtime modules load in. */
+const OFFLOAD_NAMESPACE = "denext-rn-offload";
+
 /** The modules the pass may claim. */
 const MODULE_FILTER = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 
@@ -821,7 +802,8 @@ function inside(path: string, dir: string): boolean {
  * The esbuild plugin that runs {@linkcode transformWorklets} over the modules that use
  * worklets ({@linkcode WORKLETS_GATE}): app source and node_modules. A module it leaves
  * unchanged falls through to the later loaders. Patterns it can't handle in app source are
- * build warnings at their file:line.
+ * build warnings at their file:line. It also applies the compositor pass
+ * ({@linkcode patchForOffload}) to Reanimated 4's web modules and react-native-web's UIManager.
  *
  * @param projectDir The project root (app source = under it, outside node_modules).
  * @param options `dev` adds Fast Refresh registrations to transformed app modules.
@@ -841,6 +823,14 @@ export function reanimatedWorkletsPlugin(
         contents: RUNTIME_SOURCE,
         loader: "js",
       }));
+      build.onResolve({ filter: OFFLOAD_RUNTIME_FILTER }, (args) => ({
+        path: args.path,
+        namespace: OFFLOAD_NAMESPACE,
+      }));
+      build.onLoad({ filter: /.*/, namespace: OFFLOAD_NAMESPACE }, async (args) => ({
+        contents: await runtimeSource(args.path),
+        loader: "ts",
+      }));
       build.onLoad(
         { filter: MODULE_FILTER, namespace: "file" },
         async (args) => {
@@ -851,17 +841,18 @@ export function reanimatedWorkletsPlugin(
           } catch {
             return undefined;
           }
-          if (!WORKLETS_GATE.test(source)) return undefined;
+          const gated = WORKLETS_GATE.test(source);
+          if (!gated && !OFFLOAD_MODULE_FILTER.test(args.path)) return undefined;
           const app = !args.path.includes("/node_modules/") &&
             inside(args.path, projectDir);
-          const result = await transformWorklets(source, args.path, {
-            diagnostics: app,
-            helper: "import",
-          });
+          const result = gated
+            ? await transformWorklets(source, args.path, { diagnostics: app, helper: "import" })
+            : { code: source, changed: false, worklets: 0, diagnostics: [] };
+          const patched = patchForOffload(args.path, result.code);
           if (
-            !result.changed && result.diagnostics.length === 0
+            !result.changed && patched === null && result.diagnostics.length === 0
           ) return undefined;
-          let contents = result.code;
+          let contents = patched ?? result.code;
           if (options.dev && app && REFRESH_FILTER.test(args.path)) {
             contents += await refreshRegistrations(contents, args.path);
           }

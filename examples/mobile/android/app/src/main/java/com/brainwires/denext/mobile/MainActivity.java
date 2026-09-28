@@ -1,8 +1,9 @@
-// denext-main-activity-template: 2 sha256=62a68d062e8618f0bbe0b78609762c01a0fc8be924c48641773dffa92d90560b
+// denext-main-activity-template: 2 sha256=35966c3d02b25a80331a43ff384cbdcb52547595ac12c758e4d6f3d27d31cf52
 package com.brainwires.denext.mobile;
 
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
+import dev.denext.contextmenu.DenextContextMenuPlugin;
 import dev.denext.settings.DenextSettingsPlugin;
 import androidx.activity.EdgeToEdge;
 import dev.denext.sharereceive.DenextShareReceivePlugin;
@@ -31,6 +32,9 @@ public class MainActivity extends BridgeActivity {
         // denext app settings: registers the DenextSettings plugin (openAppSettings in
         // denext/mobile). It must run before super.onCreate, which builds the bridge.
         registerPlugin(DenextSettingsPlugin.class);
+        // denext native menus: registers the DenextContextMenu plugin (showContextMenu in
+        // denext/mobile). It must run before super.onCreate, which builds the bridge.
+        registerPlugin(DenextContextMenuPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

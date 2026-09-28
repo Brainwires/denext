@@ -7,6 +7,7 @@ import { collectComponents, refreshFooter } from "../spa-refresh-plugin.ts";
 import { transformFeatures } from "../feature-transform.ts";
 import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
+import { importedNames, prepareReactNativeSource } from "./react-native.ts";
 import { firstPartyResolver, resolveFirstParty, rewriteSpecifier } from "./resolve.ts";
 import {
   addImporter,
@@ -21,9 +22,11 @@ import {
 function singleModuleBuild(
   entryPoints: string[],
   plugins: esbuild.Plugin[],
+  define?: Record<string, string>,
 ): Promise<esbuild.BuildResult<{ write: false }>> {
   return esbuild.build({
     entryPoints,
+    define,
     bundle: true,
     write: false,
     format: "esm",
@@ -66,10 +69,15 @@ async function refreshFooterFor(
   st: UnbundledState,
   abs: string,
   entry: TransformEntry,
+  source: string,
+  imported: Map<string, Set<string>>,
 ): Promise<string> {
   try {
-    const source = await Deno.readTextFile(abs);
     const parsed = await parseModule(source);
+    // React Native mode: what the module takes from each package, for its dependency entry.
+    if (parsed && st.opts.reactNative) {
+      for (const [spec, set] of importedNames(parsed)) imported.set(spec, set);
+    }
     const url = toFileUrl(abs).href;
     // Import-map aliases resolve as the rewrite resolves them, so a hook imported by `@/…` is named.
     const firstParty = await firstPartyResolver(st, abs);
@@ -85,17 +93,33 @@ async function refreshFooterFor(
       st.accepting.add(abs);
     } else st.accepting.delete(abs); // e.g. a component was removed by the edit
     return refreshFooter(url, names, metas);
-  } catch { /* unreadable/unparsable — no footer, treated as non-accepting */ }
+  } catch { /* unparsable — no footer, treated as non-accepting */ }
   return "";
+}
+
+/**
+ * The module's source as it is served: as written, or — in React Native mode — with the
+ * worklets transform and the `require` hoist applied ({@linkcode prepareReactNativeSource}).
+ * Null when it cannot be read (esbuild then reports the missing file).
+ */
+async function servedSource(st: UnbundledState, abs: string): Promise<string | null> {
+  let source: string;
+  try {
+    source = await Deno.readTextFile(abs);
+  } catch {
+    return null;
+  }
+  return st.opts.reactNative ? await prepareReactNativeSource(abs, source) : source;
 }
 
 /** esbuild plugin: load `abs` (+ footer), externalize + rewrite every import it makes. */
 function moduleRewritePlugin(
   st: UnbundledState,
   abs: string,
-  footer: string,
+  loaded: { source: string | null; footer: string; names: Map<string, Set<string>> },
   entry: TransformEntry,
 ): esbuild.Plugin {
+  const { footer, names } = loaded;
   return {
     name: "denext-dev-rewrite",
     setup(build) {
@@ -104,7 +128,7 @@ function moduleRewritePlugin(
       // other import is externalized — so this fires once.
       build.onLoad({ filter: /.*/ }, async (args) => {
         if (args.path !== abs) return null;
-        let src = await Deno.readTextFile(abs);
+        let src = loaded.source ?? await Deno.readTextFile(abs);
         // Fold `feature("KEY")` calls so dev matches a build (values, not DCE). Only when the
         // app configured `features`; a throwing fold leaves the source as written.
         const features = st.opts.features;
@@ -114,13 +138,20 @@ function moduleRewritePlugin(
             if (folded.changed) src = folded.code;
           } catch { /* best-effort — bundle the module as written */ }
         }
-        return { contents: src + footer, loader: loaderFor(abs), resolveDir: dirname(abs) };
+        return {
+          contents: src + footer,
+          loader: loaderFor(abs, st.opts.reactNative !== undefined),
+          resolveDir: dirname(abs),
+        };
       });
       build.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
         const firstParty = await resolveFirstParty(st, args.path, args.importer || abs);
         if (firstParty) addImporter(st, firstParty, abs);
-        return { path: rewriteSpecifier(st, args.path, firstParty, entry), external: true };
+        return {
+          path: rewriteSpecifier(st, args.path, firstParty, entry, names.get(args.path)),
+          external: true,
+        };
       });
     },
   };
@@ -139,11 +170,17 @@ export async function transform(st: UnbundledState, abs: string): Promise<Transf
 
   const entry: TransformEntry = { mtimeMs, code: "", deps: [], selfAccepting: false };
   st.known.add(abs);
-  const footer = await refreshFooterFor(st, abs, entry);
+  const source = await servedSource(st, abs);
+  const names = new Map<string, Set<string>>();
+  const footer = source === null ? "" : await refreshFooterFor(st, abs, entry, source, names);
   // No deno-loader: every import is externalized by the rewrite plugin, so esbuild only
   // transforms this one file (JSX/TS via its built-in loaders) — a warm rebuild is
   // ~5ms, the property that makes per-module HMR feel instant.
-  const result = await singleModuleBuild([abs], [moduleRewritePlugin(st, abs, footer, entry)]);
+  const result = await singleModuleBuild(
+    [abs],
+    [moduleRewritePlugin(st, abs, { source, footer, names }, entry)],
+    st.opts.define,
+  );
   entry.code = outputText(result);
   st.cache.set(abs, entry);
   return entry;

@@ -72,7 +72,7 @@ export async function pnpmCatalogPackages(projectDir: string): Promise<string[]>
  * (`spa.env`) — the Vite-`define` analogue. Only meaningful on the next-compat
  * (esbuild) path.
  */
-function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string> {
+export function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string> {
   // Vite's built-in `import.meta.env` values, with correct types (DEV/PROD/SSR are
   // booleans, not strings) so `if (import.meta.env.DEV)` etc. behave as in Vite.
   const out: Record<string, string> = {

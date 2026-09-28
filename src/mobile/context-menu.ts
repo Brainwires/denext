@@ -1,13 +1,16 @@
 /**
- * A native-or-web context menu for `denext/mobile`: a native `DenextContextMenu` Capacitor
- * plugin in the shell when one is registered, else an accessible in-DOM popover that lists every
- * item. The web fallback is the primary supported path and never drops an item.
+ * A native-or-web context menu for `denext/mobile`: the native `DenextContextMenu` Capacitor
+ * plugin in the shell when it is installed (`denext mobile add context-menu`: a `UIMenu` on iOS,
+ * a `PopupMenu` on Android), else an accessible in-DOM popover that lists every item. The web
+ * fallback never drops an item: a submenu's items are listed as a labelled group.
  *
  * @module
  */
 
 import { nativePlugin } from "./plugin.ts";
 import { onDesktop, viaDesktop } from "./desktop-branch.ts";
+import { isNativeShell } from "./bridge.ts";
+import { haptic } from "./haptics.ts";
 
 /** One entry in a {@linkcode showContextMenu} menu. */
 export interface ContextMenuItem {
@@ -19,8 +22,20 @@ export interface ContextMenuItem {
   readonly disabled?: boolean;
   /** Styled as a destructive action (`data-destructive` on the web). */
   readonly destructive?: boolean;
-  /** An optional leading glyph/emoji rendered before the label. */
+  /** An optional leading glyph/emoji rendered before the label (the web popover). */
   readonly icon?: string;
+  /**
+   * An SF Symbol name (`"trash"`, `"square.and.arrow.up"`) drawn by the native iOS menu. The
+   * web popover shows `icon` instead; Android's menu shows none.
+   */
+  readonly systemIcon?: string;
+  /** A second line under the label (iOS 15+; appended to the label elsewhere as `—`). */
+  readonly subtitle?: string;
+  /**
+   * A submenu: its items open from this one on iOS; Android and the web popover list them as a
+   * labelled group under this item's label. This item's own `id` is never resolved.
+   */
+  readonly children?: readonly ContextMenuItem[];
 }
 
 /** Where and how {@linkcode showContextMenu} opens. */
@@ -33,18 +48,70 @@ export interface ContextMenuOptions {
   readonly anchor?: DOMRect;
   /** An accessible title/header for the menu. */
   readonly title?: string;
+  /**
+   * A long-press haptic as the menu opens, inside the native shell only (default `false`;
+   * {@linkcode useContextMenu} turns it on for a long press).
+   */
+  readonly haptic?: boolean;
 }
 
-/** The JS side of an app-provided `DenextContextMenu` Capacitor plugin. */
+/** One item as the native plugin receives it (the JSON the bridge carries). */
+export interface NativeMenuItem {
+  id: string;
+  label: string;
+  disabled?: boolean;
+  destructive?: boolean;
+  icon?: string;
+  systemIcon?: string;
+  subtitle?: string;
+  children?: NativeMenuItem[];
+}
+
+/** The JS side of the `DenextContextMenu` Capacitor plugin (`denext mobile add context-menu`). */
 interface ContextMenuPlugin {
   show(options: {
-    items: Array<
-      { id: string; label: string; disabled?: boolean; destructive?: boolean; icon?: string }
-    >;
+    items: NativeMenuItem[];
     title?: string;
     x?: number;
     y?: number;
+    haptic?: boolean;
   }): Promise<{ selectedId?: string | null } | null>;
+}
+
+/**
+ * `items` as the native plugin takes them: only the fields that are set, submenus nested.
+ * Exported for {@linkcode useContextMenu}'s armed iOS menus.
+ */
+export function nativeMenuItems(items: readonly ContextMenuItem[]): NativeMenuItem[] {
+  return items.map((it) => ({
+    id: it.id,
+    label: it.label,
+    ...(it.disabled ? { disabled: true } : {}),
+    ...(it.destructive ? { destructive: true } : {}),
+    ...(it.icon !== undefined ? { icon: it.icon } : {}),
+    ...(it.systemIcon !== undefined ? { systemIcon: it.systemIcon } : {}),
+    ...(it.subtitle !== undefined ? { subtitle: it.subtitle } : {}),
+    ...(it.children ? { children: nativeMenuItems(it.children) } : {}),
+  }));
+}
+
+/**
+ * `items` with every submenu replaced by its items, labelled `Parent › Child` (a disabled
+ * parent disables them), for menus that cannot nest (the Deno Desktop one).
+ */
+export function flattenMenuItems(
+  items: readonly ContextMenuItem[],
+  prefix = "",
+  disabled = false,
+): ContextMenuItem[] {
+  const out: ContextMenuItem[] = [];
+  for (const it of items) {
+    const label = prefix + it.label;
+    const off = disabled || it.disabled === true;
+    if (it.children) out.push(...flattenMenuItems(it.children, `${label} › `, off));
+    else out.push({ ...it, label, ...(off ? { disabled: true } : {}) });
+  }
+  return out;
 }
 
 /** The slice of an element the web popover uses (real DOM and the test DOM both satisfy it). */
@@ -187,27 +254,58 @@ function showWebContextMenu(
       if (!contains(menu, e.target)) finish(null);
     }
 
-    for (const item of items) {
+    let groupSeq = 0;
+    /** A text span with `attr` set (the icon, the label, the subtitle). */
+    const span = (text: string, attr?: string) => {
+      const el = doc.createElement("span");
+      if (attr) {
+        el.setAttribute("aria-hidden", "true");
+        el.setAttribute(attr, "true");
+      }
+      el.textContent = text;
+      return el;
+    };
+
+    /** One selectable item, appended to `parent`. */
+    const addItem = (parent: MenuEl, item: ContextMenuItem, parentDisabled: boolean) => {
       const el = doc.createElement("div");
       el.setAttribute("role", "menuitem");
       el.setAttribute("tabindex", "-1");
-      if (item.disabled) el.setAttribute("aria-disabled", "true");
+      const enabled = item.disabled !== true && !parentDisabled;
+      if (!enabled) el.setAttribute("aria-disabled", "true");
       if (item.destructive) el.setAttribute("data-destructive", "true");
-      if (item.icon !== undefined) {
-        const icon = doc.createElement("span");
-        icon.setAttribute("aria-hidden", "true");
-        icon.setAttribute("data-menu-icon", "true");
-        icon.textContent = item.icon;
-        el.appendChild(icon);
+      if (item.icon !== undefined) el.appendChild(span(item.icon, "data-menu-icon"));
+      el.appendChild(span(item.label));
+      if (item.subtitle !== undefined) {
+        const sub = span(item.subtitle);
+        sub.setAttribute("data-menu-subtitle", "true");
+        el.appendChild(sub);
       }
-      const label = doc.createElement("span");
-      label.textContent = item.label;
-      el.appendChild(label);
-      const enabled = item.disabled !== true;
       if (enabled) el.addEventListener("click", () => finish(item.id));
-      menu.appendChild(el);
+      parent.appendChild(el);
       entries.push({ item, el, enabled });
-    }
+    };
+
+    /** `items` into `parent`; a submenu becomes a `role="group"` labelled by its item. */
+    const addItems = (parent: MenuEl, list: readonly ContextMenuItem[], disabled: boolean) => {
+      for (const item of list) {
+        if (!item.children) {
+          addItem(parent, item, disabled);
+          continue;
+        }
+        const group = doc.createElement("div");
+        const labelId = `denext-context-menu-${seq}-group-${++groupSeq}`;
+        group.setAttribute("role", "group");
+        group.setAttribute("aria-labelledby", labelId);
+        const label = span(item.label);
+        label.setAttribute("id", labelId);
+        label.setAttribute("data-menu-group-label", "true");
+        group.appendChild(label);
+        addItems(group, item.children, disabled || item.disabled === true);
+        parent.appendChild(group);
+      }
+    };
+    addItems(menu, items, false);
 
     menu.addEventListener("keydown", onKey);
     doc.body!.appendChild(menu);
@@ -229,26 +327,27 @@ function showWebContextMenu(
 /**
  * Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.
  *
- * - Inside the native shell with an app-registered `DenextContextMenu` plugin (see below), the OS
- *   menu — every item, including `disabled` and `destructive` ones, is handed to it.
+ * - Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add
+ *   context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,
+ *   iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive
+ *   and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`
+ *   (submenus as labelled groups, destructive items in the error color). For the long-press
+ *   menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the
+ *   element with {@linkcode useContextMenu} instead.
  * - Inside a Deno Desktop window (`denext desktop add context-menu`), the native menu at the
- *   same client coordinates (`BrowserWindow.showContextMenu`); `destructive` has no native
- *   styling there.
+ *   same client coordinates (`BrowserWindow.showContextMenu`); submenus are flattened
+ *   (`Parent › Child`) and `destructive` has no native styling there.
  * - Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role="menu"`
- *   with a `role="menuitem"` per item, opened at `(x, y)` or under `anchor`. It is keyboard
- *   navigable (Up/Down to move, Enter/Space to choose, Escape to dismiss), dismisses on an
- *   outside pointer press, respects `disabled` (shown, not selectable) and `destructive`, and
- *   removes every node and listener it added when it resolves.
+ *   with a `role="menuitem"` per item (a submenu is a `role="group"` labelled by its item),
+ *   opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,
+ *   Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects
+ *   `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it
+ *   added when it resolves.
  *
- * The web fallback always renders **every** item, so no menu action is silently dropped.
- *
- * There is no first-party Capacitor context-menu plugin; the native path is feature-detected
- * by the plugin name `DenextContextMenu` with a `show({ items, title?, x?, y? })` method resolving
- * `{ selectedId?: string | null }`. Register such a plugin natively to take the OS path;
- * without it, the web popover is used inside the shell too.
+ * Every path renders **every** item, so no menu action is silently dropped.
  *
  * @param items The menu entries (every one is rendered).
- * @param options `x`/`y` or `anchor` for placement, and an optional `title`.
+ * @param options `x`/`y` or `anchor` for placement, an optional `title`, and `haptic`.
  * @returns The chosen item's `id`, or `null` when dismissed (or in a non-DOM context, or when
  * `items` is empty).
  * @example
@@ -264,8 +363,16 @@ function showWebContextMenu(
  *         e.preventDefault();
  *         const choice = await showContextMenu(
  *           [
- *             { id: "open", label: "Open" },
- *             { id: "delete", label: "Delete", destructive: true },
+ *             { id: "open", label: "Open", systemIcon: "arrow.up.right.square" },
+ *             {
+ *               id: "move",
+ *               label: "Move to",
+ *               children: [
+ *                 { id: "inbox", label: "Inbox" },
+ *                 { id: "archive", label: "Archive" },
+ *               ],
+ *             },
+ *             { id: "delete", label: "Delete", destructive: true, systemIcon: "trash" },
  *           ],
  *           { x: e.clientX, y: e.clientY },
  *         );
@@ -287,25 +394,24 @@ export async function showContextMenu(
   const x = options.x ?? options.anchor?.left ?? 0;
   const y = options.y ?? options.anchor?.bottom ?? 0;
   const desktop = list.length > 0 && onDesktop()
-    ? await viaDesktop("contextMenu", (d) => d.showNativeContextMenu(list, x, y, options.title))
+    ? await viaDesktop(
+      "contextMenu",
+      (d) => d.showNativeContextMenu(flattenMenuItems(list), x, y, options.title),
+    )
     : undefined;
   if (desktop) return desktop.value;
   const plugin = nativePlugin<ContextMenuPlugin>("DenextContextMenu", ["show"]);
-  if (plugin) {
+  if (plugin && list.length > 0) {
     const result = await plugin.show({
-      items: list.map((it) => ({
-        id: it.id,
-        label: it.label,
-        ...(it.disabled ? { disabled: true } : {}),
-        ...(it.destructive ? { destructive: true } : {}),
-        ...(it.icon !== undefined ? { icon: it.icon } : {}),
-      })),
+      items: nativeMenuItems(list),
       ...(options.title !== undefined ? { title: options.title } : {}),
-      ...(options.x !== undefined ? { x: options.x } : {}),
-      ...(options.y !== undefined ? { y: options.y } : {}),
+      x,
+      y,
+      ...(options.haptic ? { haptic: true } : {}),
     });
     const id = result?.selectedId;
     return typeof id === "string" ? id : null;
   }
+  if (options.haptic && list.length > 0 && isNativeShell()) haptic("medium").catch(() => {});
   return await showWebContextMenu(list, options);
 }

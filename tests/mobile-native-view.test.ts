@@ -1,0 +1,439 @@
+// denext/mobile's NativeViewSlot / useNativeViewSlot and the tracker behind them: the slot
+// geometry (visible part, occlusion, overlays), the per-frame tracker that sends the native side
+// what changed, and the component's lifecycle in a faked Capacitor shell with a fake
+// DenextNativeViews plugin (types, create, update, setProps, command, destroy, events).
+
+import { assert, assertEquals, assertRejects } from "@std/assert";
+import { h } from "../src/jsx/jsx-runtime.ts";
+import { NativeViewSlot, useNativeViewSlot } from "../src/mobile/mod.ts";
+import { nativeViewComponent } from "../src/mobile/native-view.ts";
+import {
+  clippingAncestors,
+  clipsContent,
+  intersect,
+  isOccluded,
+  paddingBox,
+  samplePoints,
+  toScreen,
+  visiblePart,
+} from "../src/mobile/native-view-geometry.ts";
+import {
+  measureSlot,
+  nativeViewsPlugin,
+  NativeViewTracker,
+  pageTracker,
+  type TrackedSlot,
+  type TrackerEnv,
+} from "../src/mobile/native-view-tracker.ts";
+import { type Any, fakePlugin, inShell, mount, settle } from "./helpers/mobile-fakes.ts";
+
+/** Let passive effects and promise callbacks run. */
+async function tick(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await settle();
+}
+
+/** A fake element with a settable box, a parent chain and `contains`. */
+function box(x: number, y: number, width: number, height: number, parent: Any = null): Any {
+  const el: Any = {
+    rect: { left: x, top: y, width, height },
+    parentElement: parent,
+    getBoundingClientRect: () => el.rect,
+    contains: (other: Any) => {
+      for (let n = other; n; n = n.parentElement) if (n === el) return true;
+      return false;
+    },
+  };
+  return el;
+}
+
+// ---- geometry -------------------------------------------------------------------
+
+Deno.test("geometry: intersections, clipping styles and padding boxes", () => {
+  assertEquals(
+    intersect({ x: 0, y: 0, width: 10, height: 10 }, { x: 5, y: 5, width: 10, height: 10 }),
+    {
+      x: 5,
+      y: 5,
+      width: 5,
+      height: 5,
+    },
+  );
+  assertEquals(
+    intersect({ x: 0, y: 0, width: 10, height: 10 }, { x: 10, y: 0, width: 5, height: 5 }),
+    null,
+  );
+  assert(clipsContent({ overflowY: "auto" }));
+  assert(clipsContent({ overflow: "hidden" }));
+  assert(clipsContent({ contain: "layout paint" }));
+  assert(!clipsContent({ overflow: "visible", overflowX: "visible", overflowY: "visible" }));
+  assert(!clipsContent({ contain: "layout" }));
+  const bordered = Object.assign(box(0, 0, 104, 54), {
+    clientLeft: 2,
+    clientTop: 2,
+    clientWidth: 90, // a 10 px scrollbar
+    clientHeight: 50,
+  });
+  assertEquals(paddingBox(bordered), { x: 2, y: 2, width: 90, height: 50 });
+});
+
+Deno.test("geometry: the visible part is clipped by every clipping ancestor and the viewport", () => {
+  const root = box(0, 0, 400, 800);
+  const scroller = box(0, 100, 400, 300, root);
+  const card = box(0, 0, 400, 2000, scroller);
+  const slot = box(20, 350, 200, 100, card);
+  const styles = new Map<Any, Any>([[scroller, { overflowY: "auto" }], [root, {}], [card, {}]]);
+  const clippers = clippingAncestors(slot, (el) => styles.get(el));
+  assertEquals(clippers, [scroller]);
+  const viewport = { x: 0, y: 0, width: 400, height: 800 };
+  assertEquals(visiblePart({ x: 20, y: 350, width: 200, height: 100 }, clippers, viewport), {
+    x: 20,
+    y: 350,
+    width: 200,
+    height: 50,
+  });
+  assertEquals(visiblePart({ x: 20, y: 450, width: 200, height: 100 }, clippers, viewport), null);
+  assertEquals(visiblePart({ x: 20, y: 900, width: 200, height: 100 }, [], viewport), null);
+});
+
+Deno.test("geometry: screen coordinates follow the visual viewport's offset and zoom", () => {
+  const b = { x: 10, y: 300, width: 100, height: 50 };
+  assertEquals(toScreen(b, undefined), b);
+  assertEquals(toScreen(b, { offsetLeft: 0, offsetTop: 200, width: 400, height: 400, scale: 1 }), {
+    x: 10,
+    y: 100,
+    width: 100,
+    height: 50,
+  });
+  assertEquals(
+    toScreen(b, { offsetLeft: 10, offsetTop: 0, width: 200, height: 400, scale: 2 }).x,
+    0,
+  );
+});
+
+Deno.test("geometry: occlusion samples the center and inset corners", () => {
+  const slot = box(0, 0, 100, 100);
+  const inner = box(0, 0, 10, 10, slot);
+  const modal = box(0, 0, 400, 400);
+  const visible = { x: 0, y: 0, width: 100, height: 100 };
+  assertEquals(samplePoints(visible).length, 5);
+  assertEquals(samplePoints(visible)[1], [2, 2]);
+  assert(!isOccluded(slot, visible, () => slot));
+  assert(!isOccluded(slot, visible, () => inner), "the slot's own overlay is not a cover");
+  assert(!isOccluded(slot, visible, () => null), "unanswered points do not count");
+  assert(isOccluded(slot, visible, (x, y) => (x > 90 && y > 90 ? modal : slot)));
+});
+
+// ---- the tracker -----------------------------------------------------------------
+
+/** A fake environment: a manual frame queue and timers, a clock, listeners, hit testing. */
+function fakeEnv(hit: (x: number, y: number) => unknown = () => null) {
+  const frames: Array<() => void> = [];
+  const timers = new Map<number, () => void>();
+  const listeners = new Map<string, () => void>();
+  let clock = 0;
+  let nextTimer = 0;
+  const env: TrackerEnv = {
+    now: () => clock,
+    raf: (cb) => frames.push(cb),
+    caf: () => void frames.splice(0),
+    setTimeout: (cb) => (timers.set(++nextTimer, cb), nextTimer),
+    clearTimeout: (id) => void timers.delete(id),
+    viewport: () => ({ x: 0, y: 0, width: 400, height: 800 }),
+    visualViewport: () => undefined,
+    styleOf: () => ({}),
+    hitTest: (x, y) => hit(x, y),
+    dpr: () => 3,
+    listen: (target, type, fn) => {
+      listeners.set(`${target}:${type}`, fn);
+      return () => void listeners.delete(`${target}:${type}`);
+    },
+    observeResize: () => () => {},
+  };
+  return {
+    env,
+    listeners,
+    advance: (ms: number) => void (clock += ms),
+    frame() {
+      const cbs = frames.splice(0);
+      for (const cb of cbs) cb();
+      return cbs.length;
+    },
+    idle() {
+      const cbs = [...timers.values()];
+      timers.clear();
+      for (const cb of cbs) cb();
+      return cbs.length;
+    },
+  };
+}
+
+function slotOf(el: Any, placement: TrackedSlot["placement"], overlay: Any = null): TrackedSlot {
+  let active = true;
+  return {
+    id: "nv-a",
+    el,
+    placement,
+    overlay: () => overlay,
+    active: () => active,
+    // deno-lint-ignore no-explicit-any
+    ...{ setActive: (v: boolean) => void (active = v) } as any,
+  };
+}
+
+Deno.test("tracker: sends a frame when the slot moves, nothing while it is still", async () => {
+  const plugin = fakePlugin(["update"]);
+  const el = box(20, 100, 200, 120);
+  const fake = fakeEnv(() => el);
+  const tracker = new NativeViewTracker(plugin.plugin as Any, fake.env);
+  tracker.add(slotOf(el, "under"));
+  assertEquals(fake.listeners.has("document:scroll"), true);
+  assertEquals(
+    fake.listeners.has("visualViewport:resize"),
+    true,
+    "the keyboard moves the viewport",
+  );
+  fake.frame();
+  await settle();
+  assertEquals(plugin.calls.length, 1);
+  const [, sent] = plugin.calls[0] as [string, Any];
+  assertEquals(sent.dpr, 3);
+  assertEquals(sent.frames, [{
+    id: "nv-a",
+    x: 20,
+    y: 100,
+    width: 200,
+    height: 120,
+    clip: { x: 20, y: 100, width: 200, height: 120 },
+    hidden: false,
+    active: true,
+    interactive: true,
+    passthrough: [],
+  }]);
+  // Hot: the next frame measures again, but sends nothing new.
+  assertEquals(fake.frame(), 1);
+  assertEquals(plugin.calls.length, 1);
+  // Scroll: the slot moves up and is half out of the viewport.
+  el.rect = { left: 20, top: -60, width: 200, height: 120 };
+  fake.listeners.get("document:scroll")!();
+  fake.frame();
+  assertEquals((plugin.calls[1][1] as Any).frames[0].clip, { x: 20, y: 0, width: 200, height: 60 });
+  // Still for 500 ms: it falls back to the 250 ms poll.
+  fake.advance(600);
+  fake.frame();
+  assertEquals(fake.frame(), 0, "no frame loop while idle");
+  assertEquals(fake.idle(), 1);
+  // Off-screen: hidden with no clip.
+  el.rect = { left: 20, top: -500, width: 200, height: 120 };
+  fake.idle();
+  const off = (plugin.calls.at(-1)![1] as Any).frames[0];
+  assertEquals([off.hidden, off.clip, off.interactive], [true, null, false]);
+  tracker.remove("nv-a");
+  assertEquals(fake.listeners.size, 0, "every listener removed with the last slot");
+  assertEquals(fake.idle() + fake.frame(), 0);
+});
+
+Deno.test("tracker: a covered slot hides when drawn over the page, stops taking touches under it", () => {
+  const el = box(0, 0, 100, 100);
+  const sheet = box(0, 50, 400, 400);
+  const env = fakeEnv((_x, y) => (y > 50 ? sheet : el)).env;
+  const over = measureSlot(env, slotOf(el, "over"), []);
+  assertEquals([over.hidden, over.interactive], [true, false]);
+  const under = measureSlot(env, slotOf(el, "under"), []);
+  assertEquals([under.hidden, under.interactive], [false, false]);
+  const embed = measureSlot(env, slotOf(el, "embed"), []);
+  assertEquals([embed.hidden, embed.interactive], [false, false]);
+  const inactive = slotOf(el, "under");
+  (inactive as Any).setActive(false);
+  assertEquals(measureSlot(fakeEnv(() => el).env, inactive, []).hidden, true);
+});
+
+Deno.test("tracker: the overlay's children are passthrough regions, clipped to the visible part", () => {
+  const el = box(0, 100, 300, 200);
+  const button = box(10, 110, 80, 30);
+  const badge = box(250, 280, 100, 100);
+  const overlay = { ...box(0, 100, 300, 200, el), children: [button, badge] };
+  const frame = measureSlot(fakeEnv(() => el).env, slotOf(el, "under", overlay), []);
+  assertEquals(frame.passthrough, [
+    { x: 10, y: 110, width: 80, height: 30 },
+    { x: 250, y: 280, width: 50, height: 20 },
+  ]);
+});
+
+// ---- the component ---------------------------------------------------------------
+
+/** A fake DenextNativeViews plugin registering `types`. */
+function viewsPlugin(types: string[], created: Record<string, unknown> = {}) {
+  return fakePlugin(["types", "create", "update", "setProps", "command", "destroy"], {
+    types: { types },
+    create: created,
+    command: { playing: true },
+  });
+}
+
+Deno.test("NativeViewSlot: the web renders the children (the fallback)", async () => {
+  const { container } = mount(() =>
+    h(
+      NativeViewSlot as Any,
+      { type: "map", style: { height: "200px" }, id: "m" },
+      h("img", { alt: "map" }),
+    )
+  );
+  await tick();
+  const slot = container.firstChild;
+  assertEquals(slot.getAttribute("data-status"), "web");
+  assertEquals(slot.getAttribute("id"), "m", "extra props pass through");
+  assertEquals(slot.style.getPropertyValue("height"), "200px");
+  assertEquals(slot.childNodes[0].tagName, "IMG");
+  assertEquals(nativeViewsPlugin(), undefined);
+});
+
+Deno.test("NativeViewSlot: iOS embeds the view in the slot's scroller; props, events, destroy", async () => {
+  const views = viewsPlugin(["map", "video"], { placement: "embed" });
+  await inShell("ios", { DenextNativeViews: views.plugin }, async () => {
+    const env = fakeEnv().env;
+    pageTracker(views.plugin as Any, env);
+    let zoom = 10;
+    const events: unknown[] = [];
+    const { container, rerender, root } = mount(() =>
+      h(
+        NativeViewSlot as Any,
+        {
+          type: "map",
+          props: { latitude: 1, longitude: 2, zoom },
+          onEvent: (name: string, data: unknown) => events.push([name, data]),
+          overlay: h("button", null, "Recenter"),
+        },
+        h("img", { alt: "fallback" }),
+      )
+    );
+    await tick();
+    await tick();
+    const slot = container.firstChild;
+    assertEquals(slot.getAttribute("data-status"), "native");
+    const create = views.calls.find(([m]) => m === "create")![1] as Any;
+    assertEquals(create.type, "map");
+    assertEquals(create.placement, "embed");
+    assertEquals(create.props, { latitude: 1, longitude: 2, zoom: 10 });
+    assert(create.embedMarker >= 1000);
+    const [scroller, overlay] = slot.childNodes;
+    assertEquals(scroller.getAttribute("data-denext-native-view-embed"), "");
+    assertEquals(scroller.style.getPropertyValue("overflow"), "scroll");
+    assertEquals(
+      scroller.childNodes[0].style.getPropertyValue("height"),
+      `calc(100% + ${create.embedMarker}px)`,
+    );
+    assertEquals(overlay.childNodes[0].tagName, "BUTTON");
+    assertEquals(slot.childNodes.length, 2, "the fallback is gone");
+
+    zoom = 11;
+    rerender();
+    await tick();
+    const setProps = views.calls.filter(([m]) => m === "setProps");
+    assertEquals(setProps.length, 1);
+    assertEquals((setProps[0][1] as Any).props.zoom, 11);
+    rerender();
+    await tick();
+    assertEquals(views.calls.filter(([m]) => m === "setProps").length, 1, "same props: no call");
+
+    views.fire("nativeViewEvent", { id: create.id, name: "regionChange", data: { zoom: 12 } });
+    views.fire("nativeViewEvent", { id: "someone-else", name: "regionChange" });
+    assertEquals(events, [["regionChange", { zoom: 12 }]]);
+
+    root.unmount();
+    await tick();
+    assertEquals(views.calls.filter(([m]) => m === "destroy").map(([, a]) => a), [{
+      id: create.id,
+    }]);
+    assertEquals(views.listening(), 0, "the event listener goes with the last view");
+  });
+});
+
+Deno.test("NativeViewSlot: Android draws over the page; an unknown type or a failure falls back", async () => {
+  const views = viewsPlugin(["video"]);
+  await inShell("android", { DenextNativeViews: views.plugin }, async () => {
+    pageTracker(views.plugin as Any, fakeEnv().env);
+    const { container } = mount(() =>
+      h(
+        "div",
+        null,
+        h(NativeViewSlot as Any, { type: "video", props: { src: "https://x/v.mp4" } }, "web video"),
+        h(NativeViewSlot as Any, { type: "map" }, "web map"),
+      )
+    );
+    await tick();
+    await tick();
+    const [video, map] = container.firstChild.childNodes;
+    assertEquals(video.getAttribute("data-status"), "native");
+    assertEquals((views.calls.find(([m]) => m === "create")![1] as Any).placement, "over");
+    assertEquals(video.childNodes.length, 0, "no scroller off iOS, no fallback");
+    assertEquals(map.getAttribute("data-status"), "web", "map is not registered");
+    assertEquals(
+      map.textContent ?? map.childNodes[0].data ?? map.childNodes[0].textContent,
+      "web map",
+    );
+  });
+
+  const failing = fakePlugin(["types", "create", "update", "setProps", "command", "destroy"], {
+    types: { types: ["video"] },
+    create: new Error("no parent"),
+  });
+  await inShell("android", { DenextNativeViews: failing.plugin }, async () => {
+    const { container } = mount(() => h(NativeViewSlot as Any, { type: "video" }, "fallback"));
+    await tick();
+    await tick();
+    assertEquals(container.firstChild.getAttribute("data-status"), "error");
+    assertEquals(container.firstChild.childNodes.length, 1, "the fallback is back");
+  });
+});
+
+Deno.test("useNativeViewSlot: command reaches the view once native, rejects before", async () => {
+  const views = viewsPlugin(["video"], { placement: "under" });
+  await inShell("android", { DenextNativeViews: views.plugin }, async () => {
+    pageTracker(views.plugin as Any, fakeEnv().env);
+    let handle: Any;
+    function Probe() {
+      handle = useNativeViewSlot("video", { placement: "under" });
+      return h("div", { ref: handle.ref });
+    }
+    mount(() => h(Probe, null));
+    await assertRejects(() => handle.command("play"), Error, "not ready");
+    await tick();
+    await tick();
+    assertEquals(handle.status, "native");
+    assertEquals(handle.placement, "under");
+    assertEquals(await handle.command("play", { from: 0 }), { playing: true });
+    assertEquals(views.calls.find(([m]) => m === "command")![1], {
+      id: (views.calls.find(([m]) => m === "create")![1] as Any).id,
+      name: "play",
+      args: { from: 0 },
+    });
+  });
+});
+
+Deno.test("nativeViewComponent: React Native's host-component shape over a slot", async () => {
+  const views = viewsPlugin(["chart"], { placement: "over" });
+  await inShell("android", { DenextNativeViews: views.plugin }, async () => {
+    pageTracker(views.plugin as Any, fakeEnv().env);
+    const Chart = nativeViewComponent("chart");
+    const selected: unknown[] = [];
+    const { container } = mount(() =>
+      h(Chart as Any, {
+        values: [1, 2],
+        style: { height: "120px" },
+        testID: "chart",
+        onSelect: (e: unknown) => selected.push(e),
+      }, h("span", null, "legend"))
+    );
+    await tick();
+    await tick();
+    const create = views.calls.find(([m]) => m === "create")![1] as Any;
+    assertEquals(create.type, "chart");
+    assertEquals(create.props, { values: [1, 2] }, "functions, style and testID stay out");
+    const slot = container.firstChild;
+    assertEquals(slot.style.getPropertyValue("height"), "120px");
+    assertEquals(slot.childNodes[0].childNodes[0].tagName, "SPAN", "children drawn over the view");
+    views.fire("nativeViewEvent", { id: create.id, name: "select", data: { index: 1 } });
+    assertEquals(selected, [{ nativeEvent: { index: 1 } }]);
+  });
+});

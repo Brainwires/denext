@@ -264,15 +264,14 @@ channels, `appLinks`); the page side of the Deno Desktop capabilities and `denex
 
 - Dynamic Type / text zoom (a native hook plus `PixelRatio.getFontScale`), a route announcer and
   focus management on navigation, and a `useReducedMotion` hook in `denext/mobile`.
-- `LayoutAnimation` over View Transitions; `@2x` / `@3x` resolution variants as `srcset`.
-- Fast Refresh (per-module HMR) for React Native mode.
+- `@2x` / `@3x` resolution variants as `srcset`.
 - The remaining backable Expo shims: `expo-navigation-bar`, `expo-battery`, `expo-sms`,
   `expo-intent-launcher`, `expo-video-thumbnails`, `expo-localization`, `expo-mesh-gradient`.
 - Durable AsyncStorage / MMKV (an alias onto Preferences or SQLite), background audio with
   lock-screen controls, multi-select / video image picking, file transfer with progress, a
   notification service extension and badges, SQLite encryption and a PowerSync recipe.
-- `denext mobile build` / `denext mobile assets` (icons and splash through the wasm codecs), and
-  `denext profile --android` over remote CDP.
+- `denext profile --android` over remote CDP. (`denext mobile build` / `assets` / `submit`
+  shipped: https://denext.dev/docs/mobile-build.)
 - A Skia (CanvasKit) recipe; Tamagui / Unistyles verification.
 - The parity ledger's React Native gaps: the `*Base` / `*Component` aliases,
   `DrawerLayoutAndroid`, `ProgressBarAndroid`, `Settings`, and the lists' snap and

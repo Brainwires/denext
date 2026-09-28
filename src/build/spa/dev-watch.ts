@@ -2,6 +2,7 @@
 // bundle and deciding the live-reload action for each debounced batch of edits.
 
 import { resolve } from "@std/path";
+import { reactNativeOptions } from "../../server/config.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import {
   broadcastFrame,
@@ -51,21 +52,37 @@ function installShutdown(st: SpaDevState, watcher: Deno.FsWatcher): void {
  */
 async function unbundledAction(st: SpaDevState, batch: string[]): Promise<void> {
   const { entryPath, paths } = st;
+  // React Native mode: a dependency manifest, or an added / removed expo-router route, changes
+  // the dependency bundle — the reload rebuilds it.
+  if (await st.unbundled!.depsInvalidated(batch)) {
+    broadcastFrame(st, "reload");
+    return;
+  }
   if (batch.every((p) => p.endsWith(".css"))) {
     await getUnbundledCss(st);
     broadcastFrame(st, "css");
     return;
   }
-  if (!isSwappableBatch(batch, entryPath, paths.publicDir)) {
+  const jsxInJs = reactNativeOptions(paths.config) !== null;
+  if (!isSwappableBatch(batch, entryPath, paths.publicDir, jsxInJs)) {
     broadcastFrame(st, classifySpaChange(batch, entryPath, paths.publicDir));
     return;
   }
   broadcastHmr(st, st.unbundled!.onChange(batch));
 }
 
-/** Only component-module edits (not the entry, not a public asset) can hot-swap per module. */
-function isSwappableBatch(batch: string[], entryPath: string, publicDir: string): boolean {
-  return batch.every((p) => /\.(tsx|jsx)$/.test(p)) &&
+/**
+ * Only component-module edits (not the entry, not a public asset) can hot-swap per module —
+ * `.tsx` / `.jsx`, and `.js` in React Native mode (`jsxInJs`: `.js` holds JSX there).
+ */
+function isSwappableBatch(
+  batch: string[],
+  entryPath: string,
+  publicDir: string,
+  jsxInJs: boolean,
+): boolean {
+  const component = jsxInJs ? /\.(tsx|jsx|js)$/ : /\.(tsx|jsx)$/;
+  return batch.every((p) => component.test(p)) &&
     !batch.some((p) => p === entryPath || p.startsWith(publicDir));
 }
 

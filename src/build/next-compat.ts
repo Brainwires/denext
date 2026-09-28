@@ -378,7 +378,17 @@ export interface BundleNextCompatOptions {
  * import-map shim redirect) are left to the deno-loader by returning null.
  */
 /** Extensions probed when resolving an extensionless relative/alias import. */
-const SOURCE_EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
+export const SOURCE_EXTS: readonly string[] = [
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".json",
+  ".mdx",
+  ".md",
+];
 
 /**
  * The extension list to probe with `platformExtensions` (React Native's `.web.tsx`, …) tried
@@ -576,7 +586,7 @@ export function resolveReactFamilyFile(spec: string): { file: string; warning?: 
  * denext's own client/SSR/jsx specifiers, aliased to the SAME prebuilt graph so the
  * generated route entry shares the one denext instance.
  */
-const DENEXT_RUNTIME_FILES: Record<string, string> = {
+export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/ssr": "ssr.js",
   "denext/ssr-stream": "ssr-stream.js",
   "denext/client": "client.js",

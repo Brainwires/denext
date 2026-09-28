@@ -108,7 +108,7 @@ function seamImport(install: string): string {
 }
 
 /** The `import`+`install()` lines for each seam runtime the entry needs. */
-function supportInstall(support: SpaEntrySupport): string {
+export function supportInstall(support: SpaEntrySupport): string {
   const lines: string[] = [];
   if (support.classComponents ?? true) {
     lines.push(

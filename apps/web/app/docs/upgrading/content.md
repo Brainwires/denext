@@ -37,14 +37,26 @@ links back to the release that introduced it.
   body: drop the header or decode it. ([Configuration](/docs/config#production-server))
 - **The ISR page cache is keyed per build.** A cached page references its build's hashed client
   chunks, so `denext start` now reads and writes only the entries of the build it runs: every
-  deploy starts with a cold page cache (including `force-static` pages), and the previous
-  build's entries age out through the store's eviction. `denext build` writes the id into
+  deploy starts with a cold page cache (including `force-static` pages) even when the store
+  outlives the build — a custom store, an explicit `cache.path`, a volume-mounted `.denext`
+  (`denext build` already empties the default `.denext/cache.db`). `denext build` writes the id into
   `.denext/manifest.json` — random per build, or `DENEXT_BUILD_ID` when set; set it (to the
   commit sha, say) when replicas built separately should share one store. A custom
   `CacheStore` is unaffected in its interface, but page keys it receives now start with the
   cache format and build id (`v2:<buildId>:/path?query`), so a store or warm-up script that
   reads or seeds page keys by bare path must use the new form. `new PageCache()` in your own
-  `createApp()` keeps path-only keys (`v2:/path`); pass a build id to key by build.
+  `createApp()` keeps path-only keys (`v2:/path`); pass a build id to key by build. After
+  startup `denext start` also deletes the previous builds' pages from its store — always for the
+  in-memory store and the default `.denext/cache.db`, and for a custom store or an explicit
+  `cache.path` only when the id is pinned with `DENEXT_BUILD_ID` and the store implements the
+  new optional `CacheStore.sweepPages(keep)`. A custom store without it keeps working and is
+  never swept. ([Multiple instances](/docs/multi-instance#page-keys-and-builds))
+- **`denext dev` serves a `reactNative` app on the per-module loop** (Fast Refresh keeps state
+  on a component edit) instead of rebuilding and reloading per change, and an explicit
+  `unbundled: true` dev server option is accepted. A package import is now served from a
+  dependency bundle built on the first page load; if your app relied on a full rebuild per
+  edit, set `DENEXT_DEV_UNBUNDLED=0` (or pass `unbundled: false`) for the bundled loop.
+  ([React Native](/docs/react-native#fast-refresh))
 
 ## Upgrading to 2.10
 

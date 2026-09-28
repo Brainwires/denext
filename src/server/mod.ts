@@ -259,6 +259,8 @@ export {
   type LiveSubscriptionRequest,
   type LocalPattern,
   type MdxConfig,
+  type MobileConfig,
+  type MobileFlavorConfig,
   type ReactNativeConfig,
   type RedirectRule,
   type RemotePattern,

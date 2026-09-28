@@ -58,10 +58,14 @@ import {
 } from "./stack-model.ts";
 import { StackView, type StackViewAnimate, type StackViewHandle } from "./stack-view.ts";
 import { viewTransitionsOn } from "./vt-hold.ts";
+import type { NavigationThemeProps } from "./theme.ts";
 import type { NavigationPlatform, ScreenOptions, StackViewEntry } from "./types.ts";
 
-/** Props of {@linkcode StackLayout}. */
-export interface StackLayoutProps {
+/**
+ * Props of {@linkcode StackLayout}. `theme` (default `"auto"`: the platform theme inside the
+ * native shell), `material` and `accentColor` pick the look; see {@linkcode NavigationThemeProps}.
+ */
+export interface StackLayoutProps extends NavigationThemeProps {
   /** The layout's `children` (the current route's page). */
   readonly children?: VNodeChildren;
   /**
@@ -632,6 +636,9 @@ export function StackLayout(props: StackLayoutProps): VNode {
       platform: rt.platform,
       screenOptions: props.screenOptions,
       swipeHaptic: props.swipeHaptic,
+      theme: props.theme,
+      material: props.material,
+      accentColor: props.accentColor,
       style: props.style,
       className: props.className,
       onPop: (index: number, how: { animated: boolean }) => popTo(rt, index, how.animated),

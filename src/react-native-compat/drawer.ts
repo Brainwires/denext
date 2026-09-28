@@ -43,6 +43,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from ".
 import { hostView, viewStyle } from "../expo/internal/common.ts";
 import { clamp, releaseSwipe, VelocityTracker } from "../navigation/gesture.ts";
 import { prefersReducedMotion } from "../navigation/animation.ts";
+import { useRouteAnnouncer } from "../navigation/announcer.ts";
 import { onBack } from "../mobile/back-handler.ts";
 import { useSafeAreaInsets } from "../mobile/safe-area.ts";
 import * as RN from "./internal/react-native.ts";
@@ -1048,6 +1049,14 @@ export function DrawerView(props: DrawerViewProps): VNode {
   const actions = useContext(DrawerActionsContext);
   const focusedKey = state.routes[state.index]?.key ?? "";
   const o = descriptors[focusedKey]?.options ?? {};
+  useRouteAnnouncer(
+    focusedKey,
+    typeof o.title === "string"
+      ? o.title
+      : typeof o.drawerLabel === "string"
+      ? o.drawerLabel
+      : state.routes[state.index]?.name,
+  );
   const loaded = useRef(new Set<string>());
   loaded.current.add(focusedKey);
   const status = getDrawerStatusFromState({ ...state, history: state.history ?? [] });

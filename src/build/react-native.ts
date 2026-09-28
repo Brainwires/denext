@@ -12,9 +12,20 @@
 //     one exists; otherwise it loads a stub that throws, naming the import, when used.
 //   - The codegen / TurboModule entry points react-native-web lacks — `TurboModuleRegistry`,
 //     `codegenNativeComponent`, `codegenNativeCommands` and `requireNativeComponent` — are
-//     added to its entry and back their deep `Libraries/…` imports: no native module is
-//     registered (`get` → null, `getEnforcing` returns a module that throws, naming it, on
-//     first use), a native component renders nothing, and native commands do nothing. React
+//     added to its entry and back their deep `Libraries/…` imports. A native module resolves,
+//     through the shell overlay's `turboModule`, to the Capacitor plugin of its name inside the
+//     iOS/Android shell or the desktop extension of its name on Deno Desktop (async methods,
+//     positional arguments); elsewhere none is registered (`get` → null, `getEnforcing`
+//     returns a module that throws, naming it, on first use). `NativeModules` and
+//     `NativeEventEmitter` are rebuilt over react-native-web's own (RN_BRIDGE_MODULES) to reach
+//     the same modules and their events. App source that uses a native method's result
+//     without awaiting it gets a build warning (native-module-scan.ts). A native component
+//     (`requireNativeComponent` / `codegenNativeComponent` / `NativeComponentRegistry.get`)
+//     is the overlay's `nativeHostComponent`: a `denext/mobile` native view slot of that type
+//     (props to the native factory, `on<Name>` events, children drawn over it; the children
+//     where the type is not registered natively). Without the overlay it renders nothing.
+//     Native commands do
+//     nothing. React
 //     Native internals a library may import (`CodegenTypes`, `DevMenu`,
 //     `NativeComponentRegistry`, `PushNotificationIOS`, `registerCallableModule`, `Systrace`)
 //     are load-safe no-ops.
@@ -72,6 +83,8 @@ import { listAdaptersPlugin } from "./react-native-lists.ts";
 import { reanimatedWorkletsPlugin } from "./reanimated.ts";
 import { desktopReactNativePlugin } from "./react-native-desktop.ts";
 import { reactNativeAliasesPlugin, resolveInstead } from "./react-native-aliases.ts";
+import { nativeModuleScanPlugin } from "./native-module-scan.ts";
+import { reactNativePatchesPlugin } from "./react-native-patches.ts";
 
 /** The web platform extensions React Native mode probes ahead of the plain ones. */
 export const WEB_PLATFORM_EXTENSIONS: readonly string[] = [
@@ -316,8 +329,11 @@ function nativeDeepImport(spec: string): string | null {
 }
 
 /**
- * The web stand-ins for React Native's codegen / TurboModule entry points. No native module is
- * registered on the web, so `TurboModuleRegistry.get(name)` is null and
+ * The web stand-ins for React Native's codegen / TurboModule entry points. With the shell
+ * overlay (`overlay`), `TurboModuleRegistry.get(name)` / `getEnforcing(name)` first ask its
+ * `turboModule(name)`: the Capacitor plugin of that name inside the iOS/Android shell, the
+ * desktop extension of that name on Deno Desktop (src/react-native/native-modules.ts). Where
+ * neither serves the module (the web), `TurboModuleRegistry.get(name)` is null and
  * `TurboModuleRegistry.getEnforcing(name)` returns a stand-in that loads harmlessly (codegen
  * specs call it at module top level) and throws an error naming the module on first use: any
  * genuine member name. Introspection is exempt, so logging and error overlays never throw:
@@ -325,8 +341,9 @@ function nativeDeepImport(spec: string): string | null {
  *   - `then` (not thenable), `$$typeof` (not a React element), `__esModule`, `inspect`,
  *     `nodeType`, `asymmetricMatch`, `@@`-prefixed keys and symbol keys → `undefined`. A
  * `codegenNativeComponent(name)` (and `requireNativeComponent(name)`, and
- * `NativeComponentRegistry.get(name)`) component renders nothing (warning once per name in dev),
- * and `codegenNativeCommands()` returns commands that do nothing.
+ * `NativeComponentRegistry.get(name)`) component is, with the overlay, its
+ * `nativeHostComponent(name)` (a native view slot); without it, it renders nothing (warning once
+ * per name in dev). `codegenNativeCommands()` returns commands that do nothing.
  *
  * The React Native internals a library may import load and do nothing: `CodegenTypes` is an
  * empty object (its members are types), `DevMenu.show()`, `registerCallableModule()` and
@@ -336,9 +353,26 @@ function nativeDeepImport(spec: string): string | null {
  *
  * @returns The module source.
  */
-function nativeModulesSource(): string {
-  return `function get(_name) { return null; }
+function nativeModulesSource(overlay = false): string {
+  // With the shell overlay, a module the native side serves (a Capacitor plugin in the shell,
+  // a desktop extension on Deno Desktop) comes from its turboModule(); through a namespace, so
+  // an overlay without it (a stand-in) reads undefined instead of failing the build.
+  const native = overlay
+    ? `import * as __denextOverlay from ${JSON.stringify(RN_OVERLAY)};
+function served(name) {
+  var turbo = __denextOverlay.turboModule;
+  return typeof turbo === "function" ? turbo(name) : null;
+}
+function hostView(name) {
+  var host = __denextOverlay.nativeHostComponent;
+  return typeof host === "function" ? host(name) : null;
+}
+`
+    : "function served(_name) { return null; }\nfunction hostView(_name) { return null; }\n";
+  return `${native}function get(name) { return served(name); }
 function getEnforcing(name) {
+  var found = served(name);
+  if (found) return found;
   var message = "denext reactNative: the native module \\"" + name + "\\" is unavailable " +
     "on the web (TurboModuleRegistry.getEnforcing). Guard its use behind Platform.OS, give " +
     "the importing module a .web.* variant, or map the package to a web shim.";
@@ -358,6 +392,8 @@ function getEnforcing(name) {
 var TurboModuleRegistry = { get: get, getEnforcing: getEnforcing };
 var warned = /* @__PURE__ */ new Set();
 function nativeComponent(name, via) {
+  var view = hostView(name);
+  if (view) return view;
   function NativeComponent() {
     if ((typeof __DEV__ === "undefined" || __DEV__) && !warned.has(name)) {
       warned.add(name);
@@ -710,6 +746,58 @@ export function overlayModuleSource(name: string, cjs: boolean): string {
 }
 
 /**
+ * The react-native-web modules React Native mode rebuilds over their own base so they reach
+ * the app's native code ({@linkcode bridgeModuleSource}), each with the base module's path
+ * relative to it: `NativeModules` (react-native-web's holds only `UIManager`) and
+ * `NativeEventEmitter` (its vendored class).
+ */
+export const RN_BRIDGE_MODULES: Readonly<Record<string, string>> = {
+  NativeModules: "../UIManager",
+  NativeEventEmitter: "../../vendor/react-native/EventEmitter/NativeEventEmitter",
+};
+
+/** A {@linkcode RN_BRIDGE_MODULES} module (ES or CommonJS build); group 1 is `cjs/`, 2 the name. */
+const BRIDGE_MODULE = new RegExp(
+  `[\\\\/]react-native-web[\\\\/]dist[\\\\/](cjs[\\\\/])?exports[\\\\/](${
+    Object.keys(RN_BRIDGE_MODULES).join("|")
+  })[\\\\/]index\\.js$`,
+);
+
+/**
+ * The source that stands in for react-native-web's module `name` (a key of
+ * {@linkcode RN_BRIDGE_MODULES}): the shell overlay's `create<name>(base)` over the module's
+ * own base (src/react-native/native-modules.ts), so `NativeModules.Foo` and
+ * `new NativeEventEmitter(Foo)` reach the Capacitor plugin / desktop extension `Foo`. An
+ * overlay without the factory (a stand-in) keeps react-native-web's value.
+ *
+ * @param name The module name.
+ * @param cjs Whether the module is from react-native-web's CommonJS build.
+ * @returns The module source.
+ */
+export function bridgeModuleSource(name: string, cjs: boolean): string {
+  const base = JSON.stringify(RN_BRIDGE_MODULES[name]);
+  const fallback = name === "NativeModules" ? "{ UIManager: __denextBase }" : "__denextBase";
+  if (!cjs) {
+    return `import __denextBase from ${base};\n` +
+      `import * as __denextOverlay from ${JSON.stringify(RN_OVERLAY)};\n` +
+      `var __denextCreate = __denextOverlay.create${name};\n` +
+      `export default typeof __denextCreate === "function" ? ` +
+      `/* @__PURE__ */ __denextCreate(__denextBase) : ${fallback};\n`;
+  }
+  return `"use strict";\nvar __denextBase = require(${base});\n` +
+    "if (__denextBase && __denextBase.__esModule) __denextBase = __denextBase.default;\n" +
+    `var __denextCreate = require(${JSON.stringify(RN_OVERLAY)}).create${name};\n` +
+    `module.exports = typeof __denextCreate === "function" ? __denextCreate(__denextBase) : ` +
+    `${fallback};\n`;
+}
+
+/** Whether the shell overlay resolves from `resolveDir` in this build. */
+async function overlayResolves(build: esbuild.PluginBuild, resolveDir: string): Promise<boolean> {
+  const result = await build.resolve(RN_OVERLAY, { kind: "import-statement", resolveDir });
+  return result.errors.length === 0;
+}
+
+/**
  * The esbuild plugin that sends `react-native` (and its subpaths) to react-native-web. It
  * must run ahead of the app and node_modules resolvers, which is where the SPA bundle's
  * `extraPlugins` go.
@@ -744,12 +832,28 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
         namespace: NATIVE_NAMESPACE,
         sideEffects: false,
       }));
-      build.onLoad({ filter: /.*/, namespace: NATIVE_NAMESPACE }, (args) => ({
-        contents: args.path === NATIVE_MODULES
-          ? nativeModulesSource()
-          : NATIVE_DEEP_IMPORTS[args.path],
-        loader: "js",
-      }));
+      build.onLoad({ filter: /.*/, namespace: NATIVE_NAMESPACE }, async (args) => {
+        if (args.path !== NATIVE_MODULES) {
+          return { contents: NATIVE_DEEP_IMPORTS[args.path], loader: "js" };
+        }
+        const dir = await (webDir ??= findReactNativeWeb(projectDir));
+        const overlay = dir !== null && await overlayResolves(build, dir);
+        return {
+          contents: nativeModulesSource(overlay),
+          loader: "js",
+          ...(dir === null ? {} : { resolveDir: dir }),
+        };
+      });
+      build.onLoad({ filter: BRIDGE_MODULE }, async (args) => {
+        const resolveDir = dirname(args.path);
+        if (!(await overlayResolves(build, resolveDir))) return undefined;
+        const [, cjs, name] = BRIDGE_MODULE.exec(args.path)!;
+        return {
+          contents: bridgeModuleSource(name, cjs !== undefined),
+          loader: "js",
+          resolveDir,
+        };
+      });
       build.onLoad({ filter: WEB_ENTRY_MODULE }, async (args) => ({
         contents: withNativeModuleExports(
           await Deno.readTextFile(args.path),
@@ -803,7 +907,8 @@ export interface ReactNativeBundleOptions {
   /** The `define` entries ({@linkcode reactNativeDefines}). */
   define: Record<string, string>;
   /**
-   * The react-native → react-native-web resolver, expo-router's route context and its
+   * The native-module sync-use scan (warnings only), the react-native → react-native-web
+   * resolver, expo-router's route context and its
    * `Stack` / `Tabs` drawn by `denext/navigation`, (unless
    * `expoShims: false`) the `expo-*` → `denext/expo/*` resolver and (unless
    * `lists: "library"`) the list adapters, ahead of the built-in resolvers.
@@ -837,10 +942,13 @@ export function reactNativeBundleOptions(
   return {
     define: reactNativeDefines(dev),
     plugins: [
+      // First: its onLoad only reports warnings (no contents), so every loader after it runs.
+      nativeModuleScanPlugin(projectDir),
       // Ahead of the react-native-web resolver: `desktopPackage` claims app-source
       // `react-native` imports first.
       desktopReactNativePlugin(options.desktopPackage),
       reactNativeWebPlugin(projectDir),
+      reactNativePatchesPlugin(),
       expoRouterContextPlugin(projectDir),
       expoRouterNavigatorsPlugin(),
       ...(options.expoShims === false ? [] : [expoShimPlugin()]),

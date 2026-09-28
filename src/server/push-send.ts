@@ -239,7 +239,8 @@ function pkcs8Der(pem: string, what: string): Uint8Array<ArrayBuffer> {
   }
 }
 
-async function importKey(
+/** Import a PKCS#8 PEM signing key; a TypeError naming `what` when it is not one. */
+export async function importKey(
   pem: string,
   what: string,
   algorithm: EcKeyImportParams | RsaHashedImportParams,
@@ -255,7 +256,7 @@ async function importKey(
 }
 
 /** A compact JWS over `header`.`claims`, signed with `key`. */
-async function signJwt(
+export async function signJwt(
   header: Record<string, unknown>,
   claims: Record<string, unknown>,
   key: CryptoKey,

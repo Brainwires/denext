@@ -40,6 +40,8 @@ export {
   supportKeyboard,
 } from "./desktop.ts";
 export { I18nManager } from "./i18n-manager.ts";
+export { reactNativeFontScale, withFontScaleRatio, withFontScaling } from "./font-scaling.ts";
+export { pickImageScale } from "./image-scale.ts";
 export { createKeyboardAvoidingView, Keyboard } from "./keyboard.ts";
 export { createInputAccessoryView } from "./input-accessory-view.ts";
 export { Linking } from "./linking.ts";
@@ -51,5 +53,12 @@ export { createFlatList } from "./lists/flat-list.ts";
 export { createSectionList } from "./lists/section-list.ts";
 export { createVirtualizedList } from "./lists/virtualized.ts";
 export { createNativeSafeAreaProvider, createSafeAreaView } from "./safe-area.ts";
+export { withScrollSnap } from "./scroll-snap.ts";
 export { StatusBar } from "./status-bar.ts";
 export { ToastAndroid } from "./toast-android.ts";
+export {
+  createNativeEventEmitter,
+  createNativeModules,
+  nativeHostComponent,
+  turboModule,
+} from "./native-modules.ts";

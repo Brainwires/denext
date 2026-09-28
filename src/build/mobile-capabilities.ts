@@ -44,6 +44,8 @@ import { CAPACITOR_CONFIGS, capacitorConfigFile, readCapacitorConfig } from "./c
 import { addOfflineScreenToProject } from "./mobile-offline-screen.ts";
 import { privacyEntriesFor, privacyLabels, writePrivacyManifests } from "./mobile-privacy.ts";
 import { PLATFORM_CAPABILITIES } from "./mobile-capabilities-platform.ts";
+import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
+import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -831,6 +833,8 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   // app-review, app-update, screen-orientation, media-library, privacy-screen, tracking,
   // background, restore: ./mobile-capabilities-platform.ts.
   ...PLATFORM_CAPABILITIES,
+  "native-module": NATIVE_MODULE_CAPABILITY,
+  ...NATIVE_VIEW_CAPABILITIES,
 };
 
 /** A package manager `denext mobile add` can drive. */

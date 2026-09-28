@@ -10,9 +10,11 @@ intervals and gfxinfo jank. Phase 1 of the denext VirtualList plan: find where e
 shared/    plain TypeScript, no React: seeded lazy data (data.ts), row design numbers
            (theme.ts), the scenario catalogue + deep links + logcat markers (scenarios.ts)
 web/       denext SPA (mode "spa", compat build for the npm list libraries) + Capacitor Android
+ssr/       denext App Router app: server-rendered lists, islands, resumable, VirtualList islands
 native/    React Native 0.87 CLI app (New Architecture, Hermes), its own package.json
 harness/   measure.ts (adb), matrix.ts (planning/report), parse.ts (parsers), web-smoke.ts
-           (headless Chromium check of the web impls), unit tests
+           (headless Chromium check of the web impls), ssr-measure.ts + ssr-report.ts (the
+           server-rendered bench in headless Chromium), unit tests
 ```
 
 ## Kinds and sizes
@@ -87,3 +89,50 @@ deno run -A harness/measure.ts coldstart --runs 5
 The method, and what each number does and does not mean, is in the header of
 `harness/measure.ts`. Checks without a device: `deno task test` (parsers, matrix, data) and
 `deno task smoke` (every web impl in headless Chromium after `cd web && deno task export`).
+
+## Server-rendered lists (`ssr/`)
+
+`ssr/` asks a different question: for a list of mostly static rows on a server-rendered page,
+at what size should the page stop sending every row as plain HTML (no JS, and Ctrl+F, SEO,
+accessibility, selection and printing all work) and switch to `VirtualList`? It is a denext
+App Router app (not SPA mode) that draws the same data with the same rows (`shared/`, plus
+`web/src/rows.tsx` and `styles.ts`). Each impl is a route, `/list/<impl>?kind=fixed|chat|images&n=1000`:
+
+| impl                     | what the server sends                                                                    | per-row control (a like button)                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `static`                 | every row as HTML (Server Components)                                                    | none                                                                     |
+| `static-cv`              | the same + `content-visibility: auto; contain-intrinsic-size: auto <estimate>px` per row | none                                                                     |
+| `static-cv-islands`      | `static-cv`                                                                              | one `client:load` island per row                                         |
+| `static-cv-resumable`    | `static-cv` in a `resumable` route                                                       | the same component per row, resumed on its first click                   |
+| `static-cv-delegated`    | `static-cv`                                                                              | plain HTML buttons + ONE `client:load` island with a delegated listener  |
+| `static-cv-script`       | `static-cv`                                                                              | plain HTML buttons + the same listener as a `public/` script (no island) |
+| `virtual-island`         | `VirtualList` as one `client:load` island: the server renders its first window           | a row component inside the list                                          |
+| `virtual-island-visible` | the same below a 1.5-viewport intro, `client:visible`                                    | the same                                                                 |
+| `virtual-island-find`    | `virtual-island` with `findInPage`                                                       | the same                                                                 |
+| `virtual-spa`            | reference: the SPA's `denext` impl (`web/out`)                                           | none                                                                     |
+
+The virtual islands receive only `kind`, `n` and `seed` as props and generate the rows on the
+client, so no row data crosses the Flight boundary. The report lists what shipping the rows as
+props would add.
+
+```sh
+(cd ssr && deno task build)                  # production build; `deno task dev` to browse
+(cd ssr && deno task test)                   # every route renders its cell (no browser)
+deno task ssr-measure --smoke                # one run per impl at 100 and 1k rows
+deno task ssr-measure                        # the matrix → results/ssr-<date>/results.{md,json}
+deno task ssr-measure --impls islands --kinds fixed,chat --out results/ssr-2026-09-27
+                                             # re-run the island pages' cells (also: static,
+                                             # virtual, or impl ids); the report is rebuilt
+                                             # from every cell in --out
+```
+
+`harness/ssr-measure.ts` runs `denext start` behind a gzip proxy and loads every (profile,
+impl, kind, n) cell three times, each in a cold headless Chromium. `desktop` is 1280×800;
+`mobile` is 412×915 at DPR 2.625 with touch, 4× CPU throttling and a 9/1.5 Mbps, 60 ms
+network. Each run records TTFB, FCP, LCP, time to interactive, total blocking time, the HTML
+and JS bytes, DOM elements, JS heap, renderer memory, rAF frame intervals during a scripted
+fling, click-to-paint latency of a row's control, whether `window.find` reaches row n−1, and
+the `listitem` count of the accessibility tree. `--max-load` (default 4) waits until the
+1-minute load average is below it. The method is in the header of `harness/ssr-measure.ts`,
+and its pure half (`harness/ssr-report.ts`) is unit-tested. The findings feed the
+[Lists docs](https://denext.dev/docs/lists#server-rendered-lists-and-islands-vs-virtuallist).

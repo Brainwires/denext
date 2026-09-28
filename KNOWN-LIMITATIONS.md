@@ -448,11 +448,15 @@ four documented bounds of the opt-in:
 - **The Deno Desktop self-updater replaces the UI, not the app.** `denext/desktop/updater`
   verifies and overlays a signed UI export in the app-support directory; the executable and
   the runtime are updated only by shipping a new build. Every manifest must be signed.
-- **`showContextMenu` is an in-page menu on mobile and the web.** denext ships no native
-  context-menu plugin for Capacitor: the menu is an accessible popover in the WebView unless the
-  app registers its own `DenextContextMenu` plugin. In a Deno Desktop window with the
-  `context-menu` capability it is the OS menu (once the desktop runtime ships), flat (no
-  submenus) and without destructive styling.
+- **Native context menus need `denext mobile add context-menu`, and iOS's lifted preview needs
+  a bound element.** Without the plugin the menu is an accessible popover in the WebView. With
+  it, the long-press menu with the lifted preview is `useContextMenu` / `attachContextMenu` (the
+  system `UIContextMenuInteraction`, armed per press); `showContextMenu(items, { x, y })` from
+  code has no element to lift, so iOS presents its `UIMenu` through the edit-menu presentation
+  (iOS 16+; an action sheet on iOS 15). Android's `PopupMenu` lists submenus as labelled groups
+  and draws no icons or menu title. In a Deno Desktop window with the `context-menu` capability
+  it is the OS menu (once the desktop runtime ships), with submenus flattened (`Parent › Child`)
+  and without destructive styling.
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
@@ -514,13 +518,40 @@ four documented bounds of the opt-in:
   sent through `CapacitorHttp`.
 - **Service workers do not run on iOS's `capacitor://` origin.** Cache API data for offline use
   in SQLite or Preferences, unless the app is served from `https` with `WKAppBoundDomains`.
+- **JavaScript-driven motion runs at 60 Hz on ProMotion iPhones.** WKWebView caps
+  `requestAnimationFrame` at 60 Hz on 120 Hz displays
+  ([WebKit bug 294338](https://bugs.webkit.org/show_bug.cgi?id=294338)); CSS and Web Animations
+  and native scrolling run at the display's rate. Anything JavaScript moves frame by frame (a
+  gesture-driven drag, Reanimated worklets, rows mounting during a fast fling) updates at half
+  the rate React Native reaches there. Unlocking it needs a private WebKit setting, an App
+  Review risk denext does not take. denext's smoothness checks ran on a 60 Hz iPhone 16e;
+  nothing has been measured on a 120 Hz display.
+- **Android WebView versions vary.** The WebView is a separately updated system app, so the
+  engine is whatever the device has: current on Play-updated phones, older on devices without
+  Play updates (some OEM, China-market and enterprise builds). Web features and bugs follow the
+  device's version (for example, `env(safe-area-inset-*)` is wrong below WebView 140;
+  `useSafeAreaInsets` reads the shell's insets instead). Only an emulator with WebView 124 has
+  been measured.
 - **Interactive keyboard dismissal is limited.** The swipe-down dismiss that tracks the keyboard
   (iMessage-style) is at best available to the WebView's outer scroller; inner scroll
   containers cannot drive it.
-- **Screen readers follow the WebView's DOM accessibility tree.** Route changes are not
-  announced yet (no route announcer), and WKWebView may move VoiceOver focus to the top of the
-  page on a full load. Whether VoiceOver / TalkBack is on reaches the page only through
-  `denext mobile add accessibility`; Dynamic Type / text zoom does not reach it at all yet.
+- **Screen readers follow the WebView's DOM accessibility tree.** `denext/navigation`'s stacks,
+  tabs and React Native mode's navigators announce a screen change through an `aria-live`
+  region, but focus is not moved to the new screen (a screen reader keeps its place in the
+  page), plain App Router navigations outside them are not announced, and WKWebView may move
+  VoiceOver focus to the top of the page on a full load. Whether VoiceOver / TalkBack is on, and
+  the OS text size (Dynamic Type, Android's font scale), reach the page only through `denext
+  mobile add accessibility`; the text size applies to a page only through `applyFontScale()`
+  (or React Native mode's `Text`), and on Android `allowFontScaling={false}` cannot undo the
+  WebView's own text zoom.
+- **WebView storage is evictable; durable storage needs `denext mobile add storage`.** iOS and
+  Android may clear a WebView's `localStorage` and IndexedDB under storage pressure.
+  `openKeyValueStore` (and React Native mode's AsyncStorage / MMKV) write to the app's data folder
+  only with the `DenextStorage` plugin (or an installed `@capacitor-community/sqlite`); without
+  either they fall back to IndexedDB and warn. `denext mobile doctor` flags app code that keeps
+  data in web storage itself. The store is not encrypted (secrets go in `secureStore`), and on
+  Android a single value above about 2 MB cannot be read back (SQLite's cursor window), as with
+  React Native's AsyncStorage. The native plugin is compiled but not yet run on a device.
 - **No install attribution or deferred deep links.** Firebase Dynamic Links shut down on
   2025-08-25; use an attribution SDK (Branch, AppsFlyer, Adjust).
 - **An OTA update cannot change what the app is.** Apple allows over-the-air updates to
@@ -534,6 +565,24 @@ four documented bounds of the opt-in:
   advisory.** Anything in `out/` can be read from the app package; keep secrets and
   authorization on the server.
 - **Enterprise MDM (managed app configuration) is not wrapped.** Use a community plugin.
+- **`NativeViewSlot` cannot track its slot perfectly outside iOS's `"embed"` placement.**
+  `"under"` and `"over"` views are moved by the page: it measures each slot per animation frame
+  while the page moves and every 250 ms while it is still, and the native move lands a frame
+  after the page's, so during a fast fling (and on Android's slower bridge, possibly two) the
+  view trails its slot. A CSS transform or animation on an ancestor is followed only as the
+  rect it produces (a rotation or skew is drawn as its bounding box, a scale as the scaled
+  box), a clip other than an `overflow` / `contain: paint` box (`clip-path`, a rounded
+  `border-radius` corner, `mask`) is not applied, and an `"over"` view hides whole while page
+  content covers any part of it (occlusion is sampled at five points, so a cover smaller than
+  the gaps between them is missed). A layout change with no event (content inserted above the
+  slot) is caught within 250 ms. `"under"` needs every ancestor transparent over the slot.
+  `"embed"` (iOS) depends on WebKit backing the slot's `overflow: scroll` element with a native
+  scroll view (as `@capacitor/google-maps` does); if it does not within 2 s the view falls back
+  to `"over"`, and a DOM overlay over an embedded view receives touches only where the page
+  reports it (the slot's `overlay` children). A slot a virtualized list unmounts destroys its
+  view (a map loses its position; a video restarts). Android is compiled, not yet run: the
+  touch routing and the frame math have not run on a device or emulator. iOS awaits its first
+  device run.
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so
@@ -597,7 +646,8 @@ four documented bounds of the opt-in:
 
 - **Rendering stays DOM.** `reactNative` builds an app's source for the web through
   react-native-web. A TurboModule / Fabric codegen package, or a `requireNativeComponent` view,
-  loads and fails only when its native module is used; Nitro HybridObjects throw on use. Two
+  loads and fails only when its native module is used (unless the app ships a Capacitor plugin
+  of that name, below); Nitro HybridObjects throw on use. Two
   kinds fail earlier, at build time or import, unless an [Expo shim](https://denext.dev/docs/react-native#expo-apis)
   or [community alias](https://denext.dev/docs/react-native#community-packages) covers them: a
   package whose `main` is Flow source, and an Expo module that calls `requireNativeModule` at
@@ -611,26 +661,57 @@ four documented bounds of the opt-in:
   tells the shells apart.
 - **No UI-thread animation or gesture runtime.** Reanimated's worklets are stamped at build time
   and run as plain JavaScript on the page's main thread, sharing it with React and layout; a
-  busy thread drops frames React Native would keep. Worklet classes and context objects are not
-  stamped, and `runOnUISync` throws on the web. Libraries built on Reanimated (bottom-sheet,
-  moti, Skia animations, victory-native) inherit this. CSS `transform` / `opacity` animations
-  run off the main thread.
-- **Native views have no WebView equivalent.** Apple Maps / Google Maps (`expo-maps` is a
-  stand-in; use MapLibre or Leaflet in a `.web.tsx` twin), SF Symbols / Material Symbols
-  (`expo-symbols` renders its fallback), Liquid Glass (`expo-glass-effect` reports it
-  unavailable), native tab bars and large-title headers, and `@expo/ui`'s SwiftUI / Compose
+  busy thread drops frames React Native would keep. The build moves declarative `transform` /
+  `opacity` animations (`withTiming`, `withSpring`, `withDelay`, `withSequence`, `withRepeat`,
+  driven by a shared value or returned from the style) to Web Animations on the compositor, but
+  gesture callbacks, `useFrameCallback`, derived values and reactions, `useAnimatedProps`,
+  animations of any other style key, `withDecay` / `withClamp`, and a nested animation with its
+  own callback stay on the main thread; so do libraries built on Reanimated (bottom-sheet, moti,
+  Skia animations, victory-native) wherever they use those. The pass patches Reanimated 4's
+  `lib/module` web build; another version's internals are left alone and keep the main-thread
+  loop. Worklet classes and context objects are not stamped, and `runOnUISync` throws on the web.
+- **Native views have no WebView equivalent in React Native mode.** `expo-maps` is a stand-in
+  (place a real map with `denext/mobile`'s `<NativeViewSlot type="map">`, or use MapLibre or
+  Leaflet in a `.web.tsx` twin), `expo-symbols` (renders its fallback; denext's own
+  `<SystemIcon>` draws real SF Symbols on iOS and Material Symbols elsewhere), Liquid Glass
+  (`expo-glass-effect` reports it unavailable; `denext/navigation`'s platform theme approximates
+  it in CSS, without refraction), native tab bars and large-title headers (`denext/navigation`
+  draws them in the DOM), and `@expo/ui`'s SwiftUI / Compose
   views (stand-ins that render their children). `react-native-webview` is an `<iframe>`:
   script injection works only for inline HTML and same-origin pages.
 - **The parity ledger's open React Native gaps.** React Native's 32 `*Base` / `*Component`
   type-alias exports, `DrawerLayoutAndroid`, `ProgressBarAndroid` and `Settings` are not
   exported, and 10 exports miss members (`scripts/parity/native/baselines/known-gaps.json`).
-  `AppState`'s `memoryWarning` never fires, `Linking.sendIntent()` rejects,
-  `ActionSheetIOS.dismissActionSheet()` closes nothing, and `LayoutAnimation.configureNext`
-  animates nothing (react-native-web's).
+  `AppState`'s `memoryWarning` never fires, `Linking.sendIntent()` rejects, and
+  `ActionSheetIOS.dismissActionSheet()` closes nothing.
+- **`LayoutAnimation` animates positions, not sizes.** `configureNext` measures the page, waits
+  for the next DOM change and plays FLIP animations: a view that moved glides from its old place
+  (a transform), created views animate in and deleted views animate out (a snapshot clone in a
+  fixed layer, so its inherited styles can differ). A view that changed size snaps to it, the
+  `spring` type is a sampled curve (`ease-out` where CSS `linear()` is unsupported), and a page
+  with more than 3,000 elements is not animated. The first DOM change after the call is taken as
+  the commit, even an unrelated one.
 - **Lists keep a few React Native props unimplemented.** The FlatList / SectionList / FlashList /
-  LegendList adapters record their remaining gaps (such as `snapToInterval` / `snapToOffsets`
-  and `renderScrollComponent`) in `scripts/parity/native/baselines/lists.known-gaps.json`;
+  LegendList adapters record their remaining gaps (such as LegendList's `snapToIndices` and
+  `renderScrollComponent`) in `scripts/parity/native/baselines/lists.known-gaps.json`;
   `reactNative: { lists: "library" }` restores the libraries' own engines.
+- **Snap props are CSS scroll snap.** `snapToInterval` / `snapToOffsets` / `snapToAlignment`
+  end the platform's native momentum on a snap point, but `decelerationRate` only chooses
+  between stopping at the next snap point (`"fast"`) or not: the momentum curve is the
+  platform's. A virtualized list whose scroll space is scaled (past about 8M px) does not snap.
+- **`react-native-mmkv` is synchronous over an asynchronous store.** Reads come from an in-memory
+  copy seeded from `localStorage`; after the OS cleared the WebView's storage they miss those
+  keys until `mmkvReady()` resolves, writes reach the durable store a moment after they return,
+  and encryption (`encryptionKey`, `recrypt`) is refused.
+- **Your own native modules are asynchronous only.** `TurboModuleRegistry`, `NativeModules`
+  and Expo's `requireNativeModule` reach a Capacitor plugin (or a Deno Desktop extension) of the
+  same name, but every method returns a Promise: there is no JSI, so synchronous TurboModule
+  methods, `getConstants()`, Expo's sync `Function` / `Constants` and Nitro modules cannot be
+  served. React Native mode warns at build time where app code uses a native method's result
+  without awaiting it, and a dev build warns at run time. No codegen or autolinking runs: the
+  native side is a Capacitor plugin you write or generate (`denext mobile add native-module`).
+  See
+  [Your own native code](https://denext.dev/docs/native-code).
 - **The synchronous JSI Expo APIs are omitted.** The Capacitor bridge is asynchronous, so
   `expo-sqlite`'s `*Sync` API, `expo-secure-store`'s `getItem` / `setItem` and similar are not
   provided (use the `…Async` forms); `expo-file-system`'s sync calls act on an index the shim
@@ -640,11 +721,15 @@ four documented bounds of the opt-in:
   ships no npm runtime dependency; without the package, opening a database fails with an error
   naming it. Where OPFS is unavailable, or another tab of the origin holds the `opfs-sahpool`
   pool, the database is in memory for the session.
-- **Resolution variants are not picked by pixel ratio.** `require("./logo.png")` gets that file;
-  `logo@2x.png` / `logo@3x.png` are not chosen as Metro does.
-- **`reactNative` has no Fast Refresh and refuses `unbundled` dev.** A change rebuilds and
-  reloads the page (state is lost), because the resolution lives in bundler plugins the
-  per-module loop does not run; the mode is valid only with `mode: "spa"`.
+- **Resolution variants are picked once, when the module loads.** `require("./logo.png")` next to
+  `logo@2x.png` / `logo@3x.png` bundles every variant and is the URL of the one the screen's
+  pixel ratio wants then; a window moved to a screen of another density keeps it.
+- **`reactNative` is valid only with `mode: "spa"`.** In `denext dev` an edit to a component
+  module hot-swaps it with its state kept (Fast Refresh), but some edits still reload the page
+  and lose state: the first import of a package, or of a name the app has not imported from it
+  before (the dependency bundle is rebuilt), adding or removing an expo-router route, a change
+  to `package.json` or a lockfile, and an edit to a module that is not a component (as in any
+  SPA).
 - **expo-router's `+api` and `+middleware` routes are not built.** Write them as denext route
   handlers.
 - **Expo services are not provided.** `getExpoPushTokenAsync` rejects (send through your own

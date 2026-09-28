@@ -1,0 +1,35 @@
+{
+  "//": "The server-rendered list benchmark (App Router, not SPA mode). Its own Deno root, like web/; it reuses ../shared (data, row designs) and ../web/src/rows.tsx + styles.ts so its rows are the SPA's rows.",
+  "workspace": [],
+  "tasks": {
+    "dev": "deno run -A ../../../cli.ts dev .",
+    "build": "deno run -A ../../../cli.ts build .",
+    "start": "deno run -A ../../../cli.ts start .",
+    "test": "deno test -A app_test.ts"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
+  },
+  "imports": {
+    "denext": "../../../mod.ts",
+    "denext/jsx-runtime": "../../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../../src/server/mod.ts",
+    "denext/client": "../../../src/client/mod.ts",
+    "denext/testing": "../../../src/testing/mod.ts",
+    "@std/assert": "jsr:@std/assert@^1.0.0"
+  },
+  "lint": {
+    "plugins": ["../../../src/lint/denext-plugin.ts"]
+  },
+  "exclude": [".denext/", "out/"],
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false,
+    "proseWrap": "preserve"
+  }
+}

@@ -67,7 +67,11 @@ navigators).
 - **Safe areas.** A `viewport-fit=cover` default viewport, `SafeAreaView` and
   react-native-safe-area-context's provider over `denext/mobile`'s insets.
 - **Reanimated without its Babel plugin.** An swc pass stamps each worklet's `__closure` and
-  `__workletHash`, so hooks need no dependency arrays. Worklets still run on the main thread.
+  `__workletHash`, so hooks need no dependency arrays. Worklets still run on the main thread,
+  but declarative `transform` / `opacity` animations (`withTiming`, `withSpring`, `withDelay`,
+  `withSequence`, `withRepeat`) run as Web Animations on the compositor: in headless Chromium
+  one kept drawing through a 500 ms main-thread block (`tests/e2e/reanimated.e2e.test.ts`).
+  `LayoutAnimation.configureNext` animates the next commit (FLIP).
 - **Lists on `VirtualList`.** `FlatList`, `SectionList`, `VirtualizedList`, FlashList v2 and
   LegendList run on denext's engine (`reactNative: { lists: "library" }` keeps the libraries'
   own).
@@ -179,7 +183,9 @@ The honest ones, deduplicated; KNOWN-LIMITATIONS.md has the user-facing wording 
 the open work.
 
 - **No UI-thread animation or gesture runtime.** Reanimated's worklets run on the page's main
-  thread, sharing it with React and layout.
+  thread, sharing it with React and layout; only declarative `transform` / `opacity`
+  animations move to the compositor. WKWebView also caps `requestAnimationFrame` at 60 Hz on
+  120 Hz iPhones (WebKit bug 294338), and nothing has been measured on a 120 Hz display.
 - **No synchronous JSI APIs:** the sync `expo-sqlite` API, MMKV-class sync stores,
   `expo-secure-store`'s `getItem` / `setItem`, Nitro HybridObjects, camera frame processors.
 - **Native views without a WebView equivalent:** Apple Maps / Google Maps (a stand-in; MapLibre
@@ -189,7 +195,10 @@ the open work.
   background tasks run in Capacitor's Background Runner without the DOM.
 - **Dynamic Type / text zoom** reaches the page only through a native plugin denext does not ship
   yet; bold text and grayscale always read false.
-- **No Fast Refresh in React Native mode** (a rebuild and reload per change), and no unbundled dev.
+- **Fast Refresh reloads for dependency changes.** A component edit hot-swaps with state kept;
+  the first import of a new package (or of a new name from one), an added or removed
+  expo-router route, and a `package.json` / lockfile change rebuild the dependency bundle and
+  reload the page.
 - **Import-time failures** remain for unlisted packages whose `main` is Flow source or that call
   `requireNativeModule` at the top level.
 - **Expo services:** no Expo Go-style client, no hosted push, build or update service.
@@ -374,8 +383,11 @@ The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile`
   (2.10.0-rc.3)** as `examples/capacitor-ci`, a GitHub Actions recipe that runs the fingerprint
   check from gap 2 and either ships a signed OTA manifest or builds signed binaries
   (`xcodebuild archive` with an App Store Connect API key, a keystore-signed `bundleRelease`).
-  A recipe, not run in this repository's CI. Store submission and preview builds stay the
-  app's own steps.
+  Since 2.11 the pipeline is also three verbs, `denext mobile assets` (icons and splash),
+  `denext mobile build ios|android` (signed `.ipa` / `.aab`, flavors) and `denext mobile submit`
+  (App Store Connect / Google Play), and `.github/workflows/mobile-build.yml` runs it nightly on
+  `examples/mobile` (Android debug + signed flavor release, unsigned iOS). Preview builds and a
+  hosted macOS builder remain the app's own.
 - **Surface parity gate:** `deno task parity:native` (2.10.0) diffs the React Native surface
   denext serves against React Native's declared one, failing on any deviation not waived or
   already in the known-gaps ledger; it runs on PRs to `main`. Its `expo` half diffs each

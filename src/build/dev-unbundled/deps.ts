@@ -11,8 +11,14 @@ import {
   nodeBuiltinStubPlugin,
   prebuildDenextRuntime,
 } from "../next-compat.ts";
+import {
+  buildReactNativeDeps,
+  crawlReactNativeGraph,
+  dependencySignature,
+} from "./react-native.ts";
 import { compatDepUrl, ensureMergedConfig } from "./resolve.ts";
 import { DEP_ENTRYPOINTS, depSlug, type UnbundledState } from "./state.ts";
+import { transform } from "./transform.ts";
 
 /** Bundle the native denext `@dep` set once (shared core hoisted into one chunk). */
 async function buildDeps(st: UnbundledState): Promise<void> {
@@ -120,6 +126,29 @@ async function buildNpmBundle(st: UnbundledState): Promise<void> {
 }
 
 /**
+ * React Native mode's dependency bundle ({@linkcode buildReactNativeDeps}), current for the
+ * app's whole import graph: every module reachable from the entry and expo-router's routes is
+ * transformed first (a cache hit when unchanged), so the bundle already carries every
+ * specifier and name the page will import — a module linking against a bundle that lacks one
+ * of its imports fails to load.
+ */
+async function ensureReactNativeBundle(st: UnbundledState): Promise<void> {
+  const epoch = st.graphEpoch;
+  await crawlReactNativeGraph(st, (abs) => transform(st, abs));
+  const sig = dependencySignature(st);
+  if (sig !== st.npmBuiltSig) {
+    // A rebuild over a current bundle (not the first build, not an invalidation that already
+    // reloaded the page): the page holds the previous bundle's modules.
+    const underLivePage = st.npmBuiltSig !== null;
+    await ensureRuntime(st);
+    await buildReactNativeDeps(st);
+    st.npmBuiltSig = sig;
+    if (underLivePage) st.opts.onDepsRebuilt?.();
+  }
+  st.npmCheckedEpoch = epoch;
+}
+
+/**
  * compat: on-demand npm dependency bundle (Vite optimizeDeps). ALL discovered npm
  * specifiers are bundled together in one `splitting` pass so packages sharing a
  * transitive dep get one instance; `react` is external (shared runtime). Rebuilt when
@@ -127,9 +156,11 @@ async function buildNpmBundle(st: UnbundledState): Promise<void> {
  */
 export async function ensureNpmBundle(st: UnbundledState): Promise<void> {
   while (st.npmBuilding) await st.npmBuilding;
-  if (st.npmSpecs.size === 0) return;
-  if ([...st.npmSpecs].every((s) => st.npmBuilt.has(s))) return;
-  st.npmBuilding = buildNpmBundle(st);
+  if (st.opts.reactNative) {
+    // React Native mode: re-checked once per batch of edits (a new specifier or name).
+    if (st.npmCheckedEpoch === st.graphEpoch && st.npmBuiltSig !== null) return;
+  } else if (st.npmSpecs.size === 0 || [...st.npmSpecs].every((s) => st.npmBuilt.has(s))) return;
+  st.npmBuilding = st.opts.reactNative ? ensureReactNativeBundle(st) : buildNpmBundle(st);
   try {
     await st.npmBuilding;
   } finally {

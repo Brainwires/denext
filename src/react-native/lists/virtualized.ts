@@ -31,6 +31,7 @@ import {
   useState,
 } from "../../runtime/hooks.ts";
 import { VirtualList } from "../../client/virtual/virtual-list.ts";
+import { snapOptionsFromProps } from "../../client/virtual/snap.ts";
 import type {
   ViewableItemsChanged,
   ViewToken,
@@ -507,9 +508,11 @@ function containerProps(
   if (list.pagingEnabled) own.scrollSnapType = `${horizontal ? "x" : "y"} mandatory`;
   const user = wrapped ? {} : resolveStyle(prim.StyleSheet, list.style);
   const content = resolveStyle(prim.StyleSheet, list.contentContainerStyle);
+  const snap = list.pagingEnabled ? null : snapOptionsFromProps(list);
   return {
     class: classes(user.class, hide && HIDE_SCROLLBAR_CLASS),
     style: { ...own, ...user.style },
+    ...(snap ? { scrollSnap: snap } : {}),
     contentContainerStyle: content.style ?? (content.class ? {} : undefined),
     contentContainerClass: content.class,
   };

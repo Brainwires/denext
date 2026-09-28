@@ -413,6 +413,7 @@ export type {
   VirtualListScrollMetrics,
   VirtualListSlot,
 } from "./src/client/virtual/types.ts";
+export type { ScrollSnapAlign, ScrollSnapOptions } from "./src/client/virtual/snap.ts";
 
 export { useActionState, useFormState, useFormStatus } from "./src/runtime/actions.ts";
 export type { FormStatus } from "./src/runtime/actions.ts";

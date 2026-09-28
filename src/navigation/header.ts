@@ -80,7 +80,7 @@ function backControl(
       textDecoration: "none",
       background: "none",
       border: 0,
-      padding: 0,
+      padding: "var(--dnx-back-padding, 0)",
       font: "inherit",
       cursor: "pointer",
       ...style,
@@ -95,19 +95,23 @@ function backControl(
 function barStyle(platform: NavigationPlatform): Record<string, unknown> {
   return {
     flex: "none",
-    position: "relative",
+    position: "var(--dnx-header-position, relative)",
     zIndex: 1,
     boxSizing: "content-box",
     paddingTop: "var(--dnx-header-inset, env(safe-area-inset-top, 0px))",
-    height: platform === "ios" ? 44 : 56,
+    height: `var(--dnx-header-height, ${platform === "ios" ? 44 : 56}px)`,
     display: "flex",
     alignItems: "center",
     gap: 8,
     paddingInline: platform === "ios" ? 8 : 4,
     background: "var(--dnx-header-bg, Canvas)",
     color: "var(--dnx-header-fg, CanvasText)",
-    borderBottom: platform === "ios" ? "0.5px solid rgba(127, 127, 127, 0.35)" : "none",
-    boxShadow: platform === "android" ? "0 1px 3px rgba(0, 0, 0, 0.12)" : "none",
+    borderBottom: platform === "ios"
+      ? "var(--dnx-header-border, 0.5px solid rgba(127, 127, 127, 0.35))"
+      : "none",
+    boxShadow: platform === "android"
+      ? "var(--dnx-header-shadow, 0 1px 3px rgba(0, 0, 0, 0.12))"
+      : "none",
   };
 }
 
@@ -148,8 +152,8 @@ function androidHeader(props: StackHeaderProps, showBack: boolean, title: VNodeC
     titleEl(title, {
       flex: 1,
       minWidth: 0,
-      fontSize: 20,
-      fontWeight: 500,
+      fontSize: "var(--dnx-header-title-size, 20px)",
+      fontWeight: "var(--dnx-header-title-weight, 500)",
       paddingInline: showBack ? 4 : 12,
     }),
     right,

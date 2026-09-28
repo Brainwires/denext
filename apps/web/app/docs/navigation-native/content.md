@@ -232,6 +232,53 @@ export function AppTabs({ children }: { children: unknown }) {
   bar; `hideTabBarOnKeyboard` hides it while the on-screen keyboard is up (pass
   `keyboard={useKeyboard()}` from `denext/mobile`, or let it read the visual viewport).
 - `history: "replace"` makes tab switches replace the history entry instead of pushing one.
+- Inside the native shell a tab switch plays a selection haptic (`tabHaptics={false}` turns it
+  off; the web never vibrates for it). Use [`<SystemIcon>`](/docs/mobile#system-icons) for tab
+  icons: the real SF Symbol on iOS, a Material Symbol on Android.
+
+## Platform theme
+
+`StackLayout`, `TabsLayout` (and the `StackView` / `TabsView` under them) take a `theme`:
+
+| `theme`            | Look                                                                    |
+| ------------------ | ----------------------------------------------------------------------- |
+| `"auto"` (default) | the platform theme inside the Capacitor shell, the plain look elsewhere |
+| `"platform"`       | the platform theme everywhere, the web included                         |
+| `"plain"`          | the plain look everywhere (system colors, opaque bars)                  |
+
+The platform theme is:
+
+- **iOS**: the system font (`-apple-system`); a header that floats over the screen's content,
+  transparent at the top (the scroll-edge look) and the translucent bar material with a hairline
+  once content scrolls under it; the large title (`headerLargeTitle`) that scrolls under the bar
+  while the bar's title fades in over the last 20 px, and stretches when you pull down; a tab bar
+  the content scrolls under.
+- **iOS 26 Liquid Glass** (`material="glass"`, the default): a floating, rounded tab bar of
+  translucent glass (a blurred, saturated backdrop with a light rim and a soft shadow) with a
+  highlight behind the active tab, glass capsules for the back button, and a soft scroll-edge
+  blur under the header instead of a hairline. `material="blur"` is the iOS 7–18 edge-to-edge
+  translucent bars. It is an approximation in CSS (`backdrop-filter`): there is no refraction.
+- **Android**: Material 3's small top app bar (64 dp, title-large, the surface color, the
+  surface-container color once content scrolls under it) and navigation bar (80 dp, a 64 × 32
+  indicator pill behind the active icon, label-medium), in Roboto.
+- **Both**: light and dark follow the system (`prefers-color-scheme`), or the app's own switch
+  (`<html data-theme="dark">` or `class="dark"`, `data-theme="light"` to force light); Reduce
+  Transparency makes the bars opaque; `accentColor` tints back buttons, the active tab and the
+  Material indicator.
+
+```tsx
+<TabsLayout tabs={tabs} accentColor="#ff2d55" material="glass">{children}</TabsLayout>;
+```
+
+It is a stylesheet added through the CSSOM (CSP-safe) on the client, keyed off attributes the
+views always render (`data-dnx-theme`, `data-dnx-look`, `data-dnx-material`, and
+`data-dnx-scrolled` on a scrolled screen). The markup is the same with or without it, so a server
+render and the hydrating client agree, and inside the shell the client marks
+`<html data-dnx-shell="ios|android">` so `"auto"` applies. On the web with `theme="platform"`,
+the first paint before hydration is the plain look; `platformThemeCss()` returns the stylesheet
+for an app that wants it in its own CSS from the start. The themed values are CSS custom
+properties on the themed container (`--dnx-accent`, `--dnx-bg`, `--dnx-label`, `--dnx-bar`,
+`--dnx-glass`, …), so a class on the layout overrides any of them.
 
 ## Sheet
 
@@ -322,10 +369,12 @@ press on the active tab emits `tabPress`, which pops a nested stack to its root.
   sees the top screen's params until the pop lands.
 - A claimed pop re-renders the route in the background (the router's normal soft navigation),
   so it still costs a request; the screen itself shows immediately.
-- Screens are DOM, not native views: there is no native header, no native tab bar and no
-  Liquid Glass. The header and tab bar are styled to match and take CSS custom properties
-  (`--dnx-header-bg`, `--dnx-header-tint`, `--dnx-tabbar-bg`, `--dnx-tab-active`,
-  `--dnx-screen-bg`, `--dnx-sheet-bg`).
+- Screens are DOM, not native views: there is no native header or native tab bar, and Liquid
+  Glass is approximated with `backdrop-filter` (no refraction, no lensing of the content below).
+  The header and tab bar are styled to match (the [platform theme](#platform-theme)) and take CSS
+  custom properties (`--dnx-header-bg`, `--dnx-header-tint`, `--dnx-tabbar-bg`,
+  `--dnx-tab-active`, `--dnx-screen-bg`, `--dnx-sheet-bg`). Android's large top app bar is not
+  drawn: `headerLargeTitle` is iOS only.
 
 See also: [Mobile (Capacitor)](/docs/mobile) for the shell, `denext mobile add back` and the
 keyboard; [Coming from React Native](/docs/coming-from-react-native) for the concept map.

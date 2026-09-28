@@ -13,6 +13,7 @@ import { DialogsScreen } from "./dialogs.tsx";
 import { KeyboardFormScreen, KeyboardScreen } from "./keyboard.tsx";
 import { ListsScreen } from "./lists.tsx";
 import { NavigationScreen } from "./navigation.tsx";
+import { NativeUiScreen } from "./native-ui.tsx";
 import { RefreshScreen } from "./refresh.tsx";
 import { SelfTestScreen } from "./selftest.tsx";
 import { OrientationScreen, PrivacyScreen, SafeAreaScreen } from "./system.tsx";
@@ -32,6 +33,7 @@ const LIST: [path: string, label: string][] = [
   ["/v211/store", "11–13. Tracking · Review · Media library"],
   ["/v211/lists", "14. Lists (100k, chat 10k, sticky)"],
   ["/v211/navigation", "15. Navigation (stack, tabs, sheet)"],
+  ["/v211/native-ui", "16. Native look (menus, SF Symbols, theme)"],
   ["/selftest", "Run the automatic self-test"],
 ];
 
@@ -50,6 +52,7 @@ export const V211_SCREENS: Record<string, (inbox: Inbox) => VNode> = {
   "/v211/store": () => <StoreScreen />,
   "/v211/lists": () => <ListsScreen />,
   "/v211/navigation": () => <NavigationScreen />,
+  "/v211/native-ui": () => <NativeUiScreen />,
   "/selftest": () => <SelfTestScreen />,
 };
 

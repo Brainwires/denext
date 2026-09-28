@@ -10,6 +10,131 @@ and this project adheres to
 
 ### Added
 
+- **Reanimated animations on the compositor (React Native mode).** Reanimated's web build steps
+  every animation in a main-thread `requestAnimationFrame` loop; the build now patches its
+  `lib/module` web modules so declarative `transform` / `opacity` animations run as Web
+  Animations on the compositor instead: a shared value assigned `withTiming` / `withSpring` /
+  `withDelay` / `withSequence` / `withRepeat` (forever too) whose every reader is such a
+  `useAnimatedStyle`, and those animations returned from the style itself. The animation is
+  simulated ahead on a copy at 60 Hz and the style updaters sampled into keyframes; `sv.value`
+  reads the interpolated value, callbacks fire at the end, and a reassignment, another changed
+  input or a new reader hands it back to Reanimated's loop at the same point (a spinner started
+  in `useEffect` is taken over once its style registers). Everything else keeps the loop;
+  `globalThis.__DENEXT_REANIMATED_WAAPI = false` turns it off. In headless Chromium such an
+  animation drew 26 distinct frames through a 500 ms main-thread block, against none on
+  Reanimated's loop (`tests/e2e/reanimated.e2e.test.ts`).
+- **`LayoutAnimation.configureNext` animates (React Native mode).** react-native-web's no-op
+  `UIManager.configureNextLayoutAnimation` is routed to a FLIP runtime: the next commit's moved
+  views glide from their old position (a compositor transform), created and deleted views
+  animate by the config's `property`, with its `duration`, `delay` and `type`. Sizes snap.
+- **Docs: [denext vs React Native](https://denext.dev/docs/vs-react-native)** — who should
+  switch and who should not, with the measurements (each citing its source) and the WebView's
+  inherent limits.
+- **Native context menus (`denext mobile add context-menu`).** denext's own `DenextContextMenu`
+  plugin, with no npm package. `useContextMenu(items, onSelect)` / `attachContextMenu(el, …)`
+  bind a menu to an element: on iOS the system `UIContextMenuInteraction` (a press arms it with
+  the element's rect; the system long press lifts a snapshot of the element as the preview and
+  shows a `UIMenu`), on Android a 500 ms long press opens a Material `PopupMenu` with the
+  long-press haptic, on the web a long press or right click opens the popover.
+  `showContextMenu` gains submenus (`children`), SF Symbol icons (`systemIcon`), `subtitle` and
+  `haptic`; from code it presents a `UIMenu` at the point (iOS 16+; an action sheet on iOS 15).
+  The popover lists a submenu as a labelled `role="group"` and the Deno Desktop menu flattens it
+  (`Parent › Child`), so no item is dropped.
+- **`<SystemIcon>` (`denext mobile add system-icons`).** The platform's own icon: in the iOS
+  shell the real SF Symbol, rendered natively by the `DenextSystemIcon` plugin at the requested
+  weight, scale and pixel density (monochrome as a `currentColor` mask; hierarchical, palette and
+  multicolor), cached natively and in the page; elsewhere a Material Symbol as inline SVG
+  (~75 common ones built in, Apache 2.0; `registerSystemIcons` adds more), mapped from the SF
+  Symbol name when `android` is not given. denext ships no SF Symbols artwork (Apple licenses it
+  for Apple platforms only). `preloadSystemIcons` warms the first screen's icons.
+- **Platform theme for `denext/navigation`.** `theme` on `StackLayout` / `TabsLayout` /
+  `StackView` / `TabsView` (`"auto"`, the default: on inside the native shell; `"platform"`;
+  `"plain"`): iOS headers that float over the content, transparent at the scroll edge and
+  translucent once content scrolls under them, the large title that collapses continuously
+  (and stretches on a pull), the system font; iOS 26 Liquid Glass approximated in CSS
+  (`material="glass"`, the default: a floating glass tab bar, glass back buttons, a scroll-edge
+  blur; `"blur"` for the classic bars); Android Material 3 top app bar and navigation bar;
+  light/dark (system or `data-theme` / `.dark`), Reduce Transparency, and `accentColor`. A
+  CSP-safe stylesheet keyed off attributes the markup always carries, so hydration is unaffected;
+  `platformThemeCss()` returns it.
+- **Haptics by default in the shell.** A tab switch plays a selection haptic (`tabHaptics`), and
+  a long-press menu its long-press haptic; the web never vibrates for either.
+- **Mobile docs: a guideline 4.2 checklist** (what App Review looks for in a WebView app, and
+  what denext provides for each).
+
+- **Build and submit store apps without a hosted service: `denext mobile assets | build |
+  submit`.** `denext mobile assets` writes every iOS and Android icon and splash from one icon
+  (and optionally a splash image): the App Store icon as RGB (App Store Connect refuses an alpha
+  channel), Android's legacy, round, adaptive and themed (monochrome) icons per density, the
+  splash sets, and dark variants (iOS 18 dark icon, `luminosity: dark` splash, `drawable-night`);
+  decoding and resizing run on `@denext/photon`, no npm. `denext mobile build ios|android
+  [--release]` runs `denext export`, `npx cap sync`, then `xcodebuild archive` + `-exportArchive`
+  (automatic signing with `--team`, and an App Store Connect API key on CI; `--unsigned` for an
+  unsigned `.ipa`) or Gradle (`assembleDebug`, `bundleRelease`, `--apk`), signed with the upload
+  keystore through `GRADLE_OPTS` so no secret reaches argv or the output. `--build-number` /
+  `--version-name` apply to one build, `--bump` increments the sources, `--dry-run` prints the
+  plan. Flavors (`mobile.flavors` in `denext.config.ts`: `appId` / `appIdSuffix`, `appName`,
+  `serverUrl`, `icon`, `splash`, `backgroundColor`, `env`) are applied for the build and restored
+  byte for byte, also after a killed build (`mobile build --restore`). The artifact lands in
+  `dist/mobile/<platform>[-<flavor>]/` with a JSON sidecar. `denext mobile submit ios|android`
+  checks the artifact and the credentials, then uploads with `xcrun altool` and the API key, or
+  through the Google Play Developer API (edit, upload, track, commit); `--dry-run` uploads
+  nothing. New config types `MobileConfig` / `MobileFlavorConfig` (`denext/server`). A nightly
+  workflow (`.github/workflows/mobile-build.yml`) builds `examples/mobile` for Android (debug
+  `.apk`, signed `.aab` of its `staging` flavor) and iOS (unsigned `.ipa`). New guide:
+  https://denext.dev/docs/mobile-build.
+- **Fast Refresh in React Native mode.** `denext dev` now serves a `reactNative: true` app on the
+  per-module loop, as it does any SPA: an edit to a component module (`.tsx`, `.jsx`, or `.js`,
+  which holds JSX in this mode) re-transforms that module alone and swaps it into the running
+  page with its hook state kept, instead of rebuilding the whole app and reloading (edit → DOM
+  about 75 ms, from about 980 ms with the state lost, on a small react-native-web app). The app's
+  modules are served one by one (`.web.*` first, JSX in `.js`, React Native's globals, the
+  worklets transform, a static `require("./img.png")` turned into an import); every package
+  import (and every image or font) is served from one dependency bundle built through React
+  Native mode's resolvers, with React, denext and the app's own modules left outside it (one
+  instance each; expo-router's routes included). The first import of a new package or name, an
+  added or removed expo-router route, and a `package.json` / lockfile change rebuild that bundle
+  and reload the page. It works on a device through `denext mobile dev --lan`. An explicit
+  `unbundled: true` is accepted now; `DENEXT_DEV_UNBUNDLED=0` keeps the bundled loop.
+- **Your own native code: `nativeModule` + `denext mobile add native-module`.** `nativeModule<Spec,
+  Events>(name, { calls? })` and `onNativeEvent(name, event, handler)` in `denext/mobile` are a
+  typed client for the app's own native plugin: the Capacitor plugin `name` inside the
+  iOS/Android shell, the desktop extension `name` in a Deno Desktop window (loaded lazily),
+  `null` on the web. Methods are async; `addListener` receives the plugin's events; `calls:
+  "positional"` speaks React Native's convention (`{ args }` in, `{ value }` unwrapped out). A
+  dev build warns once per method when a call's result is used without `await`.
+  `denext mobile add native-module --name <Name> [--dry-run]` scaffolds one: a Swift
+  `CAPBridgedPlugin` and a Kotlin plugin (one sample async method, one event), registered through
+  `DenextNativeModules` from `DenextBridgeViewController` / `MainActivity` (composing with the
+  other denext plugins), the Kotlin Gradle plugin for the Android app, and a typed
+  `native/Native<Name>.ts` client. New guide: https://denext.dev/docs/native-code.
+- **React Native mode reaches the app's native modules.** `TurboModuleRegistry.get` /
+  `getEnforcing`, `NativeModules.<Name>` and `NativeEventEmitter` (React Native), and
+  `requireNativeModule` / `requireOptionalNativeModule` / `new EventEmitter(module)` (Expo)
+  resolve to the Capacitor plugin (or desktop extension) of that name instead of the web
+  stand-ins; where none exists they answer as before. A build warning names the file and line
+  where app code uses a native method's result without awaiting it (there is no JSI: every
+  native call is async). `requireNativeComponent` / `codegenNativeComponent` /
+  `NativeComponentRegistry.get` and Expo's `requireNativeView` return a native view slot of that
+  view type (`denext mobile add native-views`): JSON props go to the native factory, a native
+  event `name` calls `on<Name>` with `{ nativeEvent }`, a style array is flattened onto the slot,
+  and children are drawn over the view (they render instead where the type is not registered).
+- **Native views in the page layout: `NativeViewSlot` + `denext mobile add native-views`.**
+  `<NativeViewSlot type props overlay placement onEvent onCommand>` (and `useNativeViewSlot`) in
+  `denext/mobile` keep a native view on a box in the page: on iOS embedded in the page's own
+  layer tree (the native scroll view WebKit backs an `overflow: scroll` element with, as
+  `@capacitor/google-maps` does), so the compositor scrolls, clips and transforms it; elsewhere
+  drawn under a transparent WebView or over it and moved to the slot each frame the page moves
+  (scroll, resize, keyboard, CSS transitions and animations, touch drags), clipped to what its
+  scrolling ancestors leave visible, hidden off-screen and while covered (`over`), with touches
+  over the visible part routed to the view and those on the slot's DOM `overlay` kept by the
+  page. Its children are the web fallback. `denext mobile add native-views` writes the
+  `DenextNativeViews` plugin (Swift + Java, registered with the other denext plugins), a
+  registry of view factories (`DenextNativeViews.register(...)` or
+  `plugins.DenextNativeViews.factories` in `capacitor.config`) and the built-in `video` view
+  (AVPlayerViewController / VideoView); `denext mobile add native-map` adds `map` (MapKit /
+  osmdroid, no API key). New example: `examples/native-views` (two maps and a video in a
+  `VirtualList`). Docs: https://denext.dev/docs/mobile#native-views.
 - **Response compression (`compress`, on by default — Next.js's `compress`).** `denext start`,
   `denext dev` (App Router and SPA mode) and any `createApp()` handler now compress dynamic
   responses — rendered HTML,
@@ -546,6 +671,46 @@ and this project adheres to
   props, `Flyout`, `Popup`, `DynamicColorMacOS`, …), as Metro does for a macOS / Windows build,
   with the source unchanged; node_modules keep `react-native`. `denext migrate --from expo`
   writes it when the app depends on one of the two packages (both: the choice is left commented).
+- **Durable storage: `openKeyValueStore(name)` in `denext/mobile` and `denext mobile add
+  storage`.** A WebView's `localStorage` and IndexedDB may be cleared by iOS and Android under
+  storage pressure; the new `DenextStorage` plugin (Swift and Java, no npm package) keeps strings
+  in one SQLite file in the app's data folder, opened with the system SQLite, one bridge call per
+  batch (`getMany` / `setMany` / `removeMany` / `keys` / `clear`). Without it an installed
+  `@capacitor-community/sqlite` is used, else IndexedDB with a warning; Deno Desktop uses the
+  runtime's SQLite (`denext desktop add sqlite`), a browser IndexedDB.
+- **React Native mode: `@react-native-async-storage/async-storage` and `react-native-mmkv` resolve
+  to durable stand-ins over it.** AsyncStorage's whole 2.x API (`multiGet`, `multiSet`,
+  `mergeItem` with the native modules' deep merge, `getAllKeys`, `clear`, the callbacks,
+  `useAsyncStorage`) plus 3.x's `getMany` / `setMany` / `removeMany` / `createAsyncStorage` /
+  `AsyncStorageError`; the first call copies what the package's web build left in `localStorage`,
+  once. MMKV (4.x's `createMMKV` / `remove` / `existsMMKV` / `deleteMMKV` / hooks and 3.x's
+  `new MMKV()`) keeps its synchronous API over an in-memory copy seeded from `localStorage` and
+  written through to the durable store; `mmkvReady()` resolves once the durable data is in.
+- **`denext mobile doctor` checks web storage** (`web-storage`, both profiles): app code that
+  keeps data in `localStorage`, IndexedDB or redux-persist's web storage, and AsyncStorage / MMKV
+  / `openKeyValueStore` in a project without a durable native store, are warnings with the fix.
+- **The OS text size reaches the page: `getFontScale()` / `useFontScale()` /
+  `onFontScaleChange()` / `applyFontScale()` in `denext/mobile`.** `denext mobile add
+  accessibility`'s plugin (template generation 2; an unedited generation-1 file is upgraded)
+  reports Dynamic Type on iOS (React Native's scale table) and the font scale on Android, as the
+  factor the page still has to apply (Android's WebView already applies the system scale through
+  its text zoom). `applyFontScale()` opts the root font size in and sets `--dnx-font-scale`. In
+  React Native mode `Text` honours it (`allowFontScaling`, `maxFontSizeMultiplier`), as do
+  `PixelRatio.getFontScale()` and `useWindowDimensions().fontScale`.
+- **Route announcements in `denext/navigation`.** A push, a pop, a tab switch (and a React
+  Navigation drawer's screen change) reads the new screen's title (its `title` option, else the
+  document title) into one `aria-live` region, as VoiceOver and TalkBack announce a native screen
+  change; `announceRouteChanges: false` on `StackView` / `TabsView` turns it off and
+  `announceRoute(message)` speaks through the same region.
+- **Scroll snapping, React Native's way.** `VirtualList` gains `scrollSnap` (`interval`,
+  `offsets`, `align`, `stop`); React Native mode's `ScrollView`, `FlatList`, `SectionList`,
+  FlashList and LegendList take `snapToInterval`, `snapToOffsets`, `snapToAlignment`,
+  `snapToStart` / `snapToEnd`, `decelerationRate="fast"` and `disableIntervalMomentum` as CSS
+  scroll snap (invisible markers near the viewport), so the platform's native momentum ends on a
+  snap point.
+- **React Native mode picks `@2x` / `@3x` image variants as Metro does.** `require("./logo.png")`
+  next to `logo@2x.png` / `logo@3x.png` (with or without the plain file) bundles every variant and
+  is the URL of the one the screen's pixel ratio wants.
 
 ### Changed
 
@@ -553,9 +718,19 @@ and this project adheres to
   `.denext/manifest.json` (random, or `DENEXT_BUILD_ID` for separately built replicas sharing
   one store) and `denext start` keys cached pages as `v2:<buildId>:<path>`, so a redeploy never
   serves a page from the previous build — whose HTML named client chunks the new build no longer
-  has (`force-static` pages previously stayed stale forever). The key also carries a format
+  has. `denext build` already emptied the default `.denext/cache.db`; this covers every store
+  that outlives a build — a custom store, an explicit `cache.path`, a volume-mounted
+  `.denext` — where `force-static` pages previously stayed stale forever. The key also carries a format
   version, so a framework upgrade that changes the cached shape starts cold. A custom
   `CacheStore` that seeds or reads page keys by bare path must adopt the new key shape.
+  After startup, `denext start` deletes the other builds' and older formats' pages from its
+  store through the new optional `CacheStore.sweepPages(keep)` (implemented by the in-memory
+  and `node:sqlite` stores; data entries are never touched). It always sweeps the in-memory
+  store and the default `.denext/cache.db` (which holds old pages only when it outlived the
+  build, e.g. on a mounted volume); a custom store or an explicit `cache.path` — which
+  other servers may share — only when the build id is pinned with `DENEXT_BUILD_ID`, so
+  separately built replicas with random ids never delete each other's live pages. A store
+  without the method is never swept.
 
 - **React Native mode: `Platform.select` falls back to the shell's own key.** Inside the iOS or
   Android shell, a `spec` without `web` now picks `ios` / `android` (then `default`), as React

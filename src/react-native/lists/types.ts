@@ -154,8 +154,26 @@ export interface ListScrollProps {
   readonly maintainVisibleContentPosition?: MaintainVisibleContentPosition | null;
   /** Snap each item to the viewport's start (CSS scroll snap). */
   readonly pagingEnabled?: boolean;
-  /** Where items snap with `pagingEnabled`. Default `"start"`. */
+  /**
+   * Where items snap with `pagingEnabled`, and where each `snapToInterval` slot meets the
+   * viewport. Default `"start"`.
+   */
   readonly snapToAlignment?: "start" | "center" | "end";
+  /** Snap every this many px (CSS scroll snap; a carousel's item width plus its gap). */
+  readonly snapToInterval?: number;
+  /** Snap at these content offsets, px (wins over `snapToInterval`). */
+  readonly snapToOffsets?: readonly number[];
+  /** With `snapToOffsets`: the content start is a snap point too. Default `true`. */
+  readonly snapToStart?: boolean;
+  /** With `snapToOffsets`: the content end is a snap point too. Default `true`. */
+  readonly snapToEnd?: boolean;
+  /**
+   * `"fast"` (or a rate at or below iOS's 0.99): a fling stops at the next snap point
+   * (`scroll-snap-stop: always`). The momentum curve itself is the platform's.
+   */
+  readonly decelerationRate?: "fast" | "normal" | number;
+  /** A fling stops at the next snap point (`scroll-snap-stop: always`). */
+  readonly disableIntervalMomentum?: boolean;
   /** Accepted: nested scrolling works on the web without it (Android-only in RN). */
   readonly nestedScrollEnabled?: boolean;
   /** Called with the list's frame on mount and whenever it resizes. */

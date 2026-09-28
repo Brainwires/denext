@@ -136,10 +136,32 @@ UI resolve. It needs `spa.ota: true` (the bundled UI stamped at export). See
 
 ## Store submission
 
-Left to you on purpose. The `release` job attaches the `.ipa` and `.aab` to the GitHub release.
-To go further: set `destination` to `upload` in `ExportOptions.plist` (the export step then
-sends the build to App Store Connect and TestFlight), and upload the `.aab` with the Google Play
-Developer API (for example `r0adkll/upload-google-play`) or fastlane.
+The `release` job attaches the `.ipa` and `.aab` to the GitHub release. To upload them too, add
+a step after each build with `denext mobile submit` (see
+[Mobile builds & store submission](https://denext.dev/docs/mobile-build)):
+
+```yaml
+# ios job, after "Export the .ipa" (the App Store Connect API key is already on disk)
+- run: $DENEXT mobile submit ios --file "$RUNNER_TEMP"/export/*.ipa --app-id com.example.app
+  env:
+    DENEXT_ASC_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+    DENEXT_ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+    DENEXT_ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+# android job, after "Build the signed .aab" (a Play service-account key as a secret)
+- run: |
+    echo "$PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/play.json"
+    $DENEXT mobile submit android --dir "$CAP_DIR" --app-id com.example.app --track internal \
+      --file "$CAP_DIR"/android/app/build/outputs/bundle/release/*.aab \
+      --service-account "$RUNNER_TEMP/play.json"
+  env:
+    PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+```
+
+`--dry-run` checks the build and the credentials and uploads nothing. The build steps
+themselves can also be one `denext mobile build ios --release` / `denext mobile build android
+--release` each, with the signing inputs in the environment; this template spells the
+`xcodebuild` and Gradle calls out so every flag is visible. The denext repository runs that
+pipeline nightly on `examples/mobile` (`.github/workflows/mobile-build.yml`).
 
 ## Try the pieces locally
 

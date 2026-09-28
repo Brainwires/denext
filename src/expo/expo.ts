@@ -5,10 +5,18 @@
  *   react-native-web's `AppRegistry.runApplication` in React Native mode (what an Expo web
  *   entry does), else with denext's `createRoot`. An Expo app's `index.ts` therefore works
  *   as the SPA entry unchanged, with no hand-written web entry.
- * - The native-module API answers as Expo's web build does: `requireNativeModule` throws,
- *   `requireOptionalNativeModule` returns null, and `requireNativeView` returns a component
- *   that renders nothing. `EventEmitter`, `NativeModule`, `SharedObject`, `SharedRef`,
- *   `registerWebModule`, `useEvent` and `useEventListener` work for JS-implemented modules.
+ * - The native-module API reaches the app's own native code: `requireNativeModule(name)` /
+ *   `requireOptionalNativeModule(name)` return a client for the Capacitor plugin `name`
+ *   inside the iOS/Android shell, or the desktop extension `name` on Deno Desktop
+ *   (`nativeModule` from `denext/mobile`, positional arguments). Every function returns a
+ *   Promise (the bridge is async; Expo's synchronous functions and properties cannot be
+ *   served), and the module's `addListener` receives its native events. Where neither exists
+ *   they answer as Expo's web build does: `requireNativeModule` throws,
+ *   `requireOptionalNativeModule` returns null. `requireNativeView` returns a native view slot
+ *   (`denext mobile add native-views`) that renders its children where the view type is not
+ *   registered natively. `EventEmitter`, `NativeModule`, `SharedObject`, `SharedRef`,
+ *   `registerWebModule`, `useEvent` and `useEventListener` work for JS-implemented modules,
+ *   and `new EventEmitter(nativeModule)` (the pre-SDK 52 form) listens to its native events.
  * - `fetch` (from `expo/fetch`) is the platform's streaming `fetch`.
  *
  * @example
@@ -35,6 +43,8 @@ import {
   type Subscription,
 } from "./internal/common.ts";
 import * as RN from "./internal/react-native.ts";
+import { nativeModule, nativeModuleName } from "../mobile/native-module.ts";
+import { nativeHostComponent } from "../react-native/native-modules.ts";
 
 export { createPermissionHook, PermissionStatus };
 export type { PermissionExpiration, PermissionHookOptions, PermissionResponse, Subscription };
@@ -71,39 +81,61 @@ export function registerRootComponent<P extends Record<string, unknown>>(
 }
 
 /**
- * A native module: none exist here, so it throws (as Expo's web build does for a module with
- * no web implementation).
+ * The native module `moduleName`: the Capacitor plugin of that name inside the iOS/Android
+ * shell, or the desktop extension of that name on Deno Desktop. Its functions take Expo's
+ * positional arguments and return Promises. Where neither exists it throws, as Expo's web
+ * build does for a module with no web implementation.
  *
- * @param moduleName The module's name.
- * @returns Never.
+ * @param moduleName The module's name (`Name("…")` in the module definition).
+ * @returns The module client.
  */
 export function requireNativeModule<T = unknown>(moduleName: string): T {
-  throw new Error(`Cannot find native module '${moduleName}'`);
+  const found = requireOptionalNativeModule<T>(moduleName);
+  if (found === null) throw new Error(`Cannot find native module '${moduleName}'`);
+  return found;
 }
 
 /**
- * A native module when it exists: never here.
+ * The native module `moduleName` when this runtime has it (see
+ * {@linkcode requireNativeModule}), else null.
  *
- * @param _moduleName The module's name.
- * @returns null.
+ * @param moduleName The module's name.
+ * @returns The module client, or null.
  */
-export function requireOptionalNativeModule<T = unknown>(_moduleName: string): T | null {
-  return null;
+export function requireOptionalNativeModule<T = unknown>(moduleName: string): T | null {
+  if (typeof moduleName !== "string" || moduleName === "") return null;
+  return nativeModule(moduleName, { calls: "positional" }) as T | null;
 }
 
 /**
- * A native view: none exist here, so the component renders nothing.
+ * The native view type {@linkcode requireNativeView} uses: the module name, or
+ * `<moduleName>_<viewName>` for a module's other views (Expo's own view key).
  *
- * @param _moduleName The view's module name.
- * @param _viewName The view's name.
- * @returns A component that renders null.
+ * @param moduleName The view's module name.
+ * @param viewName The view's name.
+ * @returns The view type registered natively.
+ */
+function nativeViewType(moduleName: string, viewName?: string): string {
+  return viewName && viewName !== moduleName ? `${moduleName}_${viewName}` : moduleName;
+}
+
+/**
+ * A native view as a component: `denext/mobile`'s native view slot for the type
+ * {@linkcode nativeViewType} names (the `DenextNativeViews` plugin, `denext mobile add
+ * native-views`). Its JSON props go to the native factory, a native event `name` calls the
+ * `on<Name>` prop with `{ nativeEvent }`, `style` styles the slot and its children are drawn
+ * over the view. Where that view type is not registered natively (the web), the children render
+ * instead.
+ *
+ * @param moduleName The view's module name.
+ * @param viewName The view's name.
+ * @returns The component.
  */
 export function requireNativeView<P = Record<string, unknown>>(
-  _moduleName: string,
-  _viewName?: string,
+  moduleName: string,
+  viewName?: string,
 ): Component<P> {
-  // Rendering nothing is a valid component result; `Component` types the non-null case.
-  return (() => null) as unknown as Component<P>;
+  return nativeHostComponent(nativeViewType(moduleName, viewName)) as unknown as Component<P>;
 }
 
 /** A typed event emitter, as Expo modules use. */
@@ -114,22 +146,46 @@ export class EventEmitter<
   >,
 > {
   #listeners = new Map<keyof Events, Set<(...args: never[]) => void>>();
+  /** The native module whose events this emitter forwards (`new EventEmitter(module)`). */
+  #native: Listenable | undefined;
+  /** Native subscriptions, by event and listener. */
+  #nativeSubs = new Map<keyof Events, Map<(...args: never[]) => void, { remove(): void }>>();
+
+  /**
+   * @param nativeModule A native module (from {@linkcode requireNativeModule}) whose events
+   * this emitter's listeners also receive (Expo's pre-SDK 52 `new EventEmitter(module)`).
+   */
+  constructor(nativeModule?: unknown) {
+    if (nativeModuleName(nativeModule) !== undefined) this.#native = nativeModule as Listenable;
+  }
 
   /** Add `listener` for `eventName`. */
   addListener<E extends keyof Events>(eventName: E, listener: Events[E]): Subscription {
     let set = this.#listeners.get(eventName);
     if (!set) this.#listeners.set(eventName, set = new Set());
     set.add(listener);
+    if (this.#native) {
+      let subs = this.#nativeSubs.get(eventName);
+      if (!subs) this.#nativeSubs.set(eventName, subs = new Map());
+      if (!subs.has(listener)) {
+        subs.set(listener, this.#native.addListener(String(eventName), listener));
+      }
+    }
     return { remove: () => this.removeListener(eventName, listener) };
   }
 
   /** Remove `listener` for `eventName`. */
   removeListener<E extends keyof Events>(eventName: E, listener: Events[E]): void {
     this.#listeners.get(eventName)?.delete(listener);
+    const subs = this.#nativeSubs.get(eventName);
+    subs?.get(listener)?.remove();
+    subs?.delete(listener);
   }
 
   /** Remove every listener for `eventName`. */
   removeAllListeners(eventName: keyof Events): void {
+    for (const sub of this.#nativeSubs.get(eventName)?.values() ?? []) sub.remove();
+    this.#nativeSubs.delete(eventName);
     this.#listeners.delete(eventName);
   }
 

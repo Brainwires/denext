@@ -30,8 +30,10 @@ import {
 /**
  * The generation of the templates, stamped into every file the installers write. Generation 2
  * (denext 2.11): the registering-only `DenextBridgeViewController` (written in this family) can
- * register the DenextSettings and DenextAccessibility plugins, which 2.10.0 (generation 1) does
- * not know; the bump makes 2.10.0 keep such a bridge instead of rewriting it without them.
+ * register the DenextSettings and DenextAccessibility plugins (and, in the same unreleased
+ * generation, the native views and the app's own native modules), which 2.10.0 (generation 1)
+ * does not know; the bump makes 2.10.0 keep such a bridge instead of rewriting it without them.
+ * Bump again only when a released generation would drop a registration.
  */
 export const APP_EXTENSION_TEMPLATE_VERSION = 2;
 

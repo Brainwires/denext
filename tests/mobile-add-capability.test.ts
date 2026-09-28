@@ -607,8 +607,14 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "background",
     "restore",
     "accessibility",
+    "storage",
+    "context-menu",
+    "system-icons",
     "background-location",
     "application",
+    "native-module",
+    "native-views",
+    "native-map",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
@@ -644,6 +650,12 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
       "permissions",
       "offline-screen",
       "accessibility",
+      "storage",
+      "context-menu",
+      "system-icons",
+      "native-module",
+      "native-views",
+      "native-map",
     ],
   );
   assertStringIncludes(

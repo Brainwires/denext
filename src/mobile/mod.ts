@@ -81,9 +81,16 @@
  * - {@linkcode watchPositionInBackground} / {@linkcode stopBackgroundLocation}: location that
  *   keeps arriving in the background (`denext mobile add background-location`; the foreground
  *   watch on the web).
+ * - {@linkcode openKeyValueStore}: durable key-value storage in the app's data folder, which the
+ *   OS does not evict the way it may evict WebView storage (`denext mobile add storage`;
+ *   IndexedDB on the web). React Native mode's AsyncStorage and MMKV run on it.
  * - {@linkcode isScreenReaderEnabled} / {@linkcode onScreenReaderChange} /
  *   {@linkcode useScreenReader}: VoiceOver / TalkBack state (`denext mobile add accessibility`;
  *   `false` on the web).
+ * - {@linkcode getFontScale} / {@linkcode useFontScale} / {@linkcode onFontScaleChange}: the OS
+ *   text size (Dynamic Type, Android's font scale) as the factor the page must apply;
+ *   {@linkcode applyFontScale} opts the root font size in (`denext mobile add accessibility`;
+ *   1 on the web).
  * - {@linkcode configurePurchases}, {@linkcode getOfferings}, {@linkcode purchasePackage},
  *   {@linkcode restorePurchases}, {@linkcode getCustomerInfo}, {@linkcode useEntitlement}:
  *   in-app purchases through RevenueCat (`denext mobile add purchases`; no web fallback).
@@ -96,9 +103,20 @@
  *   {@linkcode defineBackgroundTask} (`mobile add background`), and
  *   {@linkcode onRestoredResult} / {@linkcode restoreRouteOnRelaunch} for Android process death
  *   (`mobile add restore`).
+ * - {@linkcode showContextMenu} / {@linkcode useContextMenu} / {@linkcode attachContextMenu}:
+ *   native menus (`UIContextMenuInteraction` with the lifted preview and `UIMenu` on iOS,
+ *   `PopupMenu` on Android; `denext mobile add context-menu`), an in-page popover elsewhere.
+ * - {@linkcode SystemIcon}: the SF Symbol, rendered natively in the iOS shell (`denext mobile
+ *   add system-icons`), a Material Symbol everywhere else.
  * - {@linkcode initCrashReporting}: Sentry's Capacitor SDK with the OTA UI version as the release
  *   (`mobile add sentry`); {@linkcode installOfflineScreen}: a full-screen notice while the
  *   device is offline (`mobile add offline-screen`).
+ * - {@linkcode NativeViewSlot} / {@linkcode useNativeViewSlot}: a native view (a map, a video
+ *   player, your own registered view type) kept on a box in the page layout, with its children
+ *   as the web fallback (`mobile add native-views`, `mobile add native-map`).
+ * - {@linkcode nativeModule} / {@linkcode onNativeEvent}: a typed client for your own native
+ *   plugin (a Capacitor plugin in the shell, e.g. from `denext mobile add native-module --name
+ *   <Name>`; a desktop extension in a Deno Desktop window); every call is async.
  *
  * @example
  * ```tsx
@@ -299,6 +317,22 @@ export * from "./widgets.ts";
 export * from "./live-activity.ts";
 export { type ContextMenuItem, type ContextMenuOptions, showContextMenu } from "./context-menu.ts";
 export {
+  attachContextMenu,
+  type ContextMenuElement,
+  type ContextMenuItems,
+  type ContextMenuTargetOptions,
+  useContextMenu,
+} from "./context-menu-target.ts";
+export {
+  materialNameFor,
+  preloadSystemIcons,
+  registerSystemIcons,
+  SystemIcon,
+  type SystemIconMode,
+  type SystemIconProps,
+  type SystemIconWeight,
+} from "./system-icon.ts";
+export {
   checkPermission,
   openAppSettings,
   type PermissionError,
@@ -450,10 +484,43 @@ export {
   type SentrySiblingSdk,
 } from "./crash-reporting.ts";
 export { installOfflineScreen, type OfflineScreenOptions } from "./offline-screen.ts";
-export { isScreenReaderEnabled, onScreenReaderChange, useScreenReader } from "./accessibility.ts";
+export {
+  applyFontScale,
+  type ApplyFontScaleOptions,
+  getFontScale,
+  isScreenReaderEnabled,
+  onFontScaleChange,
+  onScreenReaderChange,
+  useFontScale,
+  useScreenReader,
+} from "./accessibility.ts";
+export { type KeyValueBackend, type KeyValueStore, openKeyValueStore } from "./kv-store.ts";
+export {
+  nativeViewEmbedScroller,
+  type NativeViewPlacement,
+  type NativeViewPlacementOption,
+  NativeViewSlot,
+  type NativeViewSlotHandle,
+  type NativeViewSlotOptions,
+  type NativeViewSlotProps,
+  type NativeViewSlotStyle,
+  type NativeViewStatus,
+  useNativeViewSlot,
+} from "./native-view.ts";
 export {
   type BackgroundLocationOptions,
   isBackgroundLocationAvailable,
   stopBackgroundLocation,
   watchPositionInBackground,
 } from "./background-location.ts";
+export {
+  type NativeCallConvention,
+  type NativeMethod,
+  nativeModule,
+  type NativeModuleClient,
+  type NativeModuleEvents,
+  type NativeModuleMethods,
+  type NativeModuleOptions,
+  type NativeSubscription,
+  onNativeEvent,
+} from "./native-module.ts";

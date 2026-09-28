@@ -232,6 +232,17 @@
       "hasReadme": true
     },
     {
+      "name": "native-views",
+      "title": "Native views in the layout (Capacitor)",
+      "blurb": "A denext SPA in a Capacitor 8 shell that puts native views inside a scrolling VirtualList: a map of London (row 3, placement=\"auto\": embedded on iOS, drawn over the WebView on Android), a video…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/native-views",
+      "tags": [
+        "spa",
+        "mobile"
+      ],
+      "hasReadme": true
+    },
+    {
       "name": "next-compat",
       "title": "next-compat example — real npm React libraries on denext",
       "blurb": "This app renders the actual @radix-ui/react-collapsible npm package on denext's own React — server-rendered, then hydrated.",

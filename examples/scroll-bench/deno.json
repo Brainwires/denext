@@ -1,14 +1,16 @@
 {
-  "//": "Deno config for shared/ and harness/ (plain Deno TypeScript). web/ has its own deno.json (the denext app); native/ is a separate Metro/npm project, excluded here.",
+  "//": "Deno config for shared/ and harness/ (plain Deno TypeScript). web/ and ssr/ have their own deno.json (the denext SPA and the server-rendered App Router app); native/ is a separate Metro/npm project, excluded here.",
   "tasks": {
     "images": "deno run -A shared/gen-images.ts",
     "harness": "deno run -A harness/measure.ts",
     "test": "deno test -A harness/ shared/",
-    "smoke": "deno run -A harness/web-smoke.ts"
+    "smoke": "deno run -A harness/web-smoke.ts",
+    "ssr-measure": "deno run -A harness/ssr-measure.ts"
   },
   "exclude": [
     "native/",
     "web/",
+    "ssr/",
     "results/"
   ],
   "imports": {

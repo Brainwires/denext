@@ -15,9 +15,12 @@ export default function Mobile() {
     >
       <p>
         Coming from React Native or Expo? Read{" "}
-        <a href="/docs/coming-from-react-native">Coming from React Native</a>{" "}
-        for the concept map, and <a href="/docs/react-native">React Native / Expo apps</a>{" "}
-        to build an existing Expo app with{" "}
+        <a href="/docs/coming-from-react-native">Coming from React Native</a> for the concept map,
+        {" "}
+        <a href="/docs/vs-react-native">denext vs React Native</a>{" "}
+        for who should switch (and who should not), and{" "}
+        <a href="/docs/react-native">React Native / Expo apps</a> to build an existing Expo app with
+        {" "}
         <code>denext migrate --from expo</code>. The desktop target (<code>denext desktop</code>,
         {" "}
         <code>denext/desktop/updater</code>) is on <a href="/docs/desktop">Desktop apps</a>.
@@ -737,57 +740,305 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
         Both need <code>viewport-fit=cover</code> in the viewport meta.
       </p>
 
-      <h2 id="context-menus">Context menus</h2>
+      <h2 id="native-views">Native views in the layout</h2>
       <p>
-        <code>showContextMenu(items, options)</code>{" "}
-        opens a menu and resolves with the chosen item's <code>id</code>, or <code>null</code>{" "}
-        when it is dismissed. Inside the shell it hands every item to a native{" "}
-        <code>DenextContextMenu</code>{" "}
-        plugin when the app registers one (denext ships none: it is feature-detected by that name
-        and a <code>show({"{ items, title, x, y }"})</code> method resolving{" "}
-        <code>{"{ selectedId }"}</code>). Everywhere else, the shell without that plugin, the web
-        and a Deno Desktop window, it renders an accessible popover in the page: a{" "}
-        <code>role="menu"</code> with a <code>role="menuitem"</code> per item, opened at{" "}
-        <code>x</code> / <code>y</code> or under an <code>anchor</code>{" "}
-        rect. Up / Down move, Enter or Space choose, Escape or a press outside dismisses it, and it
-        removes every node and listener it added when it resolves.
+        <code>NativeViewSlot</code>{" "}
+        reserves a box in the page and keeps a native view on it: a map, a video player with the
+        system controls, a camera preview, or any view type your app registers natively. The page
+        scrolls, clips and covers the slot like any other box; its children are the web fallback,
+        rendered on the web, during SSR, and in a shell without the plugin or without that view
+        type. <code>denext mobile add native-views</code> installs the{" "}
+        <code>DenextNativeViews</code>{" "}
+        plugin (Swift and Java, registered like the other denext plugins) with the built-in{" "}
+        <code>video</code> view; <code>denext mobile add native-map</code> adds <code>map</code>
+        {" "}
+        (MapKit on iOS, OpenStreetMap through osmdroid on Android, neither with an API key).
       </p>
       <Code lang="tsx">
-        {`"use client";
-import { showContextMenu } from "denext/mobile";
+        {`import { NativeViewSlot } from "denext/mobile";
 
-export function Row({ id, onDelete }: { id: string; onDelete: (id: string) => void }) {
-  return (
-    <button
-      type="button"
-      onContextMenu={async (e) => {
-        e.preventDefault();
-        const choice = await showContextMenu(
-          [
-            { id: "open", label: "Open" },
-            { id: "archive", label: "Archive", disabled: true },
-            { id: "delete", label: "Delete", destructive: true },
-          ],
-          { x: e.clientX, y: e.clientY, title: "Thread" },
-        );
-        if (choice === "delete") onDelete(id);
-      }}
-    >
-      {id}
-    </button>
-  );
+<NativeViewSlot
+  type="map"
+  props={{ latitude: 51.5, longitude: -0.12, zoom: 12, markers: [{ latitude: 51.5, longitude: -0.12, title: "Here" }] }}
+  onEvent={(name, data) => name === "regionChange" && console.log(data)}
+  onCommand={(command) => (recenter.current = command)} // command("setRegion", { … })
+  overlay={<button style={{ position: "absolute", right: 8, bottom: 8, pointerEvents: "auto" }}>Recenter</button>}
+  style={{ height: 280, borderRadius: 12, overflow: "hidden" }}
+>
+  <img src="/static-map.png" alt="Map of London" /> {/* the web fallback */}
+</NativeViewSlot>`}
+      </Code>
+      <p>
+        <code>overlay</code>{" "}
+        is DOM drawn over the native view; touches on its elements stay in the page, and every other
+        touch over the slot&apos;s visible part reaches the native view.{" "}
+        <code>useNativeViewSlot(type, options)</code>{" "}
+        is the same as a hook for a slot element you render yourself (it returns the refs,{" "}
+        <code>status</code>, <code>placement</code> and <code>command</code>).
+      </p>
+      <p>
+        Where the view is drawn (<code>placement</code>, default <code>"auto"</code>):
+      </p>
+      <ul>
+        <li>
+          <code>"embed"</code>{" "}
+          (iOS, the default there): the view is added to the native scroll view WebKit backs the
+          slot&apos;s <code>overflow: scroll</code> element with, the approach of{" "}
+          <code>@capacitor/google-maps</code>. The compositor moves, clips and transforms it with
+          the page (scrolling, CSS transforms and animations included, with no lag), and page
+          content drawn later (a sticky header, a modal) covers it. If WebKit does not back the
+          element with a scroll view within 2 s, it falls back to <code>"over"</code>.
+        </li>
+        <li>
+          <code>"over"</code>{" "}
+          (the default on Android): the view is drawn above the WebView, clipped to the part of the
+          slot its scrolling ancestors and the viewport leave visible. It needs nothing from the
+          page, but no DOM can draw over it: while page content covers any part of the slot (a
+          sheet, a modal, a sticky header) the view hides.
+        </li>
+        <li>
+          <code>"under"</code>{" "}
+          : the view is drawn behind the WebView, which is made transparent, and seen through the
+          slot. DOM over the slot draws above it. The slot and every ancestor must be transparent
+          where the slot is (a dev warning names the first one that is not); a touch over the
+          visible part is handed to the view unless page content covers the slot.
+        </li>
+      </ul>
+      <p>
+        For <code>"under"</code> and <code>"over"</code>{" "}
+        the page measures each slot and sends the native side its box, its visible part, whether it
+        is covered and where its overlays are, once per animation frame while the page moves (a
+        scroll, a resize, the keyboard, a CSS transition or animation, a touch drag; for 500 ms
+        after the last one) and every 250 ms while it is still, and only when something changed. The
+        native move lands one frame after the page&apos;s, so a fast fling shows the view trailing
+        its slot by a frame; see{" "}
+        <a href="/docs/limitations">Known limitations</a>. A slot unmounted by a virtualized list
+        destroys its view, and a new one is made when it scrolls back.
+      </p>
+      <p>
+        The built-in views. <code>video</code>: props <code>src</code> (an absolute URL),{" "}
+        <code>autoplay</code>, <code>loop</code>, <code>muted</code>, <code>controls</code>{" "}
+        (default true), <code>fit</code> (<code>"contain"</code> or{" "}
+        <code>"cover"</code>, iOS); events <code>ready</code>, <code>play</code>,{" "}
+        <code>pause</code>, <code>ended</code>, <code>error</code>; commands <code>play</code>,{" "}
+        <code>pause</code>, <code>seek</code>, <code>status</code>. <code>map</code>: props{" "}
+        <code>latitude</code>, <code>longitude</code>, <code>zoom</code> (0 to 20),{" "}
+        <code>markers</code>, <code>mapType</code> (iOS), <code>interactive</code>; events{" "}
+        <code>regionChange</code>, <code>markerPress</code>; command{" "}
+        <code>setRegion</code>. The map moves only when <code>latitude</code>,{" "}
+        <code>longitude</code> or <code>zoom</code>{" "}
+        change, so a pan is not undone by other props. OpenStreetMap&apos;s tile servers are for
+        light use: point a production Android app at its own tile source.
+      </p>
+      <h3 id="your-own-native-view">Your own native view</h3>
+      <p>
+        A view type is a factory registered with the plugin. On iOS, a class conforming to{" "}
+        <code>DenextNativeViewFactory</code> (every method runs on the main thread):
+      </p>
+      <Code lang="swift">
+        {`import UIKit
+
+@objc(ChartViewFactory)
+final class ChartViewFactory: NSObject, DenextNativeViewFactory {
+    func makeView(context: DenextNativeViewContext, props: [String: Any]) -> UIView {
+        let chart = ChartView()
+        chart.onSelect = { index in context.emit("select", ["index": index]) }
+        chart.values = props["values"] as? [Double] ?? []
+        return chart
+    }
+    func updateView(_ view: UIView, props: [String: Any]) {
+        (view as? ChartView)?.values = props["values"] as? [Double] ?? []
+    }
+    // Optional: command(_:name:args:) -> [String: Any]? and destroyView(_:).
 }`}
       </Code>
       <p>
-        The popover always lists every item: a <code>disabled</code>{" "}
-        one is shown but not selectable (<code>aria-disabled</code>), a <code>destructive</code>
-        {" "}
-        one carries <code>data-destructive</code>, and <code>icon</code>{" "}
-        is a glyph before the label. It sets only its position, so style it through{" "}
-        <code>[role="menu"]</code> and <code>[role="menuitem"]</code>{" "}
-        in your CSS. It is SSR-safe: importing it runs nothing, and called without a DOM (or with no
-        items) it renders nothing and resolves <code>null</code>.
+        On Android, a class implementing <code>DenextNativeViewFactory</code>:
       </p>
+      <Code lang="java">
+        {`package com.example.app;
+
+import android.view.View;
+import com.getcapacitor.JSObject;
+import dev.denext.nativeviews.DenextNativeViewContext;
+import dev.denext.nativeviews.DenextNativeViewFactory;
+
+public class ChartViewFactory implements DenextNativeViewFactory {
+    @Override public View create(DenextNativeViewContext context, JSObject props) {
+        ChartView chart = new ChartView(context.getActivity());
+        chart.setValues(props.optJSONArray("values"));
+        return chart;
+    }
+    @Override public void update(View view, JSObject props) {
+        ((ChartView) view).setValues(props.optJSONArray("values"));
+    }
+    // Optional: command(view, name, args), lifecycle(view, resumed), destroy(view).
+}`}
+      </Code>
+      <p>
+        Register it by name in <code>capacitor.config</code>{" "}
+        (the plugin creates it with its no-argument constructor), or in code before the page makes a
+        view (<code>DenextNativeViews.register("chart", ChartViewFactory())</code> in{" "}
+        <code>AppDelegate</code>;{" "}
+        <code>DenextNativeViews.register("chart", new ChartViewFactory())</code> in{" "}
+        <code>MainActivity.onCreate</code>):
+      </p>
+      <Code lang="json">
+        {`{
+  "plugins": {
+    "DenextNativeViews": {
+      "factories": { "chart": "ChartViewFactory" }
+    }
+  }
+}`}
+      </Code>
+      <p>
+        On iOS the name is the class&apos;s Objective-C name (give it{" "}
+        <code>@objc(Name)</code>); on Android the fully qualified class name (<code>
+          com.example.app.ChartViewFactory
+        </code>). Then <code>&lt;NativeViewSlot type="chart" props=…&gt;</code>{" "}
+        places it. The example app{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/native-views">
+          <code>examples/native-views</code>
+        </a>{" "}
+        puts two maps and a video in a scrolling <code>VirtualList</code>.
+      </p>
+
+      <h2 id="context-menus">Context menus</h2>
+      <p>
+        <code>denext mobile add context-menu</code> installs denext&apos;s native{" "}
+        <code>DenextContextMenu</code>{" "}
+        plugin (no npm package). With it, the shell shows the platform&apos;s own menus:
+      </p>
+      <ul>
+        <li>
+          <strong>
+            <code>useContextMenu(items, onSelect)</code>
+          </strong>{" "}
+          (or{" "}
+          <code>attachContextMenu(el, items, onSelect)</code>) binds a menu to an element. On iOS it
+          is the system{" "}
+          <code>UIContextMenuInteraction</code>: a press arms the native side with the
+          element&apos;s rect and items, and the system long press lifts a snapshot of the element
+          (clipped to its corner radius), plays the system haptic and shows the{" "}
+          <code>UIMenu</code>; a secondary click on iPad opens it too. On Android a 500 ms long
+          press opens a Material <code>PopupMenu</code>{" "}
+          at the finger with the long-press haptic. On the web a long press or a right click opens
+          the in-page popover.
+        </li>
+        <li>
+          <strong>
+            <code>showContextMenu(items, {"{ x, y }"})</code>
+          </strong>{" "}
+          opens a menu from code and resolves the chosen <code>id</code> (<code>null</code>{" "}
+          when dismissed): a <code>UIMenu</code>{" "}
+          at the point on iOS 16+ (the edit-menu presentation; an action sheet on iOS 15), the{" "}
+          <code>PopupMenu</code> on Android, the popover elsewhere.
+        </li>
+      </ul>
+      <p>
+        An item is <code>{"{ id, label }"}</code> plus <code>systemIcon</code>{" "}
+        (an SF Symbol name for the iOS menu), <code>icon</code> (a glyph for the popover),{" "}
+        <code>subtitle</code>, <code>destructive</code>, <code>disabled</code> and{" "}
+        <code>children</code>{" "}
+        (a submenu). iOS nests submenus; Android and the popover list a submenu&apos;s items as a
+        labelled group, and the Deno Desktop menu flattens them (<code>Parent › Child</code>), so no
+        item is ever out of reach.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useContextMenu } from "denext/mobile";
+
+export function MessageRow({ message, act }: {
+  message: { id: string; text: string };
+  act: (action: string, id: string) => void;
+}) {
+  const menu = useContextMenu(
+    [
+      { id: "reply", label: "Reply", systemIcon: "arrowshape.turn.up.left" },
+      { id: "copy", label: "Copy", systemIcon: "doc.on.doc" },
+      {
+        id: "move",
+        label: "Move to",
+        systemIcon: "folder",
+        children: [
+          { id: "inbox", label: "Inbox" },
+          { id: "archive", label: "Archive", subtitle: "Out of the inbox, kept" },
+        ],
+      },
+      { id: "delete", label: "Delete", systemIcon: "trash", destructive: true },
+    ],
+    (id) => act(id, message.id),
+    { title: "Message" },
+  );
+  return <div ref={menu} style={{ borderRadius: 12 }}>{message.text}</div>;
+}`}
+      </Code>
+      <p>
+        The items and the handler are read when the menu opens, so they can change every render.
+        While bound, the element has <code>-webkit-touch-callout</code> and <code>user-select</code>
+        {" "}
+        set to <code>none</code>{" "}
+        (WebKit&apos;s own link preview and text selection would fight the menu). The popover
+        renders <code>role="menu"</code> with a <code>role="menuitem"</code>{" "}
+        per item (a submenu is a <code>role="group"</code>{" "}
+        labelled by its item), is keyboard navigable (Up / Down, Enter or Space, Escape), dismisses
+        on a press outside, and sets only its position: style it through <code>[role="menu"]</code>
+        {" "}
+        and <code>[role="menuitem"]</code> in your CSS (a <code>disabled</code> item carries{" "}
+        <code>aria-disabled</code>, a <code>destructive</code> one{" "}
+        <code>data-destructive</code>). Both are SSR-safe: importing them runs nothing.
+      </p>
+
+      <h2 id="system-icons">System icons</h2>
+      <p>
+        <code>{'<SystemIcon name="square.and.arrow.up" android="share" />'}</code>{" "}
+        draws the platform&apos;s own icon. In the iOS shell with{" "}
+        <code>denext mobile add system-icons</code> it is the real SF Symbol: the{" "}
+        <code>DenextSystemIcon</code> plugin renders it with <code>UIImage(systemName:)</code>{" "}
+        at the requested weight and scale and the device&apos;s pixel density, and the page uses it
+        as a mask filled with the CSS <code>color</code>{" "}
+        (so it follows the text color, dark mode and hover). Every render is cached natively and in
+        the page. Everywhere else (Android, the web, a desktop window, SSR) it is a Material Symbol
+        drawn as inline SVG.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { SystemIcon } from "denext/mobile";
+
+<SystemIcon name="house.fill" size={26} />                 // Material: home-fill (mapped)
+<SystemIcon name="bell" weight="semibold" label="Alerts" /> // role="img" with a name
+<SystemIcon name="cloud.sun.fill" mode="multicolor" android="partly_cloudy_day" />`}
+      </Code>
+      <ul>
+        <li>
+          <code>size</code> (CSS px, default 24), <code>weight</code> (<code>ultralight</code> …
+          {" "}
+          <code>black</code>), <code>scale</code>, <code>color</code>, and <code>mode</code>:{" "}
+          <code>monochrome</code> (the default mask), <code>hierarchical</code>,{" "}
+          <code>palette</code> (<code>colors</code>) or <code>multicolor</code>.
+        </li>
+        <li>
+          Without{" "}
+          <code>android</code>, the Material Symbol is mapped from the SF Symbol name for the common
+          icons (<code>house</code> → <code>home</code>, <code>square.and.arrow.up</code> →{" "}
+          <code>share</code>, a <code>.fill</code> suffix to the <code>-fill</code>{" "}
+          variant). denext ships about 75 common Material Symbols (Apache 2.0);{" "}
+          <code>registerSystemIcons({"{ name: pathData }"})</code> adds any other from{" "}
+          <code>@material-symbols/svg-400</code>.
+        </li>
+        <li>
+          The server renders the Material Symbol, so the markup always hydrates; in the iOS shell
+          the SF Symbol replaces it before paint once cached, and the box is hidden for the one
+          bridge round trip of a first render. <code>preloadSystemIcons([...])</code>{" "}
+          at startup warms the icons of the first screen.
+        </li>
+        <li>
+          <strong>Why no SF Symbols SVGs:</strong>{" "}
+          Apple licenses SF Symbols for use in apps on Apple platforms only, so denext ships none of
+          their artwork; iOS draws them itself, and every other platform gets Material Symbols.
+        </li>
+      </ul>
 
       <h2 id="deep-links">Deep links</h2>
       <p>
@@ -1344,6 +1595,107 @@ function Slides({ items }: { items: string[] }) {
   return screenReader ? <ol>{items.map((i) => <li key={i}>{i}</li>)}</ol> : <Carousel items={items} />;
 }`}
       </Code>
+
+      <h3 id="text-size">Text size (Dynamic Type)</h3>
+      <p>
+        The same plugin reports the OS text size: Dynamic Type on iOS, the font scale on Android.
+        {" "}
+        <code>getFontScale()</code> / <code>useFontScale()</code> / <code>onFontScaleChange()</code>
+        {" "}
+        answer the factor the page still has to apply itself, 1 at the default size. iOS&apos;s
+        WKWebView ignores Dynamic Type, so there it is the whole factor (React Native&apos;s table:
+        0.823 at the smallest size, 1.353 at the largest standard one, up to 3.571 with the larger
+        accessibility sizes). Android&apos;s WebView already zooms all text by the system font scale
+        (its{" "}
+        <code>textZoom</code>), so there it is the system scale divided by that zoom, usually 1. In
+        a browser it is 1: the browser applies its user&apos;s text size to <code>rem</code> itself.
+      </p>
+      <p>
+        <code>applyFontScale()</code>{" "}
+        opts the whole page in: it scales the root font size (as your stylesheet sets it) by the
+        factor and keeps it current, so everything sized in <code>rem</code> follows, and sets{" "}
+        <code>--dnx-font-scale</code>{" "}
+        for sizes you compute. Call it once, early; the function it returns undoes it. React Native
+        mode applies the factor to <code>Text</code> itself (<code>allowFontScaling</code>,{" "}
+        <code>maxFontSizeMultiplier</code>), and <code>PixelRatio.getFontScale()</code> and{" "}
+        <code>useWindowDimensions().fontScale</code> report it.
+      </p>
+      <Code lang="tsx">
+        {`import { applyFontScale, useFontScale } from "denext/mobile";
+
+applyFontScale({ max: 2 }); // rem-based CSS follows the OS text size, at most 2x
+
+function Price({ amount }: { amount: string }) {
+  const scale = useFontScale(); // 1 until the first answer
+  return <span style={{ fontSize: 17 * Math.min(scale, 1.5) }}>{amount}</span>;
+}`}
+      </Code>
+
+      <h2 id="durable-storage">Durable storage</h2>
+      <p>
+        A WebView&apos;s <code>localStorage</code>{" "}
+        and IndexedDB belong to the web view, and iOS and Android may clear them when the device
+        runs low on space; Capacitor&apos;s own guidance calls them transient.{" "}
+        <code>openKeyValueStore(name)</code> keeps strings where the OS does not clear them:{" "}
+        <code>denext mobile add storage</code> writes denext&apos;s <code>DenextStorage</code>{" "}
+        plugin (Swift and Java, no npm package), one SQLite file in the app&apos;s own data folder
+        (<code>Library/Application Support</code> on iOS, the app&apos;s <code>databases/</code>
+        {" "}
+        on Android), opened with the system SQLite. Every call is one batch over the bridge, so a
+        thousand keys cost one round trip.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Where the page runs</th>
+            <th>Where the data goes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>iOS / Android shell</td>
+            <td>
+              <code>DenextStorage</code> (<code>backend()</code> is{" "}
+              <code>
+                &quot;native&quot;
+              </code>); without it, an installed <code>@capacitor-community/sqlite</code>{" "}
+              (<code>&quot;sqlite&quot;</code>); with neither, IndexedDB and a console warning
+            </td>
+          </tr>
+          <tr>
+            <td>Deno Desktop</td>
+            <td>
+              the runtime&apos;s SQLite (<code>denext desktop add sqlite</code>); until the runtime
+              answers, IndexedDB with the desktop storage warning
+            </td>
+          </tr>
+          <tr>
+            <td>Browser</td>
+            <td>IndexedDB</td>
+          </tr>
+        </tbody>
+      </table>
+      <Code lang="ts">
+        {`import { openKeyValueStore } from "denext/mobile";
+
+const drafts = openKeyValueStore("drafts");
+await drafts.setMany([["post-1", body], ["post-2", other]]);
+const [first, second] = await drafts.getMany(["post-1", "post-2"]);
+await drafts.remove("post-2");
+console.log(await drafts.backend()); // "native" in the shell after denext mobile add storage`}
+      </Code>
+      <p>
+        Values are strings (<code>JSON.stringify</code>{" "}
+        anything else), not encrypted: tokens and passwords go in{" "}
+        <code>secureStore</code>. React Native mode&apos;s{" "}
+        <code>@react-native-async-storage/async-storage</code> and <code>react-native-mmkv</code>
+        {" "}
+        run on this store (see <a href="/docs/react-native#durable-storage">React Native mode</a>).
+        {" "}
+        <code>denext mobile doctor</code> warns about app code that keeps data in{" "}
+        <code>localStorage</code> / IndexedDB, and about AsyncStorage, MMKV or{" "}
+        <code>openKeyValueStore</code> in a project without a durable native store.
+      </p>
 
       <h2 id="in-app-purchases">In-app purchases</h2>
       <p>
@@ -2498,6 +2850,112 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
           purchases of digital goods through in-app purchase (3.1.1).
         </li>
       </ul>
+      <h3 id="guideline-4-2-checklist">Guideline 4.2 checklist</h3>
+      <p>
+        What reviewers look for when they test a WebView app against 4.2, and what denext gives you
+        for each. A reviewer uses the app for a few minutes: the first screen, the tab bar, a long
+        press, going back, airplane mode.
+      </p>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Reviewers look for</th>
+            <th>What denext provides</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              It behaves like an app, not a website: no browser chrome, no pinch-zoom of the page,
+              no text selection or link callouts on controls, no rubber-banding of the whole page.
+            </td>
+            <td>
+              The export ships in the binary; <code>StackLayout</code> / <code>TabsLayout</code>
+              {" "}
+              own the scrolling (each screen scrolls, the bars stay put);{" "}
+              <code>useContextMenu</code>{" "}
+              turns off WebKit&apos;s callout on its element; the platform theme turns off tap
+              highlights and selection on the bars.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              Native navigation: a tab bar, pushed screens with the platform transition, the iOS
+              edge swipe, Android back and predictive back.
+            </td>
+            <td>
+              <code>denext/navigation</code>: <code>StackLayout</code>, <code>TabsLayout</code>,
+              {" "}
+              <code>Sheet</code>, <code>denext mobile add back</code>.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              It looks like the platform: system font, large titles, translucent (iOS 26: Liquid
+              Glass) bars, Material 3 on Android, dark mode.
+            </td>
+            <td>
+              The <a href="/docs/navigation-native#platform-theme">platform theme</a>{" "}
+              (the default in the shell), <code>useSystemBarsFollowTheme</code>, safe areas.
+            </td>
+          </tr>
+          <tr>
+            <td>Native menus and icons, not web look-alikes.</td>
+            <td>
+              <code>denext mobile add context-menu</code> (<code>UIContextMenuInteraction</code>
+              {" "}
+              with the lifted preview, <code>PopupMenu</code>) and{" "}
+              <code>denext mobile add system-icons</code>{" "}
+              (<code>&lt;SystemIcon&gt;</code>: real SF Symbols).
+            </td>
+          </tr>
+          <tr>
+            <td>Haptics where the platform has them.</td>
+            <td>
+              Tab switches and long-press menus play them in the shell by default;{" "}
+              <code>haptic()</code> for your own (<code>denext mobile add haptics</code>).
+            </td>
+          </tr>
+          <tr>
+            <td>Features a website cannot offer, visible in the review build.</td>
+            <td>
+              Push, widgets, Live Activities, a share extension, quick actions, biometrics, the
+              camera and document picker, deep links, background tasks: each a{" "}
+              <code>denext mobile add</code> capability. Name them in the review notes.
+            </td>
+          </tr>
+          <tr>
+            <td>It works offline and fails gracefully.</td>
+            <td>
+              <code>denext mobile add offline-screen</code>,{" "}
+              <code>installOfflineScreen()</code>, durable storage, OTA UI that never leaves a blank
+              screen.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              No flow that only works in an external browser; the account rules (Sign in with Apple,
+              account deletion).
+            </td>
+            <td>
+              <code>openAuthSession</code>, <code>signInWithApple</code>,{" "}
+              <code>openExternal</code>&apos;s in-app browser, denextAuth&apos;s account deletion;
+              {" "}
+              <code>denext mobile doctor --store</code> checks the last two.
+            </td>
+          </tr>
+          <tr>
+            <td>
+              Content and value beyond your website: an app that only shows what your site shows is
+              still at risk.
+            </td>
+            <td>
+              Nothing a framework can supply. Give the app a job the site does not do (offline use,
+              notifications, device features, widgets).
+            </td>
+          </tr>
+        </tbody>
+      </table>
       <p>
         <code>denext mobile doctor --store</code>{" "}
         checks what it can, each finding with its fix, and exits 1 on an error:
@@ -2536,7 +2994,14 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         <li>
           sign-in without account deletion, and Google sign-in without Sign in with Apple (read from
           the app&apos;s sources; <code>--app &lt;dir&gt;</code>{" "}
-          when the denext app is not the Capacitor folder).
+          when the denext app is not the Capacitor folder);
+        </li>
+        <li>
+          app code that keeps data in{" "}
+          <code>localStorage</code>, IndexedDB or redux-persist&apos;s web storage, which the OS may
+          clear (a warning, in both profiles; see{" "}
+          <a href="#durable-storage">Durable storage</a>), and AsyncStorage, MMKV or{" "}
+          <code>openKeyValueStore</code> without <code>denext mobile add storage</code>.
         </li>
       </ul>
       <p>
@@ -2654,6 +3119,13 @@ npx @sentry/cli sourcemaps upload \\
       </p>
 
       <h2 id="building-in-ci">Building in CI</h2>
+      <p>
+        <code>denext mobile assets</code>, <code>denext mobile build ios|android</code> and{" "}
+        <code>denext mobile submit ios|android</code>{" "}
+        generate every icon and splash, build signed store binaries (with flavors) and upload them
+        to App Store Connect and Google Play, locally or in CI: see{" "}
+        <a href="/docs/mobile-build">Mobile builds &amp; store submission</a>.
+      </p>
       <p>
         <a href="https://github.com/Brainwires/denext/tree/main/examples/capacitor-ci">
           <code>examples/capacitor-ci</code>

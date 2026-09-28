@@ -14,6 +14,14 @@
  *   active tab pops to its root, then scrolls to the top.
  * - {@linkcode Sheet}: a bottom sheet with detents, drag, dismissal, a focus trap and keyboard
  *   avoidance.
+ * - A route announcer: a push, a pop or a tab switch reads the new screen's title to screen
+ *   readers (an `aria-live` region; `announceRouteChanges: false` turns it off);
+ *   {@linkcode announceRoute} says something through the same region.
+ * - The platform theme (`theme="platform"`, and the default `"auto"` inside the native shell):
+ *   iOS bars that blur the content under them, a Liquid Glass-style floating tab bar, the large
+ *   title that collapses on scroll and the system font; Android's Material 3 top app bar and
+ *   navigation bar; light/dark and an `accentColor`. {@linkcode platformThemeCss} is the
+ *   stylesheet itself.
  * - {@linkcode createNativeStackNavigatorFactory} / {@linkcode createBottomTabNavigatorFactory}:
  *   React Navigation navigators drawn by the same views (React Native mode).
  *
@@ -45,6 +53,13 @@ export {
   type TabsViewProps,
 } from "./tabs.ts";
 export { Sheet, type SheetProps } from "./sheet.ts";
+export { announceRoute } from "./announcer.ts";
+export {
+  type IosBarMaterial,
+  type NavigationTheme,
+  type NavigationThemeProps,
+  platformThemeCss,
+} from "./theme.ts";
 export {
   createBottomTabNavigatorFactory,
   createNativeStackNavigatorFactory,
