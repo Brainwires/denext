@@ -17,6 +17,7 @@ import {
   secureStoreCommand,
 } from "../src/desktop/caps/secure-store.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
+import { dialogsCapability } from "../src/desktop/caps/dialogs.ts";
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import type { DesktopAppDirs } from "../src/desktop/app-dirs.ts";
 
@@ -633,6 +634,125 @@ Deno.test("shell: openPath/trash accept a picked handle (trash needs a writable 
   }
 });
 
+// --- dialogs -----------------------------------------------------------------
+
+/** A dialogs cap whose runner records the (cmd, args) it was handed and "chooses" `stdout`. */
+function capturingDialogs(os: "darwin" | "windows" | "linux", stdout: string) {
+  const calls: Array<[string, string[]]> = [];
+  const picked = new PickedPaths();
+  const cap = dialogsCapability({
+    picked,
+    os,
+    run: (cmd, args) => {
+      calls.push([cmd, args]);
+      return Promise.resolve({ code: 0, stdout });
+    },
+  });
+  return { cap, calls, picked };
+}
+
+Deno.test("dialogs: per-OS program is spawned with the path/name as discrete args (no injection)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-dialogs-argv-" });
+  try {
+    const folder = await Deno.realPath(dir);
+    // The program the cap spawns, per OS (first candidate).
+    const mac = capturingDialogs("darwin", folder);
+    await call(mac.cap, "pickFolder", {});
+    assertEquals(mac.calls[0], ["osascript", ["-e", "POSIX path of (choose folder)"]]);
+    const lin = capturingDialogs("linux", folder);
+    await call(lin.cap, "openFile", {});
+    assertEquals(lin.calls[0][0], "zenity");
+    const win = capturingDialogs("windows", folder);
+    await call(win.cap, "openFile", {});
+    assertEquals(win.calls[0][0], "powershell.exe");
+    // saveFile: the suggested name is its own argv element, never spliced into the script string.
+    const out = join(dir, "notes.txt");
+    const save = capturingDialogs("darwin", out);
+    await call(save.cap, "saveFile", { data: "x", encoding: "utf8", suggestedName: "notes.txt" });
+    const [, args] = save.calls[0];
+    assertEquals(args[args.length - 1], "notes.txt");
+    assert(args.every((a) => a === "notes.txt" || !a.includes("notes.txt")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("dialogs.openFile: a chosen file returns a read handle (+ data); cancel → no files", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-dialogs-" });
+  try {
+    const file = join(dir, "picked.txt");
+    await Deno.writeTextFile(file, "hello");
+    const picked = new PickedPaths();
+    // A fake dialog program that "chose" `file`.
+    const chose = dialogsCapability({
+      picked,
+      os: "darwin",
+      run: () => Promise.resolve({ code: 0, stdout: `${file}\n` }),
+    });
+    const out = await call(chose, "openFile", { readData: true }) as {
+      files: Array<Record<string, unknown>>;
+    };
+    assertEquals(out.files.length, 1);
+    assertEquals(out.files[0].name, "picked.txt");
+    assertEquals(out.files[0].data, "aGVsbG8="); // base64("hello")
+    // The handle it returned is usable via the picked set (read mode).
+    const h = out.files[0].handle as string;
+    assertEquals((await picked.resolve(h, "", false)).target, await Deno.realPath(file));
+    // Cancel (non-zero exit) → no files.
+    const cancel = dialogsCapability({
+      picked,
+      os: "darwin",
+      run: () => Promise.resolve({ code: 1, stdout: "" }),
+    });
+    assertEquals(await call(cancel, "openFile", {}), { files: [] });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("dialogs.saveFile writes the data and returns a readwrite handle; pickFolder → folder handle", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-dialogs-" });
+  try {
+    const picked = new PickedPaths();
+    const out = join(dir, "out.txt");
+    const save = dialogsCapability({
+      picked,
+      os: "darwin",
+      run: () => Promise.resolve({ code: 0, stdout: out }),
+    });
+    const res = await call(save, "saveFile", { data: "saved!", encoding: "utf8" }) as {
+      path: string;
+      handle: string;
+    };
+    assertEquals(await Deno.readTextFile(out), "saved!");
+    assertEquals(res.path, out);
+    // readwrite handle: a write through it is allowed.
+    assert((await picked.resolve(res.handle, "", true)).target === await Deno.realPath(out));
+
+    const folder = dialogsCapability({
+      picked,
+      os: "darwin",
+      run: () => Promise.resolve({ code: 0, stdout: dir }),
+    });
+    const f = await call(folder, "pickFolder", {}) as { path: string; handle: string };
+    assertEquals(f.path, dir);
+    assertEquals((await picked.resolve(f.handle, "", true)).root, await Deno.realPath(dir));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("dialogs: no dialog program available → unavailable (page falls back to <input type=file>)", async () => {
+  const picked = new PickedPaths();
+  const none = dialogsCapability({
+    picked,
+    os: "linux",
+    run: () => Promise.resolve({ code: null, stdout: "" }),
+  });
+  const err = await assertRejects(() => call(none, "pickFolder", {}), DesktopCapError);
+  assertEquals(err.code, "unavailable");
+});
+
 // --- resolver ----------------------------------------------------------------
 
 Deno.test("resolver: no desktop config → no capabilities (default deny)", async () => {
@@ -651,11 +771,12 @@ Deno.test("resolver: maps enabled built-ins; echo off unless explicitly true", a
         shell: true,
         keepAwake: true,
         secureStore: true,
+        dialogs: true,
       },
     },
   });
   const names = r.capabilities.map((c) => c.name).sort();
-  assertEquals(names, ["device", "fs", "keepAwake", "secureStore", "shell", "sqlite"]);
+  assertEquals(names, ["device", "dialogs", "fs", "keepAwake", "secureStore", "shell", "sqlite"]);
   // echo is a diagnostic — only when capabilities.echo === true.
   const withEcho = await resolveDesktopCapabilities({ desktop: { capabilities: { echo: true } } });
   assertEquals(withEcho.capabilities.map((c) => c.name), ["echo"]);

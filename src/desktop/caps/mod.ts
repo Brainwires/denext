@@ -29,6 +29,7 @@ import { shellCapability, type ShellCapabilityConfig } from "./shell.ts";
 import { keepAwakeCapability } from "./keep-awake.ts";
 import { secureStoreCapability } from "./secure-store.ts";
 import { PickedPaths } from "../picked-paths.ts";
+import { dialogsCapability } from "./dialogs.ts";
 
 /** The app-support subdirectory name when the config gives no identifier (matches the updater). */
 const DEFAULT_APP_ID = "denext-desktop";
@@ -146,6 +147,7 @@ export async function resolveDesktopCapabilities(
   if (caps.shell) {
     capabilities.push(shellCapability({ dirs, config: resolveShell(caps.shell), picked }));
   }
+  if (caps.dialogs) capabilities.push(dialogsCapability({ picked }));
   if (caps.keepAwake) capabilities.push(keepAwakeCapability());
   if (caps.secureStore) capabilities.push(secureStoreCapability({ service: appId }));
 
