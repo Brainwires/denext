@@ -8,10 +8,9 @@
  * On the web a notification scheduled for now shows through the Notifications API (when
  * permission is granted); nothing can be scheduled for later, so a trigger rejects there.
  *
- * In a Deno Desktop window (`denext desktop add notifications`) the desktop runtime shows them
- * as OS notifications, schedules triggers while the app runs (not after it quits), and routes
- * a click like a tap: it focuses the window, then `onLocalNotificationTapped` fires. There are
- * no action buttons, channels or categories on desktop.
+ * A Deno Desktop window takes the web path: the desktop runtime has no notifications
+ * capability, so a notification without a trigger shows through the WebView's Notification
+ * API, a trigger rejects, and a click is not routed to `onLocalNotificationTapped`.
  *
  * @module
  */

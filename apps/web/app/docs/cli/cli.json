@@ -597,7 +597,7 @@
         {
           "name": "force",
           "type": "boolean",
-          "description": "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session / share-extension / widget / live-activity)"
+          "description": "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session / share-extension / widget / live-activity / native-module)"
         },
         {
           "name": "public-key",

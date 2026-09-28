@@ -334,9 +334,9 @@ function showWebContextMenu(
  *   (submenus as labelled groups, destructive items in the error color). For the long-press
  *   menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the
  *   element with {@linkcode useContextMenu} instead.
- * - Inside a Deno Desktop window (`denext desktop add context-menu`), the native menu at the
- *   same client coordinates (`BrowserWindow.showContextMenu`); submenus are flattened
- *   (`Parent › Child`) and `destructive` has no native styling there.
+ * - Inside a Deno Desktop window, the in-page popover below: the desktop runtime has no
+ *   context-menu capability yet (a native menu awaits an upstream dismiss event), so the
+ *   bridge answers `unavailable` and the web path runs.
  * - Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role="menu"`
  *   with a `role="menuitem"` per item (a submenu is a `role="group"` labelled by its item),
  *   opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,
@@ -390,7 +390,8 @@ export async function showContextMenu(
   options: ContextMenuOptions = {},
 ): Promise<string | null> {
   const list = [...items];
-  // Deno Desktop: the OS menu through the bridge (lazy, so web/mobile bundles never load it).
+  // Deno Desktop: asked through the bridge (lazy, so web/mobile bundles never load it); the
+  // runtime has no context-menu cap yet, so it answers `unavailable` and the popover runs.
   const x = options.x ?? options.anchor?.left ?? 0;
   const y = options.y ?? options.anchor?.bottom ?? 0;
   const desktop = list.length > 0 && onDesktop()

@@ -857,7 +857,7 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "force",
       type: "boolean",
       help:
-        "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session / share-extension / widget / live-activity)",
+        "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session / share-extension / widget / live-activity / native-module)",
     },
     {
       name: "public-key",

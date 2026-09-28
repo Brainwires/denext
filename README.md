@@ -183,11 +183,16 @@ New in 2.11 (on `development`):
   in-app purchases, app review and update, background tasks, crash reporting, and store
   tooling (the iOS privacy manifest, `denext mobile doctor --store`). The iOS side of the new
   surface ran on an iPhone; Android is built and unit-tested, not run on a device.
+- **Native views and your own native code**: `<NativeViewSlot>` keeps a native map or video on
+  a box in the page (on iOS a video plays under the page with AVKit's controls; verified on an
+  iPhone), and `denext mobile add native-module` scaffolds a Capacitor plugin that `nativeModule`
+  and React Native's TurboModules reach ([Your own native code](https://denext.dev/docs/native-code)).
 - **An app backend**: `cors`, native auth sessions, native Sign in with Apple / Google, account
   deletion and zero-npm push sending ([App backend](https://denext.dev/docs/app-backend)).
-- **Deno Desktop capabilities**: the same `denext/mobile` calls reach the OS keychain, files,
-  SQLite, native menus and dialogs through `denext desktop add`; the desktop runtime that
-  answers them lands in 2.11 ([Desktop apps](https://denext.dev/docs/desktop)).
+- **Deno Desktop capabilities**: the same `denext/mobile` calls reach the OS keychain (macOS,
+  Linux), files, SQLite, native file dialogs and the shell through `denext desktop add`, and
+  packaged apps get least-privilege `--allow-*` flags derived from those capabilities instead
+  of `-A` ([Desktop apps](https://denext.dev/docs/desktop)).
 
 ## React & Next.js compatibility
 

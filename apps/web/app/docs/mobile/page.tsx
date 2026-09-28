@@ -41,10 +41,20 @@ export default function Mobile() {
         sheet, saving to Photos, <code>VirtualList</code> (an exact <code>scrollToIndex</code>{" "}
         on 100,000 rows, flings without blank frames, a chat list, sticky headers) and the stack,
         tabs and sheet of{" "}
-        <a href="/docs/navigation-native">native-feel navigation</a>. Built and unit-tested but not
-        yet run on the phone: biometrics, native sign-in, in-app purchases, crash reporting,
-        background tasks and background location, and the bottom safe-area inset. Android is
-        compiled and unit-tested, not run on a device: its halves of <code>denext/mobile</code>{" "}
+        <a href="/docs/navigation-native">native-feel navigation</a>. On 2026-09-28{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/native-views">
+          <code>examples/native-views</code>
+        </a>{" "}
+        ran there: <a href="#native-views">native views</a> in a{" "}
+        <code>VirtualList</code>, the video drawn under the page with AVKit&apos;s controls, a
+        vertical swipe on it scrolling the list (<code>scrollPassthrough</code>), and the views kept
+        across a Fast Refresh edit. Built and unit-tested but not yet run on the phone: native
+        modules, native context menus,{" "}
+        <code>SystemIcon</code>, durable storage, font scaling, biometrics, native sign-in, in-app
+        purchases, crash reporting, background tasks and background location, and the bottom
+        safe-area inset. Android is compiled and unit-tested, not run on a device: its halves of
+        {" "}
+        <code>denext/mobile</code>{" "}
         and of the generators have not run on Android at all, and a whole-app comparison ran on an
         emulator only. The details, and every open limit, are in{" "}
         <a href="/docs/limitations">Known limitations</a> (Desktop &amp; mobile) and{" "}
@@ -975,8 +985,8 @@ public class ChartViewFactory implements DenextNativeViewFactory {
         <code>subtitle</code>, <code>destructive</code>, <code>disabled</code> and{" "}
         <code>children</code>{" "}
         (a submenu). iOS nests submenus; Android and the popover list a submenu&apos;s items as a
-        labelled group, and the Deno Desktop menu flattens them (<code>Parent › Child</code>), so no
-        item is ever out of reach.
+        labelled group (a Deno Desktop window shows the popover too), so no item is ever out of
+        reach.
       </p>
       <Code lang="tsx">
         {`"use client";
@@ -1698,8 +1708,8 @@ function Price({ amount }: { amount: string }) {
           <tr>
             <td>Deno Desktop</td>
             <td>
-              the runtime&apos;s SQLite (<code>denext desktop add sqlite</code>); until the runtime
-              answers, IndexedDB with the desktop storage warning
+              the runtime&apos;s SQLite (<code>denext desktop add sqlite</code>); without that
+              capability, IndexedDB with the desktop storage warning
             </td>
           </tr>
           <tr>

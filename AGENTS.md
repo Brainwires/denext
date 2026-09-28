@@ -291,8 +291,10 @@ WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fall
 `useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickDocument`/`scanBarcode` (`null`
 when cancelled), `setQuickActions`/`useQuickAction` (home-screen shortcuts), `openSqlite` (the
-app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` (an in-page menu
-unless the app registers a native one); `denext mobile add <capability...> [--dry-run] [--list]`
+app's own `@sqlite.org/sqlite-wasm` on OPFS on the web) and `showContextMenu` /
+`useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
+`UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
+Deno Desktop included); `denext mobile add <capability...> [--dry-run] [--list]`
 installs their plugins, and `deep-links --scheme/--domain` / `push` add
 `onDeepLink`/`useDeepLink` (filtered by `accept`, routed once) and
 `requestPushPermission`/`registerForPush`/`onPushTapped` (no web push; your server sends via
@@ -300,7 +302,15 @@ APNs/FCM; Android needs `google-services.json`). Your own native code: `nativeMo
 Events>(name)` is a typed async client for the Capacitor plugin `name` (the desktop extension on
 Deno Desktop, `null` on the web), `native-module --name <Name>` generates one (Swift + Kotlin +
 `native/Native<Name>.ts`), and React Native mode's `TurboModuleRegistry` / `NativeModules` /
-Expo `requireNativeModule` resolve to it (every call async; no JSI). `auth-session --scheme myapp` adds
+Expo `requireNativeModule` resolve to it (every call async; no JSI). Native views:
+`<NativeViewSlot type="video" | "map" | …>` / `useNativeViewSlot` keep a native view on a DOM
+box (children are the web fallback); `denext mobile add native-views` (built-in `video`) /
+`native-map` (MapKit / osmdroid). `placement: "auto"` is `"embed"` (inside the page's scroll
+view) on iOS except `video`, which is `"under"` (AVPlayerViewController with system controls,
+the page painting over it), and `"over"` on Android; `scrollPassthrough` (iOS; `"vertical"` by
+default for `video`) lets a drag on the view scroll the list. In React Native mode `expo-maps` /
+`react-native-maps` → the map view, `expo-video` / `react-native-video` → the video view,
+`expo-symbols` → `<SystemIcon>`. `auth-session --scheme myapp` adds
 `openAuthSession(url, { callbackScheme })` (OAuth in an iOS ASWebAuthenticationSession / Android
 Custom Tab / web popup finished by `completeAuthSession()`, and in a Deno Desktop window the
 system browser with a loopback redirect; resolves the callback URL, PKCE + `state` are yours).
@@ -327,7 +337,10 @@ prompt | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleN
 `background-location`, `purchases` (RevenueCat), `app-review`, `app-update`,
 `screen-orientation`, `media-library`, `privacy-screen`, `tracking` (ATT), `background`
 (`defineBackgroundTask` in `background/`, no DOM), `restore` (Android process death),
-`accessibility` (`useScreenReader`), `sentry` (`initCrashReporting`) and `offline-screen`.
+`accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
+`storage` (`openKeyValueStore`: durable SQLite, behind React Native mode's AsyncStorage / MMKV),
+`system-icons` (`<SystemIcon>`: SF Symbols in the iOS shell, Material Symbols elsewhere),
+`sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing.
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy
 manifest), `denext mobile doctor --store | --release`, `denext mobile inspect`.
 Ship without a hosted service: `denext mobile assets` (every icon + splash from one image),
@@ -356,8 +369,13 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `keep-awake`, `clipboard`, `device`; written to `desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
-The runtime that answers these calls (and `defineDesktopExtension` in `denext/desktop`) lands
-in 2.11; until then a window answers `unavailable` and the web path runs.
+The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
+(macOS / Linux; fails closed on Windows) and your `defineDesktopExtension` modules (from
+`denext/desktop`); `context-menu`, `clipboard` and `notifications` stay WebView-backed (a
+scheduled notification rejects). Packaging is least-privilege: `scripts/package-*.ts` derive
+`--allow-*` from `desktop.capabilities` instead of `-A`, and
+`denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
+a diff for each changed file).
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
@@ -384,7 +402,10 @@ tabs on `denext/navigation`, Reanimated needs no Babel plugin, and popular nativ
 implementations (`reactNative: { aliases: { "<pkg>": false } }` restores one).
 `Platform.OS` stays `"web"`; read `Platform.constants.denextShell`. `reactNative.desktopPackage: "react-native-macos" | "react-native-windows"` builds the app's own `react-native` imports as that desktop package. `denext migrate --from expo`
 writes the `deno.json`, the config and a `capacitor.config.ts`, and reports native-only packages.
-Docs: https://denext.dev/docs/react-native
+`denext dev` hot-swaps an edited component with its state kept (Fast Refresh); a top-level
+`requireNativeModule` loads off-device and throws only when called. Native-only SDKs
+(`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`) have no alias:
+https://denext.dev/docs/native-sdk-recipes. Docs: https://denext.dev/docs/react-native
 
 **A database (zero-npm, server-only module):**
 

@@ -748,12 +748,15 @@ is, because of the [codegen entry points](#what-reactnative-does): its spec's to
 `getEnforcing` no longer throws, and a `requireNativeComponent` view renders its children unless the view type is registered natively, so the
 package fails only when its native module is actually used. It still needs a replacement if
 the web build calls into that module, unless the app ships that module as a Capacitor plugin of
-the same name ([Your own native code](/docs/native-code)). Two kinds fail earlier, before any use: a package whose
-`main` is Flow source (a parse error at build time), and an Expo module that calls
-`requireNativeModule` at the top level (it throws at import, which stops the bundle). The
+the same name ([Your own native code](/docs/native-code)). An Expo module that calls
+`requireNativeModule` at the top level loads too: off-device the call returns a stand-in whose
+functions throw `Cannot find native module` only when called. One kind fails earlier, before
+any use: a package whose `main` is Flow source (a parse error at build time). The
 listed [Expo shims](#expo-apis) and [community packages](#community-packages) cover the common
-ones; `denext migrate --from expo` names the native-only packages it finds. Two ways to
-replace one:
+ones; `denext migrate --from expo` names the native-only packages it finds, and
+[Native SDK recipes](/docs/native-sdk-recipes) covers the most used ones (Firebase, in-app
+purchases, Stripe, file system, camera, config, crash reporting, CodePush). Two ways to replace
+one:
 
 - Add a `.web.ts` beside the module that imports it, exporting a web implementation. The
   platform-file rule picks it up.

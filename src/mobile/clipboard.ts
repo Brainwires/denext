@@ -39,9 +39,9 @@ function webClipboard(fn: string): WebClipboard {
 
 /**
  * Read text from the clipboard: through `@capacitor/clipboard` inside the native shell
- * (`denext mobile add clipboard`), through the desktop runtime in a Deno Desktop window
- * (`denext desktop add clipboard`; no user gesture needed), else `navigator.clipboard.readText()`, which browsers
- * gate behind a permission prompt or a user gesture.
+ * (`denext mobile add clipboard`), else `navigator.clipboard.readText()`, which browsers
+ * gate behind a permission prompt or a user gesture. A Deno Desktop window uses the WebView's
+ * `navigator.clipboard` too: the desktop runtime has no clipboard capability.
  *
  * @returns The clipboard's text (`""` when it holds none).
  * @example
@@ -64,8 +64,8 @@ export async function readClipboard(): Promise<string> {
 
 /**
  * Write text to the clipboard: through `@capacitor/clipboard` inside the native shell
- * (`denext mobile add clipboard`), through the desktop runtime in a Deno Desktop window
- * (`denext desktop add clipboard`), else `navigator.clipboard.writeText()`.
+ * (`denext mobile add clipboard`), else `navigator.clipboard.writeText()` (a Deno Desktop
+ * window included: the desktop runtime has no clipboard capability).
  *
  * @param text The text to copy.
  * @returns A promise that settles once the text is on the clipboard. It rejects where there is

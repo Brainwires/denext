@@ -156,6 +156,14 @@ They're shipped and on by default in their contexts; the notes below are their
 **documented boundaries**, not a regression from React and not an "experimental"
 caveat — being a denext original is not the same as being incomplete.
 
+### Content-Security-Policy (`csp`)
+
+- **No `frame-src` or `media-src` opt-in.** A `csp` object adds sources to `script-src`,
+  `style-src`, `img-src` and `connect-src` only; frames and media fall back to
+  `default-src 'self'`, so a third-party iframe (Stripe Elements, a video embed, a captcha) is
+  blocked under the strict policy. Turn the generated policy off for that route
+  (`export const csp = "off"`, or `spa.csp` unset in SPA mode) and send a policy of your own.
+
 ### Islands & resumability (`client:*`, `resumable`, `qrl`)
 
 - **Flight route only.** Per-island carve-out lives on the Flight path; add a
@@ -435,8 +443,8 @@ four documented bounds of the opt-in:
   resolve `null` below it.
 - **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell, the
   OS keychain in a Deno Desktop window with the `secure-store` capability (`denext desktop add
-  secure-store`, once the desktop runtime ships; see below), and a plain IndexedDB database in
-  a browser (or a desktop window without that capability, where it is also wiped on relaunch).
+  secure-store`; macOS and Linux only, see below), and a plain IndexedDB database in a browser
+  (or a desktop window without that capability, where it is also wiped on relaunch).
 - **Passkeys (WebAuthn) do not run in the iOS Capacitor WebView.** The page's origin is
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
   `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's
@@ -454,9 +462,9 @@ four documented bounds of the opt-in:
   system `UIContextMenuInteraction`, armed per press); `showContextMenu(items, { x, y })` from
   code has no element to lift, so iOS presents its `UIMenu` through the edit-menu presentation
   (iOS 16+; an action sheet on iOS 15). Android's `PopupMenu` lists submenus as labelled groups
-  and draws no icons or menu title. In a Deno Desktop window with the `context-menu` capability
-  it is the OS menu (once the desktop runtime ships), with submenus flattened (`Parent › Child`)
-  and without destructive styling.
+  and draws no icons or menu title. A Deno Desktop window shows the in-page popover: the
+  desktop runtime has no context-menu capability (a native menu needs a dismiss event Deno
+  Desktop does not emit yet).
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
@@ -606,15 +614,24 @@ four documented bounds of the opt-in:
   `localStorage`, IndexedDB, OPFS and the Cache API start empty. `secureStore`, the file
   functions and `openSqlite` persist only with their desktop capability enabled (`secure-store`,
   `fs`, `sqlite`); without it they fall back to browser storage and warn once.
-- **The desktop runtime behind the capabilities is not in this build yet.** The `denext/mobile`
-  desktop branches, `denext desktop add` and `denext/desktop/client` shipped and are unit-tested
-  against a fake of the bridge's gate and wire contract; the runtime that answers them is still
-  being built for 2.11. Until it ships, a real window answers `unavailable` and every function
-  keeps its web path (so browser storage is still wiped on every relaunch).
-- **Packaged desktop apps are built with `-A`.** The scaffolded packaging scripts
-  (`scripts/package-macos.ts`, `-linux`, `-windows`) pass `-A` to `deno desktop`; deriving the
-  `--allow-*` flags from `desktop.capabilities` lands with the desktop runtime. A migrated SPA's
-  `deno task desktop` bakes `--allow-net=127.0.0.1,localhost --allow-read --allow-env`.
+- **`context-menu`, `clipboard` and `notifications` are WebView-backed on desktop.** The desktop
+  runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store` and
+  your extensions; these three have no runtime capability, so `showContextMenu` is the in-page
+  popover, the clipboard is the WebView's `navigator.clipboard`, and notifications are the
+  WebView's Notification API (below). denext ships no app menu, tray, single-instance lock,
+  global shortcut or launch-at-login API (an extension can reach Deno's `BrowserWindow`).
+- **The desktop capabilities are unit-tested, not window-tested.** Each runtime capability is
+  tested against the bridge contract, with its OS commands through an injected runner. A real
+  `deno desktop` build with the derived flags launched and served its bundle on macOS; the
+  capabilities themselves, and the Linux and Windows backends (libsecret, zenity / kdialog,
+  PowerShell dialogs, `SetThreadExecutionState`), have no recorded run in a real window.
+- **Read and env stay broad in a packaged app.** The package scripts derive `--allow-*` from
+  `desktop.capabilities` instead of `-A`, but the baseline keeps `--allow-read` and
+  `--allow-env` unscoped (the served bundle and the per-user app-support folder are only known
+  at run time), and any capability that writes adds an unscoped `--allow-write`; the runtime
+  capabilities confine file access. An extension's own permissions are not derived: add its
+  `--allow-*` to the script by hand. A project scaffolded before 2.11 keeps `-A` until
+  `denext desktop package --regenerate-scripts` rewrites its scripts.
 - **The bridge token is readable by any script in the page.** The per-launch token lives in the
   top-level document (never in frames), so script injected into the page (an XSS) can use every
   capability the app enabled. Keep the strict CSP, enable only the capabilities you use, and
@@ -623,14 +640,16 @@ four documented bounds of the opt-in:
   build time, and a path chosen in a dialog is known only at run time, so `dialogs` implies
   `--allow-read` and `--allow-write` without a list. The runtime narrows file access to the app's
   folders and the paths picked this session; other code in the Deno process is not narrowed.
-- **FFI and spawned programs are full trust.** `secure-store` loads the OS keychain library,
-  `shell` and `keep-awake` run OS tools (`open` / `xdg-open` / `explorer`, `caffeinate` /
-  `systemd-inhibit`): each can do anything the user can. Node-API (`.node`) addons do not load in
+- **FFI and spawned programs are full trust.** `secure-store` runs the OS credential tool
+  (`security` / `secret-tool`), `shell` and `keep-awake` run OS tools (`open` / `xdg-open` /
+  `explorer`, `caffeinate` / `systemd-inhibit`; `keep-awake` is FFI on Windows): each can do
+  anything the user can. Node-API (`.node`) addons do not load in
   desktop builds on Linux and Windows (denoland/deno#36596); use FFI or a sidecar. FFI cannot
   touch windows or AppKit / Win32 UI, because the runtime is not on the main thread.
-- **Desktop notifications are basic.** No action buttons, inline reply, channels or categories;
-  a scheduled notification fires only while the app runs; macOS shows them only from a signed
-  bundle. A click focuses the window and routes like a tap.
+- **Desktop notifications are the WebView's.** Only a notification without a trigger shows
+  (through the Notification API, once the page has permission); a scheduled one rejects, as on
+  the web. A click is not routed to `onLocalNotificationTapped`, and there are no action
+  buttons, inline reply, channels or categories.
 - **Not on desktop:** drag-out of files, file paths from drag-in, the share sheet, Handoff,
   Spotlight, the Touch Bar, passkeys in the webview (its loopback IP origin is not a valid
   relying party; use `openAuthSession`), fullscreen / maximize / minimum-size / screen APIs, a
@@ -654,13 +673,14 @@ four documented bounds of the opt-in:
 - **Rendering stays DOM.** `reactNative` builds an app's source for the web through
   react-native-web. A TurboModule / Fabric codegen package, or a `requireNativeComponent` view,
   loads and fails only when its native module is used (unless the app ships a Capacitor plugin
-  of that name, below); Nitro HybridObjects throw on use. Two
-  kinds fail earlier, at build time or import, unless an [Expo shim](https://denext.dev/docs/react-native#expo-apis)
-  or [community alias](https://denext.dev/docs/react-native#community-packages) covers them: a
-  package whose `main` is Flow source, and an Expo module that calls `requireNativeModule` at
-  the top level. Each needs a web replacement of the app's own (`.web.ts` beside the importer,
-  or a `deno.json` `imports` entry); `denext migrate --from expo` names the native-only
-  packages it finds.
+  of that name, below); Nitro HybridObjects throw on use, and an Expo module's top-level
+  `requireNativeModule` returns a stand-in that throws when called. A package whose `main` is
+  Flow source fails earlier, at build time, unless an [Expo shim](https://denext.dev/docs/react-native#expo-apis)
+  or [community alias](https://denext.dev/docs/react-native#community-packages) covers it.
+  Each needs a web replacement of the app's own (`.web.ts` beside the importer, or a
+  `deno.json` `imports` entry); `denext migrate --from expo` names the native-only packages it
+  finds, and [Native SDK recipes](https://denext.dev/docs/native-sdk-recipes) covers Firebase,
+  in-app purchases and Stripe.
 - **`Platform.OS` is `"web"` in the shells and in Deno Desktop.** react-native-web and libraries
   pick their DOM code paths by it, so React Native code that branches on `ios` / `android` for
   behaviour (not for a native module) takes its web path. `Platform.select` does pick the
@@ -677,18 +697,21 @@ four documented bounds of the opt-in:
   Skia animations, victory-native) wherever they use those. The pass patches Reanimated 4's
   `lib/module` web build; another version's internals are left alone and keep the main-thread
   loop. Worklet classes and context objects are not stamped, and `runOnUISync` throws on the web.
-- **Native views have no WebView equivalent in React Native mode.** `expo-maps` is a stand-in
-  (place a real map with `denext/mobile`'s `<NativeViewSlot type="map">`, or use MapLibre or
-  Leaflet in a `.web.tsx` twin), `expo-symbols` (renders its fallback; denext's own
-  `<SystemIcon>` draws real SF Symbols on iOS and Material Symbols elsewhere), Liquid Glass
+- **Some native views have no WebView equivalent in React Native mode.** `expo-maps` and
+  `react-native-maps` are the native map view only where the app registered it (`denext
+  mobile add native-map`) and draw polylines, circles, callouts and other overlays nowhere; on
+  the web they are a labelled placeholder (use MapLibre or Leaflet in a `.web.tsx` twin).
+  `expo-video` / `react-native-video` fall back to an HTML `<video>` without the native view
+  (no Picture in Picture, AirPlay or subtitles there). Not provided: Liquid Glass
   (`expo-glass-effect` reports it unavailable; `denext/navigation`'s platform theme approximates
   it in CSS, without refraction), native tab bars and large-title headers (`denext/navigation`
   draws them in the DOM), and `@expo/ui`'s SwiftUI / Compose
   views (stand-ins that render their children). `react-native-webview` is an `<iframe>`:
   script injection works only for inline HTML and same-origin pages.
 - **The parity ledger's open React Native gaps.** React Native's 32 `*Base` / `*Component`
-  type-alias exports, `DrawerLayoutAndroid`, `ProgressBarAndroid` and `Settings` are not
-  exported, and 10 exports miss members (`scripts/parity/native/baselines/known-gaps.json`).
+  type-alias exports are not exported, and 9 exports miss members (`UIManager`'s view-manager
+  commands, `AppRegistry`'s headless tasks and others;
+  `scripts/parity/native/baselines/known-gaps.json`).
   `AppState`'s `memoryWarning` never fires, `Linking.sendIntent()` rejects, and
   `ActionSheetIOS.dismissActionSheet()` closes nothing.
 - **`LayoutAnimation` animates positions, not sizes.** `configureNext` measures the page, waits

@@ -241,18 +241,32 @@ state, application, toast, action sheet; `readSafeAreaInsets` / `watchSafeAreaIn
 tooling (privacy manifest, `mobile doctor --store | --release`, offline screen, Sentry,
 `mobile inspect`); the app backend (`cors`, native sessions, native Sign
 in with Apple / Google, account deletion, `createApiClient({ base, auth })`, `sendPush`, OTA
-channels, `appLinks`); the page side of the Deno Desktop capabilities and `denext desktop add`.
+channels, `appLinks`); your own native code (`nativeModule`, `denext mobile add
+native-module`, TurboModules / NativeModules / Expo modules reaching it) and native views
+(`NativeViewSlot`, `native-views` / `native-map`, `scrollPassthrough`) with `expo-maps`,
+`react-native-maps`, `expo-video` and `react-native-video` routed to them and `expo-symbols` to
+`<SystemIcon>`; durable storage (`openKeyValueStore`, AsyncStorage / MMKV); React Native mode
+Fast Refresh; `denext mobile assets | build | submit`; the native look (platform theme,
+`<SystemIcon>`, native context menus); font scale, route announcements and `useReducedMotion`;
+Reanimated on the compositor and `LayoutAnimation`; the Expo shims over the capabilities
+(store-review, screen-orientation, navigation-bar, screen-capture, media-library); the core
+names that failed the build (`DrawerLayoutAndroid`, `Settings`, `ProgressBarAndroid`,
+`TouchableNativeFeedback`, `Image.resolveAssetSource`), `onContentSizeChange`, `@2x` / `@3x`
+variants and snap props; the Deno Desktop runtime (fs, sqlite, device, dialogs, shell,
+keep-awake, secure-store, extensions), `denext desktop add` and least-privilege packaging
+(`denext desktop package --regenerate-scripts` for older projects).
 
 **Open for 2.11 final:**
 
-- **The Deno Desktop runtime** (peer-owned): the token-gated bridge's dispatcher and capability
-  modules behind `denext/mobile`'s desktop branches, so desktop storage persists across
-  launches, and packaging with `--allow-*` flags derived from `desktop.capabilities` instead of
-  `-A`. Then the bridge-dependent items of the desktop plan: the app menu, the navigation
-  guard, single instance, tray, global shortcuts, launch at login.
+- **Deno Desktop, the rest of the plan:** the app menu, the navigation guard, single instance,
+  tray, global shortcuts, launch at login; runtime capabilities for context menus (needs an
+  upstream dismiss event), the clipboard and notifications (scheduling, click routing); a
+  Windows `secureStore` backend; real-window runs of the capabilities on each OS.
 - **iPhone items not yet validated:** the bottom safe-area inset and the example's button-row
   layout (fixes in progress), biometrics with Face ID enrolled, native social login, a sandbox
-  purchase, Sentry, background tasks and background location.
+  purchase, Sentry, background tasks and background location, and the round-3 items built but
+  not run on the phone (native modules, context menus, `<SystemIcon>`, durable storage, font
+  scale, the maps / video / symbols wiring of the Expo and community packages).
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
 - **Android on a real device.** The emulator comparison (2026-09-25, REACT-NATIVE-EXPO.md gap 5)
   has Capacitor starting in under half the time and using less memory, but missing vsync on
@@ -262,20 +276,23 @@ channels, `appLinks`); the page side of the Deno Desktop capabilities and `denex
 
 **Later (after 2.11):**
 
-- Dynamic Type / text zoom (a native hook plus `PixelRatio.getFontScale`), a route announcer and
-  focus management on navigation, and a `useReducedMotion` hook in `denext/mobile`.
-- `@2x` / `@3x` resolution variants as `srcset`.
-- The remaining backable Expo shims: `expo-navigation-bar`, `expo-battery`, `expo-sms`,
-  `expo-intent-launcher`, `expo-video-thumbnails`, `expo-localization`, `expo-mesh-gradient`.
-- Durable AsyncStorage / MMKV (an alias onto Preferences or SQLite), background audio with
-  lock-screen controls, multi-select / video image picking, file transfer with progress, a
-  notification service extension and badges, SQLite encryption and a PowerSync recipe.
+- Focus management on navigation (move focus to the new screen), and bold text / grayscale
+  from the OS.
+- The remaining backable Expo shims: `expo-battery`, `expo-sms`, `expo-intent-launcher`,
+  `expo-video-thumbnails`, `expo-localization`, `expo-mesh-gradient`.
+- `denext migrate --from expo` advice for the native-only SDKs apps use most
+  (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
+  the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
+- Background audio with lock-screen controls, multi-select / video image picking, file transfer
+  with progress, a notification service extension and badges, SQLite encryption and a
+  PowerSync recipe.
 - `denext profile --android` over remote CDP. (`denext mobile build` / `assets` / `submit`
   shipped: https://denext.dev/docs/mobile-build.)
 - A Skia (CanvasKit) recipe; Tamagui / Unistyles verification.
-- The parity ledger's React Native gaps: the `*Base` / `*Component` aliases,
-  `DrawerLayoutAndroid`, `ProgressBarAndroid`, `Settings`, and the lists' snap and
-  `renderScrollComponent` props.
+- The parity ledger's React Native gaps: the `*Base` / `*Component` aliases, the missing
+  members (`UIManager.dispatchViewManagerCommand` / `getViewManagerConfig`,
+  `AppRegistry.registerHeadlessTask` and others), and the lists' `renderScrollComponent`,
+  `automaticallyAdjustKeyboardInsets` and LegendList `snapToIndices` props.
 
 ## Candidate features (from the framework-gap survey)
 
@@ -302,8 +319,8 @@ scheduled.
     design: the window needs net to the loopback dev port only, which a migrated
     SPA's `deno task desktop` already bakes (`--allow-net=127.0.0.1,localhost`),
     so `denext desktop dev` widens no permission over it. (The scaffolded
-    packaging scripts still pass `-A`; capability-derived flags land with the
-    desktop runtime, above.)
+    packaging scripts now derive their flags from `desktop.capabilities`
+    instead of `-A`.)
   - Optional (still open): a spike on `deno desktop --inspect-renderer` (CDP into
     the window, which `src/profile/browser.ts` already knows how to drive).
 - **Deploy adapter API + presets** (the larger, separate bet — Nitro / Next 16

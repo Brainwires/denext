@@ -69,7 +69,11 @@ and this project adheres to
   animate by the config's `property`, with its `duration`, `delay` and `type`. Sizes snap.
 - **Docs: [denext vs React Native](https://denext.dev/docs/vs-react-native)** — who should
   switch and who should not, with the measurements (each citing its source) and the WebView's
-  inherent limits.
+  inherent limits. **[Native SDK recipes](https://denext.dev/docs/native-sdk-recipes)** — what
+  replaces `@react-native-firebase/*` (push through `sendPush`, the Firebase JS SDK with native
+  sign-in), `react-native-iap` (RevenueCat or a StoreKit plugin) and
+  `@stripe/stripe-react-native` (Stripe.js or a Capacitor plugin), and the other common
+  native-only packages.
 - **Native context menus (`denext mobile add context-menu`).** denext's own `DenextContextMenu`
   plugin, with no npm package. `useContextMenu(items, onSelect)` / `attachContextMenu(el, …)`
   bind a menu to an element: on iOS the system `UIContextMenuInteraction` (a press arms it with
@@ -78,8 +82,8 @@ and this project adheres to
   long-press haptic, on the web a long press or right click opens the popover.
   `showContextMenu` gains submenus (`children`), SF Symbol icons (`systemIcon`), `subtitle` and
   `haptic`; from code it presents a `UIMenu` at the point (iOS 16+; an action sheet on iOS 15).
-  The popover lists a submenu as a labelled `role="group"` and the Deno Desktop menu flattens it
-  (`Parent › Child`), so no item is dropped.
+  The popover (also what a Deno Desktop window shows) lists a submenu as a labelled
+  `role="group"`, so no item is dropped.
 - **`<SystemIcon>` (`denext mobile add system-icons`).** The platform's own icon: in the iOS
   shell the real SF Symbol, rendered natively by the `DenextSystemIcon` plugin at the requested
   weight, scale and pixel density (monochrome as a `currentColor` mask; hierarchical, palette and
@@ -174,13 +178,19 @@ and this project adheres to
   `DenextNativeViews` plugin (Swift + Java, registered with the other denext plugins), a
   registry of view factories (`DenextNativeViews.register(...)` or
   `plugins.DenextNativeViews.factories` in `capacitor.config`) and the built-in `video` view
-  (AVPlayerViewController with the system controls, drawn under the WebView by default on iOS so its controls behave as in any UIKit app; VideoView on Android). `scrollPassthrough` (iOS) lets a vertical drag that starts on a video scroll the list, with native momentum; a native view survives a Fast Refresh remount (`viewKey`), and a page reload removes the previous page's views; `denext mobile add native-map` adds `map` (MapKit /
-  osmdroid, no API key). New example: `examples/native-views` (two maps and a video in a
-  `VirtualList`). Docs: https://denext.dev/docs/mobile#native-views.
-- **`feature()` now folds on the SPA's denext-native path.** `mode: "spa"` bundled with
-  `deno bundle` (no npm React) neither seeded `__DENEXT_FEATURES__` nor folded `feature("KEY")`,
-  so every flag read `false` at run time whatever `features` said. The flags are now seeded at the
-  top of the entry and each app module that calls `feature()` is folded (production builds).
+  (AVPlayerViewController with the system controls, drawn under the WebView by default on iOS
+  so its controls behave as in any UIKit app; VideoView on Android). `scrollPassthrough` (iOS)
+  lets a vertical drag that starts on a video scroll the list, with native momentum.
+  `denext mobile add native-map` adds `map` (MapKit / osmdroid, no API key). A Fast Refresh
+  remount re-adopts the parked view (same type + `viewKey` or slot position, 150 ms grace)
+  instead of destroying and re-creating it, so video playback and map regions survive edits,
+  and native re-binds to a replaced scroll container; a page reload (dev, `location.reload`, an
+  OTA UI switch) tears down every native view (iOS on the WebView's main-frame load, Android on
+  `Bridge.reset()`, plus a JS `reset()` before the first view), so no stale video or map is
+  left on screen. Verified on an iPhone (`examples/native-views`, two maps and a video in a
+  `VirtualList`); the Android views are built, not run. `denext mobile dev` / SPA dev running
+  from a denext checkout also watches denext's own `src/` and reloads on framework edits.
+  Docs: https://denext.dev/docs/mobile#native-views.
 - **Response compression (`compress`, on by default — Next.js's `compress`).** `denext start`,
   `denext dev` (App Router and SPA mode) and any `createApp()` handler now compress dynamic
   responses — rendered HTML,
@@ -193,17 +203,22 @@ and this project adheres to
   layout or route handler opts out with `export const compress = false`; `compress: false` in
   `denext.config.ts` turns it off (a proxy/CDN that compresses). A 10 000-row list page goes
   from 617 KB to 91 KB (gzip) / 41 KB (brotli) on the wire without a compressing proxy.
-- **Deno Desktop capabilities in `denext/mobile`.** In a Deno Desktop window
-  (`runtimePlatform() === "desktop"`), `secureStore` (the OS keychain), `readFile` / `writeFile`
-  / `deleteFile` / `listDir` / `downloadToFile` (the app-support folder), `openSqlite`
-  (`node:sqlite`), `showContextMenu` (the native menu), `openExternal` (the system browser),
-  `pickDocument` (the native open panel, with a path), the local notifications (a click routes
-  like a tap), `useKeepAwake`, the clipboard and `deviceInfo` call the desktop runtime through
-  its token-gated bridge, loading the desktop code lazily (this is the page side: until the
-  desktop runtime that answers the bridge ships, a window answers `unavailable` and each
-  function keeps its web path). New `openPath`,
-  `revealInFileManager`, `moveToTrash`, `saveFile` and `pickFolder`. A capability that is not
-  enabled keeps the web path (storage ones warn once: browser storage is wiped per launch).
+- **Deno Desktop capabilities in `denext/mobile`, and the desktop runtime that answers them.**
+  In a Deno Desktop window (`runtimePlatform() === "desktop"`), `secureStore` (the OS credential
+  store: the macOS Keychain through `security`, libsecret through `secret-tool` on Linux; on
+  Windows it fails closed with `unsupported_platform`), `readFile` / `writeFile` / `deleteFile` /
+  `listDir` / `downloadToFile` (the app-support folder), `openSqlite` (`node:sqlite`),
+  `openExternal` (the system browser), `pickDocument` (the native open panel, with a path),
+  `useKeepAwake` (a ref-counted OS power assertion) and `deviceInfo` call the desktop runtime
+  through its token-gated bridge, loading the desktop code lazily. The runtime's built-in
+  capabilities are `fs`, `sqlite`, `device`, `shell`, `keep-awake`, `secure-store` and `dialogs`
+  (native open / save / folder panels through osascript, PowerShell or zenity / kdialog), plus
+  the app's `defineDesktopExtension` modules; `desktop.capabilities` in `denext.config.ts` is
+  its allowlist. `showContextMenu`, the clipboard and the local notifications stay
+  WebView-backed there (no runtime capability; a scheduled notification rejects, as on the
+  web). New `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile` and `pickFolder`. A
+  capability that is not enabled keeps the web path (storage ones warn once: browser storage
+  is wiped per launch).
 - **Picked files and folders (`denext/mobile`).** `pickDocument`, `saveFile` and `pickFolder`
   resolve `{ path, handle }`: `handle` is an opaque string for exactly the item the user chose,
   and `path` is display-only (never accepted back as authority). The file functions take
@@ -633,10 +648,11 @@ and this project adheres to
   resolves each to a `denext/expo/*` shim. `expo-tracking-transparency` is a full shim over
   `denext/mobile`'s `getTrackingStatus` / `requestTrackingPermission` (`denext mobile add tracking`): the ATT status in the iOS
   shell, undetermined and not askable there without the plugin, granted on Android and the web
-  (as Expo). `expo-maps` and `@expo/ui` are load-safe stand-ins: map views render a labelled
-  placeholder whose ref methods throw a denext error, SwiftUI / Compose views render their
-  children with web layout, and modifiers return inert configs; each warns once. `/docs/react-native`
-  has a "Maps" recipe (MapLibre GL / Leaflet in a `.web.tsx` twin).
+  (as Expo). `@expo/ui` is a load-safe stand-in: SwiftUI / Compose views render their children
+  with web layout, and modifiers return inert configs; it warns once. `expo-maps` is the native
+  map view where one is registered (above); elsewhere its views render a labelled placeholder
+  whose ref methods throw a denext error. `/docs/react-native` has a "Maps" recipe (MapLibre GL /
+  Leaflet in a `.web.tsx` twin).
 - **`denext/expo/application`: an `expo-application` shim.** The app's name, id, version and
   build come from `@capacitor/app`'s `getInfo()` in the shell (they were `null` there), seeded
   from the Expo config until it answers; `applicationInfoAsync()` (denext only) waits for it.
@@ -789,7 +805,10 @@ and this project adheres to
   is loopback net + read + env; a capability adds exactly the OS programs / FFI it uses (the
   catalog is pinned to the runtime caps' declared permissions by a drift test). Read stays broad
   (per-user app-support and the served bundle are only known at run time); the runtime caps
-  confine file access. Existing projects keep their generated scripts until those are replaced.
+  confine file access. `denext desktop package --regenerate-scripts` rewrites an existing
+  project's `scripts/package-*.ts` from the current template (a changed file is backed up to
+  `<name>.bak` and printed as a unified diff; an identical one is left alone; a missing one is
+  created).
 
 - **The ISR / PPR page cache is keyed per build.** `denext build` records a `buildId` in
   `.denext/manifest.json` (random, or `DENEXT_BUILD_ID` for separately built replicas sharing
@@ -850,6 +869,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`feature()` folds on the SPA's denext-native path.** `mode: "spa"` bundled with
+  `deno bundle` (no npm React) neither seeded `__DENEXT_FEATURES__` nor folded `feature("KEY")`,
+  so every flag read `false` at run time whatever `features` said. The flags are now seeded at the
+  top of the entry and each app module that calls `feature()` is folded (production builds).
 - **A dev edit no longer sends a `VirtualList` back to the top.** An ordinary edit on the
   default (unbundled) dev loop already reconciles in place, so the list keeps its position, its
   measured sizes and its rows' state. What still remounted the list or reloaded the page, and so
@@ -904,15 +927,6 @@ and this project adheres to
   redirect at all. And the app's config is patched only when it anchors module resolution
   (`nodeModulesDir: "manual"` or an `npm:` import — the module re-exec's rule);
   `nodeModulesDir: "none"` / `"auto"` apps are no longer touched.
-
-- **Native views across reloads and hot updates.** A page reload (dev, `location.reload`, an OTA
-  UI switch) tears down every native view — iOS on the WebView's main-frame load, Android on
-  `Bridge.reset()`, plus a JS `reset()` before the first view — so no stale video/map is left
-  on screen tied to the old page's scroller. A Fast Refresh remount re-adopts the parked view
-  (same type + `viewKey` or slot position, 150 ms grace) instead of destroy + create, so video
-  playback and map regions survive edits; native re-binds to a replaced scroll container.
-  `denext mobile dev` / SPA dev running from a denext checkout also watches denext's own
-  `src/` and reloads on framework edits.
 
 - **Production SPAs install the class-component and `Activity` runtimes before the app renders.**
   The generated production entry put `installClassSupport()` after `import "./main.tsx"`; ES

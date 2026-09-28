@@ -507,10 +507,11 @@ The entries below are for an app built with `reactNative: true`. The full guide 
 
 ### The build fails on a package's Flow source, or the page is blank with `Cannot find native module`
 
-**Cause.** The package has no web build and no denext replacement. Two kinds fail before any
-of their code is used: a package whose `main` is Flow source (a parse error at build time),
-and an Expo module that calls `requireNativeModule` at the top level (it throws
-`Cannot find native module '…'` at import, which stops the whole bundle).
+**Cause.** The package has no web build and no denext replacement. A package whose `main` is
+Flow source fails before any of its code is used (a parse error at build time). A module that
+asks for a native module no plugin provides loads, and throws
+`Cannot find native module '…'` when one of that module's functions is called (the app's own
+code, or a library at startup, then stops the page).
 
 **Fix.** Check the [Expo APIs](/docs/react-native#expo-apis) and
 [Community packages](/docs/react-native#community-packages) tables first: a listed package

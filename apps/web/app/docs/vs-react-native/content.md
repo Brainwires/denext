@@ -71,9 +71,15 @@ another app is named. Source:
 - **Lists and navigation:** `VirtualList` lands `scrollToIndex` exactly on a 100,000-row list
   and flings with 0 of 60 frames blank; the stack keeps each screen's state and scroll, and the
   swipe back follows the finger.
-- **The 2.11 capability set:** 27 of 27 automatic self-test checks passed on 2026-09-27
+- **The 2.11 capability set:** 32 of 32 automatic self-test checks (layout checks included) passed on 2026-09-27
   (keyboard, system bars, dialogs, pull-to-refresh, permissions, notifications, geolocation and
   more; the table in the same file lists what is verified and what is only built).
+- **Native views in the page:** on 2026-09-28, in
+  [`examples/native-views`](https://github.com/Brainwires/denext/tree/main/examples/native-views)
+  (maps and a video in a `VirtualList`): an AVPlayer video drawn under the page with AVKit's own
+  controls and fullscreen, taps reaching views embedded in the page's scroll view, a vertical
+  swipe that starts on the video scrolling the list with native momentum (`scrollPassthrough`),
+  and a Fast Refresh edit keeping the list position and the playing video.
 
 Every Android half of these is built and unit-tested, not run on a device.
 
@@ -118,9 +124,13 @@ These are limits of the WebView model itself. denext cannot remove them; the
   `react-native-mmkv` reads from an in-memory mirror, but its writes reach durable storage a
   moment after the call returns.)
 - **You need native views inside the layout.** Maps, video with native controls, a camera
-  preview with overlays: in a WebView app a native view is a separate layer above or below the
-  page, moved to follow an element. It cannot sit between two DOM elements, be clipped by CSS,
-  or follow a CSS transform exactly.
+  preview with overlays: in a WebView app a native view is not a DOM element. On iOS the
+  default `"embed"` placement puts it inside the page's own scroll view, so the compositor
+  scrolls, clips and transforms it with the page, but UIKit controls inside an embedded view do
+  not complete taps (which is why video defaults to `"under"`). Under or over the page (every
+  placement on Android, where the native views have not run on a device) it is a separate
+  layer moved to follow an element: it cannot sit between two DOM elements, be clipped by CSS
+  beyond its scrolling ancestors, or follow a CSS transform exactly.
 - **Your app works in the background.** The OS suspends the WebView when the app leaves the
   foreground, and JavaScript stops. Background tasks run in a separate runtime with no DOM
   (about 30 s on iOS); there is no background audio or lock-screen media control yet. Fitness,
@@ -131,8 +141,9 @@ These are limits of the WebView model itself. denext cannot remove them; the
   (2.10) and has been tested by building apps and rendering them in headless Chromium, not by
   running a migrated app on a phone. denext runs its own React implementation, has one
   maintainer, and nobody on the job market knows it yet. Expo's hosted services (EAS Build,
-  Submit and Update, the push service, Expo Go) have no denext equivalent; denext gives you the
-  pieces to run your own.
+  Submit and Update, the push service, Expo Go) have no hosted denext equivalent; denext gives
+  you the pieces to run your own (`denext mobile build | submit` on your machine or CI, OTA
+  from your server, `sendPush` to APNs / FCM).
 
 ## What moving costs
 
@@ -156,9 +167,12 @@ in the [Expo APIs](/docs/react-native#expo-apis) and
 - your own native modules and native views, as Capacitor plugins (see
   [Your own native code](/docs/native-code));
 - code that calls a native API synchronously, as `await`ed calls;
-- packages that fail at build time or import: an unlisted package whose `main` is Flow source,
-  and an Expo module that calls `requireNativeModule` at the top level, each with a `.web.ts`
-  replacement;
+- packages that fail at build time: an unlisted package whose `main` is Flow source, with a
+  `.web.ts` replacement (an Expo module that calls `requireNativeModule` at the top level now
+  loads everywhere and throws only when a function of the missing module is called);
+- native-only SDKs such as `@react-native-firebase/*`, `react-native-iap` and
+  `@stripe/stripe-react-native`, onto their web SDKs or Capacitor plugins (see
+  [Native SDK recipes](/docs/native-sdk-recipes));
 - expo-router `+api` and `+middleware` routes, as denext route handlers;
 - a backend that sends through Expo's push service, onto APNs / FCM directly
   (`createPushSender`).
@@ -178,34 +192,51 @@ printing) needs no native module; and the backend (native sessions, Sign in with
 push sending, OTA channels with staged rollouts) is in the same framework
 ([App backend](/docs/app-backend)).
 
-## Arriving in 2.11
+## New in 2.11
 
-**Status: being finalized for the 2.11 release.** These items are on `development`; this section
-is confirmed when 2.11 ships.
+Signed over-the-air updates, app extensions and push shipped in 2.10 and are listed
+[above](#verified-on-an-iphone). Each 2.11 item says how far it was verified, on the levels of
+[REACT-NATIVE-EXPO.md](https://github.com/Brainwires/denext/blob/main/REACT-NATIVE-EXPO.md):
+**iPhone** (run on a physical iPhone 16e), **built** (unit- or DOM-tested and compiled, not run
+on a device). Android is built only, and has run on an emulator only.
 
-- **Your own native modules:** `denext mobile add native-module` generates a Capacitor plugin
-  that `TurboModuleRegistry`, `NativeModules` and Expo's `requireNativeModule` reach by name
-  (asynchronous methods only). See [Your own native code](/docs/native-code).
-- **`NativeViewSlot`:** a native view (a map, a video) placed over or under the page and kept on
-  its slot as the page scrolls, with iOS's `"embed"` placement inside the page's scroll view.
-  Its tracking and clipping limits are in the [known limitations](/docs/limitations).
-- **Fast Refresh in React Native mode:** a component edit hot-swaps with its state kept; some
-  edits (a newly imported package, a new expo-router route) still reload.
-- **Build and submit without a hosted service:** `denext mobile assets` (every icon and
+- **Native views in the layout (iPhone).** `<NativeViewSlot>` (`denext mobile add
+  native-views`, plus `native-map` for MapKit / osmdroid maps) keeps a native view on a box in
+  the page. On iOS a map is embedded in the page's scroll view and a video is drawn under the
+  page with AVKit's controls, where a vertical swipe scrolls the list (`scrollPassthrough`);
+  views survive a Fast Refresh edit and are removed on a reload. The limits are in the
+  [known limitations](/docs/limitations). React Native mode routes `expo-maps`,
+  `react-native-maps`, `expo-video` and `react-native-video` to these views, and
+  `expo-symbols` to `<SystemIcon>` (built, not run on a device).
+- **Your own native modules (built):** `denext mobile add native-module` generates a Capacitor
+  plugin that `TurboModuleRegistry`, `NativeModules` and Expo's `requireNativeModule` reach by
+  name (asynchronous methods only). See [Your own native code](/docs/native-code).
+- **Fast Refresh in React Native mode (built; headless Chromium):** a component edit hot-swaps
+  with its state kept; some edits (a newly imported package, a new expo-router route) still
+  reload.
+- **Build and submit without a hosted service (built):** `denext mobile assets` (every icon and
   splash), `denext mobile build ios|android` (signed archives, flavors) and
-  `denext mobile submit`.
-- **A native look:** the platform theme for `denext/navigation` (iOS headers and large titles,
-  Liquid Glass approximated in CSS, Material 3 on Android), `<SystemIcon>` (real SF Symbols in
-  the iOS shell) and native context menus.
-- **Durable AsyncStorage:** `@react-native-async-storage/async-storage` stored in a SQLite file
-  in the app's data folder (`denext mobile add storage`), not in the WebView's `localStorage`,
-  which the OS may evict; `react-native-mmkv` on the same store behind a synchronous in-memory
-  mirror.
-- **Reanimated on the compositor:** in React Native mode, `withTiming`, `withSpring`,
-  `withSequence`, `withDelay` and `withRepeat` (forever too) animations of `transform` and
-  `opacity` run as Web Animations on the compositor instead of a main-thread frame loop, whether
-  a shared value drives them or the style returns them; anything else stays on Reanimated's
-  loop. In headless Chromium, such an animation drew 26 distinct frames while the main thread
-  was blocked for 500 ms, and the same animation on Reanimated's loop drew none
+  `denext mobile submit`. A nightly workflow builds `examples/mobile` for both platforms.
+- **A native look (built):** the platform theme for `denext/navigation` (iOS headers and large
+  titles, Liquid Glass approximated in CSS, Material 3 on Android), `<SystemIcon>` (real SF
+  Symbols in the iOS shell) and native context menus (`UIContextMenuInteraction` on iOS, a
+  `PopupMenu` on Android).
+- **Durable AsyncStorage (built):** `@react-native-async-storage/async-storage` stored in a
+  SQLite file in the app's data folder (`denext mobile add storage`), not in the WebView's
+  `localStorage`, which the OS may evict; `react-native-mmkv` on the same store behind a
+  synchronous in-memory mirror.
+- **Text size and motion (built):** Dynamic Type / Android font scale through
+  `denext mobile add accessibility` (`getFontScale`, `applyFontScale`), `useReducedMotion()`,
+  and screen changes announced to VoiceOver and TalkBack.
+- **Reanimated on the compositor (built; headless Chromium):** in React Native mode,
+  `withTiming`, `withSpring`, `withSequence`, `withDelay` and `withRepeat` (forever too)
+  animations of `transform` and `opacity` run as Web Animations on the compositor instead of a
+  main-thread frame loop, whether a shared value drives them or the style returns them; anything
+  else stays on Reanimated's loop. In headless Chromium, such an animation drew 26 distinct
+  frames while the main thread was blocked for 500 ms, and the same animation on Reanimated's
+  loop drew none
   ([`tests/e2e/reanimated.e2e.test.ts`](https://github.com/Brainwires/denext/blob/main/tests/e2e/reanimated.e2e.test.ts)).
   `LayoutAnimation.configureNext` animates the next commit's moved, created and deleted views.
+- **Deno Desktop (built):** the desktop runtime answers `denext/mobile`'s storage, file, SQLite,
+  dialog, shell, keep-awake, secure-store and device calls, and packaged apps get
+  least-privilege `--allow-*` flags instead of `-A`; see [Desktop apps](/docs/desktop).

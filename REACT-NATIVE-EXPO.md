@@ -17,8 +17,8 @@ replaces its mocked and browser-only modules with implementations over `denext/m
 the app's lists on `VirtualList` and its stacks and tabs on `denext/navigation`, stamps
 Reanimated's worklets at build time, and resolves the Expo packages and popular community
 libraries to denext implementations. The iOS half of the 2.11 mobile surface ran on an iPhone
-on 2026-09-27. Android has not run on a device, and Android scrolling is the one measured gap
-(gap 5).
+on 2026-09-27, and native views in the page (`NativeViewSlot`) on 2026-09-28. Android has not
+run on a device, and Android scrolling is the one measured gap (gap 5).
 
 **Scope.** Native rendering is out of scope; React Native APIs and apps are supported through
 react-native-web plus denext's overlay ([POLICIES.md](./POLICIES.md#engineering-guardrails)).
@@ -80,15 +80,42 @@ navigators).
   drives its `Stack` and `Tabs`; it caught two bugs, both fixed: the generated navigator
   module's own imports did not resolve in a real build, and the navigators must be built over
   expo-router's bundled copy of React Navigation (55+), not `@react-navigation/native`.
-- **Community packages.** 26 aliases (`src/react-native-compat/manifest.ts`; 7 full, 19
+- **Community packages.** 31 aliases (`src/react-native-compat/manifest.ts`; 8 full, 23
   partial): react-native-keyboard-controller, react-native-safe-area-context,
   react-native-permissions, react-native-keychain, react-native-webview (an `<iframe>`),
   react-native-pager-view, the date pickers, linear-gradient, blur, masked-view,
-  `@react-native-menu/menu`, NativeWind v4's JSX runtime, `.svg` components and more.
-- **Expo shims.** 53 manifest entries (7 full, 38 partial, 8 stub) covering 43 packages,
+  `@react-native-menu/menu`, AsyncStorage and MMKV (durable, below), react-native-maps and
+  react-native-video (the native views, below), react-native-fast-image (React Native's
+  `Image`), NativeWind v4's JSX runtime, `.svg` components and more.
+- **Expo shims.** 59 manifest entries (8 full, 45 partial, 6 stub) covering 48 packages,
   including the three that used to stop the bundle at import (expo-tracking-transparency,
-  expo-maps, `@expo/ui`). The generated table is at
+  expo-maps, `@expo/ui`) and, over `denext/mobile` capabilities, `expo-store-review`,
+  `expo-screen-orientation`, `expo-navigation-bar`, `expo-screen-capture` and
+  `expo-media-library` (SDK 57's class API, plus `/legacy`). The generated table is at
   [/docs/react-native#expo-apis](https://denext.dev/docs/react-native#expo-apis).
+- **Native primitives behind the packages apps import.** `expo-maps`' `AppleMaps.View` /
+  `GoogleMaps.View` and `react-native-maps`' `MapView` are the native `map` view, and
+  `expo-video`'s `VideoView` and `react-native-video`'s `Video` the native `video` view, where
+  the app registered them (`denext mobile add native-map` / `native-views`); elsewhere a
+  labelled placeholder and an HTML `<video>`. `expo-symbols`' `SymbolView` is `<SystemIcon>`.
+  This wiring is built and tested; the phone run below used `NativeViewSlot` directly.
+- **Your own native code.** `TurboModuleRegistry`, `NativeModules`, `NativeEventEmitter` and
+  Expo's `requireNativeModule` / `EventEmitter` reach the app's Capacitor plugin (or desktop
+  extension) of that name, asynchronously; `requireNativeComponent` / `codegenNativeComponent`
+  and Expo's `requireNativeView` are a native view slot of that type. A top-level
+  `requireNativeModule` no longer throws off-device: the stand-in throws only when called.
+- **Fast Refresh.** `denext dev` serves React Native mode on the per-module loop: a component
+  edit hot-swaps with its state kept (about 75 ms against about 980 ms for a bundled reload with
+  the state lost, on a small react-native-web app).
+- **Durable storage.** `@react-native-async-storage/async-storage` and `react-native-mmkv`
+  write through `denext/mobile`'s key-value store (a SQLite file with `denext mobile add
+  storage`); MMKV keeps its synchronous API over an in-memory mirror.
+- **More of React Native's surface.** `@2x` / `@3x` image variants picked by pixel ratio; the
+  snap props as CSS scroll snap; `Text` and `PixelRatio.getFontScale()` following the OS text
+  size (`denext mobile add accessibility`); `onContentSizeChange` on every list;
+  `useReducedMotion()` in `denext/mobile`; `DrawerLayoutAndroid`, `Settings`,
+  `ProgressBarAndroid`, `TouchableNativeFeedback` and `Image.resolveAssetSource` /
+  `getSizeWithHeaders` / `prefetchWithMetadata`.
 - **Desktop packages.** `react-native-windows` and `react-native-macos` resolve to
   `react-native` plus their additions (`Flyout`, `Popup`, `Glyph`, `AppTheme`,
   `DynamicColorMacOS`, the desktop `View` props), and `reactNative.desktopPackage` builds the
@@ -96,8 +123,8 @@ navigators).
   writes it).
 - **The parity gate** (`deno task parity:native`) builds the bundle apps actually get, checks
   class statics and object members, and covers the lists and the desktop packages. Its ledger
-  holds 45 open React Native deviations: the 32 `*Base` / `*Component` type aliases,
-  `DrawerLayoutAndroid`, `ProgressBarAndroid`, `Settings`, and missing members on 10 exports.
+  holds 41 open React Native deviations: the 32 `*Base` / `*Component` type aliases and
+  missing members on 9 exports (`scripts/parity/native/baselines/known-gaps.json`).
 
 ### Lists and navigation (denext apps and React Native mode alike)
 
@@ -143,9 +170,24 @@ fallback where one exists.
 | `app-update`, `accessibility` (screen reader state), `application`, `offline-screen` | Built                                                                               |
 | `toast`, `action-sheet` (the system UI behind `ToastAndroid` / `ActionSheetIOS`)     | Built                                                                               |
 | `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` (insets outside a component)      | Built                                                                               |
+| `native-views`, `native-map` (`NativeViewSlot`)                                      | **iPhone:** see below                                                               |
+| `native-module` (`nativeModule`, `onNativeEvent`)                                    | Built                                                                               |
+| `storage` (`openKeyValueStore`, durable AsyncStorage / MMKV)                         | Built                                                                               |
+| `system-icons` (`<SystemIcon>`), `context-menu` (`useContextMenu`)                   | Built                                                                               |
+| `accessibility` font scale (`getFontScale`, `applyFontScale`), `useReducedMotion`    | Built                                                                               |
 
-Store and release tooling is built and tested, not device-run: the iOS privacy manifest
-(`denext mobile privacy`), `denext mobile doctor --store | --release`, `denext mobile inspect`,
+**Native views on the iPhone** (2026-09-28, [`examples/native-views`](./examples/native-views):
+maps and a video in a `VirtualList`): the video drawn under the WebView as an
+`AVPlayerViewController` with the system controls and AVKit's fullscreen (`placement: "auto"`
+picks `"under"` for `video` on iOS, `"embed"` for other types, `"over"` on Android); taps
+reaching embedded views; under / over views following a fling natively; a vertical swipe that
+starts on the video scrolling the list with native momentum (`scrollPassthrough`, the default
+for `video`, iOS only); a Fast Refresh edit keeping the list position and the playing video;
+and a reload removing the old page's views. The Android native views are built, not run.
+
+Store and release tooling is built and tested, not device-run: `denext mobile assets | build |
+submit` (a nightly workflow builds `examples/mobile` for both platforms), the iOS privacy
+manifest (`denext mobile privacy`), `denext mobile doctor --store | --release`, `denext mobile inspect`,
 hidden source maps (`denext export --sourcemaps hidden`) and the `appLinks` association files.
 
 ### The app's backend
@@ -160,14 +202,18 @@ Google (`POST /auth/native/:provider`), account deletion (`POST /auth/account/de
 
 ### Deno Desktop
 
-The page side of the desktop capabilities shipped: `denext/mobile`'s storage, file, SQLite,
-context-menu, shell, dialog, notification, keep-awake, clipboard and device functions call the
-desktop runtime through a token-gated bridge, `denext desktop add` writes
-`desktop.capabilities`, and `denext/desktop/client` types your own extensions. It is tested
-against a fake of the bridge. **The desktop runtime that answers those calls is still being
-built for 2.11**; until it ships, a real window answers `unavailable` and every function keeps
-its web path, browser storage is wiped on every relaunch, and the packaging scripts build with
-`-A`. React Native apps run in a Deno Desktop window like any SPA (`examples/rn-desktop`).
+`denext/mobile`'s capability functions reach the desktop runtime through a token-gated bridge,
+and the runtime answers `fs`, `sqlite`, `device`, `dialogs` (native open / save / folder
+panels, returning picked-file handles), `shell`, `keep-awake`, `secure-store` (macOS Keychain,
+Linux libsecret; it fails closed on Windows) and the app's own `defineDesktopExtension`
+modules. `context-menu`, `clipboard` and `notifications` stay WebView-backed (no runtime
+capability; a scheduled notification rejects). `denext desktop add` writes
+`desktop.capabilities`, the runtime's allowlist, and the packaging scripts derive
+least-privilege `--allow-*` flags from it instead of `-A`
+(`denext desktop package --regenerate-scripts` updates an older project's scripts). Built and
+unit-tested; a real `deno desktop` build with the derived flags launched and served its bundle
+on macOS. React Native apps run in a Deno Desktop window like any SPA
+(`examples/rn-desktop`).
 
 ## Android
 
@@ -188,22 +234,26 @@ the open work.
   120 Hz iPhones (WebKit bug 294338), and nothing has been measured on a 120 Hz display.
 - **No synchronous JSI APIs:** the sync `expo-sqlite` API, MMKV-class sync stores,
   `expo-secure-store`'s `getItem` / `setItem`, Nitro HybridObjects, camera frame processors.
-- **Native views without a WebView equivalent:** Apple Maps / Google Maps (a stand-in; MapLibre
-  or Leaflet in a `.web.tsx` twin), SF Symbols, Liquid Glass, native tab bars and headers,
-  `@expo/ui` SwiftUI / Compose.
+- **Native views are layers, not DOM.** Maps and video are native views on a slot
+  (`NativeViewSlot`), embedded in the page's scroll view on iOS or drawn under / over the
+  WebView; on the web the Expo and community map packages show a placeholder (MapLibre or
+  Leaflet in a `.web.tsx` twin). Liquid Glass, native tab bars and headers are CSS, and
+  `@expo/ui` SwiftUI / Compose views are stand-ins. Android's native views have not run.
 - **Background execution.** JavaScript does not run in the page while the WebView is suspended;
   background tasks run in Capacitor's Background Runner without the DOM.
-- **Dynamic Type / text zoom** reaches the page only through a native plugin denext does not ship
-  yet; bold text and grayscale always read false.
+- **Accessibility settings:** Dynamic Type and Android's font scale reach the page through
+  `denext mobile add accessibility`, but bold text and grayscale always read false, and focus
+  is not moved to a new screen.
 - **Fast Refresh reloads for dependency changes.** A component edit hot-swaps with state kept;
   the first import of a new package (or of a new name from one), an added or removed
   expo-router route, and a `package.json` / lockfile change rebuild the dependency bundle and
   reload the page.
-- **Import-time failures** remain for unlisted packages whose `main` is Flow source or that call
-  `requireNativeModule` at the top level.
+- **Build-time failures** remain for unlisted packages whose `main` is Flow source.
 - **Expo services:** no Expo Go-style client, no hosted push, build or update service.
 - **Android:** no device run; scrolling measured worse than React Native on an emulator.
-- **Desktop:** the runtime behind the desktop capabilities is still in progress (above).
+- **Desktop:** no runtime capability for context menus, the clipboard or notifications;
+  `secureStore` fails closed on Windows; no app menu, tray or single-instance API; Deno Desktop
+  itself is experimental.
 
 ## The T3 Code bar (2.10)
 
@@ -349,8 +399,9 @@ The functions: `haptic`, `readClipboard` / `writeClipboard`, `share`, `readFile`
   the web the app's own `@sqlite.org/sqlite-wasm` in a worker, persisted to OPFS through the
   `opfs-sahpool` VFS (no cross-origin isolation needed).
 - **Context menus** (`@react-native-menu/menu`): `showContextMenu` (2.10.0) opens an accessible
-  in-page menu that lists every item, or an app-registered `DenextContextMenu` native plugin
-  (denext ships none). Built.
+  in-page menu that lists every item; since 2.11 `denext mobile add context-menu` ships the
+  `DenextContextMenu` plugin (`UIContextMenuInteraction` / `UIMenu` on iOS, `PopupMenu` on
+  Android). Built.
 - **Keyboard + safe areas**: in 2.10, `useKeyboardInset`, `SAFE_AREA_CSS`, `useBackSwipe` and
   `useAppResume`; 2.11 adds `useKeyboard`, `KeyboardAvoidingView`, `KeyboardStickyView`,
   `useSafeAreaInsets` and Android back (see "Shipped in 2.11").
@@ -413,8 +464,8 @@ aliases, all 41 swept routes render, and pairing persists across reloads through
    - **`reactNative: true`** (2.10.0-rc.2; SPA mode;
      [guide](https://denext.dev/docs/react-native)): the resolve mode from the spike, covering
      every item of the spec below except uniwind (a documented recipe).
-     `require("./img.png")` works through the file loader; `@2x`/`@3x` variants are not picked
-     by pixel ratio (documented). rc.3 added `Appearance.setColorScheme`, the codegen /
+     `require("./img.png")` works through the file loader; `@2x`/`@3x` variants were not picked
+     by pixel ratio then (2.11 picks them). rc.3 added `Appearance.setColorScheme`, the codegen /
      TurboModule entry points and expo-router's route context;
    - **`denext migrate --from expo`** (2.10.0-rc.3): writes `deno.json`, a `reactNative`
      `denext.config.ts` with the app's own entry and a `capacitor.config.ts`; reads the app
@@ -524,9 +575,10 @@ hand-written web shims, bundler workarounds applied through `denext patch`.
 - Open at the time: `denext dev` failed. The npm prebundle couldn't resolve react-native-web's
   own deps through the alias (`styleq`, `fbjs`, `@babel/runtime`,
   `@react-native/normalize-colors`), and a `global.css` with `@import "tailwindcss"` got a 500.
-  **Since addressed:** React Native mode runs `denext dev` on the bundled loop (2.10.0-rc.2),
-  so the per-module prebundle is not involved; a root-entry rebuild loop was fixed in rc.3; and
-  the Tailwind input goes through the uniwind recipe's `tailwind` config.
+  **Since addressed:** React Native mode ran `denext dev` on the bundled loop (2.10.0-rc.2), so
+  the per-module prebundle was not involved; a root-entry rebuild loop was fixed in rc.3; the
+  Tailwind input goes through the uniwind recipe's `tailwind` config; and 2.11 moved React
+  Native mode to the per-module loop with Fast Refresh, its packages in one dependency bundle.
 
 **Third-party packages through web builds:**
 
@@ -560,10 +612,12 @@ is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `ex
 4. ~~The 2.11 React Native / Expo replacement: the overlay, lists, navigation, the platform
    capabilities, store tooling and the app backend.~~ Shipped on `development` for 2.11; the
    iOS capabilities listed above verified on the iPhone on 2026-09-27.
-5. **Open for 2.11 final:** the desktop runtime behind the desktop capabilities (storage that
-   persists, capability-derived packaging permissions); the iPhone items still unvalidated (the
-   bottom safe-area inset, biometrics with Face ID enrolled, social login, a sandbox purchase,
-   Sentry, background tasks and location); the scroll-bench numbers in `/docs/lists`.
+5. ~~The desktop runtime behind the desktop capabilities (storage that persists,
+   capability-derived packaging permissions).~~ Shipped for 2.11 (built and unit-tested).
+   **Still open:** the iPhone items not yet validated (the bottom safe-area inset, biometrics
+   with Face ID enrolled, social login, a sandbox purchase, Sentry, background tasks and
+   location, and the round-3 items marked "Built" above); a migrated React Native app on a
+   phone; the scroll-bench numbers in `/docs/lists`.
 6. **Android. Open.** The emulator comparison has run (gap 5): Capacitor starts faster and uses
    less memory, and React Native scrolls smoother. Next: a real device. No Android parity claim
    before that.

@@ -492,17 +492,16 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         and prints the Deno permissions it adds per OS. That one object is both the runtime's
         allowlist (a call to a capability that is not listed is refused{" "}
         <code>unavailable</code>, and the function keeps its web path) and the source the package
-        scripts will derive the app's <code>--allow-*</code> flags from.
+        scripts derive the app's <code>--allow-*</code> flags from.
       </p>
       <Callout kind="note">
-        <strong>The desktop runtime lands in 2.11.</strong> The page side described here (the{" "}
+        <strong>The desktop runtime ships with 2.11.</strong> The page side described here (the{" "}
         <code>denext/mobile</code> desktop branches, <code>denext desktop add</code> and{" "}
         <code>denext/desktop/client</code>) and the runtime that answers it — the gated bridge, the
-        built-in capabilities, and the config→capabilities resolver — are implemented and land
-        together in 2.11. A real window serves each enabled capability (falling back to the web path
-        only for one you have not enabled, and for the WebView-backed rows below), so app data
-        survives relaunch. The scaffolded packaging scripts derive the app's <code>--allow-*</code>
-        {" "}
+        built-in capabilities, and the config→capabilities resolver — ship together. A real window
+        serves each enabled capability (falling back to the web path only for one you have not
+        enabled, and for the WebView-backed rows below), so app data survives relaunch. The
+        scaffolded packaging scripts derive the app's <code>--allow-*</code>{" "}
         from its enabled capabilities (the table below) in place of <code>-A</code>: a loopback{" "}
         <code>--allow-net</code>, broad <code>--allow-read</code> / <code>--allow-env</code>{" "}
         for the app's own bundle and support directory, and only the <code>--allow-run</code> /{" "}
@@ -740,9 +739,8 @@ if (folder) {
         the handler runs and strips the result after it. List it in{" "}
         <code>desktop.capabilities.extensions</code>, then call it from the page through{" "}
         <code>denext/desktop/client</code>. The page half (<code>desktopExtension</code>,{" "}
-        <code>onDesktopEvent</code>) is available now; <code>defineDesktopExtension</code> ships in
-        {" "}
-        <code>denext/desktop</code> with the desktop runtime in 2.11:
+        <code>onDesktopEvent</code>) is in <code>denext/desktop/client</code>;{" "}
+        <code>defineDesktopExtension</code> is exported from <code>denext/desktop</code>:
       </p>
       <Code lang="tsx">
         {`// desktop/extensions/scanner.ts: runs in the Deno process only
