@@ -28,6 +28,7 @@ import {
   supportKeyboard,
 } from "../src/react-native/mod.ts";
 import { type Any, mount, withGlobals } from "./helpers/mobile-fakes.ts";
+import { runtimePlatform } from "../src/mobile/bridge.ts";
 
 /** Write `files` (relative path → contents) under `root`. */
 async function writeTree(root: string, files: Record<string, string>): Promise<void> {
@@ -418,6 +419,25 @@ Deno.test("Platform on Deno Desktop: denextDesktop, os, and the macos / windows 
   });
   assertEquals(Platform.constants.denextDesktop, false);
   assertEquals(Platform.select(spec), "default", "a browser never picks desktop keys");
+});
+
+Deno.test("RN mode + Deno Desktop coexist: Platform.OS is web, runtimePlatform() is desktop (caps route to the desktop branch)", async () => {
+  // RN mode and the desktop-capability runtime are independent axes: RN mode only rewrites which
+  // module `react-native*` imports resolve to (react-native-web + the overlay), so React Native's
+  // Platform.OS stays "web"; the desktop caps key off `runtimePlatform()` (denext/mobile's own
+  // marker), NOT off Platform.OS. This pins that an RN-mode app in a Deno Desktop window still
+  // reaches the desktop branch — the per-capability routing itself is covered by
+  // tests/desktop-mobile-branches.test.ts.
+  await withGlobals({ __denext: { desktop: true, os: "darwin" } }, () => {
+    assertEquals(Platform.OS, "web", "RN mode: react-native-web reports web");
+    assertEquals(Platform.constants.denextDesktop, true);
+    assertEquals(
+      runtimePlatform(),
+      "desktop",
+      "denext/mobile caps see desktop regardless of Platform.OS, so they route to the desktop bridge",
+    );
+  });
+  assertEquals(runtimePlatform(), "web", "off desktop, caps keep their web path");
 });
 
 Deno.test("Flyout content is rendered with flushSync-stable identity", () => {

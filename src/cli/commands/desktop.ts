@@ -16,13 +16,15 @@
 // A single command whose first positional selects the action, since the framework
 // models flat verbs; the second positional is the project dir.
 
-import { join, resolve } from "@std/path";
+import { dirname, join, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { runBuildStep, spawnDenoAndExit } from "../shared.ts";
 import { spawnDenoChild, startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
 import { staticExport } from "../../build/export.ts";
 import { desktopDevTarget, type DesktopWindow, runDesktopDev } from "../../build/desktop-dev.ts";
 import { DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
+import { scaffoldFiles } from "../../build/scaffold.ts";
+import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
@@ -48,7 +50,8 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n" +
     "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
     "  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n" +
-    "  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS",
+    "  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS\n" +
+    "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template",
   positionals: [
     { name: "action", help: "run | build | dev | package (default: run)" },
     { name: "dir", help: "Project directory (default: .)" },
@@ -83,6 +86,13 @@ export const desktopCommand: CommandSpec = {
       name: "lan",
       type: "boolean",
       help: "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)",
+    },
+    {
+      name: "regenerate-scripts",
+      type: "boolean",
+      help:
+        "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), " +
+        "keeping a .bak of any file that differs; adopt the current scripts in an existing project",
     },
     ...DESKTOP_ADD_FLAGS,
   ],
@@ -183,8 +193,10 @@ async function runDesktop(dir: string, entry: string): Promise<void> {
   await spawnDenoAndExit(["desktop", entry], dir);
 }
 
-/** `denext desktop package`: run the scaffolded packaging script for the target OS. */
+/** `denext desktop package`: run the scaffolded packaging script for the target OS (or, with
+ * `--regenerate-scripts`, rewrite the scripts from the current template instead of running one). */
 async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
+  if (ctx.flags["regenerate-scripts"] === true) return await regeneratePackageScripts(dir);
   const targetOs = packageTargetOs(ctx);
   const script = join(dir, "scripts", PACKAGE_SCRIPTS[targetOs]);
   try {
@@ -192,12 +204,59 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   } catch {
     console.error(
       `denext: no packaging script at ${script}\n` +
-        "  Scaffold desktop packaging with `denext create --desktop`.",
+        "  Scaffold desktop packaging with `denext create --desktop`, or write the scripts with\n" +
+        "  `denext desktop package --regenerate-scripts`.",
     );
     Deno.exit(1);
   }
   console.log(`\n  denext desktop — packaging (${targetOs})  ▸  ${dir}\n`);
   await spawnDenoAndExit(["run", "-A", script, ...ctx.rest], dir);
+}
+
+/**
+ * `denext desktop package --regenerate-scripts`: rewrite `scripts/package-{macos,linux,windows}.ts`
+ * from the CURRENT scaffold template (so an existing project adopts the least-privilege `deno desktop`
+ * flags in place of a stale `-A` script). Never a silent overwrite: a file that already exists and
+ * differs is backed up to `<name>.bak` and the change is printed as a unified diff; an identical file
+ * is left alone; a missing one is created. Opt-in only (this runs solely under the flag).
+ */
+async function regeneratePackageScripts(dir: string): Promise<void> {
+  const scripts = scaffoldFiles({ dir, desktop: true }).filter((f) =>
+    f.path.startsWith("scripts/package-") && f.path.endsWith(".ts")
+  );
+  console.log(`\n  denext desktop — regenerating packaging scripts  ▸  ${dir}\n`);
+  let changed = 0;
+  for (const f of scripts) {
+    const dest = join(dir, f.path);
+    let existing: string | undefined;
+    try {
+      existing = await Deno.readTextFile(dest);
+    } catch {
+      existing = undefined; // not present yet
+    }
+    if (existing === f.content) {
+      console.log(`  unchanged  ${f.path}`);
+      continue;
+    }
+    await Deno.mkdir(dirname(dest), { recursive: true });
+    if (existing === undefined) {
+      await Deno.writeTextFile(dest, f.content);
+      console.log(`  created    ${f.path}`);
+    } else {
+      await Deno.writeTextFile(`${dest}.bak`, existing);
+      await Deno.writeTextFile(dest, f.content);
+      console.log(`  updated    ${f.path}  (previous saved to ${f.path}.bak)`);
+      const diff = createUnifiedDiff(existing, f.content, `a/${f.path}`, `b/${f.path}`);
+      if (diff) console.log(diff.trimEnd() + "\n");
+    }
+    changed++;
+  }
+  console.log(
+    changed === 0
+      ? "\n  Already up to date.\n"
+      : `\n  Regenerated ${changed} script(s). Review the diff, then commit. The scripts now derive\n` +
+        "  --allow-* from your desktop.capabilities instead of -A.\n",
+  );
 }
 
 type PackageOs = "macos" | "linux" | "windows";

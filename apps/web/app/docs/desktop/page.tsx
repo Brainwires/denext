@@ -508,7 +508,12 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         for the app's own bundle and support directory, and only the <code>--allow-run</code> /{" "}
         <code>--allow-ffi</code> / <code>--allow-sys</code> (plus a broad <code>--allow-write</code>
         {" "}
-        when a capability writes) that the enabled capabilities actually need.
+        when a capability writes) that the enabled capabilities actually need. A project scaffolded
+        before 2.11 keeps its older scripts until you refresh them —{" "}
+        <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
+        <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
+        {" "}
+        of any file it changes.
       </Callout>
       <table class="table">
         <thead>
@@ -599,7 +604,8 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>notifications</code>
             </td>
             <td>
-              <code>scheduleNotification</code> (immediate; the WebView Notification API)
+              <code>scheduleNotification</code>{" "}
+              (immediate only, via the WebView Notification API; a scheduled trigger rejects)
             </td>
             <td>none</td>
             <td>none</td>

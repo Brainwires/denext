@@ -127,7 +127,9 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
     value: true,
     api: ["showContextMenu"],
     trust: "none",
-    notes: "native menu at the pointer (BrowserWindow.showContextMenu)",
+    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission. A native OS menu
+    // would need an upstream dismiss event that Deno Desktop does not yet emit.
+    notes: "WebView in-page menu (no runtime cap; native OS menus await an upstream dismiss event)",
   },
   shell: {
     key: "shell",
@@ -173,9 +175,12 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
       "onLocalNotificationTapped",
     ],
     trust: "none",
-    notes: "OS notifications; a click focuses the window and routes data.path",
+    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission. The webview's
+    // Notification API shows an IMMEDIATE notification; a scheduled trigger rejects, exactly as on
+    // the web (Deno Desktop has no scheduler).
+    notes: "WebView Notification API, immediate only (no runtime cap; a scheduled trigger rejects)",
     manual: [
-      "notifications: macOS shows them only from a signed .app (`denext desktop package` signs ad-hoc at least); scheduled ones fire only while the app runs.",
+      "notifications: on Deno Desktop these use the WebView Notification API — grant it in the page. Only immediate notifications show; a scheduled trigger rejects (needs a plugin), the same as on the web. No --allow-* is added and no scheduled/tap routing is provided.",
     ],
   },
   "keep-awake": {
@@ -196,7 +201,9 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
     value: true,
     api: ["readClipboard", "writeClipboard"],
     trust: "none",
-    notes: "text clipboard from the Deno side (no user gesture needed)",
+    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission — the page uses the
+    // WebView's own clipboard.
+    notes: "WebView clipboard via navigator.clipboard (no runtime cap)",
   },
   device: {
     key: "device",
