@@ -518,10 +518,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>secure-store</code>
             </td>
             <td>
-              <code>secureStore</code> (Keychain / Credential Manager / libsecret)
+              <code>secureStore</code> (Keychain · <em>not yet on Windows</em> · libsecret)
             </td>
             <td>
-              <code>--allow-ffi</code>: Security.framework · advapi32.dll · libsecret-1.so.0
+              <code>--allow-run</code>: security · <em>—</em> · secret-tool
             </td>
             <td>full</td>
           </tr>
@@ -554,7 +554,7 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>context-menu</code>
             </td>
             <td>
-              <code>showContextMenu</code> (the OS menu)
+              <code>showContextMenu</code> (in-page menu on Deno Desktop)
             </td>
             <td>none</td>
             <td>none</td>
@@ -583,7 +583,7 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
             </td>
             <td>
               unscoped <code>--allow-read</code> /{" "}
-              <code>--allow-write</code>, plus osascript · comdlg32 · zenity/kdialog
+              <code>--allow-write</code>, plus osascript · PowerShell · zenity/kdialog
             </td>
             <td>broad</td>
           </tr>
@@ -592,8 +592,7 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>notifications</code>
             </td>
             <td>
-              <code>scheduleNotification</code>, <code>cancelNotification</code>,{" "}
-              <code>pendingNotifications</code>, <code>onLocalNotificationTapped</code>
+              <code>scheduleNotification</code> (immediate; the WebView Notification API)
             </td>
             <td>none</td>
             <td>none</td>
@@ -613,7 +612,7 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>clipboard</code>
             </td>
             <td>
-              <code>readClipboard</code>, <code>writeClipboard</code> (no user gesture)
+              <code>readClipboard</code>, <code>writeClipboard</code> (the WebView clipboard)
             </td>
             <td>none</td>
             <td>none</td>
@@ -632,6 +631,24 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
           </tr>
         </tbody>
       </table>
+      <Callout kind="note">
+        <strong>Native vs the WebView on Deno Desktop.</strong>{" "}
+        Most capabilities run in the Deno process: <code>fs</code>, <code>sqlite</code> and{" "}
+        <code>secure-store</code> keep data that survives a relaunch (<code>secure-store</code>{" "}
+        uses the <code>security</code> / <code>secret-tool</code>{" "}
+        tools and is not yet available on Windows, where it fails closed rather than storing
+        plaintext); <code>shell</code>, <code>dialogs</code> and <code>keep-awake</code>{" "}
+        drive OS programs. Three lean on the WebView instead, because the WebView already provides
+        them and the Deno process cannot improve on them: <code>clipboard</code>{" "}
+        uses the WebView clipboard (so <code>desktop add clipboard</code>{" "}
+        needs no runtime capability), <code>notifications</code>{" "}
+        shows immediate notifications through the WebView Notification API (there is no desktop
+        scheduler yet), and <code>context-menu</code>{" "}
+        renders the in-page menu (a native menu awaits a menu-dismiss event upstream).{" "}
+        <code>dialogs</code> answers <code>unavailable</code> on a headless Linux with no{" "}
+        <code>zenity</code>/<code>kdialog</code>, so the page&apos;s{" "}
+        <code>&lt;input type=&quot;file&quot;&gt;</code> runs.
+      </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
         <code>openPath</code>, <code>revealInFileManager</code> and <code>moveToTrash</code>;{" "}
