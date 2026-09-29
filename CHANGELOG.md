@@ -34,6 +34,14 @@ because React / Next still export or accept them.
 
 ### Fixed
 
+- **Packaged Windows apps run without the Visual C++ redistributable.** The `deno desktop` binary
+  imports `VCRUNTIME140`, `VCRUNTIME140_1` and `MSVCP140`; on a Windows machine without the
+  redistributable a packaged app died at launch with a silent `0xC0000135`. `package-windows.ts`
+  now ships those three DLLs next to the `.exe` (Microsoft's app-local deployment), copied from
+  System32 when packaging on Windows for the host architecture; otherwise it says the target needs
+  the redistributable and links the right one. The prerequisite note now lists only WebView2.
+  Verified on a real Windows 11 machine with no redistributable installed. Re-run
+  `denext desktop package --regenerate-scripts` to update an existing project's script.
 - **Windows: the framework builds, serves and develops on a Windows host.** Found by running the
   whole test suite on a real Windows 11 machine, where every framework test now passes.
   - The build finds client islands and `"use client"` boundaries again: the module-graph crawl

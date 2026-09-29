@@ -125,6 +125,10 @@ const WINDOWS_PACKAGING_KEYWORDS = [
   "DENEXT_WINDOWS_CERT",
   "WebView2",
   "--target",
+  // Ships the VC++ runtime app-local so the packaged app needs no redistributable installed
+  // (else it dies at launch with a silent 0xC0000135). Verified end-to-end on a real Windows box.
+  "bundleVcRuntime",
+  "vcruntime140.dll",
 ];
 
 /** Asserts the desktop scaffold emits `script` and that it mentions every keyword. */
