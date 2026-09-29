@@ -10,7 +10,8 @@
  * appears after the focus scroll. So after every viewport resize, overlap change and focus, once
  * layout settles, a field whose bottom is below the visible bottom (the visual viewport's, less
  * the part of the keyboard that covers the page) is scrolled up by the difference through its
- * scrolling ancestors, innermost first, then the document.
+ * scrolling ancestors, innermost first, then the document: smoothly, starting with the keyboard's
+ * own ~250 ms animation (at once under `prefers-reduced-motion`).
  *
  * Internal to `denext/mobile`; not re-exported.
  *
@@ -30,6 +31,34 @@ interface ScrollBox {
   readonly clientHeight: number;
   readonly parentElement: ScrollBox | null;
   getBoundingClientRect(): { top: number; bottom: number };
+  scrollTo?(options: { top: number; behavior: "smooth" | "instant" }): void;
+}
+
+/** How long a smooth reveal runs: iOS's keyboard animation, which it moves with. */
+const SMOOTH_MS = 250;
+
+/** Until when a smooth reveal is in flight (re-checks wait for it rather than chase it). */
+let smoothUntil = 0;
+
+/** Whether the user asked for reduced motion (then the reveal is instant). */
+function reducedMotion(): boolean {
+  const mm = (globalThis as { matchMedia?: (q: string) => { matches: boolean } }).matchMedia;
+  try {
+    return typeof mm === "function" && mm("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Scroll `box` to `top`: smoothly (in step with the keyboard) where the element can, else at
+ * once.
+ */
+function scrollBoxTo(box: ScrollBox, top: number, smooth: boolean): void {
+  if (smooth && typeof box.scrollTo === "function") {
+    box.scrollTo({ top, behavior: "smooth" });
+    smoothUntil = Date.now() + SMOOTH_MS + 30;
+  } else box.scrollTop = top;
 }
 
 /** Whether `el` is a text field the keyboard is up for (an input that takes text, a textarea, contenteditable). */
@@ -58,20 +87,24 @@ function scrolls(el: ScrollBox): boolean {
  *
  * @returns The px it could not scroll.
  */
-function scrollUpBy(field: ScrollBox, delta: number): number {
+function scrollUpBy(field: ScrollBox, delta: number, smooth: boolean): number {
   let left = delta;
   for (let p = field.parentElement; p && left > 0.5; p = p.parentElement) {
     if (!scrolls(p)) continue;
     const before = p.scrollTop;
-    p.scrollTop = Math.min(before + left, p.scrollHeight - p.clientHeight);
-    left -= p.scrollTop - before;
+    const top = Math.min(before + left, p.scrollHeight - p.clientHeight);
+    if (top <= before) continue;
+    scrollBoxTo(p, top, smooth);
+    left -= top - before;
   }
   const doc = (globalThis as { document?: { scrollingElement?: ScrollBox | null } }).document
     ?.scrollingElement;
   if (doc && left > 0.5) {
-    const before = doc.scrollTop;
-    doc.scrollTop = before + left;
-    left -= doc.scrollTop - before;
+    const top = Math.min(doc.scrollTop + left, doc.scrollHeight - doc.clientHeight);
+    if (top > doc.scrollTop) {
+      left -= top - doc.scrollTop;
+      scrollBoxTo(doc, top, smooth);
+    }
   }
   return Math.max(0, left);
 }
@@ -106,7 +139,11 @@ export function revealFocusedField(coveredPx: number): boolean {
   if (delta <= 0.5) return false;
   // A field taller than the visible area keeps its top in view instead.
   const shift = Math.min(delta, Math.max(0, rect.top - GAP_PX));
-  return shift > 0.5 && scrollUpBy(field, shift) < shift;
+  if (shift <= 0.5) return false;
+  // Smooth, in step with the keyboard (instant under reduced motion). While one runs the
+  // field's position is mid-flight: a re-check then waits for the next trigger.
+  if (Date.now() < smoothUntil) return false;
+  return scrollUpBy(field, shift, !reducedMotion()) < shift;
 }
 
 /** The page-lifetime watcher: how many views use it, the latest covered height, its re-check. */

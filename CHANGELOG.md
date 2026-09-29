@@ -911,7 +911,8 @@ and this project adheres to
   `KeyboardAvoidingView` / `KeyboardStickyView` or React Native mode's `KeyboardAvoidingView`
   is mounted, a focused field below the visible bottom (the visual viewport's, less the part
   of the keyboard covering the page) is scrolled up through its scrolling ancestors after each
-  viewport resize, covered-height change and focus.
+  viewport resize, covered-height change and focus: smoothly, in step with the keyboard's own
+  ~250 ms animation, and at once under `prefers-reduced-motion`.
 - **Safe-area insets the web view applies late are picked up.** In the iOS shell a page loaded
   from the app bundle (`capacitor://localhost`) measured `env(safe-area-inset-*)` before
   WKWebView applied it and no event announced the change, so `useSafeAreaInsets()` (and

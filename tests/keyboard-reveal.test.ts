@@ -116,3 +116,43 @@ Deno.test("joinFocusedFieldReveal: shared listeners, a covered-height change re-
     assertEquals(s.listeners.size, 0, "the last leave removes the listeners");
   });
 });
+
+Deno.test("revealFocusedField: smooth with the keyboard; instant under reduced motion; no chasing", async () => {
+  // A scroller that animates: `scrollTo({ behavior: "smooth" })` is recorded, not applied.
+  const s = scene({ viewport: 508, fieldTop: 784 });
+  const calls: unknown[] = [];
+  s.scroller.scrollTo = (o: unknown) => calls.push(o);
+  await withGlobals({ ...s.globals, matchMedia: () => ({ matches: false }) }, async () => {
+    assertEquals(revealFocusedField(0), true);
+    assertEquals(calls, [{ top: 328, behavior: "smooth" }]);
+    assertEquals(s.scroller.scrollTop, 0, "left to the smooth scroll");
+    // A re-check while it runs does not chase the mid-flight position…
+    assertEquals(revealFocusedField(0), false);
+    assertEquals(calls.length, 1);
+    // …and once it is over, a field still short of the edge is revealed again.
+    await new Promise((r) => setTimeout(r, 300));
+    assertEquals(revealFocusedField(0), true);
+    assertEquals(calls.length, 2);
+    await new Promise((r) => setTimeout(r, 300));
+  });
+
+  // prefers-reduced-motion: the same reveal, at once.
+  const r = scene({ viewport: 508, fieldTop: 784 });
+  const rCalls: unknown[] = [];
+  r.scroller.scrollTo = (o: unknown) => rCalls.push(o);
+  await withGlobals({ ...r.globals, matchMedia: () => ({ matches: true }) }, () => {
+    assertEquals(revealFocusedField(0), true);
+    assertEquals(rCalls, []);
+    assertEquals(r.scroller.scrollTop, 328);
+  });
+
+  // The tall-field top clamp holds when smooth too.
+  const t = scene({ viewport: 508, fieldTop: 100, height: 600, tag: "TEXTAREA" });
+  const tCalls: unknown[] = [];
+  t.scroller.scrollTo = (o: unknown) => tCalls.push(o);
+  await withGlobals({ ...t.globals, matchMedia: () => ({ matches: false }) }, async () => {
+    revealFocusedField(0);
+    assertEquals(tCalls, [{ top: 88, behavior: "smooth" }]);
+    await new Promise((r) => setTimeout(r, 300));
+  });
+});
