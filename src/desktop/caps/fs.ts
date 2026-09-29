@@ -252,8 +252,11 @@ function baseFor(cfg: FsCapabilityConfig, directory: unknown, write: boolean): s
   return cfg.dirs[directory];
 }
 
-/** Confine a page-supplied relative `path` to `base` (see {@link confineRelative}). */
-function scopedPath(base: string, path: unknown): Promise<string> {
+/** Confine a page-supplied relative `path` to `base` (see {@link confineRelative}). With
+ * `allowRoot` (listDir), `""` names the directory itself — the page's `listDir("")`, which
+ * normalizes `"."` away, so it is the only way the page can list an app directory's root. */
+function scopedPath(base: string, path: unknown, allowRoot = false): Promise<string> {
+  if (allowRoot && path === "") return confineRelative(base, ".");
   if (typeof path !== "string" || path.length === 0) {
     throw badInput("path must be a non-empty string");
   }
@@ -270,6 +273,7 @@ async function resolveTarget(
   directory: unknown,
   path: unknown,
   write: boolean,
+  allowRoot = false,
 ): Promise<{ target: string; root: string }> {
   const handle = pickedHandle(directory);
   if (handle !== undefined) {
@@ -277,7 +281,7 @@ async function resolveTarget(
     return cfg.picked.resolve(handle, typeof path === "string" ? path : "", write);
   }
   const base = baseFor(cfg, directory, write);
-  const target = await scopedPath(base, path);
+  const target = await scopedPath(base, path, allowRoot);
   // The runtime's own state under the data dir (the updater overlay) is never page-writable.
   if (write) refuseReservedDataPath(cfg.dirs.data, target);
   return { target, root: base };
@@ -366,7 +370,7 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         permissions: { read: [...cfg.read] },
         handler: async (args) => {
           const a = (args ?? {}) as { path?: unknown; directory?: unknown };
-          const { target } = await resolveTarget(cfg, a.directory, a.path, false);
+          const { target } = await resolveTarget(cfg, a.directory, a.path, false, true);
           const entries: FileEntry[] = [];
           try {
             for await (const e of Deno.readDir(target)) {

@@ -167,8 +167,13 @@ export function shellPathCommand(
       [
         "-e",
         "on run argv",
+        // Resolve the path to an alias OUTSIDE the Finder tell: inside it, `POSIX file …` is sent to
+        // Finder as an object specifier it cannot resolve (-1728), so every trash failed on a real Mac.
+        // (Not `target` as the name: that is a Finder property, and fails with -1728 too.)
         "-e",
-        'tell application "Finder" to delete (POSIX file (item 1 of argv))',
+        "set theItem to POSIX file (item 1 of argv) as alias",
+        "-e",
+        'tell application "Finder" to delete theItem',
         "-e",
         "end run",
         path,

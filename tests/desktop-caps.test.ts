@@ -134,6 +134,11 @@ Deno.test("fs: recursive write creates parent dirs; listDir reports entries", as
     >;
     assertEquals(listing.map((e) => e.name), ["deep"]);
     assertEquals(listing[0].type, "directory");
+    // "" lists the directory's root (the page's listDir("") sends "", never ".").
+    const root = await call(fs, "listDir", { path: "", directory: "data" }) as Array<
+      Record<string, unknown>
+    >;
+    assertEquals(root.map((e) => e.name), ["sub"]);
   } finally {
     await cleanup();
   }
@@ -537,6 +542,12 @@ Deno.test("shellPathCommand: per-OS argv passes the path as a discrete arg (no i
   const [tcmd, targs] = shellPathCommand("darwin", "trash", p);
   assertEquals(tcmd, "osascript");
   assertEquals(targs[targs.length - 1], p);
+  // Inside a Finder tell, `POSIX file …` is an object specifier Finder cannot resolve (-1728, found
+  // in a packaged window): the path must become an alias before the tell.
+  assert(
+    !targs.some((a) => a.includes('tell application "Finder"') && a.includes("POSIX file")),
+    targs.join(" "),
+  );
   assertEquals(shellPathCommand("linux", "open", p), ["xdg-open", [p]]);
   assertEquals(shellPathCommand("linux", "trash", p), ["gio", ["trash", p]]);
   assertEquals(shellPathCommand("windows", "open", p), ["explorer.exe", [p]]);
