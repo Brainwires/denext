@@ -57,7 +57,7 @@ export interface DesktopPermissionSet {
 export type DesktopTrust = "none" | "scoped" | "broad" | "full";
 
 /** One desktop capability: what it enables and what it costs. */
-export interface DesktopCapability {
+export interface DesktopCapabilityEntry {
   /** The `desktop.capabilities` key it writes. */
   readonly key: string;
   /** The value written when the key is absent. */
@@ -66,7 +66,7 @@ export interface DesktopCapability {
   readonly api: readonly string[];
   /** The permissions it needs on every OS. */
   readonly all?: DesktopPermissionSet;
-  /** The permissions it needs per OS, on top of {@linkcode DesktopCapability.all}. */
+  /** The permissions it needs per OS, on top of {@linkcode DesktopCapabilityEntry.all}. */
   readonly os?: Partial<Readonly<Record<DesktopOs, DesktopPermissionSet>>>;
   /** The trust it adds (see {@linkcode DesktopTrust}). */
   readonly trust: DesktopTrust;
@@ -83,7 +83,7 @@ const APP_FOLDERS = ["$APPDATA", "$CACHE"];
  * The capability table: `denext desktop add <name>`. Names mirror `denext mobile add` where
  * the capability exists on both.
  */
-export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> = {
+export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntry>> = {
   "secure-store": {
     key: "secureStore",
     value: true,
@@ -107,11 +107,15 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
     value: { read: APP_FOLDERS, write: APP_FOLDERS },
     api: ["readFile", "writeFile", "deleteFile", "listDir", "downloadToFile"],
     all: { read: APP_FOLDERS, write: APP_FOLDERS },
-    trust: "scoped",
-    notes: "app files under the OS app-support / cache folders (survive relaunch)",
+    // BROAD, not scoped: a per-user app-support path can't be baked at build time, so the packaged
+    // binary gets a broad --allow-write (and read is broad in the baseline). The RUNTIME cap layer
+    // confines the page to the app dirs; the process-level grant is broad.
+    trust: "broad",
+    notes:
+      "app files under the OS app-support / cache folders (survive relaunch); broad --allow-write baked",
     manual: [
       'fs: `directory: "documents"` needs "$DOCUMENTS" in desktop.capabilities.fs.read/write (it maps to ~/Documents/<app>); add it by hand if you use it.',
-      "fs: downloadToFile fetches in the Deno process, so each download host needs network permission in the packaged app (beyond the loopback baseline).",
+      "fs: the packaged binary bakes a broad --allow-write (the per-user app-support path can't be baked); the runtime cap layer confines writes to the app's folders. downloadToFile fetches in the Deno process, so each download host needs net in desktop.extraPermissions (beyond the loopback baseline).",
     ],
   },
   sqlite: {
@@ -119,8 +123,9 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
     value: true,
     api: ["openSqlite", "deleteSqlite"],
     all: { read: ["$APPDATA"], write: ["$APPDATA"] },
-    trust: "scoped",
-    notes: "node:sqlite database files in the app-support folder",
+    // BROAD for the same reason as `fs`: the app-support path can't be baked, so --allow-write is broad.
+    trust: "broad",
+    notes: "node:sqlite database files in the app-support folder (broad --allow-write baked)",
   },
   "context-menu": {
     key: "contextMenu",
@@ -146,6 +151,25 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
       "shell: --allow-run of the OS opener (open / explorer / xdg-open) can start any app the user can; the runtime only passes URLs of the listed schemes and paths inside the fs scope or picked this session.",
     ],
   },
+  "auth-session": {
+    key: "authSession",
+    value: true,
+    api: ["openAuthSession"],
+    // The system-browser opener (same per-OS launcher as shell.openExternal). Deno Desktop's
+    // loopback OAuth endpoint is DEFAULT-DENY: it answers `unavailable` unless this capability is
+    // enabled, and `openAuthSession` then falls back to its web path — so the opener's run
+    // permission is only baked when the app opts in.
+    os: {
+      darwin: { run: ["open"] },
+      windows: { run: ["rundll32.exe"] },
+      linux: { run: ["xdg-open"] },
+    },
+    trust: "full",
+    notes: "system-browser OAuth via a loopback redirect (openAuthSession)",
+    manual: [
+      "auth-session: --allow-run of the system browser opener (open / rundll32 / xdg-open) can start any app the user can; the runtime only hands it the provider auth URL you pass, and the loopback endpoint is default-deny unless this capability is enabled.",
+    ],
+  },
   dialogs: {
     key: "dialogs",
     value: true,
@@ -158,9 +182,12 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapability>> =
       windows: { run: ["powershell.exe"] },
       linux: { run: ["zenity", "kdialog"] },
     },
-    trust: "broad",
+    // FULL, not broad: `--allow-run=osascript` / `powershell.exe` are script interpreters, so any
+    // code in the Deno process can run arbitrary commands through them.
+    trust: "full",
     notes: "native open / save / folder panels returning paths",
     manual: [
+      "dialogs: --allow-run of osascript (macOS) / powershell.exe (Windows) lets any code in the Deno process run arbitrary scripts through them; the runtime itself passes only fixed scripts.",
       "dialogs: a path the user picks is only known at run time, but Deno Desktop bakes permissions at build time, so reading or writing it needs an unscoped --allow-read / --allow-write. The runtime narrows it to the paths picked this session; any other code in the Deno process is not narrowed.",
       "dialogs: Linux users need zenity or kdialog installed.",
     ],
@@ -280,34 +307,109 @@ function enabledCapabilityKeys(capabilities: unknown): string[] {
     .map(([key]) => key);
 }
 
+/** The relevant slice of `denext.config.ts` for flag derivation. */
+interface DesktopFlagConfig {
+  readonly desktop?: {
+    readonly capabilities?: unknown;
+    /** Extra `--allow-*` merged into the baked flags (for the updater's feed host + data dir, an
+     * extension's own permissions, or any need the catalog can't see); `--regenerate-scripts`
+     * preserves it because it lives in the config. */
+    readonly extraPermissions?: DesktopPermissionSet;
+  };
+  readonly spa?: {
+    readonly proxy?: { readonly target?: unknown; readonly allowNonLoopback?: unknown };
+  };
+}
+
+/** The non-loopback host of a `spa.proxy` target (only when `allowNonLoopback` opts in), else
+ * `undefined` — a loopback target is already covered by the baseline. */
+function proxyNetHost(
+  proxy: { target?: unknown; allowNonLoopback?: unknown } | undefined,
+): string | undefined {
+  if (!proxy || proxy.allowNonLoopback !== true || typeof proxy.target !== "string") {
+    return undefined;
+  }
+  try {
+    return new URL(proxy.target).hostname || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const kindOfFlag = (flag: string): string => flag.split("=", 1)[0];
+function valuesOfFlag(flag: string): string[] {
+  const eq = flag.indexOf("=");
+  return eq < 0 ? [] : flag.slice(eq + 1).split(",");
+}
+
+/** The `run` / `ffi` / `sys` values from the capabilities' flags, unioned with extraPermissions'. */
+function bakeableSets(
+  capFlags: readonly string[],
+  extra: DesktopPermissionSet,
+): { run: Set<string>; ffi: Set<string>; sys: Set<string> } {
+  const run = new Set(extra.run ?? []);
+  const ffi = new Set(extra.ffi ?? []);
+  const sys = new Set(extra.sys ?? []);
+  const byKind: Record<string, Set<string> | undefined> = {
+    "--allow-run": run,
+    "--allow-ffi": ffi,
+    "--allow-sys": sys,
+  };
+  for (const f of capFlags) {
+    const set = byKind[kindOfFlag(f)];
+    if (set) { for (const v of valuesOfFlag(f)) set.add(v); }
+  }
+  return { run, ffi, sys };
+}
+
 /**
- * The full `--allow-*` flag list to bake into the `deno desktop` binary for `os`, given a
- * project's `desktop.capabilities` — the least-privilege replacement for `-A` in the package
- * scripts. It is {@linkcode DESKTOP_BASELINE_FLAGS} plus, from the enabled capabilities:
- * - `run` / `ffi` / `sys` — kept exactly (the real least-privilege wins: only the programs,
- *   libraries and system APIs the enabled capabilities use);
- * - `read` / `env` — dropped (already broad in the baseline);
- * - `net` — dropped (the baseline's loopback stands; `downloadToFile`'s per-host access is a
- *   documented manual grant, never `*` baked into the binary);
- * - `write` — collapsed to a single broad `--allow-write` when any capability needs it (the
- *   target is a per-user or user-picked path that can't be baked; the runtime cap layer confines it).
+ * The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the
+ * least-privilege replacement for `-A` in the package scripts — derived from the WHOLE project
+ * config, not just `desktop.capabilities` (deriving from capabilities alone would starve the
+ * non-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback
+ * proxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:
+ * - the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a
+ *   single broad `--allow-write` when any capability writes (a per-user path can't be baked; the
+ *   runtime cap layer confines it);
+ * - a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only
+ *   the last `--allow-net`, so every host is one flag);
+ * - `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's
+ *   feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED
+ *   in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.
+ * A capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`
+ * (only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`
+ * grant, never `*` baked in.
  *
- * User `extensions` declare their own method permissions in code the catalog can't see; add their
- * `--allow-*` by hand.
- *
- * @param capabilities The project's `desktop.capabilities` (or `undefined` — baseline only).
+ * @param config The project config (`denext.config.ts` default export), or `undefined` — baseline only.
  * @param os The target OS.
- * @returns The flags, e.g. `["--allow-net=127.0.0.1,localhost", "--allow-read", "--allow-env",
- * "--allow-write", "--allow-run=caffeinate,open"]`.
+ * @returns The flags, ready to splice into the `deno desktop` argv (never `-A`).
  */
-export function desktopBuildFlags(capabilities: unknown, os: DesktopOs): string[] {
-  const capFlags = desktopPermissionFlags(enabledCapabilityKeys(capabilities), os);
-  const kindOf = (flag: string) => flag.split("=", 1)[0];
-  const bakeable = capFlags.filter((f) =>
-    kindOf(f) === "--allow-sys" || kindOf(f) === "--allow-run" || kindOf(f) === "--allow-ffi"
-  );
-  const needsWrite = capFlags.some((f) => kindOf(f) === "--allow-write");
-  return [...DESKTOP_BASELINE_FLAGS, ...(needsWrite ? ["--allow-write"] : []), ...bakeable];
+export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
+  const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
+  const extra: DesktopPermissionSet = cfg.desktop?.extraPermissions ?? {};
+  const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
+
+  // net: baseline loopback + a non-loopback spa.proxy host + extraPermissions.net, as ONE flag.
+  const net = new Set<string>(["127.0.0.1", "localhost", ...(extra.net ?? [])]);
+  const proxyHost = proxyNetHost(cfg.spa?.proxy);
+  if (proxyHost) net.add(proxyHost);
+
+  const { run, ffi, sys } = bakeableSets(capFlags, extra);
+  // write: broad when a capability writes or extraPermissions asks (per-user paths can't be baked).
+  const needsWrite = capFlags.some((f) => kindOfFlag(f) === "--allow-write") ||
+    (extra.write?.length ?? 0) > 0;
+  const listFlag = (kind: string, set: Set<string>): string[] =>
+    set.size > 0 ? [`--allow-${kind}=${[...set].sort().join(",")}`] : [];
+
+  return [
+    `--allow-net=${[...net].sort().join(",")}`,
+    "--allow-read",
+    "--allow-env",
+    ...(needsWrite ? ["--allow-write"] : []),
+    ...listFlag("sys", sys),
+    ...listFlag("run", run),
+    ...listFlag("ffi", ffi),
+  ];
 }
 
 /**
@@ -323,17 +425,14 @@ export function desktopBuildFlags(capabilities: unknown, os: DesktopOs): string[
  * @returns The `--allow-*` flags, ready to splice into the `deno desktop` argv.
  */
 export async function desktopPackageFlags(entryUrl: string, os: DesktopOs): Promise<string[]> {
-  let capabilities: unknown;
+  let config: unknown;
   try {
     const mod = await import(new URL("../denext.config.ts", entryUrl).href);
-    const config = (mod as { default?: unknown }).default as
-      | { desktop?: { capabilities?: unknown } }
-      | undefined;
-    capabilities = config?.desktop?.capabilities;
+    config = (mod as { default?: unknown }).default;
   } catch {
     // no denext.config.ts (or it exports no config) → baseline only
   }
-  return desktopBuildFlags(capabilities, os);
+  return desktopBuildFlags(config, os);
 }
 
 /**
@@ -343,7 +442,7 @@ export async function desktopPackageFlags(entryUrl: string, os: DesktopOs): Prom
  * @returns The formatted table.
  */
 export function formatDesktopCapabilityTable(
-  table: Readonly<Record<string, DesktopCapability>> = DESKTOP_CAPABILITIES,
+  table: Readonly<Record<string, DesktopCapabilityEntry>> = DESKTOP_CAPABILITIES,
 ): string {
   return Object.entries(table).map(([name, c]) =>
     `  ${name.padEnd(15)}${c.key.padEnd(15)}${c.trust.padEnd(8)}${c.notes}`

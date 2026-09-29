@@ -20,7 +20,7 @@ import type {
   DesktopShellConfig,
 } from "../../server/config.ts";
 import type { DesktopCapability } from "../extension.ts";
-import { desktopAppDirs } from "../app-dirs.ts";
+import { type DesktopAppDirs, desktopAppDirs } from "../app-dirs.ts";
 import { echoCapability } from "./echo.ts";
 import { deviceCapability } from "./device.ts";
 import { fsCapability } from "./fs.ts";
@@ -51,6 +51,10 @@ export interface ResolvedDesktop {
   readonly capabilities: DesktopCapability[];
   /** The app-support (data) directory handed to capability handlers and used by `fs`/`sqlite`. */
   readonly appSupportDir: string;
+  /** Whether the `auth-session` capability is enabled — gates the loopback OAuth endpoint
+   * (`openAuthSession`), which is default-deny (answers `unavailable`) unless this is true. It is
+   * not a bridge capability, so it is surfaced here rather than in {@link ResolvedDesktop.capabilities}. */
+  readonly authSessionEnabled: boolean;
 }
 
 /** The default URL schemes `shell.openExternal` allows when enabled with `shell: true`. */
@@ -112,14 +116,18 @@ async function loadExtension(spec: string, base: string | undefined): Promise<De
  * Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the
  * app-support directory the runtime hands to handlers.
  *
- * Only the currently implemented built-ins are mapped (`device`, `fs`, `sqlite`, `echo`); a
- * configured key without a built-in yet is left unavailable (the page falls back), never an error.
- * A bad extension path IS an error (fail fast at launch).
+ * The built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,
+ * `secureStore`, `dialogs`, and the `echo` diagnostic), plus any `extensions` module paths;
+ * `auth-session` is a runtime endpoint (not a bridge cap) so it only sets `authSessionEnabled`. A
+ * configured key with no built-in yet (`clipboard`/`contextMenu`/`notifications` — WebView-backed)
+ * is left unavailable (the page uses its web path), never an error. A bad extension path IS an
+ * error, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a
+ * `desktop.app.identifier` — both fail fast at launch.
  *
  * @param config The project config (or its `desktop` block via the whole config); `undefined`
  * yields no capabilities.
  * @param options The app id (for storage dirs) and the entry's `import.meta.url` (for extensions).
- * @returns The enabled capabilities and the app-support directory.
+ * @returns The enabled capabilities, the app-support directory, and whether auth-session is enabled.
  */
 export async function resolveDesktopCapabilities(
   config: DenextConfig | undefined,
@@ -127,16 +135,48 @@ export async function resolveDesktopCapabilities(
 ): Promise<ResolvedDesktop> {
   const desktop = config?.desktop;
   const caps: DesktopCapabilitiesConfig | undefined = desktop?.capabilities;
-  const appId = options.appId ??
-    (desktop as { app?: { identifier?: string } } | undefined)?.app?.identifier ?? DEFAULT_APP_ID;
+  // The app identity keys the storage dirs AND the secureStore keychain SERVICE. It MUST be
+  // explicit (options.appId, or `desktop.app.identifier` in the config) — the default is shared, so
+  // falling back to it for a data-storing cap would collide storage and secrets across every denext
+  // desktop app. So `explicitId` is tracked separately from the fallback used only for dir paths.
+  const explicitId = options.appId ??
+    (desktop as { app?: { identifier?: string } } | undefined)?.app?.identifier;
+  const appId = explicitId ?? DEFAULT_APP_ID;
   const dirs = desktopAppDirs(appId);
-  const capabilities: DesktopCapability[] = [];
+  // `auth-session` is a runtime endpoint, not a bridge capability, so it never becomes a
+  // `DesktopCapability`; the flag only gates the loopback OAuth endpoint in `runDesktop`.
+  const authSessionEnabled = (caps as { authSession?: unknown } | undefined)?.authSession === true;
 
-  if (!caps) return { capabilities, appSupportDir: dirs.data };
+  if (!caps) return { capabilities: [], appSupportDir: dirs.data, authSessionEnabled };
+  assertAppIdentity(Boolean(explicitId), caps);
+  const capabilities = await buildBuiltinCaps(caps, { dirs, appId, base: options.base });
+  return { capabilities, appSupportDir: dirs.data, authSessionEnabled };
+}
 
+/**
+ * Fail closed on the cross-app collision (CV-3): the caps that PERSIST data (`secureStore`'s
+ * keychain service, `fs`/`sqlite`'s app-support files) require a unique identifier — without one
+ * they would share the default folder and keychain service with every other denext desktop app.
+ */
+function assertAppIdentity(hasExplicitId: boolean, caps: DesktopCapabilitiesConfig): void {
+  if (!hasExplicitId && (caps.secureStore || caps.fs || caps.sqlite)) {
+    throw new Error(
+      "desktop: set `desktop.app.identifier` in denext.config.ts (a unique reverse-DNS id) — " +
+        "secureStore/fs/sqlite key their storage and keychain service by it, and without it every " +
+        "desktop app shares one data folder and one keychain (an app could read another's secrets).",
+    );
+  }
+}
+
+/** Map the enabled `caps` to the bridge capability objects (built-ins + loaded extensions). */
+async function buildBuiltinCaps(
+  caps: DesktopCapabilitiesConfig,
+  ctx: { dirs: DesktopAppDirs; appId: string; base: string | undefined },
+): Promise<DesktopCapability[]> {
+  const { dirs, appId, base } = ctx;
   // One per-launch picked-path set, shared by dialogs (adds picks) and fs/shell (consult handles).
   const picked = new PickedPaths();
-
+  const capabilities: DesktopCapability[] = [];
   if (caps.echo === true) capabilities.push(echoCapability);
   if (caps.device) capabilities.push(deviceCapability);
   if (caps.fs) {
@@ -150,10 +190,6 @@ export async function resolveDesktopCapabilities(
   if (caps.dialogs) capabilities.push(dialogsCapability({ picked }));
   if (caps.keepAwake) capabilities.push(keepAwakeCapability());
   if (caps.secureStore) capabilities.push(secureStoreCapability({ service: appId }));
-
-  for (const spec of caps.extensions ?? []) {
-    capabilities.push(await loadExtension(spec, options.base));
-  }
-
-  return { capabilities, appSupportDir: dirs.data };
+  for (const spec of caps.extensions ?? []) capabilities.push(await loadExtension(spec, base));
+  return capabilities;
 }

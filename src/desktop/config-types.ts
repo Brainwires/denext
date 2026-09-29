@@ -22,6 +22,7 @@ export const DESKTOP_ADD_CAPABILITY_KEYS = [
   "sqlite",
   "contextMenu",
   "shell",
+  "authSession",
   "dialogs",
   "notifications",
   "keepAwake",

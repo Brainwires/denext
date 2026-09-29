@@ -30,6 +30,22 @@ function fail(status: number, code: AuthSessionErrorCode, message: string): Resp
 }
 
 /**
+ * The response for a disabled auth-session capability: `{ code: "unavailable" }`, which the
+ * page-side {@link openAuthSession} recognizes (it maps `unavailable` to an `unsupported` error
+ * telling the developer to run `denext desktop add auth-session`). Returned by the desktop handler
+ * BEFORE {@link handleDesktopAuthSession}, so the system browser is never opened — and the
+ * `--allow-run` for the opener is only baked when the capability is enabled. `unavailable` is the
+ * bridge's reserved "not enabled" code, so it is sent directly rather than as an
+ * {@link AuthSessionErrorCode}.
+ */
+export function authSessionUnavailable(): Response {
+  return Response.json(
+    { code: "unavailable", message: "the auth-session capability is not enabled" },
+    { status: 404 },
+  );
+}
+
+/**
  * Constant-time string compare over UTF-8 bytes. Returns false immediately when the lengths
  * differ (length is not secret here — the token is a fixed-length UUID), otherwise XOR-accumulates
  * every byte so no character short-circuits the comparison.

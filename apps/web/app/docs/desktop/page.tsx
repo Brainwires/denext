@@ -17,9 +17,12 @@ export default function Desktop() {
       <p>
         Scaffold with the desktop target (<code>denext create --desktop</code>, or add it to an
         existing project) and you get a <code>desktop.ts</code> entry, a <code>desktop</code>{" "}
-        block in <code>deno.json</code>, an <code>icons/</code>{" "}
-        folder, and the packaging scripts (<code>scripts/package-macos.ts</code> and{" "}
-        <code>scripts/package-linux.ts</code>). Drive it all with the <code>denext desktop</code>
+        block in <code>deno.json</code> (the app name and identifier), a{" "}
+        <code>denext.config.ts</code> (its <code>desktop.capabilities</code>{" "}
+        is the native allowlist), an <code>icons/</code>{" "}
+        folder, and the packaging scripts (<code>scripts/package-macos.ts</code>,{" "}
+        <code>scripts/package-linux.ts</code> and{" "}
+        <code>scripts/package-windows.ts</code>). Drive it all with the <code>denext desktop</code>
         {" "}
         verb:
       </p>
@@ -52,11 +55,23 @@ export default function Desktop() {
         <code>denext/desktop</code>, so a fix reaches every app:
       </p>
       <Code lang="tsx">
-        {`import { runDesktop } from "denext/desktop";
-import config from "./denext.config.ts";
+        {`import config from "./denext.config.ts";
+import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
-await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });`}
+await runDesktop({
+  importMetaUrl: import.meta.url,
+  // the enabled native capabilities (desktop.capabilities), served through the gated bridge
+  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+});`}
       </Code>
+      <p>
+        An entry written before 2.11 (or by <code>denext migrate --desktop</code>, which writes{" "}
+        <code>{"runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy })"}</code>)
+        has no <code>resolveDesktopCapabilities</code> spread, so every capability answers{" "}
+        <code>unavailable</code>{" "}
+        and the page keeps its web path; add the spread to serve the ones you enable. To
+        reverse-proxy a backend, pass <code>proxy: config.spa?.proxy</code> too.
+      </p>
       <Callout kind="note">
         <code>runDesktop</code> serves the static export (with a history-API fallback and{" "}
         <code>no-store</code>{" "}
@@ -120,9 +135,9 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
         <code>--host</code>{" "}
         without it is refused) exposes the app and its source to anyone who can reach that address,
         so use it only on a network you trust. The token-gated <code>/_denext/desktop/*</code>{" "}
-        endpoints (the OAuth loopback sheet and the updater boot beacon) are always served locally
-        and are never proxied to the dev server, and the per-launch desktop token is stripped from a
-        request before it is forwarded.
+        endpoints (the capability bridge, the OAuth loopback sheet and the updater boot beacon) are
+        always served locally and are never proxied to the dev server, and the per-launch desktop
+        token is stripped from a request before it is forwarded.
       </Callout>
       <Callout kind="note">
         <strong>No extra permissions.</strong> <code>denext desktop dev</code>{" "}
@@ -514,6 +529,17 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         {" "}
         of any file it changes.
       </Callout>
+      <Callout kind="note">
+        <strong>What is verified.</strong>{" "}
+        The bridge is tested end to end against the real runtime (the wire, and a headless Chromium
+        page: token, origin, preflight, frames, event replay, fallback), and a real{" "}
+        <code>deno desktop</code> build of <code>examples/native</code>{" "}
+        with the derived flags launched and served its bundle on macOS. The built-in capabilities
+        are unit-tested: <code>fs</code> and <code>sqlite</code>{" "}
+        against the real file system, and the keychain, dialog, shell and keep-awake programs
+        through their per-OS argument builders with the process spawn stubbed, not yet driven in a
+        packaged window on every OS.
+      </Callout>
       <table class="table">
         <thead>
           <tr>
@@ -545,10 +571,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>listDir</code>, <code>downloadToFile</code>
             </td>
             <td>
-              <code>--allow-read</code> /{" "}
-              <code>--allow-write</code>: the app-support and cache folders
+              broad <code>--allow-write</code>{" "}
+              (the runtime confines it to the app-support / cache folders)
             </td>
-            <td>scoped</td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -557,8 +583,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
             <td>
               <code>openSqlite</code>, <code>deleteSqlite</code> (<code>node:sqlite</code>)
             </td>
-            <td>the app-support folder</td>
-            <td>scoped</td>
+            <td>
+              broad <code>--allow-write</code> (runtime-confined to the app-support folder)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -587,6 +615,19 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
           </tr>
           <tr>
             <td>
+              <code>auth-session</code>
+            </td>
+            <td>
+              <code>openAuthSession</code>{" "}
+              (system-browser OAuth; the endpoint is default-deny until enabled)
+            </td>
+            <td>
+              <code>--allow-run</code>: open · rundll32 · xdg-open
+            </td>
+            <td>full</td>
+          </tr>
+          <tr>
+            <td>
               <code>dialogs</code>
             </td>
             <td>
@@ -596,7 +637,7 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               unscoped <code>--allow-read</code> /{" "}
               <code>--allow-write</code>, plus osascript · PowerShell · zenity/kdialog
             </td>
-            <td>broad</td>
+            <td>full</td>
           </tr>
           <tr>
             <td>
@@ -616,7 +657,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
             <td>
               <code>useKeepAwake</code>
             </td>
-            <td>caffeinate · kernel32.dll · systemd-inhibit</td>
+            <td>
+              <code>--allow-run</code>: caffeinate · <code>--allow-ffi</code>: kernel32.dll ·{" "}
+              <code>--allow-run</code>: systemd-inhibit
+            </td>
             <td>full</td>
           </tr>
           <tr>
@@ -643,6 +687,26 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
           </tr>
         </tbody>
       </table>
+      <Callout kind="note">
+        <strong>What the runtime refuses.</strong>{" "}
+        The page is untrusted, so each capability has limits beyond its Deno flags.{" "}
+        <code>downloadToFile</code> fetches only <code>http</code>/<code>https</code>{" "}
+        URLs, refuses loopback and link-local targets (<code>localhost</code>,{" "}
+        <code>127.0.0.0/8</code>, <code>::1</code>, <code>169.254.0.0/16</code>,{" "}
+        <code>fe80::/10</code>, checked after DNS and again on every redirect), stops after 100 MiB
+        or 10 minutes, and leaves nothing behind on failure. LAN addresses (<code>
+          192.168.x.x
+        </code>, <code>10.x.x.x</code>, …) stay allowed, so a download from a NAS works.{" "}
+        <code>openPath</code> refuses programs, scripts and launchers (<code>.exe</code>,{" "}
+        <code>.bat</code>, <code>.command</code>, <code>.terminal</code>,{" "}
+        <code>.desktop</code>, an executable file, …), because the default app would run them.{" "}
+        <code>fs</code> never writes the updater's <code>ui-updates</code>{" "}
+        folder. SQLite connections cannot <code>ATTACH</code> another file, and a <code>query</code>
+        {" "}
+        stops after 20 seconds of producing rows (a single long statement still blocks the app,
+        since <code>node:sqlite</code>{" "}
+        cannot be interrupted). A reload releases the previous page's keep-awake holds.
+      </Callout>
       <Callout kind="note">
         <strong>Native vs the WebView on Deno Desktop.</strong>{" "}
         Most capabilities run in the Deno process: <code>fs</code>, <code>sqlite</code> and{" "}
@@ -748,13 +812,14 @@ import { defineDesktopExtension } from "denext/desktop";
 import { z } from "zod";
 export default defineDesktopExtension({
   name: "scanner",
-  permissions: { ffi: ["./native/libscanner.dylib"] },
   events: ["attached"],
   methods: {
     listDevices: {
       input: z.object({ kind: z.string().optional() }),
       output: z.array(z.string()),
-      handler: ({ kind }) => listDevices(kind), // FFI, a sidecar, or plain Deno
+      permissions: { ffi: ["./native/libscanner.dylib"] }, // per method; add the flag by hand
+      // args are validated by input but typed unknown here (the page is typed from the schemas)
+      handler: (args) => listDevices((args as { kind?: string }).kind), // FFI, a sidecar, or Deno
     },
   },
 });
@@ -776,9 +841,14 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         <code>forbidden</code> (the gate refused it), <code>validation</code>, <code>timeout</code>
         {" "}
         (30 s by default; pass <code>{"{ timeoutMs }"}</code>), <code>too_large</code>{" "}
-        (a request over 4 MiB), or the extension's own code. Events that fire before a handler
-        subscribes (a notification click that launched the app, a deep link) are kept by the runtime
-        and delivered to the first subscriber.
+        (a request over 4 MiB), or the extension's own code (throw a <code>DesktopCapError</code>
+        {" "}
+        from <code>denext/desktop</code> with a code and a safe message). A method's{" "}
+        <code>permissions</code>{" "}
+        are not seen by the package scripts, which derive flags from the built-in catalog only, so
+        add an extension&apos;s <code>--allow-*</code> to <code>scripts/package-*.ts</code>{" "}
+        by hand. Events that fire before a handler subscribes (a notification click that launched
+        the app, a deep link) are kept by the runtime and delivered to the first subscriber.
       </p>
 
       <h2 id="desktop-security">Security model</h2>
@@ -809,9 +879,10 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
           picks paths at run time; the runtime narrows file calls to the paths picked this session.
           {" "}
           <code>--allow-run</code> and <code>--allow-ffi</code> (<code>shell</code>,{" "}
-          <code>keep-awake</code>,{" "}
-          <code>secure-store</code>, your extensions) are full trust: that program or library can do
-          anything the user can.
+          <code>keep-awake</code>, <code>secure-store</code>, <code>dialogs</code> — whose{" "}
+          <code>osascript</code> / <code>powershell.exe</code>{" "}
+          are script interpreters — and your extensions) are full trust: that program or library can
+          do anything the user can.
         </li>
         <li>
           <strong>Errors carry codes, not internals.</strong>{" "}

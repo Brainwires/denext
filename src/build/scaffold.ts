@@ -489,6 +489,17 @@ function denextConfig(opts: ScaffoldOptions): string {
       `  reactCompiler: true, // auto-memoization`,
     );
   }
+  if (opts.desktop) {
+    lines.push(
+      `  desktop: {`,
+      `    // Unique per app: keys the OS storage dirs and the secureStore keychain service, so`,
+      `    // change it to YOUR reverse-DNS id (keep it equal to deno.json's desktop.app.identifier).`,
+      `    // secureStore / fs / sqlite refuse to start without it, to avoid sharing data across apps.`,
+      `    app: { identifier: "com.example.denext" },`,
+      `    // capabilities: { fs: true, secureStore: true, shell: true },  // denext desktop add <cap>`,
+      `  },`,
+    );
+  }
   return `import type { DenextConfig } from "denext/server";
 
 export default {

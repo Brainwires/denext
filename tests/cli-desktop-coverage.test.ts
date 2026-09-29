@@ -138,6 +138,55 @@ Deno.test("desktop package --regenerate-scripts: creates, .bak-updates a stale s
   await Deno.remove(dir, { recursive: true });
 });
 
+Deno.test("desktop package --regenerate-scripts: warns when the updater is used without extraPermissions.net", async () => {
+  const cap = capture();
+  const dir = await tempDir("denext_desktop_regen_updater_");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "desktop.ts"),
+      'import { runDesktop } from "denext/desktop";\n' +
+        'await runDesktop({ importMetaUrl: import.meta.url, updater: { feedUrl: "x", publicKey: "y" } });\n',
+    );
+    // No extraPermissions.net → the updater can't reach its feed host → warn.
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), "export default {};\n");
+    await desktopCommand.run(makeCtx({
+      positionals: ["package"],
+      flags: { "regenerate-scripts": true },
+      global: { cwd: dir },
+    }));
+  } finally {
+    cap.restore();
+  }
+  assertStringIncludes(cap.errs.join("\n"), "self-updater");
+  assertStringIncludes(cap.errs.join("\n"), "extraPermissions");
+  await Deno.remove(dir, { recursive: true });
+});
+
+Deno.test("desktop package --regenerate-scripts: no updater warning when extraPermissions.net is set", async () => {
+  const cap = capture();
+  const dir = await tempDir("denext_desktop_regen_updater_ok_");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "desktop.ts"),
+      'import { runDesktop } from "denext/desktop";\n' +
+        'await runDesktop({ importMetaUrl: import.meta.url, updater: { feedUrl: "x", publicKey: "y" } });\n',
+    );
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'export default { desktop: { extraPermissions: { net: ["updates.example.com"] } } };\n',
+    );
+    await desktopCommand.run(makeCtx({
+      positionals: ["package"],
+      flags: { "regenerate-scripts": true },
+      global: { cwd: dir },
+    }));
+  } finally {
+    cap.restore();
+  }
+  assert(!cap.errs.join("\n").includes("self-updater"), "no warning when net is declared");
+  await Deno.remove(dir, { recursive: true });
+});
+
 Deno.test("desktop run errors when no desktop entry exists", async () => {
   const cap = capture();
   const exit = stubExit();
@@ -153,4 +202,40 @@ Deno.test("desktop run errors when no desktop entry exists", async () => {
   }
   assert(exit.calls.includes(1));
   assertStringIncludes(cap.errs.join("\n"), "no desktop entry");
+});
+
+Deno.test("desktop package --regenerate-scripts SECURITY: never writes through a symlinked script or .bak", async () => {
+  if (Deno.build.os === "windows") return; // symlink creation needs privileges there
+  const cap = capture();
+  const dir = await tempDir("denext_desktop_regen_link_");
+  const outside = await tempDir("denext_desktop_regen_outside_");
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    // A stale macOS script whose .bak is a symlink to a file OUTSIDE the project.
+    await Deno.writeTextFile(join(dir, "scripts", "package-macos.ts"), "// attacker content\n");
+    await Deno.writeTextFile(join(outside, "victim"), "precious\n");
+    await Deno.symlink(join(outside, "victim"), join(dir, "scripts", "package-macos.ts.bak"));
+    // The linux script itself is a symlink to an outside file.
+    await Deno.writeTextFile(join(outside, "victim2"), "precious2\n");
+    await Deno.symlink(join(outside, "victim2"), join(dir, "scripts", "package-linux.ts"));
+    await desktopCommand.run(makeCtx({
+      positionals: ["package"],
+      flags: { "regenerate-scripts": true },
+      global: { cwd: dir },
+    }));
+  } finally {
+    cap.restore();
+  }
+  // Neither outside file was written.
+  assertEquals(await Deno.readTextFile(join(outside, "victim")), "precious\n");
+  assertEquals(await Deno.readTextFile(join(outside, "victim2")), "precious2\n");
+  // The .bak is now a regular file holding the previous script; the linked script was skipped.
+  assert(!(await Deno.lstat(join(dir, "scripts", "package-macos.ts.bak"))).isSymlink);
+  assertStringIncludes(
+    await Deno.readTextFile(join(dir, "scripts", "package-macos.ts.bak")),
+    "// attacker content",
+  );
+  assertStringIncludes(cap.errs.join("\n"), "skipped");
+  await Deno.remove(dir, { recursive: true });
+  await Deno.remove(outside, { recursive: true });
 });

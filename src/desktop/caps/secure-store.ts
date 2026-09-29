@@ -31,11 +31,13 @@ import { type DesktopCapability, DesktopCapError, type DesktopPermissions } from
 /** The running OS spelling the command builder branches on. */
 type Os = "darwin" | "windows" | "linux";
 
-/** Run a credential CLI (argv, no shell; optional stdin). Injected so tests never touch the OS store. */
+/** Run a credential CLI (argv, no shell; optional stdin; optional abort signal). Injected so tests
+ * never touch the OS store. */
 export type SecureRunner = (
   cmd: string,
   args: string[],
   stdin?: string,
+  signal?: AbortSignal,
 ) => Promise<{ code: number; stdout: string }>;
 
 /** A credential-CLI invocation: the command, its argv, and optional stdin (the secret, on Linux). */
@@ -96,11 +98,15 @@ async function defaultRun(
   cmd: string,
   args: string[],
   stdin?: string,
+  signal?: AbortSignal,
 ): Promise<{ code: number; stdout: string }> {
   let child: Deno.ChildProcess;
   try {
     child = new Deno.Command(cmd, {
       args,
+      // The bridge's per-method timeout aborts this signal; Deno then kills the child, so a hung
+      // credential CLI does not outlive the deadline.
+      signal,
       stdin: stdin !== undefined ? "piped" : "null",
       stdout: "piped",
       stderr: "null",
@@ -149,6 +155,27 @@ function str(value: unknown, name: string): string {
 }
 
 /**
+ * Reject a page-supplied key an OS credential CLI could misread: `secret-tool` takes the key as a
+ * positional attribute VALUE, where a leading `-` is parsed as an option (getopt), and a control
+ * character or NUL would corrupt the argv. (macOS `security -a <key>` is safe — the value follows an
+ * option flag — but this is validated uniformly for every backend.) Tool-agnostic, so it does not
+ * depend on any one CLI's `--` handling.
+ *
+ * @param key The account/key from the page.
+ * @returns The key, when safe.
+ */
+function safeKey(key: string): string {
+  // deno-lint-ignore no-control-regex
+  if (key.startsWith("-") || /[\u0000-\u001f\u007f]/.test(key)) {
+    throw new DesktopCapError(
+      "validation",
+      "key must not start with '-' or contain control characters",
+    );
+  }
+  return key;
+}
+
+/**
  * Build the `secureStore` capability.
  *
  * @param deps The service name, and (for tests) the OS and runner.
@@ -168,11 +195,16 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
     : {};
   const keyArg = (args: unknown): string => {
     refuseWindows(os);
-    return str((args as { key?: unknown })?.key, "key");
+    return safeKey(str((args as { key?: unknown })?.key, "key"));
   };
-  const exec = (op: "get" | "set" | "delete", key: string, b64?: string) => {
+  const exec = (
+    op: "get" | "set" | "delete",
+    key: string,
+    b64: string | undefined,
+    signal: AbortSignal,
+  ) => {
     const c = secureStoreCommand(os, op, service, key, b64);
-    return run(c.cmd, c.args, c.stdin);
+    return run(c.cmd, c.args, c.stdin, signal);
   };
 
   return {
@@ -180,8 +212,8 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
     methods: {
       get: {
         permissions,
-        handler: async (args) => {
-          const { code, stdout } = await exec("get", keyArg(args));
+        handler: async (args, ctx) => {
+          const { code, stdout } = await exec("get", keyArg(args), undefined, ctx.signal);
           if (code !== 0) return null; // not found (a missing backend already threw)
           const b64 = stdout.trim();
           if (!b64) return null;
@@ -194,11 +226,11 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
       },
       set: {
         permissions,
-        handler: async (args) => {
+        handler: async (args, ctx) => {
           const key = keyArg(args);
           const value = str((args as { value?: unknown })?.value, "value");
           const b64 = bytesToBase64(new TextEncoder().encode(value));
-          const { code } = await exec("set", key, b64);
+          const { code } = await exec("set", key, b64, ctx.signal);
           if (code !== 0) {
             throw new DesktopCapError("store_failed", "the secure store rejected the write");
           }
@@ -207,8 +239,9 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
       },
       delete: {
         permissions,
-        handler: async (args) => {
-          await exec("delete", keyArg(args)); // a non-zero (not found) is fine — delete is idempotent
+        handler: async (args, ctx) => {
+          // a non-zero (not found) is fine — delete is idempotent
+          await exec("delete", keyArg(args), undefined, ctx.signal);
           return { ok: true };
         },
       },

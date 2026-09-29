@@ -73,7 +73,10 @@ export interface DesktopCapCtx {
  * process.
  *
  * Input inference for the PAGE flows from `input`/`output` (read by `denext/desktop/client`'s
- * typed proxy). Annotate `handler`'s `args` with the schema's output type for typed handler code.
+ * typed proxy). The HANDLER receives `args` typed as `unknown` (the bridge has already validated it
+ * against `input`); read fields off it or cast it to the input schema's output type INSIDE the
+ * handler — do not annotate the `args` parameter with a narrower type, as a handler assigned to
+ * `(args: unknown) => …` cannot narrow it (parameter contravariance).
  */
 export interface DesktopCapabilityMethod<I = unknown, O = unknown> {
   /** Validates the page's arguments; a mismatch is a `validation` error before the handler runs. */
@@ -104,6 +107,12 @@ export interface DesktopCapability {
   readonly methods: Readonly<Record<string, DesktopCapabilityMethod>>;
   /** The event names this capability may emit (empty when it emits none). */
   readonly events?: readonly string[];
+  /**
+   * Called when the window starts a NEW top-level page load (a reload or a navigation): the page
+   * that owned any per-page state is gone, so release it (keep-awake holds, open handles). Errors
+   * are logged, never surfaced. The same idea as the mobile native views' teardown on navigation.
+   */
+  readonly onPageLoad?: () => void | Promise<void>;
 }
 
 /**
@@ -157,6 +166,15 @@ export class DesktopCapError extends Error {
   /** Structured detail for the page, if any (must be JSON-serialisable and non-sensitive). */
   readonly data?: unknown;
 
+  /**
+   * Build a capability error whose envelope crosses safely to the page.
+   *
+   * @param code The machine-readable error code the page narrows on (never `"unavailable"`, which
+   * the bridge reserves for a disabled capability).
+   * @param message A SAFE message that crosses to the page — no absolute path, env value or stack.
+   * @param options `status` (the HTTP status for the envelope, default 400) and `data` (structured,
+   * JSON-serialisable, non-sensitive detail for the page).
+   */
   constructor(code: string, message: string, options: { status?: number; data?: unknown } = {}) {
     super(message);
     this.code = code;

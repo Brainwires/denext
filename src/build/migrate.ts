@@ -1996,9 +1996,15 @@ function spaDesktopSource(): string {
     `// window (run \`deno task export\` first, or \`deno task desktop\`).\n` +
     `// Backend reverse proxy: set \`spa.proxy\` in denext.config.ts (e.g. to reach a\n` +
     `// local server same-origin so its session cookies persist).\n` +
-    `import { runDesktop } from "denext/desktop";\n` +
+    `import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";\n` +
     `import config from "./denext.config.ts";\n\n` +
-    `await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });\n`;
+    `await runDesktop({\n` +
+    `  importMetaUrl: import.meta.url,\n` +
+    `  proxy: config.spa?.proxy,\n` +
+    `  // Serve the enabled desktop.capabilities (denext desktop add <cap>); without this spread\n` +
+    `  // every bridge call answers \`unavailable\` and \`denext desktop add\` has no runtime effect.\n` +
+    `  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),\n` +
+    `});\n`;
 }
 
 /**

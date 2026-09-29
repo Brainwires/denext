@@ -15,11 +15,22 @@ import type { SpaProxyConfig } from "../server/config.ts";
 import { serveStatic } from "../server/static.ts";
 import { isLoopbackHost } from "./dev-server/lan.ts";
 import { wantsShell } from "./spa/shared.ts";
-import { handleDesktopAuthSession, timingSafeEqual } from "../desktop/auth-session-runtime.ts";
+import {
+  authSessionUnavailable,
+  handleDesktopAuthSession,
+  timingSafeEqual,
+} from "../desktop/auth-session-runtime.ts";
 import { sha256Base64 } from "../server/csp.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
 import type { DesktopCapability } from "../desktop/extension.ts";
+
+/** The gated capability bridge {@linkcode createDesktopHandler} dispatches to (re-exported so the
+ * handler's signature has no private type). */
+export type { DesktopBridge } from "../desktop/bridge.ts";
+/** The retained-event replay buffer reached through {@linkcode DesktopBridge}'s `events` (re-exported
+ * so that public member does not reference a private type). */
+export type { DesktopEventLog } from "../desktop/bridge-events.ts";
 
 // The desktop native-extension authoring API is served from `denext/desktop` (this module).
 export {
@@ -47,7 +58,9 @@ export {
   desktopPackageFlags,
 } from "./desktop-capabilities.ts";
 
-type ProxyModule = typeof import("./dev-proxy.ts");
+/** The lazily-imported reverse-proxy module ({@link ./dev-proxy.ts}) {@linkcode createDesktopHandler}
+ * forwards to when a backend proxy is configured; exported so the handler's signature is public. */
+export type ProxyModule = typeof import("./dev-proxy.ts");
 
 /** The token-gated loopback OAuth endpoint the desktop client half POSTs to. */
 const AUTH_SESSION_PATH = "/_denext/desktop/auth-session";
@@ -195,6 +208,13 @@ async function devProxyResponse(
   return new Response(injected, { status: res.status, statusText: res.statusText, headers });
 }
 
+/**
+ * Options for {@linkcode runDesktop} (and {@linkcode createDesktopHandler}): where to serve the
+ * static export from, an optional loopback reverse proxy and request escape hatch, the signed
+ * self-updater, the enabled capability bridge, the app-support directory, and whether the loopback
+ * OAuth endpoint is enabled. The generated `desktop.ts` entry spreads
+ * {@linkcode resolveDesktopCapabilities} into it.
+ */
 export interface RunDesktopOptions {
   /**
    * Absolute path (or a path relative to {@link importMetaUrl}) of the static export
@@ -245,6 +265,14 @@ export interface RunDesktopOptions {
    * `desktop.ts` computes it from the app id.
    */
   appSupportDir?: string;
+  /**
+   * Whether the `auth-session` capability is enabled (from `desktop.capabilities.authSession`, via
+   * {@link resolveDesktopCapabilities}). The loopback OAuth endpoint ({@link openAuthSession}) is
+   * DEFAULT-DENY: when this is not `true` it answers `unavailable`, so the page-side
+   * `openAuthSession` reports that the capability is off rather than opening the system browser. It
+   * is a full-trust `--allow-run` of the browser opener, so it is opt-in like every other run cap.
+   */
+  authSessionEnabled?: boolean;
 }
 
 // The SPA entry is stably named (`/_denext/client/index.js`), so the WebView would
@@ -366,9 +394,16 @@ async function handleLocalEndpoint(
   request: Request,
   url: URL,
   token: string,
+  authSessionEnabled: boolean,
   onBooted?: () => void | Promise<void>,
 ): Promise<Response | null> {
-  if (url.pathname === AUTH_SESSION_PATH) return await handleDesktopAuthSession(request, token);
+  if (url.pathname === AUTH_SESSION_PATH) {
+    // Default-deny: without the `auth-session` capability the endpoint answers `unavailable` and
+    // never opens the system browser, so the opener's `--allow-run` is only baked when opted in.
+    return authSessionEnabled
+      ? await handleDesktopAuthSession(request, token)
+      : authSessionUnavailable();
+  }
   if (onBooted && url.pathname === BOOTED_PATH) {
     if (request.method !== "POST") return new Response(null, { status: 405 });
     const presented = request.headers.get(DESKTOP_TOKEN_HEADER) ?? "";
@@ -455,7 +490,13 @@ export function createDesktopHandler(
     }
     // The token-gated local endpoints (loopback OAuth + boot-confirm beacon) — before the dev
     // proxy AND the backend proxy/static, so they are always served locally (never proxied).
-    const endpoint = await handleLocalEndpoint(request, url, token, onBooted);
+    const endpoint = await handleLocalEndpoint(
+      request,
+      url,
+      token,
+      options.authSessionEnabled === true,
+      onBooted,
+    );
     if (endpoint) return endpoint;
     // The capability bridge (RPC + events) — gated, and like the local endpoints it runs BEFORE any
     // proxy so it is always served locally and never forwarded.
@@ -468,6 +509,11 @@ export function createDesktopHandler(
     // get the desktop global without the token, and cannot reach the bridge.
     const injectToken = (request.headers.get("sec-fetch-dest") ?? "document") === "document" &&
       isLoopbackHost(url.hostname);
+    // A top-level NAVIGATION (a reload or a new page) ends the previous page: release what it
+    // held through the bridge (keep-awake holds…). Only a real browser navigation counts.
+    if (bridge && injectToken && request.method === "GET" && isPageNavigation(request)) {
+      await bridge.pageLoaded();
+    }
     // Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`,
     // with the per-launch desktop token stripped so it never reaches the dev server. The token is
     // injected into a buffered HTML navigation only for a loopback dev target (`devInjectToken`)
@@ -477,6 +523,12 @@ export function createDesktopHandler(
     }
     return await serveBackendOrExport(request, url, injectToken);
   };
+}
+
+/** Whether `request` is a browser's top-level navigation (`Sec-Fetch-Mode: navigate`, document). */
+function isPageNavigation(request: Request): boolean {
+  return request.headers.get("sec-fetch-mode") === "navigate" &&
+    request.headers.get("sec-fetch-dest") === "document";
 }
 
 /**

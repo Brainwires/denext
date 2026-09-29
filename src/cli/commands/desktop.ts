@@ -213,6 +213,15 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   await spawnDenoAndExit(["run", "-A", script, ...ctx.rest], dir);
 }
 
+/** Whether `path` is itself a symbolic link (a missing path is not). */
+async function isSymlink(path: string): Promise<boolean> {
+  try {
+    return (await Deno.lstat(path)).isSymlink;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * `denext desktop package --regenerate-scripts`: rewrite `scripts/package-{macos,linux,windows}.ts`
  * from the CURRENT scaffold template (so an existing project adopts the least-privilege `deno desktop`
@@ -239,11 +248,22 @@ async function regeneratePackageScripts(dir: string): Promise<void> {
       continue;
     }
     await Deno.mkdir(dirname(dest), { recursive: true });
+    // Never write THROUGH a symlink: a cloned repo could point a script (or its .bak) at a file
+    // outside the project (~/.zshrc) and have this command write repo-controlled content there.
+    if (await isSymlink(dest)) {
+      console.error(`  skipped    ${f.path}  (a symlink; replace it with a regular file first)`);
+      continue;
+    }
     if (existing === undefined) {
-      await Deno.writeTextFile(dest, f.content);
+      await Deno.writeTextFile(dest, f.content, { createNew: true });
       console.log(`  created    ${f.path}`);
     } else {
-      await Deno.writeTextFile(`${dest}.bak`, existing);
+      const bak = `${dest}.bak`;
+      // Replace (not write through) any existing .bak — removing a symlink removes the link only.
+      await Deno.remove(bak).catch((err) => {
+        if (!(err instanceof Deno.errors.NotFound)) throw err;
+      });
+      await Deno.writeTextFile(bak, existing, { createNew: true });
       await Deno.writeTextFile(dest, f.content);
       console.log(`  updated    ${f.path}  (previous saved to ${f.path}.bak)`);
       const diff = createUnifiedDiff(existing, f.content, `a/${f.path}`, `b/${f.path}`);
@@ -256,6 +276,28 @@ async function regeneratePackageScripts(dir: string): Promise<void> {
       ? "\n  Already up to date.\n"
       : `\n  Regenerated ${changed} script(s). Review the diff, then commit. The scripts now derive\n` +
         "  --allow-* from your desktop.capabilities instead of -A.\n",
+  );
+  await warnIfUpdaterMissingNet(dir);
+}
+
+/**
+ * Warn (not fail) when `desktop.ts` uses the self-updater but `desktop.extraPermissions.net` has no
+ * feed host: the derived scripts only grant loopback net, so the updater — which fetches from its
+ * feed host and writes its data dir — would silently never update. The updater config lives in
+ * `desktop.ts` code (not `denext.config.ts`), so it can't be auto-derived; this points the developer
+ * at the escape hatch. A static text scan, deliberately: it must not import/run the project.
+ */
+async function warnIfUpdaterMissingNet(dir: string): Promise<void> {
+  const entry = await Deno.readTextFile(join(dir, "desktop.ts")).catch(() => "");
+  if (!(/runDesktop\s*\(/.test(entry) && /\bupdater\b/.test(entry))) return;
+  const config = await Deno.readTextFile(join(dir, "denext.config.ts")).catch(() => "");
+  if (/extraPermissions\s*:\s*\{[\s\S]*?\bnet\b/.test(config)) return;
+  console.error(
+    "  ⚠ desktop.ts uses the self-updater, but the derived scripts grant only loopback net.\n" +
+      "    The updater fetches from its feed host and writes its data dir, so add them to\n" +
+      "    denext.config.ts:\n" +
+      '        desktop: { extraPermissions: { net: ["updates.example.com"], write: ["."] } }\n' +
+      "    or the packaged app will silently fail to update.\n",
   );
 }
 

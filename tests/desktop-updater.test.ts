@@ -127,6 +127,36 @@ Deno.test("desktop updater: a valid signed update downloads, verifies, applies a
   }
 });
 
+Deno.test("desktop updater SECURITY (H3): a tampered active overlay is re-verified at launch and refused", async () => {
+  const { publicKey, signingKey } = await keys();
+  const feed = await exportDir();
+  const data = await tmpData();
+  await writeOtaManifest(feed, { sequence: 100 }, signingKey);
+  const config = cfg(data, publicKey);
+  const restore = routeFetch(() => createOtaHandler({ dir: feed, basePath: BASE }));
+  try {
+    const version = (await checkForDesktopUpdate(config)).version!;
+    await prepareDesktopUpdate(config);
+    await applyDesktopUpdate(version, config);
+    await desktopBooted(config);
+    const good = await resolveDesktopUiDir("/bundled", config);
+    assert(good !== "/bundled", "the verified overlay is served initially");
+
+    // Tamper a served file AFTER apply — as a page write into the overlay dir would (the fs
+    // reserved-path guard is the first line; launch re-verification is the defense in depth).
+    await Deno.writeTextFile(join(good, "_denext", "client", "app.js"), "/* injected */ evil()");
+
+    // Launch re-verification recomputes every file's SHA-256 against the signed manifest, so the
+    // tampered overlay is NOT served — it falls back to the embedded bundle, and an injected script
+    // cannot persist across relaunches or outlive a signed update.
+    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
+  } finally {
+    restore();
+    await Deno.remove(feed, { recursive: true });
+    await Deno.remove(data, { recursive: true });
+  }
+});
+
 Deno.test("desktop updater: a tampered file (wrong SHA-256) is refused and staging discarded", async () => {
   const { publicKey, signingKey } = await keys();
   const feed = await exportDir();

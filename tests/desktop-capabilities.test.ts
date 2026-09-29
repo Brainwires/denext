@@ -95,7 +95,8 @@ Deno.test("desktop add --dry-run: plans without writing", async () => {
   assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), "export default {};\n");
   const out = formatDesktopAddReport(report, true);
   assertStringIncludes(out, "would enable: dialogs");
-  assertStringIncludes(out, "BROAD");
+  // osascript / powershell.exe are interpreters: dialogs is FULL trust, not merely broad.
+  assertStringIncludes(out, "FULL");
 });
 
 Deno.test("desktop add: unknown or missing capabilities are refused", async () => {
@@ -145,9 +146,14 @@ Deno.test("docs: the desktop page lists every capability `denext desktop add` kn
   }
 });
 
+/** Wrap a `desktop.capabilities` object as a whole config (desktopBuildFlags takes the config). */
+function caps(capabilities: Record<string, unknown>): unknown {
+  return { desktop: { capabilities } };
+}
+
 Deno.test("desktopBuildFlags: no capabilities → only the loopback + read + env baseline (never -A)", () => {
-  for (const caps of [undefined, {}, { extensions: ["./ext.ts"] }]) {
-    const flags = desktopBuildFlags(caps, "darwin");
+  for (const config of [undefined, {}, caps({ extensions: ["./ext.ts"] })]) {
+    const flags = desktopBuildFlags(config, "darwin");
     assertEquals(flags, [...DESKTOP_BASELINE_FLAGS]);
     assert(!flags.includes("-A") && !flags.includes("--allow-all"));
   }
@@ -155,15 +161,17 @@ Deno.test("desktopBuildFlags: no capabilities → only the loopback + read + env
 
 Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay the baseline", () => {
   // Scoped caps add only their exact run + sys; no write, no per-token read/write leaks.
-  assertEquals(desktopBuildFlags({ secureStore: true, device: true }, "darwin"), [
+  assertEquals(desktopBuildFlags(caps({ secureStore: true, device: true }), "darwin"), [
     ...DESKTOP_BASELINE_FLAGS,
     "--allow-sys=osRelease",
     "--allow-run=security",
   ]);
   // secure-store is unsupported on Windows → it bakes nothing there (baseline only).
-  assertEquals(desktopBuildFlags({ secureStore: true }, "windows"), [...DESKTOP_BASELINE_FLAGS]);
+  assertEquals(desktopBuildFlags(caps({ secureStore: true }), "windows"), [
+    ...DESKTOP_BASELINE_FLAGS,
+  ]);
   // keep-awake's Windows backend is FFI, not a program.
-  assertEquals(desktopBuildFlags({ keepAwake: true }, "windows"), [
+  assertEquals(desktopBuildFlags(caps({ keepAwake: true }), "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
     "--allow-ffi=kernel32.dll",
   ]);
@@ -173,7 +181,7 @@ Deno.test("desktopBuildFlags: a capability that writes collapses to one broad --
   // fs/sqlite/dialogs write to per-user (or picked) paths that can't be baked, so packaging grants
   // a broad --allow-write once; the runtime cap layer confines it. No `--allow-write=$APPDATA` leaks.
   const flags = desktopBuildFlags(
-    { fs: { read: ["$APPDATA"], write: ["$APPDATA"] }, sqlite: true },
+    caps({ fs: { read: ["$APPDATA"], write: ["$APPDATA"] }, sqlite: true }),
     "linux",
   );
   assert(flags.includes("--allow-write"), flags.join(" "));
@@ -183,7 +191,7 @@ Deno.test("desktopBuildFlags: a capability that writes collapses to one broad --
 });
 
 Deno.test("desktopBuildFlags: the full capability set on Windows, least-privilege", () => {
-  const caps = {
+  const config = caps({
     device: true,
     fs: true,
     sqlite: true,
@@ -194,8 +202,8 @@ Deno.test("desktopBuildFlags: the full capability set on Windows, least-privileg
     clipboard: true, // WebView-backed: contributes no flags
     contextMenu: true, // WebView-backed
     notifications: true, // WebView-backed
-  };
-  assertEquals(desktopBuildFlags(caps, "windows"), [
+  });
+  assertEquals(desktopBuildFlags(config, "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
     "--allow-write",
     "--allow-sys=osRelease",
@@ -205,10 +213,63 @@ Deno.test("desktopBuildFlags: the full capability set on Windows, least-privileg
 });
 
 Deno.test("desktopBuildFlags: a `false` value disables a capability", () => {
-  assertEquals(desktopBuildFlags({ device: false, keepAwake: true }, "darwin"), [
+  assertEquals(desktopBuildFlags(caps({ device: false, keepAwake: true }), "darwin"), [
     ...DESKTOP_BASELINE_FLAGS,
     "--allow-run=caffeinate",
   ]);
+});
+
+Deno.test("desktopBuildFlags: auth-session bakes the per-OS browser opener", () => {
+  assertEquals(desktopBuildFlags(caps({ authSession: true }), "darwin"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-run=open",
+  ]);
+  assertEquals(desktopBuildFlags(caps({ authSession: true }), "windows"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-run=rundll32.exe",
+  ]);
+  assertEquals(desktopBuildFlags(caps({ authSession: true }), "linux"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-run=xdg-open",
+  ]);
+});
+
+Deno.test("desktopBuildFlags: a non-loopback spa.proxy host merges into the single --allow-net", () => {
+  const flags = desktopBuildFlags(
+    { spa: { proxy: { target: "https://api.example.com", allowNonLoopback: true } } },
+    "darwin",
+  );
+  // ONE --allow-net carrying loopback + the proxy host, sorted (Deno keeps only the last --allow-net).
+  assertEquals(flags.filter((f) => f.startsWith("--allow-net")), [
+    "--allow-net=127.0.0.1,api.example.com,localhost",
+  ]);
+  // A loopback proxy target (or one without allowNonLoopback) does not widen net.
+  assertEquals(
+    desktopBuildFlags({ spa: { proxy: { target: "http://127.0.0.1:8080" } } }, "darwin"),
+    [...DESKTOP_BASELINE_FLAGS],
+  );
+});
+
+Deno.test("desktopBuildFlags: extraPermissions is the escape hatch (updater net+write, custom run)", () => {
+  const flags = desktopBuildFlags(
+    {
+      desktop: {
+        capabilities: { device: true },
+        extraPermissions: {
+          net: ["updates.example.com"],
+          write: ["ignored-value"],
+          run: ["myhelper"],
+        },
+      },
+    },
+    "darwin",
+  );
+  // net merges loopback + the updater feed host; write becomes broad; run unions device(none)+myhelper+sys.
+  assert(flags.includes("--allow-net=127.0.0.1,localhost,updates.example.com"), flags.join(" "));
+  assert(flags.includes("--allow-write"), "extraPermissions.write → broad --allow-write");
+  assert(!flags.some((f) => f.startsWith("--allow-write=")), "write is broad, not scoped");
+  assert(flags.includes("--allow-run=myhelper"), flags.join(" "));
+  assert(flags.includes("--allow-sys=osRelease"), "device's sys still baked");
 });
 
 Deno.test("desktopPackageFlags: reads denext.config.ts next to the script (missing → baseline)", async () => {
