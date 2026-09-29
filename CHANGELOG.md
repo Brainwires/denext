@@ -8,7 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [3.0.0-rc.1] - 2026-09-29
+## [3.0.0] - 2026-09-29
 
 ### Breaking
 
@@ -26,11 +26,15 @@ and this project adheres to
   say to add a header, must call `redirectResponse`.
 - **`InspectNode.sourceId` is removed** from the DevTools inspector tree — read `source`
   (`{ file, export, line, column }`) instead.
+  Unchanged: Next.js's own spellings — `experimental.reactCompiler`, `experimental.cacheComponents`
+  and `experimental.optimizePackageImports` — stay honored as obsolete aliases with a dev warning,
+  and `unstable_noStore`, `io`, `useFormState` and `images.domains` stay as compatible aliases
+  because React / Next still export or accept them.
 
-Unchanged: Next.js's own spellings — `experimental.reactCompiler`, `experimental.cacheComponents`
-and `experimental.optimizePackageImports` — stay honored as obsolete aliases with a dev warning,
-and `unstable_noStore`, `io`, `useFormState` and `images.domains` stay as compatible aliases
-because React / Next still export or accept them.
+### Added
+
+- **`desktop.capabilities.shell.openPathAllowExtensions`** — bare file extensions (`["py",
+  "sh"]`) `openPath` may open despite its executable/script denylist.
 
 ### Fixed
 
@@ -145,11 +149,6 @@ because React / Next still export or accept them.
   POST the per-launch token to a token-gated quit endpoint (like the boot beacon), which exits the
   single-window app — the same outcome as the native window close. Verified end-to-end against a
   real packaged app.
-
-### Added
-
-- **`desktop.capabilities.shell.openPathAllowExtensions`** — bare file extensions (`["py",
-  "sh"]`) `openPath` may open despite its executable/script denylist.
 
 ## [2.11.0-rc.1] - 2026-09-29
 
@@ -9683,6 +9682,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[3.0.0]: https://jsr.io/@denext/denext@3.0.0
 [3.0.0-rc.1]: https://jsr.io/@denext/denext@3.0.0-rc.1
 [2.11.0-rc.1]: https://jsr.io/@denext/denext@2.11.0-rc.1
 [2.10.0]: https://jsr.io/@denext/denext@2.10.0
