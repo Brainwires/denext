@@ -103,6 +103,18 @@ jobs:
           deno check cli.ts mod.ts
           deno test -A --unstable-kv --parallel --ignore=tests/e2e/,tests/migration-bed/
 
+      - name: Publish exactly the tagged source
+        # `deno publish` refuses a dirty tree. A test that leaves a file behind must not block
+        # (or leak into) a release: show what it left, then restore the checkout to the tag.
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::warning::the verify step left the tree dirty (fix the test that writes these):"
+            git status --porcelain
+            git diff --stat
+            git checkout -- .
+            git clean -fdq
+          fi
+
       - name: Publish to JSR (with provenance)
         run: deno publish --config ${{ steps.pkg.outputs.config }}
 
