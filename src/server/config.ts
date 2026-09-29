@@ -674,7 +674,7 @@ export interface DesktopFsConfig {
  */
 export interface DesktopCapabilitiesConfig {
   /** OS keychain: macOS Keychain / Linux libsecret / Windows WinRT PasswordVault (the Windows
-   * backend is implemented but not yet run on Windows — exercised by the Windows packaging CI). */
+   * backend is verified by the Windows CI round-trip). */
   secureStore?: boolean;
   /** App files under the OS app-support / cache folders. */
   fs?: boolean | DesktopFsConfig;

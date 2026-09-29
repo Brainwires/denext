@@ -713,7 +713,7 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         <code>secure-store</code> keep data that survives a relaunch (<code>secure-store</code>{" "}
         uses the <code>security</code> / <code>secret-tool</code> tools and, on Windows, WinRT{" "}
         <code>PasswordVault</code> via <code>powershell.exe</code>{" "}
-        — the Windows backend is implemented but not yet run on Windows); <code>shell</code>,{" "}
+        — the Windows backend is verified by the Windows CI round-trip); <code>shell</code>,{" "}
         <code>dialogs</code> and <code>keep-awake</code>{" "}
         drive OS programs. Three lean on the WebView instead, because the WebView already provides
         them and the Deno process cannot improve on them: <code>clipboard</code>{" "}

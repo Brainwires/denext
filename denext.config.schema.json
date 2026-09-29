@@ -1142,7 +1142,7 @@
           "type": "object",
           "properties": {
             "secureStore": {
-              "description": "OS keychain: macOS Keychain / Linux libsecret / Windows WinRT PasswordVault (the Windows backend is implemented but not yet run on Windows — exercised by the Windows packaging CI).",
+              "description": "OS keychain: macOS Keychain / Linux libsecret / Windows WinRT PasswordVault (the Windows backend is verified by the Windows CI round-trip).",
               "type": "boolean"
             },
             "fs": {

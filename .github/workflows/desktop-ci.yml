@@ -53,8 +53,14 @@ jobs:
       - name: secureStore round-trip (Linux, keyring session)
         if: matrix.os == 'ubuntu-latest'
         run: |
+          # An empty-password `--unlock` on a fresh daemon leaves no default collection, so
+          # secret-tool's store to the default alias tries to PROMPT (gcr-prompter → "cannot open
+          # display" on a headless runner). Name the default collection "login" and create+unlock it
+          # with a known password so the store is non-interactive.
           dbus-run-session -- bash -c '
-            echo -n "" | gnome-keyring-daemon --unlock --components=secrets &
+            mkdir -p ~/.local/share/keyrings
+            echo -n "login" > ~/.local/share/keyrings/default
+            echo -n "ci" | gnome-keyring-daemon --unlock --components=secrets &
             sleep 2
             deno run -A scripts/ci/desktop-secure-store-roundtrip.ts
           '

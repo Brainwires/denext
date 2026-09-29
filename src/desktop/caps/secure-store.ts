@@ -9,7 +9,7 @@
  *   on STDIN, never argv.
  * - Windows: WinRT `PasswordVault` via Windows PowerShell (see WINDOWS_VAULT_SCRIPT). Every value
  *   travels on STDIN as JSON, never argv (PowerShell `-Command` joins trailing argv into the command
- *   text). Implemented, not yet run on Windows — exercised by the Windows packaging CI, not locally.
+ *   text). Verified by the Windows CI (a real PasswordVault set/get/delete round-trip).
  *
  * Values are stored base64-of-UTF-8, so a newline, quote or non-ASCII byte in the value can never
  * corrupt the round-trip or the command. FAIL CLOSED: if the backend is missing (no `security` /
