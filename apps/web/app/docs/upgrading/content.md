@@ -47,9 +47,13 @@ spellings that are React's or Next.js's own stay, as compatible aliases.
 - **`InspectNode.sourceId` is removed** from the DevTools inspector tree — read
   `source` (`{ file, export, line, column }`) instead.
 
-<!-- 2.11 carry-over items: orchestrator -->
+3.0 also carries every change that first shipped in the 2.11.0-rc.1 prerelease
+(there is no 2.11.0 final): compression on by default, React re-render
+semantics for library components, per-build page-cache keys and least-privilege
+desktop packaging among them. Coming from 2.10 or earlier, work through
+[the list below](#also-in-30-from-2110-rc1) too.
 
-## Upgrading to 2.11
+## Also in 3.0 (from 2.11.0-rc.1)
 
 - **Responses are now compressed by default** (gzip per `Accept-Encoding`, Next.js's
   `compress`; `compress: { encodings: ["br", "gzip"] }` adds brotli, at about two to three
