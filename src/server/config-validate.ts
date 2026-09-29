@@ -60,21 +60,28 @@ function unknownKeyMessage(name: string, key: string, suggestion: string | undef
 /**
  * `experimental.*` keys that graduated to top-level config, with whether the old alias is
  * still read. Setting one gets a "moved" message instead of a generic unknown-key warning.
- * An honored alias may still be a (deprecated) `ExperimentalConfig` member so a 2.x config
- * keeps type-checking; this map is consulted before the generated key list, so it warns
- * either way.
+ * The honored ones are Next.js's own spellings, kept as obsolete aliases for migrated Next
+ * apps (and so still `ExperimentalConfig` members); this map is consulted before the
+ * generated key list, so it warns either way.
  */
 const MOVED_EXPERIMENTAL_KEYS: ReadonlyMap<string, { to: string; honored: boolean }> = new Map([
   ["streaming", { to: "streaming", honored: false }], // alias removed in 2.0
   ["live", { to: "live", honored: false }], // alias removed in 2.0
-  ["cacheComponents", { to: "cacheComponents", honored: true }], // graduated in 2.0; alias kept
-  ["nodeResolve", { to: "nodeResolve", honored: true }], // graduated in 2.0; alias kept
-  ["reactCompiler", { to: "reactCompiler", honored: true }], // graduated in 2.5; alias kept
-  ["compiler", { to: "reactCompiler", honored: true }], // the pre-2.0 name of the same switch
-  ["asyncContext", { to: "asyncContext", honored: true }], // graduated in 2.5; alias kept
-  ["features", { to: "features", honored: true }], // graduated in 2.5; alias kept
-  // Next.js's own spelling: a migrated next.config carries it; honored as an alias.
-  ["optimizePackageImports", { to: "optimizePackageImports", honored: true }],
+  ["cacheComponents", { to: "cacheComponents", honored: true }], // Next 16's spelling
+  ["reactCompiler", { to: "reactCompiler", honored: true }], // Next 15's spelling
+  ["optimizePackageImports", { to: "optimizePackageImports", honored: true }], // Next's spelling
+]);
+
+/**
+ * denext's own former `experimental.*` keys, removed in 3.0, mapped to the top-level key that
+ * replaces each. Setting one is a validation ERROR, not a warning: silently ignoring, say,
+ * `experimental.nodeResolve: false` would change how the app builds.
+ */
+const REMOVED_EXPERIMENTAL_KEYS: ReadonlyMap<string, string> = new Map([
+  ["compiler", "reactCompiler"],
+  ["asyncContext", "asyncContext"],
+  ["features", "features"],
+  ["nodeResolve", "nodeResolve"],
 ]);
 
 /** The warning for a graduated `experimental.<key>`, pointing at its top-level home. */
@@ -92,6 +99,7 @@ function warnUnknownExperimentalKeys(experimental: unknown, name: string): void 
     return;
   }
   for (const key of Object.keys(experimental)) {
+    if (REMOVED_EXPERIMENTAL_KEYS.has(key)) continue; // a validation error, not a warning
     const moved = MOVED_EXPERIMENTAL_KEYS.get(key);
     if (moved) {
       console.warn(movedKeyMessage(name, key, moved.to, moved.honored));
@@ -208,6 +216,22 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
     const ok = v === undefined || typeof v === "boolean" ||
       (typeof v === "object" && v !== null && !Array.isArray(v));
     if (!ok) fail(`desktop.capabilities.${key}`, "must be a boolean or an options object");
+  }
+  validateOpenPathAllow(c.shell, fail);
+}
+
+/** `desktop.capabilities.shell.openPathAllowExtensions`: bare extensions (no dot, no path). */
+function validateOpenPathAllow(shell: unknown, fail: Fail): void {
+  if (typeof shell !== "object" || shell === null || Array.isArray(shell)) return;
+  const allow = (shell as { openPathAllowExtensions?: unknown }).openPathAllowExtensions;
+  if (allow === undefined) return;
+  const ok = Array.isArray(allow) &&
+    allow.every((e) => typeof e === "string" && e !== "" && !/[./\\]/.test(e));
+  if (!ok) {
+    fail(
+      "desktop.capabilities.shell.openPathAllowExtensions",
+      'must be an array of bare file extensions (no dot, no path separators), e.g. ["py", "sh"]',
+    );
   }
 }
 
@@ -713,9 +737,9 @@ function validateReactNativeAliases(value: unknown, fail: Fail): void {
 
 /** Nested fields whose absence would crash at request time rather than at boot. */
 /**
- * `features` (and its legacy alias `experimental.features`) must be a flat map of booleans —
- * the fold replaces a `feature("KEY")` call with the literal, so a non-boolean value would emit
- * invalid code (and a nested object is always a mistake). Absent keeps every flag off.
+ * `features` must be a flat map of booleans — the fold replaces a `feature("KEY")` call with
+ * the literal, so a non-boolean value would emit invalid code (and a nested object is always a
+ * mistake). Absent keeps every flag off.
  */
 function validateFeatures(features: unknown, at: string, fail: Fail): void {
   if (features === undefined) return;
@@ -781,9 +805,19 @@ function validatePackageList(list: unknown, at: string, fail: Fail, allowFalse =
   }
 }
 
+/** A removed denext `experimental.*` key fails, naming the top-level key that replaced it. */
+function validateRemovedExperimental(experimental: unknown, fail: Fail): void {
+  if (typeof experimental !== "object" || experimental === null) return;
+  for (const [key, to] of REMOVED_EXPERIMENTAL_KEYS) {
+    if (Object.hasOwn(experimental, key)) {
+      fail(`experimental.${key}`, `was removed in denext 3.0 — set top-level \`${to}\` instead`);
+    }
+  }
+}
+
 function validateNestedRequired(config: DenextConfig, fail: Fail): void {
+  validateRemovedExperimental(config.experimental, fail);
   validateFeatures(config.features, "features", fail);
-  validateFeatures(config.experimental?.features, "experimental.features", fail);
   validatePackageList(config.optimizePackageImports, "optimizePackageImports", fail, true);
   validatePackageList(
     config.experimental?.optimizePackageImports,

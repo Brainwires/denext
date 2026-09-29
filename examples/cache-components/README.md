@@ -2,9 +2,9 @@
 
 A minimal demo of Next.js 16 **Cache Components** on denext, a stable opt-in
 enabled by top-level `cacheComponents: true` in
-[`denext.config.ts`](./denext.config.ts) (the legacy
-`experimental: { cacheComponents: true }` still works and warns in dev — as
-does every other `experimental.*` key, all of which are top-level fields now).
+[`denext.config.ts`](./denext.config.ts) (Next.js's
+`experimental: { cacheComponents: true }` spelling still works and warns in
+dev).
 
 The single page renders in two lifetimes:
 

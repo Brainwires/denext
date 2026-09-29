@@ -134,13 +134,6 @@ touches the zero-npm **runtime** guardrail; both are build-time.
 
 **Reconciler:**
 
-- **A key scope per child array.** Sibling arrays under one parent share one key map today
-  (`normalizeChildren` flattens them, `indexOldChildren` keys the flat list), so overlapping
-  keys swap rows' state (KNOWN-LIMITATIONS: "Keys in sibling arrays share one scope"). Give each
-  nested array its own scope on the fiber, as React does, including hydration. The dev
-  duplicate-key warning should then only fire within one array. Un-`ignore` the test
-  "keyed: sibling arrays are separate key scopes" in `tests/keyed-reorder.test.ts`.
-
 **Auth:**
 
 - **Passkeys / WebAuthn** over the adapter's credential tables.

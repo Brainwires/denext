@@ -270,9 +270,6 @@ Deno.test("inspector: source location + owner stack from the family registry", (
     // these, so the location carries the module + export but no line/column.
     assertEquals(parent!.source, { file: "file:///app/parent.tsx", export: "SrcParent" });
     assertEquals(child!.source, { file: "file:///app/child.tsx", export: "SrcChild" });
-    // The pre-2.5 `fileUrl#Export` string is still reported alongside it.
-    assertEquals(parent!.sourceId, "file:///app/parent.tsx#SrcParent");
-    assertEquals(child!.sourceId, "file:///app/child.tsx#SrcChild");
     // Without metadata the hooks keep their kind labels and carry no naming verdict.
     assertEquals(child!.hooksNamed, undefined);
     assertEquals(child!.hooks[0]?.kind, "state");
@@ -326,8 +323,6 @@ Deno.test("inspector: dev metadata overlays the declaration's line/column onto t
         line: 42,
         column: 5,
       });
-      // The legacy string is unchanged by the overlay.
-      assertEquals(leaf!.sourceId, "file:///app/meta.tsx#MetaLeaf");
       // The owner stack carries the same shape (with the parent's own position).
       assertEquals(getOwnerStack(leaf!.id)[0]?.source, {
         file: "file:///app/meta.tsx",

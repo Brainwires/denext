@@ -314,8 +314,9 @@ function nodesOf(
 
 Deno.test("every named config key describes itself", async () => {
   // The editor renders a key's JSDoc as its help text, so a key without any is a labelled
-  // control with nothing to say what it does — which is how `experimental.compiler` and
-  // `experimental.nodeResolve` came to sit unexplained beside the keys that replaced them.
+  // control with nothing to say what it does — which is how the (since removed)
+  // `experimental.compiler` and `experimental.nodeResolve` came to sit unexplained beside the
+  // keys that replaced them.
   const schema = JSON.parse(await Deno.readTextFile(SCHEMA_OUT)) as Record<string, unknown>;
   const bare = nodesOf(schema)
     .filter((entry) => entry.named)
@@ -342,12 +343,11 @@ Deno.test("a superseded key is marked, and says what replaced it", async () => {
   // A block that is ONLY `@deprecated` leaves no summary paragraph — deno doc reports the tag
   // structurally — so without this the key reached the editor with nothing at all to say what
   // it was, sitting beside the key that replaced it.
-  assertEquals(at("experimental", "compiler").deprecated, true);
+  assertEquals(at("experimental", "optimizePackageImports").deprecated, true);
   assertStringIncludes(
-    String(at("experimental", "compiler").description),
-    "top-level `reactCompiler`",
+    String(at("experimental", "optimizePackageImports").description),
+    "top-level `optimizePackageImports`",
   );
-  assertEquals(at("experimental", "nodeResolve").deprecated, true);
   assertEquals(at("experimental", "reactCompiler").deprecated, true);
   assertStringIncludes(
     String(at("experimental", "reactCompiler").description),

@@ -8,7 +8,7 @@
 // and client hydration all see `params.locale`.
 
 import type { Middleware } from "./middleware.ts";
-import { next, redirect } from "./middleware.ts";
+import { next, redirectResponse } from "./middleware.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 
 /** Internationalization configuration. */
@@ -237,6 +237,6 @@ export function localeMiddleware(i18n: I18nConfig): Middleware {
     if (!always && (detected === i18n.defaultLocale || detected === locale)) return next();
 
     const dest = `/${detected}${url.pathname === "/" ? "" : url.pathname}${url.search}`;
-    return redirect(dest);
+    return redirectResponse(dest);
   };
 }

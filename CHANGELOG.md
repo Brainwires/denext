@@ -8,6 +8,55 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking
+
+- **`experimental.compiler` is removed** — set top-level `reactCompiler`. Setting it is now a
+  `denext.config` validation error, not a warning.
+- **`experimental.asyncContext` is removed** — set top-level `asyncContext` (a validation error).
+- **`experimental.features` is removed** — set top-level `features` (a validation error).
+- **`experimental.nodeResolve` is removed** — set top-level `nodeResolve` (a validation error;
+  ignoring an `experimental.nodeResolve: false` silently would change how the app builds).
+- **`redirect` from `denext/server` now throws**, the same `redirect()` as `denext` (and Next).
+  The deprecated alias of `redirectResponse` is gone: in `middleware.ts`, return
+  `redirectResponse(location, status)`. A middleware that still calls `redirect()` keeps
+  working — a thrown `redirect()` / `permanentRedirect()` there becomes a 307 / 308 response
+  (a numeric second argument keeps its status); code that used the returned `Response` itself,
+  say to add a header, must call `redirectResponse`.
+- **`InspectNode.sourceId` is removed** from the DevTools inspector tree — read `source`
+  (`{ file, export, line, column }`) instead.
+
+Unchanged: Next.js's own spellings — `experimental.reactCompiler`, `experimental.cacheComponents`
+and `experimental.optimizePackageImports` — stay honored as obsolete aliases with a dev warning,
+and `unstable_noStore`, `io`, `useFormState` and `images.domains` stay as compatible aliases
+because React / Next still export or accept them.
+
+### Fixed
+
+- **Keys are scoped per array, as in React.** Two `.map()`s rendered side by side under one
+  parent may reuse the same keys: each nested array is its own key scope, so overlapping keys
+  no longer hand one row another row's state, DOM node or input value, and the dev
+  duplicate-key warning only fires within one array. A child after a variable-length list also
+  keeps its identity however many rows the list has (the list is one slot, like React's
+  implicit fragment). The "Keys in sibling arrays share one scope" limitation is gone.
+- **Android native views: `scrollPassthrough`.** A drag that starts on an `"over"` or `"under"`
+  native view and passes the system touch slop along the slot's `scrollPassthrough` axis is
+  handed to the WebView from where it started, so the page scrolls with its own fling. Taps,
+  off-axis drags and pinches stay the view's, as on iOS; `"vertical"` is still the default for
+  `video`. Compile-verified against Capacitor 8; not yet run on an Android device. Re-run
+  `denext mobile add native-views` (template generation 2) and ship a new binary.
+- **Android: a dead WebView renderer no longer ends the app.** The `MainActivity` denext
+  composes (generation 3) answers `onRenderProcessGone`: it logs the event, removes and
+  destroys the dead WebView and recreates the activity, which builds a fresh bridge and
+  reloads the page. A renderer that dies three times within a minute still ends the app, so an
+  over-the-air UI that crashes its renderer is still rolled back as a failed trial. Re-run any
+  `denext mobile add` Android capability to upgrade an unedited `MainActivity`.
+  Compile-verified; not yet run on a device.
+
+### Added
+
+- **`desktop.capabilities.shell.openPathAllowExtensions`** — bare file extensions (`["py",
+  "sh"]`) `openPath` may open despite its executable/script denylist.
+
 ## [2.11.0-rc.1] - 2026-09-29
 
 ### Added

@@ -53,7 +53,7 @@ Deno.test("didYouMean suggests a close key and stays quiet on nonsense", () => {
   assertEquals(didYouMean("xyzzy"), undefined);
   assertEquals(didYouMean("somethingEntirelyUnrelated"), undefined);
   // Any candidate list works (the experimental sub-keys reuse it).
-  assertEquals(didYouMean("asynccontext", EXPERIMENTAL_KEYS), "asyncContext");
+  assertEquals(didYouMean("reactcompiler", EXPERIMENTAL_KEYS), "reactCompiler");
   assertEquals(didYouMean("basePath", EXPERIMENTAL_KEYS), undefined);
 });
 
@@ -78,10 +78,10 @@ Deno.test("experimental.*: a typo gets a suggestion, an empty block is silent", 
   assertEquals(captureWarn(() => warnUnknownConfigKeys({ experimental: {} })), []);
 
   const warns = captureWarn(() =>
-    warnUnknownConfigKeys({ experimental: { complier: true } }, "denext.config.ts")
+    warnUnknownConfigKeys({ experimental: { reactCompilr: true } }, "denext.config.ts")
   );
   assertEquals(warns, [
-    "denext: denext.config.ts has an unknown option `experimental.complier`, which will be ignored — did you mean `compiler`?",
+    "denext: denext.config.ts has an unknown option `experimental.reactCompilr`, which will be ignored — did you mean `reactCompiler`?",
   ]);
   // Far-off: warns without a suggestion, and the top-level key list is NOT consulted.
   const far = captureWarn(() => warnUnknownConfigKeys({ experimental: { basePath: "/x" } }));
@@ -102,34 +102,25 @@ Deno.test("graduated experimental.* keys point at their top-level home (exact wo
   ]);
   // The removed aliases must not also be live `ExperimentalConfig` fields (else the
   // "no longer honored" message would be a lie — the generated list is the arbiter).
-  for (const k of ["streaming", "live", "cacheComponents"]) {
+  for (const k of ["streaming", "live"]) {
     assert(!EXPERIMENTAL_KEYS.includes(k as never), `\`${k}\` is still in ExperimentalConfig`);
   }
+  // Next 16's spelling stays a typed, honored alias.
+  assert(EXPERIMENTAL_KEYS.includes("cacheComponents" as never));
 });
 
-Deno.test("every remaining experimental.* key is a graduated alias: honored, and warns once", () => {
-  // The whole block is deprecated: each member stays an `ExperimentalConfig` field so a 2.x
-  // config keeps type-checking, and setting one warns exactly once, naming its top-level twin.
+Deno.test("every remaining experimental.* key is Next's own spelling: honored, and warns once", () => {
+  // Each member is a Next.js spelling kept as an obsolete alias for migrated Next apps, and
+  // setting one warns exactly once, naming its top-level twin.
   const warns = captureWarn(() =>
     warnUnknownConfigKeys(
-      {
-        experimental: {
-          reactCompiler: true,
-          compiler: true,
-          asyncContext: true,
-          features: { A: true },
-          nodeResolve: false,
-        },
-      },
+      { experimental: { reactCompiler: true, optimizePackageImports: ["x"] } },
       "denext.config.ts",
     )
   );
   assertEquals(warns, [
     "denext: denext.config.ts sets `experimental.reactCompiler`, which is still honored for now but has moved — set top-level `reactCompiler` instead.",
-    "denext: denext.config.ts sets `experimental.compiler`, which is still honored for now but has moved — set top-level `reactCompiler` instead.",
-    "denext: denext.config.ts sets `experimental.asyncContext`, which is still honored for now but has moved — set top-level `asyncContext` instead.",
-    "denext: denext.config.ts sets `experimental.features`, which is still honored for now but has moved — set top-level `features` instead.",
-    "denext: denext.config.ts sets `experimental.nodeResolve`, which is still honored for now but has moved — set top-level `nodeResolve` instead.",
+    "denext: denext.config.ts sets `experimental.optimizePackageImports`, which is still honored for now but has moved — set top-level `optimizePackageImports` instead.",
   ]);
   // Every generated sub-key is covered by a "moved" pointer — no member is left un-deprecated.
   for (const k of EXPERIMENTAL_KEYS) {
@@ -145,15 +136,35 @@ Deno.test("every remaining experimental.* key is a graduated alias: honored, and
   );
 });
 
+Deno.test("denext's own experimental.* aliases were removed in 3.0: a validation error, no warning", () => {
+  const removed: [string, unknown, string][] = [
+    ["compiler", true, "reactCompiler"],
+    ["asyncContext", true, "asyncContext"],
+    ["features", { A: true }, "features"],
+    // Silently ignoring `false` here would flip the resolver back on — hence an error.
+    ["nodeResolve", false, "nodeResolve"],
+  ];
+  for (const [key, value, to] of removed) {
+    const config = { experimental: { [key]: value } } as never;
+    assertThrows(
+      () => validateDenextConfig(config, "denext.config.ts"),
+      Error,
+      `invalid denext.config.ts: \`experimental.${key}\` was removed in denext 3.0 — set top-level \`${to}\` instead`,
+    );
+    // The key check leaves it to the validator: no "unknown option" or "moved" line too.
+    assertEquals(captureWarn(() => warnUnknownConfigKeys(config)), [], key);
+    assert(!EXPERIMENTAL_KEYS.includes(key as never), `\`${key}\` is still in ExperimentalConfig`);
+  }
+});
+
 Deno.test("a non-object `experimental` never crashes the key check", () => {
   for (const experimental of [true, false, null, undefined, "compiler", 42, ["compiler"]]) {
     assertEquals(captureWarn(() => warnUnknownConfigKeys({ experimental })), []);
   }
 });
 
-Deno.test("features is validated at both spellings, each error naming the field as written", () => {
+Deno.test("features is validated, each error naming the field as written", () => {
   validateDenextConfig({ features: { A: true, B: false } });
-  validateDenextConfig({ experimental: { features: { A: true } } });
   assertThrows(
     () => validateDenextConfig({ features: ["A"] as never }),
     Error,
@@ -163,11 +174,6 @@ Deno.test("features is validated at both spellings, each error naming the field 
     () => validateDenextConfig({ features: { A: "yes" } as never }),
     Error,
     "`features.A` must be a boolean",
-  );
-  assertThrows(
-    () => validateDenextConfig({ experimental: { features: { A: 1 } } as never }),
-    Error,
-    "`experimental.features.A` must be a boolean",
   );
 });
 
@@ -316,6 +322,21 @@ Deno.test("desktop.capabilities: valid shapes pass; bad shapes throw a field-sco
     Error,
     "`desktop.capabilities.fs`",
   );
+});
+
+Deno.test("desktop.capabilities.shell.openPathAllowExtensions: bare extensions only", () => {
+  const cfg = (allow: unknown) =>
+    ({
+      desktop: { capabilities: { shell: { openPath: true, openPathAllowExtensions: allow } } },
+    }) as unknown as Record<never, never>;
+  validateDenextConfig(cfg(["py", "SH"]));
+  for (const bad of [".py", "a/b", "a\\b", "", 5, "py"]) {
+    assertThrows(
+      () => validateDenextConfig(cfg(bad === "py" ? "py" : [bad])),
+      Error,
+      "`desktop.capabilities.shell.openPathAllowExtensions`",
+    );
+  }
 });
 
 Deno.test("csp / spa.csp: opt-in values must be string arrays; unknown keys warn", () => {

@@ -25,8 +25,12 @@
 
 import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-marker.ts";
 
-/** The generation of the templates below, stamped into every file the installer writes. */
-export const NATIVE_VIEWS_TEMPLATE_VERSION = 1;
+/**
+ * The generation of the templates below, stamped into every file the installer writes.
+ * Generation 2: the Android plugin honours `scrollPassthrough`; the bump keeps an older denext
+ * from rewriting that plugin back to one where every touch on a view stays the view's.
+ */
+export const NATIVE_VIEWS_TEMPLATE_VERSION = 2;
 
 /**
  * A template as the installer writes it: a first line
@@ -1776,6 +1780,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.webkit.WebView;
 import android.widget.FrameLayout;
@@ -1809,7 +1814,8 @@ import org.json.JSONObject;
  *
  * <p>Touches: a layer above the WebView holds the "over" views and takes a touch only when it
  * lands on one's visible, uncovered part (else the WebView gets it). A touch listener on the
- * WebView hands a gesture that starts over an "under" view's visible part to that view.
+ * WebView hands a gesture that starts over an "under" view's visible part to that view. A drag
+ * along the slot's {@code scrollPassthrough} axis goes back to the WebView (see {@link Drag}).
  */
 @CapacitorPlugin(name = "DenextNativeViews")
 public class DenextNativeViewsPlugin extends Plugin {
@@ -1823,6 +1829,8 @@ public class DenextNativeViewsPlugin extends Plugin {
         final FrameLayout host;
         boolean visible = false;
         boolean interactive = true;
+        /** The drags that scroll the page: "vertical", "horizontal", "both" or "none". */
+        String scrollPassthrough = "none";
         final List<RectF> passthrough = new ArrayList<>();
         /** The last frame from the page, re-applied when the document scrolls. */
         @Nullable
@@ -1849,9 +1857,62 @@ public class DenextNativeViewsPlugin extends Plugin {
         }
     }
 
+    /**
+     * One gesture on a view, deciding whether it scrolls the page (scrollPassthrough): once it
+     * moves past the touch slop, a single-finger drag mostly along the slot's axis ("vertical",
+     * "horizontal", either for "both"), with something for the page to scroll that way, is the
+     * page's; a tap, a drag the other way or a second finger leave it the view's. Decided once
+     * per gesture, like iOS's pan recognizer.
+     */
+    private final class Drag {
+        /** The gesture's ACTION_DOWN, in the coordinates it arrived in. */
+        @Nullable
+        MotionEvent down;
+        @Nullable
+        private Slot slot;
+        private boolean decided = false;
+        /** The page scrolls: the rest of the gesture goes to the WebView. */
+        boolean scrolling = false;
+
+        void start(Slot slot, MotionEvent event) {
+            reset();
+            this.slot = slot;
+            down = MotionEvent.obtain(event);
+            decided = "none".equals(slot.scrollPassthrough);
+        }
+
+        /** Whether {@code event} turns the gesture into a page scroll (true once, at that event). */
+        boolean takesOver(MotionEvent event) {
+            if (decided || down == null || slot == null) return false;
+            if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) {
+                decided = true;
+                return false;
+            }
+            if (event.getActionMasked() != MotionEvent.ACTION_MOVE) return false;
+            float dx = Math.abs(event.getX() - down.getX());
+            float dy = Math.abs(event.getY() - down.getY());
+            if (dx <= touchSlop && dy <= touchSlop) return false;
+            decided = true;
+            boolean vertical = dy > dx;
+            String axis = slot.scrollPassthrough;
+            boolean along = "both".equals(axis) || (vertical ? "vertical".equals(axis) : "horizontal".equals(axis));
+            scrolling = along && canScroll(slot, vertical);
+            return scrolling;
+        }
+
+        void reset() {
+            if (down != null) down.recycle();
+            down = null;
+            slot = null;
+            decided = false;
+            scrolling = false;
+        }
+    }
+
     /** The layer above the WebView: it takes a gesture only when it starts on an "over" view. */
     private final class Router extends FrameLayout {
         private boolean routing = false;
+        private final Drag drag = new Drag();
 
         Router(Activity activity) {
             super(activity);
@@ -1860,10 +1921,30 @@ public class DenextNativeViewsPlugin extends Plugin {
         @Override
         public boolean dispatchTouchEvent(MotionEvent event) {
             int action = event.getActionMasked();
-            if (action == MotionEvent.ACTION_DOWN) routing = hit(event.getX(), event.getY(), "over") != null;
+            if (action == MotionEvent.ACTION_DOWN) {
+                Slot slot = hit(event.getX(), event.getY(), "over");
+                routing = slot != null;
+                if (slot != null) drag.start(slot, event);
+            }
             if (!routing) return false;
-            super.dispatchTouchEvent(event);
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) routing = false;
+            float dx = getLeft() - bridge.getWebView().getLeft();
+            float dy = getTop() - bridge.getWebView().getTop();
+            if (drag.scrolling) {
+                toWeb(event, dx, dy);
+            } else if (drag.takesOver(event)) {
+                // The view lets go; the WebView gets the whole drag, from where it started.
+                MotionEvent cancel = cancelOf(event, 0, 0);
+                super.dispatchTouchEvent(cancel);
+                cancel.recycle();
+                toWeb(drag.down, dx, dy);
+                toWeb(event, dx, dy);
+            } else {
+                super.dispatchTouchEvent(event);
+            }
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                routing = false;
+                drag.reset();
+            }
             return true;
         }
     }
@@ -1883,9 +1964,16 @@ public class DenextNativeViewsPlugin extends Plugin {
     /** Main-thread only. The "under" view the current WebView gesture goes to. */
     @Nullable
     private Slot touchTarget;
+    /** Main-thread only. The current WebView gesture's scrollPassthrough, for an "under" view. */
+    private final Drag underDrag = new Drag();
+    /** Main-thread only. Set while a drag taken from a view is dispatched to the WebView. */
+    private boolean forwarding = false;
+    /** The distance (px) a touch moves before it is a drag. */
+    private int touchSlop = 8;
 
     @Override
     public void load() {
+        touchSlop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
         if (DenextNativeViews.get("video") == null) DenextNativeViews.register("video", new DenextVideoViewFactory());
         for (String[] builtIn : BUILT_IN) registerByName(builtIn[0], builtIn[1]);
         JSONObject configured = getConfig().getObject("factories");
@@ -1926,7 +2014,8 @@ public class DenextNativeViewsPlugin extends Plugin {
         }
         JSObject props = call.getObject("props", new JSObject());
         String placement = "under".equals(call.getString("placement")) ? "under" : "over";
-        main.post(() -> make(call, id, type, props, placement));
+        String scrollPassthrough = call.getString("scrollPassthrough", "none");
+        main.post(() -> make(call, id, type, props, placement, scrollPassthrough));
     }
 
     @PluginMethod
@@ -2027,7 +2116,7 @@ public class DenextNativeViewsPlugin extends Plugin {
 
     // Making and placing views (main thread).
 
-    private void make(PluginCall call, String id, String type, JSObject props, String placement) {
+    private void make(PluginCall call, String id, String type, JSObject props, String placement, String scrollPassthrough) {
         DenextNativeViewFactory factory = DenextNativeViews.get(type);
         Activity activity = getActivity();
         if (factory == null || activity == null) {
@@ -2052,7 +2141,9 @@ public class DenextNativeViewsPlugin extends Plugin {
         }
         layer.addView(host, new FrameLayout.LayoutParams(1, 1));
         if ("under".equals(placement)) bridge.getWebView().setBackgroundColor(Color.TRANSPARENT);
-        slots.put(id, new Slot(id, placement, factory, view, host));
+        Slot slot = new Slot(id, placement, factory, view, host);
+        slot.scrollPassthrough = scrollPassthrough == null ? "none" : scrollPassthrough;
+        slots.put(id, slot);
         JSObject result = new JSObject();
         result.put("placement", placement);
         call.resolve(result);
@@ -2089,21 +2180,84 @@ public class DenextNativeViewsPlugin extends Plugin {
         }
     }
 
-    /** The WebView's touch listener: a gesture that starts on an "under" view goes to it. */
+    /**
+     * The WebView's touch listener: a gesture that starts on an "under" view goes to it, until a
+     * scrollPassthrough drag hands it back (the WebView then sees it from its ACTION_DOWN).
+     */
     private boolean routeUnder(WebView web, MotionEvent event) {
+        if (forwarding) return false;
         FrameLayout layer = underLayer;
         if (layer == null) return false;
         float dx = web.getLeft() - layer.getLeft();
         float dy = web.getTop() - layer.getTop();
         int action = event.getActionMasked();
-        if (action == MotionEvent.ACTION_DOWN) touchTarget = hit(event.getX() + dx, event.getY() + dy, "under");
+        boolean end = action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL;
+        if (action == MotionEvent.ACTION_DOWN) {
+            touchTarget = hit(event.getX() + dx, event.getY() + dy, "under");
+            if (touchTarget != null) underDrag.start(touchTarget, event);
+        }
         if (touchTarget == null) return false;
+        if (underDrag.scrolling || underDrag.takesOver(event)) {
+            if (underDrag.down != null) {
+                // The drag just became the page's: the view lets go, the WebView starts it.
+                MotionEvent cancel = cancelOf(event, dx, dy);
+                layer.dispatchTouchEvent(cancel);
+                cancel.recycle();
+                toWeb(underDrag.down, 0, 0);
+                underDrag.down.recycle();
+                underDrag.down = null;
+            }
+            if (end) {
+                touchTarget = null;
+                underDrag.reset();
+            }
+            // Not consumed: the WebView's own onTouchEvent scrolls the page.
+            return false;
+        }
         MotionEvent copy = MotionEvent.obtain(event);
         copy.offsetLocation(dx, dy);
         layer.dispatchTouchEvent(copy);
         copy.recycle();
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) touchTarget = null;
+        if (end) {
+            touchTarget = null;
+            underDrag.reset();
+        }
         return true;
+    }
+
+    /** Dispatch {@code event}, moved by (dx, dy) into the WebView's coordinates, to the WebView. */
+    private void toWeb(@Nullable MotionEvent event, float dx, float dy) {
+        if (event == null) return;
+        MotionEvent copy = MotionEvent.obtain(event);
+        copy.offsetLocation(dx, dy);
+        forwarding = true;
+        try {
+            bridge.getWebView().dispatchTouchEvent(copy);
+        } finally {
+            forwarding = false;
+            copy.recycle();
+        }
+    }
+
+    /** An ACTION_CANCEL copy of {@code event}, moved by (dx, dy). The caller recycles it. */
+    private static MotionEvent cancelOf(MotionEvent event, float dx, float dy) {
+        MotionEvent cancel = MotionEvent.obtain(event);
+        cancel.setAction(MotionEvent.ACTION_CANCEL);
+        cancel.offsetLocation(dx, dy);
+        return cancel;
+    }
+
+    /**
+     * Whether the page has room to scroll that way. Only the document's scroll is known here; a
+     * scrolling element inside the page is assumed to scroll (the WebView decides).
+     */
+    private boolean canScroll(Slot slot, boolean vertical) {
+        JSONObject scroller = slot.frame == null ? null : slot.frame.optJSONObject("scroller");
+        if (scroller == null || !"document".equals(scroller.optString("kind"))) return true;
+        WebView web = bridge.getWebView();
+        return vertical
+            ? web.canScrollVertically(1) || web.canScrollVertically(-1)
+            : web.canScrollHorizontally(1) || web.canScrollHorizontally(-1);
     }
 
     /** The top-most {@code placement} view that takes a touch at (x, y), or null. */
@@ -2122,6 +2276,7 @@ public class DenextNativeViewsPlugin extends Plugin {
         Slot slot = slots.get(frame.optString("id"));
         if (slot == null) return;
         slot.frame = frame;
+        if (frame.has("scrollPassthrough")) slot.scrollPassthrough = frame.optString("scrollPassthrough", "none");
         this.dpr = dpr;
         place(slot);
     }
@@ -2199,7 +2354,10 @@ public class DenextNativeViewsPlugin extends Plugin {
 
     private void remove(@Nullable Slot slot) {
         if (slot == null) return;
-        if (touchTarget == slot) touchTarget = null;
+        if (touchTarget == slot) {
+            touchTarget = null;
+            underDrag.reset();
+        }
         if (slot.host.getParent() instanceof ViewGroup) ((ViewGroup) slot.host.getParent()).removeView(slot.host);
         slot.factory.destroy(slot.view);
     }

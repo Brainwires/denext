@@ -31,6 +31,50 @@ export function normalizeChildren(children: VNodeChildren): VNode[] {
   return out;
 }
 
+/** Children normalized for reconciliation, with the key scope of each. */
+export interface ScopedChildren {
+  nodes: VNode[];
+  /**
+   * `scopes[i]` is the key scope of `nodes[i]`: the path of nested child arrays it came from
+   * (`"1"` for the array in the second child slot, `"1.0"` for an array inside that, …), or
+   * `undefined` for a direct child. `null` when no child came from a nested array, the
+   * common case, so a plain list allocates nothing extra.
+   */
+  scopes: (string | undefined)[] | null;
+}
+
+/**
+ * {@linkcode normalizeChildren} that also records each child's key scope. React treats every
+ * nested array as its own fragment, so keys are only compared within one array: two sibling
+ * `.map()`s may reuse the same keys, and a variable-length list never shifts the identity of
+ * the children after it. A top-level `children` array is the direct child list itself.
+ */
+export function normalizeChildrenScoped(children: VNodeChildren): ScopedChildren {
+  const nodes: VNode[] = [];
+  let scopes: (string | undefined)[] | null = null;
+  const push = (c: VNodeChild, scope: string | undefined) => {
+    if (c == null || c === false || c === true) return;
+    if (typeof c === "string") nodes.push(textVNode(c));
+    else if (typeof c === "number") nodes.push(textVNode(String(c)));
+    else nodes.push(c as VNode);
+    if (scopes !== null) scopes.push(scope);
+    else if (scope !== undefined) {
+      scopes = new Array<string | undefined>(nodes.length - 1).fill(undefined);
+      scopes.push(scope);
+    }
+  };
+  const walk = (list: readonly unknown[], scope: string | undefined) => {
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (Array.isArray(c)) walk(c, scope === undefined ? String(i) : `${scope}.${i}`);
+      else push(c as VNodeChild, scope);
+    }
+  };
+  if (Array.isArray(children)) walk(children, undefined);
+  else push(children as VNodeChild, undefined);
+  return { nodes, scopes };
+}
+
 // Optional component-family check, installed by the dev Fast Refresh runtime
 // (`refresh-runtime.ts`). Null in production — that module is never imported
 // there — so `sameType` stays pure reference equality with no added cost on the

@@ -124,9 +124,9 @@ async function buildCompatLoad(
     outDir: join(ctx.projectRoot, ".denext"),
     modules,
     minify: ctx.mode !== "dev",
-    // Honor the App-Router opt-out: `experimental.nodeResolve: false` puts the compat
+    // Honor the App-Router opt-out: `nodeResolve: false` puts the compat
     // bundle back on Deno's strict `npm:` loader (the default resolves from node_modules).
-    resolveAllNodeModules: ctx.config.experimental?.nodeResolve !== false,
+    resolveAllNodeModules: ctx.config.nodeResolve !== false,
   });
   return createNextCompatServerLoader(ctx.load, { moduleMap });
 }

@@ -199,14 +199,15 @@ export {
   createMiddlewareRunner,
   NEXT,
   next,
-  redirect,
   redirectResponse,
   REWRITE,
   rewrite,
   withHeaders,
 } from "./middleware.ts";
 // The throwing navigation signals also resolve from `denext/server` (the obvious import
-// in a Server Component / Server Action), identical to the `denext` exports.
+// in a Server Component / Server Action), identical to the `denext` exports — `redirect`
+// included, as in Next.js. Thrown from middleware, a redirect signal becomes the response
+// `redirectResponse` would build (see src/server/middleware.ts).
 export {
   forbidden,
   isControlSignal,
@@ -216,6 +217,7 @@ export {
   isUnauthorized,
   notFound,
   permanentRedirect,
+  redirect,
   RedirectType,
   unauthorized,
 } from "../runtime/error-boundary.ts";

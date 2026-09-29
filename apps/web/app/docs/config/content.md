@@ -492,19 +492,20 @@ Build-time switches. All off by default except `nodeResolve`,
   app's own `react-native` imports as that desktop package. See
   [React Native / Expo apps](/docs/react-native#options).
 
-> **`experimental` is superseded.** Everything denext shipped under it is
-> denext's own finished work, so every key graduated to a top-level field —
-> `experimental.reactCompiler` (and the older `experimental.compiler`) →
-> `reactCompiler`, `experimental.asyncContext` → `asyncContext`,
-> `experimental.features` → `features`, `experimental.nodeResolve` →
-> `nodeResolve`, `experimental.cacheComponents` → `cacheComponents` — and
-> Next's own `experimental.optimizePackageImports` → `optimizePackageImports`. The legacy
-> spellings are still honored when the top-level field is absent (the top-level
-> one wins when both are set), and each emits a dev warning naming the new
-> field, so nothing breaks while you migrate; the block is removed in 3.0.
-> `experimental.streaming` → `streaming` and `experimental.live` → `live` are no
-> longer read at all — move the value up. An unknown `experimental.*` key warns
-> with a did-you-mean, like a top-level one.
+> **`experimental` is superseded.** Every key denext shipped under it is a
+> top-level field now. Next.js's own spellings stay readable as obsolete
+> aliases for migrated Next apps — `experimental.reactCompiler` →
+> `reactCompiler`, `experimental.cacheComponents` → `cacheComponents` and
+> `experimental.optimizePackageImports` → `optimizePackageImports` — honored
+> when the top-level field is absent (the top-level one wins when both are
+> set), each with a dev warning naming the new field. denext's own former keys
+> were **removed in 3.0** and are a config error naming their replacement:
+> `experimental.compiler` → `reactCompiler`, `experimental.asyncContext` →
+> `asyncContext`, `experimental.features` → `features`,
+> `experimental.nodeResolve` → `nodeResolve`. `experimental.streaming` →
+> `streaming` and `experimental.live` → `live` are no longer read at all —
+> move the value up. An unknown `experimental.*` key warns with a
+> did-you-mean, like a top-level one.
 
 ## Config schema
 

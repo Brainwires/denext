@@ -28,26 +28,6 @@ next-compat interop path — denext's own apps are unaffected):
   correctly, just not off-thread. A one-time dev warning fires. Self-host
   Partytown if you need true off-main-thread execution.
 
-- **Keys in sibling arrays share one scope.** React scopes keys per array, so two
-  arrays rendered side by side under one parent may reuse the same keys. denext flattens
-  nested child arrays and matches keys across the whole list, so overlapping keys in sibling
-  arrays can match the wrong row: a row may take another row's component state, DOM node and
-  uncontrolled input value. The dev duplicate-key warning also fires for this pattern, although
-  it is valid React. Minimal repro:
-
-  ```tsx
-  <ul>
-    {a.map((id) => <Row key={id} />)}
-    {b.map((id) => <Row key={id} />)}
-  </ul>;
-  // a = b = ["1", "2", "3"], then a = ["2", "3"]:
-  // A2 and A3 reuse B2's and B3's fibers (their state is swapped)
-  ```
-
-  Keys within one array, and arrays whose keys don't overlap, are unaffected. Until it is fixed
-  (see the roadmap), prefix the keys per array (`key={`a:${id}`}`) or wrap each array in its
-  own keyed `<Fragment>`. Tracked by an `ignore`d test in `tests/keyed-reorder.test.ts`.
-
 - **A root layout's `<html>`/`<body>` rendered by CLIENT code is re-created on hydration.**
   denext owns the real document tags and nests a layout's `<html>`/`<head>`/`<body>` inside
   its page container, where the browser's parser drops them. A Server Component layout is
@@ -609,9 +589,9 @@ four documented bounds of the opt-in:
   (the cause is not yet known), and an `"over"` view hides while covered; `"under"` does not hide
   on occlusion (the page paints over it), so it is the placement to use.
   A slot a virtualized list unmounts destroys its view (a map loses its position; a video
-  restarts). A drag that starts on an `"under"` / `"over"` view scrolls the page only on iOS
-  (`scrollPassthrough`); on Android every touch on the view stays the view's. Android is
-  compiled, not run on a device or emulator.
+  restarts). Android's `scrollPassthrough` (a drag past the touch slop along the axis is handed
+  to the WebView from its start) is compile-verified, not yet run on an Android device, like the
+  rest of the Android plugin (compiled, not run on a device or emulator).
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so

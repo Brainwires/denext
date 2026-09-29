@@ -34,8 +34,18 @@ function combinations(): AndroidFeature[][] {
 const activityPath = (pkg: string) =>
   `android/app/src/main/java/${pkg.replaceAll(".", "/")}/MainActivity.java`;
 
-/** `text` without its first (marker) line: what releases before the marker wrote. */
+/** `text` without its first (marker) line. */
 const unmarked = (text: string) => text.slice(text.indexOf("\n") + 1);
+
+/**
+ * A current body as releases before generation 3 wrote it (and, unmarked, as releases before the
+ * marker did): everything after `super.onCreate` (the renderer recovery) is generation 3's.
+ */
+const beforeRecovery = (body: string) =>
+  body.replace(
+    /( {8}super\.onCreate\(savedInstanceState\);\n)[\s\S]*$/,
+    "$1    }\n}\n",
+  );
 
 /** A project holding only `text` as its MainActivity; `fn` runs, then the project goes. */
 async function withActivity(
@@ -89,7 +99,7 @@ async function assertUpgrades(
       label,
     );
     // Only a file already at this release's generation is not an upgrade.
-    const current = text.startsWith("// denext-main-activity-template: 2 ");
+    const current = text.startsWith("// denext-main-activity-template: 3 ");
     assertEquals(report.upgraded, current ? [] : [path], label);
   });
 }
@@ -97,7 +107,7 @@ async function assertUpgrades(
 Deno.test("MainActivity: written under an intact marker line, package on the next line", async () => {
   for (const set of combinations()) {
     const text = await mainActivitySource("com.example.app", new Set(set));
-    assert(text.startsWith("// denext-main-activity-template: 2 sha256="), set.join("+"));
+    assert(text.startsWith("// denext-main-activity-template: 3 sha256="), set.join("+"));
     assertEquals(await markedTemplateIntact("main-activity", text), true);
     assert(unmarked(text).startsWith("package com.example.app;\n"));
   }
@@ -108,7 +118,7 @@ Deno.test("MainActivity: every pre-marker shape upgrades to the current source, 
   // SHIPPED_MAIN_ACTIVITY_SHA256; the git-backed test below checks them against the tags).
   for (const pkg of PACKAGES) {
     for (const set of combinations()) {
-      const old = unmarked(await mainActivitySource(pkg, new Set(set)));
+      const old = beforeRecovery(unmarked(await mainActivitySource(pkg, new Set(set))));
       for (const feature of FEATURES) {
         await assertUpgrades(
           pkg,
@@ -195,24 +205,65 @@ Deno.test("MainActivity: back and edge-to-edge compose with every feature, befor
   );
 });
 
-Deno.test("MainActivity: generation 1 files keep their bodies and upgrade to generation 2", async () => {
+Deno.test("MainActivity: generation 1 and 2 files upgrade to generation 3 (renderer recovery)", async () => {
   const pkg = "com.example.app";
-  for (const set of combinations()) {
-    const body = unmarked(await mainActivitySource(pkg, new Set(set)));
-    const gen1 = await renderMarkedTemplate("main-activity", 1, body);
-    await assertUpgrades(pkg, gen1, "back", new Set([...set, "back"]), `${set.join("+")} + back`);
+  for (const generation of [1, 2]) {
+    for (const set of combinations()) {
+      const body = beforeRecovery(unmarked(await mainActivitySource(pkg, new Set(set))));
+      const old = await renderMarkedTemplate("main-activity", generation, body);
+      const label = `generation ${generation}: ${set.join("+")} + back`;
+      await assertUpgrades(pkg, old, "back", new Set([...set, "back"]), label);
+    }
   }
-  // Re-adding a feature a generation-1 file has: brought up to generation 2, body unchanged.
-  const body = unmarked(await mainActivitySource(pkg, new Set(["ota", "widgets"])));
+  // Re-adding a feature a generation-1 file has: brought up to generation 3, the registrations
+  // unchanged and the renderer recovery added.
+  const current = unmarked(await mainActivitySource(pkg, new Set(["ota", "widgets"])));
+  const body = beforeRecovery(current);
+  assert(body !== current && !body.includes("RendererRecovery"));
   await withActivity(
     pkg,
     await renderMarkedTemplate("main-activity", 1, body),
     async (dir, path) => {
       const report = await register(dir, "ota");
       assertEquals(report.upgraded, [path]);
-      assertEquals(unmarked(await Deno.readTextFile(join(dir, path))), body);
+      const text = unmarked(await Deno.readTextFile(join(dir, path)));
+      assertEquals(text, current);
+      assertEquals(beforeRecovery(text), body);
     },
   );
+});
+
+Deno.test("MainActivity: every combination survives a dead WebView renderer", async () => {
+  for (const set of [...combinations(), ALL_FEATURES]) {
+    const text = await mainActivitySource("com.example.app", new Set(set));
+    const label = set.join("+");
+    // Registered on the bridge super.onCreate built (it is null when the layout had no WebView).
+    const superCall = text.indexOf("super.onCreate(savedInstanceState);");
+    const listener = text.indexOf(
+      "if (bridge != null) bridge.addWebViewListener(new RendererRecovery(this));",
+    );
+    assert(superCall >= 0 && superCall < listener, label);
+    assertStringIncludes(text, "extends com.getcapacitor.WebViewListener");
+    // Capacitor's BridgeWebViewClient returns what its listeners answer: true keeps the app.
+    assertStringIncludes(
+      text,
+      "public boolean onRenderProcessGone(android.webkit.WebView webView, android.webkit.RenderProcessGoneDetail detail)",
+    );
+    const handler = text.slice(text.indexOf("public boolean onRenderProcessGone"));
+    const order = [
+      'android.util.Log.w("denext"',
+      ".removeView(webView);",
+      "webView.destroy();",
+      "activity.recreate();",
+      "return true;",
+    ].map((s) => handler.indexOf(s));
+    assert(order.every((at, i) => at > 0 && (i === 0 || order[i - 1] < at)), `${label}: ${order}`);
+    // A renderer that keeps dying ends the app instead of looping.
+    assertStringIncludes(handler, "if (RECENT.size() >= MAX_RECOVERIES) {");
+    assertStringIncludes(handler, "return false;");
+    // No plugin registration this release would not recognise.
+    assert(!/registerPlugin\(\s*RendererRecovery/.test(text), label);
+  }
 });
 
 Deno.test("MainActivity: a marked one from another generation is upgraded", async () => {

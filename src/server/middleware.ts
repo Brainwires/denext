@@ -6,6 +6,7 @@
 import { getCookies } from "@std/http/cookie";
 import { safeRedirectLocation } from "./config.ts";
 import { after } from "./request-context.ts";
+import { isRedirect } from "../runtime/error-boundary.ts";
 
 /** Internal marker symbol keying a {@linkcode NextCommand}. */
 export const NEXT: unique symbol = Symbol.for("denext.middleware.next");
@@ -192,13 +193,6 @@ export function rewrite(
 export function redirectResponse(location: string, status = 307): Response {
   return new Response(null, { status, headers: { location: safeRedirectLocation(location) } });
 }
-
-/**
- * @deprecated Renamed {@linkcode redirectResponse} in 2.0 — `redirect` on `denext/server`
- * collided with the throwing `redirect()` from `denext` (Server/Client Components). This
- * alias stays through 2.x and is removed in 3.0.
- */
-export const redirect: typeof redirectResponse = redirectResponse;
 
 // ---- Runner ----------------------------------------------------------------
 
@@ -464,6 +458,28 @@ function toEntries(exp: MiddlewareExport): MiddlewareEntry[] {
     .filter((e): e is MiddlewareEntry => typeof e?.handler === "function");
 }
 
+/**
+ * Invoke one entry's handler. A thrown `redirect()` / `permanentRedirect()` (the throwing
+ * helpers `denext` and `denext/server` export, as in Next.js) becomes the response
+ * {@linkcode redirectResponse} would build, keeping the signal's status (307, or 308 for a
+ * permanent redirect). Anything else thrown propagates.
+ */
+async function callHandler(
+  entry: MiddlewareEntry,
+  request: Request,
+  url: URL,
+): Promise<MiddlewareResult> {
+  try {
+    return await entry.handler(requestAdapter(request), {
+      url,
+      waitUntil: (promise) => after(() => promise),
+    });
+  } catch (err) {
+    if (isRedirect(err)) return redirectResponse(err.url, err.status);
+    throw err;
+  }
+}
+
 /** Run one entry against the current request/url and classify its result. */
 async function runEntry(
   entry: MiddlewareEntry,
@@ -472,10 +488,7 @@ async function runEntry(
   matchPath: string,
 ): Promise<MiddlewareOutcome> {
   if (!matches(entry.config, matchPath, { request, url })) return { type: "next" };
-  const result = await entry.handler(requestAdapter(request), {
-    url,
-    waitUntil: (promise) => after(() => promise),
-  });
+  const result = await callHandler(entry, request, url);
 
   if (result instanceof Response) {
     // A `NextResponse.next()`/`.rewrite()` is a real Response carrying an intent

@@ -34,9 +34,9 @@ Deno.test("defineConfig warns on an unknown key with a suggestion", () => {
 
 Deno.test("defineConfig warns on a typo'd experimental.* key and on graduated aliases", () => {
   // Typo one level down → suggestion from the experimental sub-key list.
-  const typo = captureWarn(() => defineConfig({ experimental: { complier: true } } as never));
+  const typo = captureWarn(() => defineConfig({ experimental: { reactCompilr: true } } as never));
   assertEquals(typo, [
-    "denext: denext.config has an unknown option `experimental.complier`, which will be ignored — did you mean `compiler`?",
+    "denext: denext.config has an unknown option `experimental.reactCompilr`, which will be ignored — did you mean `reactCompiler`?",
   ]);
   // Graduated keys → a "moved" pointer, not a generic unknown-key warning.
   const moved = captureWarn(() =>
@@ -57,10 +57,18 @@ Deno.test("defineConfig warns on a typo'd experimental.* key and on graduated al
     [],
   );
   assertEquals(
-    captureWarn(() => defineConfig({ cacheComponents: true, experimental: { compiler: true } })),
+    captureWarn(() =>
+      defineConfig({ cacheComponents: true, experimental: { reactCompiler: true } })
+    ),
     [
-      "denext: denext.config sets `experimental.compiler`, which is still honored for now but has moved — set top-level `reactCompiler` instead.",
+      "denext: denext.config sets `experimental.reactCompiler`, which is still honored for now but has moved — set top-level `reactCompiler` instead.",
     ],
+  );
+  // denext's own removed aliases throw instead (3.0).
+  assertThrows(
+    () => defineConfig({ experimental: { compiler: true } } as never),
+    Error,
+    "`experimental.compiler` was removed in denext 3.0 — set top-level `reactCompiler` instead",
   );
 });
 

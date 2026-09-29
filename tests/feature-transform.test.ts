@@ -133,10 +133,9 @@ async function loadThrough(
   return (await fn({ path }))?.contents;
 }
 
-Deno.test("the fold reads the top-level `features` config key (and its legacy alias)", async () => {
-  // `features` graduated out of `experimental` in 2.5: the top-level key drives the fold, the
-  // legacy spelling still does when the top-level one is absent, and top-level wins when both
-  // are set (the maps are not merged).
+Deno.test("the fold reads the top-level `features` config key", async () => {
+  // `features` graduated out of `experimental` in 2.5, and the legacy spelling was removed in
+  // 3.0: only the top-level key drives the fold.
   const dir = await Deno.makeTempDir({ prefix: "denext_feature_cfg_" });
   try {
     const file = join(dir, "App.tsx");
@@ -150,19 +149,6 @@ Deno.test("the fold reads the top-level `features` config key (and its legacy al
       file,
     );
     assertStringIncludes(graduated ?? "", "export const on = true;");
-    const legacy = await loadThrough(
-      spaSourceTransformPlugin(dir, { experimental: { features: { FLAG: true } } }),
-      file,
-    );
-    assertStringIncludes(legacy ?? "", "export const on = true;");
-    const both = await loadThrough(
-      spaSourceTransformPlugin(dir, {
-        features: { FLAG: false },
-        experimental: { features: { FLAG: true } },
-      }),
-      file,
-    );
-    assertStringIncludes(both ?? "", "export const on = false;");
     // No flags configured anywhere → the plugin is not even installed.
     assertEquals(spaSourceTransformPlugin(dir, {}), undefined);
   } finally {
