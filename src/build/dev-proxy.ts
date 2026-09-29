@@ -62,10 +62,27 @@ function frontIsSecure(req: Request, url: URL): boolean {
   return url.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https";
 }
 
+/**
+ * The content encodings Deno's `fetch` decodes transparently (a single `gzip` or `br` token —
+ * verified against Deno 2.9: `deflate`, `zstd`, `x-gzip` and a multi-encoding list arrive
+ * as-is). After such a decode the response still carries the upstream `Content-Encoding` and
+ * the ENCODED `Content-Length`, so neither describes the bytes `res.body` yields.
+ */
+function fetchDecodedEncoding(contentEncoding: string | null): boolean {
+  const enc = contentEncoding?.trim().toLowerCase();
+  return enc === "gzip" || enc === "br";
+}
+
 async function proxyHttp(req: Request, url: URL, backend: URL): Promise<Response> {
   const target = new URL(url.pathname + url.search, backend);
   const headers = new Headers(req.headers);
   headers.set("host", backend.host);
+  // Let `fetch` negotiate the upstream encoding with ITS defaults rather than the browser's
+  // list: it decodes exactly the encodings it advertises (gzip, br), so the strip below is
+  // correct by construction. Forwarding the browser's `Accept-Encoding` would let a backend
+  // answer with one `fetch` advertises but does not decode (an explicit list changes what it
+  // decodes — `identity` upstream leaves even a gzip body encoded), and the two would drift.
+  headers.delete("accept-encoding");
   const init: RequestInit & { duplex?: "half" } = {
     method: req.method,
     headers,
@@ -79,6 +96,15 @@ async function proxyHttp(req: Request, url: URL, backend: URL): Promise<Response
   // Secure, which the browser would otherwise refuse to store).
   const secure = frontIsSecure(req, url);
   const outHeaders = new Headers(res.headers);
+  // `fetch` already decoded a gzip/br body, so the upstream encoding (and the length of the
+  // ENCODED bytes) no longer describe what is relayed: a browser handed plain bytes labelled
+  // `gzip` fails with "cannot decode raw data" (WebKit) / ERR_CONTENT_DECODING_FAILED (Chromium).
+  // An encoding `fetch` does not decode (deflate, zstd, …) is relayed verbatim WITH its headers,
+  // which still describe the bytes. The front server may re-encode.
+  if (fetchDecodedEncoding(res.headers.get("content-encoding"))) {
+    outHeaders.delete("content-encoding");
+    outHeaders.delete("content-length");
+  }
   outHeaders.delete("set-cookie");
   for (const c of res.headers.getSetCookie?.() ?? []) {
     const noDomain = c.replace(/;\s*Domain=[^;]+/i, "");

@@ -503,3 +503,59 @@ Deno.test("resolveOutDir: relative to importMetaUrl when given, else cwd", () =>
   assertEquals(resolveOutDir({ outDir: "/abs/out" }), "/abs/out");
   assertEquals(resolveOutDir({}), join(Deno.cwd(), "out"));
 });
+
+// ---- the backend proxy (`spa.proxy`) through the release handler -----------------------------
+
+Deno.test({
+  name: "desktop handler (release path): a gzip API response from the backend is relayed decodable",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  // The T3 Code 3.0.0 black screen: the backend gzipped `/api/orchestration/shell`, `fetch`
+  // decoded it, and the proxy relayed the plain bytes still labelled `Content-Encoding: gzip`
+  // with the ENCODED `Content-Length` — WebKit: "cannot decode raw data".
+  const { gzipSync } = await import("node:zlib");
+  const payload = JSON.stringify({ shell: "zsh", pad: "x".repeat(2048) });
+  const gz = new Uint8Array(gzipSync(new TextEncoder().encode(payload)));
+  const ac = new AbortController();
+  const { promise, resolve } = Promise.withResolvers<number>();
+  const backend = Deno.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    signal: ac.signal,
+    onListen: ({ port }) => resolve(port),
+  }, () =>
+    new Response(gz, {
+      headers: {
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+        "content-length": String(gz.byteLength),
+      },
+    }));
+  const backendPort = await promise;
+  const dir = await exportDir();
+  try {
+    const proxy = await import("../src/build/dev-proxy.ts");
+    const handle = createDesktopHandler(
+      { proxy: { prefixes: ["/api"], target: `http://127.0.0.1:${backendPort}` } },
+      dir,
+      proxy,
+    );
+    const res = await handle(
+      new Request("http://127.0.0.1/api/orchestration/shell", {
+        headers: { "accept-encoding": "gzip, deflate, br" },
+      }),
+      new URL("http://127.0.0.1/api/orchestration/shell"),
+    );
+    assertEquals(res.status, 200);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    // The body is plain JSON, so the response must not claim a gzip encoding or its length.
+    assertEquals(res.headers.get("content-encoding"), null);
+    assertEquals(res.headers.get("content-length"), null);
+    assertEquals(new TextDecoder().decode(bytes), payload);
+  } finally {
+    ac.abort();
+    await backend.finished;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
