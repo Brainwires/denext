@@ -222,6 +222,12 @@ ignorePatterns = [
   # harness/ssr-measure.ts drives the server-rendered list bench in headless Chromium (CDP I/O
   # only; its pure parts live in harness/ssr-report.ts, which stays analyzed and tested).
   "examples/scroll-bench/harness/ssr-measure.ts",
+  # examples/rn-desktop's packaging scripts are byte-identical vendored copies of the scaffold
+  # template (a tests/integration/scaffold.test.ts byte-identity test pins them to it), so they
+  # deliberately mirror examples/native/scripts. Excluded from analysis so that intentional
+  # per-example duplication + the template's own CRAP aren't reported against them; the
+  # byte-identity test is their guard. (examples/native/scripts is an entry point above.)
+  "examples/rn-desktop/scripts/**",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls
