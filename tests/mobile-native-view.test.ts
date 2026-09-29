@@ -400,6 +400,42 @@ Deno.test("NativeViewSlot: iOS embeds the view in the slot's scroller; props, ev
   });
 });
 
+Deno.test("NativeViewSlot: an inline callback ref gets the element and never re-creates the view", async () => {
+  const views = viewsPlugin(["map"], { placement: "embed" });
+  await inShell("ios", { DenextNativeViews: views.plugin }, async () => {
+    pageTracker(views.plugin as Any, fakeEnv().env);
+    const seen: unknown[] = [];
+    let n = 0;
+    const { container, rerender, root } = mount(() =>
+      h(NativeViewSlot as Any, {
+        type: "map",
+        props: { n },
+        // A new function every render, as an inline `ref={(el) => …}` is.
+        ref: (el: unknown) => seen.push(el),
+      })
+    );
+    await tick();
+    await tick();
+    const slot = container.firstChild;
+    assertEquals(seen[0], slot, "the caller's ref holds the slot element");
+    for (n = 1; n < 4; n++) {
+      rerender();
+      await tick();
+    }
+    assertEquals(views.calls.filter(([m]) => m === "create").length, 1, "one native view");
+    assertEquals(
+      views.calls.filter(([m]) => m === "update").every(([, a]) =>
+        !(a as Any).frames.some((f: Any) => f.hidden)
+      ),
+      true,
+      "never hidden by a ref swap",
+    );
+    assertEquals(seen.at(-1), slot, "the latest ref holds the element");
+    root.unmount();
+    await tick();
+  });
+});
+
 Deno.test("NativeViewSlot: Android draws over the page; an unknown type or a failure falls back", async () => {
   const views = viewsPlugin(["video"]);
   await inShell("android", { DenextNativeViews: views.plugin }, async () => {

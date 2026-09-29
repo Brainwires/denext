@@ -272,3 +272,28 @@ Deno.test("providers/google + facebook: the web flows ask for tokens directly", 
   });
   assertEquals(Google.discovery.tokenEndpoint, "https://oauth2.googleapis.com/token");
 });
+
+Deno.test("AuthRequest: state and PKCE verifier are uniform over the unreserved charset", async () => {
+  const charset = /^[A-Za-z0-9\-._~]+$/;
+  const request = new AuthSession.AuthRequest({ clientId: "c", redirectUri: "app://cb" });
+  await request.getAuthRequestConfigAsync();
+  assertEquals(request.state.length, 10);
+  assert(charset.test(request.state), request.state);
+  assertEquals(request.codeVerifier?.length, 64);
+  assert(charset.test(request.codeVerifier!), request.codeVerifier);
+  // Bytes 198..255 would favour the first 58 characters (b % 66): they are drawn again.
+  const real = crypto.getRandomValues;
+  let calls = 0;
+  crypto.getRandomValues = (<T extends ArrayBufferView | null>(array: T): T => {
+    const bytes = array as unknown as Uint8Array;
+    bytes.fill(calls++ === 0 ? 250 : 65);
+    return array;
+  }) as typeof crypto.getRandomValues;
+  try {
+    const biased = new AuthSession.AuthRequest({ clientId: "c", redirectUri: "app://cb" });
+    assertEquals(biased.state, "~".repeat(10), "the rejected 250s are not mapped to '0'");
+    assertEquals(calls, 2);
+  } finally {
+    crypto.getRandomValues = real;
+  }
+});

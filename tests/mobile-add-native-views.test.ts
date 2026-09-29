@@ -193,6 +193,19 @@ Deno.test("native-views Android plugin: scrollPassthrough hands a drag on a view
   assertStringIncludes(plugin, "web.canScrollVertically(1) || web.canScrollVertically(-1)");
 });
 
+Deno.test("native-views iOS plugin: the __debug logging command is Debug-only", () => {
+  const plugin = NATIVE_VIEWS_IOS_FILES["DenextNativeViewsPlugin.swift"];
+  // Generation 3 is the one that gated it (an older denext must not rewrite the gate away).
+  assert(NATIVE_VIEWS_TEMPLATE_VERSION >= 3);
+  const branch = plugin.slice(plugin.indexOf('if name == "__debug" {'));
+  const gated = branch.slice(0, branch.indexOf("#endif"));
+  // Logging is switched on only inside `#if DEBUG`; a release build answers `logging: false`.
+  assert(gated.indexOf("#if DEBUG") < gated.indexOf("DenextNativeViewsLog.enabled = true"));
+  assert(gated.indexOf("DenextNativeViewsLog.enabled = true") < gated.indexOf("#else"));
+  assertStringIncludes(gated.slice(gated.indexOf("#else")), 'call.resolve(["logging": false])');
+  assertEquals(plugin.match(/DenextNativeViewsLog\.enabled = true/g)?.length, 1);
+});
+
 Deno.test("mobile add native-map: native-views plus the map view and osmdroid", async () => {
   await inProject({}, async (dir) => {
     const { run } = fakeRunner();

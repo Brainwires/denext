@@ -117,6 +117,28 @@ Deno.test("joinFocusedFieldReveal: shared listeners, a covered-height change re-
   });
 });
 
+Deno.test("joinFocusedFieldReveal: the last leave cancels a frame already queued", async () => {
+  // A settle timer fired and queued its frame; the view left before the frame ran.
+  const s = scene({ viewport: 508, fieldTop: 784 });
+  const queued = new Map<number, () => void>();
+  let next = 1;
+  s.globals.requestAnimationFrame = (fn: () => void) => {
+    queued.set(next, fn);
+    return next++;
+  };
+  s.globals.cancelAnimationFrame = (id: number) => queued.delete(id);
+  await withGlobals(s.globals, async () => {
+    const a = joinFocusedFieldReveal();
+    s.listeners.get("window:resize")!();
+    await new Promise((r) => setTimeout(r, 20)); // the 0 ms timer ran and queued a frame
+    assertEquals(queued.size, 1);
+    a.leave();
+    assertEquals(queued.size, 0, "stop() cancelled the queued frame");
+    await new Promise((r) => setTimeout(r, 400));
+    assertEquals(s.scroller.scrollTop, 0, "no reveal after the last view left");
+  });
+});
+
 Deno.test("revealFocusedField: smooth with the keyboard; instant under reduced motion; no chasing", async () => {
   // A scroller that animates: `scrollTo({ behavior: "smooth" })` is recorded, not applied.
   const s = scene({ viewport: 508, fieldTop: 784 });

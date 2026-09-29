@@ -225,12 +225,6 @@
     },
     {
       "specifier": "react-native-macos",
-      "symbol": "UIManager",
-      "category": "MEMBER_MISSING",
-      "detail": "missing member(s): dispatchViewManagerCommand, getViewManagerConfig, hasViewManagerConfig"
-    },
-    {
-      "specifier": "react-native-macos",
       "symbol": "ViewBase",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
@@ -465,12 +459,6 @@
     },
     {
       "specifier": "react-native-windows",
-      "symbol": "UIManager",
-      "category": "MEMBER_MISSING",
-      "detail": "missing member(s): dispatchViewManagerCommand, getViewManagerConfig, hasViewManagerConfig"
-    },
-    {
-      "specifier": "react-native-windows",
       "symbol": "ViewBase",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
@@ -702,12 +690,6 @@
       "symbol": "TouchableWithoutFeedbackComponent",
       "category": "MISSING_VALUE",
       "detail": "runtime export missing from denext"
-    },
-    {
-      "specifier": "react-native",
-      "symbol": "UIManager",
-      "category": "MEMBER_MISSING",
-      "detail": "missing member(s): dispatchViewManagerCommand, getViewManagerConfig, hasViewManagerConfig"
     },
     {
       "specifier": "react-native",

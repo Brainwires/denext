@@ -697,11 +697,15 @@ four documented bounds of the opt-in:
   views (stand-ins that render their children). `react-native-webview` is an `<iframe>`:
   script injection works only for inline HTML and same-origin pages.
 - **The parity ledger's open React Native gaps.** React Native's 32 `*Base` / `*Component`
-  type-alias exports are not exported, and 9 exports miss members (`UIManager`'s view-manager
-  commands, `AppRegistry`'s headless tasks and others;
-  `scripts/parity/native/baselines/known-gaps.json`).
-  `AppState`'s `memoryWarning` never fires, `Linking.sendIntent()` rejects, and
-  `ActionSheetIOS.dismissActionSheet()` closes nothing.
+  type-alias exports are not exported, and 8 exports miss members (`AppRegistry`'s headless
+  tasks and others; `scripts/parity/native/baselines/known-gaps.json`).
+  `AppState`'s `memoryWarning` never fires (neither Capacitor nor denext's native code forwards
+  the OS memory warning), `Linking.sendIntent()` rejects, and
+  `ActionSheetIOS.dismissActionSheet()` closes nothing. `UIManager.getViewManagerConfig(name)`
+  answers only for a native component the app built with `requireNativeComponent` /
+  `codegenNativeComponent`, and `UIManager.dispatchViewManagerCommand` reaches a native view
+  only through the element a ref holds (react-native-web's `findNodeHandle` throws, so there is
+  no numeric tag). `codegenNativeCommands` commands take the same route, so the same limits apply.
 - **`LayoutAnimation` animates positions, not sizes.** `configureNext` measures the page, waits
   for the next DOM change and plays FLIP animations: a view that moved glides from its old place
   (a transform), created views animate in and deleted views animate out (a snapshot clone in a

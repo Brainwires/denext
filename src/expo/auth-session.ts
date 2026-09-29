@@ -358,11 +358,24 @@ export class TokenResponse implements TokenResponseConfig {
   }
 }
 
-/** A random URL-safe string of `size` characters. */
+/** The PKCE-unreserved characters `randomString` draws from. */
+const RANDOM_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+
+/** Bytes at or above this are rejected, so every character is equally likely (256 - 256 % 66). */
+const RANDOM_LIMIT = 256 - 256 % RANDOM_CHARS.length;
+
+/**
+ * A random URL-safe string of `size` characters, uniform over {@linkcode RANDOM_CHARS}: a byte
+ * that would favour the first characters (`b % 66` over 256 values) is drawn again.
+ */
 function randomString(size: number): string {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
-  return Array.from(crypto.getRandomValues(new Uint8Array(size)), (b) => chars[b % chars.length])
-    .join("");
+  let out = "";
+  while (out.length < size) {
+    for (const b of crypto.getRandomValues(new Uint8Array(size - out.length))) {
+      if (b < RANDOM_LIMIT) out += RANDOM_CHARS[b % RANDOM_CHARS.length];
+    }
+  }
+  return out;
 }
 
 /** The S256 PKCE challenge of `verifier`. */

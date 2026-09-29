@@ -273,9 +273,14 @@ function reportExpoDeps(d: NonNullable<MigrateResult["expo"]>["deps"]): void {
   }
 }
 
-/** An `expo-*` shim's status line: the status, what it omits, and its shimmed subpaths. */
+/** How many omitted exports a status line names before it counts the rest. */
+const NAMED_OMISSIONS = 6;
+
+/** An `expo-*` shim's status line: the status, what it omits (by name), and its shimmed subpaths. */
 function shimLine(p: NonNullable<MigrateResult["expo"]>["deps"]["expo"][number]): string {
-  const omitted = p.omitted ? ` (${p.omitted} export(s) not provided)` : "";
+  const named = p.omittedExports.slice(0, NAMED_OMISSIONS).join(", ");
+  const more = p.omitted > NAMED_OMISSIONS ? `, +${p.omitted - NAMED_OMISSIONS} more` : "";
+  const omitted = p.omitted ? ` (${p.omitted} export(s) not provided: ${named}${more})` : "";
   const subpaths = p.subpaths ? ` — shims for ${p.subpaths.join(", ")}; the rest is real` : "";
   return `${p.status}${omitted}${subpaths}`;
 }

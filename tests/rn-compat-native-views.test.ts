@@ -17,6 +17,10 @@ import RNMapView, {
 import RNVideo, { type VideoRef } from "../src/react-native-compat/video.ts";
 import { pageTracker, type TrackerEnv } from "../src/mobile/native-view-tracker.ts";
 import { resetNativeViewWarningsForTesting } from "../src/expo/internal/native-view.ts";
+import { getViewManagerConfig, nativeHostComponent } from "../src/react-native/native-modules.ts";
+// What React Native mode's build calls on react-native-web's UIManager, and what its
+// codegenNativeCommands dispatch through (the overlay entry's).
+import { dispatchViewManagerCommand, withViewManagerCommands } from "../src/react-native/mod.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
 import { type Any, fakePlugin, inShell, mount, settle } from "./helpers/mobile-fakes.ts";
@@ -369,4 +373,60 @@ Deno.test("expo-symbols: SymbolView is SystemIcon (a Material Symbol off iOS) or
     h(SymbolView as Any, { name: "star", fallback: h("i", null, "*") })
   );
   assertEquals(withFallback.container.firstChild.tagName, "I");
+});
+
+// ---- UIManager's view manager API ---------------------------------------------------------
+
+Deno.test("UIManager: getViewManagerConfig knows the app's native components only", () => {
+  assertEquals(getViewManagerConfig("NoSuchView"), null);
+  nativeHostComponent("RNTChart");
+  const config = getViewManagerConfig("RNTChart")!;
+  assertEquals(config.Commands.zoomTo, "zoomTo", "a command's id is its name");
+  assertEquals((config.Commands as Any).then, undefined, "not thenable");
+  // Added in place; a member react-native-web already has is kept.
+  const own = () => "own";
+  const ui: Any = withViewManagerCommands({ measure: own, dispatchViewManagerCommand: own });
+  assertEquals(ui.measure, own);
+  assertEquals(ui.dispatchViewManagerCommand, own);
+  assertEquals(ui.getViewManagerConfig, getViewManagerConfig);
+  assertEquals(ui.hasViewManagerConfig("RNTChart"), true);
+  assertEquals(ui.hasViewManagerConfig("NoSuchView"), false);
+});
+
+Deno.test("UIManager: dispatchViewManagerCommand runs on the native slot a ref names", async () => {
+  const views = viewsPlugin(["RNTChart"]);
+  const warned: unknown[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]) => void warned.push(args[0]);
+  try {
+    await inShell("android", { DenextNativeViews: views.plugin }, async () => {
+      pageTracker(views.plugin as Any, quietEnv());
+      const Chart = nativeHostComponent("RNTChart");
+      const ref: { current: Any } = { current: null };
+      // Before the view is native, and for a tag that is no slot: a no-op, warned once.
+      dispatchViewManagerCommand(ref, "zoomTo", [2]);
+      dispatchViewManagerCommand(42, "zoomTo", [2]);
+      assertEquals(warned.length, 1);
+      assert(String(warned[0]).includes('dispatchViewManagerCommand("zoomTo") names no native'));
+      mount(() => h(Chart as Any, { ref, values: [1] }));
+      await tick();
+      await tick();
+      assertEquals(ref.current?.getAttribute("data-denext-native-view"), "RNTChart");
+      const id = created(views).id;
+      const { Commands } = getViewManagerConfig("RNTChart")!;
+      dispatchViewManagerCommand(ref.current, Commands.zoomTo, [3, { animated: true }]);
+      dispatchViewManagerCommand(ref, "reset");
+      await tick();
+      assertEquals(commands(views), [["zoomTo", { args: [3, { animated: true }] }], ["reset", {
+        args: [],
+      }]]);
+      assertEquals(views.calls.filter(([m]) => m === "command").map(([, a]) => (a as Any).id), [
+        id,
+        id,
+      ]);
+      assertEquals(warned.length, 1, "no further warnings");
+    });
+  } finally {
+    console.warn = warn;
+  }
 });

@@ -37,6 +37,21 @@ because React / Next still export or accept them.
   through CommonJS `__exportStar`, say) was hot-swapped against the page's old bundle, failed to
   link ("does not provide an export named …"), fell back to a reload and then reloaded again for
   the rebuild. `denext dev` now rebuilds the bundle before deciding, and reloads the page once.
+- **Keyboard-aware views no longer scroll once more after the last one unmounts**: the queued
+  animation frame is cancelled.
+- **Native views (iOS): the `__debug` logging and `__frame` geometry commands work in Debug
+  builds only**, so page script cannot switch on logging in a release build. Re-run
+  `denext mobile add native-views` (template generation 3).
+- **`denext/expo/auth-session`: the random `state` and PKCE `code_verifier` are uniformly
+  distributed** (rejection sampling instead of a modulo).
+- **`denext migrate --from expo` reports each shim's omitted exports** and never calls a shim
+  with omissions or documented differences `full` (`expo-haptics` and `expo-keep-awake` now
+  read `partial`); it suggests a `denext mobile add` capability only for a package with a shim.
+- **React Native mode: `UIManager.getViewManagerConfig`, `hasViewManagerConfig` and
+  `dispatchViewManagerCommand` exist, and `codegenNativeCommands` commands work.** A command
+  sent to the element a ref to a native component holds runs on that native view slot;
+  anything else warns once in dev and does nothing. A `ref` on `<NativeViewSlot>` now receives
+  the slot element.
 - **Keys are scoped per array, as in React.** Two `.map()`s rendered side by side under one
   parent may reuse the same keys: each nested array is its own key scope, so overlapping keys
   no longer hand one row another row's state, DOM node or input value, and the dev
@@ -56,6 +71,21 @@ because React / Next still export or accept them.
   over-the-air UI that crashes its renderer is still rolled back as a failed trial. Re-run any
   `denext mobile add` Android capability to upgrade an unedited `MainActivity`.
   Compile-verified; not yet run on a device.
+- **`denext desktop package` works for a project with a stylesheet.** The CLI's CSS re-exec guard
+  (`DENEXT_CSS_ACTIVE` / `DENEXT_MODULE_ACTIVE`) no longer leaks into the packaging script's
+  `deno task export`, which had skipped its own CSS re-exec and failed with
+  `Import "denext/desktop/client" not a dependency` (the default scaffold has `public/styles.css`).
+- **macOS packaging lands the bundle where signing expects it.** `deno desktop --output X.app`
+  writes `X.app.app`; the macOS packaging template now passes the base name, so signing, the
+  universal `lipo` merge and the `.dmg` step all find the bundle.
+- **Packaged apps embed their desktop extensions.** The packaging scripts add `--include` for each
+  `desktop.capabilities.extensions` module, so an extension no longer fails to load at launch.
+- **Packaged binaries bake `--no-prompt`.** A least-privilege packaged app throws on an unbaked
+  permission instead of blocking on a permission prompt the GUI has no TTY to answer.
+- **`sqlite` ATTACH / `VACUUM INTO` refusal surfaces as `forbidden`, not a generic `internal`,** so
+  the page sees why the statement was rejected.
+- **`denext desktop add` removes the scaffold's commented `capabilities` placeholder** once it
+  writes the real block, instead of leaving the hint beside it.
 
 ### Added
 

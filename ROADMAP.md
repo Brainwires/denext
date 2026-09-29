@@ -259,8 +259,8 @@ ran on an iPhone, is [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md).
 - `denext profile --android` over remote CDP.
 - A Skia (CanvasKit) recipe; Tamagui / Unistyles verification.
 - The parity ledger's React Native gaps: the `*Base` / `*Component` aliases, the missing
-  members (`UIManager.dispatchViewManagerCommand` / `getViewManagerConfig`,
-  `AppRegistry.registerHeadlessTask` and others), and the lists' `renderScrollComponent`,
+  members (`AppRegistry.registerHeadlessTask` and others), and the lists'
+  `renderScrollComponent`,
   `automaticallyAdjustKeyboardInsets` and LegendList `snapToIndices` props.
 
 ## Candidate features (from the framework-gap survey)

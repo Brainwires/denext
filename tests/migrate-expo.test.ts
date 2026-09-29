@@ -222,7 +222,7 @@ Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native mo
     // The dependency report.
     const status = Object.fromEntries(e.deps.expo.map((p) => [p.name, p.status]));
     assertEquals(status["expo-sqlite"], "partial");
-    assertEquals(status["expo-haptics"], "full");
+    assertEquals(status["expo-haptics"], "partial"); // approximated styles are a documented difference
     assertEquals(status["expo-contacts"], "none");
     assertEquals(e.deps.nativeOnly, [
       { name: "@acme/terminal-native", kind: "Expo native module" },
@@ -478,7 +478,9 @@ Deno.test("migrate CLI: the Expo report", async () => {
     const out = cap.logs.join("\n");
     assertStringIncludes(out, 'Expo app detected — wrote denext.config.ts (mode: "spa"');
     assertStringIncludes(out, "not statically readable (computed in code): ");
-    assertStringIncludes(out, "expo-sqlite              partial");
+    assertStringIncludes(out, "expo-sqlite              partial (9 export(s) not provided: ");
+    assertStringIncludes(out, `${EXPO_SHIMS["expo-sqlite"].omitted![0]}, `);
+    assertStringIncludes(out, ", +3 more)");
     assertStringIncludes(out, "expo-contacts            no shim");
     assertStringIncludes(out, "react-native-nitro-markdown — Nitro module (JSI)");
     assertStringIncludes(out, "install react-native-web @sqlite.org/sqlite-wasm");
@@ -649,4 +651,40 @@ Deno.test("expoDependencyReport: an unshimmed background package says what to us
     assertEquals(review.status, "full");
     assertEquals(review.advice, undefined);
   });
+});
+
+Deno.test("expoDependencyReport: every shim's standing comes from the manifest, omissions named", async () => {
+  await withApp({ "package.json": { name: "p" } }, async (dir) => {
+    const names = Object.keys(EXPO_SHIMS).filter((key) => /^expo(-[a-z-]+)?$/.test(key));
+    const report = await expoDependencyReport(
+      dir,
+      Object.fromEntries(names.map((n) => [n, "57.0.0"])),
+    );
+    assertEquals(report.expo.map((p) => p.name).sort(), [...names].sort());
+    for (const p of report.expo) {
+      const shim = EXPO_SHIMS[p.name];
+      assertEquals(p.omittedExports, shim.omitted ?? [], p.name);
+      assertEquals(p.omitted, p.omittedExports.length, p.name);
+      // `full` only where nothing is left out; otherwise the manifest's own status.
+      if (p.omitted > 0) assert(p.status !== "full", `${p.name} omits exports but reads full`);
+      else assertEquals(p.status, shim.status, p.name);
+    }
+    const asset = report.expo.find((p) => p.name === "expo-asset")!;
+    assertEquals(asset.omittedExports, ["Asset.byHash", "Asset.byUri", "Asset.fromMetadata"]);
+  });
+});
+
+Deno.test("expoMobilePlan: every package that suggests a capability has a shim in the manifest", () => {
+  // Every expo-* dependency at once: each suggested capability names a package the manifest
+  // shims (the plan's "because" is the package for a dependency-driven capability).
+  const deps = Object.fromEntries(
+    [...Object.keys(EXPO_SHIMS), "expo-task-manager", "expo-background-fetch", "expo-contacts"]
+      .map((n) => [n, "1"]),
+  );
+  const plan = expoMobilePlan(deps, NO_CONFIG);
+  assert(plan.capabilities.length > 10, "the shimmed packages suggest their capabilities");
+  for (const c of plan.capabilities) {
+    const pkg = c.because.split(" ")[0];
+    assert(pkg in EXPO_SHIMS, `${c.capability} suggested for ${pkg}, which has no shim`);
+  }
 });

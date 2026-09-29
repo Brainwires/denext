@@ -21,6 +21,7 @@ import {
   WEB_PLATFORM_EXTENSIONS,
   withAppearancePolyfill,
   withNativeModuleExports,
+  withViewManagerCommandsSource,
 } from "../src/build/react-native.ts";
 import { spaShellHtml } from "../src/build/spa.ts";
 import { resolveProject, validateDenextConfig } from "../src/build/paths.ts";
@@ -669,6 +670,30 @@ Deno.test("withAppearancePolyfill: inserted ahead of the default export; left al
   const out = withAppearancePolyfill("var A = {};\nexport default A;");
   assertStringIncludes(out, "})(A);\nexport default A;");
   assertEquals(withAppearancePolyfill("module.exports = {};"), "module.exports = {};");
+});
+
+Deno.test("withViewManagerCommandsSource: UIManager gains the view manager API from the overlay", () => {
+  const es = withViewManagerCommandsSource("var UIManager = {};\nexport default UIManager;", false);
+  assert(es.startsWith('import * as __denextViewManagerOverlay from "denext/react-native";\n'));
+  assertStringIncludes(es, "})(UIManager);\nexport default UIManager;");
+  assertEquals(
+    withViewManagerCommandsSource("module.exports = {};", false),
+    "module.exports = {};",
+  );
+  // The CommonJS build: run it with a fake overlay (and without one: left alone).
+  const cjs = withViewManagerCommandsSource(
+    '"use strict";\nvar UIManager = { measure() {} };\n' +
+      "var _default = exports.default = UIManager;\nmodule.exports = exports.default;\n",
+    true,
+  );
+  const run = (overlay: Record<string, unknown>) => {
+    const module = { exports: {} as Record<string, unknown> };
+    new Function("require", "module", "exports", cjs)(() => overlay, module, module.exports);
+    return module.exports;
+  };
+  const added = run({ withViewManagerCommands: (u: Record<string, unknown>) => (u.added = true) });
+  assertEquals(added.added, true);
+  assertEquals("added" in run({}), false, "an overlay without it leaves UIManager alone");
 });
 
 Deno.test("reactNative dev: the per-module (unbundled) loop is the default, like any SPA", async () => {

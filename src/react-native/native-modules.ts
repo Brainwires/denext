@@ -12,7 +12,7 @@
  */
 
 import { nativeModule, nativeModuleName } from "../mobile/native-module.ts";
-import { nativeViewComponent } from "../mobile/native-view.ts";
+import { nativeViewComponent, nativeViewSlotCommand } from "../mobile/native-view.ts";
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 
@@ -193,4 +193,76 @@ export function nativeHostComponent(
     hostComponents.set(type, component = Host);
   }
   return component;
+}
+
+/** A view manager's config as React Native code reads it: only its `Commands`. */
+export interface ViewManagerConfig {
+  /** Every command name maps to itself (a native view slot's commands are called by name). */
+  readonly Commands: Readonly<Record<string, string>>;
+}
+
+/** `Commands` of every config: any name is its own command id. */
+const COMMANDS: Readonly<Record<string, string>> = new Proxy({}, {
+  get: (_target, key) => typeof key === "string" && key !== "then" ? key : undefined,
+});
+
+/**
+ * React Native's `UIManager.getViewManagerConfig(name)`: a config for a native component this
+ * app built with `requireNativeComponent` / `codegenNativeComponent` (a native view slot of that
+ * type, {@linkcode nativeHostComponent}), null for any other name — so a library that
+ * feature-detects its view falls back instead of mounting a view nothing draws.
+ *
+ * @param name The view manager (native component) name.
+ * @returns The config, or null.
+ */
+export function getViewManagerConfig(name: string): ViewManagerConfig | null {
+  return typeof name === "string" && hostComponents?.has(name) ? { Commands: COMMANDS } : null;
+}
+
+/** Whether the dev warning for a command with no native view has been shown. */
+let warnedCommand = false;
+
+/** Warn once (not in a production build) that a view command reached no native view. */
+function warnCommandOnce(command: unknown, why: string): void {
+  if (warnedCommand || (globalThis as { __DEV__?: boolean }).__DEV__ === false) return;
+  warnedCommand = true;
+  console.warn(
+    `denext reactNative: UIManager.dispatchViewManagerCommand("${String(command)}") ${why}; ` +
+      "it does nothing (further commands are not reported).",
+  );
+}
+
+/**
+ * React Native's `UIManager.dispatchViewManagerCommand(tag, command, args)`: when `tag` is a
+ * native view slot's element (what a ref to a native component holds; react-native-web's
+ * `findNodeHandle` throws, so a numeric tag cannot name one) and that view is native, runs
+ * the command on it (`{ args }`, React Native's positional arguments). Anything else does
+ * nothing, with one warning in dev.
+ *
+ * @param tag The view: its element, or a ref object holding it.
+ * @param command The command name (a `Commands` entry of {@linkcode getViewManagerConfig}).
+ * @param args The command's arguments.
+ */
+export function dispatchViewManagerCommand(tag: unknown, command: unknown, args?: unknown): void {
+  const run = nativeViewSlotCommand(tag);
+  if (!run) return warnCommandOnce(command, "names no native view");
+  run(String(command), { args: Array.isArray(args) ? args : [] }).catch((err: unknown) =>
+    warnCommandOnce(command, `failed (${err instanceof Error ? err.message : String(err)})`)
+  );
+}
+
+/**
+ * react-native-web's `UIManager` with the view manager API it lacks, added in place (a member it
+ * already has is kept): {@linkcode getViewManagerConfig}, `hasViewManagerConfig` and
+ * {@linkcode dispatchViewManagerCommand}.
+ *
+ * @param UIManager react-native-web's `UIManager`.
+ * @returns The same object.
+ */
+export function withViewManagerCommands<T extends object>(UIManager: T): T {
+  const u = UIManager as Record<string, unknown>;
+  u.getViewManagerConfig ??= getViewManagerConfig;
+  u.hasViewManagerConfig ??= (name: string) => getViewManagerConfig(name) !== null;
+  u.dispatchViewManagerCommand ??= dispatchViewManagerCommand;
+  return UIManager;
 }

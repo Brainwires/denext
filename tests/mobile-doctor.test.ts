@@ -211,6 +211,34 @@ Deno.test("mobile doctor --release: debuggable, cleartext, mixed content, CSP an
   }
 });
 
+Deno.test("mobile doctor --release: a native copy left inspectable by a killed dev session is an error", async () => {
+  // The source config is clean; `denext mobile dev` turned debugging on in the synced copies and
+  // was killed before it could restore them.
+  const dir = await project({
+    ...cleanFiles(),
+    "ios/App/App/capacitor.config.json": JSON.stringify({
+      appId: "dev.example",
+      ios: { webContentsDebuggingEnabled: true },
+    }),
+    "android/app/src/main/assets/capacitor.config.json": JSON.stringify({
+      appId: "dev.example",
+      android: { webContentsDebuggingEnabled: true },
+    }),
+  });
+  try {
+    const report = await runMobileDoctor({ root: dir, profile: "release" });
+    assertEquals(flagged(report, "error"), ["webview-debugging"]);
+    const found = report.findings.filter((f) => f.check === "webview-debugging");
+    assertEquals(found.map((f) => f.message.split(":")[0]), [
+      "ios/App/App/capacitor.config.json",
+      "android/app/src/main/assets/capacitor.config.json",
+    ]);
+    for (const f of found) assertStringIncludes(f.fix, "remove ");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("mobile doctor: a TS config is read as data; no export is a warning; account deletion found", async () => {
   const files: Record<string, string | null> = {
     ...cleanFiles(),

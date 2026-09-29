@@ -287,7 +287,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   "expo-haptics": {
     module: "./haptics.ts",
     pinned: "57.0.2",
-    status: "full",
+    status: "partial",
     notes: "Soft/Rigid play as light/heavy; Android haptic constants play the nearest kind.",
   },
   "expo-image": {
@@ -328,7 +328,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
   "expo-keep-awake": {
     module: "./keep-awake.ts",
     pinned: "57.0.2",
-    status: "full",
+    status: "partial",
     notes: "The release listener is never called: the web wake lock is re-acquired on its own.",
   },
   "expo-linking": {

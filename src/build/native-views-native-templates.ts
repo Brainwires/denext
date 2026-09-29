@@ -29,8 +29,10 @@ import { markedTemplateIntact, renderMarkedTemplate } from "./native-template-ma
  * The generation of the templates below, stamped into every file the installer writes.
  * Generation 2: the Android plugin honours `scrollPassthrough`; the bump keeps an older denext
  * from rewriting that plugin back to one where every touch on a view stays the view's.
+ * Generation 3: the iOS "__debug" logging and "__frame" geometry commands are compiled into
+ * Debug builds only.
  */
-export const NATIVE_VIEWS_TEMPLATE_VERSION = 2;
+export const NATIVE_VIEWS_TEMPLATE_VERSION = 3;
 
 /**
  * A template as the installer writes it: a first line
@@ -64,7 +66,7 @@ import UIKit.UIGestureRecognizerSubclass
 import WebKit
 
 /// "[nv]" device-test logging, off unless the page's probe build turns it on (the "__debug"
-/// command). Main-thread only.
+/// command, honoured in Debug builds only). Main-thread only.
 enum DenextNativeViewsLog {
     static var enabled = false
     /// Also sends each line to the page (the probe posts them), where NSLog may not be captured.
@@ -782,16 +784,26 @@ public class DenextNativeViewsPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Se
                 return
             }
             if name == "__debug" {
+                // A release build ignores it: page script cannot turn on logging there.
+                #if DEBUG
                 DenextNativeViewsLog.enabled = true
                 DenextNativeViewsLog.sink = { [weak self] line in
                     self?.notifyListeners("nativeViewLog", data: ["line": line])
                 }
                 DenextNativeViewsLog.log("logging on (\\(slot.id) \\(slot.placement))")
                 call.resolve(["logging": true])
+                #else
+                call.resolve(["logging": false])
+                #endif
                 return
             }
             if name == "__frame" {
+                // Device tests only: a release build answers nothing.
+                #if DEBUG
                 call.resolve(self.debugFrame(slot))
+                #else
+                call.resolve([:])
+                #endif
                 return
             }
             call.resolve(slot.factory.command(slot.view, name: name, args: args) ?? [:])
