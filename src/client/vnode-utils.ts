@@ -8,7 +8,7 @@ import type { VNode, VNodeChild, VNodeChildren } from "../jsx/types.ts";
 export const TEXT_TYPE = "#text";
 
 /** Wrap a raw string value as a text VNode. */
-export function textVNode(value: string): VNode {
+function textVNode(value: string): VNode {
   return { type: TEXT_TYPE, props: { nodeValue: value }, key: null };
 }
 
