@@ -234,6 +234,18 @@ Deno.test("providers/google: a failed exchange is an error response", async () =
   }, { fetch: net.fetch });
 });
 
+/**
+ * Wait until `ready()` holds: a request is built asynchronously (crypto for the state / PKCE),
+ * which on a loaded machine can take more than one tick. Fails after 5 s.
+ */
+async function until(ready: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!ready()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for the auth request");
+    await tick();
+  }
+}
+
 Deno.test("providers/google + facebook: the web flows ask for tokens directly", async () => {
   await withGlobals({ location: { origin: "https://app.test" } }, async () => {
     let google!: Google.GoogleAuthRequestHook;
@@ -243,7 +255,7 @@ Deno.test("providers/google + facebook: the web flows ask for tokens directly", 
       facebook = Facebook.useAuthRequest({ clientId: "123", language: "it_IT" });
       return null;
     });
-    await tick();
+    await until(() => google[0] !== null && facebook[0] !== null);
     const g = new URL(google[0]!.url!);
     assertEquals(g.searchParams.get("response_type"), "id_token");
     assertEquals(g.searchParams.get("client_id"), "web-id");
@@ -266,7 +278,7 @@ Deno.test("providers/google + facebook: the web flows ask for tokens directly", 
       facebook = Facebook.useAuthRequest({ androidClientId: "987" });
       return null;
     });
-    await tick();
+    await until(() => facebook[0] !== null);
     assertEquals(new URL(facebook[0]!.url!).searchParams.get("redirect_uri"), "fb987://authorize");
     root.unmount();
   });
