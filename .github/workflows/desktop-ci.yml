@@ -1,0 +1,55 @@
+# Desktop capabilities on Windows and Linux — the platforms the maintainer's Mac can't verify.
+#
+# Manual (workflow_dispatch): the desktop caps runtime is unit-tested on macOS, but two things only a
+# real Windows / Linux runner can prove:
+#   1. `secureStore` round-trips against the ACTUAL OS credential store (WinRT PasswordVault on
+#      Windows via powershell.exe, libsecret `secret-tool` on Linux) — the unit tests use a fake
+#      runner. This is the verification for the Windows PasswordVault backend.
+#   2. (TODO, follow-up) the `deno desktop` packaging OUTPUT PATH on Windows (.exe/zip) and Linux
+#      (dir/tar.gz). The macOS `.app.app` bug is fixed + verified locally; the Win/Linux paths need a
+#      packaging job here. It needs `deno desktop` (Deno >= 2.9.7) plus the runner's WebView deps
+#      (WebKitGTK on Linux, WebView2 on Windows) and a scaffolded app; add it once the round-trip
+#      job is green so the CI-specific bits are settled one at a time.
+#
+# This is a keeper (the "Windows/Linux in CI" item). Kept workflow_dispatch until it has passed a few
+# times, then it can gain a schedule / PR trigger.
+
+name: Desktop CI (Windows / Linux)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  secure-store-roundtrip:
+    name: secureStore round-trip (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.7" # `deno desktop` and the desktop runtime target 2.9.7+
+      # Linux: the round-trip drives libsecret's `secret-tool`, which needs a Secret Service
+      # (gnome-keyring) with an unlocked collection. Run under a private D-Bus session with the
+      # keyring unlocked to an empty password. (This setup is the most CI-specific part — if the run
+      # fails here, tune the keyring bootstrap; the darwin/windows legs need no setup.)
+      - name: Linux — libsecret + an unlocked keyring
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-tools gnome-keyring dbus-x11
+      - name: secureStore round-trip
+        if: matrix.os != 'ubuntu-latest'
+        run: deno run -A scripts/ci/desktop-secure-store-roundtrip.ts
+      - name: secureStore round-trip (Linux, keyring session)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          dbus-run-session -- bash -c '
+            echo -n "" | gnome-keyring-daemon --unlock --components=secrets &
+            sleep 2
+            deno run -A scripts/ci/desktop-secure-store-roundtrip.ts
+          '

@@ -110,6 +110,8 @@ entry = [
   # Build/codegen scripts run via `deno task`, not imported — declare them so they
   # aren't reported as unused files (e.g. scripts/gen-*.ts feed the docs site).
   "scripts/*.ts",
+  # CI-only scripts run via `deno run` from a workflow (e.g. the desktop secureStore round-trip).
+  "scripts/ci/*.ts",
   # More file conventions denext loads by PATH, not import: the project config, the
   # request middleware, the instrumentation hook, and the App Router metadata files.
   "**/denext.config.ts",
