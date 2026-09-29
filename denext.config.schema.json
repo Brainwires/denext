@@ -1142,7 +1142,7 @@
           "type": "object",
           "properties": {
             "secureStore": {
-              "description": "OS keychain (macOS Keychain / libsecret; not yet on Windows, where it fails closed).",
+              "description": "OS keychain: macOS Keychain / Linux libsecret / Windows WinRT PasswordVault (the Windows backend is implemented but not yet run on Windows — exercised by the Windows packaging CI).",
               "type": "boolean"
             },
             "fs": {

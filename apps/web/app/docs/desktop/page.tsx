@@ -555,10 +555,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>secure-store</code>
             </td>
             <td>
-              <code>secureStore</code> (Keychain · <em>not yet on Windows</em> · libsecret)
+              <code>secureStore</code> (Keychain · PasswordVault · libsecret)
             </td>
             <td>
-              <code>--allow-run</code>: security · <em>—</em> · secret-tool
+              <code>--allow-run</code>: security · powershell.exe · secret-tool
             </td>
             <td>full</td>
           </tr>
@@ -711,9 +711,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         <strong>Native vs the WebView on Deno Desktop.</strong>{" "}
         Most capabilities run in the Deno process: <code>fs</code>, <code>sqlite</code> and{" "}
         <code>secure-store</code> keep data that survives a relaunch (<code>secure-store</code>{" "}
-        uses the <code>security</code> / <code>secret-tool</code>{" "}
-        tools and is not yet available on Windows, where it fails closed rather than storing
-        plaintext); <code>shell</code>, <code>dialogs</code> and <code>keep-awake</code>{" "}
+        uses the <code>security</code> / <code>secret-tool</code> tools and, on Windows, WinRT{" "}
+        <code>PasswordVault</code> via <code>powershell.exe</code>{" "}
+        — the Windows backend is implemented but not yet run on Windows); <code>shell</code>,{" "}
+        <code>dialogs</code> and <code>keep-awake</code>{" "}
         drive OS programs. Three lean on the WebView instead, because the WebView already provides
         them and the Deno process cannot improve on them: <code>clipboard</code>{" "}
         uses the WebView clipboard (so <code>desktop add clipboard</code>{" "}

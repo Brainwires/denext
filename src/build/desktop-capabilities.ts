@@ -89,17 +89,18 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     value: true,
     api: ["secureStore"],
     os: {
-      // The runtime drives the OS credential CLIs (argv, no shell), not raw FFI. Windows has no
-      // backend yet — the runtime fails closed (never a plaintext fallback), so it adds nothing.
+      // The runtime drives the OS credential CLIs (argv/stdin, no shell), not raw FFI: macOS
+      // `security`, Linux `secret-tool`, Windows WinRT PasswordVault via `powershell.exe`.
       darwin: { run: ["security"] },
       linux: { run: ["secret-tool"] },
+      windows: { run: ["powershell.exe"] },
     },
     trust: "full",
     notes:
-      "OS keychain via CLI (Keychain `security` / libsecret `secret-tool`; not yet on Windows)",
+      "OS keychain via CLI (Keychain `security` / libsecret `secret-tool` / Windows PasswordVault)",
     manual: [
       "secure-store: Linux users need libsecret and a running Secret Service (GNOME Keyring, KWallet); without one the runtime refuses rather than writing a plain file.",
-      "secure-store: Windows is not yet supported — the runtime fails closed (a real error, never a plaintext fallback), so the packaged app grants nothing for it.",
+      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell — implemented, not yet run on Windows (exercised by the Windows packaging CI).",
     ],
   },
   fs: {

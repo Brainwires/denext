@@ -436,8 +436,9 @@ four documented bounds of the opt-in:
   resolve `null` below it.
 - **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell, the
   OS keychain in a Deno Desktop window with the `secure-store` capability (`denext desktop add
-  secure-store`; macOS and Linux only, see below), and a plain IndexedDB database in a browser
-  (or a desktop window without that capability, where it is also wiped on relaunch).
+  secure-store`; macOS `security`, Linux libsecret, Windows WinRT PasswordVault — the Windows
+  backend is implemented but not yet run on Windows, see below), and a plain IndexedDB database in
+  a browser (or a desktop window without that capability, where it is also wiped on relaunch).
 - **Passkeys (WebAuthn) do not run in the iOS Capacitor WebView.** The page's origin is
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
   `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's

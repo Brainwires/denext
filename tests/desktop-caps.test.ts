@@ -910,6 +910,18 @@ Deno.test("secureStoreCommand: per-OS argv; the secret is argv on macOS, stdin o
   assertEquals(lin.stdin, "QjY0"); // secret on stdin, never argv
   assert(!lin.args.includes("QjY0"));
   assertEquals(secureStoreCommand("linux", "get", "svc", "tok").args[0], "lookup");
+
+  // Windows (WinRT PasswordVault via powershell.exe): the script is CONSTANT and every value
+  // travels in the stdin JSON — powershell.exe -Command joins trailing argv into the command text,
+  // so service/key/secret must never appear in argv.
+  const win = secureStoreCommand("windows", "set", "svc", "tok", "QjY0");
+  assertEquals(win.cmd, "powershell.exe");
+  assert(win.args.includes("-Command"));
+  assert(
+    !win.args.some((a) => a.includes("svc") || a.includes("tok") || a.includes("QjY0")),
+    "no user data in argv",
+  );
+  assertEquals(JSON.parse(win.stdin!), { op: "set", service: "svc", key: "tok", value: "QjY0" });
 });
 
 /** A fake macOS `security` backing an in-memory keychain, for the handler round-trip. */
@@ -944,22 +956,42 @@ Deno.test("secureStore: set/get round-trips a value with newlines and unicode (b
   assertEquals(await call(cap, "get", { key: "token" }), null);
 });
 
-Deno.test("secureStore SECURITY: Windows fails closed (never a plaintext fallback)", async () => {
-  const cap = secureStoreCapability({
-    service: "svc",
-    os: "windows",
-    run: () => {
-      throw new Error("the runner must not be called on the unsupported platform");
-    },
-  });
-  for (
-    const [m, a] of [["get", { key: "k" }], ["set", { key: "k", value: "v" }], ["delete", {
-      key: "k",
-    }]] as const
-  ) {
-    const err = await assertRejects(() => call(cap, m, a), DesktopCapError);
-    assertEquals(err.code, "unsupported_platform");
-  }
+/** A fake Windows PasswordVault backed by the stdin JSON payload (an in-memory store), for the
+ * handler round-trip. The real WinRT round-trip runs only on the Windows CI. */
+function windowsVault(): { run: SecureRunner; store: Map<string, string> } {
+  const store = new Map<string, string>();
+  const run: SecureRunner = (_cmd, _args, stdin) => {
+    const p = JSON.parse(stdin ?? "{}") as {
+      op: string;
+      service: string;
+      key: string;
+      value?: string;
+    };
+    const id = `${p.service}\u0000${p.key}`;
+    if (p.op === "set") {
+      store.set(id, p.value ?? "");
+      return Promise.resolve({ code: 0, stdout: "" });
+    }
+    if (p.op === "delete") {
+      store.delete(id);
+      return Promise.resolve({ code: 0, stdout: "" });
+    }
+    return Promise.resolve(
+      store.has(id) ? { code: 0, stdout: store.get(id)! } : { code: 1, stdout: "" },
+    );
+  };
+  return { run, store };
+}
+
+Deno.test("secureStore: Windows PasswordVault round-trips via the stdin JSON payload", async () => {
+  const { run } = windowsVault();
+  const cap = secureStoreCapability({ service: "com.example.app", os: "windows", run });
+  const secret = 'k=v\nline2 🔒 "q"';
+  await call(cap, "set", { key: "token", value: secret });
+  assertEquals(await call(cap, "get", { key: "token" }), secret);
+  assertEquals(await call(cap, "get", { key: "absent" }), null);
+  await call(cap, "delete", { key: "token" });
+  assertEquals(await call(cap, "get", { key: "token" }), null);
 });
 
 Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is refused (secret-tool getopt)", async () => {
