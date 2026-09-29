@@ -8,6 +8,7 @@
 // guard only turns a real stall into a failure instead of a hung run.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import zlib from "node:zlib";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import {
@@ -308,6 +309,50 @@ Deno.test("skip: a body under the threshold — known length or read within the 
 });
 
 // ---- streaming -------------------------------------------------------------
+
+/** Decode the bytes of an unfinished gzip / brotli stream (everything flushed so far). */
+function decodePartial(coding: "gzip" | "br", bytes: Uint8Array): string {
+  const buf = coding === "gzip"
+    ? zlib.gunzipSync(bytes, { finishFlush: zlib.constants.Z_SYNC_FLUSH })
+    : zlib.brotliDecompressSync(bytes, {
+      finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH,
+    });
+  return new TextDecoder().decode(buf);
+}
+
+for (const coding of ["gzip", "br"] as const) {
+  Deno.test(`streaming (${coding}): ONE written chunk is decodable within 5 s, the source still open`, async () => {
+    // The tripwire for an encoder that buffers until close (Deno 2.9.7's CompressionStream
+    // did): the source writes one chunk and never ends, so only a real flush can deliver it.
+    const shell = "<!doctype html><main>" + "shell row\n".repeat(200) + "</main>";
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(enc.encode(shell));
+      },
+    });
+    const res = await compressResponse(req({ "accept-encoding": coding }), html(body), {
+      encodings: [coding],
+    });
+    assertEquals(res.headers.get("content-encoding"), coding);
+    const reader = res.body!.getReader();
+    const deadline = Date.now() + 5_000;
+    let received = new Uint8Array(0);
+    let text = "";
+    while (!text.includes("</main>")) {
+      const left = deadline - Date.now();
+      assert(left > 0, `no decodable output within 5 s (${received.byteLength} B arrived)`);
+      const r = await guard(reader.read(), `the ${coding} flush`, left);
+      assert(!r.done, "the source is still open");
+      const next = new Uint8Array(received.byteLength + r.value.byteLength);
+      next.set(received);
+      next.set(r.value, received.byteLength);
+      received = next;
+      text = decodePartial(coding, received);
+    }
+    assertEquals(text, shell);
+    await reader.cancel();
+  });
+}
 
 Deno.test("streaming: the first chunk decodes before the source has finished", async () => {
   let release!: () => void;

@@ -818,17 +818,18 @@ and this project adheres to
   `denext dev` (App Router and SPA mode) and any `createApp()` handler now compress dynamic
   responses — rendered HTML,
   Flight/JSON payloads, route-handler text/JSON/JS/CSS/SVG/XML — with gzip per
-  `Accept-Encoding` (q-values, `identity;q=0`), through the web-standard `CompressionStream`,
+  `Accept-Encoding` (q-values, `identity;q=0`),
   adding `Vary: Accept-Encoding` and weakening a strong `ETag` on an encoded response.
-  Streamed Suspense/PPR HTML stays progressive (a flush per chunk; same-tick chunks coalesced).
+  Streamed Suspense/PPR HTML stays progressive: the encoder is `node:zlib` with an explicit
+  sync flush per burst (same-tick chunks coalesced), not `CompressionStream`, which on Deno
+  2.9.7 emits nothing until the stream closes.
   Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types, an existing
   `Content-Encoding` (so the precompressed client bundles and an outer compressor are never
   doubled), `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`; a
   `spa.proxy` response is relayed as-is. A page, layout or route handler opts out with
   `export const compress = false`; `compress: false` in `denext.config.ts` turns it off (a
-  proxy/CDN that compresses). gzip is the default, as Next.js's `compress`: Deno's brotli
-  encoder has no quality setting and cost about four times gzip's CPU per response (266 ms vs
-  69 ms on 1.26 MB of HTML) for about 11 % fewer bytes. `compress: { encodings: ["br", "gzip"] }`
+  proxy/CDN that compresses). gzip is the default, as Next.js's `compress`; brotli (quality 5) is
+  opt-in, at about two to three times gzip's CPU. `compress: { encodings: ["br", "gzip"] }`
   sends brotli to clients that accept it (the list is the server's preference order; a q-value
   tie goes to the earlier entry). A 10 000-row list page goes from 617 KB to 91 KB (gzip) /
   41 KB (brotli) on the wire without a compressing proxy.

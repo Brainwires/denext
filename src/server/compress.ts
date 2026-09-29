@@ -4,12 +4,15 @@
 //
 // `createApp` runs every response it produces through {@link compressResponse}: rendered
 // HTML (buffered or streamed), Flight/JSON soft-navigation payloads, and route-handler
-// bodies of a compressible type. The encoder is the web-standard `CompressionStream`
-// (`"gzip"`, and `"brotli"` → `Content-Encoding: br` when configured). Deno's CompressionStream flushes after
-// every written chunk, so a streamed Suspense/PPR document stays progressive: each chunk the
-// renderer emits is decodable by the browser as soon as it arrives. Chunks that arrive in
-// the same tick are coalesced first (up to {@link COALESCE_MAX_BYTES}) so a renderer that
-// emits many tiny chunks does not pay a flush — and its ratio cost — per chunk.
+// bodies of a compressible type. The encoder is `node:zlib` (gzip, and brotli → `Content-Encoding:
+// br` when configured), flushed EXPLICITLY after every burst (`Z_SYNC_FLUSH` /
+// `BROTLI_OPERATION_FLUSH`), so a streamed Suspense/PPR document stays progressive: each chunk
+// the renderer emits is decodable by the browser as soon as it arrives. Not the web
+// `CompressionStream`: whether it flushes per written chunk is unspecified, and Deno 2.9.7's
+// does not (gzip emits its header, brotli nothing, until the stream closes), which held a
+// streamed page back until its last Suspense hole resolved. Chunks that arrive in the same tick
+// are coalesced first (up to {@link COALESCE_MAX_BYTES}) so a renderer that emits many tiny
+// chunks does not pay a flush — and its ratio cost — per chunk.
 //
 // BREACH: like Next.js (whose server gzips everything compressible) and nginx/Cloudflare
 // defaults, denext does not try to detect "secret reflected next to user input" — no
@@ -17,6 +20,8 @@
 // in the HTML (the CSP is hash-based, not nonce-based; Server Actions are CSRF-gated by
 // Origin, not by an embedded token). A route that does embed one next to reflected input
 // opts out with `export const compress = false`, or the whole app with `compress: false`.
+
+import zlib from "node:zlib";
 
 /** A body chunk: bytes over a plain (non-shared) `ArrayBuffer`, as streams carry them. */
 type Bytes = Uint8Array<ArrayBuffer>;
@@ -30,16 +35,19 @@ export const COMPRESS_THRESHOLD = 1024;
 /** Coalesce same-tick chunks up to this many bytes before one compress-and-flush. */
 const COALESCE_MAX_BYTES = 64 * 1024;
 
-/** The `CompressionStream` format for each coding. */
-const FORMAT: Record<ContentCoding, string> = { br: "brotli", gzip: "gzip" };
+/**
+ * Brotli quality for dynamic bodies. zlib's default (11) is an offline setting, far too slow
+ * per request; 5 is in the range CDNs use for on-the-fly brotli.
+ */
+const BROTLI_QUALITY = 5;
 
 /** Statuses whose response has no body to encode, or a body that must not be re-encoded. */
 const NO_BODY_STATUS = new Set([101, 204, 205, 206, 304]);
 
 /**
  * The codings produced when `compress` is on without `{ encodings }`: gzip only, as Next.js's
- * `compress`. Brotli (`CompressionStream("brotli")`, with no quality setting in Deno) costs
- * about four times gzip's CPU per dynamic response for about a tenth fewer bytes.
+ * `compress`. Brotli (at {@link BROTLI_QUALITY}) is opt-in: markedly smaller output for about two
+ * to three times gzip's CPU per dynamic response.
  */
 const DEFAULT_ENCODINGS: readonly ContentCoding[] = ["gzip"];
 
@@ -191,7 +199,7 @@ export interface CompressOptions {
  * Compress `response` for `request` when the client accepts one of `options.encodings` (gzip
  * by default) and nothing
  * rules it out (see the module header and {@link skipReason}): the body is piped through a
- * `CompressionStream`, `Content-Encoding` is set, `Content-Length` and `Accept-Ranges`
+ * flushing encoder ({@link encoderStream}), `Content-Encoding` is set, `Content-Length` and `Accept-Ranges`
  * are dropped, a strong `ETag` is weakened (the bytes changed), and `Vary: Accept-Encoding`
  * is added whenever the representation depends on the header. Anything else returns the
  * response untouched (a body of unknown length that turns out to be tiny is re-wrapped
@@ -232,7 +240,7 @@ export async function compressResponse(
   if (etag && !etag.startsWith("W/")) headers.set("etag", `W/${etag}`);
   const encoded = body
     .pipeThrough(coalesceChunks())
-    .pipeThrough(new CompressionStream(FORMAT[coding] as CompressionFormat));
+    .pipeThrough(encoderStream(coding));
   return new Response(encoded, {
     status: response.status,
     statusText: response.statusText,
@@ -418,6 +426,61 @@ export function coalesceChunks(): TransformStream<Bytes, Bytes> {
     },
     cancel() {
       if (timer !== undefined) clearTimeout(timer);
+    },
+  });
+}
+
+/**
+ * A gzip or brotli encoder (`node:zlib`) that flushes after every chunk it is given, so each
+ * chunk is decodable on arrival (chunks come from {@link coalesceChunks}: one per burst).
+ *
+ * @param coding The content coding.
+ * @returns The encoding transform.
+ */
+function encoderStream(coding: ContentCoding): TransformStream<Bytes, Bytes> {
+  const z = coding === "gzip" ? zlib.createGzip() : zlib.createBrotliCompress({
+    params: { [zlib.constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY },
+  });
+  const flushMode = coding === "gzip"
+    ? zlib.constants.Z_SYNC_FLUSH
+    : zlib.constants.BROTLI_OPERATION_FLUSH;
+  let out!: TransformStreamDefaultController<Bytes>;
+  let failure: unknown;
+  z.on("data", (data: Uint8Array) => {
+    try {
+      out.enqueue(new Uint8Array(data)); // a copy: zlib may reuse its output buffer
+    } catch { /* the reader went away (client disconnect) */ }
+  });
+  z.on("error", (err: unknown) => {
+    failure = err;
+    try {
+      out.error(err);
+    } catch { /* already errored or closed */ }
+  });
+  /** Run `op` and resolve once zlib has called back (or reject with its error). */
+  const settle = (op: (done: () => void) => void) =>
+    new Promise<void>((resolve, reject) => {
+      if (failure !== undefined) return reject(failure);
+      op(() => (failure === undefined ? resolve() : reject(failure)));
+    });
+  return new TransformStream<Bytes, Bytes>({
+    start(controller) {
+      out = controller;
+    },
+    transform(chunk) {
+      return settle((done) => {
+        z.write(chunk);
+        z.flush(flushMode, done);
+      });
+    },
+    flush() {
+      return settle((done) => {
+        z.once("end", done);
+        z.end();
+      });
+    },
+    cancel() {
+      z.destroy();
     },
   });
 }

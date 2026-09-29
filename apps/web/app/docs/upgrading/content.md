@@ -27,8 +27,8 @@ links back to the release that introduced it.
 ## Upgrading to 2.11
 
 - **Responses are now compressed by default** (gzip per `Accept-Encoding`, Next.js's
-  `compress`; `compress: { encodings: ["br", "gzip"] }` adds brotli, at about four times the
-  CPU). `denext start` and `denext dev` — App Router and SPA mode — and every
+  `compress`; `compress: { encodings: ["br", "gzip"] }` adds brotli, at about two to three
+  times gzip's CPU). `denext start` and `denext dev` — App Router and SPA mode — and every
   `createApp()` / `serve()` embedder encode dynamic HTML, JSON, JS, CSS, SVG and XML responses
   of 1 KiB or more, and add `Vary: Accept-Encoding` to them. Set `compress: false` in
   `denext.config.ts` (or pass `compress: false` to `createApp()`) if a proxy or CDN in front

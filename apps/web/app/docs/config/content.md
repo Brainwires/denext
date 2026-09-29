@@ -217,8 +217,8 @@ itself (it reads neither the config keys nor the env vars for them).
   default**, gzip, like Next.js's `compress`). Compresses dynamic responses —
   rendered HTML, Flight/JSON payloads and route-handler text, JSON, JavaScript,
   CSS, SVG and XML — with gzip when the client's `Accept-Encoding` accepts it.
-  Brotli is off by default: Deno's encoder has no quality setting and costs
-  about four times gzip's CPU per response for about a tenth fewer bytes.
+  Brotli (quality 5) is off by default: it makes markedly smaller output but
+  costs about two to three times gzip's CPU per response.
   `compress: { encodings: ["br", "gzip"] }` sends it to clients that accept it:
   the list is the server's preference order, the client's q-values decide, and
   a tie goes to the earlier entry. Streamed (Suspense) HTML is compressed chunk by chunk with a

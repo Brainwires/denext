@@ -1183,6 +1183,7 @@
     "DesktopCapability:interface",
     "DesktopCapabilityMethod:interface",
     "DesktopDevProxyDecision:typeAlias",
+    "DesktopEventLog:class",
     "DesktopOs:typeAlias",
     "DesktopPermissions:interface",
     "DesktopProxyFn:typeAlias",

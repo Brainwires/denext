@@ -768,7 +768,8 @@ export interface CompressConfig {
    * The content codings denext may produce, in the server's order of preference: the client's
    * highest-q acceptable coding among them wins, and a tie goes to the earlier one here. The
    * default is gzip only (Next.js's `compress`); list `"br"` to send brotli to clients that
-   * accept it, at about four times gzip's CPU per response. An empty list sends identity.
+   * accept it (quality 5: markedly smaller output for about two to three times gzip's CPU).
+   * An empty list sends identity.
    *
    * @default ["gzip"]
    */
@@ -1024,11 +1025,10 @@ export interface DenextConfig {
   /**
    * Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/
    * JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as
-   * Next.js): brotli costs about four times gzip's CPU per response for about a tenth fewer
-   * bytes, so it is produced only when listed in `{ encodings }`
-   * (`{ encodings: ["br", "gzip"] }`). Negotiated from `Accept-Encoding` (q-values; a tie goes
-   * to the earlier listed coding) through the web-standard
-   * `CompressionStream`; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a
+   * Next.js); brotli (quality 5: markedly smaller output for about two to three times gzip's
+   * CPU) only when listed in `{ encodings }` (`{ encodings: ["br", "gzip"] }`). Negotiated from
+   * `Accept-Encoding` (q-values; a tie goes to the earlier listed coding) through `node:zlib`,
+   * flushed explicitly; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a
    * flush per chunk, so it still reaches the browser progressively. Skipped for bodies under
    * 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives),
    * a response that already has a `Content-Encoding`, `Cache-Control: no-transform`, range
