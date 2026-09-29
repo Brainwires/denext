@@ -7,6 +7,7 @@
 // import map". This module builds that config; cli.ts drives the re-exec.
 
 import { dirname, join, resolve, toFileUrl } from "@std/path";
+import { carryLinks } from "./config-links.ts";
 import { ensureDir } from "@std/fs";
 import { parse as parseJsonc } from "@std/jsonc";
 import { denoExecutable, minDepAgeConfig, readFrameworkJson } from "./bundle.ts";
@@ -21,6 +22,10 @@ export interface DenoConfigView {
   imports?: Record<string, string>;
   /** Compiler options passed through to the merged config. */
   compilerOptions?: unknown;
+  /** Local-package overrides (`links`; `patch` before Deno 2.2), relative to the config. */
+  links?: unknown;
+  /** The pre-2.2 spelling of {@link links}. */
+  patch?: unknown;
 }
 
 /**
@@ -357,6 +362,7 @@ export async function writeMergedModuleConfig(
     appCfg,
   );
   await ensureDir(outDir);
+  carryLinks(merged, appCfg, dirname(appConfigPath), outDir);
   const configPath = join(outDir, "module-config.json");
   // Remove any pre-existing entry before writing: Deno.writeTextFile follows a
   // symlink and truncates its target, so a symlink planted at this predictable

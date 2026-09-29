@@ -34,6 +34,11 @@ because React / Next still export or accept them.
 
 ### Fixed
 
+- **A `deno.json` with `links` builds.** The configs denext generates from the app's (the
+  `deno bundle` config, `.denext/module-config.json`, `.denext/css-config.json`) copied `links`
+  unchanged or dropped them, so a relative link resolved against the wrong directory
+  ("Could not find link member …") or the linked package was silently not used. The entries are
+  now re-based for each copy's location, on every OS.
 - **A project made right after a denext release installs it.** `denext create` and
   `denext migrate` write `"minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }`, so Deno's
   24-hour hold on freshly published versions no longer blocks the denext version that made the
