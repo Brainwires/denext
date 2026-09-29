@@ -9,6 +9,13 @@
  * - `source={{ uri }}` loads the URL; `source={{ html, baseUrl }}` loads the markup through
  *   `srcdoc` (with a `<base href>` for `baseUrl`), in a sandbox WITHOUT `allow-same-origin`:
  *   inline HTML gets an opaque origin, so it cannot read the app's cookies or storage.
+ * - Native shell: unlike React Native's separate WKWebView, this frame lives INSIDE the app's
+ *   Capacitor WebView. Native plugin calls are accepted from the main frame only: on Android by
+ *   Capacitor 8's bridge (not with `android.useLegacyBridge`, which `denext mobile doctor
+ *   --release` flags), and on iOS by the guard in the `DenextBridgeViewController` every
+ *   `denext mobile add` of a denext native plugin writes (Capacitor's own iOS handler answers
+ *   every frame; `denext mobile doctor` flags a bridge written before the guard). The framed
+ *   page still runs in the app's WebView process, so frame only content you trust.
  * - `window.ReactNativeWebView.postMessage(data)` inside the page reaches `onMessage` as
  *   `{ nativeEvent: { data } }`. A plain `window.parent.postMessage(string, "*")` from a page
  *   in the frame does too.

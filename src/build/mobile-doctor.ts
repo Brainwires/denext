@@ -232,6 +232,43 @@ const mixedContent: Check = {
     })),
 };
 
+const legacyBridge: Check = {
+  id: "legacy-bridge",
+  profiles: ["release"],
+  run: (p) =>
+    perConfig(p, (c) => at(c, "android", "useLegacyBridge") === true, (label) => ({
+      check: "legacy-bridge",
+      level: "error",
+      message: `${label}: android.useLegacyBridge exposes the native bridge through ` +
+        "addJavascriptInterface, which every frame can call: an iframe could reach every " +
+        "installed plugin (the default bridge accepts plugin calls from the main frame only)",
+      fix: "remove android.useLegacyBridge",
+    })),
+};
+
+/** The bridge view controller denext generates, and the guard every current one carries. */
+const BRIDGE_VIEW_CONTROLLER = "ios/App/App/DenextBridgeViewController.swift";
+const FRAME_GUARD_CLASS = "DenextMainFrameBridgeGuard";
+
+const bridgeFrameGuard: Check = {
+  id: "bridge-frame-guard",
+  profiles: ["store", "release"],
+  run: async (p) => {
+    const text = await readText(join(p.root, BRIDGE_VIEW_CONTROLLER));
+    if (text === null || text.includes(FRAME_GUARD_CLASS)) return [];
+    return [{
+      check: "bridge-frame-guard",
+      level: "error",
+      message: `${BRIDGE_VIEW_CONTROLLER} predates the main-frame guard: any iframe in the page ` +
+        "can post native plugin calls to every installed plugin",
+      fix: "re-run `denext mobile add-ota` (with OTA) or the `denext mobile add` that wrote " +
+        "it: an unedited file is upgraded, an edited one is kept (`--force` replaces it, or copy " +
+        `${FRAME_GUARD_CLASS} from the current template and call its install(on: bridge) ` +
+        "after super.capacitorDidLoad()); then ship a new binary",
+    }];
+  },
+};
+
 /** Whether an allowNavigation entry allows every host. */
 function wildcardHost(entry: unknown): boolean {
   return typeof entry === "string" && /^(?:[a-z]+:\/\/)?\*(?:\/.*)?$/i.test(entry.trim());
@@ -762,7 +799,9 @@ const CHECKS: readonly Check[] = [
   webviewDebugging,
   cleartext,
   mixedContent,
+  legacyBridge,
   allowNavigation,
+  bridgeFrameGuard,
   androidDebuggable,
   productionLogging,
   csp,
