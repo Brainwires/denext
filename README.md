@@ -17,6 +17,16 @@ unified stack, no Vercel lock-in.
 
 **Docs:** [denext.dev](https://denext.dev/) · **Package:** [jsr.io/@denext/denext](https://jsr.io/@denext/denext) · **Source:** [github.com/Brainwires/denext](https://github.com/Brainwires/denext) · **License:** [MIT](./LICENSE)
 
+**One codebase for the web, iOS, Android and the desktop — including the React Native / Expo app
+you already have.** The same denext app ships as a Capacitor app (native capabilities, native
+views such as maps and video, app extensions, signed over-the-air UI updates, store builds without
+a hosted service) and as a single-binary Deno Desktop app with a least-privilege native bridge. An
+Expo or React Native codebase runs through `reactNative: true` — `react-native`, `expo-*`, expo-router,
+React Navigation, FlatList and the popular native libraries resolve to denext implementations, and your
+own Turbo Modules become Capacitor plugins. See [Mobile](https://denext.dev/docs/mobile),
+[React Native mode](https://denext.dev/docs/react-native), [Desktop](https://denext.dev/docs/desktop)
+and [denext vs React Native](https://denext.dev/docs/vs-react-native).
+
 You already know the API — `app/`, `page.tsx`, `layout.tsx`, `"use client"`, Server Actions,
 `<Link>`, `next/image`, middleware. denext reimplements that Next.js core — App Router, streaming
 SSR, hydration, Suspense — as native Deno/TypeScript. What's different is **underneath**: it ships

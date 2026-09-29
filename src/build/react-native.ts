@@ -24,8 +24,9 @@
 //     is the overlay's `nativeHostComponent`: a `denext/mobile` native view slot of that type
 //     (props to the native factory, `on<Name>` events, children drawn over it; the children
 //     where the type is not registered natively). Without the overlay it renders nothing.
-//     Native commands do
-//     nothing. React
+//     `codegenNativeCommands` commands dispatch like UIManager; react-native-web's `UIManager` gains
+//     `getViewManagerConfig` / `hasViewManagerConfig` / `dispatchViewManagerCommand`, which
+//     runs a command on the native view slot its tag (the element a ref holds) names. React
 //     Native internals a library may import (`CodegenTypes`, `DevMenu`,
 //     `NativeComponentRegistry`, `PushNotificationIOS`, `registerCallableModule`, `Systrace`)
 //     are load-safe no-ops; `Libraries/Image/resolveAssetSource` is the overlay's.
@@ -351,7 +352,9 @@ function nativeDeepImport(spec: string): string | null {
  * `codegenNativeComponent(name)` (and `requireNativeComponent(name)`, and
  * `NativeComponentRegistry.get(name)`) component is, with the overlay, its
  * `nativeHostComponent(name)` (a native view slot); without it, it renders nothing (warning once
- * per name in dev). `codegenNativeCommands()` returns commands that do nothing.
+ * per name in dev). `codegenNativeCommands()` returns commands that, with the overlay, send
+ * `Commands.name(ref, ...args)` to the native view slot `ref` holds (as
+ * `UIManager.dispatchViewManagerCommand` does); without it they do nothing.
  *
  * The React Native internals a library may import load and do nothing: `CodegenTypes` is an
  * empty object (its members are types), `DevMenu.show()`, `registerCallableModule()` and
@@ -375,12 +378,17 @@ function hostView(name) {
   var host = __denextOverlay.nativeHostComponent;
   return typeof host === "function" ? host(name) : null;
 }
+function dispatchCommand(ref, name, args) {
+  var dispatch = __denextOverlay.dispatchViewManagerCommand;
+  if (typeof dispatch === "function") dispatch(ref, name, args);
+}
 function resolveAssetSource(source) {
   var resolve = __denextOverlay.resolveAssetSource;
   return typeof resolve === "function" ? resolve(source) : plainAssetSource(source);
 }
 `
     : "function served(_name) { return null; }\nfunction hostView(_name) { return null; }\n" +
+      "function dispatchCommand(_ref, _name, _args) {}\n" +
       "function resolveAssetSource(source) { return plainAssetSource(source); }\n";
   return `${native}function get(name) { return served(name); }
 function getEnforcing(name) {
@@ -429,7 +437,10 @@ function noop() {}
 function codegenNativeCommands() {
   return new Proxy({}, {
     get: function (_target, key) {
-      return typeof key === "symbol" || key === "then" ? undefined : noop;
+      if (typeof key === "symbol" || key === "then") return undefined;
+      // Commands.name(ref, ...args): the view manager command, sent to the native view slot
+      // the ref's element is (UIManager.dispatchViewManagerCommand).
+      return function (ref) { dispatchCommand(ref, key, Array.prototype.slice.call(arguments, 1)); };
     },
   });
 }
@@ -706,6 +717,38 @@ export function withAppearancePolyfill(source: string): string {
 /** The prebuilt runtime specifier of the shell overlay (`src/react-native/mod.ts`). */
 export const RN_OVERLAY = "denext/react-native";
 
+/** react-native-web's `UIManager` module (ES or CommonJS build); group 1 is `cjs/`. */
+const UIMANAGER_MODULE =
+  /[\\/]react-native-web[\\/]dist[\\/](cjs[\\/])?exports[\\/]UIManager[\\/]index\.js$/;
+
+/**
+ * react-native-web's `UIManager` module with the view manager API it lacks
+ * (`getViewManagerConfig`, `hasViewManagerConfig`, `dispatchViewManagerCommand`) added by the
+ * shell overlay's `withViewManagerCommands`, ahead of its default export, so the one object every
+ * importer shares (`UIManager`, `NativeModules.UIManager`) has it. The source is unchanged when
+ * it has no such export; an overlay without the function (a stand-in) leaves the object alone.
+ *
+ * @param source The module source.
+ * @param cjs Whether it is react-native-web's CommonJS build.
+ * @returns The module source.
+ */
+export function withViewManagerCommandsSource(source: string, cjs: boolean): string {
+  const match = cjs
+    ? /var _default = exports\.default = ([A-Za-z_$][\w$]*);/.exec(source)
+    : /export\s+default\s+([A-Za-z_$][\w$]*)\s*;?\s*$/.exec(source);
+  if (!match) return source;
+  const overlay = cjs ? `require(${JSON.stringify(RN_OVERLAY)})` : "__denextViewManagerOverlay";
+  const head = cjs
+    ? ""
+    : `import * as __denextViewManagerOverlay from ${JSON.stringify(RN_OVERLAY)};\n`;
+  const hook = `;(function (U) {
+  var add = ${overlay}.withViewManagerCommands;
+  if (typeof add === "function") add(U);
+})(${match[1]});
+`;
+  return head + source.slice(0, match.index) + hook + source.slice(match.index);
+}
+
 /**
  * The react-native-web modules the shell overlay replaces, by export name: `"value"` re-exports
  * denext's export of the same name; `"view"` is a component built by denext's
@@ -907,6 +950,17 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
         const [, cjs, name] = OVERLAY_MODULE.exec(args.path)!;
         return {
           contents: overlayModuleSource(name, cjs !== undefined),
+          loader: "js",
+          resolveDir,
+        };
+      });
+      build.onLoad({ filter: UIMANAGER_MODULE }, async (args) => {
+        const resolveDir = dirname(args.path);
+        // Without the overlay (a bare build), react-native-web's own module stays.
+        if (!(await overlayResolves(build, resolveDir))) return undefined;
+        const cjs = UIMANAGER_MODULE.exec(args.path)![1] !== undefined;
+        return {
+          contents: withViewManagerCommandsSource(await Deno.readTextFile(args.path), cjs),
           loader: "js",
           resolveDir,
         };

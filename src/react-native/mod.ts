@@ -61,6 +61,8 @@ export { DrawerLayoutAndroid, Settings } from "./android-compat.ts";
 export {
   createNativeEventEmitter,
   createNativeModules,
+  dispatchViewManagerCommand,
   nativeHostComponent,
   turboModule,
+  withViewManagerCommands,
 } from "./native-modules.ts";

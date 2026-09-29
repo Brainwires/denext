@@ -8,6 +8,97 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.0.0-rc.1] - 2026-09-29
+
+### Breaking
+
+- **`experimental.compiler` is removed** — set top-level `reactCompiler`. Setting it is now a
+  `denext.config` validation error, not a warning.
+- **`experimental.asyncContext` is removed** — set top-level `asyncContext` (a validation error).
+- **`experimental.features` is removed** — set top-level `features` (a validation error).
+- **`experimental.nodeResolve` is removed** — set top-level `nodeResolve` (a validation error;
+  ignoring an `experimental.nodeResolve: false` silently would change how the app builds).
+- **`redirect` from `denext/server` now throws**, the same `redirect()` as `denext` (and Next).
+  The deprecated alias of `redirectResponse` is gone: in `middleware.ts`, return
+  `redirectResponse(location, status)`. A middleware that still calls `redirect()` keeps
+  working — a thrown `redirect()` / `permanentRedirect()` there becomes a 307 / 308 response
+  (a numeric second argument keeps its status); code that used the returned `Response` itself,
+  say to add a header, must call `redirectResponse`.
+- **`InspectNode.sourceId` is removed** from the DevTools inspector tree — read `source`
+  (`{ file, export, line, column }`) instead.
+
+Unchanged: Next.js's own spellings — `experimental.reactCompiler`, `experimental.cacheComponents`
+and `experimental.optimizePackageImports` — stay honored as obsolete aliases with a dev warning,
+and `unstable_noStore`, `io`, `useFormState` and `images.domains` stay as compatible aliases
+because React / Next still export or accept them.
+
+### Fixed
+
+- **React Native mode dev: importing a new name no longer reload-loops the page.** An edit that
+  imported a name the dev dependency bundle did not yet export (one a package re-exports
+  through CommonJS `__exportStar`, say) was hot-swapped against the page's old bundle, failed to
+  link ("does not provide an export named …"), fell back to a reload and then reloaded again for
+  the rebuild. `denext dev` now rebuilds the bundle before deciding, and reloads the page once.
+- **Keyboard-aware views no longer scroll once more after the last one unmounts**: the queued
+  animation frame is cancelled.
+- **Native views (iOS): the `__debug` logging and `__frame` geometry commands work in Debug
+  builds only**, so page script cannot switch on logging in a release build. Re-run
+  `denext mobile add native-views` (template generation 3).
+- **`denext/expo/auth-session`: the random `state` and PKCE `code_verifier` are uniformly
+  distributed** (rejection sampling instead of a modulo).
+- **`denext migrate --from expo` reports each shim's omitted exports** and never calls a shim
+  with omissions or documented differences `full` (`expo-haptics` and `expo-keep-awake` now
+  read `partial`); it suggests a `denext mobile add` capability only for a package with a shim.
+- **React Native mode: `UIManager.getViewManagerConfig`, `hasViewManagerConfig` and
+  `dispatchViewManagerCommand` exist, and `codegenNativeCommands` commands work.** A command
+  sent to the element a ref to a native component holds runs on that native view slot;
+  anything else warns once in dev and does nothing. A `ref` on `<NativeViewSlot>` now receives
+  the slot element.
+- **Keys are scoped per array, as in React.** Two `.map()`s rendered side by side under one
+  parent may reuse the same keys: each nested array is its own key scope, so overlapping keys
+  no longer hand one row another row's state, DOM node or input value, and the dev
+  duplicate-key warning only fires within one array. A child after a variable-length list also
+  keeps its identity however many rows the list has (the list is one slot, like React's
+  implicit fragment). The "Keys in sibling arrays share one scope" limitation is gone.
+- **Android native views: `scrollPassthrough`.** A drag that starts on an `"over"` or `"under"`
+  native view and passes the system touch slop along the slot's `scrollPassthrough` axis is
+  handed to the WebView from where it started, so the page scrolls with its own fling. Taps,
+  off-axis drags and pinches stay the view's, as on iOS; `"vertical"` is still the default for
+  `video`. Compile-verified against Capacitor 8; not yet run on an Android device. Re-run
+  `denext mobile add native-views` (template generation 2) and ship a new binary.
+- **Android: a dead WebView renderer no longer ends the app.** The `MainActivity` denext
+  composes (generation 3) answers `onRenderProcessGone`: it logs the event, removes and
+  destroys the dead WebView and recreates the activity, which builds a fresh bridge and
+  reloads the page. A renderer that dies three times within a minute still ends the app, so an
+  over-the-air UI that crashes its renderer is still rolled back as a failed trial. Re-run any
+  `denext mobile add` Android capability to upgrade an unedited `MainActivity`.
+  Compile-verified; not yet run on a device.
+- **`denext desktop package` works for a project with a stylesheet.** The CLI's CSS re-exec guard
+  (`DENEXT_CSS_ACTIVE` / `DENEXT_MODULE_ACTIVE`) no longer leaks into the packaging script's
+  `deno task export`, which had skipped its own CSS re-exec and failed with
+  `Import "denext/desktop/client" not a dependency` (the default scaffold has `public/styles.css`).
+- **macOS packaging lands the bundle where signing expects it.** `deno desktop --output X.app`
+  writes `X.app.app`; the macOS packaging template now passes the base name, so signing, the
+  universal `lipo` merge and the `.dmg` step all find the bundle.
+- **Packaged apps embed their desktop extensions.** The packaging scripts add `--include` for each
+  `desktop.capabilities.extensions` module, so an extension no longer fails to load at launch.
+- **Packaged binaries bake `--no-prompt`.** A least-privilege packaged app throws on an unbaked
+  permission instead of blocking on a permission prompt the GUI has no TTY to answer.
+- **`sqlite` ATTACH / `VACUUM INTO` refusal surfaces as `forbidden`, not a generic `internal`,** so
+  the page sees why the statement was rejected.
+- **`denext desktop add` removes the scaffold's commented `capabilities` placeholder** once it
+  writes the real block, instead of leaving the hint beside it.
+- **A page-initiated `window.close()` quits the desktop app.** The WebView does not forward
+  `window.close()` to the native window, so it was a no-op; the injected shell now overrides it to
+  POST the per-launch token to a token-gated quit endpoint (like the boot beacon), which exits the
+  single-window app — the same outcome as the native window close. Verified end-to-end against a
+  real packaged app.
+
+### Added
+
+- **`desktop.capabilities.shell.openPathAllowExtensions`** — bare file extensions (`["py",
+  "sh"]`) `openPath` may open despite its executable/script denylist.
+
 ## [2.11.0-rc.1] - 2026-09-29
 
 ### Added
@@ -1091,6 +1182,9 @@ and this project adheres to
 ## [2.10.0] - 2026-09-25
 
 ### Added
+
+Verified on the iPhone (2026-09-29): an iframe's direct `DenextStorage.setMany` is refused and
+logged while the main frame's plugin calls work.
 
 - **`denext desktop dev`: live reload for the Deno Desktop window (the Metro model for desktop).**
   Starts a `denext dev` server (or attaches to one already answering at the target) and opens a
@@ -9537,6 +9631,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[3.0.0-rc.1]: https://jsr.io/@denext/denext@3.0.0-rc.1
 [2.11.0-rc.1]: https://jsr.io/@denext/denext@2.11.0-rc.1
 [2.10.0]: https://jsr.io/@denext/denext@2.10.0
 [2.10.0-rc.6]: https://jsr.io/@denext/denext@2.10.0-rc.6

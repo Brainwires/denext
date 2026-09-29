@@ -7,8 +7,9 @@
  * - macOS: `security add/find/delete-generic-password` (the login Keychain).
  * - Linux: `secret-tool store/lookup/clear` (libsecret / the Secret Service). The secret is written
  *   on STDIN, never argv.
- * - Windows: not yet supported — the cap FAILS CLOSED with a real error (never the web fallback,
- *   which is not secret), so an app never silently downgrades to plaintext.
+ * - Windows: WinRT `PasswordVault` via Windows PowerShell (see WINDOWS_VAULT_SCRIPT). Every value
+ *   travels on STDIN as JSON, never argv (PowerShell `-Command` joins trailing argv into the command
+ *   text). Verified by the Windows CI (a real PasswordVault set/get/delete round-trip).
  *
  * Values are stored base64-of-UTF-8, so a newline, quote or non-ASCII byte in the value can never
  * corrupt the round-trip or the command. FAIL CLOSED: if the backend is missing (no `security` /
@@ -48,9 +49,33 @@ export interface SecureCommand {
 }
 
 /**
- * The credential-CLI invocation for `op` on macOS/Linux. Pure + exported so every OS's argv is
- * unit-tested. The value (already base64) is argv on macOS (`security`) and STDIN on Linux
- * (`secret-tool`). Windows has no builder — the cap fails closed before reaching here.
+ * The Windows credential script: WinRT `PasswordVault` driven by Windows PowerShell (5.1 projects
+ * WinRT types; the cap spawns `powershell.exe`, not `pwsh`). It is a CONSTANT — every value
+ * (service, key, secret) arrives on STDIN as JSON and is read with `ConvertFrom-Json`, NEVER
+ * interpolated into the command, because PowerShell `-Command` joins trailing argv into the command
+ * text (so a page-supplied key/value on argv would be a command-injection). `get` writes the stored
+ * password to stdout (exit 1 when absent); `set` upserts; `delete` is idempotent.
+ *
+ * NOTE (verification): the injection-safe SHAPE (constant script + JSON on stdin) is unit-tested
+ * here, but the WinRT round-trip runs only on Windows — it is exercised by the Windows packaging CI,
+ * not locally.
+ */
+const WINDOWS_VAULT_SCRIPT = [
+  "$ErrorActionPreference='Stop'",
+  "$p=[Console]::In.ReadToEnd()|ConvertFrom-Json",
+  "[void][Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,ContentType=WindowsRuntime]",
+  "$v=New-Object Windows.Security.Credentials.PasswordVault",
+  "switch($p.op){",
+  "'get'{try{$c=$v.Retrieve($p.service,$p.key);$c.RetrievePassword();[Console]::Out.Write($c.Password)}catch{exit 1}}",
+  "'set'{try{$old=$v.Retrieve($p.service,$p.key);$v.Remove($old)}catch{};$v.Add((New-Object Windows.Security.Credentials.PasswordCredential($p.service,$p.key,$p.value)))}",
+  "'delete'{try{$c=$v.Retrieve($p.service,$p.key);$v.Remove($c)}catch{}}",
+  "}",
+].join("\n");
+
+/**
+ * The credential-CLI invocation for `op`. Pure + exported so every OS's argv (and Windows' stdin
+ * payload) is unit-tested. The value (already base64) is argv on macOS (`security`) and STDIN on
+ * Linux (`secret-tool`) / Windows (`powershell.exe` + WinRT PasswordVault).
  *
  * @param os The target OS.
  * @param op `get` / `set` / `delete`.
@@ -66,6 +91,13 @@ export function secureStoreCommand(
   key: string,
   b64?: string,
 ): SecureCommand {
+  if (os === "windows") {
+    return {
+      cmd: "powershell.exe",
+      args: ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_VAULT_SCRIPT],
+      stdin: JSON.stringify({ op, service, key, value: b64 ?? null }),
+    };
+  }
   if (os === "darwin") {
     if (op === "get") {
       return { cmd: "security", args: ["find-generic-password", "-a", key, "-s", service, "-w"] };
@@ -136,16 +168,6 @@ export interface SecureStoreDeps {
   readonly run?: SecureRunner;
 }
 
-/** Refuse on Windows (no backend yet) — fail closed, never a plaintext web fallback. */
-function refuseWindows(os: Os): void {
-  if (os === "windows") {
-    throw new DesktopCapError(
-      "unsupported_platform",
-      "secure-store is not yet supported on Windows; it fails closed rather than storing plaintext",
-    );
-  }
-}
-
 /** Require a string arg. */
 function str(value: unknown, name: string): string {
   if (typeof value !== "string") {
@@ -192,11 +214,8 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
     ? { run: ["security"] }
     : os === "linux"
     ? { run: ["secret-tool"] }
-    : {};
-  const keyArg = (args: unknown): string => {
-    refuseWindows(os);
-    return safeKey(str((args as { key?: unknown })?.key, "key"));
-  };
+    : { run: ["powershell.exe"] };
+  const keyArg = (args: unknown): string => safeKey(str((args as { key?: unknown })?.key, "key"));
   const exec = (
     op: "get" | "set" | "delete",
     key: string,

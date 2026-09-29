@@ -226,6 +226,63 @@ Deno.test("desktop handler: boot beacon confirms via a token-gated endpoint (upd
   }
 });
 
+Deno.test("desktop handler: window.close() quits via a token-gated quit endpoint", async () => {
+  const dir = await exportDir();
+  try {
+    let quit = 0;
+    const token = "tok-quit-xyz";
+    const handle = createDesktopHandler(
+      {},
+      dir,
+      undefined,
+      token,
+      undefined, // onBooted
+      undefined, // devProxy
+      false, // devInjectToken
+      undefined, // bridge
+      () => quit++, // onQuit (production passes Deno.exit(0))
+    );
+    const at = (p: string) => `http://127.0.0.1${p}`;
+
+    // The shell overrides window.close to POST the token to /quit.
+    const shell = await handle(
+      new Request(at("/"), { headers: { accept: "text/html" } }),
+      new URL(at("/")),
+    );
+    const html = await shell.text();
+    assertStringIncludes(html, "window.close=function");
+    assertStringIncludes(html, "/_denext/desktop/quit");
+
+    // GET is rejected; a POST without the token is refused (a cross-origin page cannot quit).
+    assertEquals(
+      (await handle(new Request(at("/_denext/desktop/quit")), new URL(at("/_denext/desktop/quit"))))
+        .status,
+      405,
+    );
+    const noTok = await handle(
+      new Request(at("/_denext/desktop/quit"), { method: "POST" }),
+      new URL(at("/_denext/desktop/quit")),
+    );
+    assertEquals(noTok.status, 403);
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(quit, 0);
+
+    // A POST with the token quits (204, then onQuit on the next microtask so the 204 flushes first).
+    const ok = await handle(
+      new Request(at("/_denext/desktop/quit"), {
+        method: "POST",
+        headers: { "x-denext-desktop-token": token },
+      }),
+      new URL(at("/_denext/desktop/quit")),
+    );
+    assertEquals(ok.status, 204);
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(quit, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop handler: no beacon and no booted endpoint when the updater is off", async () => {
   const dir = await exportDir();
   try {

@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import {
@@ -11,10 +11,12 @@ import {
   MIDDLEWARE_REQUEST_PREFIX,
   MIDDLEWARE_REWRITE_HEADER,
   next,
-  redirect,
+  redirectResponse,
   rewrite,
   setRequestAdapter,
 } from "../src/server/middleware.ts";
+import { permanentRedirect, redirect } from "../src/runtime/error-boundary.ts";
+import * as serverMod from "../src/server/mod.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageProps } from "../src/server/types.ts";
@@ -153,11 +155,11 @@ Deno.test("middleware can short-circuit with a Response", async () => {
   assertEquals(await res.text(), "blocked");
 });
 
-Deno.test("middleware redirect returns a 307 with Location", async () => {
+Deno.test("middleware redirectResponse returns a 307 with Location", async () => {
   const app = appWith({
     default: (req: Request) => {
       if (new URL(req.url).pathname === "/secret") {
-        return redirect("/home");
+        return redirectResponse("/home");
       }
       return next();
     },
@@ -168,12 +170,71 @@ Deno.test("middleware redirect returns a 307 with Location", async () => {
   assertEquals(res.headers.get("location"), "/home");
 });
 
+Deno.test("a returned redirectResponse is used as-is (its own status)", async () => {
+  const app = appWith({ default: () => redirectResponse("/home", 302) });
+  const res = await app(new Request("http://localhost/secret"));
+  await res.body?.cancel();
+  assertEquals(res.status, 302);
+  assertEquals(res.headers.get("location"), "/home");
+});
+
+Deno.test("middleware that THROWS redirect() gets a 307 with Location", async () => {
+  // `denext/server` exports the throwing `redirect` (as Next does); 2.x middleware that
+  // imported the old Response-returning alias and wrote `return redirect(…)` still works,
+  // because the thrown signal is turned into the response.
+  assertEquals(serverMod.redirect, redirect);
+  const app = appWith({
+    default: (req: Request) => {
+      if (new URL(req.url).pathname === "/secret") return serverMod.redirect("/login");
+      return next();
+    },
+  });
+  const res = await app(new Request("http://localhost/secret"));
+  await res.body?.cancel();
+  assertEquals(res.status, 307);
+  assertEquals(res.headers.get("location"), "/login");
+});
+
+Deno.test("middleware that throws permanentRedirect() gets a 308; the location is normalized", async () => {
+  const app = appWith({ default: () => permanentRedirect("//evil.com") });
+  const res = await app(new Request("http://localhost/secret"));
+  await res.body?.cancel();
+  assertEquals(res.status, 308);
+  assertEquals(res.headers.get("location"), "/evil.com");
+});
+
+Deno.test("a thrown redirect in a composed chain short-circuits; other throws propagate", async () => {
+  let reached = false;
+  const run = composeMiddleware([
+    { handler: () => redirect("/a") },
+    {
+      handler: () => {
+        reached = true;
+      },
+    },
+  ])!;
+  const outcome = await run(new Request("http://localhost/x"));
+  assertEquals(outcome.type, "response");
+  if (outcome.type === "response") {
+    assertEquals(outcome.response.status, 307);
+    assertEquals(outcome.response.headers.get("location"), "/a");
+  }
+  assertEquals(reached, false);
+
+  const failing = composeMiddleware([{
+    handler: () => {
+      throw new Error("boom");
+    },
+  }])!;
+  await assertRejects(() => failing(new Request("http://localhost/x")), Error, "boom");
+});
+
 Deno.test("middleware redirect normalizes a protocol-relative open-redirect", async () => {
   const app = appWith({
     default: (req: Request) => {
-      // Simulate an attacker-controlled ?next= reaching redirect() verbatim.
+      // Simulate an attacker-controlled ?next= reaching redirectResponse() verbatim.
       const next = new URL(req.url).searchParams.get("next") ?? "/";
-      return redirect(next);
+      return redirectResponse(next);
     },
   });
   // `//evil.com` (browser-cross-origin) is collapsed to a same-origin path.

@@ -760,8 +760,11 @@ const MAIN_ACTIVITY_FAMILY = "main-activity";
  * {@linkcode SHIPPED_MAIN_ACTIVITY_SHA256}. The bump keeps an older denext from rewriting a
  * generation-2 file: it would keep the `DenextBackPlugin` registration it does not know as an
  * edit, but silently drop the `EdgeToEdge.enable` line, which is not a plugin registration.
+ * Generation 3 added {@linkcode RENDERER_RECOVERY} to every combination (a dead WebView renderer
+ * recreates the activity instead of ending the app); the bump keeps an older denext from
+ * rewriting it away. The registrations above it are unchanged.
  */
-const MAIN_ACTIVITY_TEMPLATE_VERSION = 2;
+const MAIN_ACTIVITY_TEMPLATE_VERSION = 3;
 
 /**
  * SHA-256 of every MainActivity denext wrote before the marker line existed, with the package
@@ -789,6 +792,66 @@ const SHIPPED_MAIN_ACTIVITY_SHA256: readonly string[] = [
   "24b5ef26fcd8d7d70ac6f3e188ca4f3bce2b1dced99a6ff1326cfbe5cd06a04f", // all four
 ];
 
+/**
+ * The end of every composed MainActivity from generation 3: after `super.onCreate` builds the
+ * bridge, a `WebViewListener` that survives the WebView's renderer process dying.
+ *
+ * Android ends the app when the renderer goes (the system reclaimed it under memory pressure, or
+ * it crashed) unless `WebViewClient.onRenderProcessGone` returns true, and Capacitor 8's
+ * `BridgeWebViewClient` returns what its `WebViewListener`s answer. The bridge's WebView cannot
+ * be swapped for a new one (`Bridge.webView` is final and the bridge has no API for it), so the
+ * listener drops the dead WebView and recreates the activity, which builds a new bridge, WebView
+ * and page. It lives here, not in the OTA plugin, because every app needs it and every denext
+ * Android feature composes this file. A renderer that dies three times within a minute is left to
+ * end the app, so a page that kills its renderer does not loop (an over-the-air UI then counts
+ * that launch as a failed trial). Written with fully qualified names so the imports above stay
+ * the registrations'.
+ */
+const RENDERER_RECOVERY = `        super.onCreate(savedInstanceState);
+        // denext: a dead WebView renderer recreates the activity instead of ending the app.
+        if (bridge != null) bridge.addWebViewListener(new RendererRecovery(this));
+    }
+
+    /**
+     * denext: when the WebView's renderer process dies, Android ends the app unless the WebView
+     * client handles it. This drops the dead WebView (it cannot be used again) and recreates the
+     * activity, which builds a new bridge and WebView and loads the page again. A renderer that
+     * dies three times within a minute is left to end the app.
+     */
+    private static final class RendererRecovery extends com.getcapacitor.WebViewListener {
+        private static final int MAX_RECOVERIES = 3;
+        private static final long WINDOW_MS = 60_000;
+        /** When the renderer died recently (elapsed realtime); survives the recreated activity. */
+        private static final java.util.ArrayDeque<Long> RECENT = new java.util.ArrayDeque<>();
+        private final android.app.Activity activity;
+
+        RendererRecovery(android.app.Activity activity) {
+            this.activity = activity;
+        }
+
+        @Override
+        public boolean onRenderProcessGone(android.webkit.WebView webView, android.webkit.RenderProcessGoneDetail detail) {
+            long now = android.os.SystemClock.elapsedRealtime();
+            while (!RECENT.isEmpty() && now - RECENT.peekFirst() > WINDOW_MS) RECENT.pollFirst();
+            boolean crashed = android.os.Build.VERSION.SDK_INT >= 26 && detail != null && detail.didCrash();
+            String cause = crashed ? "crashed" : "was killed by the system";
+            if (RECENT.size() >= MAX_RECOVERIES) {
+                android.util.Log.e("denext", "WebView renderer " + cause + " again; not recovering");
+                return false;
+            }
+            RECENT.addLast(now);
+            android.util.Log.w("denext", "WebView renderer " + cause + "; recreating the activity");
+            if (webView.getParent() instanceof android.view.ViewGroup) {
+                ((android.view.ViewGroup) webView.getParent()).removeView(webView);
+            }
+            webView.destroy();
+            if (!activity.isFinishing()) activity.recreate();
+            return true;
+        }
+    }
+}
+`;
+
 /** `text` with its leading `package <name>;` replaced by `package PKG;`, for hashing. */
 function normalizedPackage(text: string): string {
   return text.replace(/^package\s+[\w.]+\s*;/, "package PKG;");
@@ -796,8 +859,9 @@ function normalizedPackage(text: string): string {
 
 /**
  * A `MainActivity` that registers `features` before the bridge is built (OTA first in onCreate,
- * so its `prepare` still runs first thing), under a `// denext-main-activity-template:` marker
- * line, so a later release still recognises it as unedited after the text changes.
+ * so its `prepare` still runs first thing) and recovers from a dead WebView renderer
+ * ({@linkcode RENDERER_RECOVERY}), under a `// denext-main-activity-template:` marker line, so a
+ * later release still recognises it as unedited after the text changes.
  *
  * @param pkg The activity's Java package.
  * @param features The features to register (at least one).
@@ -822,10 +886,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-${lines}        super.onCreate(savedInstanceState);
-    }
-}
-`,
+${lines}${RENDERER_RECOVERY}`,
   );
 }
 

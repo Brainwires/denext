@@ -106,7 +106,7 @@ export type { DynamicLoader, DynamicLoadingProps, DynamicOptions } from "./src/r
 
 // denext's first-party AsyncContext — the TC39 primitive (Variable + Snapshot) no
 // browser has shipped. Synchronous scoping works everywhere; propagation across
-// `await` requires the build transform (`experimental.asyncContext`). Not a React
+// `await` requires the build transform (`asyncContext: true`). Not a React
 // re-export — a denext original. `Variable`/`Snapshot` are the classes behind
 // `AsyncContext.Variable`/`.Snapshot`, exported so the namespace's type is fully public.
 export { AsyncContext, Snapshot, Variable } from "./src/runtime/async-context.ts";
@@ -466,4 +466,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "2.11.0-rc.1";
+export const VERSION = "3.0.0-rc.1";

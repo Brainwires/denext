@@ -21,7 +21,7 @@ import { browserPost, formsWith, unescapeAttr as unescape } from "./helpers/brow
 const POPULATED = `// the project config
 export default {
   // legacy spelling, still honoured — and unknown to the editor's schema
-  experimental: { cacheComponents: true, reactCompiler: false, features: { A: true } },
+  experimental: { cacheComponents: true, reactCompiler: false, optimizePackageImports: ["a-pkg"] },
   streaming: true,
   basePath: "/docs",
   i18n: { locales: ["en", "fr"], defaultLocale: "en", localeDetection: false },
@@ -212,7 +212,7 @@ Deno.test("saving a group keeps the keys the editor's schema does not know", asy
     const written = await onDisk(dir);
     assertStringIncludes(written, "cacheComponents: true", "the unknown key survived the save");
     assertStringIncludes(written, "reactCompiler");
-    assertStringIncludes(written, "A: true");
+    assertStringIncludes(written, "a-pkg");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

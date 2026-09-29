@@ -459,7 +459,7 @@ Deno.test("a flattened union keeps the types of its values", () => {
 
 Deno.test("a superseded key that IS set says so on its label", () => {
   // `experimental.reactCompiler` and the top-level `reactCompiler` are the SAME switch — the
-  // effective flag is `reactCompiler ?? experimental.reactCompiler ?? experimental.compiler`.
+  // effective flag is `reactCompiler ?? experimental.reactCompiler`.
   // Side by side with no mark, they read as two features. The pill only ever appears on a key
   // the config actually sets: an unset one is not shown.
   const spec = specAt("experimental", "reactCompiler");
@@ -475,23 +475,23 @@ Deno.test("a superseded key that IS set says so on its label", () => {
 });
 
 Deno.test("a superseded key is not offered until the config actually sets it", () => {
-  // Showing `experimental.compiler` to someone who never used it is an invitation to start
+  // Showing `experimental.reactCompiler` to someone who never used it is an invitation to start
   // using the name that was replaced. Showing it when it IS set is the only way to clear it.
-  // Every `experimental.*` key graduated to a top-level twin, so an empty block offers none.
+  // Every `experimental.*` key has a top-level twin, so an empty block offers none.
   const group = specAt("experimental");
   assertEquals(group.deprecated, true, "the block itself is superseded");
   const empty = render(group, {});
-  for (const key of ["compiler", "reactCompiler", "asyncContext", "features", "nodeResolve"]) {
+  for (const key of ["reactCompiler", "optimizePackageImports"]) {
     assert(!empty.includes(`experimental.${key}`), `an unset superseded key is not rendered`);
   }
 
-  const held = render(group, { compiler: true });
-  assertStringIncludes(held, "experimental.compiler", "a key the config sets is always shown");
+  const held = render(group, { reactCompiler: true });
+  assertStringIncludes(held, "experimental.reactCompiler", "a key the config sets is always shown");
   assertStringIncludes(held, ">deprecated<");
 
   // Hiding is not deleting: the group posts nothing for it, which reads as "leave it alone".
   assertEquals(decode(group, encode(group, {})), undefined, "an empty group stays absent");
-  assertEquals(decode(group, encode(group, { compiler: true })), { compiler: true });
+  assertEquals(decode(group, encode(group, { reactCompiler: true })), { reactCompiler: true });
 });
 
 Deno.test("a union names its key once, not once per branch", () => {

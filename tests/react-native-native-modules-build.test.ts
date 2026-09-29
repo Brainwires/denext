@@ -1,7 +1,8 @@
 // React Native mode at build time: `TurboModuleRegistry.get` / `getEnforcing` (the entry's
 // and the deep `Libraries/…` import) ask the shell overlay's `turboModule` first, and
 // react-native-web's `NativeModules` / `NativeEventEmitter` are rebuilt through its
-// `createNativeModules` / `createNativeEventEmitter` over their own bases. Without the overlay
+// `createNativeModules` / `createNativeEventEmitter` over their own bases, and its `UIManager`
+// goes through `withViewManagerCommands`. Without the overlay
 // (a bare build) everything stays as react-native-web / the web stand-ins answer. The overlay
 // is a stand-in here; its behaviour is tested in mobile-native-module.test.ts.
 
@@ -24,7 +25,8 @@ const RNW: Record<string, string> = {
   "node_modules/react-native-web/dist/index.js":
     'export { default as NativeModules } from "./exports/NativeModules";\n' +
     'export { default as NativeEventEmitter } from "./exports/NativeEventEmitter";\n',
-  "node_modules/react-native-web/dist/exports/UIManager/index.js": 'export default "RNW_UI";\n',
+  "node_modules/react-native-web/dist/exports/UIManager/index.js":
+    'var UIManager = "RNW_UI";\nexport default UIManager;\n',
   "node_modules/react-native-web/dist/exports/NativeModules/index.js":
     'import UIManager from "../UIManager";\nexport default { UIManager, original: true };\n',
   "node_modules/react-native-web/dist/exports/NativeEventEmitter/index.js":
@@ -34,7 +36,7 @@ const RNW: Record<string, string> = {
   "entry.js":
     `import { TurboModuleRegistry, NativeModules, NativeEventEmitter } from "react-native";
 import * as Deep from "react-native/Libraries/TurboModule/TurboModuleRegistry";
-import { requireNativeComponent, codegenNativeComponent } from "react-native";
+import { requireNativeComponent, codegenNativeComponent, codegenNativeCommands } from "react-native";
 let enforcedMissing;
 try { TurboModuleRegistry.getEnforcing("None").anything; } catch (e) { enforcedMissing = e.message; }
 export const result = {
@@ -47,6 +49,8 @@ export const result = {
   NativeEventEmitter,
   required: requireNativeComponent("RNCMap"),
   codegen: codegenNativeComponent("RNCChart"),
+  command: (codegenNativeCommands({ supportedCommands: ["zoomTo"] }).zoomTo("REF", 2, true),
+    globalThis.__denextDispatched),
 };
 `,
 };
@@ -56,6 +60,10 @@ const STAND_IN =
 export function createNativeModules(UIManager) { return "NM(" + UIManager + ")"; }
 export function createNativeEventEmitter(Base) { return "EM(" + Base + ")"; }
 export function nativeHostComponent(type) { return "HOST_" + type; }
+export function withViewManagerCommands(UIManager) { globalThis.__denextViewManagers = UIManager; }
+export function dispatchViewManagerCommand(ref, name, args) {
+  globalThis.__denextDispatched = [ref, name, args];
+}
 `;
 
 /** Bundle the fixture's entry (with the stand-in overlay unless `bare`), returning `result`. */
@@ -110,6 +118,11 @@ Deno.test("reactNative native modules: served through the overlay's turboModule"
   assertEquals(result.NativeEventEmitter, "EM(RNW_EMITTER)", "over its vendored emitter");
   assertEquals(result.required, "HOST_RNCMap", "a native component is the overlay's view slot");
   assertEquals(result.codegen, "HOST_RNCChart");
+  assertEquals(result.command, ["REF", "zoomTo", [2, true]], "a codegen command is dispatched");
+  delete (globalThis as { __denextDispatched?: unknown }).__denextDispatched;
+  const g = globalThis as { __denextViewManagers?: unknown };
+  assertEquals(g.__denextViewManagers, "RNW_UI", "UIManager went through withViewManagerCommands");
+  delete g.__denextViewManagers;
 });
 
 Deno.test("reactNative native modules: a bare build keeps the web answers", async () => {
@@ -119,6 +132,7 @@ Deno.test("reactNative native modules: a bare build keeps the web answers", asyn
   assertStringIncludes(String(result.enforcedMissing), "unavailable");
   assertEquals(result.NativeModules, { UIManager: "RNW_UI", original: true });
   assertEquals(result.NativeEventEmitter, "RNW_EMITTER");
+  assertEquals((globalThis as { __denextViewManagers?: unknown }).__denextViewManagers, undefined);
   assertEquals(typeof result.required, "function", "the render-nothing stand-in");
   assertEquals((result.required as () => unknown)(), null);
 });

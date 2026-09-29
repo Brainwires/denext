@@ -89,17 +89,18 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     value: true,
     api: ["secureStore"],
     os: {
-      // The runtime drives the OS credential CLIs (argv, no shell), not raw FFI. Windows has no
-      // backend yet — the runtime fails closed (never a plaintext fallback), so it adds nothing.
+      // The runtime drives the OS credential CLIs (argv/stdin, no shell), not raw FFI: macOS
+      // `security`, Linux `secret-tool`, Windows WinRT PasswordVault via `powershell.exe`.
       darwin: { run: ["security"] },
       linux: { run: ["secret-tool"] },
+      windows: { run: ["powershell.exe"] },
     },
     trust: "full",
     notes:
-      "OS keychain via CLI (Keychain `security` / libsecret `secret-tool`; not yet on Windows)",
+      "OS keychain via CLI (Keychain `security` / libsecret `secret-tool` / Windows PasswordVault)",
     manual: [
       "secure-store: Linux users need libsecret and a running Secret Service (GNOME Keyring, KWallet); without one the runtime refuses rather than writing a plain file.",
-      "secure-store: Windows is not yet supported — the runtime fails closed (a real error, never a plaintext fallback), so the packaged app grants nothing for it.",
+      "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip).",
     ],
   },
   fs: {
@@ -435,6 +436,38 @@ export async function desktopPackageFlags(entryUrl: string, os: DesktopOs): Prom
   return desktopBuildFlags(config, os);
 }
 
+/** The `desktop.capabilities.extensions` module paths from a config object (each a project-relative
+ * path a packaging build must embed), else `[]`. */
+function configExtensionPaths(config: unknown): string[] {
+  const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
+  const caps = cfg.desktop?.capabilities;
+  const exts = (typeof caps === "object" && caps !== null)
+    ? (caps as { extensions?: unknown }).extensions
+    : undefined;
+  return Array.isArray(exts) ? exts.filter((p): p is string => typeof p === "string") : [];
+}
+
+/**
+ * The extra `--include <path>` args a scaffolded packaging script must add so the packaged binary
+ * embeds each `desktop.capabilities.extensions` module — otherwise the app launches but the runtime
+ * fails to load the extension ("Module not found"), since `--include out` only bundles the export.
+ * Reads the project's `denext.config.ts` next to `entryUrl` (a `scripts/` script → `../`), like
+ * {@linkcode desktopPackageFlags}; a project with no extensions gets `[]`.
+ *
+ * @param entryUrl The packaging script's `import.meta.url`.
+ * @returns `["--include", path, "--include", path, …]`, ready to splice into the `deno desktop` argv.
+ */
+export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
+  let config: unknown;
+  try {
+    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
+    config = (mod as { default?: unknown }).default;
+  } catch {
+    // no denext.config.ts (or it exports no config) → no extensions to embed
+  }
+  return configExtensionPaths(config).flatMap((p) => ["--include", p]);
+}
+
 /**
  * The `--list` table: name, config key, trust, note.
  *
@@ -551,7 +584,16 @@ async function spliceCapabilities(
     source = edit.source;
     added.push(name);
   }
+  // Once a real `capabilities` block exists, drop the scaffold's commented placeholder hint so it
+  // doesn't linger beside it (`// capabilities: { … },  // denext desktop add <cap>`).
+  if (added.length > 0 || kept.length > 0) source = removeCapabilitiesHint(source);
   return { source, added, kept };
+}
+
+/** Remove the scaffold's commented `// capabilities: … // denext desktop add <cap>` placeholder
+ * line (only that specific hint — any other comment is preserved). */
+function removeCapabilitiesHint(source: string): string {
+  return source.replace(/^[ \t]*\/\/ capabilities:.*denext desktop add.*\r?\n/m, "");
 }
 
 /** The highest trust among `names`. */

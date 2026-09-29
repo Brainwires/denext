@@ -662,7 +662,9 @@ const CAPABILITY_NOTES: Readonly<Record<string, string>> = {
 
 /** The capabilities a dependency calls for: its Expo shim's, or its community alias's. */
 function packageCapabilities(pkg: string): readonly string[] {
-  const own = PACKAGE_CAPABILITIES[pkg];
+  // Only where the manifest has a shim to carry the calls: an entry for a package whose shim
+  // was dropped would otherwise suggest a capability its own web build never reaches.
+  const own = Object.hasOwn(EXPO_SHIMS, pkg) ? PACKAGE_CAPABILITIES[pkg] : undefined;
   if (own !== undefined) return typeof own === "string" ? [own] : own;
   return Object.hasOwn(COMMUNITY_ALIASES, pkg) ? COMMUNITY_ALIASES[pkg].capabilities ?? [] : [];
 }
@@ -892,6 +894,8 @@ export interface ExpoPackageStatus {
   readonly advice?: string;
   /** Exports the shim does not provide. */
   readonly omitted: number;
+  /** Their names, as the manifest lists them (`Asset.byHash`; a subpath shim's prefixed). */
+  readonly omittedExports: readonly string[];
   /**
    * The package's subpaths that have shims of their own when the package itself has none
    * (`@expo/ui`: `swift-ui`, `community/masked-view`, …); every other subpath is the real
@@ -1119,26 +1123,47 @@ export async function expoDependencyReport(
 function expoPackageStatus(name: string): ExpoPackageStatus | null {
   const own = Object.hasOwn(EXPO_SHIMS, name) ? EXPO_SHIMS[name] : undefined;
   if (/^expo(-|$)/.test(name)) {
-    const advice = own ? undefined : NO_SHIM_ADVICE[name];
-    return {
-      name,
-      status: own?.status ?? "none",
-      omitted: own?.omitted?.length ?? 0,
-      ...(advice ? { advice } : {}),
-    };
+    if (!own) {
+      const advice = NO_SHIM_ADVICE[name];
+      return {
+        name,
+        status: "none",
+        omitted: 0,
+        omittedExports: [],
+        ...(advice ? { advice } : {}),
+      };
+    }
+    return { name, ...shimStanding(name, [name]) };
   }
   if (!name.startsWith("@expo/")) return null;
   const subKeys = Object.keys(EXPO_SHIMS).filter((key) => key.startsWith(`${name}/`));
   if (!own && subKeys.length === 0) return null;
-  const omitted = [...(own ? [own] : []), ...subKeys.map((key) => EXPO_SHIMS[key])]
-    .reduce((n, shim) => n + (shim.omitted?.length ?? 0), 0);
-  if (own) return { name, status: own.status, omitted };
+  const standing = shimStanding(name, own ? [name, ...subKeys] : subKeys);
+  if (own) return { name, ...standing };
   return {
     name,
+    ...standing,
     status: "partial",
-    omitted,
     subpaths: subKeys.map((key) => key.slice(name.length + 1)).sort(),
   };
+}
+
+/**
+ * What the report says of `keys`' shims, read from the manifest (so the two cannot drift): the
+ * package's own status, except that a shim the manifest lists omitted exports for is never
+ * reported `full`; and every omitted export by name (a subpath shim's prefixed with the subpath).
+ */
+function shimStanding(
+  name: string,
+  keys: readonly string[],
+): Pick<ExpoPackageStatus, "status" | "omitted" | "omittedExports"> {
+  const omittedExports = keys.flatMap((key) => {
+    const prefix = key === name ? "" : `${key.slice(name.length + 1)}: `;
+    return (EXPO_SHIMS[key].omitted ?? []).map((exp) => prefix + exp);
+  });
+  const declared = keys.includes(name) ? EXPO_SHIMS[name].status : "partial";
+  const status = declared === "full" && omittedExports.length > 0 ? "partial" : declared;
+  return { status, omitted: omittedExports.length, omittedExports };
 }
 
 // --- the Metro config ---------------------------------------------------------------------

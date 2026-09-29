@@ -85,11 +85,17 @@ function normalizedName(path: string): string {
  * @param os The target OS (only Windows refuses a missing extension).
  * @returns `true` when `openPath` must refuse it.
  */
-export function isExecutableOpenTarget(path: string, os?: Os): boolean {
+export function isExecutableOpenTarget(
+  path: string,
+  os?: Os,
+  allow?: ReadonlySet<string>,
+): boolean {
   const name = normalizedName(path);
   const dot = name.lastIndexOf(".");
   if (dot <= 0) return os === "windows"; // no extension (or a dotfile's only dot)
-  return EXECUTABLE_EXTENSIONS.has(name.slice(dot + 1));
+  const ext = name.slice(dot + 1);
+  if (allow?.has(ext)) return false; // opted back in via shell.openPathAllowExtensions
+  return EXECUTABLE_EXTENSIONS.has(ext);
 }
 
 /**
@@ -102,16 +108,28 @@ export function isExecutableOpenTarget(path: string, os?: Os): boolean {
  * @param os The target OS.
  * @returns The refusal reason, or `undefined`.
  */
-export async function openPathRefusal(path: string, os: Os): Promise<string | undefined> {
+export async function openPathRefusal(
+  path: string,
+  os: Os,
+  allow?: ReadonlySet<string>,
+): Promise<string | undefined> {
   const real = await Deno.realPath(path).catch(() => path);
   const info = await Deno.stat(real).catch(() => undefined);
   const isFile = info?.isFile === true;
   for (const p of real === path ? [path] : [path, real]) {
-    if (isExecutableOpenTarget(p, isFile ? os : undefined)) {
+    if (isExecutableOpenTarget(p, isFile ? os : undefined, allow)) {
       return "openPath refuses programs, scripts and launchers (the OS would run them)";
     }
   }
-  if (isFile && os !== "windows" && info?.mode != null && (info.mode & 0o111) !== 0) {
+  // Exec-bit: `open` would run a Unix executable in Terminal. Skip only when the RESOLVED file's own
+  // extension is explicitly allowlisted (keyed off `real`, so a `.sh`→extension-less-binary symlink
+  // can't slip a program past this).
+  const realName = normalizedName(real);
+  const rdot = realName.lastIndexOf(".");
+  const realExtAllowed = rdot > 0 && allow?.has(realName.slice(rdot + 1)) === true;
+  if (
+    isFile && !realExtAllowed && os !== "windows" && info?.mode != null && (info.mode & 0o111) !== 0
+  ) {
     return "openPath refuses an executable file (the OS would run it)";
   }
   return undefined;
@@ -127,6 +145,10 @@ export interface ShellCapabilityConfig {
   readonly reveal: boolean;
   /** Whether `trash` (move a path to the OS trash) is allowed. */
   readonly trash: boolean;
+  /** Bare file extensions (no dot, lower-case) `openPath` may open despite the executable/script
+   * denylist — the `desktop.capabilities.shell.openPathAllowExtensions` opt-in (e.g. `["py", "sh"]`).
+   * Empty by default. */
+  readonly openPathAllowExtensions?: readonly string[];
 }
 
 /** Options for {@link shellCapability}. */
@@ -167,8 +189,13 @@ export function shellPathCommand(
       [
         "-e",
         "on run argv",
+        // Resolve the path to an alias OUTSIDE the Finder tell: inside it, `POSIX file …` is sent to
+        // Finder as an object specifier it cannot resolve (-1728), so every trash failed on a real Mac.
+        // (Not `target` as the name: that is a Finder property, and fails with -1728 too.)
         "-e",
-        'tell application "Finder" to delete (POSIX file (item 1 of argv))',
+        "set theItem to POSIX file (item 1 of argv) as alias",
+        "-e",
+        'tell application "Finder" to delete theItem',
         "-e",
         "end run",
         path,
@@ -272,6 +299,10 @@ export function shellCapability(deps: ShellCapabilityDeps): DesktopCapability {
   const spawn = deps.spawn ?? runShellTool;
   const os = deps.os ?? (Deno.build.os as Os);
   const roots = [deps.dirs.data, deps.dirs.cache, deps.dirs.documents];
+  // Extensions `openPath` may open despite the denylist (opt-in), normalized to lower-case bare.
+  const openPathAllow = new Set(
+    (deps.config.openPathAllowExtensions ?? []).map((e) => e.toLowerCase()),
+  );
 
   // The exact program each method spawns on this OS, so its `permissions` name only that binary.
   // `--allow-run` is full trust over the named program, so keeping the list tight matters.
@@ -304,7 +335,9 @@ export function shellCapability(deps: ShellCapabilityDeps): DesktopCapability {
       throw new DesktopCapError("validation", "a path or handle is required");
     }
     // Applies to app-dir paths AND picked handles alike (a user-picked `.bat` is still a program).
-    const refusal = action === "open" ? await openPathRefusal(confined, os) : undefined;
+    const refusal = action === "open"
+      ? await openPathRefusal(confined, os, openPathAllow)
+      : undefined;
     if (refusal) throw new DesktopCapError("forbidden", refusal, { status: 403 });
     const [cmd, cmdArgs] = shellPathCommand(os, action, confined);
     await spawn(cmd, cmdArgs, shellPathEnv(os, action, confined), signal);

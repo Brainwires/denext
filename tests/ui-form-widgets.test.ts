@@ -272,7 +272,6 @@ Deno.test("a union branch is a widget of its own, rendered at the union's path",
 Deno.test("records become key/value maps, opaque ones stay read-only", () => {
   assertEquals(kindAt("scheduledTasks"), "map");
   assertEquals(kindAt("features"), "map");
-  assertEquals(kindAt("experimental", "features"), "map", "the legacy alias keeps its shape");
   assertEquals(kindAt("spa", "env"), "map");
   assertEquals(specAt("spa", "env").items?.kind, "text");
   assertEquals(specAt("features").items?.kind, "toggle");

@@ -324,6 +324,11 @@ export interface Fiber {
   idParentScope?: IdScope;
   idScope?: IdScope;
 
+  // The key scope this fiber occupies among its siblings: which nested child array it came
+  // from (`"1"`, `"1.0"`, …; `undefined` for a direct child). React scopes keys per array,
+  // so a key only matches an old fiber of the same scope. Set by the parent's reconcile.
+  keyScope?: string;
+
   // Hydration: the server-node cursor for this host/root's children.
   hydrationCursor?: Cursor | null;
 
@@ -396,6 +401,7 @@ class FiberNode implements Fiber {
   bailed: Fiber["bailed"];
   idParentScope: Fiber["idParentScope"];
   idScope: Fiber["idScope"];
+  keyScope: Fiber["keyScope"];
   hydrationCursor: Fiber["hydrationCursor"];
   unmounted: Fiber["unmounted"];
 
@@ -483,6 +489,7 @@ function carryOver(wip: Fiber, current: Fiber): void {
   wip.hydrationCursor = current.hydrationCursor;
   wip.idParentScope = current.idParentScope;
   wip.idScope = current.idScope;
+  wip.keyScope = current.keyScope;
   wip.host = current.host;
   wip.boundary = current.boundary;
 }

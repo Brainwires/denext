@@ -124,8 +124,8 @@ export interface ImagesConfig {
   unoptimized?: boolean;
   /**
    * Exact remote hosts allowed as sources (host only, e.g. `cdn.example.com`).
-   * @deprecated Removed in Next.js 16; use `remotePatterns`. Still honored through denext 2.x,
-   * removed in 3.0.
+   * @deprecated Deprecated in Next.js 16; use `remotePatterns`. Kept as a compatible alias
+   * because Next still accepts it.
    */
   domains?: string[];
   /** Pattern-based remote allowlist (protocol/host-wildcard/pathname). */
@@ -645,6 +645,14 @@ export interface DesktopShellConfig {
   reveal?: boolean;
   /** Allow `trash` (move a path to the OS trash). */
   trash?: boolean;
+  /**
+   * File extensions `openPath` may open despite its executable/script denylist — bare, no
+   * leading dot, case-insensitive (e.g. `["py", "sh"]`). By default `openPath` refuses
+   * programs, scripts and launchers, because the OS default handler would RUN them; list an
+   * extension to opt back in when you trust the handler for that type. Ignored unless
+   * `openPath` is true; `reveal` and `trash` never execute, so they are unaffected.
+   */
+  openPathAllowExtensions?: string[];
 }
 
 /**
@@ -665,7 +673,8 @@ export interface DesktopFsConfig {
  * validator warns on it.
  */
 export interface DesktopCapabilitiesConfig {
-  /** OS keychain (macOS Keychain / libsecret; not yet on Windows, where it fails closed). */
+  /** OS keychain: macOS Keychain / Linux libsecret / Windows WinRT PasswordVault (the Windows
+   * backend is verified by the Windows CI round-trip). */
   secureStore?: boolean;
   /** App files under the OS app-support / cache folders. */
   fs?: boolean | DesktopFsConfig;
@@ -1049,7 +1058,7 @@ export interface DenextConfig {
    * pnpm/npm/yarn/bun app build with no catalog-concretizing and no hand-patching of
    * dependency `exports` — the "seamless migration" contract. Set `false` only to force
    * app deps back through Deno's strict `npm:` loader (escape hatch). The pre-2.0 home,
-   * `experimental.nodeResolve`, is still honored.
+   * `experimental.nodeResolve`, was removed in 3.0 (setting it is a config error).
    *
    * @default true
    */
@@ -1070,9 +1079,8 @@ export interface DenextConfig {
    * already-flushed head; and `searchParams` read outside a Suspense boundary with
    * `cacheKeyParams` can reflect one request's value.
    *
-   * Configs written against 2.0 pre-releases may still set
-   * `experimental.cacheComponents`; that legacy alias is honored (see
-   * {@linkcode resolveCacheComponents}) but this top-level field is the canonical home.
+   * Next.js's `experimental.cacheComponents` spelling is kept as an obsolete alias for
+   * migrated Next apps (see {@linkcode resolveCacheComponents}); this top-level field wins.
    */
   cacheComponents?: boolean;
   /**
@@ -1081,8 +1089,8 @@ export interface DenextConfig {
    * identity whenever a transform isn't provably safe, so it only ever adds memoization,
    * never changes behavior.
    *
-   * Graduated from `experimental.reactCompiler` in 2.5; that spelling (and the older
-   * `experimental.compiler`) is still honored, with a dev warning, when this field is absent.
+   * Next.js 15's `experimental.reactCompiler` spelling is honored, with a dev warning, when
+   * this field is absent (the pre-2.0 `experimental.compiler` was removed in 3.0).
    */
   reactCompiler?: boolean;
   /**
@@ -1095,8 +1103,8 @@ export interface DenextConfig {
    * in client code (a small per-await cost); the default time-window behavior is unchanged
    * when off. Removes the async-`startTransition` gap in KNOWN-LIMITATIONS when on.
    *
-   * Graduated from `experimental.asyncContext` in 2.5; that spelling is still honored, with
-   * a dev warning, when this field is absent.
+   * Graduated from `experimental.asyncContext` in 2.5; that spelling was removed in 3.0
+   * (setting it is a config error).
    */
   asyncContext?: boolean;
   /**
@@ -1110,8 +1118,8 @@ export interface DenextConfig {
    * compat drop-in App Router path and non-component modules on the native path read the
    * seeded value without DCE. Flag names and states are embedded in the client bundle.
    *
-   * Graduated from `experimental.features` in 2.5; that spelling is still honored, with a
-   * dev warning, when this field is absent.
+   * Graduated from `experimental.features` in 2.5; that spelling was removed in 3.0
+   * (setting it is a config error).
    */
   features?: Record<string, boolean>;
   /**
@@ -1193,10 +1201,12 @@ export interface DenextConfig {
    */
   reactNative?: boolean | ReactNativeConfig;
   /**
-   * @deprecated Every `experimental.*` key graduated to a top-level field by 2.5
-   * (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The
-   * old spellings are still honored, with a dev warning, when the top-level field is absent;
-   * the top-level field wins when both are set. Removed in 3.0.
+   * @deprecated Next.js's `experimental` block, kept for migrated Next apps. Only Next's own
+   * spellings are read — `reactCompiler`, `cacheComponents` and `optimizePackageImports` —
+   * as obsolete aliases of their top-level fields: honored, with a dev warning, when the
+   * top-level field is absent; the top-level field wins when both are set. denext's own
+   * former `experimental.*` keys (`compiler`, `asyncContext`, `features`, `nodeResolve`)
+   * were removed in 3.0, and setting one is a config error.
    */
   experimental?: ExperimentalConfig;
   /**
@@ -1392,44 +1402,31 @@ export interface LiveConfig {
 }
 
 /**
- * The legacy `experimental` block of `denext.config.ts`. Every key in it graduated to a
- * top-level {@link DenextConfig} field — what denext ships is its own finished work, and an
- * "experimental" label only kept developers from using it — so each member is a deprecated
- * alias of its top-level twin: still honored (with a dev warning) when the top-level field
- * is absent, and ignored when both are set. The interface stays exported so a config written
- * against 2.x keeps type-checking; it is removed in 3.0.
+ * Next.js's `experimental` block, as a migrated `next.config` carries it into
+ * `denext.config.ts`. Each member is Next.js's own spelling of a top-level
+ * {@link DenextConfig} field, kept as an obsolete alias for migrated Next apps: honored
+ * (with a dev warning) when the top-level field is absent, and ignored when both are set.
+ * Next 16's `experimental.cacheComponents` is honored the same way (see
+ * {@linkcode resolveCacheComponents}) but is not a typed member. denext's own former
+ * `experimental.*` keys (`compiler`, `asyncContext`, `features`, `nodeResolve`) were removed
+ * in 3.0; the config validator rejects them.
  */
 export interface ExperimentalConfig {
   /**
-   * @deprecated Graduated to the top-level `reactCompiler` in 2.5. Honored as an alias
-   * through 2.x; removed in 3.0.
+   * @deprecated Next.js 15's spelling of the top-level `reactCompiler`, kept as an obsolete
+   * alias for migrated Next apps. The top-level field wins.
    */
   reactCompiler?: boolean;
   /**
-   * @deprecated Renamed `reactCompiler` (Next.js's key) in 2.0, now the top-level
-   * `reactCompiler`. Honored as an alias through 2.x; removed in 3.0.
-   */
-  compiler?: boolean;
-  /**
-   * @deprecated Graduated to the top-level `asyncContext` in 2.5. Honored as an alias
-   * through 2.x; removed in 3.0.
-   */
-  asyncContext?: boolean;
-  /**
-   * @deprecated Graduated to the top-level `features` in 2.5. Honored as an alias through
-   * 2.x; removed in 3.0.
-   */
-  features?: Record<string, boolean>;
-  /**
-   * @deprecated Moved to the top-level `nodeResolve` in 2.0 — it is load-bearing for every
-   * compat migration, not an incomplete feature. Honored as an alias through 2.x.
-   */
-  nodeResolve?: boolean;
-  /**
-   * @deprecated Next.js's spelling of the top-level `optimizePackageImports`. Honored as an
-   * alias (with a dev warning) when the top-level field is absent.
+   * @deprecated Next.js's spelling of the top-level `optimizePackageImports`, kept as an
+   * obsolete alias for migrated Next apps. The top-level field wins.
    */
   optimizePackageImports?: string[];
+  /**
+   * @deprecated Next.js 16's spelling of the top-level `cacheComponents`, kept as an obsolete
+   * alias for migrated Next apps. The top-level field wins.
+   */
+  cacheComponents?: boolean;
 }
 
 /**
@@ -1460,40 +1457,37 @@ export function reactNativeRootStyle(config: DenextConfig | null | undefined): b
 
 /**
  * Whether the tolerant node_modules resolver is active for the compat build. Default-on:
- * only an explicit `nodeResolve: false` (or the legacy `experimental.nodeResolve: false`)
- * disables it. Threaded into every compat bundler (SSR/client/flight + SPA) so App Router
- * and SPA behave identically.
+ * only an explicit `nodeResolve: false` disables it. Threaded into every compat bundler
+ * (SSR/client/flight + SPA) so App Router and SPA behave identically.
  */
 export function nodeResolveEnabled(config: DenextConfig | null | undefined): boolean {
-  return (config?.nodeResolve ?? config?.experimental?.nodeResolve) !== false;
+  return config?.nodeResolve !== false;
 }
 
 /**
- * The effective auto-memo compiler flag: the top-level `reactCompiler`, else the legacy
- * `experimental.reactCompiler` / `experimental.compiler` aliases (top-level wins).
+ * The effective auto-memo compiler flag: the top-level `reactCompiler`, else Next.js's
+ * `experimental.reactCompiler` spelling (top-level wins).
  */
 export function reactCompilerEnabled(config: DenextConfig | null | undefined): boolean {
-  return (config?.reactCompiler ?? config?.experimental?.reactCompiler ??
-    config?.experimental?.compiler) === true;
+  return (config?.reactCompiler ?? config?.experimental?.reactCompiler) === true;
 }
 
 /**
- * The effective AsyncContext transition-scoping flag: the top-level `asyncContext`, else the
- * legacy `experimental.asyncContext` alias (top-level wins). Gates the build transform in
- * src/build/async-context-transform.ts.
+ * The effective AsyncContext transition-scoping flag: the top-level `asyncContext`. Gates
+ * the build transform in src/build/async-context-transform.ts.
  */
 export function asyncContextEnabled(config: DenextConfig | null | undefined): boolean {
-  return (config?.asyncContext ?? config?.experimental?.asyncContext) === true;
+  return config?.asyncContext === true;
 }
 
 /**
- * The configured compile-time feature flags — the top-level `features`, else the legacy
- * `experimental.features` alias (top-level wins) — or an empty map. The build folds
- * `feature("KEY")` calls to these values (see src/build/feature-transform.ts) and seeds the
- * same map for server rendering (`resolveProject`) and the esbuild compat `define`.
+ * The configured compile-time feature flags — the top-level `features` — or an empty map.
+ * The build folds `feature("KEY")` calls to these values (see src/build/feature-transform.ts)
+ * and seeds the same map for server rendering (`resolveProject`) and the esbuild compat
+ * `define`.
  */
 export function featureFlags(config: DenextConfig | null | undefined): Record<string, boolean> {
-  return config?.features ?? config?.experimental?.features ?? {};
+  return config?.features ?? {};
 }
 
 /**
@@ -1516,17 +1510,15 @@ export function resolveLive(config: DenextConfig | null | undefined): LiveConfig
 }
 
 /**
- * The effective Cache Components setting. `cacheComponents` graduated to a top-level
- * config field in 2.0; a config written against a 2.0 pre-release may still set the
- * legacy `experimental.cacheComponents`, which is honored when the top-level field is
- * absent (soft migration — the validator emits a "moved to top-level" dev warning). The
- * top-level field always wins when both are set. `undefined` means "not set" (off).
+ * The effective Cache Components setting: the top-level `cacheComponents`, else Next.js's
+ * `experimental.cacheComponents` spelling, honored when the top-level field is absent (the
+ * validator emits a "moved to top-level" dev warning). The top-level field always wins when
+ * both are set. `undefined` means "not set" (off).
  */
 export function resolveCacheComponents(
   config: DenextConfig | null | undefined,
 ): boolean | undefined {
-  return config?.cacheComponents ??
-    (config?.experimental as { cacheComponents?: boolean } | undefined)?.cacheComponents;
+  return config?.cacheComponents ?? config?.experimental?.cacheComponents;
 }
 
 /**

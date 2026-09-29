@@ -24,7 +24,36 @@ links back to the release that introduced it.
   generated file changed shape.** Migrate writes config by default and is
   non-destructive to your source; see [Migrating from Next.js](/docs/migrating).
 
-## Upgrading to 2.11
+## 2.x → 3.0
+
+3.0 removes the aliases denext kept through 2.x for its own renamed APIs. The
+spellings that are React's or Next.js's own stay, as compatible aliases.
+
+- **`experimental.compiler`, `experimental.asyncContext`,
+  `experimental.features` and `experimental.nodeResolve` are removed** — move
+  each to its top-level key: `reactCompiler`, `asyncContext`, `features`,
+  `nodeResolve`. Setting one is now a `denext.config` validation error naming
+  the replacement, not a dev warning (silently ignoring
+  `experimental.nodeResolve: false` would change how the app builds). Next.js's
+  own `experimental.reactCompiler`, `experimental.cacheComponents` and
+  `experimental.optimizePackageImports` are still honored, with a dev warning.
+  ([Configuration](/docs/config))
+- **`redirect` from `denext/server` throws**, like `redirect` from `denext` and
+  Next.js. The deprecated Response-returning alias is gone: return
+  `redirectResponse(location, status)` from `middleware.ts`. Middleware that
+  still calls `redirect()` keeps working — a thrown `redirect()` /
+  `permanentRedirect()` there becomes a 307 / 308 response — but code that used
+  the returned `Response` itself must call `redirectResponse`.
+- **`InspectNode.sourceId` is removed** from the DevTools inspector tree — read
+  `source` (`{ file, export, line, column }`) instead.
+
+3.0 also carries every change that first shipped in the 2.11.0-rc.1 prerelease
+(there is no 2.11.0 final): compression on by default, React re-render
+semantics for library components, per-build page-cache keys and least-privilege
+desktop packaging among them. Coming from 2.10 or earlier, work through
+[the list below](#also-in-30-from-2110-rc1) too.
+
+## Also in 3.0 (from 2.11.0-rc.1)
 
 - **Responses are now compressed by default** (gzip per `Accept-Encoding`, Next.js's
   `compress`; `compress: { encodings: ["br", "gzip"] }` adds brotli, at about two to three

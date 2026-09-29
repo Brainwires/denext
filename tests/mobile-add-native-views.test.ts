@@ -16,6 +16,7 @@ import {
   NATIVE_MAP_ANDROID_FILES,
   NATIVE_VIEWS_ANDROID_FILES,
   NATIVE_VIEWS_IOS_FILES,
+  NATIVE_VIEWS_TEMPLATE_VERSION,
   OSMDROID_DEPENDENCY,
 } from "../src/build/native-views-native-templates.ts";
 import { markedTemplateIntact } from "../src/build/native-template-marker.ts";
@@ -112,7 +113,11 @@ Deno.test("mobile add native-views: the plugin on iOS + Android, registered; no 
       assert(report.written.includes(path), path);
     }
     const plugin = await read(dir, IOS_PLUGIN);
-    assert(plugin.startsWith("// denext-native-views-template: 1 sha256="));
+    assert(
+      plugin.startsWith(
+        `// denext-native-views-template: ${NATIVE_VIEWS_TEMPLATE_VERSION} sha256=`,
+      ),
+    );
     assertEquals(await markedTemplateIntact("native-views", plugin), true);
     assertStringIncludes(plugin, 'jsName = "DenextNativeViews"');
     assertStringIncludes(plugin, "public protocol DenextNativeViewFactory");
@@ -151,6 +156,54 @@ Deno.test("mobile add native-views: the plugin on iOS + Android, registered; no 
     const again = await addMobileCapabilities({ capabilities: ["native-views"], cwd: dir, run });
     assertEquals(again.written, []);
   });
+});
+
+Deno.test("native-views Android plugin: scrollPassthrough hands a drag on a view to the WebView", () => {
+  const plugin = NATIVE_VIEWS_ANDROID_FILES["DenextNativeViewsPlugin.java"];
+  // Generation 2 is the one that added it (an older denext must not rewrite it away).
+  assert(NATIVE_VIEWS_TEMPLATE_VERSION >= 2);
+  // The axis comes from create and from every frame.
+  assertStringIncludes(plugin, 'call.getString("scrollPassthrough", "none")');
+  assertStringIncludes(plugin, 'frame.optString("scrollPassthrough", "none")');
+  // A drag past the system touch slop, along the axis ("both": either way), decided once.
+  assertStringIncludes(plugin, "ViewConfiguration.get(getContext()).getScaledTouchSlop()");
+  assertStringIncludes(plugin, "if (dx <= touchSlop && dy <= touchSlop) return false;");
+  assertStringIncludes(
+    plugin,
+    '"both".equals(axis) || (vertical ? "vertical".equals(axis) : "horizontal".equals(axis))',
+  );
+  // A second finger (a pinch) stays the view's.
+  assertStringIncludes(plugin, "MotionEvent.ACTION_POINTER_DOWN");
+  // "over": the router cancels the view's gesture, then replays it to the WebView from its
+  // ACTION_DOWN, moved into the WebView's coordinates.
+  const router = plugin.slice(plugin.indexOf("private final class Router"));
+  const takeOver = router.slice(router.indexOf("drag.takesOver(event)"));
+  assert(
+    takeOver.indexOf("cancelOf(event, 0, 0)") < takeOver.indexOf("toWeb(drag.down, dx, dy)") &&
+      takeOver.indexOf("toWeb(drag.down, dx, dy)") < takeOver.indexOf("toWeb(event, dx, dy)"),
+    "cancel, then the original down, then the current move",
+  );
+  assertStringIncludes(plugin, "copy.offsetLocation(dx, dy);");
+  assertStringIncludes(plugin, "cancel.setAction(MotionEvent.ACTION_CANCEL);");
+  // "under": the listener stops consuming, so the WebView's own onTouchEvent scrolls the page.
+  assertStringIncludes(plugin, "toWeb(underDrag.down, 0, 0);");
+  // A replayed event is not routed to an "under" view again.
+  assertStringIncludes(plugin, "if (forwarding) return false;");
+  // Nothing to scroll in the document: the drag stays the view's (as on iOS).
+  assertStringIncludes(plugin, "web.canScrollVertically(1) || web.canScrollVertically(-1)");
+});
+
+Deno.test("native-views iOS plugin: the __debug logging command is Debug-only", () => {
+  const plugin = NATIVE_VIEWS_IOS_FILES["DenextNativeViewsPlugin.swift"];
+  // Generation 3 is the one that gated it (an older denext must not rewrite the gate away).
+  assert(NATIVE_VIEWS_TEMPLATE_VERSION >= 3);
+  const branch = plugin.slice(plugin.indexOf('if name == "__debug" {'));
+  const gated = branch.slice(0, branch.indexOf("#endif"));
+  // Logging is switched on only inside `#if DEBUG`; a release build answers `logging: false`.
+  assert(gated.indexOf("#if DEBUG") < gated.indexOf("DenextNativeViewsLog.enabled = true"));
+  assert(gated.indexOf("DenextNativeViewsLog.enabled = true") < gated.indexOf("#else"));
+  assertStringIncludes(gated.slice(gated.indexOf("#else")), 'call.resolve(["logging": false])');
+  assertEquals(plugin.match(/DenextNativeViewsLog\.enabled = true/g)?.length, 1);
 });
 
 Deno.test("mobile add native-map: native-views plus the map view and osmdroid", async () => {

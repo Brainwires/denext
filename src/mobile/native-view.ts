@@ -16,7 +16,7 @@
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode, VNodeChildren } from "../jsx/types.ts";
-import { useCallback, useEffect, useRef, useState } from "../runtime/hooks.ts";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "../runtime/hooks.ts";
 import { nativePlatform } from "./bridge.ts";
 import type { GeometryElement } from "./native-view-geometry.ts";
 import {
@@ -348,8 +348,57 @@ export function useNativeViewSlot(
     },
     [],
   );
+  // While native, the slot element answers React Native's UIManager commands.
+  useEffect(() => {
+    if (!el || status !== "native") return;
+    slotCommands.set(el, command);
+    return () => void slotCommands.delete(el);
+  }, [el, status]);
 
   return { ref, overlayRef, status, placement, embedMarker: marker, error, command };
+}
+
+/** Each native slot's element → its handle's `command`, while the view is native. */
+const slotCommands = new WeakMap<object, NativeViewSlotHandle["command"]>();
+
+/** The attribute every {@linkcode NativeViewSlot} element carries. */
+const SLOT_SELECTOR = "[data-denext-native-view]";
+
+/** A ref object's `current`, or `tag` itself (an element has no `current`). */
+function unwrapRef(tag: unknown): unknown {
+  const isRef = typeof tag === "object" && tag !== null && "current" in tag && !("nodeType" in tag);
+  return isRef ? (tag as { current: unknown }).current : tag;
+}
+
+/** The slot element a React Native "tag" stands for: the element, or a ref object's. */
+function slotElementOf(tag: unknown): object | undefined {
+  const node = unwrapRef(tag);
+  if (!node || typeof node !== "object") return undefined;
+  if (slotCommands.has(node)) return node;
+  const el = node as { closest?: (selector: string) => object | null };
+  return typeof el.closest === "function" ? el.closest(SLOT_SELECTOR) ?? undefined : undefined;
+}
+
+/**
+ * The `command` of the native view slot behind a React Native "tag" (a slot element, one inside
+ * it, or a ref object holding either), while that view is native; else undefined. React Native
+ * mode's `UIManager.dispatchViewManagerCommand` routes through it. Internal to denext; not
+ * re-exported from `denext/mobile`.
+ *
+ * @param tag What the caller passed as the view's tag.
+ * @returns The command function, or undefined.
+ */
+export function nativeViewSlotCommand(tag: unknown): NativeViewSlotHandle["command"] | undefined {
+  const el = slotElementOf(tag);
+  return el ? slotCommands.get(el) : undefined;
+}
+
+/** Point `ref` (a callback or a ref object) at `node`. */
+function assignRef(ref: unknown, node: Element | null): void {
+  if (typeof ref === "function") ref(node);
+  else if (ref && typeof ref === "object" && "current" in ref) {
+    (ref as { current: unknown }).current = node;
+  }
 }
 
 /** An inline style object, as {@linkcode NativeViewSlot} accepts and extends it. */
@@ -434,6 +483,7 @@ export function NativeViewSlot(props: NativeViewSlotProps): VNode {
     overlay,
     style,
     children,
+    ref: userRef,
     ...rest
   } = props;
   const slot = useNativeViewSlot(type, {
@@ -444,6 +494,24 @@ export function NativeViewSlot(props: NativeViewSlotProps): VNode {
     viewKey,
     scrollPassthrough,
   });
+  // A `ref` given to the slot (React Native mode forwards the host component's) gets the element.
+  // The merged ref stays one function for the slot's life: a new identity per render (an inline
+  // callback `ref`) would detach and re-attach the slot, tearing the native view down.
+  const userRefBox = useRef<unknown>(userRef);
+  const attached = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    // A new user ref (not a new slot): hand the element over at commit, as React does.
+    if (userRefBox.current === userRef) return;
+    assignRef(userRefBox.current, null);
+    userRefBox.current = userRef;
+    if (attached.current) assignRef(userRef, attached.current);
+  });
+  const slotRef = slot.ref;
+  const ref = useCallback((node: Element | null) => {
+    attached.current = node;
+    slotRef(node);
+    assignRef(userRefBox.current, node);
+  }, []);
   const passthrough = scrollPassthroughFor(type, scrollPassthrough);
   const touchAction = touchActionFor(passthrough);
   const native = slot.status === "native" || slot.status === "pending";
@@ -456,7 +524,7 @@ export function NativeViewSlot(props: NativeViewSlotProps): VNode {
     "div",
     {
       ...rest,
-      ref: slot.ref,
+      ref,
       "data-denext-native-view": type,
       "data-status": slot.status,
       "data-scroll-passthrough": passthrough,
@@ -518,6 +586,8 @@ export function nativeViewComponent(
     }, []);
     return h(NativeViewSlot, {
       type,
+      // The host component's ref lands on the slot element: a UIManager command's tag.
+      ref: props.ref,
       props: viewPropsOf(props),
       onEvent,
       style: props.style as NativeViewSlotStyle | undefined,

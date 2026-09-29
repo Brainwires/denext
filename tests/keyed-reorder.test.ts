@@ -258,11 +258,7 @@ function TwoLists(props: { a: string[]; b: string[] }): VNode {
 
 Deno.test({
   name: "keyed: sibling arrays are separate key scopes (the same key in each keeps its own state)",
-  // KNOWN LIMITATION (KNOWN-LIMITATIONS.md, "Keys in sibling arrays"): normalizeChildren
-  // flattens nested arrays and indexOldChildren keys them in one Map, so A's rows match B's
-  // fibers when the keys overlap. React scopes keys per array. Fixing it needs a per-array key
-  // scope on fibers (hydration included); tracked in ROADMAP.md.
-  ignore: true,
+  // React scopes keys per array: each nested array is its own key scope (fiber.keyScope).
 }, () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
@@ -276,6 +272,67 @@ Deno.test({
     ["A2=A2", "A3=A3", "B1=B1", "B2=B2", "B3=B3"],
     "each row keeps the state it mounted with",
   );
+});
+
+Deno.test("keyed: the same key in two sibling arrays does not warn in dev", () => {
+  const g = globalThis as { __denextDev?: boolean };
+  const errors: string[] = [];
+  const orig = console.error;
+  g.__denextDev = true;
+  installDuplicateKeyWarning();
+  console.error = (...a: unknown[]) => void errors.push(a.map(String).join(" "));
+  try {
+    const { doc, container } = makeDom();
+    setDocument(doc as Any);
+    createRoot(container as Any).render(h(TwoLists, { a: ["1", "2"], b: ["1", "2"] }));
+    assertEquals(errors, [], "keys are unique per array, as in React");
+  } finally {
+    console.error = orig;
+    installDuplicateKeyWarning(false);
+    delete g.__denextDev;
+  }
+});
+
+Deno.test("keyed: a direct child and an array child may share a key", () => {
+  const Mixed = (props: { list: string[] }): VNode =>
+    h(
+      "ul",
+      null,
+      h("li", { key: "1" }, h(Row, { id: "head" })),
+      props.list.map((id) => h("li", { key: id }, h(Row, { id: `L${id}` }))),
+    );
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const root = createRoot(container as Any);
+  root.render(h(Mixed, { list: ["1", "2"] }));
+  root.render(h(Mixed, { list: ["2"] }));
+  const ul = container.childNodes[0] as FakeElement;
+  assertEquals(ul.childNodes.map((li) => (li as Any).textContent), ["head=head", "L2=L2"]);
+});
+
+Deno.test("unkeyed: a sibling after a shrinking list keeps its own state", () => {
+  // React treats the list as one fragment slot, so the footer after it is always slot 2 and
+  // keeps its fiber however many rows the list has; it never takes a row's state.
+  const Page = (props: { rows: string[] }): VNode =>
+    h(
+      "div",
+      null,
+      h(Row, { id: "header" }),
+      props.rows.map((id) => h(Row, { id: `R${id}` })),
+      h(Row, { id: "footer" }),
+    );
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  mounts = [];
+  const root = createRoot(container as Any);
+  root.render(h(Page, { rows: ["1", "2", "3"] }));
+  root.render(h(Page, { rows: ["1"] }));
+  const div = container.childNodes[0] as FakeElement;
+  assertEquals(
+    div.childNodes.map((n) => (n as Any).textContent),
+    ["header=header", "R1=R1", "footer=footer"],
+  );
+  assertEquals(mounts, ["header", "R1", "R2", "R3", "footer"], "nothing remounted");
 });
 
 Deno.test("keyed: the documented workaround — each sibling array in its own keyed Fragment", () => {

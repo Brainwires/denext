@@ -46,6 +46,34 @@ function badInput(message: string): DesktopCapError {
   return new DesktopCapError("validation", message);
 }
 
+/**
+ * Run a SQLite call, mapping the confinement refusal ({@link confineDatabase}) to a specific
+ * `forbidden` code instead of a generic `internal`: `ATTACH` / `VACUUM INTO` surfaces as an
+ * attached-database-limit error (`limits.attach = 0` → "too many attached databases") or an
+ * authorizer denial ("not authorized"), and the page deserves to see WHY. Other SQL errors (syntax,
+ * constraints) pass through unchanged.
+ *
+ * node:sqlite gives every SQLite error the same generic `code` ("ERR_SQLITE_ERROR") with no
+ * `errcode`/`errstr` (checked on Deno 2.9.7), so the only distinguisher is the message text. The
+ * "node:sqlite refuses ATTACH with the wording guardSql keys off" canary test pins that wording, so
+ * a Deno upgrade that changes it fails loudly rather than silently regressing this to `internal`.
+ */
+function guardSql<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    const msg = (err instanceof Error ? err.message : "").toLowerCase();
+    if (msg.includes("not authorized") || msg.includes("attached databas")) {
+      throw new DesktopCapError(
+        "forbidden",
+        "ATTACH DATABASE / VACUUM INTO is not allowed on a page-driven connection",
+        { status: 403 },
+      );
+    }
+    throw err;
+  }
+}
+
 /** A safe single-component database name (no separators, no `..`, non-empty). */
 function safeName(name: unknown): string {
   if (typeof name !== "string" || name.length === 0) {
@@ -183,7 +211,7 @@ export function sqliteCapability(
         handler: (args) => {
           const a = (args ?? {}) as { handle?: unknown; sql?: unknown };
           if (typeof a.sql !== "string") throw badInput("sql must be a string");
-          dbFor(a.handle).exec(a.sql);
+          guardSql(() => dbFor(a.handle).exec(a.sql as string));
           return { ok: true };
         },
       },
@@ -191,7 +219,7 @@ export function sqliteCapability(
         handler: (args) => {
           const a = (args ?? {}) as { handle?: unknown; sql?: unknown; params?: unknown };
           const stmt = prepare(a.handle, a.sql);
-          const r = stmt.run(...bindArgs(stmt, a.params));
+          const r = guardSql(() => stmt.run(...bindArgs(stmt, a.params)));
           return { changes: Number(r.changes), lastInsertRowId: Number(r.lastInsertRowid) };
         },
       },
@@ -204,16 +232,18 @@ export function sqliteCapability(
           // producing rows stops here instead of pinning the event loop (see the module notes).
           const deadline = Date.now() + budgetMs;
           const rows: unknown[][] = [];
-          for (const row of stmt.iterate(...bindArgs(stmt, a.params))) {
-            rows.push((row as unknown[]).map(encodeCell));
-            if (Date.now() > deadline) {
-              throw new DesktopCapError("timeout", "the query ran past its time budget", {
-                status: 408,
-              });
+          return guardSql(() => {
+            for (const row of stmt.iterate(...bindArgs(stmt, a.params))) {
+              rows.push((row as unknown[]).map(encodeCell));
+              if (Date.now() > deadline) {
+                throw new DesktopCapError("timeout", "the query ran past its time budget", {
+                  status: 408,
+                });
+              }
             }
-          }
-          const columns = stmt.columns().map((c) => c.name ?? c.column ?? "");
-          return { columns, rows };
+            const columns = stmt.columns().map((c) => c.name ?? c.column ?? "");
+            return { columns, rows };
+          });
         },
       },
       inTransaction: {

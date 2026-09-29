@@ -206,6 +206,8 @@ export interface UnbundledState {
   graphEpoch: number;
   /** React Native: the {@link graphEpoch} the dependency bundle was last checked against. */
   npmCheckedEpoch: number;
+  /** React Native: how many times the dependency bundle was rebuilt under a live page. */
+  npmLiveRebuilds: number;
 }
 
 /** Create the shared state for one project (dirs under `<outDir>/dev-unbundled/`). */
@@ -233,6 +235,7 @@ export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState 
     npmBuiltSig: null,
     graphEpoch: 0,
     npmCheckedEpoch: -1,
+    npmLiveRebuilds: 0,
   };
 }
 

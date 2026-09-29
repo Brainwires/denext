@@ -72,6 +72,7 @@ function resolveShell(value: boolean | DesktopShellConfig): ShellCapabilityConfi
     openPath: cfg.openPath === true,
     reveal: cfg.reveal === true,
     trash: cfg.trash === true,
+    openPathAllowExtensions: cfg.openPathAllowExtensions ?? [],
   };
 }
 

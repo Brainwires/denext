@@ -28,26 +28,6 @@ next-compat interop path — denext's own apps are unaffected):
   correctly, just not off-thread. A one-time dev warning fires. Self-host
   Partytown if you need true off-main-thread execution.
 
-- **Keys in sibling arrays share one scope.** React scopes keys per array, so two
-  arrays rendered side by side under one parent may reuse the same keys. denext flattens
-  nested child arrays and matches keys across the whole list, so overlapping keys in sibling
-  arrays can match the wrong row: a row may take another row's component state, DOM node and
-  uncontrolled input value. The dev duplicate-key warning also fires for this pattern, although
-  it is valid React. Minimal repro:
-
-  ```tsx
-  <ul>
-    {a.map((id) => <Row key={id} />)}
-    {b.map((id) => <Row key={id} />)}
-  </ul>;
-  // a = b = ["1", "2", "3"], then a = ["2", "3"]:
-  // A2 and A3 reuse B2's and B3's fibers (their state is swapped)
-  ```
-
-  Keys within one array, and arrays whose keys don't overlap, are unaffected. Until it is fixed
-  (see the roadmap), prefix the keys per array (`key={`a:${id}`}`) or wrap each array in its
-  own keyed `<Fragment>`. Tracked by an `ignore`d test in `tests/keyed-reorder.test.ts`.
-
 - **A root layout's `<html>`/`<body>` rendered by CLIENT code is re-created on hydration.**
   denext owns the real document tags and nests a layout's `<html>`/`<head>`/`<body>` inside
   its page container, where the browser's parser drops them. A Server Component layout is
@@ -456,7 +436,8 @@ four documented bounds of the opt-in:
   resolve `null` below it.
 - **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell, the
   OS keychain in a Deno Desktop window with the `secure-store` capability (`denext desktop add
-  secure-store`; macOS and Linux only, see below), and a plain IndexedDB database in a browser
+  secure-store`; macOS `security`, Linux libsecret, Windows WinRT PasswordVault — the Windows
+  backend is verified by the Windows CI round-trip), and a plain IndexedDB database in a browser
   (or a desktop window without that capability, where it is also wiped on relaunch).
 - **Passkeys (WebAuthn) do not run in the iOS Capacitor WebView.** The page's origin is
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
@@ -609,9 +590,9 @@ four documented bounds of the opt-in:
   (the cause is not yet known), and an `"over"` view hides while covered; `"under"` does not hide
   on occlusion (the page paints over it), so it is the placement to use.
   A slot a virtualized list unmounts destroys its view (a map loses its position; a video
-  restarts). A drag that starts on an `"under"` / `"over"` view scrolls the page only on iOS
-  (`scrollPassthrough`); on Android every touch on the view stays the view's. Android is
-  compiled, not run on a device or emulator.
+  restarts). Android's `scrollPassthrough` (a drag past the touch slop along the axis is handed
+  to the WebView from its start) is compile-verified, not yet run on an Android device, like the
+  rest of the Android plugin (compiled, not run on a device or emulator).
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so
@@ -717,11 +698,15 @@ four documented bounds of the opt-in:
   views (stand-ins that render their children). `react-native-webview` is an `<iframe>`:
   script injection works only for inline HTML and same-origin pages.
 - **The parity ledger's open React Native gaps.** React Native's 32 `*Base` / `*Component`
-  type-alias exports are not exported, and 9 exports miss members (`UIManager`'s view-manager
-  commands, `AppRegistry`'s headless tasks and others;
-  `scripts/parity/native/baselines/known-gaps.json`).
-  `AppState`'s `memoryWarning` never fires, `Linking.sendIntent()` rejects, and
-  `ActionSheetIOS.dismissActionSheet()` closes nothing.
+  type-alias exports are not exported, and 8 exports miss members (`AppRegistry`'s headless
+  tasks and others; `scripts/parity/native/baselines/known-gaps.json`).
+  `AppState`'s `memoryWarning` never fires (neither Capacitor nor denext's native code forwards
+  the OS memory warning), `Linking.sendIntent()` rejects, and
+  `ActionSheetIOS.dismissActionSheet()` closes nothing. `UIManager.getViewManagerConfig(name)`
+  answers only for a native component the app built with `requireNativeComponent` /
+  `codegenNativeComponent`, and `UIManager.dispatchViewManagerCommand` reaches a native view
+  only through the element a ref holds (react-native-web's `findNodeHandle` throws, so there is
+  no numeric tag). `codegenNativeCommands` commands take the same route, so the same limits apply.
 - **`LayoutAnimation` animates positions, not sizes.** `configureNext` measures the page, waits
   for the next DOM change and plays FLIP animations: a view that moved glides from its old place
   (a transform), created views animate in and deleted views animate out (a snapshot clone in a

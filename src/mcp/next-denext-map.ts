@@ -58,7 +58,7 @@ export const IMPORT_RULES: readonly ImportRule[] = [
       "useParams",
     ],
     note:
-      "All of next/navigation lives on `denext` and works in Server and Client Components alike. NOT denext/server: its `redirectResponse()` (alias `redirect`) is the middleware helper that RETURNS a Response.",
+      "All of next/navigation lives on `denext` and works in Server and Client Components alike (`denext/server` re-exports the same throwing helpers). In middleware, `redirectResponse()` from denext/server RETURNS a Response; a thrown `redirect()` there becomes that response.",
   },
   {
     from: "next/link",

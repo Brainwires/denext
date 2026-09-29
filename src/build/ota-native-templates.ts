@@ -1508,8 +1508,10 @@ import java.io.File;
  * in twice is rolled back here, before the first page loads. {@code bridgeBuilder} is the
  * activity's own protected field, which is why the activity passes it in.
  *
- * <p>A WebView renderer that dies during a trial takes the app process with it (Capacitor does
- * not handle {@code onRenderProcessGone}); the next launch counts that as a failed trial attempt.
+ * <p>A WebView renderer that dies is recovered by the {@code MainActivity} denext composes: it
+ * recreates the activity in the same process, which calls this again and keeps the same UI (a
+ * launch's trial attempt is counted once per process). A renderer that dies three times within a
+ * minute ends the app instead, and the next launch counts that as a failed trial attempt.
  */
 public final class DenextOta {
 

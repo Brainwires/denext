@@ -276,13 +276,6 @@ export interface InspectNode {
    */
   source?: SourceLocation;
   /**
-   * The raw Fast Refresh family id (`"<fileUrl>#<Export>"`, cache-buster stripped) —
-   * what {@link source} was before it became a {@link SourceLocation}.
-   *
-   * @deprecated Read {@link source} instead. Kept for one minor.
-   */
-  sourceId?: string;
-  /**
    * Whether the hook `name`/`hook` labels resolved against the build-time metadata.
    * `false` means metadata existed but did not line up with the live cells (a
    * conditional hook, or an opaque custom hook) — the panel then shows kind labels and
@@ -291,16 +284,6 @@ export interface InspectNode {
   hooksNamed?: boolean;
   /** Child nodes, in order. */
   children: InspectNode[];
-}
-
-/** A component's raw family id `fileUrl#Export` (cache-buster stripped), or undefined. */
-function sourceIdOf(type: unknown): string | undefined {
-  const fam = familyIdOf(type);
-  if (!fam) return undefined;
-  const hash = fam.lastIndexOf("#");
-  const url = (hash >= 0 ? fam.slice(0, hash) : fam).replace(/\?[^#]*$/, "");
-  const exp = hash >= 0 ? fam.slice(hash + 1) : "";
-  return exp ? `${url}#${exp}` : url;
 }
 
 /**
@@ -429,7 +412,6 @@ function componentDetail(fiber: Fiber): Partial<InspectNode> {
     hooks: serializeHooks(fiber, names ?? undefined),
     contexts: serializeContexts(fiber),
     source: sourceOf(fiber.vnode.type),
-    sourceId: sourceIdOf(fiber.vnode.type),
   };
   if (names !== undefined) detail.hooksNamed = names !== null;
   return detail;

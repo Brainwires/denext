@@ -223,6 +223,20 @@ Deno.test("scaffoldFiles: scaffolded Linux package script matches the examples/n
   assertEquals(scaffolded, example);
 });
 
+// examples/rn-desktop is the other checked-in desktop reference (react-native-web + Deno Desktop);
+// its packaging scripts are the SAME least-privilege scaffold template, so pin them byte-identical
+// too — a scaffold-template change must update both examples or these fail.
+for (const os of ["macos", "linux", "windows"] as const) {
+  Deno.test(`scaffoldFiles: scaffolded ${os} package script matches the examples/rn-desktop copy`, async () => {
+    const scaffolded = scaffoldFiles({ dir: "/x", desktop: true })
+      .find((f) => f.path === `scripts/package-${os}.ts`)!.content;
+    const example = await Deno.readTextFile(
+      new URL(`../../examples/rn-desktop/scripts/package-${os}.ts`, import.meta.url),
+    );
+    assertEquals(scaffolded, example);
+  });
+}
+
 Deno.test("scaffoldFiles: capacitor wires config, package.json, and mobile tasks", () => {
   const files = scaffoldFiles({ dir: "/x", capacitor: true });
   const paths = files.map((f) => f.path);

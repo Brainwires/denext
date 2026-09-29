@@ -2,7 +2,7 @@
 // Handlers are called directly with a fake DesktopCapCtx; the security-critical fs path-scoping
 // gets dedicated `..` / absolute / symlink-escape cases (the peer's e2e proves the wire).
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import type {
   DesktopCapability,
@@ -134,6 +134,11 @@ Deno.test("fs: recursive write creates parent dirs; listDir reports entries", as
     >;
     assertEquals(listing.map((e) => e.name), ["deep"]);
     assertEquals(listing[0].type, "directory");
+    // "" lists the directory's root (the page's listDir("") sends "", never ".").
+    const root = await call(fs, "listDir", { path: "", directory: "data" }) as Array<
+      Record<string, unknown>
+    >;
+    assertEquals(root.map((e) => e.name), ["sub"]);
   } finally {
     await cleanup();
   }
@@ -305,13 +310,43 @@ Deno.test("sqlite SECURITY: ATTACH / VACUUM INTO cannot reach a file outside the
         `VACUUM INTO '${join(outside, "y.db")}'`,
       ]
     ) {
-      await assertRejects(() => call(cap, "exec", { handle, sql }));
+      const err = await assertRejects(
+        () => call(cap, "exec", { handle, sql }),
+        DesktopCapError,
+      );
+      assertEquals(err.code, "forbidden", sql); // a specific code, not a generic `internal`
     }
     assertEquals([...Deno.readDirSync(outside)].length, 0, "nothing was created outside");
     await call(cap, "close", { handle });
   } finally {
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(outside, { recursive: true });
+  }
+});
+
+// CANARY: node:sqlite gives every error the same generic code ("ERR_SQLITE_ERROR", no errcode), so
+// the sqlite cap's guardSql keys the ATTACH→`forbidden` mapping off the MESSAGE text. Pin that
+// wording here: if a Deno/node:sqlite upgrade changes it, this fails loudly (and guardSql would
+// otherwise silently regress the ATTACH refusal to a generic `internal`).
+Deno.test("sqlite CANARY: node:sqlite refuses ATTACH with the wording guardSql keys off", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(":memory:");
+  const limits = (db as unknown as { limits?: Record<string, number> }).limits;
+  try {
+    assert(
+      limits && typeof limits === "object" && "attach" in limits,
+      "node:sqlite no longer exposes `limits.attach` — revisit confineDatabase()",
+    );
+    limits.attach = 0;
+    const err = assertThrows(() => db.exec("ATTACH DATABASE ':memory:' AS x")) as Error;
+    // guardSql matches "attached databas" (limits path) or "not authorized" (authorizer fallback).
+    const msg = err.message.toLowerCase();
+    assert(
+      msg.includes("attached databas") || msg.includes("not authorized"),
+      `node:sqlite ATTACH-refusal wording changed to "${err.message}" — update guardSql in sqlite.ts`,
+    );
+  } finally {
+    db.close();
   }
 });
 
@@ -537,6 +572,12 @@ Deno.test("shellPathCommand: per-OS argv passes the path as a discrete arg (no i
   const [tcmd, targs] = shellPathCommand("darwin", "trash", p);
   assertEquals(tcmd, "osascript");
   assertEquals(targs[targs.length - 1], p);
+  // Inside a Finder tell, `POSIX file …` is an object specifier Finder cannot resolve (-1728, found
+  // in a packaged window): the path must become an alias before the tell.
+  assert(
+    !targs.some((a) => a.includes('tell application "Finder"') && a.includes("POSIX file")),
+    targs.join(" "),
+  );
   assertEquals(shellPathCommand("linux", "open", p), ["xdg-open", [p]]);
   assertEquals(shellPathCommand("linux", "trash", p), ["gio", ["trash", p]]);
   assertEquals(shellPathCommand("windows", "open", p), ["explorer.exe", [p]]);
@@ -660,6 +701,66 @@ Deno.test("shell.openPath SECURITY: programs, scripts and launchers are refused 
     await Deno.writeTextFile(join(root, "noext"), "x");
     assert(await openPathRefusal(join(root, "noext"), "windows"));
     assertEquals(await openPathRefusal(join(root, "noext"), "linux"), undefined);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("shell.openPath allowlist: openPathAllowExtensions re-allows specific extensions (safely)", async () => {
+  // Unit: the allow set removes an extension from the denylist — and ONLY that extension.
+  const allow = new Set(["sh", "py"]);
+  assert(isExecutableOpenTarget("/app/data/s.sh"), "sh is on the denylist by default");
+  assert(!isExecutableOpenTarget("/app/data/s.sh", undefined, allow), "sh opted back in");
+  assert(!isExecutableOpenTarget("/app/data/x.SH", undefined, allow), "case-insensitive");
+  assert(isExecutableOpenTarget("/app/data/x.bat", undefined, allow), "bat still refused");
+
+  if (OS === "windows") return; // the runtime cases below use Unix symlinks + exec bits
+  const root = await Deno.makeTempDir({ prefix: "denext-shell-allow-" });
+  try {
+    const spawned: string[][] = [];
+    const cap = shellCapability({
+      dirs: { data: root, cache: root, documents: root },
+      config: {
+        openExternal: [],
+        openPath: true,
+        reveal: true,
+        trash: false,
+        openPathAllowExtensions: ["sh"],
+      },
+      spawn: (_c, args) => {
+        spawned.push(args);
+        return Promise.resolve();
+      },
+    });
+    // An allowlisted .sh opens — even with the execute bit set (the user opted in for this ext).
+    await Deno.writeTextFile(join(root, "ok.sh"), "#!/bin/sh\necho hi\n");
+    await Deno.chmod(join(root, "ok.sh"), 0o755);
+    await call(cap, "openPath", { path: join(root, "ok.sh") });
+    assertEquals(spawned.length, 1);
+    // A NON-allowlisted script is still refused.
+    await Deno.writeTextFile(join(root, "no.py"), "print(1)");
+    await assertRejects(
+      () => call(cap, "openPath", { path: join(root, "no.py") }),
+      DesktopCapError,
+    );
+    // SAFETY: an allowlisted .sh that symlinks to a NON-allowlisted program is refused (the real
+    // target is checked too).
+    await Deno.writeTextFile(join(root, "run.bat"), "calc");
+    await Deno.symlink(join(root, "run.bat"), join(root, "trick.sh"));
+    await assertRejects(
+      () => call(cap, "openPath", { path: join(root, "trick.sh") }),
+      DesktopCapError,
+    );
+    // SAFETY: an allowlisted extension symlinked to an extension-less executable is still refused
+    // (the exec-bit guard keys off the resolved file, whose ext is not allowlisted).
+    await Deno.writeTextFile(join(root, "bin"), "#!/bin/sh\n");
+    await Deno.chmod(join(root, "bin"), 0o755);
+    await Deno.symlink(join(root, "bin"), join(root, "wrap.sh"));
+    await assertRejects(
+      () => call(cap, "openPath", { path: join(root, "wrap.sh") }),
+      DesktopCapError,
+    );
+    assertEquals(spawned.length, 1, "only the safe .sh opened");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -809,6 +910,18 @@ Deno.test("secureStoreCommand: per-OS argv; the secret is argv on macOS, stdin o
   assertEquals(lin.stdin, "QjY0"); // secret on stdin, never argv
   assert(!lin.args.includes("QjY0"));
   assertEquals(secureStoreCommand("linux", "get", "svc", "tok").args[0], "lookup");
+
+  // Windows (WinRT PasswordVault via powershell.exe): the script is CONSTANT and every value
+  // travels in the stdin JSON — powershell.exe -Command joins trailing argv into the command text,
+  // so service/key/secret must never appear in argv.
+  const win = secureStoreCommand("windows", "set", "svc", "tok", "QjY0");
+  assertEquals(win.cmd, "powershell.exe");
+  assert(win.args.includes("-Command"));
+  assert(
+    !win.args.some((a) => a.includes("svc") || a.includes("tok") || a.includes("QjY0")),
+    "no user data in argv",
+  );
+  assertEquals(JSON.parse(win.stdin!), { op: "set", service: "svc", key: "tok", value: "QjY0" });
 });
 
 /** A fake macOS `security` backing an in-memory keychain, for the handler round-trip. */
@@ -843,22 +956,42 @@ Deno.test("secureStore: set/get round-trips a value with newlines and unicode (b
   assertEquals(await call(cap, "get", { key: "token" }), null);
 });
 
-Deno.test("secureStore SECURITY: Windows fails closed (never a plaintext fallback)", async () => {
-  const cap = secureStoreCapability({
-    service: "svc",
-    os: "windows",
-    run: () => {
-      throw new Error("the runner must not be called on the unsupported platform");
-    },
-  });
-  for (
-    const [m, a] of [["get", { key: "k" }], ["set", { key: "k", value: "v" }], ["delete", {
-      key: "k",
-    }]] as const
-  ) {
-    const err = await assertRejects(() => call(cap, m, a), DesktopCapError);
-    assertEquals(err.code, "unsupported_platform");
-  }
+/** A fake Windows PasswordVault backed by the stdin JSON payload (an in-memory store), for the
+ * handler round-trip. The real WinRT round-trip runs only on the Windows CI. */
+function windowsVault(): { run: SecureRunner; store: Map<string, string> } {
+  const store = new Map<string, string>();
+  const run: SecureRunner = (_cmd, _args, stdin) => {
+    const p = JSON.parse(stdin ?? "{}") as {
+      op: string;
+      service: string;
+      key: string;
+      value?: string;
+    };
+    const id = `${p.service}\u0000${p.key}`;
+    if (p.op === "set") {
+      store.set(id, p.value ?? "");
+      return Promise.resolve({ code: 0, stdout: "" });
+    }
+    if (p.op === "delete") {
+      store.delete(id);
+      return Promise.resolve({ code: 0, stdout: "" });
+    }
+    return Promise.resolve(
+      store.has(id) ? { code: 0, stdout: store.get(id)! } : { code: 1, stdout: "" },
+    );
+  };
+  return { run, store };
+}
+
+Deno.test("secureStore: Windows PasswordVault round-trips via the stdin JSON payload", async () => {
+  const { run } = windowsVault();
+  const cap = secureStoreCapability({ service: "com.example.app", os: "windows", run });
+  const secret = 'k=v\nline2 🔒 "q"';
+  await call(cap, "set", { key: "token", value: secret });
+  assertEquals(await call(cap, "get", { key: "token" }), secret);
+  assertEquals(await call(cap, "get", { key: "absent" }), null);
+  await call(cap, "delete", { key: "token" });
+  assertEquals(await call(cap, "get", { key: "token" }), null);
 });
 
 Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is refused (secret-tool getopt)", async () => {

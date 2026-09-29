@@ -110,6 +110,8 @@ entry = [
   # Build/codegen scripts run via `deno task`, not imported — declare them so they
   # aren't reported as unused files (e.g. scripts/gen-*.ts feed the docs site).
   "scripts/*.ts",
+  # CI-only scripts run via `deno run` from a workflow (e.g. the desktop secureStore round-trip).
+  "scripts/ci/*.ts",
   # More file conventions denext loads by PATH, not import: the project config, the
   # request middleware, the instrumentation hook, and the App Router metadata files.
   "**/denext.config.ts",
@@ -222,6 +224,12 @@ ignorePatterns = [
   # harness/ssr-measure.ts drives the server-rendered list bench in headless Chromium (CDP I/O
   # only; its pure parts live in harness/ssr-report.ts, which stays analyzed and tested).
   "examples/scroll-bench/harness/ssr-measure.ts",
+  # examples/rn-desktop's packaging scripts are byte-identical vendored copies of the scaffold
+  # template (a tests/integration/scaffold.test.ts byte-identity test pins them to it), so they
+  # deliberately mirror examples/native/scripts. Excluded from analysis so that intentional
+  # per-example duplication + the template's own CRAP aren't reported against them; the
+  # byte-identity test is their guard. (examples/native/scripts is an entry point above.)
+  "examples/rn-desktop/scripts/**",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls

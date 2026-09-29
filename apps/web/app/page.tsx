@@ -106,12 +106,14 @@ export default function Landing() {
           If you know Next.js, you already know denext — the same file conventions, hooks, and
           `app/` router, with a zero-npm runtime and its own small React. And because denext owns
           the reconciler, it adds what stock React can't: Qwik-style resumability and Astro-style
-          islands.
+          islands. The same app ships to iOS, Android and the desktop, and your existing React
+          Native / Expo app comes along too.
         </p>
         <div class="cta">
           <a class="btn primary" href="/docs/getting-started">Get started</a>
           <a class="btn" href="/docs/tutorial">Follow the tutorial</a>
           <a class="btn" href="/docs/migrating">Migrate a Next.js app</a>
+          <a class="btn" href="/docs/react-native">Bring a React Native app</a>
         </div>
         <Code lang="tsx">{SAMPLE}</Code>
       </section>

@@ -31,6 +31,7 @@ import {
 } from "../src/build/dev-unbundled/state.ts";
 import { transform } from "../src/build/dev-unbundled/transform.ts";
 import { onChange } from "../src/build/dev-unbundled/hmr.ts";
+import { refreshReactNativeDeps } from "../src/build/dev-unbundled/deps.ts";
 
 async function writeTree(root: string, files: Record<string, string>): Promise<void> {
   for (const [rel, text] of Object.entries(files)) {
@@ -253,6 +254,46 @@ Deno.test("React Native: a manifest change or an added / removed route invalidat
     onChange(st, [join(dir, "src/main.tsx")]);
     assertEquals(st.graphEpoch, before + 1, "an edit re-checks the dependency bundle");
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("React Native: an edit importing a new name rebuilds the bundle before any hot-swap", async () => {
+  const { dir, st } = await rnApp();
+  let reloads = 0;
+  (st.opts as { onDepsRebuilt?: () => void }).onDepsRebuilt = () => reloads++;
+  st.runtimeBuilt = Promise.resolve(); // the shared runtime is not under test
+  try {
+    assertEquals(await refreshReactNativeDeps(st), false, "no bundle yet: the page load builds it");
+    // The first build (the page load's) is not a live rebuild.
+    st.npmCheckedEpoch = -1;
+    await crawlReactNativeGraph(st, (abs) => transform(st, abs));
+    await buildReactNativeDeps(st);
+    st.npmBuiltSig = dependencySignature(st);
+    st.npmCheckedEpoch = st.graphEpoch;
+
+    // An edit that imports nothing new: hot-swap as usual, no rebuild, no reload.
+    onChange(st, [join(dir, "src/badge.js")]);
+    assertEquals(await refreshReactNativeDeps(st), false);
+    assertEquals(reloads, 0);
+
+    // An edit importing a name the bundle lacks (re-exported through CommonJS, say): the bundle
+    // is rebuilt first and the page told to reload once — never a hot-swap against the old one.
+    const main = join(dir, "src/main.tsx");
+    await Deno.writeTextFile(
+      main,
+      (await Deno.readTextFile(main)).replace("import { hello }", "import { goodbye, hello }") +
+        "export const more = goodbye;\n",
+    );
+    onChange(st, [main]);
+    assertEquals(await refreshReactNativeDeps(st), true);
+    assertEquals(reloads, 1);
+    const cjs = await Deno.readTextFile(join(st.npmDir, "cjs-pkg.js"));
+    assert(/as goodbye\b/.test(cjs), "the new name is in the rebuilt bundle");
+    assertEquals(await refreshReactNativeDeps(st), false, "settled: no second rebuild");
+    assertEquals(reloads, 1);
+  } finally {
+    await esbuild.stop();
     await Deno.remove(dir, { recursive: true });
   }
 });

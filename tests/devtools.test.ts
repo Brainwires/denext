@@ -273,9 +273,8 @@ Deno.test("denext/devtools exposes the source-location types on its public surfa
     export: "Page",
   };
   const owner: OwnerStackEntry = { name: "Page", source };
-  const node: Pick<InspectNode, "source" | "sourceId" | "hooksNamed"> = {
+  const node: Pick<InspectNode, "source" | "hooksNamed"> = {
     source,
-    sourceId: "file:///app/page.tsx#Page",
     hooksNamed: true,
   };
   assertEquals(owner.source?.line, 42);

@@ -156,6 +156,28 @@ interface Watcher {
 
 let watcher: Watcher | undefined;
 
+/**
+ * Reveal the field on the next animation frame (at once without `requestAnimationFrame`),
+ * tracking the queued frame's id in `frames` until it runs.
+ */
+function revealNextFrame(frames: Set<number>, covered: () => number): void {
+  const raf = (globalThis as { requestAnimationFrame?: (fn: () => void) => number })
+    .requestAnimationFrame;
+  if (!raf) {
+    revealFocusedField(covered());
+    return;
+  }
+  let ran = false;
+  let id = 0;
+  id = raf(() => {
+    ran = true;
+    frames.delete(id);
+    revealFocusedField(covered());
+  });
+  // A synchronous rAF (tests) has already run: nothing left to cancel.
+  if (!ran) frames.add(id);
+}
+
 /** The page's listeners: window and visual-viewport resizes and `focusin` re-check the field. */
 function startWatcher(g: {
   addEventListener: EventTarget["addEventListener"];
@@ -164,6 +186,8 @@ function startWatcher(g: {
   document: EventTarget;
 }): Watcher {
   const timers = new Set<ReturnType<typeof setTimeout>>();
+  // Frames queued by a settled timer, cancelled with the timers so no reveal runs after `stop`.
+  const frames = new Set<number>();
   const w: Watcher = {
     users: 0,
     covered: 0,
@@ -171,10 +195,7 @@ function startWatcher(g: {
       for (const ms of SETTLE_MS) {
         const t = setTimeout(() => {
           timers.delete(t);
-          const raf = (globalThis as { requestAnimationFrame?: (fn: () => void) => void })
-            .requestAnimationFrame;
-          if (raf) raf(() => revealFocusedField(w.covered));
-          else revealFocusedField(w.covered);
+          revealNextFrame(frames, () => w.covered);
         }, ms);
         timers.add(t);
       }
@@ -184,6 +205,11 @@ function startWatcher(g: {
       vv?.removeEventListener("resize", w.check);
       g.document.removeEventListener("focusin", w.check);
       for (const t of timers) clearTimeout(t);
+      timers.clear();
+      const caf = (globalThis as { cancelAnimationFrame?: (id: number) => void })
+        .cancelAnimationFrame;
+      if (caf) { for (const id of frames) caf(id); }
+      frames.clear();
     },
   };
   const vv = g.visualViewport;

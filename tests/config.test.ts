@@ -7,6 +7,7 @@ import {
   fillDestination,
   isOrigin,
   matchPattern,
+  nodeResolveEnabled,
   reactCompilerEnabled,
   resolveCacheComponents,
   resolveLive,
@@ -71,36 +72,29 @@ Deno.test("resolveCacheComponents: top-level wins, legacy experimental alias sti
   assertEquals(resolveCacheComponents(undefined), undefined);
 });
 
-Deno.test("reactCompiler/asyncContext/features: top-level wins, the experimental.* alias still reads", () => {
+Deno.test("reactCompiler/asyncContext/features: top-level only, but for Next's experimental.reactCompiler", () => {
   // The graduated top-level fields are the canonical home.
   assertEquals(reactCompilerEnabled({ reactCompiler: true }), true);
   assertEquals(asyncContextEnabled({ asyncContext: true }), true);
   assertEquals(featureFlags({ features: { A: true, B: false } }), { A: true, B: false });
 
-  // Both spellings produce the same effective value: a 2.x config still works unchanged.
+  // Next.js 15's `experimental.reactCompiler` is kept as an obsolete alias; the top-level
+  // field takes precedence when both are set — even an explicit `false`.
   assertEquals(reactCompilerEnabled({ experimental: { reactCompiler: true } }), true);
-  assertEquals(reactCompilerEnabled({ experimental: { compiler: true } }), true);
-  assertEquals(asyncContextEnabled({ experimental: { asyncContext: true } }), true);
-  assertEquals(featureFlags({ experimental: { features: { A: true } } }), { A: true });
-
-  // The top-level field takes precedence when both are set — even an explicit `false`, and
-  // the maps are not merged.
   assertEquals(
     reactCompilerEnabled({ reactCompiler: false, experimental: { reactCompiler: true } }),
     false,
   );
-  assertEquals(
-    reactCompilerEnabled({ reactCompiler: true, experimental: { compiler: false } }),
-    true,
-  );
-  assertEquals(
-    asyncContextEnabled({ asyncContext: false, experimental: { asyncContext: true } }),
-    false,
-  );
-  assertEquals(
-    featureFlags({ features: { A: false }, experimental: { features: { A: true, B: true } } }),
-    { A: false },
-  );
+
+  // denext's own former aliases were removed in 3.0 and are no longer read (the validator
+  // rejects them before a resolver ever sees one).
+  const removed = {
+    experimental: { compiler: true, asyncContext: true, features: { A: true }, nodeResolve: false },
+  } as unknown as DenextConfig;
+  assertEquals(reactCompilerEnabled(removed), false);
+  assertEquals(asyncContextEnabled(removed), false);
+  assertEquals(featureFlags(removed), {});
+  assertEquals(nodeResolveEnabled(removed), true);
 
   // Neither set → off / an empty map.
   for (const config of [{}, { experimental: {} }, null, undefined]) {

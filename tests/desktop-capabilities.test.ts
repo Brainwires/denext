@@ -9,6 +9,7 @@ import {
   DESKTOP_BASELINE_FLAGS,
   DESKTOP_CAPABILITIES,
   desktopBuildFlags,
+  desktopIncludeArgs,
   desktopPackageFlags,
   desktopPermissionFlags,
   formatDesktopAddReport,
@@ -77,6 +78,21 @@ Deno.test("desktop add: a key the user customised is kept", async () => {
   const text = await Deno.readTextFile(join(dir, "denext.config.ts"));
   assertStringIncludes(text, 'openExternal: ["https:"]');
   assertStringIncludes(text, "clipboard: true");
+});
+
+Deno.test("desktop add: drops the scaffold's commented capabilities hint once a real block exists", async () => {
+  const dir = await project(
+    "export default {\n  desktop: {\n" +
+      '    app: { identifier: "com.example.denext" },\n' +
+      "    // capabilities: { fs: true, secureStore: true, shell: true },  // denext desktop add <cap>\n" +
+      "  },\n};\n",
+  );
+  const report = await addDesktopCapabilities({ capabilities: ["fs"], dir });
+  assertEquals(report.added, ["fs"]);
+  const text = await Deno.readTextFile(join(dir, "denext.config.ts"));
+  assertStringIncludes(text, "$APPDATA"); // the real fs block was written
+  assert(!text.includes("denext desktop add <cap>"), "the commented hint line is gone");
+  assert(!text.includes("// capabilities:"), "no commented capabilities placeholder remains");
 });
 
 Deno.test("desktop add: creates denext.config.ts when the project has none", async () => {
@@ -166,9 +182,10 @@ Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay t
     "--allow-sys=osRelease",
     "--allow-run=security",
   ]);
-  // secure-store is unsupported on Windows → it bakes nothing there (baseline only).
+  // secure-store on Windows uses WinRT PasswordVault via powershell.exe (not on other OSes).
   assertEquals(desktopBuildFlags(caps({ secureStore: true }), "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
+    "--allow-run=powershell.exe",
   ]);
   // keep-awake's Windows backend is FFI, not a program.
   assertEquals(desktopBuildFlags(caps({ keepAwake: true }), "windows"), [
@@ -295,5 +312,42 @@ Deno.test("desktopPackageFlags: reads denext.config.ts next to the script (missi
   } finally {
     await Deno.remove(bare, { recursive: true });
     await Deno.remove(withCfg, { recursive: true });
+  }
+});
+
+Deno.test("desktopIncludeArgs: one --include per desktop.capabilities.extensions path (none → [])", async () => {
+  // No config, and a config with no extensions → nothing extra to embed.
+  const bare = await Deno.makeTempDir({ prefix: "denext-inc-bare-" });
+  const noExt = await Deno.makeTempDir({ prefix: "denext-inc-noext-" });
+  // A config that declares extension modules → one `--include <path>` each (so the packaged
+  // binary embeds them, not just the export dir).
+  const withExt = await Deno.makeTempDir({ prefix: "denext-inc-ext-" });
+  try {
+    await Deno.mkdir(join(noExt, "scripts"));
+    await Deno.mkdir(join(withExt, "scripts"));
+    await Deno.writeTextFile(
+      join(noExt, "denext.config.ts"),
+      "export default { desktop: { capabilities: { fs: true } } };\n",
+    );
+    await Deno.writeTextFile(
+      join(withExt, "denext.config.ts"),
+      'export default { desktop: { capabilities: { extensions: ["./desktop/diag.ts", "./desktop/tools.ts"] } } };\n',
+    );
+    assertEquals(
+      await desktopIncludeArgs(`file://${join(bare, "scripts", "package-macos.ts")}`),
+      [],
+    );
+    assertEquals(
+      await desktopIncludeArgs(`file://${join(noExt, "scripts", "package-macos.ts")}`),
+      [],
+    );
+    assertEquals(
+      await desktopIncludeArgs(`file://${join(withExt, "scripts", "package-macos.ts")}`),
+      ["--include", "./desktop/diag.ts", "--include", "./desktop/tools.ts"],
+    );
+  } finally {
+    await Deno.remove(bare, { recursive: true });
+    await Deno.remove(noExt, { recursive: true });
+    await Deno.remove(withExt, { recursive: true });
   }
 });

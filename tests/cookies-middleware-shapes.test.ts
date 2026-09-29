@@ -7,7 +7,7 @@
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
-import { createMiddlewareRunner, redirect, redirectResponse } from "../src/server/middleware.ts";
+import { createMiddlewareRunner, redirectResponse } from "../src/server/middleware.ts";
 import { NextResponse } from "../src/compat/next/server.ts";
 import { NextRequest } from "../src/compat/next/request.ts";
 import { unstable_noStore, unstable_rethrow } from "../src/compat/next/cache.ts";
@@ -227,11 +227,10 @@ Deno.test("Server Action: notFound()/forbidden() are 404/403 signals, not a reda
   assertEquals((await res.json()).signal, "notFound");
 });
 
-Deno.test("redirectResponse is the middleware helper; `redirect` is its deprecated alias", () => {
+Deno.test("redirectResponse is the middleware helper", () => {
   const r = redirectResponse("/login", 308);
   assertEquals(r.status, 308);
   assertEquals(r.headers.get("location"), "/login");
-  assertEquals(redirect, redirectResponse);
 });
 
 Deno.test("NextRequest.ip uses the LAST x-forwarded-for hop, never the client-supplied first one", () => {

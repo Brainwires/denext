@@ -69,8 +69,9 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "allowedDevOrigins",
   ],
   // `features` (compile-time flags) sits with the other build-and-toolchain switches; `experimental`
-  // is the superseded block every key graduated out of, kept here so a file that still sets it
-  // is edited where it always was (the schema marks it deprecated, so an absent one is not offered).
+  // is Next.js's superseded block (its remaining keys are Next's own spellings), kept here so a
+  // file that still sets it is edited where it always was (the schema marks it deprecated, so an
+  // absent one is not offered).
   // `optimizePackageImports` is a bundler switch, so it sits beside `features`.
   advanced: [
     "features",

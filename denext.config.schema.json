@@ -1142,7 +1142,7 @@
           "type": "object",
           "properties": {
             "secureStore": {
-              "description": "OS keychain (macOS Keychain / libsecret; not yet on Windows, where it fails closed).",
+              "description": "OS keychain: macOS Keychain / Linux libsecret / Windows WinRT PasswordVault (the Windows backend is verified by the Windows CI round-trip).",
               "type": "boolean"
             },
             "fs": {
@@ -1207,6 +1207,13 @@
                     "trash": {
                       "description": "Allow `trash` (move a path to the OS trash).",
                       "type": "boolean"
+                    },
+                    "openPathAllowExtensions": {
+                      "description": "File extensions `openPath` may open despite its executable/script denylist — bare, no leading dot, case-insensitive (e.g. `[\"py\", \"sh\"]`). By default `openPath` refuses programs, scripts and launchers, because the OS default handler would RUN them; list an extension to opt back in when you trust the handler for that type. Ignored unless `openPath` is true; `reveal` and `trash` never execute, so they are unaffected.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   }
                 }
@@ -1353,45 +1360,27 @@
       ]
     },
     "experimental": {
-      "description": "Deprecated. Every `experimental.*` key graduated to a top-level field by 2.5 (`reactCompiler`, `asyncContext`, `features`, `nodeResolve`, `cacheComponents`). The old spellings are still honored, with a dev warning, when the top-level field is absent; the top-level field wins when both are set. Removed in 3.0.",
+      "description": "Deprecated. Next.js's `experimental` block, kept for migrated Next apps. Only Next's own spellings are read — `reactCompiler`, `cacheComponents` and `optimizePackageImports` — as obsolete aliases of their top-level fields: honored, with a dev warning, when the top-level field is absent; the top-level field wins when both are set. denext's own former `experimental.*` keys (`compiler`, `asyncContext`, `features`, `nodeResolve`) were removed in 3.0, and setting one is a config error.",
       "deprecated": true,
       "type": "object",
       "properties": {
         "reactCompiler": {
-          "description": "Deprecated. Graduated to the top-level `reactCompiler` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
-          "deprecated": true,
-          "type": "boolean"
-        },
-        "compiler": {
-          "description": "Deprecated. Renamed `reactCompiler` (Next.js's key) in 2.0, now the top-level `reactCompiler`. Honored as an alias through 2.x; removed in 3.0.",
-          "deprecated": true,
-          "type": "boolean"
-        },
-        "asyncContext": {
-          "description": "Deprecated. Graduated to the top-level `asyncContext` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
-          "deprecated": true,
-          "type": "boolean"
-        },
-        "features": {
-          "description": "Deprecated. Graduated to the top-level `features` in 2.5. Honored as an alias through 2.x; removed in 3.0.",
-          "deprecated": true,
-          "type": "object",
-          "additionalProperties": {
-            "type": "boolean"
-          }
-        },
-        "nodeResolve": {
-          "description": "Deprecated. Moved to the top-level `nodeResolve` in 2.0 — it is load-bearing for every compat migration, not an incomplete feature. Honored as an alias through 2.x.",
+          "description": "Deprecated. Next.js 15's spelling of the top-level `reactCompiler`, kept as an obsolete alias for migrated Next apps. The top-level field wins.",
           "deprecated": true,
           "type": "boolean"
         },
         "optimizePackageImports": {
-          "description": "Deprecated. Next.js's spelling of the top-level `optimizePackageImports`. Honored as an alias (with a dev warning) when the top-level field is absent.",
+          "description": "Deprecated. Next.js's spelling of the top-level `optimizePackageImports`, kept as an obsolete alias for migrated Next apps. The top-level field wins.",
           "deprecated": true,
           "type": "array",
           "items": {
             "type": "string"
           }
+        },
+        "cacheComponents": {
+          "description": "Deprecated. Next.js 16's spelling of the top-level `cacheComponents`, kept as an obsolete alias for migrated Next apps. The top-level field wins.",
+          "deprecated": true,
+          "type": "boolean"
         }
       },
       "additionalProperties": false

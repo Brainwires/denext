@@ -25,7 +25,7 @@ export { cacheLife as unstable_cacheLife, cacheTag as unstable_cacheTag };
  * request instead of being stored and served to every visitor.
  *
  * @deprecated Next.js 15 deprecates it in favor of `connection()` (from `denext/server`),
- * which denext also implements. Kept through 2.x; removed in 3.0.
+ * which denext also implements. Kept as a compatible alias because Next still exports it.
  */
 export function unstable_noStore(): void {
   noStore();
@@ -49,7 +49,8 @@ export {
 /**
  * `io` — Next 16's experimental marker for I/O inside a cached scope. denext's cache model
  * does not require it; provided as a no-op for source/signature compatibility.
- * @deprecated A no-op in denext; remove the call. Kept through 2.x; removed in 3.0.
+ * @deprecated A no-op in denext; remove the call. Kept as a compatible alias because Next
+ * still exports it.
  */
 export function io(): void {
   // no-op — accepted for compatibility.
