@@ -4056,7 +4056,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.10.0",
+          "signature": "VERSION: 2.11.0-rc.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -6196,6 +6196,18 @@
           "signature": "interface DesktopConfig",
           "doc": "The desktop block of denext.config.ts: Deno Desktop native capabilities. The allowlist the desktop runtime's capability bridge serves (default deny), and the source the package scripts derive least-privilege --allow-* from. Written by denext desktop add <cap>. Distinct from SpaDesktopConfig (spa.desktop, packaging settings such as the icon); the two may be unified later. Docs: https://denext.dev/docs/desktop",
           "docFull": "The `desktop` block of `denext.config.ts`: Deno Desktop native capabilities. The allowlist the\ndesktop runtime's capability bridge serves (default deny), and the source the package scripts\nderive least-privilege `--allow-*` from. Written by `denext desktop add <cap>`. Distinct from\n{@link SpaDesktopConfig} (`spa.desktop`, packaging settings such as the icon); the two may be\nunified later. Docs: https://denext.dev/docs/desktop",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopExtraPermissions",
+          "slug": "DesktopExtraPermissions",
+          "kind": "interface",
+          "signature": "interface DesktopExtraPermissions",
+          "doc": "Extra --allow-* for the desktop packaging scripts (see DesktopConfig.extraPermissions). Each field is a list of Deno permission values, unioned into the derived flags.",
+          "docFull": "Extra `--allow-*` for the desktop packaging scripts (see {@link DesktopConfig.extraPermissions}).\nEach field is a list of Deno permission values, unioned into the derived flags.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15332,6 +15344,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopBridge",
+          "slug": "DesktopBridge",
+          "kind": "interface",
+          "signature": "interface DesktopBridge",
+          "doc": "The runtime bridge: a request handler for its two paths, and an event emitter.",
+          "docFull": "The runtime bridge: a request handler for its two paths, and an event emitter.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopBuildFlags",
           "slug": "desktopBuildFlags",
           "kind": "function",
@@ -15370,7 +15394,7 @@
           "kind": "interface",
           "signature": "interface DesktopCapabilityMethod<I, O>",
           "doc": "One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process.",
-          "docFull": "One capability method: an optional input schema (validated before the handler), an optional\noutput schema (strips the result before it reaches the page, in production too), the Deno\npermissions it needs, an optional per-method timeout, and the handler that runs in the Deno\nprocess.\n\nInput inference for the PAGE flows from `input`/`output` (read by `denext/desktop/client`'s\ntyped proxy). Annotate `handler`'s `args` with the schema's output type for typed handler code.",
+          "docFull": "One capability method: an optional input schema (validated before the handler), an optional\noutput schema (strips the result before it reaches the page, in production too), the Deno\npermissions it needs, an optional per-method timeout, and the handler that runs in the Deno\nprocess.\n\nInput inference for the PAGE flows from `input`/`output` (read by `denext/desktop/client`'s\ntyped proxy). The HANDLER receives `args` typed as `unknown` (the bridge has already validated it\nagainst `input`); read fields off it or cast it to the input schema's output type INSIDE the\nhandler — do not annotate the `args` parameter with a narrower type, as a handler assigned to\n`(args: unknown) => …` cannot narrow it (parameter contravariance).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15419,6 +15443,18 @@
           "signature": "type DesktopDevProxyDecision = object | object",
           "doc": "The live-reload proxy decision from the env + the running binary — see desktopDevProxyDecision.",
           "docFull": "The live-reload proxy decision from the env + the running binary — see {@linkcode desktopDevProxyDecision}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopEventLog",
+          "slug": "DesktopEventLog",
+          "kind": "class",
+          "signature": "class DesktopEventLog",
+          "doc": "A bounded, replayable log of desktop bridge events. One instance per running app (created by the bridge); exported as a type so DesktopBridge[\"events\"] is documentable.",
+          "docFull": "A bounded, replayable log of desktop bridge events. One instance per running app (created by the\nbridge); exported as a type so `DesktopBridge[\"events\"]` is documentable.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15506,6 +15542,18 @@
           "denextOnly": true
         },
         {
+          "name": "ProxyModule",
+          "slug": "ProxyModule",
+          "kind": "typeAlias",
+          "signature": "type ProxyModule = ./dev-proxy.ts",
+          "doc": "The lazily-imported reverse-proxy module (./dev-proxy.ts) createDesktopHandler forwards to when a backend proxy is configured; exported so the handler's signature is public.",
+          "docFull": "The lazily-imported reverse-proxy module ({@link ./dev-proxy.ts}) {@linkcode createDesktopHandler}\nforwards to when a backend proxy is configured; exported so the handler's signature is public.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ResolvedDesktop",
           "slug": "ResolvedDesktop",
           "kind": "interface",
@@ -15523,7 +15571,7 @@
           "kind": "function",
           "signature": "resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
           "doc": "Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.",
-          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nOnly the currently implemented built-ins are mapped (`device`, `fs`, `sqlite`, `echo`); a\nconfigured key without a built-in yet is left unavailable (the page falls back), never an error.\nA bad extension path IS an error (fail fast at launch).",
+          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, and the `echo` diagnostic), plus any `extensions` module paths;\n`auth-session` is a runtime endpoint (not a bridge cap) so it only sets `authSessionEnabled`. A\nconfigured key with no built-in yet (`clipboard`/`contextMenu`/`notifications` — WebView-backed)\nis left unavailable (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
           "params": [
             {
               "name": "config",
@@ -15534,7 +15582,7 @@
               "doc": "The app id (for storage dirs) and the entry's import.meta.url (for extensions)."
             }
           ],
-          "returns": "The enabled capabilities and the app-support directory.",
+          "returns": "The enabled capabilities, the app-support directory, and whether auth-session is enabled.",
           "examples": [],
           "denextOnly": true
         },
@@ -15579,8 +15627,8 @@
           "slug": "RunDesktopOptions",
           "kind": "interface",
           "signature": "interface RunDesktopOptions",
-          "doc": "",
-          "docFull": "",
+          "doc": "Options for runDesktop (and createDesktopHandler): where to serve the static export from, an optional loopback reverse proxy and request escape hatch, the signed self-updater, the enabled capability bridge, the app-support directory, and whether the loopback OAuth endpoint is enabled. The generated desktop.ts entry spreads resolveDesktopCapabilities into it.",
+          "docFull": "Options for {@linkcode runDesktop} (and {@linkcode createDesktopHandler}): where to serve the\nstatic export from, an optional loopback reverse proxy and request escape hatch, the signed\nself-updater, the enabled capability bridge, the app-support directory, and whether the loopback\nOAuth endpoint is enabled. The generated `desktop.ts` entry spreads\n{@linkcode resolveDesktopCapabilities} into it.",
           "params": [],
           "returns": "",
           "examples": [],

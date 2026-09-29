@@ -2715,7 +2715,7 @@
       "title": "VERSION",
       "module": "denext",
       "url": "/docs/api/denext/VERSION",
-      "text": "VERSION VERSION: 2.10.0 The denext framework version.",
+      "text": "VERSION VERSION: 2.11.0-rc.1 The denext framework version.",
       "denextOnly": true
     },
     {
@@ -4165,6 +4165,15 @@
       "module": "denext/server",
       "url": "/docs/api/denext-server/DesktopConfig",
       "text": "DesktopConfig interface DesktopConfig The desktop block of denext.config.ts: Deno Desktop native capabilities. The allowlist the desktop runtime's capability bridge serves (default deny), and the source the package scripts derive least-privilege --allow-* from. Written by denext desktop add <cap>. Distinct from SpaDesktopConfig (spa.desktop, packaging settings such as the icon); the two may be unified later. Docs: https://denext.dev/docs/desktop",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-server/DesktopExtraPermissions",
+      "kind": "interface",
+      "title": "DesktopExtraPermissions",
+      "module": "denext/server",
+      "url": "/docs/api/denext-server/DesktopExtraPermissions",
+      "text": "DesktopExtraPermissions interface DesktopExtraPermissions Extra --allow-* for the desktop packaging scripts (see DesktopConfig.extraPermissions). Each field is a list of Deno permission values, unioned into the derived flags.",
       "denextOnly": true
     },
     {
@@ -10234,6 +10243,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-desktop/DesktopBridge",
+      "kind": "interface",
+      "title": "DesktopBridge",
+      "module": "denext/desktop",
+      "url": "/docs/api/denext-desktop/DesktopBridge",
+      "text": "DesktopBridge interface DesktopBridge The runtime bridge: a request handler for its two paths, and an event emitter.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-desktop/desktopBuildFlags",
       "kind": "function",
       "title": "desktopBuildFlags",
@@ -10257,7 +10275,7 @@
       "title": "DesktopCapabilityMethod",
       "module": "denext/desktop",
       "url": "/docs/api/denext-desktop/DesktopCapabilityMethod",
-      "text": "DesktopCapabilityMethod interface DesktopCapabilityMethod<I, O> One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process. Input inference for the PAGE flows from input/output (read by denext/desktop/client's typed proxy). Annotate handler's args with the schema's output type for typed handler code.",
+      "text": "DesktopCapabilityMethod interface DesktopCapabilityMethod<I, O> One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process. Input inference for the PAGE flows from input/output (read by denext/desktop/client's typed proxy). The HANDLER receives args typed as unknown (the bridge has already validated it against input); read fields off it or cast it to the input schema's output type INSIDE the handler — do not annotate the args parameter with a narrower type, as a handler assigned to (args: unknown) => … cannot narrow it (parameter contravariance).",
       "denextOnly": true
     },
     {
@@ -10294,6 +10312,15 @@
       "module": "denext/desktop",
       "url": "/docs/api/denext-desktop/DesktopDevProxyDecision-type",
       "text": "DesktopDevProxyDecision type DesktopDevProxyDecision = object | object The live-reload proxy decision from the env + the running binary — see desktopDevProxyDecision.",
+      "denextOnly": true
+    },
+    {
+      "id": "api:denext-desktop/DesktopEventLog",
+      "kind": "class",
+      "title": "DesktopEventLog",
+      "module": "denext/desktop",
+      "url": "/docs/api/denext-desktop/DesktopEventLog",
+      "text": "DesktopEventLog class DesktopEventLog A bounded, replayable log of desktop bridge events. One instance per running app (created by the bridge); exported as a type so DesktopBridge[\"events\"] is documentable.",
       "denextOnly": true
     },
     {
@@ -10351,6 +10378,15 @@
       "denextOnly": true
     },
     {
+      "id": "api:denext-desktop/ProxyModule",
+      "kind": "typeAlias",
+      "title": "ProxyModule",
+      "module": "denext/desktop",
+      "url": "/docs/api/denext-desktop/ProxyModule",
+      "text": "ProxyModule type ProxyModule = ./dev-proxy.ts The lazily-imported reverse-proxy module (./dev-proxy.ts) createDesktopHandler forwards to when a backend proxy is configured; exported so the handler's signature is public.",
+      "denextOnly": true
+    },
+    {
       "id": "api:denext-desktop/ResolvedDesktop",
       "kind": "interface",
       "title": "ResolvedDesktop",
@@ -10365,7 +10401,7 @@
       "title": "resolveDesktopCapabilities",
       "module": "denext/desktop",
       "url": "/docs/api/denext-desktop/resolveDesktopCapabilities",
-      "text": "resolveDesktopCapabilities resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop> Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers. Only the currently implemented built-ins are mapped (device, fs, sqlite, echo); a configured key without a built-in yet is left unavailable (the page falls back), never an error. A bad extension path IS an error (fail fast at launch). The project config (or its desktop block via the whole config); undefined yields no capabilities. The app id (for storage dirs) and the entry's import.meta.url (for extensions). The enabled capabilities and the app-support directory.",
+      "text": "resolveDesktopCapabilities resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop> Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers. The built-in bridge capabilities are mapped (device, fs, sqlite, shell, keepAwake, secureStore, dialogs, and the echo diagnostic), plus any extensions module paths; auth-session is a runtime endpoint (not a bridge cap) so it only sets authSessionEnabled. A configured key with no built-in yet (clipboard/contextMenu/notifications — WebView-backed) is left unavailable (the page uses its web path), never an error. A bad extension path IS an error, and so is enabling a data-storing cap (secureStore/fs/sqlite) without a desktop.app.identifier — both fail fast at launch. The project config (or its desktop block via the whole config); undefined yields no capabilities. The app id (for storage dirs) and the entry's import.meta.url (for extensions). The enabled capabilities, the app-support directory, and whether auth-session is enabled.",
       "denextOnly": true
     },
     {
@@ -10401,7 +10437,7 @@
       "title": "RunDesktopOptions",
       "module": "denext/desktop",
       "url": "/docs/api/denext-desktop/RunDesktopOptions",
-      "text": "RunDesktopOptions interface RunDesktopOptions",
+      "text": "RunDesktopOptions interface RunDesktopOptions Options for runDesktop (and createDesktopHandler): where to serve the static export from, an optional loopback reverse proxy and request escape hatch, the signed self-updater, the enabled capability bridge, the app-support directory, and whether the loopback OAuth endpoint is enabled. The generated desktop.ts entry spreads resolveDesktopCapabilities into it.",
       "denextOnly": true
     },
     {
