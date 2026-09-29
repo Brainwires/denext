@@ -34,7 +34,7 @@ const HEARTBEAT_MS = 15_000;
 
 /**
  * A bounded, replayable log of desktop bridge events. One instance per running app (created by the
- * bridge). Not exported past the bridge.
+ * bridge); exported as a type so `DesktopBridge["events"]` is documentable.
  */
 export class DesktopEventLog {
   #nextId = 0;
@@ -42,6 +42,11 @@ export class DesktopEventLog {
   #sinks = new Set<Sink>();
   readonly #max: number;
 
+  /**
+   * Create an empty log.
+   *
+   * @param maxBuffered How many recent events to keep for replay (at least 1).
+   */
   constructor(maxBuffered: number = DEFAULT_BUFFER) {
     this.#max = Math.max(1, maxBuffered);
   }
