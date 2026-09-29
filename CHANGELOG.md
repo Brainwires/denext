@@ -1092,6 +1092,9 @@ and this project adheres to
 
 ### Added
 
+Verified on the iPhone (2026-09-29): an iframe's direct `DenextStorage.setMany` is refused and
+logged while the main frame's plugin calls work.
+
 - **`denext desktop dev`: live reload for the Deno Desktop window (the Metro model for desktop).**
   Starts a `denext dev` server (or attaches to one already answering at the target) and opens a
   `deno desktop` window whose local runtime reverse-proxies EVERYTHING — HTTP and the HMR

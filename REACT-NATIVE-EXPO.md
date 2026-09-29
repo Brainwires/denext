@@ -154,35 +154,35 @@ runs of the bench are still to be published in `/docs/lists`.
 Each is `denext mobile add <capability>` plus typed functions in `denext/mobile`, with a web
 fallback where one exists.
 
-| Capability                                                                           | Verified                                                                            |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `keyboard` (`useKeyboard`, `KeyboardAvoidingView`, `KeyboardStickyView`)             | **iPhone:** a chat composer riding the keyboard, and a form                         |
-| `system-bars` (`setSystemBars`, `useSystemBarsFollowTheme`)                          | **iPhone:** style, hide and show, following the light / dark theme                  |
-| `dialog` (React Native mode's `Alert`)                                               | **iPhone:** the system alert and prompt; the in-page dialog for three buttons       |
-| `PullToRefresh` / `RefreshControl`                                                   | **iPhone**                                                                          |
-| `permissions` (`checkPermission`, `openAppSettings`)                                 | **iPhone:** statuses and opening Settings                                           |
-| `local-notifications`                                                                | **iPhone:** scheduling, action buttons, tap routing                                 |
-| `geolocation`                                                                        | **iPhone**                                                                          |
-| `screen-orientation`                                                                 | **iPhone:** lock and unlock                                                         |
-| `privacy-screen`                                                                     | **iPhone**                                                                          |
-| `tracking` (App Tracking Transparency)                                               | **iPhone:** the prompt                                                              |
-| `app-review`                                                                         | **iPhone:** the review sheet                                                        |
-| `media-library`                                                                      | **iPhone:** saving an image to Photos                                               |
-| Safe areas v2 (`useSafeAreaInsets`)                                                  | **iPhone:** the self-test's inset checks; the bottom inset is **not validated** yet |
-| `biometrics`                                                                         | Built (Face ID was not enrolled on the test phone)                                  |
-| `social-login` (Sign in with Apple / Google)                                         | Built                                                                               |
-| `purchases` (RevenueCat)                                                             | Built (no sandbox purchase run)                                                     |
-| `sentry` (`initCrashReporting`)                                                      | Built                                                                               |
-| `background` (`defineBackgroundTask`), `background-location`                         | Built                                                                               |
-| `back` (Android back and predictive back), `restore` (Android process death)         | Built (Android only)                                                                |
-| `app-update`, `accessibility` (screen reader state), `application`, `offline-screen` | Built                                                                               |
-| `toast`, `action-sheet` (the system UI behind `ToastAndroid` / `ActionSheetIOS`)     | Built                                                                               |
-| `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` (insets outside a component)      | Built                                                                               |
-| `native-views`, `native-map` (`NativeViewSlot`)                                      | **iPhone:** see below                                                               |
-| `native-module` (`nativeModule`, `onNativeEvent`)                                    | Built                                                                               |
-| `storage` (`openKeyValueStore`, durable AsyncStorage / MMKV)                         | Built                                                                               |
-| `system-icons` (`<SystemIcon>`), `context-menu` (`useContextMenu`)                   | Built                                                                               |
-| `accessibility` font scale (`getFontScale`, `applyFontScale`), `useReducedMotion`    | Built                                                                               |
+| Capability                                                                           | Verified                                                                                                             |
+| ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `keyboard` (`useKeyboard`, `KeyboardAvoidingView`, `KeyboardStickyView`)             | **iPhone:** a chat composer riding the keyboard, and a form                                                          |
+| `system-bars` (`setSystemBars`, `useSystemBarsFollowTheme`)                          | **iPhone:** style, hide and show, following the light / dark theme                                                   |
+| `dialog` (React Native mode's `Alert`)                                               | **iPhone:** the system alert and prompt; the in-page dialog for three buttons                                        |
+| `PullToRefresh` / `RefreshControl`                                                   | **iPhone**                                                                                                           |
+| `permissions` (`checkPermission`, `openAppSettings`)                                 | **iPhone:** statuses and opening Settings                                                                            |
+| `local-notifications`                                                                | **iPhone:** scheduling, action buttons, tap routing                                                                  |
+| `geolocation`                                                                        | **iPhone**                                                                                                           |
+| `screen-orientation`                                                                 | **iPhone:** lock and unlock                                                                                          |
+| `privacy-screen`                                                                     | **iPhone**                                                                                                           |
+| `tracking` (App Tracking Transparency)                                               | **iPhone:** the prompt                                                                                               |
+| `app-review`                                                                         | **iPhone:** the review sheet                                                                                         |
+| `media-library`                                                                      | **iPhone:** saving an image to Photos                                                                                |
+| Safe areas v2 (`useSafeAreaInsets`)                                                  | **iPhone:** the self-test's inset checks and the bottom-inset bar on the Safe area screen (user-verified 2026-09-27) |
+| `biometrics`                                                                         | Built (Face ID was not enrolled on the test phone)                                                                   |
+| `social-login` (Sign in with Apple / Google)                                         | Built                                                                                                                |
+| `purchases` (RevenueCat)                                                             | Built (no sandbox purchase run)                                                                                      |
+| `sentry` (`initCrashReporting`)                                                      | Built                                                                                                                |
+| `background` (`defineBackgroundTask`), `background-location`                         | Built                                                                                                                |
+| `back` (Android back and predictive back), `restore` (Android process death)         | Built (Android only)                                                                                                 |
+| `app-update`, `accessibility` (screen reader state), `application`, `offline-screen` | Built                                                                                                                |
+| `toast`, `action-sheet` (the system UI behind `ToastAndroid` / `ActionSheetIOS`)     | Built                                                                                                                |
+| `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` (insets outside a component)      | Built                                                                                                                |
+| `native-views`, `native-map` (`NativeViewSlot`)                                      | **iPhone:** see below                                                                                                |
+| `native-module` (`nativeModule`, `onNativeEvent`)                                    | Built                                                                                                                |
+| `storage` (`openKeyValueStore`, durable AsyncStorage / MMKV)                         | Built                                                                                                                |
+| `system-icons` (`<SystemIcon>`), `context-menu` (`useContextMenu`)                   | Built                                                                                                                |
+| `accessibility` font scale (`getFontScale`, `applyFontScale`), `useReducedMotion`    | Built                                                                                                                |
 
 **Native views on the iPhone** (2026-09-28, [`examples/native-views`](./examples/native-views):
 maps and a video in a `VirtualList`): the video drawn under the WebView as an
@@ -622,7 +622,7 @@ is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `ex
    iOS capabilities listed above verified on the iPhone on 2026-09-27.
 5. ~~The desktop runtime behind the desktop capabilities (storage that persists,
    capability-derived packaging permissions).~~ Shipped for 2.11 (built and unit-tested).
-   **Still open:** the iPhone items not yet validated (the bottom safe-area inset, biometrics
+   **Still open:** the iPhone items not yet validated (biometrics
    with Face ID enrolled, social login, a sandbox purchase, Sentry, background tasks and
    location, and the round-3 items marked "Built" above); a larger migrated React Native app
    than `examples/expo-app` on a phone (T3 Code's); the scroll-bench numbers in `/docs/lists`.
