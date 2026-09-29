@@ -1,23 +1,28 @@
 # Desktop capabilities on Windows and Linux — the platforms the maintainer's Mac can't verify.
 #
-# Manual (workflow_dispatch): the desktop caps runtime is unit-tested on macOS, but two things only a
-# real Windows / Linux runner can prove:
+# Two things only a real Windows / Linux runner can prove (the caps runtime is unit-tested on macOS):
 #   1. `secureStore` round-trips against the ACTUAL OS credential store (WinRT PasswordVault on
 #      Windows via powershell.exe, libsecret `secret-tool` on Linux) — the unit tests use a fake
 #      runner. This is the verification for the Windows PasswordVault backend.
-#   2. (TODO, follow-up) the `deno desktop` packaging OUTPUT PATH on Windows (.exe/zip) and Linux
-#      (dir/tar.gz). The macOS `.app.app` bug is fixed + verified locally; the Win/Linux paths need a
-#      packaging job here. It needs `deno desktop` (Deno >= 2.9.7) plus the runner's WebView deps
-#      (WebKitGTK on Linux, WebView2 on Windows) and a scaffolded app; add it once the round-trip
-#      job is green so the CI-specific bits are settled one at a time.
+#   2. `deno desktop` packaging lands the binary at the path the packaging scripts expect on Windows
+#      and Linux. The macOS `.app.app` bug is fixed + verified locally; the Win/Linux `--output`
+#      naming is build-only (no WebView deps needed), so it is cheap to pin here.
 #
-# This is a keeper (the "Windows/Linux in CI" item). Kept workflow_dispatch until it has passed a few
-# times, then it can gain a schedule / PR trigger.
+# workflow_dispatch is available once this workflow reaches the default branch; the `push` trigger
+# (paths-filtered to the desktop surface) runs it whenever the workflow or the desktop code changes,
+# so it self-verifies on landing. A keeper — the "Windows/Linux in CI" item.
 
 name: Desktop CI (Windows / Linux)
 
 on:
   workflow_dispatch: {}
+  push:
+    branches: [development]
+    paths:
+      - "src/desktop/**"
+      - "src/build/desktop*.ts"
+      - "scripts/ci/desktop-secure-store-roundtrip.ts"
+      - ".github/workflows/desktop-ci.yml"
 
 permissions:
   contents: read
@@ -53,3 +58,35 @@ jobs:
             sleep 2
             deno run -A scripts/ci/desktop-secure-store-roundtrip.ts
           '
+
+  packaging-output-path:
+    name: packaging output path (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: examples/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.7"
+      # Build only (no launch), so no WebView runtime deps are needed. deno desktop appends `.app` on
+      # macOS (fixed in the packaging template); this pins that `deno desktop --output <base>` lands a
+      # single artifact at the base name on Windows/Linux, which the packaging scripts rely on.
+      - name: Export the static app
+        run: deno task export
+      - name: Package (deno desktop, build only)
+        run: deno desktop --no-check --no-prompt --allow-net=127.0.0.1,localhost --allow-read --allow-env --include out --output dist/denext-app desktop.ts
+      - name: Assert the artifact landed at dist/denext-app*
+        shell: bash
+        run: |
+          echo "dist/ contents:"; ls -la dist/ || true
+          if ls dist/denext-app* >/dev/null 2>&1; then
+            echo "✓ packaged artifact present: $(ls -d dist/denext-app*)"
+          else
+            echo "✗ no dist/denext-app* artifact — deno desktop --output naming changed"; exit 1
+          fi
