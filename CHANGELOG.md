@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-09-29
+
 ### Fixed
 
 - **`spa.proxy` relays compressed backend responses correctly.** Deno's `fetch` decodes a gzip or
@@ -9695,6 +9697,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[3.0.1]: https://jsr.io/@denext/denext@3.0.1
 [3.0.0]: https://jsr.io/@denext/denext@3.0.0
 [3.0.0-rc.1]: https://jsr.io/@denext/denext@3.0.0-rc.1
 [2.11.0-rc.1]: https://jsr.io/@denext/denext@2.11.0-rc.1
