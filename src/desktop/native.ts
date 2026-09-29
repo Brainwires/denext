@@ -28,7 +28,7 @@ import type {
   SqliteRunResult,
   SqliteValue,
 } from "../mobile/sqlite-web.ts";
-import { desktopError, desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
+import { desktopError, desktopRpc } from "./bridge-client.ts";
 
 /** Capabilities already warned about falling back (one warning per capability per page). */
 const warned = new Set<string>();
@@ -397,21 +397,6 @@ export async function notifyPending(): Promise<
 > {
   const out = await desktopRpc<unknown>("notifications", "pending", {});
   return Array.isArray(out) ? out : [];
-}
-
-/**
- * Subscribe to notification clicks (`notifications` / `click`, data `{ notification: { id,
- * title, body, extra }, actionId? }`). Returns the unsubscribe.
- */
-export function onNotificationClick(
-  callback: (raw: { notification?: Record<string, unknown>; actionId?: unknown }) => void,
-): () => void {
-  return subscribeDesktopEvent(
-    "notifications",
-    "click",
-    (data) =>
-      callback((data ?? {}) as { notification?: Record<string, unknown>; actionId?: unknown }),
-  );
 }
 
 // --- keep awake (cap "keepAwake") -------------------------------------------

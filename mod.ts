@@ -390,6 +390,7 @@ export { useVirtualReorder } from "./src/client/virtual/reorder.ts";
 export type { VirtualReorder, VirtualReorderOptions } from "./src/client/virtual/reorder.ts";
 export type {
   ItemLayoutAnimationOptions,
+  RefreshControlSlotProps,
   ScrollNativeEvent,
   ScrollPoint,
   ScrollSize,

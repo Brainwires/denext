@@ -998,8 +998,30 @@
       }
     },
     "compress": {
-      "description": "Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/ JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. Negotiated from `Accept-Encoding` (brotli, else gzip, with q-values) through the web-standard `CompressionStream`; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a flush per chunk, so it still reaches the browser progressively. Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives), a response that already has a `Content-Encoding`, `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`. A page, layout or route handler opts out with `export const compress = false`. Build-time precompressed client bundles (`.gz`) are served as-is. Set `false` when a proxy in front (nginx, Cloudflare, a CDN) compresses.",
-      "type": "boolean",
+      "description": "Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/ JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as Next.js): brotli costs about four times gzip's CPU per response for about a tenth fewer bytes, so it is produced only when listed in `{ encodings }` (`{ encodings: [\"br\", \"gzip\"] }`). Negotiated from `Accept-Encoding` (q-values; a tie goes to the earlier listed coding) through the web-standard `CompressionStream`; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a flush per chunk, so it still reaches the browser progressively. Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives), a response that already has a `Content-Encoding`, `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`. A page, layout or route handler opts out with `export const compress = false`. Build-time precompressed client bundles (`.gz`) are served as-is. Set `false` when a proxy in front (nginx, Cloudflare, a CDN) compresses.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "encodings": {
+              "description": "The content codings denext may produce, in the server's order of preference: the client's highest-q acceptable coding among them wins, and a tie goes to the earlier one here. The default is gzip only (Next.js's `compress`); list `\"br\"` to send brotli to clients that accept it, at about four times gzip's CPU per response. An empty list sends identity.",
+              "type": "array",
+              "items": {
+                "enum": [
+                  "gzip",
+                  "br"
+                ]
+              },
+              "default": [
+                "gzip"
+              ]
+            }
+          }
+        }
+      ],
       "default": true
     },
     "nodeResolve": {
@@ -1101,12 +1123,26 @@
       "description": "Deno Desktop native capabilities: the allowlist the desktop runtime's capability bridge serves (default deny) and the source the package scripts derive least-privilege `--allow-*` from. Written by `denext desktop add <cap>`. Distinct from SpaConfig.desktop (packaging settings such as the icon); the two may be unified in a later release. Docs: https://denext.dev/docs/desktop",
       "type": "object",
       "properties": {
+        "app": {
+          "description": "App identity for the RUNTIME. Its `identifier` keys the OS app-support/cache/documents folders and the `secureStore` keychain SERVICE, so it MUST be unique per app — a reverse-DNS id such as `\"com.example.myapp\"`. Without it, `secureStore`/`fs`/`sqlite` refuse to start (they would otherwise share one folder and one keychain service across every denext desktop app, letting one app read another's data and secrets). Keep it equal to `deno.json`'s `desktop.app.identifier` (which `deno desktop` uses for the bundle id); the scaffold writes both.",
+          "type": "object",
+          "properties": {
+            "identifier": {
+              "description": "A unique reverse-DNS id (e.g. `\"com.example.myapp\"`) that keys the OS app-support/cache/ documents folders and the `secureStore` keychain service. Required once a data-storing cap (`secureStore`/`fs`/`sqlite`) is enabled. Keep it equal to `deno.json`'s `desktop.app.identifier`.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The app's display name for tooling; the packaged bundle name comes from `deno.json`.",
+              "type": "string"
+            }
+          }
+        },
         "capabilities": {
           "description": "The capability allowlist (default deny).",
           "type": "object",
           "properties": {
             "secureStore": {
-              "description": "OS keychain (Keychain / Credential Manager / libsecret).",
+              "description": "OS keychain (macOS Keychain / libsecret; not yet on Windows, where it fails closed).",
               "type": "boolean"
             },
             "fs": {
@@ -1141,7 +1177,7 @@
               "type": "boolean"
             },
             "contextMenu": {
-              "description": "Native context menus (`showContextMenu`).",
+              "description": "`showContextMenu` (no runtime capability yet: the WebView's in-page menu).",
               "type": "boolean"
             },
             "shell": {
@@ -1176,12 +1212,16 @@
                 }
               ]
             },
+            "authSession": {
+              "description": "System-browser OAuth via `openAuthSession` (loopback redirect). The runtime's auth-session endpoint is default-deny unless this is enabled; the packaged app then bakes the browser opener's `--allow-run`.",
+              "type": "boolean"
+            },
             "dialogs": {
               "description": "Native open/save/folder dialogs returning paths.",
               "type": "boolean"
             },
             "notifications": {
-              "description": "Local notifications (click focuses the window and routes).",
+              "description": "Local notifications (no runtime capability yet: the WebView's Notification API, immediate only; a scheduled trigger rejects and a click is not routed).",
               "type": "boolean"
             },
             "keepAwake": {
@@ -1189,7 +1229,7 @@
               "type": "boolean"
             },
             "clipboard": {
-              "description": "Read/write the system clipboard text.",
+              "description": "Clipboard text (no runtime capability yet: the WebView's `navigator.clipboard`).",
               "type": "boolean"
             },
             "device": {
@@ -1202,6 +1242,61 @@
             },
             "extensions": {
               "description": "User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "extraPermissions": {
+          "description": "Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what the enabled DesktopCapabilitiesConfig capabilities imply — the escape hatch for what the capability catalog can't see: the desktop updater's feed host (`net`) and data dir (`write`), a `defineDesktopExtension` module's own `run`/`ffi`, or any custom need. `denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script).",
+          "type": "object",
+          "properties": {
+            "read": {
+              "description": "`--allow-read` paths (usually unnecessary — the baseline is already broad read).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "write": {
+              "description": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "net": {
+              "description": "`--allow-net` hosts, e.g. the updater's feed host.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "run": {
+              "description": "`--allow-run` programs.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "ffi": {
+              "description": "`--allow-ffi` libraries.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "env": {
+              "description": "`--allow-env` variable names.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sys": {
+              "description": "`--allow-sys` kinds.",
               "type": "array",
               "items": {
                 "type": "string"

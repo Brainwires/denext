@@ -45,6 +45,19 @@ const RNW = new URL(
   import.meta.url,
 );
 
+/**
+ * The pinned react-native-web is a dev-only install (`deno install`, the parity tooling); a
+ * checkout without `node_modules` skips the test that patches its real modules instead of
+ * failing with NotFound.
+ */
+const RNW_INSTALLED = (() => {
+  try {
+    return Deno.statSync(new URL("exports/ScrollView/index.js", RNW)).isFile;
+  } catch {
+    return false;
+  }
+})();
+
 /** Every element of a rendered screen carrying `attr`. */
 function withAttr(container: unknown, attr: string): DomEl[] {
   return walkElements(container as DomEl).filter((e) => e.getAttribute(attr) !== null);
@@ -287,7 +300,11 @@ Deno.test("image scale: variants on disk (no base file needed); a plain image is
 
 // ---- react-native-web patches -----------------------------------------------------------------
 
-Deno.test("patches: react-native-web's real ScrollView / Text / PixelRatio / Dimensions, ES and CJS", async () => {
+Deno.test({
+  name: "patches: react-native-web's real ScrollView / Text / PixelRatio / Dimensions, ES and CJS",
+  // Needs the installed react-native-web@0.21.2 (node_modules); skipped where it is absent.
+  ignore: !RNW_INSTALLED,
+}, async () => {
   for (const cjs of [false, true]) {
     const at = (name: string) => new URL(`${cjs ? "cjs/" : ""}exports/${name}/index.js`, RNW);
     const cases: [string, string, string][] = [

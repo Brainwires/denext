@@ -3,7 +3,7 @@
 // bridge (`reportRequestError`). Imported by every pipeline module; imports none of them.
 
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
-import type { ApiBatchConfig, AppLinksConfig, CorsConfig } from "./config.ts";
+import type { ApiBatchConfig, AppLinksConfig, CompressConfig, CorsConfig } from "./config.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { MiddlewareRunner } from "./middleware.ts";
 import type { I18nConfig } from "./i18n.ts";
@@ -166,12 +166,13 @@ export interface AppConfig {
    */
   cacheKeyParams?: string[];
   /**
-   * Compress dynamic responses per `Accept-Encoding` (brotli, else gzip) — default `true`,
-   * like Next.js's `compress`. See `compressResponse` (compress.ts) for the skip rules; a
-   * page/layout/route opts out with `export const compress = false`. `denext start`/`dev`
-   * take it from the config's `compress`.
+   * Compress dynamic responses per `Accept-Encoding` — default `true` (gzip, like Next.js's
+   * `compress`); `{ encodings: ["br", "gzip"] }` also sends brotli. See `compressResponse`
+   * (compress.ts) for the skip rules; a page/layout/route opts out with
+   * `export const compress = false`. `denext start`/`dev` take it from the config's
+   * `compress`.
    */
-  compress?: boolean;
+  compress?: boolean | CompressConfig;
   /**
    * Extra origins allowed to invoke Server Actions, beyond the request's own
    * Host (for reverse-proxy / multi-host deployments). Actions are same-origin

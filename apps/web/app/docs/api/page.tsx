@@ -18,6 +18,9 @@ const BLURB: Record<string, string> = {
   "denext/desktop": "Desktop packaging runtime.",
   "denext/desktop/updater": "Signed over-the-air UI updates for a Deno Desktop app.",
   "denext/mobile": "Client runtime for apps in a Capacitor iOS/Android shell.",
+  "denext/navigation": "Native-feel StackLayout, TabsLayout and Sheet for app-like navigation.",
+  "denext/virtual-masonry": "VirtualMasonry: a virtualized masonry (Pinterest-style) grid.",
+  "denext/feature": "feature(): compile-time feature flags, folded and dead-code eliminated.",
   "denext/cli/command": "The CLI command contract (for plugins contributing verbs).",
 };
 

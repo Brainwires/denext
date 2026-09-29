@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useRef } from "../runtime/hooks.ts";
-import { nativePlatform, runtimePlatform } from "./bridge.ts";
+import { nativePlatform } from "./bridge.ts";
 import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { createFanout, type Fanout } from "./link-routing.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
@@ -667,7 +667,6 @@ export async function setNotificationCategories(
 
 let receivedFanout: Fanout<LocalNotification> | undefined;
 let tappedFanout: Fanout<LocalNotificationTap> | undefined;
-let desktopTappedFanout: Fanout<LocalNotificationTap> | undefined;
 
 /** A fan-out over one plugin event, mapped through `map`. */
 function pluginFanout<Raw, T>(eventName: string, map: (raw: Raw) => T): Fanout<T> {
@@ -686,7 +685,7 @@ function asPushTap(tap: LocalNotificationTap): PushTap {
   };
 }
 
-/** A raw tap (the plugin's `ActionPerformed`, or the desktop runtime's click) as a tap. */
+/** A raw tap (the plugin's `ActionPerformed`) as a tap. */
 function toLocalTap(raw: RawLocalTap | undefined): LocalNotificationTap {
   return {
     notification: toLocal(raw?.notification),
@@ -696,23 +695,12 @@ function toLocalTap(raw: RawLocalTap | undefined): LocalNotificationTap {
 }
 
 /**
- * The fan-out over Deno Desktop notification clicks (the runtime focuses the window, then
- * emits `notifications` / `click` on the bridge's event stream). The desktop module loads
- * lazily, only in a desktop window.
+ * Where taps come from here: the native plugin, or nowhere. A Deno Desktop window has no
+ * notification click source (the runtime ships no notifications capability; notifications
+ * show through the WebView's Notification API), so there it is nowhere and no event stream
+ * is opened.
  */
-function desktopTaps(): Fanout<LocalNotificationTap> {
-  return desktopTappedFanout ??= createFanout<LocalNotificationTap>((emit) =>
-    listenerDisposer(
-      import("../desktop/native.ts").then((d) => ({
-        remove: d.onNotificationClick((raw) => emit(toLocalTap(raw as RawLocalTap))),
-      })),
-    )
-  );
-}
-
-/** Where taps come from here: the desktop runtime, the native plugin, or nowhere. */
 function tapFanout(): Fanout<LocalNotificationTap> | undefined {
-  if (runtimePlatform() === "desktop") return desktopTaps();
   if (!localPlugin()) return undefined;
   return tappedFanout ??= pluginFanout<RawLocalTap, LocalNotificationTap>(
     "localNotificationActionPerformed",
@@ -799,5 +787,4 @@ export function useLocalNotificationTapped(
 export function resetLocalNotificationsForTesting(): void {
   receivedFanout = undefined;
   tappedFanout = undefined;
-  desktopTappedFanout = undefined;
 }

@@ -150,7 +150,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     maxConcurrency: "number",
     slotBackstop: "number",
     cacheKeyParams: "chips",
-    compress: "toggle",
+    compress: "union", // `boolean | CompressConfig`: a toggle branch + an options group
     nodeResolve: "toggle",
     cacheComponents: "toggle",
     reactCompiler: "toggle",
@@ -289,6 +289,8 @@ Deno.test("arrays split by what their items are", () => {
     "image/webp",
     "image/avif",
   ]);
+  // `compress: { encodings }` (the object branch of the union) is a checkbox group too.
+  assertEquals(kindAt("compress", "encodings"), "multi-select");
   assertEquals(kindAt("images", "deviceSizes"), "chips");
   assertEquals(specAt("images", "deviceSizes").items?.kind, "number");
   assertEquals(kindAt("publicEnv"), "chips");

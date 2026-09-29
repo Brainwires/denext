@@ -501,12 +501,15 @@ export async function listDir(
  *   filesystem`), the plugin's native download (`downloadFile`), which does not pass the body
  *   through the WebView and is not subject to CORS. (A plugin without `downloadFile`, which
  *   it deprecates, gets `fetch(url)` and the plugin's `writeFile` instead.)
+ * - In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime
+ *   fetches in the Deno process and writes under the app's folder.
  * - Otherwise `fetch(url)` (CORS applies), then a write to the Origin Private File System.
  *
  * @param url The `http(s)` URL to fetch.
  * @param path The file's path inside `directory`; no `..` segments.
  * @param options `directory` (default `"data"`).
- * @returns `{ path }`: the native file path in the shell, the OPFS path (`data/…`) on the web.
+ * @returns `{ path }`: the native file path in the shell, the absolute path on desktop, the OPFS
+ * path (`data/…`) on the web.
  * It rejects on a non-2xx response or a network error.
  * @example
  * ```ts

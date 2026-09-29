@@ -144,8 +144,9 @@ export function desktopExtension<M = DesktopExtensionModule>(
 }
 
 /**
- * Call `handler` for each `event` the desktop runtime emits for `cap` (a built-in capability
- * such as `"menu"`, `"tray"` or `"notifications"`, or an extension's name). The first
+ * Call `handler` for each `event` the desktop runtime emits for `cap`: an extension's name (its
+ * handlers emit the events it declares with `ctx.emit`), or a built-in capability that emits
+ * events (today only the `echo` diagnostic's `pong`). The first
  * subscription opens the event stream and the last unsubscribe closes it; frames that arrived
  * before a handler for that event subscribed are delivered to it once it does. Off desktop it
  * does nothing.
@@ -158,8 +159,8 @@ export function desktopExtension<M = DesktopExtensionModule>(
  * ```ts
  * import { onDesktopEvent } from "denext/desktop/client";
  *
- * const stop = onDesktopEvent<{ id: string }>("menu", "click", ({ id }) => {
- *   if (id === "preferences") location.assign("/settings");
+ * const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => {
+ *   console.log("scanner attached", id);
  * });
  * ```
  */

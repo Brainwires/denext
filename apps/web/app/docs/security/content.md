@@ -421,11 +421,13 @@ attack surface, so each ships with its own invariant:
   Letting the platform follow them meant a token endpoint could answer `307` and
   carry the `client_secret` in the POST body to any host it named.
 - **Native app sessions (2.11).** `denextAuth({ native })` codes are hashed, PKCE-`S256`
-  and redirect-URI bound, single-try and 60 seconds long, and minted only for a sign-in made
-  after the flow began; access tokens are re-checked against their session family on every
-  request; a replayed refresh token revokes its family while a forged one (bad MAC) touches
-  nothing. `tests/auth-native.test.ts`, `tests/auth-native-idtoken.test.ts`,
-  `tests/auth-account-delete.test.ts`. See [App backend](/docs/app-backend#security).
+  and redirect-URI bound, single-try and 60 seconds long by default, and minted only for a
+  sign-in made after the flow began; access tokens are re-checked against their session family
+  on every request; a replayed refresh token revokes its family while a forged one (bad MAC)
+  touches nothing. The opt-in `refreshTokenMaxAge` / `refreshReuseInterval` policies are
+  pinned too. `tests/auth-native.test.ts`, `tests/auth-native-idtoken.test.ts`,
+  `tests/auth-native-refresh-policy.test.ts`, `tests/auth-account-delete.test.ts`. See
+  [App backend](/docs/app-backend#security).
 - **Account linking refuses unverified matches.** An OAuth account only links to
   an existing user when both sides' emails are verified; anything else is
   `?error=account_not_linked` unless the provider explicitly sets

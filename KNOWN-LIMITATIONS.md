@@ -28,6 +28,26 @@ next-compat interop path — denext's own apps are unaffected):
   correctly, just not off-thread. A one-time dev warning fires. Self-host
   Partytown if you need true off-main-thread execution.
 
+- **Keys in sibling arrays share one scope.** React scopes keys per array, so two
+  arrays rendered side by side under one parent may reuse the same keys. denext flattens
+  nested child arrays and matches keys across the whole list, so overlapping keys in sibling
+  arrays can match the wrong row: a row may take another row's component state, DOM node and
+  uncontrolled input value. The dev duplicate-key warning also fires for this pattern, although
+  it is valid React. Minimal repro:
+
+  ```tsx
+  <ul>
+    {a.map((id) => <Row key={id} />)}
+    {b.map((id) => <Row key={id} />)}
+  </ul>;
+  // a = b = ["1", "2", "3"], then a = ["2", "3"]:
+  // A2 and A3 reuse B2's and B3's fibers (their state is swapped)
+  ```
+
+  Keys within one array, and arrays whose keys don't overlap, are unaffected. Until it is fixed
+  (see the roadmap), prefix the keys per array (`key={`a:${id}`}`) or wrap each array in its
+  own keyed `<Fragment>`. Tracked by an `ignore`d test in `tests/keyed-reorder.test.ts`.
+
 - **A root layout's `<html>`/`<body>` rendered by CLIENT code is re-created on hydration.**
   denext owns the real document tags and nests a layout's `<html>`/`<head>`/`<body>` inside
   its page container, where the browser's parser drops them. A Server Component layout is
@@ -343,7 +363,8 @@ four documented bounds of the opt-in:
 - **Native session mode (`native`) has edges of its own.** A user with a second factor can't
   use a native Apple / Google `id_token` sign-in (`403 mfa_required`; the browser flow runs
   the step-up). Two concurrent refreshes with one refresh token revoke the family (the loser
-  reads as a replay) — `nativeSession()` is single-flight, a hand-rolled client must be too.
+  reads as a replay) unless `native.refreshReuseInterval` sets a grace window —
+  `nativeSession()` is single-flight, a hand-rolled client must be too.
   A custom-scheme redirect URI can be registered by another app; PKCE stops it redeeming an
   intercepted code, a claimed `https://` URI stops it receiving one. See
   [App backend](https://denext.dev/docs/app-backend#limitations).
@@ -551,7 +572,8 @@ four documented bounds of the opt-in:
   either they fall back to IndexedDB and warn. `denext mobile doctor` flags app code that keeps
   data in web storage itself. The store is not encrypted (secrets go in `secureStore`), and on
   Android a single value above about 2 MB cannot be read back (SQLite's cursor window), as with
-  React Native's AsyncStorage. The native plugin is compiled but not yet run on a device.
+  React Native's AsyncStorage. The iOS plugin has run on an iPhone (AsyncStorage data kept
+  across launches in `examples/expo-app`); the Android one is compiled, not run on a device.
 - **No install attribution or deferred deep links.** Firebase Dynamic Links shut down on
   2025-08-25; use an attribution SDK (Branch, AppsFlyer, Adjust).
 - **An OTA update cannot change what the app is.** Apple allows over-the-air updates to
@@ -622,8 +644,7 @@ four documented bounds of the opt-in:
   `--allow-env` unscoped (the served bundle and the per-user app-support folder are only known
   at run time), and any capability that writes adds an unscoped `--allow-write`; the runtime
   capabilities confine file access. An extension's own permissions are not derived: add its
-  `--allow-*` to the script by hand. A project scaffolded before 2.11 keeps `-A` until
-  `denext desktop package --regenerate-scripts` rewrites its scripts.
+  `--allow-*` to the script by hand.
 - **The bridge token is readable by any script in the page.** The per-launch token lives in the
   top-level document (never in frames), so script injected into the page (an XSS) can use every
   capability the app enabled. Keep the strict CSP, enable only the capabilities you use, and
@@ -673,11 +694,6 @@ four documented bounds of the opt-in:
   `deno.json` `imports` entry); `denext migrate --from expo` names the native-only packages it
   finds, and [Native SDK recipes](https://denext.dev/docs/native-sdk-recipes) covers Firebase,
   in-app purchases and Stripe.
-- **`Platform.OS` is `"web"` in the shells and in Deno Desktop.** react-native-web and libraries
-  pick their DOM code paths by it, so React Native code that branches on `ios` / `android` for
-  behaviour (not for a native module) takes its web path. `Platform.select` does pick the
-  shell's `ios` / `android` key when there is no `web` key; `Platform.constants.denextShell`
-  tells the shells apart.
 - **No UI-thread animation or gesture runtime.** Reanimated's worklets are stamped at build time
   and run as plain JavaScript on the page's main thread, sharing it with React and layout; a
   busy thread drops frames React Native would keep. The build moves declarative `transform` /

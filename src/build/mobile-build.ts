@@ -12,9 +12,11 @@
 //   android  gradlew assembleDebug (a debug-signed .apk), or with --release bundleRelease (an
 //            .aab; --apk: assembleRelease) signed with the upload keystore when one is configured
 //
-// Secrets never reach the command line or the output: the keystore passwords go to Gradle as
+// Secrets never reach denext's own command line or output: the keystore passwords go to Gradle as
 // android.injected.signing.* project properties inside GRADLE_OPTS (the environment), and the API
-// key stays a path.
+// key stays a path. CAVEAT: the stock `gradlew` script expands GRADLE_OPTS into the wrapper JVM's
+// argv, so for the build's duration the passwords are visible to `ps` for processes that can read
+// that JVM's command line (same user; root) — use a dedicated build user on a shared CI host.
 // The artifact is copied to dist/mobile/<platform>[-<flavor>]/ with a <artifact>.json sidecar
 // (app id, version, build number, SHA-256) that `denext mobile submit` reads.
 
@@ -358,8 +360,9 @@ function androidSigning(
     );
   }
   // Project properties as org.gradle.project.* system properties in GRADLE_OPTS: an environment
-  // variable, so never in argv (`ps`) or the printed plan. (ORG_GRADLE_PROJECT_* variables do
-  // not reach AGP's android.injected.* options.)
+  // variable, so never in denext's argv or the printed plan — but `gradlew` splices GRADLE_OPTS
+  // into the wrapper JVM's argv (see the header caveat). (ORG_GRADLE_PROJECT_* variables do not
+  // reach AGP's android.injected.* options.)
   const props = Object.entries(values).map(([k, v]) =>
     `-Dorg.gradle.project.android.injected.signing.${k}=${v}`
   );

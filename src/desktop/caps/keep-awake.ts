@@ -4,9 +4,11 @@
  * keeps ONE OS power assertion while any id is held, and drops it when the last is released.
  *
  * The OS assertion is a {@link KeepAwakeDriver}:
- * - macOS: a long-running `caffeinate -dimsu` child, killed on release (`--allow-run=caffeinate`).
- * - Linux: `systemd-inhibit --what=idle:sleep … sleep` held while the child runs, killed on release
- *   (`--allow-run=systemd-inhibit`).
+ * - macOS: a long-running `caffeinate -dimsu -w <pid>` child, killed on release (`--allow-run=caffeinate`).
+ * - Linux: `systemd-inhibit --what=idle:sleep … tail --pid=<pid>` held while the child runs, killed
+ *   on release (`--allow-run=systemd-inhibit`).
+ * Both children are tied to the app's pid ({@link keepAwakeCommand}), so a quit or crash that never
+ * releases still drops the assertion.
  * - Windows: `kernel32!SetThreadExecutionState` via FFI (ES_CONTINUOUS|SYSTEM|DISPLAY to hold,
  *   ES_CONTINUOUS to release) (`--allow-ffi=kernel32.dll`).
  *
@@ -30,6 +32,33 @@ export interface KeepAwakeDriver {
   readonly permissions: DesktopPermissions;
 }
 
+/**
+ * The argv of the assertion-holding child on macOS/Linux, TIED TO `pid` (the app's Deno process):
+ * the child exits on its own once `pid` does. A spawned child is NOT killed when its parent exits,
+ * and the window-close handler ends the app with `Deno.exit(0)` (no release RPC ever arrives), so an
+ * untied `caffeinate` / `systemd-inhibit … sleep` would keep the machine awake indefinitely after
+ * the app quit or crashed. macOS: `caffeinate -w <pid>`; Linux: the inhibitor wraps
+ * `tail --pid=<pid> -f /dev/null` (GNU coreutils), which returns when `pid` exits. Pure + exported
+ * for tests.
+ *
+ * @param os `darwin` or `linux`.
+ * @param pid The process whose lifetime bounds the assertion.
+ * @returns `[command, args]`.
+ */
+export function keepAwakeCommand(os: "darwin" | "linux", pid: number): [string, string[]] {
+  if (os === "darwin") return ["caffeinate", ["-dimsu", "-w", String(pid)]];
+  return ["systemd-inhibit", [
+    "--what=idle:sleep",
+    "--who=denext",
+    "--why=keep-awake",
+    "--mode=block",
+    "tail",
+    `--pid=${pid}`,
+    "-f",
+    "/dev/null",
+  ]];
+}
+
 /** The default driver for `os`. */
 function defaultDriver(os: Os): KeepAwakeDriver {
   if (os === "windows") {
@@ -51,14 +80,7 @@ function defaultDriver(os: Os): KeepAwakeDriver {
       },
     };
   }
-  const [cmd, args] = os === "darwin" ? ["caffeinate", ["-dimsu"]] : ["systemd-inhibit", [
-    "--what=idle:sleep",
-    "--who=denext",
-    "--why=keep-awake",
-    "--mode=block",
-    "sleep",
-    "2147483647",
-  ]];
+  const [cmd, args] = keepAwakeCommand(os, Deno.pid);
   return {
     permissions: { run: [cmd] },
     start: () => {
@@ -118,6 +140,12 @@ export function keepAwakeCapability(deps: KeepAwakeDeps = {}): DesktopCapability
 
   return {
     name: "keepAwake",
+    // A reload/navigation drops the old page's holds: its `release` will never arrive, and the
+    // new page acquires afresh (otherwise a reload leaks a hold and the machine never sleeps).
+    onPageLoad: async () => {
+      held.clear();
+      await maybeStop();
+    },
     methods: {
       acquire: {
         permissions: driver.permissions,

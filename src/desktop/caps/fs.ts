@@ -28,7 +28,7 @@ import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import type { FileEntry } from "../../mobile/filesystem.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
-import { confineRelative } from "../path-scope.ts";
+import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
 import type { PickedPaths } from "../picked-paths.ts";
 
 /** An app-directory name (the string forms of a `FileDirectory`; kept local so this cap doesn't
@@ -42,6 +42,16 @@ const DIRECTORY_TOKEN: Readonly<Record<AppDirName, string>> = {
   documents: "$DOCUMENTS",
 };
 
+/** The largest file `download` writes by default (bytes). */
+const DEFAULT_DOWNLOAD_MAX_BYTES = 100 * 1024 * 1024;
+/** How long a `download` may take by default (ms), redirects included. */
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
+/** The most redirects `download` follows (each hop is re-checked). */
+const MAX_DOWNLOAD_REDIRECTS = 5;
+
+/** Resolve a hostname to its addresses (injected in tests; defaults to {@link Deno.resolveDns}). */
+export type HostResolver = (hostname: string) => Promise<string[]>;
+
 /** The roots and scope tokens an {@link fsCapability} instance was built with. */
 export interface FsCapabilityConfig {
   /** The resolved absolute base directories (`data` / `cache` / `documents`). */
@@ -52,6 +62,165 @@ export interface FsCapabilityConfig {
   readonly write: ReadonlySet<string>;
   /** The per-launch picked-path set, for a `directory: { picked: handle }` from a native dialog. */
   readonly picked?: PickedPaths;
+  /** `download`'s byte cap (default 100 MiB); a larger body is aborted and nothing is kept. */
+  readonly downloadMaxBytes?: number;
+  /** `download`'s overall timeout in ms (default 10 minutes). */
+  readonly downloadTimeoutMs?: number;
+  /** The DNS resolver `download` checks a hostname's addresses with (tests inject one). */
+  readonly resolveHost?: HostResolver;
+  /** The `fetch` `download` uses (tests inject one; defaults to the global). */
+  readonly fetch?: typeof fetch;
+}
+
+/** A `forbidden` download target. */
+function refusedTarget(why: string): DesktopCapError {
+  return new DesktopCapError("forbidden", `download refused: ${why}`, { status: 403 });
+}
+
+/** The four octets of a dotted IPv4 address, or `undefined`. */
+function ipv4Octets(host: string): number[] | undefined {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return undefined;
+  const octets = m.slice(1).map(Number);
+  return octets.every((o) => o <= 255) ? octets : undefined;
+}
+
+/**
+ * The IPv4 address inside an IPv4-mapped IPv6 literal, in either spelling — `::ffff:7f00:1` (how
+ * the URL parser normalizes it) or `::ffff:127.0.0.1` — else `undefined`.
+ */
+function mappedIpv4(v6: string): string | undefined {
+  const tail = /^(?:0{0,4}:){0,5}:?ffff:(.+)$/.exec(v6)?.[1];
+  if (tail === undefined) return undefined;
+  if (ipv4Octets(tail)) return tail;
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(tail);
+  if (!hex) return undefined;
+  const hi = parseInt(hex[1], 16);
+  const lo = parseInt(hex[2], 16);
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
+
+/**
+ * Whether `address` (an IP literal, or a hostname) is a loopback, unspecified or link-local
+ * target that `download` must not reach: `localhost` / `*.localhost`, `127.0.0.0/8`, `0.0.0.0/8`,
+ * `169.254.0.0/16`, `::1`, `::`, `fe80::/10`, and IPv4-mapped forms of those. LAN (RFC 1918)
+ * addresses stay allowed — a desktop app legitimately downloads from the local network.
+ *
+ * @param address A hostname or IP (IPv6 with or without brackets).
+ * @returns `true` when the target is refused.
+ */
+export function isRefusedDownloadHost(address: string): boolean {
+  const h = address.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  const v4 = ipv4Octets(h);
+  if (v4) return v4[0] === 127 || v4[0] === 0 || (v4[0] === 169 && v4[1] === 254);
+  if (!h.includes(":")) return false; // an ordinary hostname (checked again after DNS)
+  const zoneless = h.split("%")[0];
+  if (/^(?:0{0,4}:){2,7}0{0,3}1$/.test(zoneless) || zoneless === "::1") return true;
+  if (/^(?:0{0,4}:){2,7}0{0,4}$/.test(zoneless) || zoneless === "::") return true;
+  if (/^fe[89ab][0-9a-f]?:/.test(zoneless)) return true;
+  const mapped = mappedIpv4(zoneless);
+  return mapped !== undefined && isRefusedDownloadHost(mapped);
+}
+
+/** The default resolver: A + AAAA; a permission failure yields `undefined` (see the caller). */
+async function defaultResolveHost(hostname: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const type of ["A", "AAAA"] as const) {
+    try {
+      out.push(...await Deno.resolveDns(hostname, type));
+    } catch (err) {
+      // No DNS permission (the packaged binary's --allow-net names hosts, not the resolver):
+      // Deno's own per-host net permission is then the gate, so there is nothing to check here.
+      if (err instanceof Deno.errors.NotCapable || err instanceof Deno.errors.PermissionDenied) {
+        return [];
+      }
+      // NXDOMAIN / no AAAA record: the fetch itself will fail or use the other family.
+    }
+  }
+  return out;
+}
+
+/**
+ * Refuse a download URL that is not http(s), or whose host is (or resolves to) a loopback /
+ * link-local address — the page must not use the runtime's CORS-free fetch to read local services
+ * (a dev server, a local admin UI, cloud metadata at 169.254.169.254). The DNS check is
+ * best-effort: a rebinding race between it and the fetch's own lookup is not closed (Deno's fetch
+ * cannot pin an address); in a packaged app Deno's per-host `--allow-net` is the harder gate.
+ *
+ * @param url The URL (each redirect hop is checked too).
+ * @param resolve The resolver (defaults to {@link Deno.resolveDns}).
+ */
+export async function checkDownloadUrl(url: string, resolve?: HostResolver): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw badInput("url is not a valid URL");
+  }
+  // http(s) only: Deno's fetch also reads `file:` (and `data:`/`blob:`), which under the
+  // packaged binary's broad --allow-read would copy ANY local file into the app dir.
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw refusedTarget(`a "${parsed.protocol}" URL`);
+  }
+  if (isRefusedDownloadHost(parsed.hostname)) throw refusedTarget("a loopback/link-local host");
+  if (ipv4Octets(parsed.hostname) || parsed.hostname.startsWith("[")) return; // an IP literal
+  const addresses = await (resolve ?? defaultResolveHost)(parsed.hostname);
+  if (addresses.some(isRefusedDownloadHost)) {
+    throw refusedTarget("the host resolves to a loopback/link-local address");
+  }
+}
+
+/** `fetch` with redirects followed BY HAND, re-checking every hop with {@link checkDownloadUrl}. */
+async function fetchChecked(
+  url: string,
+  signal: AbortSignal,
+  cfg: FsCapabilityConfig,
+): Promise<Response> {
+  const doFetch = cfg.fetch ?? fetch;
+  let current = url;
+  for (let hop = 0;; hop++) {
+    const res = await doFetch(current, { signal, redirect: "manual" });
+    const location = res.headers.get("location");
+    if (res.status < 300 || res.status >= 400 || location === null) return res;
+    await res.body?.cancel();
+    if (hop >= MAX_DOWNLOAD_REDIRECTS) {
+      throw new DesktopCapError("download_failed", "too many redirects");
+    }
+    current = new URL(location, current).href;
+    await checkDownloadUrl(current, cfg.resolveHost);
+  }
+}
+
+/**
+ * Stream `res`'s body to `target` through a `.part` file, aborting past `maxBytes` (nothing is
+ * left behind on failure), then rename it into place.
+ */
+async function writeCapped(res: Response, target: string, maxBytes: number): Promise<void> {
+  const declared = Number(res.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel();
+    throw new DesktopCapError("too_large", `the download is over ${maxBytes} bytes`);
+  }
+  const part = `${target}.${crypto.randomUUID()}.part`;
+  const file = await Deno.open(part, { write: true, createNew: true });
+  let ok = false;
+  try {
+    let total = 0;
+    for await (const chunk of res.body ?? new ReadableStream<Uint8Array>()) {
+      total += chunk.byteLength;
+      if (total > maxBytes) {
+        throw new DesktopCapError("too_large", `the download is over ${maxBytes} bytes`);
+      }
+      let written = 0;
+      while (written < chunk.byteLength) written += await file.write(chunk.subarray(written));
+    }
+    ok = true;
+  } finally {
+    file.close();
+    if (!ok) await Deno.remove(part).catch(() => {});
+  }
+  await Deno.rename(part, target);
 }
 
 /** A `directory` arg that names a picked handle (`{ picked: "<handle>" }`) instead of a token. */
@@ -108,7 +277,10 @@ async function resolveTarget(
     return cfg.picked.resolve(handle, typeof path === "string" ? path : "", write);
   }
   const base = baseFor(cfg, directory, write);
-  return { target: await scopedPath(base, path), root: base };
+  const target = await scopedPath(base, path);
+  // The runtime's own state under the data dir (the updater overlay) is never page-writable.
+  if (write) refuseReservedDataPath(cfg.dirs.data, target);
+  return { target, root: base };
 }
 
 /** `mkdir -p path`, treating an existing directory as success (used for the base and write parents). */
@@ -208,24 +380,30 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         },
       },
       download: {
-        // The runtime fetches the URL itself; no per-method timeout (a large file may take a while).
+        // The runtime fetches the URL itself; the bridge deadline is off (a large file may take a
+        // while) and the download enforces its own timeout and byte cap instead.
         timeoutMs: false,
         permissions: { write: [...cfg.write], net: ["*"] },
         handler: async (args, ctx) => {
           const a = (args ?? {}) as { url?: unknown; path?: unknown; directory?: unknown };
           if (typeof a.url !== "string") throw badInput("url must be a string");
+          await checkDownloadUrl(a.url, cfg.resolveHost);
           const { target, root } = await resolveTarget(cfg, a.directory, a.path, true);
           await mkdirp(root);
-          const res = await fetch(a.url, { signal: ctx.signal });
+          const signal = AbortSignal.any([
+            ctx.signal,
+            AbortSignal.timeout(cfg.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS),
+          ]);
+          const res = await fetchChecked(a.url, signal, cfg);
           if (!res.ok) {
+            await res.body?.cancel();
             throw new DesktopCapError(
               "download_failed",
               `download failed with status ${res.status}`,
             );
           }
           await mkdirp(dirname(target));
-          const bytes = new Uint8Array(await res.arrayBuffer());
-          await Deno.writeFile(target, bytes);
+          await writeCapped(res, target, cfg.downloadMaxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES);
           return { path: target };
         },
       },

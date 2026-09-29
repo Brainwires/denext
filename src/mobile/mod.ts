@@ -13,9 +13,10 @@
  * - {@linkcode openExternal}: the in-app browser via the native `Browser` plugin, else
  *   `window.open` with `noopener`; only http(s), mailto: and tel: are allowed.
  * - In a Deno Desktop window ({@linkcode runtimePlatform} `"desktop"`), `secureStore`, the
- *   file functions, `openSqlite`, `showContextMenu`, `openExternal`, `pickDocument`, the
- *   notifications, `useKeepAwake`, the clipboard and `deviceInfo` go through the desktop
- *   runtime's capabilities (`denext desktop add <capability>`); {@linkcode openPath},
+ *   file functions, `openSqlite`, `openExternal`, `pickDocument`, `useKeepAwake` and
+ *   `deviceInfo` go through the desktop runtime's capabilities (`denext desktop add
+ *   <capability>`); `showContextMenu`, the notifications and the clipboard have no runtime
+ *   capability and take their WebView (web) path there; {@linkcode openPath},
  *   {@linkcode revealInFileManager}, {@linkcode moveToTrash}, {@linkcode saveFile} and
  *   {@linkcode pickFolder} are the desktop file-manager and dialog extras. A picked file or
  *   folder comes back with an opaque `handle` ({@linkcode PickedHandle}): the file functions

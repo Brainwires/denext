@@ -27,7 +27,7 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
         The binary is a CLI, not a second copy of the framework: inside a project it runs the denext
         that project pins in <code>deno.json</code> (a <code>deno run</code>{" "}
         child, so it needs a Deno), so it never silently swaps your app's framework version. Pin a
-        version — <code>jsr:@denext/denext@^2.5.0</code>, as <code>denext create</code>{" "}
+        version — <code>jsr:@denext/denext@^2.11.0</code>, as <code>denext create</code>{" "}
         writes — and that is what the binary defers to; an unversioned{" "}
         <code>jsr:@denext/denext</code>{" "}
         means "the latest published version", which is reproducible only until the next release.
@@ -78,12 +78,12 @@ deno task dev`}
       <Code lang="jsonc">
         {`{
   "tasks": {
-    "dev": "deno run -A jsr:@denext/denext@^2.5.0/cli dev .",
-    "build": "deno run -A jsr:@denext/denext@^2.5.0/cli build .",
-    "start": "deno run -A jsr:@denext/denext@^2.5.0/cli start ."
+    "dev": "deno run -A jsr:@denext/denext@^2.11.0/cli dev .",
+    "build": "deno run -A jsr:@denext/denext@^2.11.0/cli build .",
+    "start": "deno run -A jsr:@denext/denext@^2.11.0/cli start ."
   },
   "compilerOptions": { "jsx": "react-jsx", "jsxImportSource": "denext" },
-  "imports": { "denext": "jsr:@denext/denext@^2.5.0" }
+  "imports": { "denext": "jsr:@denext/denext@^2.11.0" }
 }`}
       </Code>
       <p>

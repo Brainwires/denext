@@ -62,6 +62,11 @@ export interface PushSenderConfig {
   readonly fetch?: typeof fetch;
   /** The clock, in ms since the epoch (tests inject one). Default `Date.now`. */
   readonly now?: () => number;
+  /**
+   * Abort one request to APNs, FCM or the OAuth2 token endpoint (response body included) after
+   * this many milliseconds; it then fails with `"network"`. Default 30 000.
+   */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -203,6 +208,8 @@ const APNS_INVALID_TOKEN = [
   "ExpiredToken",
 ];
 const APNS_AUTH_RETRY = ["InvalidProviderToken", "ExpiredProviderToken"];
+/** The default per-request timeout (a hung APNs / FCM connection must not hang a send). */
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 function fail(status: number, error: PushErrorCode, reason: string, retryAfter?: number): Failure {
   return retryAfter === undefined
@@ -296,6 +303,13 @@ function requireString(value: unknown, name: string): void {
 function checkConfig(config: PushSenderConfig): void {
   if (typeof config !== "object" || config === null) {
     throw new TypeError("createPushSender: pass { apns?, fcm? }");
+  }
+  const timeout = config.timeoutMs;
+  if (
+    timeout !== undefined &&
+    !(typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0)
+  ) {
+    throw new TypeError("createPushSender: timeoutMs must be a positive number");
   }
   if (config.apns !== undefined) {
     for (const key of ["keyId", "teamId", "p8", "topic"] as const) {
@@ -436,10 +450,11 @@ function apnsSender(config: ApnsConfig, doFetch: typeof fetch, now: () => number
   const host = config.production ? "api.push.apple.com" : "api.sandbox.push.apple.com";
   let key: Promise<CryptoKey> | undefined;
   let cached: { jwt: string; issuedAt: number } | undefined;
+  // The signing in flight: concurrent sends share one token, since Apple refuses a provider
+  // token that changes more than once every 20 minutes (TooManyProviderTokenUpdates).
+  let signing: Promise<string> | undefined;
 
-  async function providerToken(): Promise<string> {
-    const at = now();
-    if (cached && at - cached.issuedAt < APNS_TOKEN_TTL_MS) return cached.jwt;
+  async function sign(at: number): Promise<string> {
     key ??= importKey(config.p8, "apns.p8", { name: "ECDSA", namedCurve: "P-256" });
     const jwt = await signJwt(
       { alg: "ES256", kid: config.keyId },
@@ -451,42 +466,67 @@ function apnsSender(config: ApnsConfig, doFetch: typeof fetch, now: () => number
     return jwt;
   }
 
-  async function post(token: string, request: ApnsRequest): Promise<Response | Failure> {
+  function providerToken(): Promise<string> {
+    const at = now();
+    if (cached && at - cached.issuedAt < APNS_TOKEN_TTL_MS) return Promise.resolve(cached.jwt);
+    signing ??= sign(at).finally(() => signing = undefined);
+    return signing;
+  }
+
+  /** The response and the provider token it was sent with, or a failure. */
+  async function post(
+    token: string,
+    request: ApnsRequest,
+  ): Promise<{ response: Response; jwt: string } | Failure> {
     try {
-      return await doFetch(`https://${host}/3/device/${encodeURIComponent(token)}`, {
+      const jwt = await providerToken();
+      const response = await doFetch(`https://${host}/3/device/${encodeURIComponent(token)}`, {
         method: "POST",
-        headers: { ...request.headers, authorization: `bearer ${await providerToken()}` },
+        headers: { ...request.headers, authorization: `bearer ${jwt}` },
         body: request.body,
       });
+      return { response, jwt };
     } catch (err) {
       if (err instanceof TypeError && /apns\.p8/.test(err.message)) throw err;
       return fail(0, "network", err instanceof Error ? err.message : String(err));
     }
   }
 
+  /** The result of one APNs answer, or `"retry"` when its provider token was refused. */
+  async function outcome(
+    response: Response,
+    jwt: string,
+    firstAttempt: boolean,
+  ): Promise<PushResult | "retry"> {
+    if (response.ok) {
+      await response.body?.cancel();
+      const id = response.headers.get("apns-id");
+      return id === null ? { ok: true } : { ok: true, id };
+    }
+    const reason = String((await jsonOf(response)).reason ?? `HTTP ${response.status}`);
+    // A refused provider token: sign a fresh one and try once more.
+    if (firstAttempt && response.status === 403 && APNS_AUTH_RETRY.includes(reason)) {
+      // Only the token that was refused is dropped: a concurrent send may already have
+      // replaced it with a fresh one, which every retry then shares.
+      if (cached?.jwt === jwt) cached = undefined;
+      return "retry";
+    }
+    return fail(
+      response.status,
+      apnsError(response.status, reason),
+      reason,
+      retryAfterOf(response, now()),
+    );
+  }
+
   return async (token: string, payload: PushPayload): Promise<PushResult> => {
     const request = apnsRequest(config.topic, payload, now());
     if ("ok" in request) return request;
     for (let attempt = 0;; attempt++) {
-      const response = await post(token, request);
-      if (!(response instanceof Response)) return response;
-      if (response.ok) {
-        await response.body?.cancel();
-        const id = response.headers.get("apns-id");
-        return id === null ? { ok: true } : { ok: true, id };
-      }
-      const reason = String((await jsonOf(response)).reason ?? `HTTP ${response.status}`);
-      // A refused provider token: sign a fresh one and try once more.
-      if (response.status === 403 && APNS_AUTH_RETRY.includes(reason) && attempt === 0) {
-        cached = undefined;
-        continue;
-      }
-      return fail(
-        response.status,
-        apnsError(response.status, reason),
-        reason,
-        retryAfterOf(response, now()),
-      );
+      const sent = await post(token, request);
+      if ("ok" in sent) return sent;
+      const result = await outcome(sent.response, sent.jwt, attempt === 0);
+      if (result !== "retry") return result;
     }
   };
 }
@@ -563,11 +603,19 @@ function fcmSender(config: FcmConfig, doFetch: typeof fetch, now: () => number) 
   }/messages:send`;
   let key: Promise<CryptoKey> | undefined;
   let cached: { token: string; expiresAt: number } | undefined;
+  // The token exchange in flight: concurrent sends share it instead of each exchanging.
+  let exchanging: Promise<string | Failure> | undefined;
 
   /** A current access token, or a failure from the token exchange. */
-  async function accessToken(): Promise<string | Failure> {
+  function accessToken(): Promise<string | Failure> {
     const at = now();
-    if (cached && at < cached.expiresAt - 60_000) return cached.token;
+    if (cached && at < cached.expiresAt - 60_000) return Promise.resolve(cached.token);
+    exchanging ??= exchange(at).finally(() => exchanging = undefined);
+    return exchanging;
+  }
+
+  /** Exchange a fresh service-account assertion for an access token. */
+  async function exchange(at: number): Promise<string | Failure> {
     key ??= importKey(account.private_key, "fcm.serviceAccount.private_key", {
       name: "RSASSA-PKCS1-v1_5",
       hash: "SHA-256",
@@ -602,19 +650,44 @@ function fcmSender(config: FcmConfig, doFetch: typeof fetch, now: () => number) 
     return cached.token;
   }
 
-  /** POST one message body with a current access token. */
-  async function send(body: string): Promise<Response | Failure> {
+  /** POST one message body with a current access token; the response and that token. */
+  async function send(body: string): Promise<{ response: Response; access: string } | Failure> {
     const access = await accessToken();
     if (typeof access !== "string") return access;
     try {
-      return await doFetch(endpoint, {
+      const response = await doFetch(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
         body,
       });
+      return { response, access };
     } catch (err) {
       return fail(0, "network", err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /** The result of one FCM answer, or `"retry"` when its access token was refused. */
+  async function outcome(
+    response: Response,
+    access: string,
+    firstAttempt: boolean,
+  ): Promise<PushResult | "retry"> {
+    const json = await jsonOf(response);
+    if (response.ok) {
+      return typeof json.name === "string" ? { ok: true, id: json.name } : { ok: true };
+    }
+    if (firstAttempt && response.status === 401) {
+      // Only the refused token is dropped (a concurrent send may have replaced it already).
+      if (cached?.token === access) cached = undefined;
+      return "retry";
+    }
+    const { reason, message: text } = fcmReason(json);
+    return fail(
+      response.status,
+      fcmError(response.status, reason, text),
+      text ? `${reason}: ${text}` : reason,
+      retryAfterOf(response, now()),
+    );
   }
 
   return async (token: string, payload: PushPayload): Promise<PushResult> => {
@@ -622,23 +695,10 @@ function fcmSender(config: FcmConfig, doFetch: typeof fetch, now: () => number) 
     if ("ok" in message) return message as Failure;
     const body = JSON.stringify({ message });
     for (let attempt = 0;; attempt++) {
-      const response = await send(body);
-      if (!(response instanceof Response)) return response;
-      const json = await jsonOf(response);
-      if (response.ok) {
-        return typeof json.name === "string" ? { ok: true, id: json.name } : { ok: true };
-      }
-      if (response.status === 401 && attempt === 0) {
-        cached = undefined;
-        continue;
-      }
-      const { reason, message: text } = fcmReason(json);
-      return fail(
-        response.status,
-        fcmError(response.status, reason, text),
-        text ? `${reason}: ${text}` : reason,
-        retryAfterOf(response, now()),
-      );
+      const sent = await send(body);
+      if ("ok" in sent) return sent;
+      const result = await outcome(sent.response, sent.access, attempt === 0);
+      if (result !== "retry") return result;
     }
   };
 }
@@ -679,7 +739,12 @@ function fcmSender(config: FcmConfig, doFetch: typeof fetch, now: () => number) 
  */
 export function createPushSender(config: PushSenderConfig): PushSender {
   checkConfig(config);
-  const doFetch = config.fetch ?? ((input, init) => fetch(input, init));
+  const baseFetch = config.fetch ?? ((input, init) => fetch(input, init));
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // Every outbound call is bounded (headers and body): a hung push service fails the send with
+  // "network" instead of hanging it.
+  const doFetch: typeof fetch = (input, init) =>
+    baseFetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   const now = config.now ?? Date.now;
   const apns = config.apns ? apnsSender(config.apns, doFetch, now) : undefined;
   const fcm = config.fcm ? fcmSender(config.fcm, doFetch, now) : undefined;

@@ -272,6 +272,24 @@ export interface VirtualListOptions<T> {
   readonly ref?: Ref<VirtualListHandle>;
 }
 
+/**
+ * What {@linkcode VirtualListProps.refreshControl} passes a control component: the list's
+ * refresh state, its `class` and `style`, and the list's scroller as `children`. Any
+ * component that accepts these fits, `RefreshControl` from `denext/mobile` included.
+ */
+export type RefreshControlSlotProps = {
+  /** Whether a refresh is in progress. */
+  readonly refreshing: boolean;
+  /** Called to refresh. */
+  readonly onRefresh?: () => void;
+  /** Where the refresh spinner rests, in px. */
+  readonly progressViewOffset?: number;
+  /** The list's `class` (or `className`). */
+  readonly class?: string;
+  /** The list's style, with `display: flex; flex-direction: column` in front. */
+  readonly style?: Readonly<Record<string, string | number>>;
+};
+
 /** Props of `VirtualList`. */
 export interface VirtualListProps<T> extends VirtualListOptions<T> {
   /** Render one row. */
@@ -358,7 +376,7 @@ export interface VirtualListProps<T> extends VirtualListOptions<T> {
    * `progressViewOffset`) or an element; it is rendered AROUND the list's scroller, with the
    * list's `class` and `style`. `RefreshControl` from `denext/mobile` is one.
    */
-  readonly refreshControl?: Component<Record<string, unknown>> | VNode | null;
+  readonly refreshControl?: Component<RefreshControlSlotProps> | VNode | null;
   /** Whether a refresh is in progress (passed to a `refreshControl` component). */
   readonly refreshing?: boolean;
   /** Called to refresh (passed to a `refreshControl` component). */

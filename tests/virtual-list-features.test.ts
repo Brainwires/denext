@@ -19,6 +19,7 @@ import type {
   UseVirtualListResult,
   ViewableItemsChanged,
   VirtualListHandle,
+  VirtualListProps,
   VirtualListScrollEvent,
 } from "../src/client/virtual/types.ts";
 import { DomEl, fireEventOn } from "../src/testing/dom.ts";
@@ -505,6 +506,18 @@ Deno.test("refreshControl: a component gets refreshing/onRefresh/progressViewOff
   await screen.unmount();
 });
 
+Deno.test("refreshControl: denext/mobile's RefreshControl is assignable without a cast (types)", () => {
+  // Type-level: the documented `refreshControl={RefreshControl}` must compile (it did not while
+  // the prop was typed `Component<Record<string, unknown>>`, which lacks `refreshing`).
+  const props: VirtualListProps<number> = {
+    data: [1],
+    renderItem: (n) => h("p", null, String(n)),
+    refreshControl: RefreshControl,
+    refreshing: false,
+  };
+  assertEquals(props.refreshControl, RefreshControl);
+});
+
 Deno.test("refreshControl: denext/mobile's RefreshControl pulls the list's scroller (D3, T16)", async () => {
   // The spinner is SVG: this test uses the SVG-capable fake DOM of the mobile tests.
   let refreshes = 0;
@@ -514,7 +527,7 @@ Deno.test("refreshControl: denext/mobile's RefreshControl pulls the list's scrol
       data: rows(50),
       getItemSize: () => 30,
       viewportSize: 300,
-      refreshControl: RefreshControl as never,
+      refreshControl: RefreshControl,
       refreshing,
       onRefresh: () => void refreshes++,
       renderItem: text,
@@ -1057,4 +1070,42 @@ Deno.test("reorder: pointer drag keeps the dragged row mounted while the list sc
   assertEquals(moves, [[2, 501]]);
   assertEquals(r!.dragging, null);
   await screen.unmount();
+});
+
+Deno.test("reorder: an unmount mid-drag stops the auto-scroll frame loop; a second pointer ends the first drag", async () => {
+  const g = globalThis as Any;
+  const origRaf = g.requestAnimationFrame;
+  const origCaf = g.cancelAnimationFrame;
+  const frames = new Map<number, () => void>();
+  let next = 0;
+  g.requestAnimationFrame = (cb: () => void) => (frames.set(++next, cb), next);
+  g.cancelAnimationFrame = (id: number) => void frames.delete(id);
+  const runFrames = () => {
+    const due = [...frames.values()];
+    frames.clear();
+    for (const cb of due) cb();
+  };
+  try {
+    const moves: [number, number][] = [];
+    let r: VirtualReorder | null = null;
+    const screen = await render(h(reorderApp(moves, (x) => void (r = x)), null));
+    const handleOf = (i: number) =>
+      all(screen).find((e) => e.getAttribute("data-handle") === String(i))!;
+    const handle2 = handleOf(2);
+    await act(() => fireEventOn(handle2, "pointerdown", { clientX: 5, clientY: 90, pointerId: 1 }));
+    // A second pointer on another handle: the first drag ends; its listeners are gone.
+    await act(() =>
+      fireEventOn(handleOf(3), "pointerdown", { clientX: 5, clientY: 130, pointerId: 2 })
+    );
+    assertEquals(r!.dragging, 3);
+    await act(() => fireEventOn(handle2, "pointerup", {}));
+    assertEquals(r!.dragging, 3, "the first drag's pointerup listener was removed");
+    await screen.unmount();
+    for (let i = 0; i < 3; i++) runFrames();
+    assertEquals(frames.size, 0, "no frame loop keeps re-arming after the unmount");
+    assertEquals(moves, []);
+  } finally {
+    g.requestAnimationFrame = origRaf;
+    g.cancelAnimationFrame = origCaf;
+  }
 });

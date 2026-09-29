@@ -21,7 +21,7 @@ import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-st
 import { runPipeline } from "./request-pipeline.ts";
 import { resolveCors } from "./cors.ts";
 import { createAppLinksHandler } from "./app-links.ts";
-import { compressOrPassThrough } from "./compress.ts";
+import { compressEncodings, compressOrPassThrough, type ContentCoding } from "./compress.ts";
 import type { RequestContext } from "./request-context.ts";
 
 export type { AppConfig, RequestHandler, RequestLogInfo } from "./app-config.ts";
@@ -123,8 +123,9 @@ function dispatch(
   pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
   // Response compression (config `compress`, default on). A background regen serves no
   // client (its body is discarded), so it is never encoded.
-  if (config.compress !== false && !isBackgroundRegen) {
-    pipeline = pipeline.then((res) => maybeCompress(originalRequest, res, requestCtx));
+  const encodings = compressEncodings(config.compress);
+  if (encodings.length > 0 && !isBackgroundRegen) {
+    pipeline = pipeline.then((res) => maybeCompress(originalRequest, res, requestCtx, encodings));
   }
   pipeline = withRequestLog(pipeline, config, originalRequest, requestCtx.requestId, startedAt);
   if (release) pipeline = withSlotRelease(pipeline, requestTimeout, config.slotBackstop, release);
@@ -135,9 +136,14 @@ function dispatch(
  * Compress the response unless the served route opted out (`export const compress = false`
  * on its page, a layout above it, or its route handler).
  */
-function maybeCompress(request: Request, res: Response, ctx: RequestContext): Promise<Response> {
+function maybeCompress(
+  request: Request,
+  res: Response,
+  ctx: RequestContext,
+  encodings: readonly ContentCoding[],
+): Promise<Response> {
   if (ctx.segmentConfig?.compress === false || ctx.compressOptOut) return Promise.resolve(res);
-  return compressOrPassThrough(request, res);
+  return compressOrPassThrough(request, res, encodings);
 }
 
 /** The request logger: the app's `onRequest`, else the DENEXT_LOG default, else none. */

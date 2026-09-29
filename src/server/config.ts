@@ -665,23 +665,32 @@ export interface DesktopFsConfig {
  * validator warns on it.
  */
 export interface DesktopCapabilitiesConfig {
-  /** OS keychain (Keychain / Credential Manager / libsecret). */
+  /** OS keychain (macOS Keychain / libsecret; not yet on Windows, where it fails closed). */
   secureStore?: boolean;
   /** App files under the OS app-support / cache folders. */
   fs?: boolean | DesktopFsConfig;
   /** An app SQLite database under the app-support folder. */
   sqlite?: boolean;
-  /** Native context menus (`showContextMenu`). */
+  /** `showContextMenu` (no runtime capability yet: the WebView's in-page menu). */
   contextMenu?: boolean;
   /** Open external URLs / paths / reveal / trash (scoped). */
   shell?: boolean | DesktopShellConfig;
+  /**
+   * System-browser OAuth via `openAuthSession` (loopback redirect). The runtime's auth-session
+   * endpoint is default-deny unless this is enabled; the packaged app then bakes the browser
+   * opener's `--allow-run`.
+   */
+  authSession?: boolean;
   /** Native open/save/folder dialogs returning paths. */
   dialogs?: boolean;
-  /** Local notifications (click focuses the window and routes). */
+  /**
+   * Local notifications (no runtime capability yet: the WebView's Notification API, immediate
+   * only; a scheduled trigger rejects and a click is not routed).
+   */
   notifications?: boolean;
   /** Prevent the machine from sleeping while held. */
   keepAwake?: boolean;
-  /** Read/write the system clipboard text. */
+  /** Clipboard text (no runtime capability yet: the WebView's `navigator.clipboard`). */
   clipboard?: boolean;
   /** Device info (`os`, `osVersion`, `model?`). */
   device?: boolean;
@@ -699,8 +708,71 @@ export interface DesktopCapabilitiesConfig {
  * unified later. Docs: https://denext.dev/docs/desktop
  */
 export interface DesktopConfig {
+  /**
+   * App identity for the RUNTIME. Its `identifier` keys the OS app-support/cache/documents folders
+   * and the `secureStore` keychain SERVICE, so it MUST be unique per app — a reverse-DNS id such as
+   * `"com.example.myapp"`. Without it, `secureStore`/`fs`/`sqlite` refuse to start (they would
+   * otherwise share one folder and one keychain service across every denext desktop app, letting
+   * one app read another's data and secrets). Keep it equal to `deno.json`'s `desktop.app.identifier`
+   * (which `deno desktop` uses for the bundle id); the scaffold writes both.
+   */
+  app?: {
+    /**
+     * A unique reverse-DNS id (e.g. `"com.example.myapp"`) that keys the OS app-support/cache/
+     * documents folders and the `secureStore` keychain service. Required once a data-storing cap
+     * (`secureStore`/`fs`/`sqlite`) is enabled. Keep it equal to `deno.json`'s `desktop.app.identifier`.
+     */
+    identifier?: string;
+    /** The app's display name for tooling; the packaged bundle name comes from `deno.json`. */
+    name?: string;
+  };
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
+  /**
+   * Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what
+   * the enabled {@link DesktopCapabilitiesConfig capabilities} imply — the escape hatch for what
+   * the capability catalog can't see: the desktop updater's feed host (`net`) and data dir
+   * (`write`), a `defineDesktopExtension` module's own `run`/`ffi`, or any custom need.
+   * `denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script).
+   */
+  extraPermissions?: DesktopExtraPermissions;
+}
+
+/**
+ * Extra `--allow-*` for the desktop packaging scripts (see {@link DesktopConfig.extraPermissions}).
+ * Each field is a list of Deno permission values, unioned into the derived flags.
+ */
+export interface DesktopExtraPermissions {
+  /** `--allow-read` paths (usually unnecessary — the baseline is already broad read). */
+  read?: string[];
+  /** `--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped). */
+  write?: string[];
+  /** `--allow-net` hosts, e.g. the updater's feed host. */
+  net?: string[];
+  /** `--allow-run` programs. */
+  run?: string[];
+  /** `--allow-ffi` libraries. */
+  ffi?: string[];
+  /** `--allow-env` variable names. */
+  env?: string[];
+  /** `--allow-sys` kinds. */
+  sys?: string[];
+}
+
+/**
+ * Response compression settings (DenextConfig.compress as an object: compression on, with
+ * these settings).
+ */
+export interface CompressConfig {
+  /**
+   * The content codings denext may produce, in the server's order of preference: the client's
+   * highest-q acceptable coding among them wins, and a tie goes to the earlier one here. The
+   * default is gzip only (Next.js's `compress`); list `"br"` to send brotli to clients that
+   * accept it, at about four times gzip's CPU per response. An empty list sends identity.
+   *
+   * @default ["gzip"]
+   */
+  encodings?: Array<"gzip" | "br">;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -951,8 +1023,11 @@ export interface DenextConfig {
   cacheKeyParams?: string[];
   /**
    * Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/
-   * JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. Negotiated from
-   * `Accept-Encoding` (brotli, else gzip, with q-values) through the web-standard
+   * JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as
+   * Next.js): brotli costs about four times gzip's CPU per response for about a tenth fewer
+   * bytes, so it is produced only when listed in `{ encodings }`
+   * (`{ encodings: ["br", "gzip"] }`). Negotiated from `Accept-Encoding` (q-values; a tie goes
+   * to the earlier listed coding) through the web-standard
    * `CompressionStream`; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a
    * flush per chunk, so it still reaches the browser progressively. Skipped for bodies under
    * 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives),
@@ -963,7 +1038,7 @@ export interface DenextConfig {
    *
    * @default true
    */
-  compress?: boolean;
+  compress?: boolean | CompressConfig;
   /**
    * denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.
    *
@@ -1479,8 +1554,8 @@ export interface ServerOptions {
   actionMaxBodyBytes?: number;
   /** The ISR cache-key query-param allowlist. */
   cacheKeyParams?: string[];
-  /** Whether dynamic responses are compressed (`false` = off; default on). */
-  compress?: boolean;
+  /** Whether dynamic responses are compressed (`false` = off; default on, gzip). */
+  compress?: boolean | CompressConfig;
 }
 
 /** One env var, or `undefined` when unset, empty, or not permitted (a narrowed `--allow-env`). */

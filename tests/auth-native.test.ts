@@ -17,7 +17,7 @@ import {
 import { hashPassword } from "../src/server/auth/password.ts";
 import { handleAuthRequest } from "../src/server/auth/routes.ts";
 import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
+import { NATIVE_SESSION_RETENTION, sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
 import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
 import { requireSession } from "../src/server/api-middleware.ts";
 import type { CorsConfig } from "../src/server/config.ts";
@@ -576,6 +576,40 @@ Deno.test("sqliteAuthAdapter: code exchange, rotation, reuse detection, revoke",
     });
     await adapter.revokeNativeSessionsByUser!(h.userId);
     assertEquals(await asBearer(pair.access_token, () => auth()), null);
+  } finally {
+    await adapter.close?.();
+  }
+});
+
+Deno.test("sqliteAuthAdapter: families dead past the retention are deleted at the next sign-in", async () => {
+  let now = 1_000_000;
+  const adapter = sqliteAuthAdapter({ path: ":memory:", now: () => now });
+  const family = (id: string, expiresAt: number) => ({
+    id,
+    userId: "u1",
+    generation: 0,
+    salt: "s",
+    session: "{}",
+    createdAt: now,
+    expiresAt,
+  });
+  try {
+    await adapter.createNativeSession!(family("expired", now + 10));
+    await adapter.createNativeSession!(family("revoked", now + 10 * NATIVE_SESSION_RETENTION));
+    await adapter.createNativeSession!(family("live", now + 10 * NATIVE_SESSION_RETENTION));
+    await adapter.revokeNativeSession!("revoked");
+    // Dead, but still inside the retention: kept (a replay still finds the revoked family).
+    now += NATIVE_SESSION_RETENTION - 1;
+    await adapter.createNativeSession!(family("trigger1", now + 60));
+    assert(await adapter.getNativeSession!("expired"), "expired, inside the retention");
+    assert(await adapter.getNativeSession!("revoked"), "revoked, inside the retention");
+    // Past the retention: the next sign-in reclaims both; the live family is untouched.
+    now += 12;
+    await adapter.createNativeSession!(family("trigger2", now + 60));
+    assertEquals(await adapter.getNativeSession!("expired"), undefined);
+    assertEquals(await adapter.getNativeSession!("revoked"), undefined);
+    assert(await adapter.getNativeSession!("live"), "a live family is kept");
+    assert(await adapter.getNativeSession!("trigger2"), "the new family is kept");
   } finally {
     await adapter.close?.();
   }

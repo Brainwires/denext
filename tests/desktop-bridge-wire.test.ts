@@ -340,3 +340,36 @@ Deno.test({
     await server.close();
   }
 });
+
+Deno.test(
+  "wire: a top-level navigation runs every capability's onPageLoad (a reload drops page state)",
+  TEST,
+  async () => {
+    let loads = 0;
+    const pageScoped: DesktopCapability = {
+      name: "pageScoped",
+      methods: { ping: { handler: () => "pong" } },
+      onPageLoad: () => {
+        loads++;
+      },
+    };
+    const server = await startBridgeServer([pageScoped]);
+    try {
+      const nav = (headers: Record<string, string>) =>
+        fetch(`${server.origin}/`, { headers: { accept: "text/html", ...headers } }).then((r) =>
+          r.body?.cancel()
+        );
+      await nav({ "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" });
+      assertEquals(loads, 1);
+      // A subframe, a subresource or a non-browser GET is not a new page.
+      await nav({ "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate" });
+      await nav({ "sec-fetch-dest": "document" });
+      await nav({ "sec-fetch-dest": "empty", "sec-fetch-mode": "cors" });
+      assertEquals(loads, 1);
+      await nav({ "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" });
+      assertEquals(loads, 2);
+    } finally {
+      await server.close();
+    }
+  },
+);

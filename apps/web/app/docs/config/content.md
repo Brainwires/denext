@@ -153,6 +153,15 @@ See [Data & caching](/docs/data).
   `csp` export overrides this. Streamed and PPR responses carry the **same** strict
   hash-based CSP as buffered ones; the only uncovered case is an inline
   `<style>`/`<script>` inside a streamed hole flushed after the head.
+- **`cors`** — `CorsConfig` (off by default: no CORS headers at all).
+  Cross-origin access to route handlers and the native `denextAuth` endpoints,
+  for a Capacitor shell or a front end on another origin: `origins` (exact
+  origins, or `["*"]` without credentials), `methods`, `headers`,
+  `exposeHeaders`, `credentials` and `maxAge` (seconds, default 600). Origins
+  match exactly, preflights are answered before middleware, and a bad policy
+  fails at boot. A route replaces it with `export const cors = { … }` or turns
+  it off with `export const cors = false`. See
+  [App backend › CORS](/docs/app-backend#cors-for-app-origins).
 - **`publicEnv`** — `string[]`. Public-env keys to always embed in the page, in
   addition to the ones the build detects. Use it for a key read via a computed
   expression the build can't see (e.g. `publicEnv()["NEXT_PUBLIC_" + x]`).
@@ -204,11 +213,15 @@ itself (it reads neither the config keys nor the env vars for them).
   fork the ISR page-cache key; every other param (`?utm_*`, `?fbclid`) is
   ignored for keying but still reaches the render via `searchParams`. Unset,
   every param participates.
-- **`compress`** — `boolean` (**on by default**, like Next.js's `compress`).
-  Compresses dynamic responses — rendered HTML, Flight/JSON payloads and
-  route-handler text, JSON, JavaScript, CSS, SVG and XML — with brotli or gzip,
-  whichever the client's `Accept-Encoding` prefers (q-values honoured; brotli
-  wins a tie). Streamed (Suspense) HTML is compressed chunk by chunk with a
+- **`compress`** — `boolean | { encodings?: ("gzip" | "br")[] }` (**on by
+  default**, gzip, like Next.js's `compress`). Compresses dynamic responses —
+  rendered HTML, Flight/JSON payloads and route-handler text, JSON, JavaScript,
+  CSS, SVG and XML — with gzip when the client's `Accept-Encoding` accepts it.
+  Brotli is off by default: Deno's encoder has no quality setting and costs
+  about four times gzip's CPU per response for about a tenth fewer bytes.
+  `compress: { encodings: ["br", "gzip"] }` sends it to clients that accept it:
+  the list is the server's preference order, the client's q-values decide, and
+  a tie goes to the earlier entry. Streamed (Suspense) HTML is compressed chunk by chunk with a
   flush after each, so it still reaches the browser progressively. Skipped for
   bodies under 1 KiB, `text/event-stream` (Live/SSE), images, fonts, video and
   archives, a response that already has a `Content-Encoding`,
@@ -219,6 +232,12 @@ itself (it reads neither the config keys nor the env vars for them).
   `false` when a proxy or CDN in front compresses instead. SPA mode applies the
   same rules to its HTML shell and `public/` files (a `spa.proxy` backend's
   responses are relayed as the backend encoded them).
+- **`apiBatch`** — `ApiBatchConfig`. The typed client's batch endpoint
+  (`POST /_denext/api-batch`, same-origin only): `enabled` (default `true`;
+  `false` answers `404`), `maxItems` (default 20, at most 100), `maxBodyBytes`
+  (default 1 MiB), `concurrency` (default 4), `maxItemResponseBytes` (default
+  4 MiB) and `maxTotalResponseBytes` (default 16 MiB). See
+  [Typed API](/docs/typed-api).
 
 ```ts
 export default {
@@ -302,6 +321,35 @@ denext plugin list                  # show what's wired
 ```
 
 See [Writing a plugin](/docs/plugins).
+
+- **`commands`** — `DenextCommand[]`. Project-local CLI verbs
+  (`{ name, summary, run(ctx) }`) run as `denext <name>`, with the same flag
+  parsing and `--help` as a built-in; a built-in verb always wins a name
+  collision. `denext commands` lists them. See [CLI](/docs/cli).
+
+## Native apps
+
+- **`desktop`** — `DesktopConfig`. `desktop.capabilities` is the Deno Desktop
+  capability allowlist (default deny): `secureStore`, `fs`
+  (`true` or `{ read, write }` folder tokens), `sqlite`, `contextMenu`, `shell`
+  (`true` or per-action options), `dialogs`, `notifications`, `keepAwake`,
+  `clipboard`, `device`, and `extensions` (module paths of your
+  `defineDesktopExtension` modules). The desktop runtime serves only what is
+  listed, and the scaffolded packaging scripts derive the binary's `--allow-*`
+  flags from it. Written by `denext desktop add <capability>`. Distinct from
+  `spa.desktop` (packaging settings such as the icon). See
+  [Desktop apps › Native capabilities](/docs/desktop#desktop-capabilities).
+- **`mobile`** — `MobileConfig`. Capacitor shell settings for
+  `denext mobile build` and `denext mobile assets`, such as build `flavors`
+  (per-flavor app id, name, server URL, icon and splash). See
+  [Mobile builds › Flavors](/docs/mobile-build#flavors).
+- **`appLinks`** — `AppLinksConfig`. The domain-association files for
+  universal links (iOS) and App Links (Android): `denext start` and
+  `denext dev` serve `/.well-known/apple-app-site-association` and
+  `/.well-known/assetlinks.json` from it, and `denext export` writes both. See
+  [Mobile › Serving the association files](/docs/mobile#app-links).
+- **`cors`** (for an app's own origin such as `capacitor://localhost`) is under
+  [Security](#security).
 
 ## Streaming & Live
 

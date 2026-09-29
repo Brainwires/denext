@@ -168,11 +168,30 @@ function numArray(fail: Fail, field: string, v: unknown, opts: NumOpts): void {
  * allowlist itself; this only catches obvious mistakes (a non-object, or a bad `extensions` list /
  * `fs`/`shell` option). Unknown capability keys are allowed (forward-compat with `desktop add`).
  */
+/** `desktop.extraPermissions`: an object of permission kinds to string arrays. */
+function validateExtraPermissions(extra: unknown, fail: Fail): void {
+  if (extra === undefined) return;
+  if (typeof extra !== "object" || extra === null || Array.isArray(extra)) {
+    fail("desktop.extraPermissions", "must be an object of permission kinds to string arrays");
+    return;
+  }
+  const KINDS = ["read", "write", "net", "run", "ffi", "env", "sys"];
+  for (const [k, v] of Object.entries(extra as Record<string, unknown>)) {
+    if (!(KINDS.includes(k) && Array.isArray(v) && v.every((s) => typeof s === "string"))) {
+      fail(
+        `desktop.extraPermissions.${k}`,
+        "must be an array of strings (kinds: read, write, net, run, ffi, env, sys)",
+      );
+    }
+  }
+}
+
 function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   if (desktop === undefined) return;
   if (typeof desktop !== "object" || Array.isArray(desktop)) {
     fail("desktop", "must be an object");
   }
+  validateExtraPermissions((desktop as { extraPermissions?: unknown }).extraPermissions, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {
@@ -364,6 +383,21 @@ function validateSecurity(config: DenextConfig, fail: Fail): void {
   validateServerOptions(config, fail);
 }
 
+/** `compress`: a boolean, or `{ encodings }` listing `"gzip"` / `"br"`. */
+function validateCompress(compress: unknown, fail: Fail): void {
+  if (compress === undefined || typeof compress === "boolean") return;
+  if (typeof compress !== "object" || compress === null || Array.isArray(compress)) {
+    fail("compress", 'must be a boolean or { encodings: ("gzip" | "br")[] }');
+  }
+  const encodings = (compress as { encodings?: unknown }).encodings;
+  if (
+    encodings !== undefined &&
+    (!Array.isArray(encodings) || !encodings.every((e) => e === "gzip" || e === "br"))
+  ) {
+    fail("compress.encodings", 'must be an array of "gzip" / "br"');
+  }
+}
+
 /**
  * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `compress`,
  * `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`):
@@ -384,9 +418,7 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
   if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
     fail("trustForwardedHeaders", "must be a boolean");
   }
-  if (config.compress !== undefined && typeof config.compress !== "boolean") {
-    fail("compress", "must be a boolean");
-  }
+  validateCompress(config.compress, fail);
   if (config.requestTimeout !== undefined) {
     num(fail, "requestTimeout", config.requestTimeout, { int: true, min: 0 }); // ms; 0 disables
   }

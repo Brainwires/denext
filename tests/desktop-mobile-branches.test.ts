@@ -269,7 +269,7 @@ Deno.test("dialogs: pickDocument / saveFile / pickFolder on desktop", async () =
   );
 });
 
-Deno.test("notifications: desktop schedule / cancel / pending, and a click routes like a tap", async () => {
+Deno.test("notifications: desktop schedule / cancel / pending; a tap listener opens no event stream", async () => {
   await inDesktop({
     notifications: {
       schedule: () => null,
@@ -295,18 +295,18 @@ Deno.test("notifications: desktop schedule / cancel / pending, and a click route
       { id: 5, title: "T", body: "B", data: { path: "/x" } },
     ]);
 
+    // No built-in desktop capability emits notification clicks (the WebView's Notification API
+    // shows them), so a tap listener is inert there: it opens no bridge event stream, and a
+    // stray "notifications" / "click" event is not routed as a tap.
     const taps: unknown[] = [];
     const stop = onLocalNotificationTapped((tap) => taps.push(tap), { route: false });
-    await until(() => rt.openStreams() === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(rt.openStreams(), 0);
     rt.emit("notifications", "click", {
       notification: { id: 5, title: "T", extra: { path: "/x" } },
     });
-    await until(() => taps.length === 1);
-    assertEquals(taps[0], {
-      notification: { id: 5, title: "T", body: undefined, data: { path: "/x" } },
-      actionId: "tap",
-      inputValue: undefined,
-    });
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(taps, []);
     stop();
   });
 });

@@ -113,8 +113,6 @@ and this project adheres to
   `platformThemeCss()` returns it.
 - **Haptics by default in the shell.** A tab switch plays a selection haptic (`tabHaptics`), and
   a long-press menu its long-press haptic; the web never vibrates for either.
-- **Mobile docs: a guideline 4.2 checklist** (what App Review looks for in a WebView app, and
-  what denext provides for each).
 
 - **Build and submit store apps without a hosted service: `denext mobile assets | build |
   submit`.** `denext mobile assets` writes every iOS and Android icon and splash from one icon
@@ -201,18 +199,6 @@ and this project adheres to
   `VirtualList`); the Android views are built, not run. `denext mobile dev` / SPA dev running
   from a denext checkout also watches denext's own `src/` and reloads on framework edits.
   Docs: https://denext.dev/docs/mobile#native-views.
-- **Response compression (`compress`, on by default — Next.js's `compress`).** `denext start`,
-  `denext dev` (App Router and SPA mode) and any `createApp()` handler now compress dynamic
-  responses — rendered HTML,
-  Flight/JSON payloads, route-handler text/JSON/JS/CSS/SVG/XML — with brotli or gzip per
-  `Accept-Encoding` (q-values, `identity;q=0`), through the web-standard `CompressionStream`.
-  Streamed Suspense/PPR HTML stays progressive (a flush per chunk; same-tick chunks coalesced).
-  Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types, an existing
-  `Content-Encoding` (so the precompressed client bundles and an outer compressor are never
-  doubled), `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`. A page,
-  layout or route handler opts out with `export const compress = false`; `compress: false` in
-  `denext.config.ts` turns it off (a proxy/CDN that compresses). A 10 000-row list page goes
-  from 617 KB to 91 KB (gzip) / 41 KB (brotli) on the wire without a compressing proxy.
 - **Deno Desktop capabilities in `denext/mobile`, and the desktop runtime that answers them.**
   In a Deno Desktop window (`runtimePlatform() === "desktop"`), `secureStore` (the OS credential
   store: the macOS Keychain through `security`, libsecret through `secret-tool` on Linux; on
@@ -239,10 +225,22 @@ and this project adheres to
   use `showDirectoryPicker` / `showOpenFilePicker` / `showSaveFilePicker` and issue page-lifetime
   handles; elsewhere the file input / download / `unavailable` fallbacks stay. Inside the
   iOS/Android shell a `{ picked }` directory rejects `unavailable`. New types `PickedHandle`,
-  `PickedDirectory`, `AppFileDirectory` and `ShellItem`; `PickedFolder.handle` is now that string.
+  `PickedDirectory`, `AppFileDirectory` and `ShellItem`; `PickedFolder.handle` is that string.
 - **`denext desktop add <capability...>`** (`--list`, `--dry-run`) writes `desktop.capabilities`
   in `denext.config.ts` (the runtime's allowlist) and prints the Deno permissions each capability
   needs per OS, with its trust level.
+- **Your own desktop native code: `defineDesktopExtension` and `DesktopCapError` in
+  `denext/desktop`.** An extension is a capability (methods with Standard Schema `input` /
+  `output`, the Deno permissions each needs, and events) that runs in the desktop app's Deno
+  process; list its module in `desktop.capabilities.extensions`. The page reaches it, and the
+  built-in capabilities, through the desktop runtime's bridge (`POST /_denext/desktop/rpc`, and
+  an SSE `GET /_denext/desktop/events` with bounded replay), which `runDesktop` serves locally
+  before any proxy. The bridge fails closed: a per-launch token (injected only into a top-level
+  loopback document), a loopback `Host`, an exact matching `Origin`, a JSON content type and no
+  CORS preflight; input is validated, output stripped to its schema, each handler runs under a
+  deadline, and a thrown `DesktopCapError` answers the page with its code and a safe message.
+  The generated `desktop.ts` spreads `resolveDesktopCapabilities(config, …)` into `runDesktop`
+  (default deny: only what `desktop.capabilities` enables is served).
 - **`denext/desktop/client`**: `desktopExtension<typeof ext>(name)` (a typed proxy to a desktop
   extension's methods), `onDesktopEvent(cap, event, handler)` and `isDesktopBridgeError`.
 - **`examples/rn-desktop`**: a React Native (react-native-web) app in a Deno Desktop window;
@@ -266,7 +264,8 @@ and this project adheres to
   `android:debuggable`, CSP, secrets). The `examples/capacitor-ci` workflow runs both.
 - **`denext mobile add offline-screen`** writes `public/offline.html` and points
   `server.errorPath` at it; `installOfflineScreen()` in `denext/mobile` covers the page while
-  the device is offline. `/docs/mobile` has an "App Store review" (guideline 4.2) checklist.
+  the device is offline. `/docs/mobile` has an "App Store review" checklist for guideline 4.2
+  (what App Review looks for in a WebView app, and what denext provides for each).
 - **Crash reporting.** `denext mobile add sentry` installs `@sentry/capacitor` 4.4.0 and
   `@sentry/browser` 10.69.0; `initCrashReporting({ dsn, sdk, sibling })` in `denext/mobile`
   loads them lazily and reports under the OTA UI version as the release.
@@ -346,6 +345,10 @@ and this project adheres to
   - `inverted` is a logical reversal: no `scaleY(-1)`, and the wheel, selection, copy order and
     scrollbar are natural.
   - `getItemLayout` sizes are exact.
+  - `maintainVisibleContentPosition` is off on `FlatList` / `SectionList` / `VirtualizedList`
+    unless the app sets it, as in React Native, and on for FlashList and LegendList, as in those
+    libraries (a measurement never moves the view either way); `initialNumToRender` is passed
+    through only when the app sets it.
   - `numColumns` builds React Native's rows.
   - SectionList flattens into one list, with sticky headers and `scrollToLocation` below the
     header, and its viewability tokens carry `section`.
@@ -463,9 +466,11 @@ and this project adheres to
   by it); `Platform.Version` and `Platform.isPad` describe the device.
 - **React Native mode: the React Native core exports react-native-web lacks.** An import of any
   of these was a build error ("No matching export"); each now binds from `react-native` and
-  tree-shakes away when unused. `requireNativeComponent` (a component that renders nothing, as
-  `codegenNativeComponent`: react-native-fast-image and react-native-date-picker now build);
-  load-safe no-ops for `CodegenTypes`, `DevMenu`, `NativeComponentRegistry`,
+  tree-shakes away when unused. `requireNativeComponent` (as `codegenNativeComponent`: a native
+  view slot where that view type is registered, else its children, as described under native
+  views above; react-native-fast-image and react-native-date-picker now build);
+  load-safe no-ops for `CodegenTypes`, `DevMenu`, `NativeComponentRegistry` (its `get` is a
+  native view slot too),
   `PushNotificationIOS`, `registerCallableModule` and `Systrace` (and their `Libraries/…`
   paths); `useAnimatedValue` / `useAnimatedValueXY` / `useAnimatedColor` over react-native-web's
   `Animated`; `PermissionsAndroid` (`check` / `request` / `requestMultiple`, `RESULTS`,
@@ -514,9 +519,12 @@ and this project adheres to
   are only hints; `getItemSize` gives exact sizes), offsets live in a Fenwick tree (O(log n),
   lazy per-block storage, cheap append / prepend), and past the browser's element-height limit
   the scroll space is scaled, so 1M–10M variable rows scroll and `scrollToIndex` still lands to
-  the pixel (it measures and corrects until the row settles). Content changes above the
-  viewport never move the visible rows (anchored by key; the scroller sets
-  `overflow-anchor: none`), and during a touch fling the list absorbs corrections into its own
+  the pixel (it measures and corrects until the row settles, with or without
+  `maintainVisibleContentPosition`). Size refinements (a row measured taller or shorter than
+  its estimate, a resize) never move the visible rows (anchored by key; the scroller sets
+  `overflow-anchor: none`); rows inserted or removed above the view keep it in place too under
+  `maintainVisibleContentPosition` (default on; `false` is React Native's default, which shifts
+  the view). During a touch fling the list absorbs corrections into its own
   layout and writes the scroll offset only at `scrollend`, so iOS momentum survives with or
   without the momentum-safe shim. `anchor="end"` is chat (start at the bottom, bottom-align short
   content, stay pinned through appends and a streaming last row); `onEndReached` /
@@ -527,7 +535,11 @@ and this project adheres to
   (`hidden="until-found"` stubs), `role="list"` with `aria-setsize` / `aria-posinset`,
   Arrow / Page / Home / End navigation into rows not rendered yet, the focused row kept mounted
   while scrolled away, a development-only `onBlankArea`, and SSR of the first window
-  (`initialScrollIndex` / anchor aware) that hydrates without moving. Without a
+  (`initialScrollIndex` / anchor aware) that hydrates without moving: render-phase sizes are a
+  pure function of the props, so server and client agree, and size hints are seeded only after
+  the first client commit. `initialNumToRender` (opt-in, React Native's semantics) caps the
+  first commit at that many rows and renders the rest of the window after the first paint;
+  unset, one commit renders the whole window. Without a
   `ResizeObserver` (as under `denext/testing`) the list is deterministic: sizes from
   `getItemSize` / estimates, the viewport from `viewportSize`. Apps that do not import it bundle
   none of it.
@@ -585,7 +597,8 @@ and this project adheres to
   nothing; `/auth/native/revoke`, `revokeAllSessions()`, a password reset and account deletion
   end native sessions. Loopback redirect URIs match any port (RFC 8252). The adapter contract
   gains an optional native session group, implemented by `sqliteAuthAdapter` and
-  `inMemoryAuthAdapter`.
+  `inMemoryAuthAdapter`; `sqliteAuthAdapter` deletes a family 30 days after it expired or was
+  revoked (at the next sign-in), so the table stays bounded.
 - **Native refresh policies: `native.refreshTokenMaxAge` and `native.refreshReuseInterval`**
   (both off by default). `refreshTokenMaxAge` caps a session family absolutely from its sign-in:
   the sliding expiry never passes it, and past it a refresh is `invalid_grant` and the family is
@@ -741,7 +754,11 @@ and this project adheres to
   `geolocation`, `expo-local-authentication` → `biometrics`, `expo-apple-authentication` →
   `social-login`, `expo-tracking-transparency` → `tracking`, `expo-application` →
   `application`, `expo-camera` → `camera` + `barcode`, local `expo-notifications` scheduling →
-  `local-notifications`, …).
+  `local-notifications`, …). It recommends a capability only where a shim reaches it:
+  `expo-task-manager`, `expo-background-task` and `expo-background-fetch` point at
+  `background/<name>.ts` with `defineBackgroundTask` instead of `denext mobile add background`
+  (their web builds never run a task), and the `@react-native-menu/menu` note claims no OS menu
+  on Deno Desktop (there is no desktop context-menu capability).
 - **`denext mobile add toast` and `denext mobile add action-sheet`** install `@capacitor/toast`
   ^8.0.1 and `@capacitor/action-sheet` ^8.1.1, which React Native mode's `ToastAndroid` (the
   system toast on Android) and `ActionSheetIOS` (a native action sheet) already use when present.
@@ -797,18 +814,38 @@ and this project adheres to
 
 ### Changed
 
+- **Response compression (`compress`, on by default — Next.js's `compress`).** `denext start`,
+  `denext dev` (App Router and SPA mode) and any `createApp()` handler now compress dynamic
+  responses — rendered HTML,
+  Flight/JSON payloads, route-handler text/JSON/JS/CSS/SVG/XML — with gzip per
+  `Accept-Encoding` (q-values, `identity;q=0`), through the web-standard `CompressionStream`,
+  adding `Vary: Accept-Encoding` and weakening a strong `ETag` on an encoded response.
+  Streamed Suspense/PPR HTML stays progressive (a flush per chunk; same-tick chunks coalesced).
+  Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types, an existing
+  `Content-Encoding` (so the precompressed client bundles and an outer compressor are never
+  doubled), `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`; a
+  `spa.proxy` response is relayed as-is. A page, layout or route handler opts out with
+  `export const compress = false`; `compress: false` in `denext.config.ts` turns it off (a
+  proxy/CDN that compresses). gzip is the default, as Next.js's `compress`: Deno's brotli
+  encoder has no quality setting and cost about four times gzip's CPU per response (266 ms vs
+  69 ms on 1.26 MB of HTML) for about 11 % fewer bytes. `compress: { encodings: ["br", "gzip"] }`
+  sends brotli to clients that accept it (the list is the server's preference order; a q-value
+  tie goes to the earlier entry). A 10 000-row list page goes from 617 KB to 91 KB (gzip) /
+  41 KB (brotli) on the wire without a compressing proxy.
+- **Islands-only pages ship no Server Component payload.** A page whose client parts are all
+  `client:*` islands (or resumable) no longer inlines its whole Server Component tree as
+  `#__denext_flight` (6.65 MB for a 10 000-row list); it inlines `null` and boots without a
+  root: the islands, delegated handlers and navigation only. On that 10 000-row page the JS heap
+  went from 105 MB to 1 MB, time to interactive from 2006 ms to 1047 ms and total blocking time
+  from 758 ms to 0 (headless Chromium). A Server Action refresh of the same route adopts the
+  live markup, so island state survives; a navigation to another route mounts it fresh. A page
+  that hydrates a root (an undirected client component, or an action / `qrl` / channel prop) is
+  unchanged.
 - **A top-level `requireNativeModule("X")` no longer throws off-device.** In a browser, SSR or a
   test (or a shell without the plugin) it returns a stand-in whose functions throw only when
   called (`addListener` does nothing), so a module that asks for its native module at import
   time loads and the same app can be developed in a desktop browser.
   `requireOptionalNativeModule` still returns null.
-- **`denext migrate --from expo` recommends a capability only where a shim reaches it.**
-  `expo-task-manager`, `expo-background-task` and `expo-background-fetch` no longer suggest
-  `denext mobile add background` (their web builds never run a task); the report says to move
-  the work to `background/<name>.ts` with `defineBackgroundTask`. The `@react-native-menu/menu`
-  note no longer claims an OS menu on Deno Desktop (there is no desktop context-menu capability).
-- **`@expo/vector-icons` is covered by the Expo Router e2e fixture**: the icon font loads through
-  the `expo-font` shim and the glyph renders at its size.
 - **Desktop packaging is least-privilege.** `scripts/package-*.ts` from `denext create --desktop` /
   `denext migrate --desktop` derive `--allow-*` from `desktop.capabilities` (`desktopPackageFlags`,
   `desktopBuildFlags`, `DESKTOP_BASELINE_FLAGS` from `denext/desktop`) instead of `-A`: the baseline
@@ -1017,6 +1054,36 @@ and this project adheres to
   it has one. The generated module's own imports (`expo-router`, React Navigation) also failed
   to resolve in a real build (only `file`-namespace importers reach the node_modules resolver).
   Covered by a real-browser test with expo-router 57.0.23.
+
+- **Full-tree hydration adopts the server DOM instead of remounting the page.** The HTML parser
+  drops a nested layout's `<html>` / `<head>` / `<body>` tags, but the Flight tree kept them, so
+  hydration's host match failed and the whole page was remounted. The Flight emitters now pass
+  document tags through as their children.
+- **A root layout's `<html>` / `<body>` attributes (`lang`, `dir`, `class`) reach the document on
+  every render path**, including a streamed first chunk and a PPR cache hit, where they were
+  missing. Page-cache entries now carry a format version, so shells cached by an earlier
+  release are never served after an upgrade.
+- **Islands: a root whose wrapper was removed no longer leaks its effects** (it is swept), and
+  **islands mount after a soft navigation from a page that never loaded the lazy islands
+  runtime** (it is loaded on demand).
+
+### Security
+
+- **iOS: an iframe could call every native plugin.** WebKit delivers the native bridge's
+  script message from every frame of the page, and Capacitor's iOS handler does not check which
+  frame sent it, so any iframe (a page in React Native mode's `WebView`, an ad, a third-party
+  widget) could post plugin calls: secure storage, files, notifications, auth sessions, the
+  app's own native modules. Every generated `DenextBridgeViewController.swift` now replaces
+  Capacitor's `bridge` handler, before the first page loads, with one that forwards main-frame
+  messages only and logs a refused frame once per origin (`[denext] refused a native plugin
+  call from a non-main frame`). Re-run `denext mobile add-ota` (or the `denext mobile add` that
+  wrote the file) to upgrade an unedited bridge, then ship a new binary; the auth-session
+  template generation is now 2, so an older denext keeps a guarded bridge instead of
+  rewriting it. A shell with no denext native plugin has no `DenextBridgeViewController` and
+  keeps Capacitor's handler. Android was not exposed: Capacitor 8 accepts plugin calls from the
+  main frame only, except with `android.useLegacyBridge`. `denext mobile doctor` reports a
+  bridge written before the guard, and `--release` reports `android.useLegacyBridge`, both as
+  errors.
 
 ## [2.10.0] - 2026-09-25
 

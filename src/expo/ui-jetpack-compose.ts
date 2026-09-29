@@ -11,10 +11,10 @@
  *
  * @example
  * ```ts
- * import { Host, Text, VStack } from "denext/expo/ui/jetpack-compose";
+ * import { Column, Host, Text } from "denext/expo/ui/jetpack-compose";
  * import { h } from "denext/jsx-runtime";
  *
- * h(Host, null, h(VStack, null, h(Text, null, "Hello"))); // a column with a text line
+ * h(Host, null, h(Column, null, h(Text, null, "Hello"))); // a column with a text line
  * ```
  *
  * @module

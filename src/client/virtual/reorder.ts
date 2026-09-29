@@ -59,6 +59,12 @@ export interface VirtualReorder {
 }
 
 /** The drag in flight (a ref: pointer moves never re-render). */
+/** Cancel the auto-scroll frame `id` (0: none scheduled). */
+function stopFrame(id: number): void {
+  const caf = (globalThis as { cancelAnimationFrame?: (id: number) => void }).cancelAnimationFrame;
+  if (id && typeof caf === "function") caf(id);
+}
+
 interface Drag {
   readonly from: number;
   readonly pointer: boolean;
@@ -168,7 +174,15 @@ export function useVirtualReorder(options: VirtualReorderOptions): VirtualReorde
   latest.current = options;
   const drag = useRef<Drag | null>(null);
   const cleanup = useRef<(() => void) | null>(null);
-  useEffect(() => () => cleanup.current?.(), []);
+  // An unmount mid-drag drops the listeners AND stops the auto-scroll loop, which otherwise
+  // re-arms itself every frame for as long as `drag` holds the abandoned pointer drag.
+  useEffect(() => () => {
+    const d = drag.current;
+    drag.current = null;
+    cleanup.current?.();
+    cleanup.current = null;
+    if (d) stopFrame(d.raf);
+  }, []);
 
   const msg = {
     lifted: (p: number, n: number) =>
@@ -261,9 +275,7 @@ export function useVirtualReorder(options: VirtualReorderOptions): VirtualReorde
     cleanup.current = null;
     if (!d) return;
     if (d.el?.style) d.el.style.transform = "";
-    const caf = (globalThis as { cancelAnimationFrame?: (id: number) => void })
-      .cancelAnimationFrame;
-    if (d.raf && typeof caf === "function") caf(d.raf);
+    stopFrame(d.raf);
     setDragging(null);
     setTarget(null);
     const n = latest.current.count;
@@ -298,6 +310,9 @@ export function useVirtualReorder(options: VirtualReorderOptions): VirtualReorde
     const handleEl = e.currentTarget as HTMLElement;
     const el = closestWith(handleEl, "data-vl-item") ?? closestWith(handleEl, "data-vl-row");
     e.preventDefault?.();
+    // A second pointer (or a pointer over a keyboard drag) ends the drag in progress first, so
+    // its listeners and frame loop never outlive it.
+    if (drag.current) finish(false);
     try {
       handleEl.setPointerCapture?.(e.pointerId);
     } catch { /* not capturable */ }

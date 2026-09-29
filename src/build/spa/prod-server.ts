@@ -3,7 +3,7 @@
 
 import { join } from "@std/path";
 import { applyDefaultSecurityHeaders } from "../../server/app.ts";
-import { compressOrPassThrough } from "../../server/compress.ts";
+import { compressEncodings, compressOrPassThrough } from "../../server/compress.ts";
 
 import {
   displayHost,
@@ -56,7 +56,7 @@ export async function startSpaProdServer(
   // Response compression (config `compress`, default on — the same rules as `createApp`):
   // the shell and uncompressed `public/` files are encoded per request; the precompressed
   // client bundles already carry a Content-Encoding and pass through untouched.
-  const compress = paths.config?.compress !== false;
+  const encodings = compressEncodings(paths.config?.compress);
 
   const serveLocal = async (request: Request, url: URL, secure: boolean): Promise<Response> => {
     if (url.pathname.startsWith(CLIENT_PREFIX)) {
@@ -84,7 +84,7 @@ export async function startSpaProdServer(
       return await proxy.proxyToBackend(request, url, proxyCfg);
     }
     const res = await serveLocal(request, url, secure);
-    return compress ? await compressOrPassThrough(request, res) : res;
+    return encodings.length > 0 ? await compressOrPassThrough(request, res, encodings) : res;
   };
 
   return serveWithPortFallback(

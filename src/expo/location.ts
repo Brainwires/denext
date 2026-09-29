@@ -8,9 +8,10 @@
  * the provider status, and the enums. **Geocoding** needs a geocoding service, which neither the
  * WebView nor the plugin has: `geocodeAsync` / `reverseGeocodeAsync` call the geocoder you pass
  * to {@linkcode setGeocoder} (any HTTP geocoding API), and reject naming it without one. Not
- * provided (see the manifest): background location and geofencing (they need a background task
- * runner and a Capacitor 8 background-location plugin denext does not ship yet), the compass
- * heading and motion activity. Background permission reads denied.
+ * provided (see the manifest): background location and geofencing (this shim does not wire
+ * them; for background updates use `denext/mobile`'s `watchPositionInBackground`, `denext mobile
+ * add background-location`), the compass heading and motion activity. Background permission
+ * reads denied.
  *
  * @example
  * ```ts
@@ -384,8 +385,8 @@ function backgroundDenied(): Promise<PermissionResponse> {
 }
 
 /**
- * The background location permission: always denied here (background location is not
- * shipped).
+ * The background location permission: always denied here (this shim provides no background
+ * location; `denext/mobile` has `watchPositionInBackground`).
  *
  * @returns Denied.
  */
@@ -394,7 +395,7 @@ export function getBackgroundPermissionsAsync(): Promise<PermissionResponse> {
 }
 
 /**
- * Ask for background location: always denied here (background location is not shipped).
+ * Ask for background location: always denied here (this shim provides no background location).
  *
  * @returns Denied.
  */

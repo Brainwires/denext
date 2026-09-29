@@ -231,6 +231,20 @@ Deno.test("production-server keys: a bare origin, a boolean, whole numbers in ra
     Error,
     "`cacheKeyParams` must be an array of query-parameter-name strings",
   );
+  // compress: a boolean, or { encodings } of "gzip" / "br".
+  validateDenextConfig({ compress: false });
+  validateDenextConfig({ compress: { encodings: ["br", "gzip"] } });
+  validateDenextConfig({ compress: {} });
+  assertThrows(
+    () => validateDenextConfig({ compress: "gzip" as never }),
+    Error,
+    "`compress` must be a boolean or { encodings",
+  );
+  assertThrows(
+    () => validateDenextConfig({ compress: { encodings: ["zstd"] } as never }),
+    Error,
+    '`compress.encodings` must be an array of "gzip" / "br"',
+  );
   // They are known top-level keys — no unknown-key warning.
   for (
     const key of [

@@ -372,8 +372,10 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "`denext mobile add geolocation`; navigator.geolocation on the web) and its permission " +
       "API. geocodeAsync / reverseGeocodeAsync need a geocoding service a WebView lacks: they " +
       "call the geocoder passed to setGeocoder (denext only) and reject without one. Background " +
-      "location and geofencing (no Capacitor 8 plugin shipped; background permission reads " +
-      "denied), the compass heading and motion activity are not provided. " +
+      "location and geofencing are not wired in this shim (background permission reads " +
+      "denied; for background updates use denext/mobile's watchPositionInBackground, " +
+      "`denext mobile add background-location`), and the compass heading and motion activity " +
+      "are not provided. " +
       "installWebGeolocationPolyfill does nothing (navigator.geolocation is already there).",
   },
   "expo-maps": {

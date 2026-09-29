@@ -330,12 +330,14 @@ https://denext.dev/docs/mobile
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
 Safari included, whenever `momentumSafeScroll` is on (the default).
 
-More `denext mobile add` capabilities (each a pinned Capacitor 8 plugin, web fallback where one
-exists): `keyboard` (`useKeyboard`, `<KeyboardAvoidingView>`, `<KeyboardStickyView>`), `back`
+More `denext mobile add` capabilities (a pinned Capacitor 8 plugin, or denext's own native plugin
+for `permissions`, `accessibility`, `storage` and `system-icons`; `system-bars` uses Capacitor
+core and `offline-screen` writes a page; web fallback where one exists): `keyboard`
+(`useKeyboard`, `<KeyboardAvoidingView>`, `<KeyboardStickyView>`), `back`
 (`onBack`/`useBackHandler`, `useBackProgress` for Android predictive back), `system-bars`
 (`setSystemBars`, `useSystemBarsFollowTheme`; `useSafeAreaInsets()` needs nothing),
 `permissions` (`checkPermission`/`requestPermission`/`usePermission` → granted | limited |
-prompt | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`),
+prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`),
 `biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
 `background-location`, `purchases` (RevenueCat), `app-review`, `app-update`,
@@ -375,7 +377,10 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS / Linux; fails closed on Windows) and your `defineDesktopExtension` modules (from
-`denext/desktop`); `context-menu`, `clipboard` and `notifications` stay WebView-backed (a
+`denext/desktop`, listed in `desktop.capabilities.extensions`) — but only when `desktop.ts`
+spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
+`runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
+call answers `unavailable`); `context-menu`, `clipboard` and `notifications` stay WebView-backed (a
 scheduled notification rejects). Packaging is least-privilege: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A`, and
 `denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
@@ -537,8 +542,13 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
 i18n, images, `cacheComponents`, `streaming`, `live`, `reactCompiler`, `features`, `plugins`,
-`tailwind`, `csp`, `compatibilityMode`, `optimizePackageImports`, `momentumSafeScroll`;
+`tailwind`, `csp` (strict by default; `frameSrc` / `mediaSrc` / `workerSrc` / `fontSrc` /
+`scriptSrc` / `styleSrc` / `imgSrc` / `connectSrc` opt-ins, e.g. `{ frameSrc:
+["https://js.stripe.com"] }`), `compress` (gzip, on by default; `{ encodings: ["br", "gzip"] }`
+adds brotli; `false`, or `export const compress = false` in a route), `cors`, `compatibilityMode`,
+`optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
+Every key: https://denext.dev/docs/config
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
 `denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),
@@ -787,6 +797,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Ref<T> = object | parenthesized | null | undefined` — A mutable ref object or a callback ref, as accepted by ref/useImperativeHandle.
 - `type RefCallback<T> = (instance: T | null) => void | parenthesized` — A callback ref.
 - `interface RefObject<T>` — A ref cell (React 19's RefObject: current is writable).
+- `type RefreshControlSlotProps = object` — What VirtualListProps.refreshControl passes a control component: the list's refresh state, its class and style, and the list's scroller as children. Any component that accepts these fits, RefreshControl from denext/mobile included.
 - `interface RegisteredApi` — Augmentation target for the generated .denext/api.ts: declare module "denext" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.
 - `type RegisteredParams = conditional` — The per-route params map when typed-routes is wired (from .denext/routes.ts), else a loose fallback. Each key is a route pattern (/blog/[slug]) → its params object ({ slug: string }).
 - `interface RegisteredRoutes` — Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).
@@ -806,6 +817,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ScrollNativeEvent` — React Native's scroll nativeEvent.
 - `interface ScrollPoint` — A 2-D point.
 - `interface ScrollSize` — A 2-D size.
+- `type ScrollSnapAlign = start | center | end` — Where a snap point meets the viewport.
+- `interface ScrollSnapOptions` — Snap points, React Native's way (VirtualListProps.scrollSnap).
 - `interface ScrollToIndexOptions` — Options for VirtualListHandle.scrollToIndex.
 - `type SearchOutput<S> = conditional` — What a Standard Schema produces from the query string — its validated output type.
 - `class SearchParamsValidationError` — Thrown by useSearchParams(schema) when the URL query fails the schema. It is a normal error, so the nearest error.tsx boundary catches it (matching the server's defineApi validation).
@@ -925,7 +938,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ViewToken<T>` — One row as onViewableItemsChanged reports it (React Native's ViewToken).
 - `ViewTransition(props: object): VNode` — React.ViewTransition (experimental) — the client-driven view-transition wrapper. It is transparent (no DOM node of its own) and carries its config by stamping the DNX_VT_ATTR attribute onto its **single host child** (a DOM attribute survives server rendering AND the Flight boundary, unlike a VNode marker). Around a soft navigation the import-gated marking runtime finds these elements and applies real view-transition-name (and view-transition-class from enter/exit/update/share), so a name shared across routes morphs one element into the other. **Route-level** transitions apply regardless: a soft navigation commits inside document.startViewTransition where the browser supports it (see withViewTransition in src/client/navigation.ts). Without the gated runtime, or for a wrapper whose child isn't a single element (nothing to mark), it is a plain passthrough.
 - `interface VirtualItem` — One positioned row of UseVirtualListResult.items.
-- `VirtualList<T>(props: VirtualListProps<T>): VNode` — A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast as 100. Rows are measured as they render (estimatedItemSize is only a hint), rows keep their identity (and state) across data changes, and content changes above the viewport never move what you are looking at — including on iOS, where the list never writes the scroll offset during a fling. Past the browser's element-height limit the scroll space is scaled, and scrollToIndex still lands exactly.
+- `VirtualList: (props: VirtualListProps<T>) => VNode` — A virtualized list: renders only the rows near the viewport, so 1M–10M rows scroll as fast as 100. Rows are measured as they render (estimatedItemSize is only a hint), rows keep their identity (and state) across data changes, and content changes above the viewport never move what you are looking at — including on iOS, where the list never writes the scroll offset during a fling. Past the browser's element-height limit the scroll space is scaled, and scrollToIndex still lands exactly.
 - `type VirtualListAlign = start | center | end | auto` — Where a row lands in the viewport when scrolled to ("auto": the least movement).
 - `interface VirtualListBlankArea` — Blank space at each end of the viewport that no rendered row covers (diagnostics).
 - `interface VirtualListHandle` — The imperative handle of a VirtualList (its ref) and of useVirtualList.
@@ -1049,6 +1062,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CompiledPattern` — A source pattern compiled to a matcher with its capture keys.
 - `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `composeMiddleware(entries: MiddlewareEntry[], moduleConfig?: MiddlewareConfig): MiddlewareRunner` — Compose an ordered list of entries into a single MiddlewareRunner.
+- `interface CompressConfig` — Response compression settings (DenextConfig.compress as an object: compression on, with these settings).
 - `confirmTotp(config: AuthConfig, input: object): Promise<ConfirmTotpResult>` — Confirm a pending enrollment with a code from the authenticator app. On success the factor is marked confirmed and mfa.backupCodes backup codes are minted — returned here in plaintext exactly once, and stored only as hashes. The code's step is claimed, so it can't then be replayed at the step-up.
 - `type ConfirmTotpResult = object | object` — The outcome of confirmTotp: on success, the plaintext backup codes — the only time they exist anywhere; show them to the user once. "invalid_code": a wrong or replayed code. "not_pending": no enrollment awaits confirmation (none started, already confirmed, or replaced meanwhile).
 - `connection(): Promise<void>` — connection() (Next.js) — an explicit dynamic-rendering signal. Awaiting it marks the current render as dynamic (per-request), opting the route out of static generation/caching, without reading any specific request data (unlike cookies()/headers()). Resolves once the runtime is ready to handle the request; outside a request it resolves immediately.
@@ -1080,6 +1094,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DenextCommand` — A project-local CLI verb declared in denext.config.ts under DenextConfig.commands — the zero-ceremony half of denext's CLI extension story: no plugin, no setup, just an object. It is structurally a CLI CommandSpec, so the same parser, --help renderer, and dispatcher run it, and a verb that outgrows the config can move into a plugin's addCommand unchanged.
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
+- `interface DesktopCapabilitiesConfig` — desktop.capabilities: which native capabilities the page may reach, keyed by the name denext desktop add <name> writes. true enables a capability with its defaults; an object scopes it. Anything absent is denied. An unknown key is allowed (a newer desktop add) and the validator warns on it.
+- `interface DesktopConfig` — The desktop block of denext.config.ts: Deno Desktop native capabilities. The allowlist the desktop runtime's capability bridge serves (default deny), and the source the package scripts derive least-privilege --allow-* from. Written by denext desktop add <cap>. Distinct from SpaDesktopConfig (spa.desktop, packaging settings such as the icon); the two may be unified later. Docs: https://denext.dev/docs/desktop
+- `interface DesktopFsConfig` — The fs desktop capability's scoped roots (path tokens $APPDATA / $CACHE / $DOCUMENTS, plus the per-session $PICKED set the user grows through native dialogs).
+- `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
 - `type Directive = client | server | null` — Which boundary a module declares, or null when it declares none.
 - `disableTotp(config: AuthConfig, userId: string): Promise<void>` — Remove a user's TOTP factor and backup codes. A no-op for a user who never enrolled. Callers must have proved a fresh factor first — see the /mfa/disable endpoint.
@@ -1226,6 +1244,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type MiddlewareOutcome = object | object | object` — The normalized result of running the middleware runner for a request.
 - `type MiddlewareResult = Response | NextCommand | RewriteCommand | void | undefined` — Anything a middleware handler may return: a response, a command, or nothing.
 - `type MiddlewareRunner = parenthesized | null` — A resolved, request-ready middleware runner (null when there is none). matchPath is the pathname matchers are evaluated against when it differs from the request's (an i18n locale prefix stripped, as Next does before running middleware).
+- `interface MobileConfig` — Settings for denext mobile build / denext mobile assets (the Capacitor shell).
+- `interface MobileFlavorConfig` — One build flavor of the Capacitor shell under MobileConfig.flavors: what denext mobile build --flavor <name> changes for that build only. Every change is undone when the build ends (the native sources and capacitor.config.* are restored byte for byte).
 - `type ModuleLoader = (filePath: string) => Promise<unknown>` — How the server loads a module given its file path (injectable for tests).
 - `interface NativeAppleConfig` — Sign in with Apple for a native app: NativeIdTokenProviderConfig plus the secret.
 - `interface NativeGrantRecord` — A single-use native grant: an authorization **code** (handed to the app's redirect URI) or a sign-in **nonce** (for a native id_token sign-in). Only the SHA-256 of the value is stored.
@@ -1255,7 +1275,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface OtaHandlerOptions` — Options for createOtaHandler.
 - `interface OtaRollout` — A staged rollout of a candidate release to a share of a channel's devices.
 - `otaRolloutBucket(channel: string, candidateVersion: string, installId: string): Promise<number>` — The stable rollout bucket of one install for one candidate release: the first four bytes of SHA-256(denext-ota-rollout\n<channel>\n<candidateVersion>\n<installId>) as a big-endian uint32, modulo 10 000. A device is in a rollout of percent when the bucket is below percent * 100. Salting with the candidate's manifest version draws a fresh cohort for each release, while raising the percentage for the same candidate only ever adds devices.
-- `class PageCache` — The rendered-page store for Incremental Static Regeneration. A thin façade over the active CacheStore: the prod server consults it before rendering and populates it afterward for cacheable routes. Injecting a shared store via setCacheStore makes ISR work across replicas transparently — this class needs no per-instance state.
+- `class PageCache` — The rendered-page store for Incremental Static Regeneration. A thin façade over the active CacheStore: the prod server consults it before rendering and populates it afterward for cacheable routes. Injecting a shared store via setCacheStore makes ISR work across replicas transparently (replicas of one build share its build id).
 - `interface PageContext` — The composed page tree plus its resolved metadata/config, before rendering.
 - `interface PageMatch` — A page route matched against a pathname, with its extracted params.
 - `interface PageModule` — Shape of a page module (default export required).
@@ -1763,14 +1783,27 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop`
 
-- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean): (request: Request, url: URL) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge): (request: Request, url: URL) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `defineDesktopExtension<C>(capability: C): C` — Define a native desktop extension: a capability that runs in the desktop app's Deno process and that the page calls through denext/desktop/client's desktopExtension. Enable it in desktop.capabilities.extensions (a module path). This is an identity helper — it returns its argument unchanged so a typeof import("./ext.ts") keeps the exact method types the client's typed proxy reads — and it is not a place for side effects (nothing should run at import).
+- `DESKTOP_BASELINE_FLAGS: typeOperator` — The permissions every packaged desktop binary needs regardless of capabilities, and which the per-capability flags widen rather than replace: - --allow-net=127.0.0.1,localhost: runDesktop binds loopback and any spa.proxy targets a loopback backend, so the distributed binary can't reach the wider network. - --allow-read (broad): serve the embedded out/ AND the per-user OS app-support directory — a path only known on the end-user's machine, so it can't be baked; the runtime's fs/sqlite caps confine what the page can actually reach. - --allow-env (broad): PORT plus the app's own environment.
 - `DESKTOP_DEV_LAN_ENV: DENEXT_DESKTOP_DEV_LAN` — The SECOND dev-only opt-in denext desktop dev --lan sets alongside DESKTOP_DEV_URL_ENV to allow a NON-loopback dev-server target. Without it a non-loopback DENEXT_DESKTOP_DEV_URL is refused at runtime (see desktopDevProxyDecision), so an inherited/hostile env cannot turn a window into a proxy to an arbitrary remote origin.
 - `DESKTOP_DEV_URL_ENV: DENEXT_DESKTOP_DEV_URL` — The env var denext desktop dev sets on the deno desktop child to put the runtime into live-reload PROXY mode: its value is the loopback denext dev URL to reverse-proxy to. It is the ONLY switch that turns proxy-all on — a release / run / package invocation never sets it, so those windows serve the static export exactly as before (see runDesktop).
+- `desktopBuildFlags(config: unknown, os: DesktopOs): string[]` — The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag); - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.
+- `interface DesktopCapability` — A desktop capability: a name (its address on the bridge — an extension's name is its cap name), a set of methods, and the event names it may DesktopCapCtx.emit. Built-ins live in ./caps; user extensions are authored with defineDesktopExtension.
+- `interface DesktopCapabilityMethod<I, O>` — One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process.
+- `interface DesktopCapCtx` — The context a capability handler runs with: a scoped DesktopCapCtx.emit for its declared events, the OS app-support directory (which survives relaunch, unlike browser storage — see the desktop storage note), the running OS, the app window (Deno's BrowserWindow when the runtime exposes it), and an AbortSignal that fires when the handler's timeout elapses.
+- `class DesktopCapError` — Throw this from a capability handler to answer the page with a specific error code and a SAFE message. The bridge puts code, the message and any data into the { ok: false, error } envelope at status (default 400). Never encode an absolute path, environment value or stack into the message — it crosses to the page. The code "unavailable" is RESERVED (it means the capability/method is not enabled, which makes the page fall back to its web path); use another code for a real failure.
 - `desktopDevProxyDecision(devUrl: string | undefined, lan: boolean, execPath: string): DesktopDevProxyDecision` — Decide whether runDesktop enters live-reload PROXY mode, enforcing the loopback rule at RUNTIME rather than trusting the env (invariant: a release build never proxies to a remote origin). Pure + testable. Proxy mode requires ALL of: - a devUrl (the DESKTOP_DEV_URL_ENV value); - execPath being the deno CLI (isDenoCliExecPath) — a packaged app IGNORES the env, so an inherited/hostile env cannot turn a shipped window into a proxy; - a parseable URL whose host is loopback — OR non-loopback WITH lan (the DESKTOP_DEV_LAN_ENV opt-in that only desktop dev --lan sets). allowNonLoopback is true only in that LAN case. A blocked case returns { proxy: false, refused } so the caller can log why and serve static.
 - `type DesktopDevProxyDecision = object | object` — The live-reload proxy decision from the env + the running binary — see desktopDevProxyDecision.
+- `type DesktopOs = darwin | windows | linux` — The operating systems a Deno Desktop app ships for (Deno.build.os spelling).
+- `desktopPackageFlags(entryUrl: string, os: DesktopOs): Promise<string[]>` — The deno desktop --allow-* flags for a scaffolded packaging script: read the project's denext.config.ts (next to entryUrl — a packaging script lives in scripts/, so the config is ../denext.config.ts) and derive the least-privilege flags for os via desktopBuildFlags. A project without a config (or one that exports none) gets the baseline. The config is imported dynamically at run time from a caller-supplied URL, so it is never part of this module's own dependency graph (nor a build-time import of user code).
+- `interface DesktopPermissions` — The Deno permissions a capability method needs, as --allow-* scopes. The union of every enabled capability's descriptor is what the package scripts bake into the desktop binary instead of -A (least-privilege packaging), and what denext doctor reports. An ffi or run entry means full-trust native code: least-privilege is moot for that surface once it is on.
 - `type DesktopProxyFn = (request: Request, url: URL) => Response | Promise<Response>` — Forward a request the desktop window received to the denext dev server. Injected into createDesktopHandler so tests exercise the dev path with a spy and never spawn a real dev server; runDesktop wires it to proxyToBackend.
 - `injectDesktopGlobal(html: string, token: string | null, beacon?: boolean): Promise<string>` — Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.
 - `isDenoCliExecPath(execPath: string): boolean` — Whether execPath is the deno CLI (deno / deno.exe, case-insensitive) rather than a compiled/packaged app binary. Live-reload proxy mode runs under deno desktop <entry>, so its execPath is deno; a packaged app's is its own binary. Pure, so the packaged-vs-dev decision is testable without the real Deno.execPath.
+- `interface ResolvedDesktop` — What resolveDesktopCapabilities returns — spread straight into runDesktop.
+- `resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>` — Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.
+- `interface ResolveDesktopOptions` — Options for resolveDesktopCapabilities.
 - `resolveOutDir(options: RunDesktopOptions): string` — The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.
 - `runDesktop(options?: RunDesktopOptions): Promise<void>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server.
 - `interface RunDesktopOptions`
@@ -1808,16 +1841,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopRpcOptions` — Options for desktopRpc.
 - `interface DesktopSchemaTypes<In, Out>` — The slice of a Standard Schema (https://standardschema.dev) the extension typing reads: its input and output types.
 - `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
-- `onDesktopEvent<T>(cap: string, event: string, handler: (data: T) => void): () => void` — Call handler for each event the desktop runtime emits for cap (a built-in capability such as "menu", "tray" or "notifications", or an extension's name). The first subscription opens the event stream and the last unsubscribe closes it; frames that arrived before a handler for that event subscribed are delivered to it once it does. Off desktop it does nothing.
+- `onDesktopEvent<T>(cap: string, event: string, handler: (data: T) => void): () => void` — Call handler for each event the desktop runtime emits for cap: an extension's name (its handlers emit the events it declares with ctx.emit), or a built-in capability that emits events (today only the echo diagnostic's pong). The first subscription opens the event stream and the last unsubscribe closes it; frames that arrived before a handler for that event subscribed are delivered to it once it does. Off desktop it does nothing.
 
 ### `denext/mobile`
 
+- `type AppFileDirectory = documents | data | cache` — The app's own folders:
 - `interface AppleSignInOptions` — Options for signInWithApple.
+- `applyFontScale(options?: ApplyFontScaleOptions): () => void` — Opt in to the OS text size: scale the root element's font size (as the page's stylesheet sets it when this is called) by getFontScale's factor, so everything sized in rem / em follows Dynamic Type (iOS) and the font scale (Android), and keep it current. The factor is also set as the --dnx-font-scale custom property, for sizes the page computes itself (calc(15px * var(--dnx-font-scale))). A browser's own text-size setting already reaches rem, so on the web this sets nothing but the property (1).
+- `interface ApplyFontScaleOptions` — Options for applyFontScale.
 - `applyUiUpdate(version: string): Promise<OtaApplyResult>` — Switch to the UI prepareUiUpdate staged: the native side starts its trial, arms the rollback watchdog (15 s of foreground time by default), points the webview at it and reloads. The new page must call otaBooted, exactly as after checkForUiUpdate.
 - `interface AppStoreOptions` — Where openAppStore sends the user.
 - `type AppUpdateAvailability = unknown | not-available | available | in-progress | unsupported` — Whether the store has a newer build: the plugin's AppUpdateAvailability, named.
 - `interface AppUpdateInfo` — What getAppUpdateInfo reports. Fields a platform does not know are absent.
 - `type AppUpdateOutcome = accepted | cancelled | failed | not-available | not-allowed | info-missing | unsupported` — How an in-app update call ended: the plugin's AppUpdateResultCode, named, plus "unsupported" (not Android, or no plugin).
+- `attachContextMenu(el: ContextMenuElement, items: ContextMenuItems, onSelect: (id: string) => void, options?: ContextMenuTargetOptions): () => void` — Bind a context menu to el: a long press (or a right click) opens it and onSelect gets the chosen item's id. Inside the iOS shell with denext mobile add context-menu it is the system's UIContextMenuInteraction with the lifted element as its preview; see the module docs for the other platforms.
 - `authenticateBiometric(options?: BiometricAuthOptions): Promise<void>` — Ask the user to authenticate with Face ID / Touch ID / a fingerprint (or, with allowDeviceCredential, the device passcode).
 - `interface AuthSessionError` — The Error an openAuthSession promise rejects with.
 - `type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout` — The code on an openAuthSession rejection:
@@ -1849,8 +1886,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `completeAuthSession(): boolean` — Finish a web openAuthSession: call it on the callback page the provider redirects the popup to (an https page of the same origin). It posts this page's full URL (code, state and all) to the window that opened the popup, addressed to this origin only, then closes the popup. Not needed inside the native shell, where the callback never loads a page.
 - `completeFlexibleUpdate(): Promise<void>` — Android: install a downloaded flexible update, restarting the app. A no-op elsewhere.
 - `configurePurchases(config: PurchasesConfig): Promise<void>` — Configure RevenueCat once, early (a root layout's effect), before any other purchases call.
+- `interface ContextMenuElement` — The slice of an element a bound menu uses (real DOM and the test DOM both satisfy it).
 - `interface ContextMenuItem` — One entry in a showContextMenu menu.
+- `type ContextMenuItems = typeOperator | parenthesized` — The items of a bound menu, or a function that builds them when the menu opens.
 - `interface ContextMenuOptions` — Where and how showContextMenu opens.
+- `interface ContextMenuTargetOptions` — Options for useContextMenu and attachContextMenu.
 - `interface CrashReportingOptions` — Options for initCrashReporting.
 - `interface CrashReportingStarted` — What initCrashReporting started with.
 - `createAlbum(name: string): Promise<MediaAlbum>` — Create an album (a no-op when one with that name exists).
@@ -1869,7 +1909,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface EndLiveActivityOptions` — Options for endLiveActivity.
 - `interface EntitlementInfo` — One entitlement's state.
 - `interface EntitlementState` — What useEntitlement returns.
-- `type FileDirectory = documents | data | cache` — Where a file lives:
+- `type FileDirectory = AppFileDirectory | PickedDirectory` — Where a file lives: one of the app's own folders (AppFileDirectory), or a file or folder the user picked (PickedDirectory).
 - `type FileEncoding = utf8 | base64` — How text is carried: "utf8" (plain text, the default) or "base64" (binary data).
 - `interface FileEntry` — One entry of a listDir listing.
 - `interface FileLocationOptions` — Options for deleteFile, listDir and downloadToFile.
@@ -1882,6 +1922,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `getAppUpdateInfo(options?: object): Promise<AppUpdateInfo>` — Ask the store whether a newer build of the app exists.
 - `getCurrentPosition(options?: GeoPositionOptions): Promise<GeoPosition>` — One position fix.
 - `getCustomerInfo(): Promise<CustomerInfo>` — What the user is entitled to now (RevenueCat caches it; it refreshes in the background).
+- `getFontScale(): Promise<number>` — The OS text size as the factor the page must still apply itself: 1 at the default size.
 - `getOfferings(): Promise<PurchaseOfferings>` — The offerings configured in the RevenueCat dashboard, with the store's localized prices.
 - `getOrientation(): Promise<Orientation>` — Read the screen's orientation.
 - `getRecentMedia(options?: RecentMediaOptions): Promise<MediaItem[]>` — The newest photos and videos in the library, with thumbnails (iOS only: Android's plugin has no media query, and the web has no library).
@@ -1911,6 +1952,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `KeyboardStickyView(props: KeyboardStickyViewProps): VNode` — A <div> that rides on top of the on-screen keyboard: while the keyboard covers the page it moves up by the covered height (a compositor-only translateY), and back down when the keyboard hides. Place it at the bottom of the screen yourself (position: fixed / sticky, bottom: 0); the view only adds the transform. This is the composer of a chat screen: see the chat-composer recipe on /docs/mobile.
 - `interface KeyboardStickyViewProps` — Props of KeyboardStickyView; any other prop goes to its <div>.
 - `type KeyboardViewStyle = Readonly<Record<string, string | number | undefined>>` — An inline style object, as the views accept and extend it.
+- `type KeyValueBackend = native | sqlite | desktop | indexeddb | memory` — Where a KeyValueStore keeps its data: "native" (the DenextStorage plugin), "sqlite" (@capacitor-community/sqlite in the shell), "desktop" (the Deno Desktop runtime's SQLite), "indexeddb" (the browser's; evictable inside a native shell) or "memory" (gone when the page closes).
+- `interface KeyValueStore` — A named, durable string store (openKeyValueStore).
 - `type LinkAccept = parenthesized | LinkAllowList` — Which incoming links to act on: a predicate over the parsed URL, or an allow-list.
 - `interface LinkAllowList` — An allow-list for incoming links.
 - `type LinkRoute = boolean | parenthesized` — How to navigate to an accepted link: true navigates with the page's router, false leaves it to the callback, and a function navigates itself (e.g. (path) => router.push(path)).
@@ -1932,12 +1975,31 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type LocalNotificationTrigger = object | object | object | object | object | object | parenthesized` — When a local notification fires. Months are 1–12 and weekdays 1–7 with 1 = Sunday (the plugin's and iOS's convention); times are the device's local time.
 - `interface LocationState` — What useLocation returns.
 - `lockOrientation(orientation: OrientationLock): Promise<void>` — Lock the screen to an orientation (a video player going landscape, a scanner staying portrait). Undo it with unlockOrientation.
+- `materialNameFor(sfName: string): string | undefined` — The Material Symbol an SF Symbol name maps to: the .fill suffix becomes the -fill variant (when there is one), and trailing components are dropped until a stem is known (heart.circle.fill → favorite-fill).
 - `interface MediaAlbum` — An album, as getAlbums lists it.
 - `interface MediaItem` — One item from getRecentMedia.
 - `interface MomentumSafeScrollOptions` — Options for installMomentumSafeScroll and useMomentumSafeScroll (denext/mobile).
-- `moveToTrash(path: string): Promise<void>` — Move a file or folder to the Trash (macOS), Recycle Bin (Windows) or the freedesktop trash (Linux), so the user can restore it.
+- `moveToTrash(item: ShellItem): Promise<void>` — Move a file or folder to the Trash (macOS), Recycle Bin (Windows) or the freedesktop trash (Linux), so the user can restore it.
+- `type NativeCallConvention = options | positional` — How a call's arguments reach the native method and how its result comes back.
+- `type NativeMethod<F> = conditional` — A native method's typed client: the same arguments, and the result as a Promise.
+- `nativeModule<T, E>(name: string, options?: NativeModuleOptions): NativeModuleClient<T, E> | null` — A typed client for your own native plugin name: the Capacitor plugin of that name inside the iOS/Android shell, the desktop extension of that name in a Deno Desktop window, else null (on the web, during SSR, or when the shell has no such plugin).
+- `type NativeModuleClient<T, E> = NativeModuleMethods<T> & NativeModuleEvents<E>` — What nativeModule returns: T's methods (async) plus addListener.
+- `interface NativeModuleEvents<E>` — The event half of a NativeModuleClient: payloads typed per event name.
+- `type NativeModuleMethods<T> = mapped` — The methods of a native module spec T, each returning a Promise.
+- `interface NativeModuleOptions` — Options for nativeModule.
 - `nativePlatform(): NativePlatform` — The platform the page runs on: "ios" or "android" inside a Capacitor native shell, otherwise "web". SSR-safe ("web" when there is no window). A Capacitor custom platform (e.g. Electron) also reads "web": only the iOS and Android shells count.
 - `type NativePlatform = ios | android | web` — The platform a page runs on, as denext/mobile distinguishes them.
+- `interface NativeSubscription` — A subscription to a native event; remove() ends it (calling it twice is harmless).
+- `nativeViewEmbedScroller(marker: number): VNode` — The element iOS embeds a "embed" slot's native view in: an overflow: scroll box filling the slot (WebKit backs it with a native scroll view) whose content is marker px taller than the box, which is how the plugin tells the slots apart.
+- `type NativeViewPlacement = embed | under | over` — Where a native view is drawn relative to the WebView.
+- `type NativeViewPlacementOption = NativeViewPlacement | auto` — Where a slot's native view is drawn: a NativeViewPlacement, or "auto" ("embed" on iOS, except "under" for video, whose system controls need a plain UIKit hierarchy; "over" on Android).
+- `type NativeViewScrollPassthrough = vertical | horizontal | none` — Which drags that start on an "under" / "over" view scroll the page instead: "vertical" (a mostly vertical drag; taps and horizontal drags stay the view's), "horizontal", or "none" (every touch is the view's).
+- `NativeViewSlot(props: NativeViewSlotProps): VNode` — A box in the page that a native view of type fills: a map, a video player, a camera preview or any view type the app registers natively (denext mobile add native-views). Give it a size. Its children are the web fallback, rendered wherever the native view is not available; overlay is DOM drawn over the native view (touches on its elements stay in the page).
+- `interface NativeViewSlotHandle` — What useNativeViewSlot returns.
+- `interface NativeViewSlotOptions` — Options of useNativeViewSlot.
+- `interface NativeViewSlotProps` — Props of NativeViewSlot; any other prop goes to its <div>.
+- `type NativeViewSlotStyle = Readonly<Record<string, string | number | undefined>>` — An inline style object, as NativeViewSlot accepts and extends it.
+- `type NativeViewStatus = web | pending | native | error` — A slot's state: "web" (no native view: the children render), "pending" (the native view is being made), "native" (it is on the slot) or "error" (making it failed: the children render, and error says why).
 - `type NetworkConnectionType = wifi | cellular | none | unknown` — The kind of connection a NetworkStatus reports.
 - `networkStatus(): Promise<NetworkStatus>` — Whether the device is online right now, and over what.
 - `interface NetworkStatus` — Whether the device is online, and over what.
@@ -1950,11 +2012,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onBackProgress(cb: (event: BackProgressEvent) => void): () => void` — Call cb with each predictive-back event: the back gesture's start, its progress (0…1, with the edge it started from), then cancel or commit. Only the Android shell with denext mobile add back reports them (Android 14+ animates the gesture; earlier versions report only the commit). Elsewhere cb never runs.
 - `onDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): () => void` — Call callback for every link that opens the app, and (by default) navigate to it.
 - `onFlexibleUpdateProgress(cb: (progress: FlexibleUpdateProgress) => void): () => void` — Android: follow a flexible update's download and install. Off Android, or without the plugin, the callback never runs.
+- `onFontScaleChange(callback: (scale: number) => void): () => void` — Call callback with the new factor when the user changes the OS text size; returns a function that stops listening. Without the plugin it never fires.
 - `onKeyboardChange(cb: (state: KeyboardState) => void): () => void` — Call cb each time the on-screen keyboard shows, hides or changes height.
 - `onLiveActivityPushToken(callback: (event: LiveActivityPushTokenEvent) => void): () => void` — Call callback with each push token ActivityKit issues a running Live Activity: the first one of an activity started with { push: true } (or by a push-to-start push), and every rotation after it. Tokens issued before the first subscriber are kept for it. Elsewhere it is never called.
 - `onLiveActivityPushToStartToken(callback: (token: LiveActivityPushToStartToken) => void): () => void` — Call callback with each push-to-start token ActivityKit issues the app (iOS 17.2 and later), including the current one: a token issued before the first subscriber is kept for it. Send each to your server, which replaces the one it had. Elsewhere it is never called.
 - `onLocalNotificationReceived(callback: (notification: LocalNotification) => void): () => void` — Call callback for each local notification delivered while the app is in the foreground. Outside the shell it does nothing.
 - `onLocalNotificationTapped(callback: (tap: LocalNotificationTap) => void, options?: LocalNotificationTapOptions): () => void` — Call callback when the user taps a local notification (or one of its actions), and by default navigate to its data.path (an in-app path) or data.url (under the deep-link acceptance rules), exactly as onPushTapped does for a push. A tap that cold-started the app is kept by the shell for the first listener, so subscribe early. Outside the shell it does nothing.
+- `onNativeEvent<D>(name: string, event: string, handler: (data: D) => void): () => void` — Call handler with each event the native plugin name emits. Does nothing (and returns a no-op) where nativeModule would return null.
 - `onOrientationChange(cb: (orientation: Orientation) => void): () => void` — Call cb with the new orientation each time the screen rotates.
 - `onPushReceived(callback: (notification: PushNotification) => void): () => void` — Call callback for each notification that arrives while the app is in the foreground (one that arrives in the background shows in the tray; its tap reaches onPushTapped). Outside the native shell it does nothing.
 - `onPushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): () => void` — Call callback when the user taps a notification (or one of its actions), and by default navigate to its data.path / data.url (see PushTapOptions).
@@ -1966,7 +2030,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `openAppStore(options?: AppStoreOptions): Promise<void>` — Open the app's store page (the App Store on iOS, Play on Android) so the user can update. Without the plugin, natively or on the web, it opens the store URL instead (the App Store when appStoreId is given, else Play when androidPackage is).
 - `openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>` — Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.
 - `openExternal(url: string): Promise<void>` — Open a URL outside the app.
-- `openPath(path: string): Promise<void>` — Open a file or folder with the OS default app (Finder / Explorer for a folder).
+- `openKeyValueStore(name?: string): KeyValueStore` — Open the durable key-value store name (default "default"). Nothing is opened until the first call; every store shares one backing, and each has its own keys.
+- `openPath(item: ShellItem): Promise<void>` — Open a file or folder with the OS default app (Finder / Explorer for a folder).
 - `openSqlite(name: string, options?: SqliteOptions): Promise<SqliteDatabase>` — Open (creating when missing) the SQLite database name.
 - `openStoreReview(options?: StoreListingOptions): Promise<void>` — Open the app's page in the App Store (on the "write a review" sheet) or Play Store, for a "Rate this app" button. Unlike requestReview it always opens something.
 - `type Orientation = portrait-primary | portrait-secondary | landscape-primary | landscape-secondary` — The screen's orientation: portrait or landscape, and which way up.
@@ -1993,13 +2058,17 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type PermissionState = granted | denied | prompt | prompt-with-rationale | limited | blocked` — A permission's status, the same on every platform:
 - `pickDocument(options?: PickDocumentOptions): Promise<PickedDocument | null>` — Pick a document (any file, or the types given) with the system document picker.
 - `interface PickDocumentOptions` — Options for pickDocument.
+- `interface PickedDirectory` — A picked file or folder as a FileDirectory: { picked: handle }. For a picked folder the path is relative to it ("" for the folder itself); for a picked file the path is "". Supported in a Deno Desktop window (the fs capability) and in browsers with the File System Access API; inside the iOS/Android shell it rejects with code "unavailable".
 - `interface PickedDocument` — A file from pickDocument.
 - `interface PickedFolder` — A folder pickFolder returned.
+- `type PickedHandle = string` — An opaque handle to a file or folder the user picked in a dialog (pickFolder, pickDocument, saveFile). It is the only authority the filesystem and shell functions accept for a location outside the app's own folders: a result's path is for display only and is never accepted back. A handle lasts for the session (a Deno Desktop launch, or the page's lifetime in a browser); an unknown or expired one rejects with code "forbidden".
 - `interface PickedImage` — A picture from pickImage: one of webPath / dataUrl, plus its format.
 - `pickFolder(): Promise<PickedFolder | null>` — Let the user choose a folder.
 - `pickImage(options?: PickImageOptions): Promise<PickedImage | null>` — Take a picture or pick one from the photo library.
 - `interface PickImageOptions` — Options for pickImage.
+- `preloadSystemIcons(names: ReadonlyArray<string | Pick<SystemIconProps, name | size | weight | scale>>): Promise<void>` — Warm the native SF Symbol cache (in the iOS shell; a no-op elsewhere), so the icons a first screen shows draw without waiting for the bridge. Call it early (before the first render).
 - `prepareUiUpdate(options: OtaCheckOptions): Promise<OtaPrepareResult>` — Download and verify a newer UI WITHOUT switching to it, so the app can ask the user first.
+- `interface PressEvent` — The slice of a pointer / mouse event a bound menu reads.
 - `interface PrivacyScreenOptions` — How the app looks while hidden.
 - `promptStoreUpdate(options?: PromptStoreUpdateOptions): Promise<PromptStoreUpdateResult>` — Take the user to a newer app binary: check the store, optionally ask (confirm), then run Play's in-app update on Android (immediate by default) or open the store page. Made for the OTA refusals that mean "this UI needs a newer binary" (native_too_old, native_mismatch): pass it as checkForUiUpdate's onNativeUpdateRequired.
 - `interface PromptStoreUpdateOptions` — Options for promptStoreUpdate.
@@ -2022,7 +2091,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PushTap` — A tap on (or an action of) a notification.
 - `interface PushTapOptions` — Options for onPushTapped and usePushTapped.
 - `interface QuickAction` — One home-screen quick action.
-- `readClipboard(): Promise<string>` — Read text from the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), through the desktop runtime in a Deno Desktop window (denext desktop add clipboard; no user gesture needed), else navigator.clipboard.readText(), which browsers gate behind a permission prompt or a user gesture.
+- `readClipboard(): Promise<string>` — Read text from the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.readText(), which browsers gate behind a permission prompt or a user gesture. A Deno Desktop window uses the WebView's navigator.clipboard too: the desktop runtime has no clipboard capability.
 - `readFile(path: string, options?: ReadFileOptions): Promise<string>` — Read a file.
 - `interface ReadFileOptions` — Options for readFile.
 - `readSafeAreaInsets(): SafeAreaInsets` — The device's safe-area insets in CSS px, measured once now: the same values useSafeAreaInsets reports, for code outside a component (a store, a canvas setup, a one-off layout calculation). All zero during SSR and where there is no DOM. It adds and removes a hidden element, so it forces a style calculation; to follow changes, use watchSafeAreaInsets.
@@ -2031,6 +2100,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RefreshControlProps` — Props of RefreshControl (React Native's); any other prop goes to the wrapper.
 - `registerForPush(options?: RegisterForPushOptions): Promise<PushRegistration>` — Register the device for remote notifications and resolve its token, for your server to send to through APNs (iOS) or FCM (Android). denext ships no push relay: store the token on your server (with the user it belongs to) and send from there.
 - `interface RegisterForPushOptions` — Options for registerForPush.
+- `registerSystemIcons(icons: Readonly<Record<string, string>>): void` — Add Material Symbols SystemIcon can draw off iOS: name → the d of the symbol's path in its 960-unit grid (viewBox="0 -960 960 960", as @material-symbols/svg-* ships them). A registered name replaces a built-in one.
 - `reloadWidgets(kind?: string): Promise<void>` — Ask the OS to redraw widget kind (every kind when omitted) from its stored snapshot. Outside the native shell, or without the plugin, it does nothing.
 - `requestPermission(name: PermissionName): Promise<PermissionState>` — Ask for a permission when a prompt can still be shown, and report the outcome. A decided permission (granted, limited, blocked) comes back as it is, without a prompt. A refusal reads blocked on iOS (it never prompts again) and denied on Android's first refusal (a later request prompts again, after your rationale); see PermissionState.
 - `requestPushPermission(): Promise<PushPermission>` — Ask for permission to show notifications, when it has not been decided yet, and report the result: "granted", "denied" (the user said no; only the system settings can change it) or "prompt" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is "unsupported": there is no web-push fallback.
@@ -2040,7 +2110,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `restorePurchases(): Promise<CustomerInfo>` — Restore the user's earlier purchases (the "Restore purchases" button App Review expects on a paywall).
 - `restoreRouteOnRelaunch(options?: RestoreRouteOptions): Promise<string | null>` — Opt in to returning to the last route after the OS killed the app in the background.
 - `interface RestoreRouteOptions` — Options for restoreRouteOnRelaunch.
-- `revealInFileManager(path: string): Promise<void>` — Show a file or folder selected in Finder, Explorer or the Linux file manager.
+- `revealInFileManager(item: ShellItem): Promise<void>` — Show a file or folder selected in Finder, Explorer or the Linux file manager.
 - `type ReviewRequestResult = requested | unsupported` — What requestReview did: "requested" (the system was asked to show its review sheet; whether it did is the OS's call and is never reported) or "unsupported" (not in the native shell, or no review plugin installed).
 - `runBackgroundTask(name: string, details?: Record<string, unknown>): Promise<boolean>` — Run one background task now, from the page, in the runner's engine (for example after a sign-in, to warm the cache a later background run will extend). The task runs whatever its interval; its handler sees trigger: "dispatch" and details.
 - `interface RunningLiveActivity` — A running Live Activity, as listLiveActivities reports it.
@@ -2077,6 +2147,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SharedFile` — A file shared to the app, copied where the app can read it.
 - `interface ShareOptions` — What share shares. At least one of text or url (or title) is needed.
 - `type ShareResult = shared | copied | cancelled` — How a share ended: "shared" (the sheet completed), "copied" (no share sheet, so the text was copied to the clipboard) or "cancelled" (the user dismissed it).
+- `type ShellItem = string | object` — What openPath, revealInFileManager and moveToTrash act on: an absolute path inside the app's own folders (from downloadToFile), or { handle } for a file or folder the user picked (pickDocument, pickFolder and saveFile results carry one, so the result itself can be passed). A picked item's path is display-only: pass its handle.
 - `showContextMenu(items: typeOperator, options?: ContextMenuOptions): Promise<string | null>` — Open a context menu and resolve the chosen item's id, or null if it was dismissed.
 - `signInNative<User>(session: IdTokenSession<User>, provider: apple | google, options?: Omit<GoogleSignInOptions, nonce>): Promise<User>` — The whole native sign-in against a denext server: fetch a single-use nonce from the server, show the provider's sheet with it, and hand the id_token to session.signInWithIdToken(provider, result) (POST /auth/native/:provider), which verifies it and starts the session.
 - `signInWithApple(options?: AppleSignInOptions): Promise<SocialSignInResult>` — Show the native "Sign in with Apple" sheet (iOS 13+) and resolve its id_token, the authorizationCode, and the name and email Apple sends. **Apple sends the name only on the user's first sign-in**, so pass it to the server then (signInWithIdToken does).
@@ -2102,6 +2173,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SystemBar = status | navigation` — One of the system bars: the top status bar, or the navigation / gesture bar at the bottom.
 - `interface SystemBarsOptions` — What setSystemBars changes; a field left out is left as it is.
 - `type SystemBarsStyle = light | dark | auto` — The theme the system bars sit over: "light" (a light app, so dark icons and text), "dark" (a dark app, so light icons and text) or "auto" (the device's appearance). This is Capacitor's SystemBarsStyle; note that expo-status-bar's style names the content's color instead, the opposite way round.
+- `SystemIcon(props: SystemIconProps): VNode` — The platform's icon: the SF Symbol name inside the iOS shell (natively rendered, tinted by the CSS color), the Material Symbol android (or the one mapped from name) everywhere else. SSR draws the Material Symbol; the iOS shell swaps in the SF Symbol before paint once it is cached, and hides the box for the one bridge round trip of a first render.
+- `type SystemIconMode = monochrome | hierarchical | palette | multicolor` — How an SF Symbol is colored: "monochrome" (the default: the icon is a mask filled with the CSS color, so it follows the text color, dark mode and :hover), "hierarchical" (layers in opacities of color), "palette" (colors, one per layer) or "multicolor" (Apple's own colors).
+- `interface SystemIconProps` — Props of SystemIcon.
+- `type SystemIconWeight = ultralight | thin | light | regular | medium | semibold | bold | heavy | black` — An SF Symbol weight (UIImage.SymbolWeight).
 - `type TrackingStatus = authorized | denied | restricted | not-determined | unavailable` — The ATT status:
 - `unlockOrientation(): Promise<void>` — Release a lockOrientation lock (a no-op when nothing is locked, or on a browser without the API).
 - `updateLiveActivity(id: string, state: LiveActivityValues): Promise<void>` — Replace a running Live Activity's state.
@@ -2109,8 +2184,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useBackHandler(handler: BackHandler, enabled?: boolean): void` — Hook form of onBack: handler is registered while the component is mounted and enabled is true, and it always sees the latest props (re-renders do not re-register it, so its place in the stack stays put). A component mounted later sits above it.
 - `useBackProgress(): BackGesture | null` — Hook form of onBackProgress: the back gesture in flight (progress 0…1 and the edge it started from), or null when there is none, e.g. to drive a peek of the previous screen. Always null outside the Android shell with denext mobile add back.
 - `useBackSwipe(onBack: () => void, opts?: BackSwipeOptions): (el: Element | null) => void` — Swipe right to go back. Returns a ref callback: attach it to the element that should recognize the gesture (often the page's scroll container). A touch that travels rightward at least minDistance CSS px (default 72), with horizontal travel at least ratio (default 1.4) × vertical travel, fires onBack once, as soon as it qualifies.
+- `useContextMenu(items: ContextMenuItems, onSelect: (id: string) => void, options?: ContextMenuTargetOptions): (el: ContextMenuElement | null) => void` — attachContextMenu as a hook: returns a ref callback for the element. The latest items, onSelect and options are read when a menu opens, so they can change every render without rebinding.
 - `useDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): void` — Hook form of onDeepLink: subscribes on mount, unsubscribes on unmount. The latest callback and options are used for each link (they are held in refs), so fresh closures each render never re-subscribe.
 - `useEntitlement(id: string): EntitlementState` — Whether the user has an entitlement, live: read on mount, after every purchase / restore / getCustomerInfo anywhere in the app, and each time the app returns to the foreground.
+- `useFontScale(): number` — Hook form of getFontScale: the factor, read on mount and kept current. It starts at the last value read (1 before any), so the first render uses the default size.
 - `useKeepAwake(active?: boolean): void` — Keep the screen from dimming and locking while the component is mounted and active is true (a video call, a recipe, a boarding pass).
 - `useKeyboard(): KeyboardState` — Hook form of onKeyboardChange: the keyboard's current state, updated on every change until unmount. It reads { visible: false, height: 0 } during SSR and before mount.
 - `useKeyboardInset(opts?: KeyboardInsetOptions): number` — Hook form of installKeyboardInset: installs the custom property on mount, disposes it on unmount, and returns the current keyboard height in px (0 during SSR and before mount).
@@ -2118,6 +2195,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useLocation(options?: UseLocationOptions): LocationState` — Hook form of watchPosition: the latest fix and error, watched while mounted and enabled. Changing accuracy or minimumIntervalMs restarts the watch.
 - `interface UseLocationOptions` — Options for useLocation.
 - `useMomentumSafeScroll(options?: MomentumSafeScrollOptions): void` — Hook form of installMomentumSafeScroll: installs on mount and uninstalls when the last mounted hook unmounts. An install made by denext's runtime or directly with installMomentumSafeScroll is left in place. A change to force or settleMs re-runs the hook (it releases its share, then takes a new one); settleMs applies only when that share is the one that installs the shim, since a live install keeps its own options.
+- `useNativeViewSlot(type: string, options?: NativeViewSlotOptions): NativeViewSlotHandle` — Keep a native view of type on a slot element: the hook behind NativeViewSlot. Put ref on the slot (give it a size), overlayRef on the element holding DOM drawn over the view, and, while placement is "embed", render nativeViewEmbedScroller inside it. Render your web fallback while status is "web" or "error".
 - `useNetworkStatus(): NetworkStatus` — Hook form of networkStatus: the current status, updated on every change until unmount. Before mount (and during SSR) it reads { connected: true, connectionType: "unknown" }, so an offline banner never flashes on first paint.
 - `useOrientation(): Orientation` — The screen's orientation, live: re-renders on every rotation. The first render reads the web API (or portrait-primary during SSR); in the native shell the plugin's answer follows.
 - `usePermission(name: PermissionName, options?: UsePermissionOptions): PermissionHandle` — A permission's live status: checked on mount (or requested, with request: true), and checked again each time the app returns to the foreground, so it follows a change the user made in Settings after openAppSettings.
@@ -2126,6 +2204,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `usePushReceived(callback: (notification: PushNotification) => void): void` — Hook form of onPushReceived: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.
 - `usePushTapped(callback: (tap: PushTap) => void, options?: PushTapOptions): void` — Hook form of onPushTapped: subscribes on mount, unsubscribes on unmount, and always uses the latest callback and options.
 - `useQuickAction(callback: (id: string) => void): void` — Hook form of onQuickAction: subscribes on mount, unsubscribes on unmount, and always calls the latest callback.
+- `useReducedMotion(): boolean` — Whether the user asked for reduced motion (iOS Reduce Motion, Android Remove animations, the desktop setting), updated when it changes: prefers-reduced-motion, which the iOS and Android WebViews report from the OS. false during SSR. The same answer as Reanimated's useReducedMotion and React Native's AccessibilityInfo.isReduceMotionEnabled() in React Native mode.
 - `useRestoredResult(handler: (result: RestoredResult) => void): void` — Hook form of onRestoredResult: listens while mounted, always calling the latest handler. Mount it high (the root layout's client provider) so it is listening when the relaunched app starts.
 - `useSafeAreaInsets(): SafeAreaInsets` — The device's safe-area insets in CSS px ({ top, right, bottom, left }), kept up to date on rotation, window and visual-viewport resizes, and when Capacitor updates the insets it injects (on Android the bottom inset drops to 0 while the keyboard is up). The values are the same expressions SAFE_AREA_CSS uses, measured through a hidden fixed element, so they need viewport-fit=cover too. All zero during SSR and before mount.
 - `useScreenReader(): boolean` — Hook form: whether a screen reader is on, read on mount and kept current until unmount. It is false before the first answer (and always on the web), so render the sighted layout first and let the screen-reader one replace it.
@@ -2133,10 +2212,71 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useSystemBarsFollowTheme(scheme?: light | dark | null): void` — Keep the system bars' style matching the app's light / dark theme while the component is mounted: dark bars over a dark theme, light bars over a light one. With a scheme argument that is the theme; without one it follows the page, re-applied on every change: the root element's color-scheme when it names one (a theme toggle that sets it, or React Native's Appearance.setColorScheme in react-native mode), else the system's prefers-color-scheme. Only the native shell has system bars to style; elsewhere, and during SSR, it does nothing.
 - `watchPosition(callback: (position: GeoPosition) => void, options?: GeoPositionOptions, onError?: (error: GeolocationError) => void): () => void` — Follow the position: callback runs with each new fix until the returned function is called. A failure (permission refused, services turned off) goes to onError; the watch keeps running where the platform keeps it (the browser does), so stop it yourself on denied.
 - `watchPositionInBackground(callback: (position: GeoPosition) => void, options?: BackgroundLocationOptions, onError?: (error: GeolocationError) => void): () => void` — Follow the position in the foreground and the background: callback runs with each fix until the returned function (or stopBackgroundLocation) is called. A failure (permission refused: denied; anything else: unavailable) goes to onError.
-- `watchSafeAreaInsets(onInsets: (insets: SafeAreaInsets) => void): () => void` — Follow the device's safe-area insets outside a component: calls onInsets synchronously with the current insets, then again whenever they change (rotation, window and visual-viewport resizes, and Capacitor rewriting the --safe-area-inset-* it injects on <html>), at most once per animation frame and only when they differ. It is what useSafeAreaInsets runs. During SSR (no DOM) it calls nothing and the returned stop function is a no-op.
-- `writeClipboard(text: string): Promise<void>` — Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), through the desktop runtime in a Deno Desktop window (denext desktop add clipboard), else navigator.clipboard.writeText().
+- `watchSafeAreaInsets(onInsets: (insets: SafeAreaInsets) => void): () => void` — Follow the device's safe-area insets outside a component: calls onInsets synchronously with the current insets, then again whenever they change (rotation, window and visual-viewport resizes, Capacitor rewriting the --safe-area-inset-* it injects on <html>, and the web view applying its insets late, after the page has run), at most once per animation frame and only when they differ. It is what useSafeAreaInsets runs. During SSR (no DOM) it calls nothing and the returned stop function is a no-op.
+- `writeClipboard(text: string): Promise<void>` — Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.writeText() (a Deno Desktop window included: the desktop runtime has no clipboard capability).
 - `writeFile(path: string, data: string, options?: WriteFileOptions): Promise<void>` — Write a file, replacing it when it exists.
 - `interface WriteFileOptions` — Options for writeFile.
+
+### `denext/navigation`
+
+- `announceRoute(message: string): void` — Announce message to screen readers now (the same text twice in a row is announced twice). Nothing happens without a document or with an empty message.
+- `type Component<P> = (props: P & object) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
+- `createBottomTabNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createBottomTabNavigator for React Native mode, drawn by TabsView: visited tabs stay mounted (hidden with <Activity>), tabBarBadge / tabBarIcon / tabBarLabel / title and lazy / popToTopOnBlur / unmountOnBlur are honoured, and a press on the active tab emits tabPress (a nested stack pops to its root) then scrolls it to the top.
+- `createNativeStackNavigatorFactory(core: ReactNavigationCore): (config?: unknown) => unknown` — createNativeStackNavigator for React Native mode, drawn by StackView.
+- `Fragment: typeOperator` — Marker used as a VNode type to group children without a wrapping element.
+- `type IosBarMaterial = glass | blur` — The iOS bar material of the platform theme: "glass" (iOS 26's Liquid Glass, approximated: a floating translucent tab bar and glass header buttons; the default) or "blur" (the iOS 7–18 translucent bars, edge to edge).
+- `type Key = string | number | bigint | null | undefined` — A stable identity for a VNode among its siblings, used to keep lists reconciled.
+- `type NavigationPlatform = ios | android` — The platform look a navigator takes: iOS or Android (Material).
+- `type NavigationTheme = auto | platform | plain` — Which look the navigators take:
+- `interface NavigationThemeProps` — The theme props every navigator takes.
+- `platformThemeCss(): string` — The whole platform-theme stylesheet (exported for tests and for apps that ship it in their own CSS, e.g. to have it before the first client render).
+- `interface ReactNavigationCore` — The part of @react-navigation/native (which re-exports @react-navigation/core and the routers) the factories need: import * as core from "@react-navigation/native" fits.
+- `interface ReactNavigationDescriptor` — One screen's descriptor (options are the library's own screen options).
+- `interface ReactNavigationObject` — The slice of the navigation object the navigators use.
+- `interface ReactNavigationRoute` — A React Navigation route, as the navigators read it.
+- `interface ReactNavigationState` — A navigator's state, as the navigators read it.
+- `interface ScreenOptions` — Options for one screen of a stack. As a page's export const screenOptions = { … } they are plain JSON (the server reads them and ships them with the page); setOptions from useStackNavigation can also set the component-valued header* slots.
+- `Sheet(props: SheetProps): VNode` — A bottom sheet. Controlled by open; the user's dismissal calls onOpenChange(false).
+- `type SheetDetent = medium | large | fit | number` — A height a sheet can rest at: "medium" (half the available height), "large" (the full available height), "fit" (its content's height, up to "large"), or a number (a fraction of the available height when at most 1, else CSS px).
+- `interface SheetProps` — Props of Sheet.
+- `type StackAnimation = default | none | fade | fade_from_bottom | slide_from_right | slide_from_left | slide_from_bottom | simple_push | ios_from_right | ios_from_left | shared_axis_x` — How a screen enters and leaves a stack. The names follow react-native-screens' native-stack animation option:
+- `StackHeader(props: StackHeaderProps): VNode` — A native-style header for a stack screen. StackLayout draws it when a screen's headerShown is true; it is exported for custom headers that want the same look.
+- `interface StackHeaderProps` — Props of StackHeader.
+- `StackLayout(props: StackLayoutProps): VNode` — A native-feeling stack of the routes under a layout; see the module docs.
+- `interface StackLayoutProps` — Props of StackLayout. theme (default "auto": the platform theme inside the native shell), material and accentColor pick the look; see NavigationThemeProps.
+- `interface StackNavigation` — The stack navigation a screen gets from useStackNavigation.
+- `type StackPresentation = card | modal | formSheet | transparentModal` — How a screen is presented:
+- `StackView(props: StackViewProps): VNode` — The router-independent stack view; see the module docs. StackLayout is the App Router binding most apps use.
+- `type StackViewAnimate = auto | external | none` — How a change of entries animates: "auto" (the view animates it), "external" (a View Transition the owner started animates it), "none".
+- `interface StackViewEntry` — One screen as the stack view draws it (bottom of the stack first).
+- `interface StackViewHandle` — What StackView lets its owner do.
+- `interface StackViewProps` — Props of StackView. The theme props (theme, material, accentColor) pick the platform look: see NavigationThemeProps.
+- `interface TabDefinition` — One tab of a TabsLayout.
+- `interface TabScope` — A tab's registry of the stacks rendered inside it.
+- `TabsLayout(props: TabsLayoutProps): VNode` — A tab bar layout whose tabs keep their state; see the module docs. Render it from a "use client" component your layout uses.
+- `interface TabsLayoutProps` — Props of TabsLayout. theme (default "auto": the platform theme inside the native shell), material and accentColor pick the look (see NavigationThemeProps).
+- `interface TabStackHandle` — What a stack inside a tab registers, so the tab bar can pop it or scroll it to the top.
+- `TabsView(props: TabsViewProps): VNode` — The router-independent tab view: panels kept with <Activity>, and the bar.
+- `interface TabsViewProps` — Props of TabsView. theme, material and accentColor pick the look (see NavigationThemeProps).
+- `useScreenInfo(): object | null` — The screen a component renders in, or null outside a stack. Reads id and index (0 = the stack's root screen).
+- `useStackNavigation(): StackNavigation` — The stack navigation for the screen this component renders in: push, pop, popToTop, replace, canGoBack, setOptions. Outside a StackLayout the methods fall back to plain navigation and history.
+- `interface VNode` — A single virtual DOM node.
+- `type VNodeChild = VNode | string | number | bigint | boolean | null | undefined` — Anything that can appear as a child in JSX.
+- `type VNodeChildren = VNodeChild | VNodeChild[]` — One child or an array of children, as accepted by JSX.
+- `type VNodeType = string | Component<any> | FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
+- `interface VProps` — Props passed to a virtual node. children is normalized separately.
+
+### `denext/virtual-masonry`
+
+- `class MasonryLayout` — A masonry layout over count items.
+- `interface MasonryPlacement` — An item's placement.
+- `VirtualMasonry<T>(props: VirtualMasonryProps<T>): VNode` — A virtualized masonry (Pinterest-style) layout: items of any height in numColumns balanced columns, only those near the viewport rendered. Items are measured as they render (give getEstimatedItemSize, e.g. from an image's aspect ratio, for a steadier scrollbar); appends keep every placed item where it is; onEndReached loads the next page once per data change. Import from denext/virtual-masonry.
+- `interface VirtualMasonryHandle` — The imperative handle of a VirtualMasonry.
+- `interface VirtualMasonryProps<T>` — Props of VirtualMasonry.
+
+### `denext/feature`
+
+- `feature(name: string): boolean` — Whether the feature flag name is enabled. A feature("KEY") call with a **string literal** argument is folded to a boolean literal at build time (for a KEY listed in features) so the branch is dead-code eliminated; otherwise it reads the build-seeded flag map at runtime, defaulting to false for any unset flag.
 
 ### `denext/cli/command`
 
@@ -2455,9 +2595,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `registerRootComponent<P>(component: Component<P>): void` — Mount component as the app: react-native-web's AppRegistry in React Native mode (the app key main, as Expo registers it), else denext's createRoot.
 - `registerWebModule<T>(moduleImplementation: T | parenthesized, _moduleName?: string): T` — Register a module implemented in JS: a class is instantiated, an object returned as is.
 - `reloadAppAsync(_reason?: string): Promise<void>` — Reload the app (the page).
-- `requireNativeModule<T>(moduleName: string): T` — A native module: none exist here, so it throws (as Expo's web build does for a module with no web implementation).
-- `requireNativeView<P>(_moduleName: string, _viewName?: string): Component<P>` — A native view: none exist here, so the component renders nothing.
-- `requireOptionalNativeModule<T>(_moduleName: string): T | null` — A native module when it exists: never here.
+- `requireNativeModule<T>(moduleName: string): T` — The native module moduleName: the Capacitor plugin of that name inside the iOS/Android shell, or the desktop extension of that name on Deno Desktop. Its functions take Expo's positional arguments and return Promises. Where neither exists (a browser, a test) it returns a stand-in whose functions throw when called, so a module that asks for it at import time still loads (Expo's web build throws at the requireNativeModule call itself).
+- `requireNativeView<P>(moduleName: string, viewName?: string): Component<P>` — A native view as a component: denext/mobile's native view slot for the type nativeViewType names (the DenextNativeViews plugin, denext mobile add native-views). Its JSON props go to the native factory, a native event name calls the on<Name> prop with { nativeEvent }, style styles the slot and its children are drawn over the view. Where that view type is not registered natively (the web), the children render instead.
+- `requireOptionalNativeModule<T>(moduleName: string): T | null` — The native module moduleName when this runtime has it (see requireNativeModule), else null.
 - `class SharedObject<Events>` — An object shared with native code: a JS object here, released explicitly.
 - `class SharedRef<Type, Events>` — A reference to a native resource (an image, a file): a JS object here.
 - `interface Subscription` — What Expo's add…Listener functions return.
@@ -2716,7 +2856,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Geocoder` — A geocoding service for geocodeAsync / reverseGeocodeAsync.
 - `enum GeofencingEventType` — A geofencing event (geofencing is not provided).
 - `enum GeofencingRegionState` — A geofence region's state (geofencing is not provided).
-- `getBackgroundPermissionsAsync(): Promise<PermissionResponse>` — The background location permission: always denied here (background location is not shipped).
+- `getBackgroundPermissionsAsync(): Promise<PermissionResponse>` — The background location permission: always denied here (this shim provides no background location; denext/mobile has watchPositionInBackground).
 - `getCurrentPositionAsync(options?: LocationOptions): Promise<LocationObject>` — The current position.
 - `getForegroundPermissionsAsync(): Promise<LocationPermissionResponse>` — The foreground location permission.
 - `getLastKnownPositionAsync(options?: LocationLastKnownOptions): Promise<LocationObject | null>` — The last known position, or null: the last fix this app got (within maxAge and requiredAccuracy), else a cached fix from the platform when it has one.
@@ -2747,7 +2887,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
-- `requestBackgroundPermissionsAsync(): Promise<PermissionResponse>` — Ask for background location: always denied here (background location is not shipped).
+- `requestBackgroundPermissionsAsync(): Promise<PermissionResponse>` — Ask for background location: always denied here (this shim provides no background location).
 - `requestForegroundPermissionsAsync(): Promise<LocationPermissionResponse>` — Ask for the foreground location permission.
 - `reverseGeocodeAsync(location: Pick<LocationGeocodedLocation, latitude | longitude>): Promise<LocationGeocodedAddress[]>` — Addresses for coordinates, through the geocoder set with setGeocoder.
 - `setGeocoder(next: Geocoder | null): void` — Plug in a geocoding service (denext only; Expo's native geocoders have no WebView equivalent). Pass null to remove it.
@@ -2773,14 +2913,114 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `GoogleMaps: object` — Google Maps: the view stand-ins and the enums.
 - `enum GoogleMapsColorScheme` — Google Maps' color schemes.
 - `enum GoogleMapsMapType` — Google Maps' map types.
-- `interface MapViewHandle` — The ref handle of a map view stand-in: every method throws.
-- `type MapViewProps = Record<string, unknown> & object` — Props of a map view stand-in (whatever the native view takes).
+- `interface MapViewHandle` — The ref handle of a map view.
+- `type MapViewProps = Record<string, unknown> & object` — Props of a map view (the common expo-maps props; any other prop is ignored).
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
 - `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
 - `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for the location permission (denext/expo/location's foreground request).
 - `useLocationPermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the location permission: [response, request, get].
+
+### `denext/expo/media-library`
+
+- `addAssetsToAlbumAsync(_assets: AssetRef[] | AssetRef, _album: AlbumRef, _copy?: boolean): Promise<boolean>` — Add assets to an album: not provided.
+- `addListener(_listener: (event: object) => void): Subscription` — Listen for library changes: never fires here.
+- `class Album` — An album in the photo library.
+- `albumNeedsMigrationAsync(_album: AlbumRef): Promise<boolean>` — Whether an album needs Android's scoped-storage migration: never here.
+- `class Asset` — An asset in the photo library.
+- `enum AssetField` — The fields a Query filters and sorts by.
+- `createAlbumAsync(albumName: string, _asset?: AssetRef, _copyAsset?: boolean, initialAssetLocalUri?: string): Promise<Album>` — Make an album (or return the one of that name), and save initialAssetLocalUri into it.
+- `createAssetAsync(localUri: string, album?: AlbumRef): Promise<Asset>` — Save localUri to the library, into album when given.
+- `deleteAlbumsAsync(_albums: AlbumRef[] | AlbumRef, _assetRemove?: boolean): Promise<boolean>` — Delete albums: not provided.
+- `deleteAssetsAsync(_assets: AssetRef[] | AssetRef): Promise<boolean>` — Delete assets: not provided.
+- `getAlbumAsync(title: string): Promise<Album | null>` — The album named title, or null.
+- `getAlbumsAsync(options?: AlbumsOptions): Promise<Album[]>` — The albums.
+- `getAssetContentUriAsync(_asset: AssetRef): Promise<string>` — An asset's content URI: not provided.
+- `getAssetInfoAsync(_asset: AssetRef, _options?: object): Promise<Asset>` — An asset's details: not provided.
+- `getAssetsAsync(options?: AssetsOptions): Promise<PagedInfo<Asset>>` — The newest assets (iOS shell; none elsewhere).
+- `getMomentsAsync(): Promise<Album[]>` — The moments: not provided.
+- `getPermissionsAsync(_writeOnly?: boolean, _granularPermissions?: GranularPermission[]): Promise<PermissionResponse>` — The photo library permission.
+- `type GranularPermission = audio | photo | video` — Android 13+'s media permission kinds (the plugin asks for photos and videos together).
+- `isAvailableAsync(): Promise<boolean>` — Whether the photo library plugin is in this shell.
+- `enum MediaSubtype` — iOS media subtypes (none are reported here).
+- `enum MediaType` — An asset's kind.
+- `migrateAlbumIfNeededAsync(_album: AlbumRef): Promise<void>` — Migrate an album for scoped storage: nothing to do.
+- `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
+- `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
+- `type PermissionResponse = ExpoPermissionResponse & object` — The media library permission, with how much of the library it covers.
+- `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `presentPermissionsPicker(_mediaTypes?: parenthesized[]): Promise<void>` — Let the user change the limited selection (not provided: the system Settings).
+- `presentPermissionsPickerAsync(_mediaTypes?: parenthesized[]): Promise<void>` — Let the user change the limited selection: not available (use the system Settings).
+- `class Query` — A query over the library: limit, offset, album and a MEDIA_TYPE filter (eq / within) are applied, newest first; other filters and sort orders are not (they are accepted and ignored).
+- `removeAllListeners(): void` — Remove every change listener (there are none to call).
+- `removeAssetsFromAlbumAsync(_assets: AssetRef[] | AssetRef, _album: AlbumRef): Promise<boolean>` — Remove assets from an album: not provided.
+- `removeSubscription(sub: Subscription): void` — Remove a change listener.
+- `requestPermissionsAsync(_writeOnly?: boolean, _granularPermissions?: GranularPermission[]): Promise<PermissionResponse>` — Ask for the photo library permission.
+- `saveToLibraryAsync(localUri: string): Promise<void>` — Save localUri to the library (a browser downloads it).
+- `setAssetFavoriteAsync(_asset: AssetRef, _isFavorite: boolean): Promise<boolean>` — Favourite an asset: not provided.
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
+
+### `denext/expo/media-library/legacy`
+
+- `addAssetsToAlbumAsync(_assets: AssetRef[] | AssetRef, _album: AlbumRef, _copy?: boolean): Promise<boolean>` — Add assets to an album: not provided.
+- `addListener(_listener: (event: object) => void): Subscription` — Listen for library changes: never fires here.
+- `type Album = object` — An album.
+- `albumNeedsMigrationAsync(_album: AlbumRef): Promise<boolean>` — Whether an album needs Android's scoped-storage migration: never here.
+- `type AlbumRef = Album | string` — An album or its id.
+- `type AlbumsOptions = object` — Options of getAlbumsAsync.
+- `type Asset = object` — An asset.
+- `type AssetRef = Asset | string` — An asset or its id.
+- `type AssetsOptions = object` — Options of getAssetsAsync.
+- `createAlbumAsync(albumName: string, _asset?: AssetRef, _copyAsset?: boolean, initialAssetLocalUri?: string): Promise<Album>` — Make an album (or return the one of that name), and save initialAssetLocalUri into it.
+- `createAssetAsync(localUri: string, album?: AlbumRef): Promise<Asset>` — Save localUri to the library, into album when given.
+- `deleteAlbumsAsync(_albums: AlbumRef[] | AlbumRef, _assetRemove?: boolean): Promise<boolean>` — Delete albums: not provided.
+- `deleteAssetsAsync(_assets: AssetRef[] | AssetRef): Promise<boolean>` — Delete assets: not provided.
+- `getAlbumAsync(title: string): Promise<Album | null>` — The album named title, or null.
+- `getAlbumsAsync(options?: AlbumsOptions): Promise<Album[]>` — The albums.
+- `getAssetContentUriAsync(_asset: AssetRef): Promise<string>` — An asset's content URI: not provided.
+- `getAssetInfoAsync(_asset: AssetRef, _options?: object): Promise<Asset>` — An asset's details: not provided.
+- `getAssetsAsync(options?: AssetsOptions): Promise<PagedInfo<Asset>>` — The newest assets (iOS shell; none elsewhere).
+- `getMomentsAsync(): Promise<Album[]>` — The moments: not provided.
+- `getPermissionsAsync(_writeOnly?: boolean, _granularPermissions?: GranularPermission[]): Promise<PermissionResponse>` — The photo library permission.
+- `type GranularPermission = audio | photo | video` — Android 13+'s media permission kinds (the plugin asks for photos and videos together).
+- `isAvailableAsync(): Promise<boolean>` — Whether the photo library plugin is in this shell.
+- `MediaType: object` — The media kinds.
+- `type MediaTypeValue = audio | photo | video | unknown | pairedVideo` — An asset's kind.
+- `migrateAlbumIfNeededAsync(_album: AlbumRef): Promise<void>` — Migrate an album for scoped storage: nothing to do.
+- `type PagedInfo<T> = object` — A page of assets.
+- `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
+- `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
+- `type PermissionResponse = ExpoPermissionResponse & object` — The media library permission, with how much of the library it covers.
+- `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `presentPermissionsPickerAsync(_mediaTypes?: parenthesized[]): Promise<void>` — Let the user change the limited selection: not available (use the system Settings).
+- `removeAllListeners(): void` — Remove every change listener (there are none to call).
+- `removeAssetsFromAlbumAsync(_assets: AssetRef[] | AssetRef, _album: AlbumRef): Promise<boolean>` — Remove assets from an album: not provided.
+- `removeSubscription(sub: Subscription): void` — Remove a change listener.
+- `requestPermissionsAsync(_writeOnly?: boolean, _granularPermissions?: GranularPermission[]): Promise<PermissionResponse>` — Ask for the photo library permission.
+- `saveToLibraryAsync(localUri: string): Promise<void>` — Save localUri to the library (a browser downloads it).
+- `setAssetFavoriteAsync(_asset: AssetRef, _isFavorite: boolean): Promise<boolean>` — Favourite an asset: not provided.
+- `SortBy: object` — The sort keys.
+- `type SortByKey = default | mediaType | width | height | creationTime | modificationTime | duration` — A sort key (only the newest-first order is provided).
+- `type SortByValue = tuple | SortByKey` — A sort key, optionally with its direction.
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
+
+### `denext/expo/navigation-bar`
+
+- `addVisibilityListener(listener: (event: NavigationBarVisibilityEvent) => void): Subscription` — Listen for visibility changes made through setVisibilityAsync.
+- `getVisibilityAsync(): Promise<NavigationBarVisibility>` — The bar's visibility (what this module last set).
+- `NavigationBar: NavigationBarComponent` — The navigation bar as a component, with setStyle / setHidden.
+- `interface NavigationBarComponent` — The NavigationBar component with its static forms.
+- `type NavigationBarProps = object` — Props of NavigationBar.
+- `type NavigationBarStyle = auto | inverted | light | dark` — The buttons' color: "light", "dark", "auto" or "inverted".
+- `type NavigationBarVisibility = visible | hidden` — The navigation bar's visibility.
+- `type NavigationBarVisibilityEvent = object` — What a visibility listener receives.
+- `setStyle(style: NavigationBarStyle): void` — Set the buttons' color now (Android shell only).
+- `setVisibilityAsync(next: NavigationBarVisibility): Promise<void>` — Hide or show the bar (Android shell only).
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `useVisibility(): NavigationBarVisibility | null` — The bar's visibility, updated on each change (null until read).
 
 ### `denext/expo/network`
 
@@ -2887,6 +3127,48 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `maxCount: number | undefined` — The most actions the platform shows (not reported here).
 - `setItems<TAction>(data?: TAction[]): Promise<void>` — Replace the app's quick actions (an empty or missing list removes them).
 
+### `denext/expo/screen-capture`
+
+- `addScreenshotListener(_listener: () => void): Subscription` — Listen for screenshots: never fires here (the plugin reports none).
+- `allowScreenCaptureAsync(key?: string): Promise<void>` — Release key's block; capture is allowed again once no key holds one.
+- `disableAppSwitcherProtectionAsync(): Promise<void>` — Stop hiding the app switcher snapshot.
+- `enableAppSwitcherProtectionAsync(blurIntensity?: number): Promise<void>` — Hide the app switcher snapshot under a blur (iOS; Android hides the recents thumbnail).
+- `getPermissionsAsync(): Promise<PermissionResponse>` — The screenshot-detection permission: granted (nothing to ask for).
+- `isAvailableAsync(): Promise<boolean>` — Whether the privacy-screen plugin is in this shell.
+- `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
+- `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
+- `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `preventScreenCaptureAsync(key?: string): Promise<void>` — Block screen capture until allowScreenCaptureAsync releases key (and every other key that asked).
+- `removeScreenshotListener(sub: Subscription): void` — Remove a screenshot listener.
+- `requestPermissionsAsync(): Promise<PermissionResponse>` — Ask for the screenshot-detection permission: granted.
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `usePermissions: (options?: PermissionHookOptions<object>) => tuple` — Hook form of the permission: [response, request, get].
+- `usePreventScreenCapture(key?: string): void` — Block screen capture while the component is mounted.
+- `useScreenshotListener(listener: () => void): void` — Listen for screenshots while mounted: never fires here.
+
+### `denext/expo/screen-orientation`
+
+- `addOrientationChangeListener(listener: OrientationChangeListener): Subscription` — Listen for orientation changes.
+- `getOrientationAsync(): Promise<Orientation>` — The current orientation.
+- `getOrientationLockAsync(): Promise<OrientationLock>` — The lock applied through this module (DEFAULT until one is).
+- `getPlatformOrientationLockAsync(): Promise<PlatformOrientationInfo>` — The platform lock: the web lock name of the current lock.
+- `lockAsync(orientationLock: OrientationLock): Promise<void>` — Lock the screen to orientationLock.
+- `lockPlatformAsync(options: PlatformOrientationInfo): Promise<void>` — Lock with a platform-specific description: the web lock, else the first iOS orientation.
+- `enum Orientation` — The screen's orientation.
+- `type OrientationChangeEvent = object` — What an orientation listener receives.
+- `type OrientationChangeListener = (event: OrientationChangeEvent) => void` — An orientation listener.
+- `enum OrientationLock` — What lockAsync locks to.
+- `type PlatformOrientationInfo = object` — A platform lock (lockPlatformAsync).
+- `removeOrientationChangeListener(subscription: Subscription): void` — Remove one listener.
+- `removeOrientationChangeListeners(): void` — Remove every orientation listener.
+- `type ScreenOrientationInfo = object` — The orientation and (iOS) size classes.
+- `enum SizeClassIOS` — iOS size classes (always UNKNOWN here).
+- `interface Subscription` — What Expo's add…Listener functions return.
+- `supportsOrientationLockAsync(orientationLock: OrientationLock): Promise<boolean>` — Whether orientationLock can be applied here.
+- `unlockAsync(): Promise<void>` — Release the lock.
+- `enum WebOrientation` — The web's orientation names.
+- `enum WebOrientationLock` — The web's orientation lock names.
+
 ### `denext/expo/secure-store`
 
 - `AFTER_FIRST_UNLOCK: KeychainAccessibilityConstant` — Accessible after the first unlock following a restart.
@@ -2957,11 +3239,18 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type StatusBarProps = object` — Props of StatusBar.
 - `type StatusBarStyle = auto | inverted | light | dark` — The status bar content's color.
 
+### `denext/expo/store-review`
+
+- `hasAction(): Promise<boolean>` — Whether there is anything to do: the review sheet, or a store page to open.
+- `isAvailableAsync(): Promise<boolean>` — Whether the in-app review sheet can be asked for: in the iOS/Android shell with the review plugin.
+- `requestReview(): Promise<void>` — Ask the OS for its in-app rating sheet (the OS decides whether it shows). Does nothing where isAvailableAsync is false.
+- `storeUrl(): string | null` — The app's store page: ios.appStoreUrl in the iOS shell, android.playStoreUrl on Android (from the Expo config denext migrate carries over), else null.
+
 ### `denext/expo/symbols`
 
 - `type AndroidSymbol = string` — A Material Symbol name.
 - `type SFSymbol = string` — An SF Symbol name.
-- `SymbolView(props: SymbolViewProps): VNode` — A system symbol: its fallback, or an empty box of its size.
+- `SymbolView(props: SymbolViewProps): VNode` — A system symbol: the SF Symbol in the iOS shell, the Material Symbol (or fallback) elsewhere.
 - `interface SymbolViewProps` — SymbolView props.
 - `unstable_getMaterialSymbolSourceAsync(_symbol: AndroidSymbol | null, _size: number, _color: string): Promise<null>` — The image source of a Material Symbol: not available here.
 
@@ -3471,11 +3760,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setVideoCacheSizeAsync(_sizeBytes: number): Promise<void>` — Set the video cache size (the browser owns it): nothing to do.
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `useVideoPlayer(source: VideoSource, setup?: (player: VideoPlayer) => void, _playerBuilderOptions?: PlayerBuilderOptions): VideoPlayer` — A player for the component's lifetime.
-- `class VideoPlayer` — A video player over an HTMLVideoElement.
+- `class VideoPlayer` — A video player: an HTMLVideoElement, or the native video view it is shown in.
 - `interface VideoPlayerEvents` — The events a player emits.
 - `type VideoPlayerStatus = idle | loading | readyToPlay | error` — The player's load state.
 - `type VideoSource = string | object | null` — A video source: a URL, { uri }, or null.
-- `VideoView(props: VideoViewProps): VNode` — Shows a player's video.
+- `VideoView(props: VideoViewProps): VNode` — Shows a player's video: in the native video view where it is registered, else in the player's <video>.
 - `interface VideoViewProps` — VideoView props.
 
 ### `denext/expo/web-browser`

@@ -326,12 +326,14 @@ https://denext.dev/docs/mobile
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
 Safari included, whenever `momentumSafeScroll` is on (the default).
 
-More `denext mobile add` capabilities (each a pinned Capacitor 8 plugin, web fallback where one
-exists): `keyboard` (`useKeyboard`, `<KeyboardAvoidingView>`, `<KeyboardStickyView>`), `back`
+More `denext mobile add` capabilities (a pinned Capacitor 8 plugin, or denext's own native plugin
+for `permissions`, `accessibility`, `storage` and `system-icons`; `system-bars` uses Capacitor
+core and `offline-screen` writes a page; web fallback where one exists): `keyboard`
+(`useKeyboard`, `<KeyboardAvoidingView>`, `<KeyboardStickyView>`), `back`
 (`onBack`/`useBackHandler`, `useBackProgress` for Android predictive back), `system-bars`
 (`setSystemBars`, `useSystemBarsFollowTheme`; `useSafeAreaInsets()` needs nothing),
 `permissions` (`checkPermission`/`requestPermission`/`usePermission` → granted | limited |
-prompt | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`),
+prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`),
 `biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
 `background-location`, `purchases` (RevenueCat), `app-review`, `app-update`,
@@ -371,7 +373,10 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS / Linux; fails closed on Windows) and your `defineDesktopExtension` modules (from
-`denext/desktop`); `context-menu`, `clipboard` and `notifications` stay WebView-backed (a
+`denext/desktop`, listed in `desktop.capabilities.extensions`) — but only when `desktop.ts`
+spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
+`runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
+call answers `unavailable`); `context-menu`, `clipboard` and `notifications` stay WebView-backed (a
 scheduled notification rejects). Packaging is least-privilege: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A`, and
 `denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
@@ -533,8 +538,13 @@ if (!report.ok) throw new Error(formatReport(report)); // or run `denext doctor`
 
 **Config:** `denext.config.ts` exports `{ ... }` (redirects, rewrites, headers,
 i18n, images, `cacheComponents`, `streaming`, `live`, `reactCompiler`, `features`, `plugins`,
-`tailwind`, `csp`, `compatibilityMode`, `optimizePackageImports`, `momentumSafeScroll`;
+`tailwind`, `csp` (strict by default; `frameSrc` / `mediaSrc` / `workerSrc` / `fontSrc` /
+`scriptSrc` / `styleSrc` / `imgSrc` / `connectSrc` opt-ins, e.g. `{ frameSrc:
+["https://js.stripe.com"] }`), `compress` (gzip, on by default; `{ encodings: ["br", "gzip"] }`
+adds brotli; `false`, or `export const compress = false` in a route), `cors`, `compatibilityMode`,
+`optimizePackageImports`, `momentumSafeScroll`, `desktop`, `mobile`, `appLinks`;
 `mode: "spa"` + `spa: { entry, … }` for SPA mode). Not `next.config.js`.
+Every key: https://denext.dev/docs/config
 
 **Writing a plugin:** a `DenextPlugin` (`{ name, setup(ctx) }` from
 `denext/plugin-kit`, the semver-stable toolkit) hooks six seams — `addRouteSynthesizer` (add/adjust routes),

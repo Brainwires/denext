@@ -59,11 +59,15 @@ const get = (url: string, encoding: string) =>
 Deno.test("SPA prod server: the shell, public files and bundles under compression", async () => {
   const dir = await spaProject(`{ mode: "spa", spa: { entry: "./main.tsx" } }`);
   await withServer(dir, async (origin) => {
-    const br = await get(origin + "/deep/link", "gzip, br");
-    assertEquals(br.headers.get("content-encoding"), "br", "the history-fallback shell");
-    assertStringIncludes(br.headers.get("vary") ?? "", "Accept-Encoding");
-    assertEquals(br.headers.get("x-content-type-options"), "nosniff", "hardening kept");
-    assertEquals(await br.text(), SHELL);
+    const deep = await get(origin + "/deep/link", "gzip, br");
+    assertEquals(deep.headers.get("content-encoding"), "gzip", "the history-fallback shell");
+    assertStringIncludes(deep.headers.get("vary") ?? "", "Accept-Encoding");
+    assertEquals(deep.headers.get("x-content-type-options"), "nosniff", "hardening kept");
+    assertEquals(await deep.text(), SHELL);
+
+    const brOnly = await get(origin + "/", "br");
+    assertEquals(brOnly.headers.get("content-encoding"), null, "brotli is off by default");
+    assertEquals(await brOnly.text(), SHELL);
 
     const gz = await get(origin + "/", "gzip");
     assertEquals(gz.headers.get("content-encoding"), "gzip");
@@ -82,8 +86,7 @@ Deno.test("SPA prod server: the shell, public files and bundles under compressio
     assertEquals(png.headers.get("content-encoding"), null, "images are not re-encoded");
     await png.body?.cancel();
 
-    // The precompressed bundle is the build's .gz sibling, never re-encoded (brotli is
-    // preferred by the header, but the stored gzip goes out as-is).
+    // The precompressed bundle is the build's .gz sibling, never re-encoded.
     const js = await get(origin + "/_denext/client/index.js", "gzip, br");
     assertEquals(js.headers.get("content-encoding"), "gzip");
     assertEquals(await js.text(), BUNDLE);
@@ -91,6 +94,20 @@ Deno.test("SPA prod server: the shell, public files and bundles under compressio
     const head = await fetch(origin + "/", { method: "HEAD", headers: { accept: "text/html" } });
     assertEquals(head.headers.get("content-encoding"), null, "HEAD is never encoded");
     await head.body?.cancel();
+  });
+});
+
+Deno.test('SPA prod server: compress { encodings: ["br", "gzip"] } sends brotli', async () => {
+  const dir = await spaProject(
+    `{ mode: "spa", spa: { entry: "./main.tsx" }, compress: { encodings: ["br", "gzip"] } }`,
+  );
+  await withServer(dir, async (origin) => {
+    const br = await get(origin + "/", "gzip, br");
+    assertEquals(br.headers.get("content-encoding"), "br");
+    assertEquals(await br.text(), SHELL);
+    const gz = await get(origin + "/", "gzip");
+    assertEquals(gz.headers.get("content-encoding"), "gzip");
+    assertEquals(await gz.text(), SHELL);
   });
 });
 

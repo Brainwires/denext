@@ -7,10 +7,20 @@
  * - Every database file lives directly under the app-support directory. A database `name` is a
  *   single filename component: separators, `..` and absolute paths are refused, so a page cannot
  *   open or delete a file outside the app's own folder.
+ * - `ATTACH` / `VACUUM INTO` are disabled on every connection ({@link confineDatabase}), since the
+ *   page's arbitrary SQL could otherwise open or create a file anywhere.
  * - `open` returns an opaque handle (a random id); the page never sees or supplies a path. A
  *   method call for an unknown handle is `closed`.
  * - Blobs cross the wire as `{ $bytes: <base64> }` (JSON has no bytes); this side decodes bind
  *   values and encodes result cells to match `src/desktop/native.ts`. Booleans bind as 1/0.
+ *
+ * EVENT LOOP: `node:sqlite` is synchronous and exposes no interrupt or progress handler, so a single
+ * long-running statement (a runaway recursive CTE, a huge aggregate) blocks the desktop process —
+ * the bridge's 30 s deadline cannot preempt it, and every other request waits. What IS bounded:
+ * `query` streams its rows and stops with `timeout` once {@link QUERY_TIME_BUDGET_MS} has elapsed
+ * between rows. A page that can run arbitrary SQL can still hang its own app (a local DoS, never an
+ * escalation); running the capability in a Worker that is terminated on the deadline is the fix if
+ * that ever matters.
  *
  * Handles stay open until the page calls `close` or the process exits (a desktop app IS its Deno
  * process); an unclosed handle leaks a connection for the app's lifetime, no worse than the app
@@ -75,6 +85,7 @@ function encodeCell(value: unknown): unknown {
 interface Stmt {
   run(...params: unknown[]): { changes: number | bigint; lastInsertRowid: number | bigint };
   all(...params: unknown[]): unknown[];
+  iterate(...params: unknown[]): IterableIterator<unknown>;
   columns(): Array<{ name?: string; column?: string }>;
   setReturnArrays(on: boolean): void;
   setAllowBareNamedParameters(on: boolean): void;
@@ -93,14 +104,51 @@ function bindArgs(stmt: Stmt, params: unknown): unknown[] {
   throw badInput("params must be an array or an object");
 }
 
+/** How long one `query` may keep producing rows (ms) before it stops with `timeout`. */
+const QUERY_TIME_BUDGET_MS = 20_000;
+
+/**
+ * Forbid `ATTACH DATABASE` / `VACUUM INTO` on a page-driven connection: the page runs arbitrary SQL,
+ * and either statement opens or creates a file at ANY path from inside SQLite (bypassing the name
+ * check above). Deno already refuses them unless the process has every permission, but a desktop
+ * app run with `-A` (a migrated `deno task desktop`, a dev launch) would not — so set SQLite's
+ * attached-database limit to 0 on every connection.
+ *
+ * @param db The freshly opened connection.
+ */
+function confineDatabase(db: DatabaseSync): void {
+  // Defensive mode too: no writable_schema / shadow-table tricks that corrupt the file.
+  (db as unknown as { enableDefensive?: (on: boolean) => void }).enableDefensive?.(true);
+  const limits = (db as unknown as { limits?: Record<string, number> }).limits;
+  if (limits && typeof limits === "object" && "attach" in limits) {
+    limits.attach = 0;
+    return;
+  }
+  // No `limits` (an older runtime): refuse ATTACH through the authorizer (SQLITE_ATTACH = 24;
+  // VACUUM INTO attaches its target too), else fail closed.
+  const auth = (db as unknown as { setAuthorizer?: (cb: (action: number) => number) => void })
+    .setAuthorizer;
+  if (typeof auth === "function") {
+    auth.call(db, (action) => (action === 24 ? 1 /* SQLITE_DENY */ : 0 /* SQLITE_OK */));
+    return;
+  }
+  db.close();
+  throw new DesktopCapError("unavailable", "this runtime cannot confine SQLite ATTACH");
+}
+
 /**
  * Build the `sqlite` capability over `dir` (the app-support directory). Databases are files
  * directly under `dir`; the factory keeps the open handles in a private registry.
  *
  * @param dir The resolved absolute app-support directory (`$APPDATA`).
+ * @param options `queryTimeBudgetMs`: how long one `query` may produce rows (default 20 s).
  * @returns The `sqlite` {@link DesktopCapability}.
  */
-export function sqliteCapability(dir: string): DesktopCapability {
+export function sqliteCapability(
+  dir: string,
+  options: { readonly queryTimeBudgetMs?: number } = {},
+): DesktopCapability {
+  const budgetMs = options.queryTimeBudgetMs ?? QUERY_TIME_BUDGET_MS;
   const open = new Map<string, { db: DatabaseSync; name: string }>();
 
   const dbFor = (handle: unknown): DatabaseSync => {
@@ -125,6 +173,7 @@ export function sqliteCapability(dir: string): DesktopCapability {
             if (!(err instanceof Deno.errors.AlreadyExists)) throw err;
           });
           const db = new DatabaseSync(join(dir, name));
+          confineDatabase(db);
           const handle = crypto.randomUUID();
           open.set(handle, { db, name });
           return { handle };
@@ -151,9 +200,20 @@ export function sqliteCapability(dir: string): DesktopCapability {
           const a = (args ?? {}) as { handle?: unknown; sql?: unknown; params?: unknown };
           const stmt = prepare(a.handle, a.sql);
           stmt.setReturnArrays(true);
-          const rows = stmt.all(...bindArgs(stmt, a.params)) as unknown[][];
+          // Row by row against a time budget: a sync query can't be preempted, but one that keeps
+          // producing rows stops here instead of pinning the event loop (see the module notes).
+          const deadline = Date.now() + budgetMs;
+          const rows: unknown[][] = [];
+          for (const row of stmt.iterate(...bindArgs(stmt, a.params))) {
+            rows.push((row as unknown[]).map(encodeCell));
+            if (Date.now() > deadline) {
+              throw new DesktopCapError("timeout", "the query ran past its time budget", {
+                status: 408,
+              });
+            }
+          }
           const columns = stmt.columns().map((c) => c.name ?? c.column ?? "");
-          return { columns, rows: rows.map((row) => row.map(encodeCell)) };
+          return { columns, rows };
         },
       },
       inTransaction: {

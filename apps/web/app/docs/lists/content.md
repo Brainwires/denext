@@ -240,6 +240,9 @@ list.current?.scrollToIndex(500, { align: "center" });
 | `indexAtPoint(x, y)`                                | The row under a viewport point, or −1.                                                                                        |
 | `keyAt(i)`                                          | Row `i`'s key.                                                                                                                |
 | `recordInteraction()`                               | Counts as a user interaction for `waitForInteraction`.                                                                        |
+| `getScrollableNode()`                               | The element that scrolls the list (null before mount and with `scrollElement="window"`).                                      |
+| `getItemLayout(i)`                                  | Row `i`'s `{ offset, size }`: measured, else estimated.                                                                       |
+| `getScrollMetrics()`                                | `{ offset, viewport, min, max, rows }`: the scroll position and extent, in list offsets.                                      |
 
 `scrollToIndex` never gives up, so there is no `onScrollToIndexFailed`. It scrolls to the
 estimate, measures what rendered, and corrects until the row sits where you asked.
@@ -345,7 +348,8 @@ A list of 1M–10M rows works with `count` and `getItem`:
   an offset, is O(log n). A block that was never visited costs nothing, and far-away measured
   blocks are folded into their average, so memory stays bounded.
 - **Past the browser's height limit** (Firefox stops at about 17.2M px, Chromium at about 33.5M px),
-  the list lays out a capped height and maps it onto the real one. Small scrolls stay 1:1,
+  a list cannot be laid out 1:1. Past 8M px, with a wide margin under both, the list lays out a
+  capped height and maps it onto the real one. Small scrolls stay 1:1,
   dragging the scrollbar jumps proportionally, and both ends are reachable.
 - **Exact sizes.** `getItemSize` gives an exact size per row. Those rows are never measured, and
   the scrollbar is exact from the start. A uniform list of any length samples 32 rows to find
@@ -793,7 +797,8 @@ retry keeps working; the retry never runs.
 **Not provided:**
 
 - `renderScrollComponent`: the scroller is the list's own element.
-- `automaticallyAdjustKeyboardInsets` and `onContentSizeChange`.
+- `automaticallyAdjustKeyboardInsets` (pass the keyboard's height as `keyboardInset` on a
+  `VirtualList`, or wrap the list in `KeyboardAvoidingView`).
 - FlashList's benchmark utilities.
 - LegendList's `anchoredEndSpace`, `onItemSizeChanged`, `onMetricsChange` and `snapToIndices`.
 

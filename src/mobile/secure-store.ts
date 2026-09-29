@@ -7,6 +7,7 @@
  */
 
 import { nativePlugin } from "./plugin.ts";
+import { isNativeShell } from "./bridge.ts";
 import { authenticateBiometric } from "./biometrics.ts";
 import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
@@ -86,6 +87,23 @@ function securePlugin(): SecureStoragePlugin | undefined {
     "internalSetItem",
     "internalRemoveItem",
   ]);
+}
+
+/** Whether the not-secret fallback has been reported this session (once is enough). */
+let warnedNativeFallback = false;
+
+/**
+ * Warn ONCE when a native shell (iOS/Android) has no secure-storage plugin: the IndexedDB fallback
+ * is the web's not-secret store, and inside the app it would silently hold refresh tokens in
+ * WebView storage. The web itself stays quiet (the fallback is documented there).
+ */
+function warnNativeFallback(): void {
+  if (warnedNativeFallback || !isNativeShell()) return;
+  warnedNativeFallback = true;
+  console.warn(
+    "denext: secureStore is running in the native shell WITHOUT the secure-storage plugin " +
+      "(`denext mobile add secure-store`); values fall back to WebView IndexedDB, which is NOT secret.",
+  );
 }
 
 /** Refuse an empty or non-string key (the native plugin rejects one too). */
@@ -169,7 +187,8 @@ async function withStore<T>(
  *   plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same
  *   entries.
  * - Inside a Deno Desktop window (`denext desktop add secure-store`), the OS keychain: the
- *   macOS Keychain, Windows Credential Manager or libsecret, through the desktop runtime.
+ *   macOS Keychain or libsecret, through the desktop runtime. Windows is not supported yet:
+ *   there the capability fails closed (a real error, never the plaintext web fallback).
  * - **On the web it is NOT secret.** The fallback is a plain IndexedDB database
  *   (`denext-secure-store`) that any script on the origin, and anyone with the device's
  *   browser profile, can read. It keeps a web build working; it does not protect anything.
@@ -203,6 +222,7 @@ export const secureStore: SecureStore = {
       });
       return await ungated(typeof data === "string" ? data : null, options);
     }
+    warnNativeFallback();
     const value = await withStore("readonly", (s) => s.get(key));
     return await ungated(typeof value === "string" ? value : null, options);
   },
@@ -224,6 +244,7 @@ export const secureStore: SecureStore = {
           : WHEN_UNLOCKED,
       });
     }
+    warnNativeFallback();
     await withStore("readwrite", (s) => s.put(data, key));
   },
   async delete(key: string): Promise<void> {

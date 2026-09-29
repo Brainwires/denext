@@ -8,9 +8,12 @@
  * - Windows: PowerShell `System.Windows.Forms` Open/Save/FolderBrowser dialogs (STA).
  *
  * SECURITY / contract:
- * - `Deno.Command` takes an argv array (no shell); the only page-supplied string is `suggestedName`,
- *   passed as a discrete argv element / AppleScript `on run argv` item / PowerShell scriptblock param
- *   — never interpolated into a script, so there is no shell/AppleScript/PowerShell injection.
+ * - `Deno.Command` takes an argv array (no shell); the only page-supplied string is `suggestedName`.
+ *   It is first reduced to a plain file name with no leading `-` ({@link sanitizeSuggestedName}),
+ *   then passed as an AppleScript `on run argv` item AFTER `--` (osascript's getopt otherwise parses
+ *   a dash-led trailing arg as `-e <script>`), a zenity `--filename=` value / kdialog argument, or —
+ *   on Windows — an ENVIRONMENT variable (`powershell.exe -Command` joins trailing argv into the
+ *   command text, so an argv value there would be code). Never interpolated into a script.
  * - A pick returns `{ path, handle }` (openFile: `{ files: [{ …, handle }] }`); `path` is display-only
  *   and the page never sends it back — authority is the opaque {@link PickedPaths} `handle`
  *   (openFile → read, saveFile → readwrite, pickFolder → folder). A non-null saveFile/pickFolder
@@ -35,30 +38,57 @@ import type { PickedPaths } from "../picked-paths.ts";
 /** The OS spelling the command builders branch on. */
 type Os = "darwin" | "windows" | "linux";
 
-/** One dialog-program invocation to try (argv, no shell). */
+/** One dialog-program invocation to try (argv, no shell; optional extra environment). */
 interface DialogCandidate {
   readonly cmd: string;
   readonly args: string[];
+  /** Extra environment for the child (the Windows suggested name travels here, never in argv). */
+  readonly env?: Record<string, string>;
 }
 
 /** Run a dialog program (argv, no shell); `code: null` means the program could not be spawned. */
 export type DialogRunner = (
   cmd: string,
   args: string[],
+  env?: Record<string, string>,
 ) => Promise<{ code: number | null; stdout: string }>;
 
-/** A PowerShell one-liner that shows `dialog`, runs `body` on OK, and prints nothing on cancel. */
-function psDialog(setup: string, ok: string): DialogCandidate {
+/** The env var the Windows save dialog reads its suggested name from. */
+export const DIALOG_NAME_ENV = "DENEXT_DIALOG_SUGGESTED_NAME";
+
+/**
+ * Reduce a page-supplied suggested file name to a plain name: the last path component, control
+ * characters removed, and no leading `-` (so it can never be read as an option by `osascript` /
+ * `kdialog`, whose getopt still parses a dash-led trailing argument) — `undefined` when empty.
+ *
+ * @param raw The page's `suggestedName`.
+ * @returns The sanitized name, or `undefined`.
+ */
+export function sanitizeSuggestedName(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const last = raw.split(/[\\/]/).pop() ?? "";
+  // deno-lint-ignore no-control-regex
+  const name = last.replace(/[\u0000-\u001f\u007f]/g, "").replace(/^[\s-]+/, "").slice(0, 255);
+  return name.length > 0 && name !== "." && name !== ".." ? name : undefined;
+}
+
+/**
+ * A PowerShell one-liner that shows `dialog`, runs `body` on OK, and prints nothing on cancel.
+ * NOTHING page-supplied may be appended to this argv: `powershell.exe -Command` joins every
+ * trailing argument into the command TEXT, so a trailing value would be parsed as PowerShell. The
+ * suggested name reaches the script through {@link DIALOG_NAME_ENV} instead.
+ */
+function psDialog(setup: string, ok: string, env?: Record<string, string>): DialogCandidate {
   return {
     cmd: "powershell.exe",
     args: [
       "-STA",
       "-NoProfile",
       "-Command",
-      `& { param($n) Add-Type -AssemblyName System.Windows.Forms; ${setup} ` +
+      `& { $n = $env:${DIALOG_NAME_ENV}; Add-Type -AssemblyName System.Windows.Forms; ${setup} ` +
       `if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${ok} } }`,
-      // $n (suggested name) is bound from the trailing argv, never spliced into the script.
     ],
+    ...(env ? { env } : {}),
   };
 }
 
@@ -74,7 +104,11 @@ function openFileCommands(os: Os): DialogCandidate[] {
   ];
 }
 
-/** Candidates for a save-file panel (with an optional suggested name passed safely as an argument). */
+/**
+ * Candidates for a save-file panel. `suggestedName` must already be {@link sanitizeSuggestedName}d;
+ * on macOS it follows `--` so osascript's getopt can never read it as `-e <script>` (a dash-led
+ * trailing argument is otherwise parsed as an option: AppleScript injection).
+ */
 function saveFileCommands(os: Os, suggestedName?: string): DialogCandidate[] {
   const name = suggestedName ?? "";
   if (os === "darwin") {
@@ -86,6 +120,7 @@ function saveFileCommands(os: Os, suggestedName?: string): DialogCandidate[] {
         "POSIX path of (choose file name default name (item 1 of argv))",
         "-e",
         "end run",
+        "--",
         name,
       ]
       : ["-e", "POSIX path of (choose file name)"];
@@ -94,8 +129,9 @@ function saveFileCommands(os: Os, suggestedName?: string): DialogCandidate[] {
   if (os === "windows") {
     return [
       psDialog(
-        "$d = New-Object System.Windows.Forms.SaveFileDialog; $d.FileName = $n;",
+        "$d = New-Object System.Windows.Forms.SaveFileDialog; if ($n) { $d.FileName = $n };",
         "$d.FileName",
+        suggestedName ? { [DIALOG_NAME_ENV]: name } : undefined,
       ),
     ];
   }
@@ -138,7 +174,7 @@ async function runDialog(
   name: string,
 ): Promise<string | null> {
   for (const c of candidates) {
-    const { code, stdout } = await run(c.cmd, c.args);
+    const { code, stdout } = c.env ? await run(c.cmd, c.args, c.env) : await run(c.cmd, c.args);
     if (code === null) continue; // program not installed — try the next
     if (code !== 0) return null; // the user cancelled (or the dialog errored)
     const path = stdout.trim();
@@ -151,10 +187,12 @@ async function runDialog(
 async function defaultRun(
   cmd: string,
   args: string[],
+  env?: Record<string, string>,
 ): Promise<{ code: number | null; stdout: string }> {
   let child: Deno.ChildProcess;
   try {
-    child = new Deno.Command(cmd, { args, stdin: "null", stdout: "piped", stderr: "null" }).spawn();
+    child = new Deno.Command(cmd, { args, env, stdin: "null", stdout: "piped", stderr: "null" })
+      .spawn();
   } catch {
     return { code: null, stdout: "" };
   }
@@ -223,7 +261,7 @@ export function dialogsCapability(deps: DialogsDeps): DesktopCapability {
           if (typeof a.data !== "string") {
             throw new DesktopCapError("validation", "data must be a string");
           }
-          const suggested = typeof a.suggestedName === "string" ? a.suggestedName : undefined;
+          const suggested = sanitizeSuggestedName(a.suggestedName);
           const path = await runDialog(saveFileCommands(os, suggested), run, "save-file");
           if (path === null) return null;
           if (a.encoding === "base64") await Deno.writeFile(path, base64ToBytes(a.data));

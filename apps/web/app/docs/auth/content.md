@@ -1464,7 +1464,7 @@ client migration, or electing a single leader tab for a shared connection.
   any TOTP factor and backup codes, bearer tokens, server-side sessions and native app
   sessions — before marking it verified.
 - **Native sessions.** The one-time code is hashed at rest, bound to the registered
-  redirect URI and a PKCE `S256` challenge, lives 60 seconds and gets exactly one try; it is
+  redirect URI and a PKCE `S256` challenge, lives 60 seconds (`codeTtl`) and gets one try; it is
   minted only for a sign-in made after `/native/authorize` began, so a lingering browser
   session can't be handed to whatever app started the flow. Access tokens are HMAC-signed
   under their own MAC domain and re-checked against their session family on every request,

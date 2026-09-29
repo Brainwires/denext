@@ -516,3 +516,40 @@ Deno.test("config: missing platform credentials, bad shapes and non-PKCS#8 keys"
     "not a PEM",
   );
 });
+
+// ---- Hardening: timeouts and shared credentials --------------------------------------------------
+
+/** A fetch that never answers, rejecting only when its signal aborts. */
+function hangingFetch(): typeof globalThis.fetch {
+  return ((_input: string | URL | Request, init?: RequestInit) =>
+    new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+    })) as typeof globalThis.fetch;
+}
+
+Deno.test("hardening: a hung APNs / FCM request times out as a network failure", async () => {
+  const fetch = hangingFetch();
+  const apns = await createPushSender({ apns: APNS, fetch, timeoutMs: 20 }).send(IOS, {
+    body: "b",
+  });
+  assertEquals(apns.ok === false && apns.error, "network");
+  const fcm = await createPushSender({ fcm: { serviceAccount: ACCOUNT }, fetch, timeoutMs: 20 })
+    .send(ANDROID, { title: "x" });
+  assertEquals(fcm.ok === false && fcm.error, "network");
+  assertThrows(() => createPushSender({ apns: APNS, timeoutMs: 0 }), TypeError);
+  assertThrows(() => createPushSender({ apns: APNS, timeoutMs: Infinity }), TypeError);
+});
+
+Deno.test("hardening: concurrent cold sends share one APNs provider token", async () => {
+  const { fetch, calls } = fakeFetch(ok());
+  const push = createPushSender({ apns: APNS, fetch });
+  await Promise.all(Array.from({ length: 5 }, (_, i) => push.send(IOS, { body: `${i}` })));
+  assertEquals(new Set(calls.map((c) => c.headers.authorization)).size, 1);
+});
+
+Deno.test("hardening: concurrent cold sends share one FCM token exchange", async () => {
+  const { fetch, calls } = fcmFetch(fcmOk);
+  const push = createPushSender({ fcm: { serviceAccount: ACCOUNT }, fetch });
+  await Promise.all(Array.from({ length: 5 }, (_, i) => push.send(ANDROID, { title: `${i}` })));
+  assertEquals(calls.filter((c) => c.url.includes("oauth2")).length, 1);
+});

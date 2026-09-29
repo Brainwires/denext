@@ -299,8 +299,9 @@ export function Checkout({ clientSecret }: { clientSecret: string }) {
 
 A payment method that must leave the page (a bank redirect) returns to `return_url`; in the
 shell, make that a universal link or App Link your app handles
-([Deep links](/docs/mobile#deep-links)). denext's strict Content-Security-Policy blocks
-Stripe's script and iframes until you allow them. Add Stripe's hosts to the `csp` opt-ins, app-wide
+([Deep links](/docs/mobile#deep-links)). denext's strict Content-Security-Policy (the App
+Router default; opt-in with `spa.csp` in SPA mode) blocks Stripe's script and iframes until you
+allow them. Add Stripe's hosts to the `csp` opt-ins, app-wide
 in `denext.config.ts` (`spa: { csp: { … } }` in SPA mode) or on the checkout route alone:
 
 ```ts

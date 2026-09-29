@@ -159,6 +159,21 @@ internal design choice with no observable difference lives in
   they move. Documents inside iframes are not covered. React and Next leave scroll writes alone,
   so there a virtualized list's anchoring correction stops an iOS fling dead.
 
+## React Native mode
+
+- **`Platform.OS` is `"web"` in the iOS / Android shells and in Deno Desktop.** react-native-web
+  and libraries pick their DOM code paths by it, so React Native code that branches on `ios` /
+  `android` for behaviour (not for a native module) takes its web path. `Platform.select`
+  still picks the shell's `ios` / `android` key when the spec has no `web` key (and the host
+  OS's `macos` / `windows` / `linux` key in Deno Desktop), and `Platform.constants.denextShell`
+  tells the shells apart. Deliberate: reporting `ios` would send react-native-web and every
+  library down code paths that need a native renderer.
+- **`inverted` lists are a logical reversal, not a `scaleY(-1)` flip.** On `VirtualList`'s
+  FlatList / SectionList / VirtualizedList, FlashList and LegendList adapters the wheel, the
+  keyboard, text selection, copy order and the scrollbar all run the natural way, where
+  react-native-web's flipped list reverses them. A style that relied on the flip (a child
+  counter-transform) is not needed.
+
 ## Security posture — safe defaults
 
 Deliberate **safe defaults** that differ from Next's, each with a one-line

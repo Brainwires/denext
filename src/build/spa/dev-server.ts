@@ -2,7 +2,7 @@
 // HTML shell for every navigation, and live-reload over SSE. No SSR, no route manifest —
 // one bundle (or the unbundled module graph) + a shell + a file watcher.
 
-import { compressOrPassThrough } from "../../server/compress.ts";
+import { compressEncodings, compressOrPassThrough } from "../../server/compress.ts";
 import { displayHost, serveWithPortFallback } from "../../server/serve-utils.ts";
 import { createSpaDevHandler } from "./dev-handler.ts";
 import { createSpaDevState, type SpaDevServerOptions } from "./dev-state.ts";
@@ -16,9 +16,10 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
   const handler = createSpaDevHandler(st);
   // Response compression (config `compress`, default on), as in `denext dev` for the App
   // Router: the reload SSE stream (`text/event-stream`) is never encoded.
-  const serve = options.paths.config?.compress === false
+  const encodings = compressEncodings(options.paths.config?.compress);
+  const serve = encodings.length === 0
     ? handler
-    : async (request: Request) => compressOrPassThrough(request, await handler(request));
+    : async (request: Request) => compressOrPassThrough(request, await handler(request), encodings);
   return serveWithPortFallback(
     {
       port: options.port ?? 3000,

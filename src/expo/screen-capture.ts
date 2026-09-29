@@ -101,7 +101,8 @@ export function usePreventScreenCapture(key: string = DEFAULT_KEY): void {
 /**
  * Hide the app switcher snapshot under a blur (iOS; Android hides the recents thumbnail).
  *
- * @param blurIntensity 0–1: under 0.5 a light blur, else a dark one (default 0.5).
+ * @param blurIntensity 0–1: 0 (or less) no blur, under 0.5 a light blur, else a dark one
+ * (default 0.5).
  * @returns Settles once applied.
  */
 export async function enableAppSwitcherProtectionAsync(blurIntensity = 0.5): Promise<void> {

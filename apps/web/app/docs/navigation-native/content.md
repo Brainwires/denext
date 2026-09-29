@@ -34,9 +34,10 @@ already-rendered output.
 ```tsx
 // app/items/stack.tsx
 "use client";
+import type { VNodeChildren } from "denext";
 import { StackLayout } from "denext/navigation";
 
-export function ItemsStack({ children }: { children: unknown }) {
+export function ItemsStack({ children }: { children: VNodeChildren }) {
   return (
     <StackLayout base="/items" screenOptions={{ headerShown: true }}>
       {children}
@@ -47,9 +48,10 @@ export function ItemsStack({ children }: { children: unknown }) {
 
 ```tsx
 // app/items/layout.tsx
+import type { VNodeChildren } from "denext";
 import { ItemsStack } from "./stack.tsx";
 
-export default function Layout({ children }: { children: unknown }) {
+export default function Layout({ children }: { children: VNodeChildren }) {
   return <ItemsStack>{children}</ItemsStack>;
 }
 ```
@@ -108,14 +110,16 @@ From inside a screen, `useStackNavigation()` gives `push`, `pop(count?)`, `popTo
 import { useEffect } from "denext";
 import { useStackNavigation } from "denext/navigation";
 
-export function EditButton({ name }: { name: string }) {
+export function EditButton({ id, name }: { id: string; name: string }) {
   const nav = useStackNavigation();
   useEffect(() => {
     nav.setOptions({
       title: name,
-      headerRight: <button type="button" onClick={() => nav.push("edit")}>Edit</button>,
+      headerRight: (
+        <button type="button" onClick={() => nav.push(`/items/${id}/edit`)}>Edit</button>
+      ),
     });
-  }, [name]);
+  }, [id, name]);
   return null;
 }
 ```
@@ -203,9 +207,10 @@ current entry, so back goes to `/items/42`, then `/items`. They load when popped
 ```tsx
 // app/(tabs)/tabs.tsx
 "use client";
+import type { VNodeChildren } from "denext";
 import { TabsLayout } from "denext/navigation";
 
-export function AppTabs({ children }: { children: unknown }) {
+export function AppTabs({ children }: { children: VNodeChildren }) {
   return (
     <TabsLayout
       hideTabBarOnKeyboard

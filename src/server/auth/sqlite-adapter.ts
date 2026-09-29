@@ -221,9 +221,20 @@ const SCHEMA: TableSpec[] = [
       ["revoked_at", "INTEGER"],
       ["rotated_at", "INTEGER"],
     ],
-    indexes: [{
-      sql: "CREATE INDEX IF NOT EXISTS auth_native_sessions_user ON auth_native_sessions (user_id)",
-    }],
+    indexes: [
+      {
+        sql:
+          "CREATE INDEX IF NOT EXISTS auth_native_sessions_user ON auth_native_sessions (user_id)",
+      },
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_native_sessions_expiry " +
+          "ON auth_native_sessions (expires_at)",
+      },
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_native_sessions_revoked " +
+          "ON auth_native_sessions (revoked_at)",
+      },
+    ],
   },
 ];
 
@@ -816,6 +827,12 @@ function nativeMethods(
     },
     createNativeSession(session) {
       put(state.db(), "auth_native_sessions", toRow(NATIVE_SESSION_MAP, session));
+      // Families dead for NATIVE_SESSION_RETENTION (expired, or revoked) are reclaimed on
+      // every sign-in, so the table stays bounded. A token of a deleted family is `invalid`,
+      // the same answer a revoked or expired one gets.
+      const cutoff = state.now() - NATIVE_SESSION_RETENTION;
+      state.db().exec("DELETE FROM auth_native_sessions WHERE expires_at <= ?", [cutoff]);
+      state.db().exec("DELETE FROM auth_native_sessions WHERE revoked_at <= ?", [cutoff]);
     },
     getNativeSession(id) {
       const row = one(state.db(), "SELECT * FROM auth_native_sessions WHERE id = ?", [id]);
@@ -852,6 +869,12 @@ function nativeMethods(
     },
   };
 }
+
+/**
+ * How long (seconds) a native session family is kept after it expired or was revoked: 30
+ * days, then the next sign-in deletes it.
+ */
+export const NATIVE_SESSION_RETENTION = 30 * 24 * 60 * 60;
 
 /** The tables keyed by `user_id` that a user's deletion clears. */
 const USER_TABLES = [

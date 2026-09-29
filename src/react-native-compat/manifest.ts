@@ -252,7 +252,10 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
       "allow-scripts. goBack / goForward / stopLoading work on same-origin frames only; " +
       "canGoBack is always false. onShouldStartLoadWithRequest is never called, originWhitelist " +
       "is ignored, source headers / method / body cannot be sent, and sites that forbid framing " +
-      "refuse to load.",
+      "refuse to load. In the native shell the frame lives inside the app's own WebView (not a " +
+      "separate WKWebView as in React Native): iframes can't reach the native bridge from 2.11 " +
+      "(main-frame only), but a framed page still runs in the app's WebView process, so frame " +
+      "only content you trust.",
   },
 
   "react-native-pager-view": {

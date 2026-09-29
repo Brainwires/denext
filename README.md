@@ -164,7 +164,7 @@ app needs from the page — safe areas, the keyboard inset, the back swipe, app 
 opening links in the system browser and over-the-air UI updates — with no `@capacitor/*`
 dependency.
 
-New in 2.11 (on `development`):
+New in 2.11:
 
 - **React Native and Expo apps, unchanged.** `reactNative: true` builds an app's own source
   through react-native-web and replaces its mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`,
@@ -249,10 +249,10 @@ denext JSX toolchain and import map:
     "lib": ["deno.window", "dom", "dom.iterable", "dom.asynciterable"]
   },
   "imports": {
-    "denext": "jsr:@denext/denext@^2.5.0",
-    "denext/jsx-runtime": "jsr:@denext/denext@^2.5.0/jsx-runtime",
-    "denext/server": "jsr:@denext/denext@^2.5.0/server",
-    "denext/client": "jsr:@denext/denext@^2.5.0/client"
+    "denext": "jsr:@denext/denext@^2.11.0",
+    "denext/jsx-runtime": "jsr:@denext/denext@^2.11.0/jsx-runtime",
+    "denext/server": "jsr:@denext/denext@^2.11.0/server",
+    "denext/client": "jsr:@denext/denext@^2.11.0/client"
   }
 }
 ```

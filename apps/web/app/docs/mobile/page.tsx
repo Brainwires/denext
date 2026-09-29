@@ -48,13 +48,17 @@ export default function Mobile() {
         ran there: <a href="#native-views">native views</a> in a{" "}
         <code>VirtualList</code>, the video drawn under the page with AVKit&apos;s controls, a
         vertical swipe on it scrolling the list (<code>scrollPassthrough</code>), and the views kept
-        across a Fast Refresh edit. Built and unit-tested but not yet run on the phone: native
-        modules, native context menus,{" "}
-        <code>SystemIcon</code>, durable storage, font scaling, biometrics, native sign-in, in-app
-        purchases, crash reporting, background tasks and background location, and the bottom
-        safe-area inset. Android is compiled and unit-tested, not run on a device: its halves of
+        across a Fast Refresh edit. The same day an Expo SDK 57 app in{" "}
+        <a href="/docs/react-native">React Native mode</a>{" "}
+        (<code>examples/expo-app</code>) ran there: its tabs, deep links (cold start and running),
+        haptics, alerts and share, AsyncStorage kept across launches (on{" "}
+        <a href="#durable-storage">durable storage</a>), a focused field scrolled above the
+        keyboard, and the top safe-area inset applied after first paint. Built and unit-tested but
+        not yet run on the phone: native modules, native context menus,{" "}
+        <code>SystemIcon</code>, font scaling, biometrics, native sign-in, in-app purchases, crash
+        reporting, background tasks and background location, and the bottom safe-area inset. Android
+        is compiled and unit-tested, not run on a device: its halves of <code>denext/mobile</code>
         {" "}
-        <code>denext/mobile</code>{" "}
         and of the generators have not run on Android at all, and a whole-app comparison ran on an
         emulator only. The details, and every open limit, are in{" "}
         <a href="/docs/limitations">Known limitations</a> (Desktop &amp; mobile) and{" "}
@@ -258,10 +262,10 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
       </p>
       <Code lang="tsx">
         {`"use client";
-import { useRouter } from "denext";
+import { useRouter, type VNodeChildren } from "denext";
 import { isNativeShell, openExternal, useAppResume, useBackSwipe } from "denext/mobile";
 
-export function Shell({ children }: { children: unknown }) {
+export function Shell({ children }: { children: VNodeChildren }) {
   const router = useRouter();
   // Time away decides: under 10 s the connection is likely alive — probe it;
   // 10 s or more, reconnect and refetch. (probe/reconnect are your app's own.)
@@ -279,7 +283,8 @@ export function Shell({ children }: { children: unknown }) {
         <li>
           <code>isNativeShell()</code> / <code>nativePlatform()</code>{" "}
           — whether the page runs in the shell, and which one (<code>"ios"</code>,{" "}
-          <code>"android"</code> or <code>"web"</code>).
+          <code>"android"</code> or <code>"web"</code>). <code>runtimePlatform()</code>{" "}
+          also tells a Deno Desktop window apart (<code>"desktop"</code>).
         </li>
         <li>
           <code>useAppResume(cb)</code> (or <code>onAppResume</code> outside components) — calls
@@ -290,9 +295,11 @@ export function Shell({ children }: { children: unknown }) {
         <li>
           <code>openExternal(url)</code>{" "}
           — opens the in-app browser through Capacitor's native Browser plugin, else{" "}
-          <code>window.open</code> with <code>noopener</code>. Only http(s), <code>mailto:</code>
+          <code>window.open</code> with <code>noopener</code> (in a Deno Desktop window with the
           {" "}
-          and <code>tel:</code> URLs are allowed.
+          <code>shell</code> capability, the OS opens it). Only http(s), <code>mailto:</code> and
+          {" "}
+          <code>tel:</code> URLs are allowed.
         </li>
         <li>
           <code>useBackSwipe(onBack)</code>{" "}
@@ -362,11 +369,12 @@ installMomentumSafeScroll(); // once at startup; a no-op off iOS WebKit`}
       </p>
       <Code lang="tsx">
         {`// app/layout.tsx
+import type { VNodeChildren } from "denext";
 import { SAFE_AREA_CSS } from "denext/mobile";
 
 export const viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
-export default function RootLayout({ children }: { children: unknown }) {
+export default function RootLayout({ children }: { children: VNodeChildren }) {
   return (
     <html>
       <head><style>{SAFE_AREA_CSS}</style></head>
@@ -597,6 +605,18 @@ denext mobile add haptics share network secure-store`}
 plugins: { Keyboard: { resize: "none" } },`}
       </Code>
       <p>
+        While a <code>KeyboardAvoidingView</code> or <code>KeyboardStickyView</code>{" "}
+        is mounted (React Native mode&apos;s <code>KeyboardAvoidingView</code>{" "}
+        too), the focused text field is kept above the keyboard. WebKit scrolls a field into view
+        when it gains focus, before the keyboard is up, so a field near the bottom of an inner
+        scroller could end under the keyboard. The views re-check after every viewport resize,
+        keyboard change and focus, and scroll a covered field up through its scrolling ancestors
+        (innermost first, then the page), leaving a 12 px gap. The scroll is smooth and runs with
+        the keyboard&apos;s own animation; it is instant when the user asked for reduced motion. A
+        field taller than the visible area keeps its top in view. Without one of these views
+        mounted, nothing scrolls on the keyboard&apos;s behalf.
+      </p>
+      <p>
         <strong>Recipe: a chat composer.</strong>{" "}
         The message list fills the screen and scrolls; the composer sits on the keyboard.
       </p>
@@ -652,9 +672,10 @@ export function Chat({ messages }: { messages: { id: string; text: string }[] })
       </p>
       <Code lang="tsx">
         {`"use client";
+import type { VNodeChildren } from "denext";
 import { useBackHandler, useBackProgress } from "denext/mobile";
 
-export function Sheet({ open, onClose, children }: { open: boolean; onClose: () => void; children: unknown }) {
+export function Sheet({ open, onClose, children }: { open: boolean; onClose: () => void; children: VNodeChildren }) {
   useBackHandler(() => (onClose(), true), open); // back closes the sheet first
   const gesture = useBackProgress(); // { progress, edge } while a predictive back is in flight
   const scale = gesture ? 1 - gesture.progress * 0.1 : 1;
@@ -760,6 +781,72 @@ export function Sheet({ open, onClose, children }: { open: boolean; onClose: () 
       </ul>
       <p>
         Both need <code>viewport-fit=cover</code> in the viewport meta.
+      </p>
+
+      <h2 id="pull-to-refresh">Pull to refresh</h2>
+      <p>
+        <code>&lt;PullToRefresh&gt;</code> is a scrolling <code>&lt;div&gt;</code>{" "}
+        with the pull-to-refresh gesture and spinner. Pull down from the top past{" "}
+        <code>threshold</code> (default 64 px) and let go to call <code>onRefresh</code>; set{" "}
+        <code>refreshing</code> to <code>true</code> there and back to <code>false</code>{" "}
+        when the data arrives, as with React Native&apos;s{" "}
+        <code>RefreshControl</code>. It needs no plugin and works the same in a browser. In the
+        native shell, arming the pull plays a light haptic tick.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useState } from "denext";
+import { PullToRefresh } from "denext/mobile";
+
+export function Inbox({ load }: { load: () => Promise<void> }) {
+  const [refreshing, setRefreshing] = useState(false);
+  return (
+    <PullToRefresh
+      refreshing={refreshing}
+      onRefresh={async () => {
+        setRefreshing(true);
+        await load();
+        setRefreshing(false);
+      }}
+      style={{ height: "100dvh" }}
+    >
+      <ul>…</ul>
+    </PullToRefresh>
+  );
+}`}
+      </Code>
+      <ul>
+        <li>
+          The component is the scroll container (<code>overflow-y: auto</code>, with{" "}
+          <code>overscroll-behavior-y: contain</code>{" "}
+          so the browser&apos;s own pull-to-refresh stays out of the way), so give it a height:{" "}
+          <code>100dvh</code> or a flex parent.
+        </li>
+        <li>
+          The gesture reads touch events only. Mouse and keyboard users get no gesture, so give them
+          a refresh button too. It never writes the scroll position and cancels a touch only while
+          it is pulling at the top, so momentum scrolling and rubber-banding elsewhere are
+          untouched.
+        </li>
+        <li>
+          Options: <code>enabled</code>, <code>offset</code>{" "}
+          (where the spinner rests, default 16 px), <code>color</code>, <code>background</code>,
+          {" "}
+          <code>title</code> / <code>titleColor</code> (a line under the spinner) and{" "}
+          <code>label</code> (the accessible name while refreshing, default{" "}
+          <code>"Refreshing"</code>). Any other prop goes to the <code>&lt;div&gt;</code>.
+        </li>
+      </ul>
+      <p>
+        For a list, pass <code>RefreshControl</code>{" "}
+        (the same gesture and spinner, with React Native&apos;s prop names:{" "}
+        <code>progressViewOffset</code>, <code>tintColor</code>, <code>colors</code>, …) to{" "}
+        <code>VirtualList</code>&apos;s <code>refreshControl</code>{" "}
+        prop. The list renders it around its scroller and passes it <code>refreshing</code>,{" "}
+        <code>onRefresh</code> and <code>progressViewOffset</code>{" "}
+        (<a href="/docs/lists#pull-to-refresh">Lists &amp; scrolling</a>). React Native mode&apos;s
+        {" "}
+        <code>RefreshControl</code> is this component.
       </p>
 
       <h2 id="native-views">Native views in the layout</h2>
@@ -1346,7 +1433,8 @@ if (!result.ok && result.error === "invalid-token") await db.devices.delete(devi
           (retried once with a fresh token first), <code>rate-limited</code> (with{" "}
           <code>retryAfter</code>), <code>payload</code>{" "}
           (an APNs payload over 4 KB is refused before sending), <code>server</code>,{" "}
-          <code>network</code>. Both keys must be PKCS#8 PEMs (convert an older one with{" "}
+          <code>network</code>, and <code>rejected</code> for any other refusal (see{" "}
+          <code>reason</code>). Both keys must be PKCS#8 PEMs (convert an older one with{" "}
           <code>openssl pkcs8 -topk8 -nocrypt</code>).
         </li>
       </ul>
@@ -1370,7 +1458,7 @@ if (!result.ok && result.error === "invalid-token") await db.devices.delete(devi
         {" "}
         <code>biometrics</code> and <code>geolocation</code>). On iOS without the plugin it hands
         {" "}
-        <code>app-settings:</code> to the OS; on the web it rejects.
+        <code>app-settings:</code> to the OS; on Android without it, and on the web, it rejects.
       </p>
       <ul>
         <li>
@@ -1393,11 +1481,12 @@ if (!result.ok && result.error === "invalid-token") await db.devices.delete(devi
       </ul>
       <Code lang="tsx">
         {`"use client";
+import type { VNodeChildren } from "denext";
 import { openAppSettings, usePermission } from "denext/mobile";
 
-export function CameraGate({ children }: { children: unknown }) {
+export function CameraGate({ children }: { children: VNodeChildren }) {
   const camera = usePermission("camera");
-  if (camera.status === "granted" || camera.status === "limited") return children;
+  if (camera.status === "granted" || camera.status === "limited") return <>{children}</>;
   return camera.status === "blocked"
     ? <button type="button" onClick={() => openAppSettings()}>Allow the camera in Settings</button>
     : <button type="button" onClick={() => camera.request()}>Allow the camera</button>;
@@ -1407,12 +1496,14 @@ export function CameraGate({ children }: { children: unknown }) {
         A name nothing can answer for rejects with a <code>PermissionError</code>{" "}
         (<code>code: "unsupported"</code>): a plugin that is not installed with no browser API
         behind it (contacts needs a contacts plugin with <code>checkPermissions</code>, such as{" "}
-        <code>@capacitor-community/contacts</code>; calendar{" "}
-        <code>@capacitor/calendar</code>), and for now <code>location-background</code>{" "}
-        (<code>watchPositionInBackground</code>{" "}
-        asks for it itself; see Background location). Biometrics have no separate prompt: iOS asks
-        for Face ID the first time a prompt runs, so its status is <code>granted</code>{" "}
-        when a prompt can run and <code>blocked</code> when the user turned Face ID off for the app.
+        <code>@capacitor-community/contacts</code>; calendar <code>@capacitor/calendar</code>).{" "}
+        <code>location-background</code> is answered by the{" "}
+        <a href="#background-location">background-location</a> plugin: <code>granted</code>{" "}
+        with Always authorization, <code>denied</code>{" "}
+        with When In Use only (request it to ask for the upgrade). Biometrics have no separate
+        prompt: iOS asks for Face ID the first time a prompt runs, so its status is{" "}
+        <code>granted</code> when a prompt can run and <code>blocked</code>{" "}
+        when the user turned Face ID off for the app.
       </p>
 
       <h2 id="local-notifications">Local notifications</h2>
@@ -1674,6 +1765,29 @@ function Price({ amount }: { amount: string }) {
 }`}
       </Code>
 
+      <h3 id="reduced-motion">Reduced motion</h3>
+      <p>
+        <code>useReducedMotion()</code>{" "}
+        returns whether the user asked for reduced motion (iOS Reduce Motion, Android Remove
+        animations, the desktop setting) and re-renders when that changes. It reads{" "}
+        <code>prefers-reduced-motion</code>, which the iOS and Android WebViews report from the OS,
+        so it needs no plugin; it is <code>false</code>{" "}
+        during server rendering. In React Native mode,{" "}
+        <code>AccessibilityInfo.isReduceMotionEnabled()</code>{" "}
+        reads the same query, as does Reanimated&apos;s own <code>useReducedMotion</code>{" "}
+        on the web. denext&apos;s own motion follows it too: the keyboard focus-reveal scrolls at
+        once instead of smoothly.
+      </p>
+      <Code lang="tsx">
+        {`"use client";
+import { useReducedMotion } from "denext/mobile";
+
+export function Banner() {
+  const reduce = useReducedMotion();
+  return <div style={{ transition: reduce ? "none" : "transform 300ms" }} />;
+}`}
+      </Code>
+
       <h2 id="durable-storage">Durable storage</h2>
       <p>
         A WebView&apos;s <code>localStorage</code>{" "}
@@ -1735,9 +1849,11 @@ console.log(await drafts.backend()); // "native" in the shell after denext mobil
         {" "}
         run on this store (see <a href="/docs/react-native#durable-storage">React Native mode</a>).
         {" "}
-        <code>denext mobile doctor</code> warns about app code that keeps data in{" "}
-        <code>localStorage</code> / IndexedDB, and about AsyncStorage, MMKV or{" "}
-        <code>openKeyValueStore</code> in a project without a durable native store.
+        <code>denext mobile doctor --store</code> (and{" "}
+        <code>--release</code>) warns about app code that keeps data in <code>localStorage</code>
+        {" "}
+        / IndexedDB, and about AsyncStorage, MMKV or <code>openKeyValueStore</code>{" "}
+        in a project without a durable native store.
       </p>
 
       <h2 id="in-app-purchases">In-app purchases</h2>
@@ -3051,12 +3167,17 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         <code>denext mobile doctor --release</code>{" "}
         runs the release security profile of the same checks: a debuggable WebView, cleartext and
         mixed content (<code>android.allowMixedContent</code>), <code>allowNavigation *</code>,{" "}
-        <code>android:debuggable</code>, a missing CSP and secrets in the export are errors, and
-        {" "}
-        <code>loggingBehavior: &quot;production&quot;</code> is a warning. Run both after{" "}
-        <code>denext export</code> and <code>npx cap sync</code>{" "}
-        (the CI recipe does). Not checked: whether icons are still Capacitor&apos;s placeholders,
-        and anything about the content itself.
+        <code>android:debuggable</code>, <code>android.useLegacyBridge</code>{" "}
+        (its bridge answers plugin calls from every frame), a missing CSP and secrets in the export
+        are errors, and <code>loggingBehavior: &quot;production&quot;</code>{" "}
+        is a warning. Run both after <code>denext export</code> and <code>npx cap sync</code>{" "}
+        (the CI recipe does). Both profiles also report a{" "}
+        <code>DenextBridgeViewController.swift</code>{" "}
+        written before the main-frame guard: the one every <code>denext mobile add</code>{" "}
+        of a denext native plugin now writes accepts native plugin calls from the page&apos;s main
+        frame only, never from an iframe (Capacitor&apos;s own iOS handler answers every frame). Not
+        checked: whether icons are still Capacitor&apos;s placeholders, and anything about the
+        content itself.
       </p>
 
       <h2 id="crash-reporting">Crash reporting</h2>

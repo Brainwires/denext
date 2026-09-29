@@ -73,6 +73,11 @@ export interface DesktopBridge {
   handle(request: Request, url: URL, token: string): Promise<Response | null>;
   /** Push an event to the page's stream (its `cap` need not be a registered capability's). */
   emit(cap: string, event: string, data: unknown): void;
+  /**
+   * The window started a new top-level page load: run every capability's
+   * {@link DesktopCapability.onPageLoad} so state the previous page owned is released. Never throws.
+   */
+  pageLoaded(): Promise<void>;
   /** The event log (tests). */
   readonly events: DesktopEventLog;
 }
@@ -288,7 +293,11 @@ export function createDesktopBridge(
     if (call instanceof Response) return call;
     // Allowlist: an unknown capability or method is `unavailable` (the page falls back to web).
     const cap = registry.get(call.cap);
-    const method = cap?.methods[call.method];
+    // OWN methods only: `methods` is a plain object, so `constructor` / `__proto__` / `toString`
+    // would otherwise resolve through the prototype and crash as a 500 instead of `unavailable`.
+    const method = cap && Object.hasOwn(cap.methods, call.method)
+      ? cap.methods[call.method]
+      : undefined;
     if (!cap || !method) {
       return fail(404, "unavailable", `capability ${call.cap}.${call.method} is not enabled`);
     }
@@ -316,6 +325,16 @@ export function createDesktopBridge(
     },
     emit: (cap, event, data) => {
       events.append(cap, event, data);
+    },
+    pageLoaded: async () => {
+      for (const cap of registry.values()) {
+        if (!cap.onPageLoad) continue;
+        try {
+          await cap.onPageLoad();
+        } catch (err) {
+          console.error(`desktop: ${cap.name}.onPageLoad failed`, dev ? err : "");
+        }
+      }
     },
     events,
   };

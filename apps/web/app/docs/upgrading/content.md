@@ -26,8 +26,9 @@ links back to the release that introduced it.
 
 ## Upgrading to 2.11
 
-- **Responses are now compressed by default** (gzip or brotli per `Accept-Encoding`, Next.js's
-  `compress`). `denext start` and `denext dev` — App Router and SPA mode — and every
+- **Responses are now compressed by default** (gzip per `Accept-Encoding`, Next.js's
+  `compress`; `compress: { encodings: ["br", "gzip"] }` adds brotli, at about four times the
+  CPU). `denext start` and `denext dev` — App Router and SPA mode — and every
   `createApp()` / `serve()` embedder encode dynamic HTML, JSON, JS, CSS, SVG and XML responses
   of 1 KiB or more, and add `Vary: Accept-Encoding` to them. Set `compress: false` in
   `denext.config.ts` (or pass `compress: false` to `createApp()`) if a proxy or CDN in front
@@ -35,6 +36,10 @@ links back to the release that introduced it.
   re-encoded, and a route opts out with `export const compress = false`. A test that calls a
   `createApp()` handler directly with an `Accept-Encoding` request header now gets an encoded
   body: drop the header or decode it. ([Configuration](/docs/config#production-server))
+- **A compressed response's strong `ETag` becomes weak** (`W/"…"`), since the bytes on the wire
+  are not the handler's; `Content-Length` and `Accept-Ranges` are dropped from it. A client or
+  test that compared the `ETag` byte for byte compares the weak form, or the route opts out
+  with `export const compress = false`. ([Configuration](/docs/config#production-server))
 - **The ISR page cache is keyed per build.** A cached page references its build's hashed client
   chunks, so `denext start` now reads and writes only the entries of the build it runs: every
   deploy starts with a cold page cache (including `force-static` pages) even when the store
@@ -57,6 +62,83 @@ links back to the release that introduced it.
   dependency bundle built on the first page load; if your app relied on a full rebuild per
   edit, set `DENEXT_DEV_UNBUNDLED=0` (or pass `unbundled: false`) for the bundled loop.
   ([React Native](/docs/react-native#fast-refresh))
+- **Components from npm re-render with their parent (compat builds, React Native mode).**
+  `react` and `react/jsx-runtime` imported from inside `node_modules` now resolve to variants
+  whose elements denext skips only when their props object is unchanged (or they are a
+  `memo()`), as React does; your own components keep the implicit shallow-props memo. A library
+  that re-rendered too rarely on 2.10 (a stale screen after a tab press in expo-router's
+  headless tabs) now updates, and a list built on a library's own engine (react-native-web's
+  `FlatList` under `lists: "library"`) does about 10 % more scripting while it scrolls. Wrap a
+  hot library subtree in `memo()` if it now renders more than you want.
+- **`feature()` flags now take their configured value in a denext-native SPA.** A `mode: "spa"`
+  app bundled without npm React read every `feature("KEY")` as `false` in production whatever
+  `features` said. It now folds to the configured value, so a flag left `true` in
+  `denext.config.ts` turns its branch on. Check `features` before you deploy.
+- **A leftover `.denext/css-shims` redirect in your `deno.json` is removed, and `denext doctor`
+  reports one as an error.** A build, export or dev run that was killed outright on 2.10 could
+  leave absolute `file:///…/x.css` import entries in the app's `deno.json`. The next run deletes
+  only those members (comments and formatting are kept, one log line says so); commit the
+  cleaned file. Until then `denext doctor` / `denext mobile doctor` fail on it, which a CI gate
+  will notice. Apps with `nodeModulesDir: "none"` or `"auto"` and no `npm:` imports are no
+  longer patched at all.
+- **Native templates: the composed iOS bridge is generation 5 (OTA, app extensions) and
+  `MainActivity` is generation 2.** The next `denext mobile add` upgrades an unedited earlier
+  file in place (2.10 would have rewritten it and dropped the new registrations). With OTA
+  installed, run `denext mobile add-ota` first, as after any upgrade. The upgrade changes the
+  native layer, so `denext mobile fingerprint` changes too: ship a new binary before you publish
+  a UI stamped with `--native-fingerprint auto` from this version.
+- **React Native mode: `Platform.select` in the iOS / Android shell falls back to `ios` /
+  `android`.** A spec without `web` now picks the shell's own key (then `default`) instead of
+  `default` or `undefined`, as React Native does on the device. `web` still wins everywhere, and
+  a browser or Deno Desktop picks as before. Check specs whose `ios` / `android` values were
+  written for the native app, not the web shell.
+- **React Native mode: `requireNativeModule("X")` no longer throws when the module is absent**
+  (a browser, SSR, a test, a shell without that plugin). It returns a stand-in whose functions
+  throw only when called. Code that detected a missing module with `try` / `catch` around the
+  call must use `requireOptionalNativeModule`, which still returns `null`.
+- **Desktop packaging scripts no longer pass `-A`** in new projects. `denext create --desktop` and
+  `denext migrate --desktop` write `scripts/package-*.ts` that derive `--allow-*` from
+  `desktop.capabilities`. Existing scripts keep `-A` until you run
+  `denext desktop package --regenerate-scripts` (a changed file is backed up to `<name>.bak`).
+  After regenerating, anything the app does outside its enabled capabilities with Deno APIs
+  (its own `Deno.Command`, network beyond loopback, writes outside app support) needs the
+  matching capability or a hand-added flag. ([Desktop apps](/docs/desktop))
+- **Types (`denext/mobile`, `denext`):** `FileDirectory` is now `AppFileDirectory |
+  PickedDirectory` (it adds `{ picked: handle }`), so code that treats it as a string must narrow
+  first. The `SyntheticEvent` type gains `isPersistent()`, so an object literal typed as
+  `SyntheticEvent` needs it (the runtime events now implement `persist()`, `isPersistent()`,
+  `isDefaultPrevented()`, `isPropagationStopped()` and `nativeEvent`). `Key` accepts `bigint`.
+- **Islands-only pages ship no Server Component payload.** A page whose client parts are all
+  `client:*` islands (or resumable) inlines `null` as `#__denext_flight` and boots without a
+  root: its islands, delegated handlers and navigation only. A page that hydrates a root (an
+  undirected client component, or an action / `qrl` / channel prop) is unchanged. Code or a
+  test that read the inlined Server Component tree on such a page now reads `null`.
+  ([Islands](/docs/islands))
+- **Deno Desktop: a `desktop.ts` entry written before 2.11 serves no desktop capability.** It
+  has no `resolveDesktopCapabilities(config, { base: import.meta.url })` spread into
+  `runDesktop`, so every capability answers `unavailable` and the page keeps its web path. Add
+  the spread and enable capabilities with `denext desktop add` (the generated `desktop.ts` does
+  both). After regenerating the package scripts, add the `--allow-*` your own desktop
+  extensions need by hand: their permissions are not derived.
+  ([Desktop apps](/docs/desktop#desktop-capabilities))
+- **React Native mode replaces more of react-native-web by default.** Each is on for an
+  existing `reactNative` app and has a way back:
+  - `FlatList`, `SectionList`, `VirtualizedList`, FlashList and LegendList run on denext's
+    `VirtualList`; `reactNative: { lists: "library" }` restores the libraries' own engines
+    ([Lists](/docs/lists#react-native)).
+  - Popular community packages (React Navigation's native-stack / bottom-tabs / drawer,
+    react-native-safe-area-context, react-native-keychain, AsyncStorage, MMKV and others)
+    resolve to denext implementations; `reactNative: { aliases: { "<package>": false } }`
+    restores one ([Community packages](/docs/react-native#community-packages)).
+  - react-native-web's mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`, `Alert`,
+    `Linking`, …) are shell-backed, and `Linking.openSettings()` opens the app's settings
+    instead of rejecting.
+  - Declarative Reanimated `transform` / `opacity` animations run as Web Animations on the
+    compositor; `globalThis.__DENEXT_REANIMATED_WAAPI = false` keeps Reanimated's own loop
+    ([Animations on the compositor](/docs/react-native#animations-on-the-compositor)).
+  - The default viewport adds `viewport-fit=cover`, so safe-area insets are no longer 0 in the
+    iOS shell: a layout that padded for the notch by hand now pads twice. A viewport the app
+    sets in `spa.head` replaces the default.
 
 ## Upgrading to 2.10
 
@@ -70,7 +152,7 @@ action since 2.9, whichever rc introduced it.
   older template and an embedded public key refuses it with code `signature` (it verifies the v2
   payload). Keep publishing manifests without `--native-fingerprint` (still signed as v2) until
   every installed binary runs the generation-4 template; manifests without it keep working for
-  both. ([2.10.0-rc.3](/docs/changelog#2100-rc3---2026-09-25))
+  both. ([2.10.0-rc.3](/docs/changelog#2100---2026-09-25))
 - **Client-rendered booleanish attributes now match react-dom.** A boolean on `aria-*`,
   `data-*`, `draggable`, `spellCheck`, `contentEditable` (and React 19's other booleanish-string
   props) is written as `"true"` / `"false"`. Before, the client dropped the attribute for
@@ -84,7 +166,7 @@ action since 2.9, whichever rc introduced it.
   (`0.0.0.0` / `::` allow this machine's own addresses), and the SPA dev server now applies
   `allowedDevOrigins` too. `.denext/dev.json` records the bind as given in `hostname` and the
   allowed hosts in a new `devOrigins`; a local tool that read `hostname` as a loopback address
-  should read `origin`. ([2.10.0-rc.3](/docs/changelog#2100-rc3---2026-09-25))
+  should read `origin`. ([2.10.0-rc.3](/docs/changelog#2100---2026-09-25))
 - **`denext mobile dev` edits `ios/App/App/Info.plist` for the session** (App Transport
   Security's `NSAllowsLocalNetworking` and a local-network usage string), which a physical
   iPhone needs to reach the LAN dev server. A changed plist is a native change: rebuild and run
@@ -92,7 +174,7 @@ action since 2.9, whichever rc introduced it.
 - **`reactNative` refuses an explicit `unbundled: true` dev server option.** The resolution
   lives in bundler plugins the per-module loop does not run; drop the option (React Native
   mode already defaulted to the bundled loop).
-  ([2.10.0-rc.3](/docs/changelog#2100-rc3---2026-09-25))
+  ([2.10.0-rc.3](/docs/changelog#2100---2026-09-25))
 - **`denext mobile add` pins exactly when the project does.** When every `@capacitor/*` package
   in `package.json` is an exact version, capability packages are added at the version the
   capability table was verified against, with the package manager's exact flag; a project with

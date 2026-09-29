@@ -1,10 +1,11 @@
 // Response compression for dynamic responses — denext's equivalent of Next.js's `compress`
-// (on by default; `compress: false` in denext.config turns it off).
+// (on by default, gzip; `compress: false` in denext.config turns it off, and
+// `compress: { encodings: ["br", "gzip"] }` adds brotli).
 //
 // `createApp` runs every response it produces through {@link compressResponse}: rendered
 // HTML (buffered or streamed), Flight/JSON soft-navigation payloads, and route-handler
 // bodies of a compressible type. The encoder is the web-standard `CompressionStream`
-// (`"brotli"` → `Content-Encoding: br`, `"gzip"`). Deno's CompressionStream flushes after
+// (`"gzip"`, and `"brotli"` → `Content-Encoding: br` when configured). Deno's CompressionStream flushes after
 // every written chunk, so a streamed Suspense/PPR document stays progressive: each chunk the
 // renderer emits is decodable by the browser as soon as it arrives. Chunks that arrive in
 // the same tick are coalesced first (up to {@link COALESCE_MAX_BYTES}) so a renderer that
@@ -36,21 +37,63 @@ const FORMAT: Record<ContentCoding, string> = { br: "brotli", gzip: "gzip" };
 const NO_BODY_STATUS = new Set([101, 204, 205, 206, 304]);
 
 /**
- * Pick the content coding for an `Accept-Encoding` header: the acceptable coding (`q > 0`)
- * with the highest q-value, brotli winning a tie. `*` covers a coding the header does not
- * name; `x-gzip` is an alias of `gzip`. Null when neither is acceptable (identity is sent).
+ * The codings produced when `compress` is on without `{ encodings }`: gzip only, as Next.js's
+ * `compress`. Brotli (`CompressionStream("brotli")`, with no quality setting in Deno) costs
+ * about four times gzip's CPU per dynamic response for about a tenth fewer bytes.
+ */
+const DEFAULT_ENCODINGS: readonly ContentCoding[] = ["gzip"];
+
+/**
+ * Pick the content coding for an `Accept-Encoding` header: among `encodings` (the server's
+ * preference order, default {@link DEFAULT_ENCODINGS}), the acceptable one (`q > 0`) with the
+ * highest q-value, the earlier listed winning a tie. `*` covers a coding the header does not
+ * name; `x-gzip` is an alias of `gzip`. Null when none is acceptable (identity is sent).
  *
  * @param header The request's `Accept-Encoding`, or null.
+ * @param encodings The codings the server may produce, most preferred first.
  * @returns `"br"`, `"gzip"`, or null.
  */
-export function negotiateEncoding(header: string | null): ContentCoding | null {
+export function negotiateEncoding(
+  header: string | null,
+  encodings: readonly ContentCoding[] = DEFAULT_ENCODINGS,
+): ContentCoding | null {
   if (!header) return null;
   const q = parseAcceptEncoding(header);
   const star = q.get("*");
-  const br = q.get("br") ?? star ?? 0;
-  const gzip = q.get("gzip") ?? q.get("x-gzip") ?? star ?? 0;
-  if (br <= 0 && gzip <= 0) return null;
-  return br >= gzip ? "br" : "gzip";
+  let best: ContentCoding | null = null;
+  let bestQ = 0;
+  for (const coding of encodings) {
+    const value = coding === "gzip"
+      ? q.get("gzip") ?? q.get("x-gzip") ?? star ?? 0
+      : q.get(coding) ?? star ?? 0;
+    if (value > bestQ) {
+      best = coding;
+      bestQ = value;
+    }
+  }
+  return best;
+}
+
+/**
+ * The codings a `compress` setting produces: {@link DEFAULT_ENCODINGS} for `true` / omitted,
+ * the listed ones (unknown names and duplicates dropped) for `{ encodings }`, none for
+ * `false`.
+ *
+ * @param setting The `compress` config value.
+ * @returns The codings, most preferred first.
+ */
+export function compressEncodings(
+  setting: boolean | { encodings?: readonly string[] } | undefined,
+): readonly ContentCoding[] {
+  if (setting === false) return [];
+  if (setting === undefined || setting === true || setting.encodings === undefined) {
+    return DEFAULT_ENCODINGS;
+  }
+  const out: ContentCoding[] = [];
+  for (const name of setting.encodings) {
+    if ((name === "gzip" || name === "br") && !out.includes(name)) out.push(name);
+  }
+  return out;
 }
 
 /** Whether the header forbids the identity coding (`identity;q=0`, or `*;q=0` without it). */
@@ -137,10 +180,16 @@ export interface CompressOptions {
    * {@link COMPRESS_THRESHOLD}.
    */
   threshold?: number;
+  /**
+   * The codings to produce, most preferred first (see {@link negotiateEncoding}). Default
+   * {@link DEFAULT_ENCODINGS} (gzip). Empty: nothing is encoded.
+   */
+  encodings?: readonly ContentCoding[];
 }
 
 /**
- * Compress `response` for `request` when the client accepts brotli or gzip and nothing
+ * Compress `response` for `request` when the client accepts one of `options.encodings` (gzip
+ * by default) and nothing
  * rules it out (see the module header and {@link skipReason}): the body is piped through a
  * `CompressionStream`, `Content-Encoding` is set, `Content-Length` and `Accept-Ranges`
  * are dropped, a strong `ETag` is weakened (the bytes changed), and `Vary: Accept-Encoding`
@@ -150,7 +199,7 @@ export interface CompressOptions {
  *
  * @param request The request the response answers (method + `Accept-Encoding`).
  * @param response The response to encode.
- * @param options Tuning (the size threshold).
+ * @param options Tuning (the size threshold, the codings to produce).
  * @returns The (possibly) compressed response.
  */
 export async function compressResponse(
@@ -158,14 +207,15 @@ export async function compressResponse(
   response: Response,
   options: CompressOptions = {},
 ): Promise<Response> {
-  if (skipReason(request, response) !== null) return response;
+  const encodings = options.encodings ?? DEFAULT_ENCODINGS;
+  if (encodings.length === 0 || skipReason(request, response) !== null) return response;
   const threshold = options.threshold ?? COMPRESS_THRESHOLD;
   const accept = request.headers.get("accept-encoding");
   const mustEncode = identityForbidden(accept);
   const declared = response.headers.get("content-length");
   if (declared !== null && Number(declared) < threshold && !mustEncode) return response;
   // From here the representation depends on Accept-Encoding, compressed or not.
-  const coding = negotiateEncoding(accept);
+  const coding = negotiateEncoding(accept, encodings);
   if (!coding) return withVary(response);
   let body = response.body!;
   if (declared === null && !mustEncode) {
@@ -196,14 +246,16 @@ export async function compressResponse(
  *
  * @param request The request the response answers.
  * @param response The response to encode.
+ * @param encodings The codings to produce, most preferred first (default gzip).
  * @returns The (possibly) compressed response.
  */
 export async function compressOrPassThrough(
   request: Request,
   response: Response,
+  encodings: readonly ContentCoding[] = DEFAULT_ENCODINGS,
 ): Promise<Response> {
   try {
-    return await compressResponse(request, response);
+    return await compressResponse(request, response, { encodings });
   } catch {
     return response;
   }
@@ -273,7 +325,10 @@ async function sniffSmallBody(
   let pending: Promise<ReadableStreamReadResult<Bytes>> = reader.read();
   while (total < threshold) {
     // Never wait on the body: headers go out now, even when the first byte is still coming.
-    const result = await raceTick(pending);
+    // A source that errors is handled like one still pending: the replay stream below re-awaits
+    // `pending` and errors with it, exactly as the identity body would have. (Throwing here
+    // instead would hand the caller back a response whose body this reader has locked.)
+    const result = await raceTick(pending).catch((): typeof TICK => TICK);
     if (result === TICK) break; // more is coming, just not yet: compress the stream
     if (result.done) return { small: concat(head, total) };
     head.push(toBytes(result.value));
@@ -330,9 +385,11 @@ function concat(chunks: Bytes[], total: number): Bytes {
  * Merge chunks that arrive in the same tick into one (flushed on the next macrotask, or at
  * {@link COALESCE_MAX_BYTES}), so the per-chunk flush of the compressor runs once per burst
  * rather than once per tiny renderer write. A chunk after a real wait (a Suspense hole that
- * resolved later) is flushed on its own tick — the stream stays progressive.
+ * resolved later) is flushed on its own tick — the stream stays progressive. Exported for tests.
+ *
+ * @returns The coalescing transform.
  */
-function coalesceChunks(): TransformStream<Bytes, Bytes> {
+export function coalesceChunks(): TransformStream<Bytes, Bytes> {
   let buffered: Bytes[] = [];
   let size = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;

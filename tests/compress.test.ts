@@ -1,13 +1,20 @@
-// Response compression (`compress`, default on — Next.js's `compress`): Accept-Encoding
-// negotiation, every skip rule, streamed bodies staying progressive, and the wiring through
+// Response compression (`compress`, default on, gzip — Next.js's `compress`; brotli only when
+// listed in `{ encodings }`): Accept-Encoding negotiation, every skip rule, streamed bodies staying progressive, and the wiring through
 // createApp (config off, the per-route `export const compress = false`, SSE untouched, an
 // ISR cache hit honouring the opt-out, and the byte win on a large page).
+//
+// The streaming tests make no timing assumptions: they read until the bytes they wait for have
+// arrived (whatever chunking the encoder and the event loop produce under load), and a generous
+// guard only turns a real stall into a failure instead of a hung run.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createApp } from "../src/server/app.ts";
 import {
+  coalesceChunks,
   COMPRESS_THRESHOLD,
+  compressEncodings,
+  compressOrPassThrough,
   compressResponse,
   isCompressibleType,
   negotiateEncoding,
@@ -41,24 +48,75 @@ async function decoded(res: Response): Promise<string> {
   return await new Response(body).text();
 }
 
+/** Fail (instead of hanging) if `promise` has not settled within `ms` — a stall backstop only. */
+async function guard<T>(promise: Promise<T>, what: string, ms = 30_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stall = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`stalled: ${what}`)), ms);
+  });
+  try {
+    return await Promise.race([promise, stall]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Read decoded text until it contains `marker` (however the chunks were split). */
+async function readUntil(
+  reader: ReadableStreamDefaultReader<string>,
+  marker: string,
+): Promise<string> {
+  let text = "";
+  while (!text.includes(marker)) {
+    const r = await guard(reader.read(), `waiting for ${JSON.stringify(marker)}`);
+    if (r.done) throw new Error(`stream ended before ${JSON.stringify(marker)}: ${text}`);
+    text += r.value;
+  }
+  return text;
+}
+
 // ---- negotiation -----------------------------------------------------------
 
-Deno.test("negotiateEncoding: brotli wins a tie, q-values decide, q=0 refuses", () => {
+Deno.test("negotiateEncoding: gzip only by default — a brotli-only client gets identity", () => {
   assertEquals(negotiateEncoding(null), null);
   assertEquals(negotiateEncoding(""), null);
   assertEquals(negotiateEncoding("gzip"), "gzip");
   assertEquals(negotiateEncoding("x-gzip"), "gzip");
-  assertEquals(negotiateEncoding("br"), "br");
-  assertEquals(negotiateEncoding("gzip, deflate, br"), "br");
-  assertEquals(negotiateEncoding("br;q=0.5, gzip;q=0.8"), "gzip");
-  assertEquals(negotiateEncoding("br;q=0, gzip"), "gzip");
-  assertEquals(negotiateEncoding("gzip;q=0, br;q=0"), null);
+  assertEquals(negotiateEncoding("br"), null, "brotli is not produced unless configured");
+  assertEquals(negotiateEncoding("gzip, deflate, br"), "gzip");
+  assertEquals(negotiateEncoding("*"), "gzip");
+  assertEquals(negotiateEncoding("gzip;q=0, br"), null);
   assertEquals(negotiateEncoding("identity"), null);
   assertEquals(negotiateEncoding("deflate"), null);
-  assertEquals(negotiateEncoding("*"), "br");
-  assertEquals(negotiateEncoding("*;q=0.5, br;q=0"), "gzip");
   assertEquals(negotiateEncoding("GZIP ; Q=1"), "gzip");
   assertEquals(negotiateEncoding("gzip;q=bogus"), null);
+});
+
+Deno.test("negotiateEncoding: with brotli listed, q-values decide and the server's order breaks a tie", () => {
+  const both = ["br", "gzip"] as const;
+  assertEquals(negotiateEncoding("br", both), "br");
+  assertEquals(negotiateEncoding("gzip, deflate, br", both), "br", "tie: the first listed");
+  assertEquals(negotiateEncoding("gzip, br", ["gzip", "br"]), "gzip", "tie: the first listed");
+  assertEquals(negotiateEncoding("br;q=0.5, gzip;q=0.8", both), "gzip");
+  assertEquals(negotiateEncoding("br;q=0, gzip", both), "gzip");
+  assertEquals(negotiateEncoding("gzip;q=0, br;q=0", both), null);
+  assertEquals(negotiateEncoding("*", both), "br");
+  assertEquals(negotiateEncoding("*;q=0.5, br;q=0", both), "gzip");
+  assertEquals(negotiateEncoding("gzip", []), null, "no codings: identity");
+});
+
+Deno.test("compressEncodings: true/omitted → gzip; { encodings } as listed; false → none", () => {
+  assertEquals(compressEncodings(undefined), ["gzip"]);
+  assertEquals(compressEncodings(true), ["gzip"]);
+  assertEquals(compressEncodings({}), ["gzip"]);
+  assertEquals(compressEncodings(false), []);
+  assertEquals(compressEncodings({ encodings: ["br", "gzip"] }), ["br", "gzip"]);
+  assertEquals(
+    compressEncodings({ encodings: ["br", "br", "zstd"] }),
+    ["br"],
+    "deduped, unknown dropped",
+  );
+  assertEquals(compressEncodings({ encodings: [] }), []);
 });
 
 Deno.test("isCompressibleType: text/JSON/JS/XML/SVG yes; SSE, media, fonts, archives no", () => {
@@ -112,8 +170,10 @@ Deno.test("compressResponse: gzip — headers rewritten, body round-trips", asyn
   assertEquals(await decoded(res), BIG);
 });
 
-Deno.test("compressResponse: brotli, and an existing Vary is extended not replaced", async () => {
-  const res = await compressResponse(req(), html(BIG, { headers: { vary: "x-denext-nav" } }));
+Deno.test("compressResponse: brotli when listed, and an existing Vary is extended not replaced", async () => {
+  const res = await compressResponse(req(), html(BIG, { headers: { vary: "x-denext-nav" } }), {
+    encodings: ["br", "gzip"],
+  });
   assertEquals(res.headers.get("content-encoding"), "br");
   assertEquals(res.headers.get("vary"), "x-denext-nav, Accept-Encoding");
   assertEquals(await decoded(res), BIG);
@@ -268,58 +328,79 @@ Deno.test("streaming: the first chunk decodes before the source has finished", a
     .pipeThrough(new DecompressionStream("gzip"))
     .pipeThrough(new TextDecoderStream())
     .getReader();
-  const first = await reader.read();
-  assertEquals(first.value, shell, "the shell arrives (decodable) while the hole is pending");
+  // The source holds the tail until `release()`, so reading the whole shell first proves the
+  // stream is progressive, however the encoder or the event loop chunk it.
+  const first = await readUntil(reader, "</main>");
+  assertEquals(first, shell, "the shell arrives (decodable) while the hole is pending");
   release();
   let rest = "";
   for (let r = await reader.read(); !r.done; r = await reader.read()) rest += r.value;
-  assertEquals(first.value + rest, shell + tail, "decompressed output equals the source");
+  assertEquals(first + rest, shell + tail, "decompressed output equals the source");
 });
 
 Deno.test("streaming: same-tick chunks are coalesced into one flush", async () => {
+  // The coalescer itself: 500 chunks written in one go leave as one. (Writes that are queued
+  // together reach the transform in one microtask run, before its macrotask flush can fire.)
+  const coalesce = coalesceChunks();
+  const sizes: number[] = [];
+  const drained = (async () => {
+    for await (const chunk of coalesce.readable) sizes.push(chunk.byteLength);
+  })();
+  const writer = coalesce.writable.getWriter();
+  const rows = Array.from({ length: 500 }, (_, i) => `<li>row ${i}</li>`);
+  const writes = rows.map((row) => writer.write(enc.encode(row) as Uint8Array<ArrayBuffer>));
+  const closed = writer.close();
+  await Promise.all([...writes, closed, drained]);
+  assertEquals(sizes, [enc.encode(rows.join("")).byteLength], "one merged chunk");
+
+  // End to end, the coalesced body decodes to the source.
   const body = new ReadableStream<Uint8Array>({
     start(c) {
-      for (let i = 0; i < 500; i++) c.enqueue(enc.encode(`<li>row ${i}</li>`));
+      for (const row of rows) c.enqueue(enc.encode(row));
       c.close();
     },
   });
   const res = await compressResponse(req({ "accept-encoding": "gzip" }), html(body));
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const expected = Array.from({ length: 500 }, (_, i) => `<li>row ${i}</li>`).join("");
-  const text = await new Response(
-    new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip")),
-  ).text();
-  assertEquals(text, expected);
-  // Baseline: the same chunks written one by one — the compressor flushes after each.
-  const cs = new CompressionStream("gzip");
-  const sink = new Response(cs.readable).arrayBuffer();
-  const writer = cs.writable.getWriter();
-  for (let i = 0; i < 500; i++) await writer.write(enc.encode(`<li>row ${i}</li>`));
-  await writer.close();
-  const perChunk = (await sink).byteLength;
-  assert(
-    bytes.byteLength * 2 < perChunk,
-    `coalesced ${bytes.byteLength} B vs flushed-per-chunk ${perChunk} B`,
-  );
+  assertEquals(await decoded(res), rows.join(""));
 });
 
 Deno.test("streaming: cancelling the compressed body cancels the source", async () => {
-  let cancelled = false;
+  let onCancel!: () => void;
+  const cancelled = new Promise<void>((r) => (onCancel = r));
   const body = new ReadableStream<Uint8Array>({
     start(c) {
       c.enqueue(enc.encode(BIG));
     },
     cancel() {
-      cancelled = true;
+      onCancel();
     },
   });
   const res = await compressResponse(req(), html(body));
   const reader = res.body!.getReader();
   await reader.read();
   await reader.cancel();
-  // The cancel travels back up the pipe chain asynchronously.
-  for (let i = 0; i < 50 && !cancelled; i++) await new Promise((r) => setTimeout(r, 10));
-  assert(cancelled, "the client disconnect reaches the renderer");
+  // The cancel travels back up the pipe chain asynchronously: wait for it to arrive.
+  await guard(cancelled, "the client disconnect reaching the renderer");
+});
+
+Deno.test("streaming: a source that errors at once errors the encoded body (never a locked one)", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    pull(c) {
+      c.error(new Error("render failed"));
+    },
+  });
+  const source = html(body);
+  const res = await compressOrPassThrough(req(), source);
+  // The original's body is locked by the sniff, so handing it back would fail the server write.
+  assert(res !== source, "an encoded response, not the locked original");
+  assertEquals(res.headers.get("content-encoding"), "gzip");
+  let error: unknown;
+  try {
+    await res.arrayBuffer();
+  } catch (err) {
+    error = err;
+  }
+  assert(error !== undefined, "the body errors like the identity body would have");
 });
 
 // ---- through createApp -----------------------------------------------------
@@ -385,7 +466,7 @@ const ListPage = (_p: PageProps): VNode =>
       )),
   );
 
-Deno.test("createApp: a large page is compressed by default (≥ 5× smaller)", async () => {
+Deno.test("createApp: a large page is gzipped by default (≥ 5× smaller); brotli when listed", async () => {
   const app = appWith({ "page.tsx": { default: ListPage } });
   const identity = await app(get("/", null));
   assertEquals(identity.headers.get("content-encoding"), null);
@@ -397,7 +478,17 @@ Deno.test("createApp: a large page is compressed by default (≥ 5× smaller)", 
   const gzBytes = new Uint8Array(await gz.clone().arrayBuffer());
   assertEquals(await decoded(gz), new TextDecoder().decode(plain));
 
-  const br = await app(get("/", "br"));
+  const brOnly = await app(get("/", "br"));
+  assertEquals(brOnly.headers.get("content-encoding"), null, "brotli is off by default");
+  await brOnly.body?.cancel();
+  const both = await app(get("/"));
+  assertEquals(both.headers.get("content-encoding"), "gzip", "gzip for a gzip + br client");
+  await both.body?.cancel();
+
+  const brApp = appWith({ "page.tsx": { default: ListPage } }, {
+    compress: { encodings: ["br", "gzip"] },
+  });
+  const br = await brApp(get("/", "gzip, br"));
   assertEquals(br.headers.get("content-encoding"), "br");
   const brBytes = new Uint8Array(await br.arrayBuffer());
   assert(plain.byteLength > 300_000, `page is large (${plain.byteLength} B)`);
@@ -439,7 +530,7 @@ Deno.test("createApp: `export const compress = false` on the page, a layout, or 
   };
   const app = appWith(routes);
   const on = await app(get("/api/on"));
-  assertEquals(on.headers.get("content-encoding"), "br", "a JSON route handler compresses");
+  assertEquals(on.headers.get("content-encoding"), "gzip", "a JSON route handler compresses");
   assertEquals(JSON.parse(await decoded(on)), { data: BIG });
   const off = await app(get("/api/off"));
   assertEquals(off.headers.get("content-encoding"), null, "route opt-out");
@@ -497,17 +588,16 @@ Deno.test("createApp: a streamed Suspense page stays progressive and decodes to 
     .pipeThrough(new DecompressionStream("gzip"))
     .pipeThrough(new TextDecoderStream())
     .getReader();
-  const first = await reader.read();
-  assertStringIncludes(
-    first.value ?? "",
-    "Loading…",
-    "the shell arrives while the hole is pending",
-  );
-  assert(!(first.value ?? "").includes("streamed!"), "…before the hole resolved");
+  // The hole resolves only after the shell has been read, so reaching the fallback proves the
+  // shell streamed ahead of it, whatever the chunking.
+  const first = await readUntil(reader, "Loading…");
+  assert(!first.includes("streamed!"), "…before the hole resolved");
   b.resolve("streamed!");
   let rest = "";
-  for (let r = await reader.read(); !r.done; r = await reader.read()) rest += r.value;
-  assertEquals(first.value + rest, plain, "decompressed stream equals the uncompressed one");
+  for (let r = await guard(reader.read(), "the rest"); !r.done; r = await reader.read()) {
+    rest += r.value;
+  }
+  assertEquals(first + rest, plain, "decompressed stream equals the uncompressed one");
 });
 
 Deno.test("createApp: an ISR cache hit honours the page's compress opt-out", async () => {
@@ -528,6 +618,6 @@ Deno.test("createApp: an ISR cache hit honours the page's compress opt-out", asy
   await (await cached(get("/"))).text();
   const hit2 = await cached(get("/"));
   assertEquals(hit2.headers.get("x-denext-cache"), "HIT");
-  assertEquals(hit2.headers.get("content-encoding"), "br", "a plain cache hit compresses");
+  assertEquals(hit2.headers.get("content-encoding"), "gzip", "a plain cache hit compresses");
   await hit2.body?.cancel();
 });

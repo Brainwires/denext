@@ -17,8 +17,9 @@ replaces its mocked and browser-only modules with implementations over `denext/m
 the app's lists on `VirtualList` and its stacks and tabs on `denext/navigation`, stamps
 Reanimated's worklets at build time, and resolves the Expo packages and popular community
 libraries to denext implementations. The iOS half of the 2.11 mobile surface ran on an iPhone
-on 2026-09-27, and native views in the page (`NativeViewSlot`) on 2026-09-28. Android has not
-run on a device, and Android scrolling is the one measured gap (gap 5).
+on 2026-09-27, and native views in the page (`NativeViewSlot`) and a migrated Expo SDK 57 app
+in React Native mode ([`examples/expo-app`](./examples/expo-app)) on 2026-09-28. Android has
+not run on a device, and Android scrolling is the one measured gap (gap 5).
 
 **Scope.** Native rendering is out of scope; React Native APIs and apps are supported through
 react-native-web plus denext's overlay ([POLICIES.md](./POLICIES.md#engineering-guardrails)).
@@ -31,11 +32,15 @@ capabilities", "React Native mode & Expo shims").
 
 - **iPhone:** run on a physical iPhone 16e. The 2.10 set ran on 2026-09-25 (iOS 26.x) in
   [`examples/mobile`](./examples/mobile) unless another app is named. The 2.11 set ran on
-  2026-09-27 (iOS 26.6.2) in the example's "denext 2.11" screens: an automatic self-test (27
-  of 27 checks passed) and a manual checklist walked by hand.
+  2026-09-27 (iOS 26.6.2) in the example's "denext 2.11" screens: an automatic self-test (32
+  of 32 checks passed, layout checks included) and a manual checklist walked by hand. React
+  Native mode ran on 2026-09-28 in [`examples/expo-app`](./examples/expo-app) (Expo's SDK 57
+  starter, migrated): its tabs switch, its Lab tab's automatic self-test passed every check,
+  haptics, `Alert` and `Share` work, `AsyncStorage` keeps a value across launches, and deep
+  links route from a cold and a warm start.
 - **Built:** unit- or DOM-tested and compiled (iOS `xcodebuild`, Android Gradle), not run on a
-  device. React Native mode itself is tested by building apps with it and rendering them in
-  headless Chromium.
+  device. Beyond that one app, React Native mode is tested by building apps with it and
+  rendering them in headless Chromium.
 - **Emulator:** Android runs only on an emulator, and only the whole-app T3 comparison (gap 5).
 
 **Android has not run on a device.** Every Android capability claim in this file is "built".
@@ -45,10 +50,13 @@ capabilities", "React Native mode & Expo shims").
 ### React Native mode
 
 Every item below is built and tested (unit, DOM, and app builds rendered in headless Chromium).
-React Native mode has not run on a phone as such; the iPhone run exercised a denext app that
-uses the same implementations the overlay binds (the dialog behind `Alert`, `PullToRefresh`
-behind `RefreshControl`, `VirtualList` behind the lists, `StackView` / `TabsView` behind the
-navigators).
+On the iPhone, React Native mode has run one app, `examples/expo-app` (see "How each item was
+verified" above; its first run found and fixed library elements losing React's re-render
+semantics, deep links not reaching expo-router, the splash waiting for its timeout, a focused
+field left under the keyboard and late safe-area insets). The 2026-09-27 run exercised a
+denext app that uses the same implementations the overlay binds (the dialog behind `Alert`,
+`PullToRefresh` behind `RefreshControl`, `VirtualList` behind the lists, `StackView` /
+`TabsView` behind the navigators). An item below is iPhone-verified only where it says so.
 
 - **Shell-backed React Native APIs.** `Keyboard`, `KeyboardAvoidingView`, `BackHandler`,
   `StatusBar`, `AccessibilityInfo`, `I18nManager`, `Alert`, `RefreshControl`, `Linking`,
@@ -475,7 +483,7 @@ aliases, all 41 swept routes render, and pairing persists across reloads through
      the app's stubs, and all 41 routes render clean.
 2. **`expo-*` API shims**, aliased the way `react` → denext is. **Shipped (2.10.0-rc.3):**
    `denext/expo/*`, one module per package (35 in 2.10.0-rc.3, including `expo` itself: every
-   `expo-*` dependency of T3's `apps/mobile`; 53 manifest entries in 2.11), listed with status
+   `expo-*` dependency of T3's `apps/mobile`; 59 manifest entries in 2.11), listed with status
    and omissions in `src/expo/manifest.ts` (`EXPO_SHIMS`). React Native mode aliases each listed package (and `expo/fetch`) to its shim
    unless `reactNative: { expoShims: false }`; the shims are prebuilt into the shared denext
    runtime, so their hooks share the app's one instance
@@ -496,10 +504,10 @@ aliases, all 41 swept routes render, and pairing persists across reloads through
      `react-native-nitro-*`, T3's `t3-terminal`): can't run in a WebView. Each needs a
      Capacitor-backed shim or a web replacement of the app's own. It's the same boundary Expo
      web has. A TurboModule / Fabric codegen package (and, since 2.11, a
-     `requireNativeComponent` view) loads and fails only when its native module is used. Two
-     kinds still fail earlier: a package whose `main` is Flow source (a parse error at build
-     time) and an Expo module that calls `requireNativeModule` at the top level (it throws at
-     import). 2.11's community-package aliases and Expo shims cover the common ones
+     `requireNativeComponent` view) loads and fails only when its native module is used, and
+     so, since 2.11, does an Expo module that calls `requireNativeModule` at the top level. One
+     kind still fails earlier: a package whose `main` is Flow source (a parse error at build
+     time). 2.11's community-package aliases and Expo shims cover the common ones
      (datetimepicker, linear-gradient, expo-tracking-transparency, expo-maps, `@expo/ui`, …).
 
 **Caveat:** the risk is performance, not feasibility. UI-thread animations, native navigation
@@ -509,8 +517,8 @@ stacks and native lists become DOM equivalents. That's fine on iOS WKWebView; An
 out) is generated from `EXPO_SHIMS` into
 [/docs/react-native#expo-apis](https://denext.dev/docs/react-native#expo-apis)
 (`scripts/gen-expo-shim-docs.ts`; a test fails when it is stale), so it is not repeated here.
-The 2.10.0-rc.3 set was 35 shims for T3's `expo-*` dependencies; 2.11 has 53 manifest entries
-for 43 packages. Each row's native half is only as verified as the capability it wraps (the
+The 2.10.0-rc.3 set was 35 shims for T3's `expo-*` dependencies; 2.11 has 59 manifest entries
+for 48 packages. Each row's native half is only as verified as the capability it wraps (the
 tables above).
 
 **Integration** (T3's `apps/mobile`, `reactNative: true`, measured in headless Chromium): with
@@ -616,8 +624,8 @@ is the resolve mode (above) plus about 18 shims, led by `expo-secure-store`, `ex
    capability-derived packaging permissions).~~ Shipped for 2.11 (built and unit-tested).
    **Still open:** the iPhone items not yet validated (the bottom safe-area inset, biometrics
    with Face ID enrolled, social login, a sandbox purchase, Sentry, background tasks and
-   location, and the round-3 items marked "Built" above); a migrated React Native app on a
-   phone; the scroll-bench numbers in `/docs/lists`.
+   location, and the round-3 items marked "Built" above); a larger migrated React Native app
+   than `examples/expo-app` on a phone (T3 Code's); the scroll-bench numbers in `/docs/lists`.
 6. **Android. Open.** The emulator comparison has run (gap 5): Capacitor starts faster and uses
    less memory, and React Native scrolls smoother. Next: a real device. No Android parity claim
    before that.

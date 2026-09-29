@@ -71,9 +71,16 @@ another app is named. Source:
 - **Lists and navigation:** `VirtualList` lands `scrollToIndex` exactly on a 100,000-row list
   and flings with 0 of 60 frames blank; the stack keeps each screen's state and scroll, and the
   swipe back follows the finger.
-- **The 2.11 capability set:** 32 of 32 automatic self-test checks (layout checks included) passed on 2026-09-27
-  (keyboard, system bars, dialogs, pull-to-refresh, permissions, notifications, geolocation and
-  more; the table in the same file lists what is verified and what is only built).
+- **The 2.11 capability set:** 32 of 32 automatic self-test checks (layout checks included)
+  passed on 2026-09-27 (keyboard, system bars, dialogs, pull-to-refresh, permissions,
+  notifications, geolocation and more; the table in the same file lists what is verified and
+  what is only built).
+- **React Native mode:** on 2026-09-28, Expo's SDK 57 starter migrated with
+  `denext migrate --from expo`
+  ([`examples/expo-app`](https://github.com/Brainwires/denext/tree/main/examples/expo-app)):
+  its expo-router tabs switch, its automatic self-test passes every check, haptics, `Alert` and
+  `Share` work, `AsyncStorage` keeps a value across launches, and deep links route from a cold
+  and a warm start.
 - **Native views in the page:** on 2026-09-28, in
   [`examples/native-views`](https://github.com/Brainwires/denext/tree/main/examples/native-views)
   (maps and a video in a `VirtualList`): an AVPlayer video drawn under the page with AVKit's own
@@ -138,8 +145,9 @@ These are limits of the WebView model itself. denext cannot remove them; the
 - **Your design is iOS 26's native chrome.** Liquid Glass, the native tab bar and large-title
   headers are drawn in CSS by `denext/navigation`, close but not the system's own.
 - **You need a mature, widely known stack.** denext's React Native mode arrived in September 2026
-  (2.10) and has been tested by building apps and rendering them in headless Chromium, not by
-  running a migrated app on a phone. denext runs its own React implementation, has one
+  (2.10). It has been tested by building apps and rendering them in headless Chromium, and on a
+  phone with one small migrated app (Expo's starter, above), not with a large production app.
+  denext runs its own React implementation, has one
   maintainer, and nobody on the job market knows it yet. Expo's hosted services (EAS Build,
   Submit and Update, the push service, Expo Go) have no hosted denext equivalent; denext gives
   you the pieces to run your own (`denext mobile build | submit` on your machine or CI, OTA
@@ -200,6 +208,11 @@ Signed over-the-air updates, app extensions and push shipped in 2.10 and are lis
 **iPhone** (run on a physical iPhone 16e), **built** (unit- or DOM-tested and compiled, not run
 on a device). Android is built only, and has run on an emulator only.
 
+- **React Native mode on the iPhone (iPhone).** A migrated Expo SDK 57 app runs in the
+  Capacitor shell ([above](#verified-on-an-iphone)). Its first run found and fixed four bugs:
+  components from npm now keep React's re-render rule (expo-router/ui's tabs changed the URL
+  but not the screen), deep links reach expo-router, the splash hides once the app has drawn,
+  and a focused field is scrolled above the keyboard.
 - **Native views in the layout (iPhone).** `<NativeViewSlot>` (`denext mobile add
   native-views`, plus `native-map` for MapKit / osmdroid maps) keeps a native view on a box in
   the page. On iOS a map is embedded in the page's scroll view and a video is drawn under the

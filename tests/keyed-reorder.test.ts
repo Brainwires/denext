@@ -7,7 +7,7 @@
 // outside the longest run already in order.
 
 import { assert, assertEquals, assertStrictEquals } from "@std/assert";
-import { h } from "../src/jsx/jsx-runtime.ts";
+import { Fragment, h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, setDocument } from "../src/client/reconciler.ts";
 import { installDuplicateKeyWarning } from "../src/client/fiber/reconcile-children.ts";
 import { useState } from "../src/runtime/hooks.ts";
@@ -244,4 +244,65 @@ Deno.test("keyed: no duplicate-key warning in production", () => {
     console.error = orig;
   }
   assertEquals(errors, []);
+});
+
+/** Two sibling keyed arrays under one parent, rows tagged by list (`A` / `B`). */
+function TwoLists(props: { a: string[]; b: string[] }): VNode {
+  return h(
+    "ul",
+    null,
+    props.a.map((id) => h("li", { key: id }, h(Row, { id: `A${id}` }))),
+    props.b.map((id) => h("li", { key: id }, h(Row, { id: `B${id}` }))),
+  );
+}
+
+Deno.test({
+  name: "keyed: sibling arrays are separate key scopes (the same key in each keeps its own state)",
+  // KNOWN LIMITATION (KNOWN-LIMITATIONS.md, "Keys in sibling arrays"): normalizeChildren
+  // flattens nested arrays and indexOldChildren keys them in one Map, so A's rows match B's
+  // fibers when the keys overlap. React scopes keys per array. Fixing it needs a per-array key
+  // scope on fibers (hydration included); tracked in ROADMAP.md.
+  ignore: true,
+}, () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  mounts = [];
+  const root = createRoot(container as Any);
+  root.render(h(TwoLists, { a: ["1", "2", "3"], b: ["1", "2", "3"] }));
+  root.render(h(TwoLists, { a: ["2", "3"], b: ["1", "2", "3"] }));
+  const ul = container.childNodes[0] as FakeElement;
+  assertEquals(
+    ul.childNodes.map((li) => (li as Any).textContent),
+    ["A2=A2", "A3=A3", "B1=B1", "B2=B2", "B3=B3"],
+    "each row keeps the state it mounted with",
+  );
+});
+
+Deno.test("keyed: the documented workaround — each sibling array in its own keyed Fragment", () => {
+  const Scoped = (props: { a: string[]; b: string[] }): VNode =>
+    h(
+      "ul",
+      null,
+      h(
+        Fragment,
+        { key: "a" },
+        props.a.map((id) => h("li", { key: id }, h(Row, { id: `A${id}` }))),
+      ),
+      h(
+        Fragment,
+        { key: "b" },
+        props.b.map((id) => h("li", { key: id }, h(Row, { id: `B${id}` }))),
+      ),
+    );
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  mounts = [];
+  const root = createRoot(container as Any);
+  root.render(h(Scoped, { a: ["1", "2", "3"], b: ["1", "2", "3"] }));
+  root.render(h(Scoped, { a: ["2", "3"], b: ["1", "2", "3"] }));
+  const ul = container.childNodes[0] as FakeElement;
+  assertEquals(
+    ul.childNodes.map((li) => (li as Any).textContent),
+    ["A2=A2", "A3=A3", "B1=B1", "B2=B2", "B3=B3"],
+  );
 });
