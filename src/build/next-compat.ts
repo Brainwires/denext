@@ -1737,7 +1737,7 @@ function workerStub(url: string): string {
   }, import.meta.url), { type: "module", ...o }); } }`;
 }
 
-function viteAssetPlugin(
+export function viteAssetPlugin(
   assets: AssetOptions,
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
 ): esbuild.Plugin {

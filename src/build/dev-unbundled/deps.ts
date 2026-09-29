@@ -10,6 +10,7 @@ import {
   frameworkPatchPlugins,
   nodeBuiltinStubPlugin,
   prebuildDenextRuntime,
+  viteAssetPlugin,
 } from "../next-compat.ts";
 import {
   buildReactNativeDeps,
@@ -17,7 +18,7 @@ import {
   dependencySignature,
 } from "./react-native.ts";
 import { compatDepUrl, ensureMergedConfig, libraryDepUrl } from "./resolve.ts";
-import { DEP_ENTRYPOINTS, depSlug, type UnbundledState } from "./state.ts";
+import { DEP_ENTRYPOINTS, depSlug, NPM_PREFIX, type UnbundledState } from "./state.ts";
 import { transform } from "./transform.ts";
 
 /** Bundle the native denext `@dep` set once (shared core hoisted into one chunk). */
@@ -104,6 +105,19 @@ async function buildNpmBundle(st: UnbundledState): Promise<void> {
   const entryPoints: Record<string, string> = {};
   for (const s of specs) entryPoints[depSlug(s)] = s;
   await ensureDir(st.npmDir);
+  await npmBuild(st, entryPoints);
+  st.npmBuilt = new Set(specs);
+}
+
+/**
+ * One esbuild pass into the npm dir: the dependency bundle, or a `?worker` module one of its
+ * packages imports. Vite-style asset imports (`x.mp3?url`, `?raw`, `?inline`, `?worker`), which
+ * a workspace package may use as it does in a Vite app, go through the build's own asset plugin
+ * and are served from the npm dir like the chunks.
+ */
+async function npmBuild(st: UnbundledState, entryPoints: Record<string, string>): Promise<void> {
+  const workerBuild = (entryPath: string, outName: string) =>
+    npmBuild(st, { [outName]: entryPath });
   await esbuild.build({
     entryPoints,
     outdir: st.npmDir,
@@ -117,12 +131,12 @@ async function buildNpmBundle(st: UnbundledState): Promise<void> {
     absWorkingDir: st.opts.projectDir,
     logLevel: "silent",
     plugins: [
+      viteAssetPlugin({ publicPath: NPM_PREFIX }, workerBuild),
       runtimeExternalPlugin(st),
       catalogResolverPlugin(st.opts.projectDir, "all", BROWSER_CONDITIONS),
       nodeBuiltinStubPlugin(),
     ],
   });
-  st.npmBuilt = new Set(specs);
 }
 
 /**

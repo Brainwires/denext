@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`spa.proxy` relays compressed backend responses correctly.** Deno's `fetch` decodes a gzip or
+  br body but keeps the upstream `Content-Encoding` and the encoded `Content-Length`, so a proxied
+  response reached the browser as plain bytes labelled `gzip`/`br` and failed ("cannot decode raw
+  data" in WebKit, `ERR_CONTENT_DECODING_FAILED` in Chromium). It broke any app whose backend
+  compresses, in `denext dev`, `denext start` and packaged desktop apps alike. The proxy now lets
+  `fetch` negotiate only the encodings it decodes and drops those headers after decoding; any other
+  encoding is relayed untouched with its headers.
+- **`denext dev`: Vite asset imports (`?url`, `?raw`, `?inline`, `?worker`) inside pre-bundled
+  packages** go through the same asset handling as the production build instead of failing the
+  dependency pre-bundle.
+
 ## [3.0.0] - 2026-09-29
 
 ### Breaking
