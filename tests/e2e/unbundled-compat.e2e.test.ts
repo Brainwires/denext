@@ -55,7 +55,9 @@ async function stepNpmBundle(dev: UnbundledDev, pageCode: string): Promise<void>
   const npmUrl = pageCode.match(/\/_denext\/@npm\/[^"'`?\s]+\.js/)?.[0];
   assert(npmUrl, "page imports an @npm module");
   const code = await serveOk(dev, npmUrl);
-  assertStringIncludes(code, "/_denext/@dep/react.js"); // react shared, not bundled
+  // React shared, not bundled: the runtime's library React (npm code's elements keep React's
+  // re-render semantics), the same instance as the app's.
+  assertStringIncludes(code, "/_denext/@dep/react-lib.js");
   assert(!/function useState\(/.test(code), "no second React bundled into the npm dep");
 }
 

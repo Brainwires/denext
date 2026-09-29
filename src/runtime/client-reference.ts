@@ -13,7 +13,7 @@
 import { isComponentType } from "./react-brands.ts";
 
 /** Symbol under which a client-reference id is stored on a tagged component. */
-export const CLIENT_REF: unique symbol = Symbol.for("denext.clientRef");
+export const CLIENT_REF: unique symbol = /* @__PURE__ */ Symbol.for("denext.clientRef");
 
 /** The identifying info carried by a tagged client-component reference. */
 export interface ClientRefInfo {

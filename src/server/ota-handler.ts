@@ -4,18 +4,46 @@
 // the app's API uses. Node servers implement the same three rules in their own route.
 
 import { contentType } from "@std/media-types";
-import { extname, join, SEPARATOR } from "@std/path";
+import { dirname, extname, join, resolve, SEPARATOR } from "@std/path";
 import {
   isOtaManifest,
   isOtaManifestPath,
   OTA_MANIFEST_PATH,
   type OtaManifest,
 } from "../mobile/ota-manifest.ts";
+import {
+  inOtaRollout,
+  OTA_CHANNEL_HEADER,
+  OTA_CHANNEL_NAME,
+  OTA_INSTALL_ID_HEADER,
+  type OtaChannelsFile,
+  otaChannelsProblem,
+} from "./ota-rollout.ts";
 
 /** Options for {@linkcode createOtaHandler}. */
 export interface OtaHandlerOptions {
-  /** The export directory holding `_denext/ota.json` (e.g. `"out"`). */
-  dir: string;
+  /**
+   * The export directory holding `_denext/ota.json` (e.g. `"out"`). Give exactly one of `dir`
+   * and `channels`.
+   */
+  dir?: string;
+  /**
+   * Serve per-channel releases with staged rollouts instead of one `dir`: the path of a channels
+   * file (`ota-channels.json`, re-read when its mtime changes, release paths relative to it;
+   * `denext ota channel` / `denext ota promote` write it), or the {@linkcode OtaChannelsFile}
+   * itself (release paths relative to the working directory).
+   *
+   * A request follows the channel its `x-denext-ota-channel` header names (absent: the file's
+   * `default`; an unknown or malformed name is not served — it never falls back to another
+   * channel). A channel's `rollout` candidate goes to the share of devices whose
+   * `x-denext-ota-install-id` falls in the rollout bucket (`otaRolloutBucket`); a request without
+   * a valid install id always gets the stable `release`. The manifest and every file of one
+   * request come from the same release, and each release's manifest is served unchanged, so its
+   * signature is verified on the device exactly as with `dir`. The client sends both headers
+   * with `checkForUiUpdate({ channel })` (denext/mobile), on the manifest request and on every
+   * native file download.
+   */
+  channels?: string | OtaChannelsFile;
   /**
    * The URL path the UI is served under, e.g. `"/mobile-ui"` (the client's `baseUrl` is
    * then `https://host/mobile-ui`). Default `""`: the origin root.
@@ -49,6 +77,115 @@ interface Cached {
   paths: Set<string>;
 }
 
+/** One export directory whose `_denext/ota.json` is (re)loaded on demand. */
+interface Release {
+  readonly dir: string;
+  load(): Promise<Cached | null>;
+}
+
+/** A release loader for `dir`: the manifest is re-read when its mtime changes. */
+function releaseAt(dir: string): Release {
+  const manifestFile = join(dir, ...OTA_MANIFEST_PATH.split("/"));
+  let cached: Cached | null = null;
+  return {
+    dir,
+    async load() {
+      let mtime: number;
+      try {
+        mtime = (await Deno.stat(manifestFile)).mtime?.getTime() ?? 0;
+      } catch {
+        return cached = null;
+      }
+      if (cached && cached.mtime === mtime) return cached;
+      try {
+        const manifest: unknown = JSON.parse(await Deno.readTextFile(manifestFile));
+        if (!isOtaManifest(manifest)) return cached = null;
+        return cached = { mtime, manifest, paths: new Set(manifest.files.map((f) => f.path)) };
+      } catch {
+        return cached = null;
+      }
+    },
+  };
+}
+
+/** The release one request is served from, with its loaded manifest. */
+interface Served {
+  readonly release: Release;
+  readonly current: Cached;
+}
+
+/**
+ * Resolves the release for a request: `dir` mode always the one release; channel mode per the
+ * channels file (re-read on mtime change when given as a path).
+ */
+function releaseResolver(options: OtaHandlerOptions): (request: Request) => Promise<Served | null> {
+  const hasDir = typeof options.dir === "string";
+  const hasChannels = options.channels !== undefined;
+  if (hasDir === hasChannels) {
+    throw new TypeError("createOtaHandler: pass exactly one of `dir` and `channels`");
+  }
+  if (hasDir) {
+    const release = releaseAt(options.dir!);
+    return async () => {
+      const current = await release.load();
+      return current ? { release, current } : null;
+    };
+  }
+  const releases = new Map<string, Release>();
+  const releaseFor = (base: string, path: string) => {
+    const dir = resolve(base, path);
+    let release = releases.get(dir);
+    if (!release) releases.set(dir, release = releaseAt(dir));
+    return release;
+  };
+  const channels = options.channels!;
+  let fileCache: { mtime: number; doc: OtaChannelsFile | null } | null = null;
+  const loadChannels = async (): Promise<{ doc: OtaChannelsFile; base: string } | null> => {
+    if (typeof channels !== "string") {
+      return otaChannelsProblem(channels) === null ? { doc: channels, base: Deno.cwd() } : null;
+    }
+    let mtime: number;
+    try {
+      mtime = (await Deno.stat(channels)).mtime?.getTime() ?? 0;
+    } catch {
+      return null;
+    }
+    if (!fileCache || fileCache.mtime !== mtime) {
+      let doc: OtaChannelsFile | null = null;
+      try {
+        const parsed: unknown = JSON.parse(await Deno.readTextFile(channels));
+        if (otaChannelsProblem(parsed) === null) doc = parsed as OtaChannelsFile;
+      } catch {
+        doc = null;
+      }
+      fileCache = { mtime, doc };
+    }
+    return fileCache.doc ? { doc: fileCache.doc, base: dirname(resolve(channels)) } : null;
+  };
+  return async (request) => {
+    const loaded = await loadChannels();
+    if (!loaded) return null;
+    const { doc, base } = loaded;
+    const name = request.headers.get(OTA_CHANNEL_HEADER) ?? doc.default;
+    if (!OTA_CHANNEL_NAME.test(name) || !Object.hasOwn(doc.channels, name)) return null;
+    const channel = doc.channels[name];
+    const stable = releaseFor(base, channel.release);
+    if (channel.rollout) {
+      const candidate = releaseFor(base, channel.rollout.release);
+      const next = await candidate.load();
+      const installId = request.headers.get(OTA_INSTALL_ID_HEADER);
+      if (
+        next &&
+        await inOtaRollout(name, next.manifest.version, installId, channel.rollout.percent)
+      ) {
+        return { release: candidate, current: next };
+      }
+    }
+    const current = await stable.load();
+    return current ? { release: stable, current } : null;
+  };
+}
+
 /** A path segment list that stays inside the directory (no control characters either). */
 function safeSegments(path: string): string[] | null {
   if (!isOtaManifestPath(path) || path.includes("\\")) return null;
@@ -71,6 +208,12 @@ function corsHeaders(request: Request, origins: ReadonlySet<string>): Record<str
   return { "access-control-allow-origin": origin, vary: "Origin" };
 }
 
+/** `headers` with the channel headers added to its `vary` (channel mode only). */
+function withChannelVary(headers: Record<string, string>): Record<string, string> {
+  const channelVary = `${OTA_CHANNEL_HEADER}, ${OTA_INSTALL_ID_HEADER}`;
+  return { ...headers, vary: headers.vary ? `${headers.vary}, ${channelVary}` : channelVary };
+}
+
 /** The `204` answer to an allowed preflight. */
 function preflight(cors: Record<string, string>): Response {
   return new Response(null, {
@@ -78,7 +221,8 @@ function preflight(cors: Record<string, string>): Response {
     headers: {
       ...cors,
       "access-control-allow-methods": "GET, HEAD, OPTIONS",
-      "access-control-allow-headers": "authorization",
+      "access-control-allow-headers":
+        `authorization, ${OTA_CHANNEL_HEADER}, ${OTA_INSTALL_ID_HEADER}`,
       "access-control-max-age": "600",
     },
   });
@@ -99,7 +243,12 @@ function preflight(cors: Record<string, string>): Response {
  * could fetch a new manifest and old files, which then fail their hash check): export into a
  * new directory and point the handler at it, e.g. through a symlink you swap.
  *
- * @param options The export directory, the path it is served under, and CORS.
+ * With `channels` instead of `dir`, each request is served from the release its channel (and,
+ * during a staged rollout, its install id's bucket) selects; the rules above hold per release.
+ *
+ * @param options The export directory (or the channels file), the path it is served under, and
+ *   CORS.
+ * @throws TypeError when neither or both of `dir` and `channels` are given.
  * @returns `(request) => Response | null`: `null` for a request that is not for the UI.
  * @example
  * ```ts
@@ -121,25 +270,8 @@ export function createOtaHandler(
   options: OtaHandlerOptions,
 ): (request: Request) => Promise<Response | null> {
   const base = (options.basePath ?? "").replace(/\/+$/, "");
-  const manifestFile = join(options.dir, ...OTA_MANIFEST_PATH.split("/"));
-  let cached: Cached | null = null;
-
-  async function load(): Promise<Cached | null> {
-    let mtime: number;
-    try {
-      mtime = (await Deno.stat(manifestFile)).mtime?.getTime() ?? 0;
-    } catch {
-      return cached = null;
-    }
-    if (cached && cached.mtime === mtime) return cached;
-    try {
-      const manifest: unknown = JSON.parse(await Deno.readTextFile(manifestFile));
-      if (!isOtaManifest(manifest)) return cached = null;
-      return cached = { mtime, manifest, paths: new Set(manifest.files.map((f) => f.path)) };
-    } catch {
-      return cached = null;
-    }
-  }
+  const resolveRelease = releaseResolver(options);
+  const channelMode = options.channels !== undefined;
 
   const origins = allowedOrigins(options.cors);
 
@@ -163,14 +295,14 @@ export function createOtaHandler(
   }
 
   /** The bytes of the listed file `rel`, or null when it is not listed or leaves the export. */
-  async function readListed(current: Cached, rel: string): Promise<Uint8Array | null> {
+  async function readListed({ release, current }: Served, rel: string) {
     const segments = current.paths.has(rel) ? safeSegments(rel) : null;
     if (!segments) return null;
     try {
       // The real path must stay inside the export: a listed file later swapped for a
       // symlink (or a symlinked parent) cannot reach anything outside it.
-      const real = await Deno.realPath(join(options.dir, ...segments));
-      if (!real.startsWith((await Deno.realPath(options.dir)) + SEPARATOR)) return null;
+      const real = await Deno.realPath(join(release.dir, ...segments));
+      if (!real.startsWith((await Deno.realPath(release.dir)) + SEPARATOR)) return null;
       return await Deno.readFile(real);
     } catch {
       return null;
@@ -180,20 +312,21 @@ export function createOtaHandler(
   return async (request) => {
     const rel = relativePath(request);
     if (rel === null) return null;
-    const cors = corsHeaders(request, origins);
+    const allowed = corsHeaders(request, origins);
     if (request.method === "OPTIONS") {
-      return "access-control-allow-origin" in cors ? preflight(cors) : null;
+      return "access-control-allow-origin" in allowed ? preflight(allowed) : null;
     }
     if (request.method !== "GET" && request.method !== "HEAD") return null;
-    const current = await load();
-    if (!current) return null;
+    const cors = channelMode ? withChannelVary(allowed) : allowed;
+    const served = await resolveRelease(request);
+    if (!served) return null;
     const head = request.method === "HEAD";
     if (rel === OTA_MANIFEST_PATH) {
-      const body = new TextEncoder().encode(JSON.stringify(current.manifest));
+      const body = new TextEncoder().encode(JSON.stringify(served.current.manifest));
       const headers = noStore("application/json; charset=utf-8", body.byteLength, cors);
       return new Response(head ? null : body, { headers });
     }
-    const bytes = await readListed(current, rel);
+    const bytes = await readListed(served, rel);
     if (!bytes) return null;
     const type = contentType(extname(rel)) ?? "application/octet-stream";
     return new Response(head ? null : bytes as Uint8Array<ArrayBuffer>, {

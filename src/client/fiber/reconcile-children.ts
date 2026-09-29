@@ -1,7 +1,7 @@
 // Child reconciliation: keyed and unkeyed diffing of a fiber's new vnodes against
 // its committed children, and cloning a bailed fiber's children.
 
-import { createFiberFromVNode } from "./fiber-utils.ts";
+import { createFiberFromVNode, devHydrationActive } from "./fiber-utils.ts";
 import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { familyMatchActive, normalizeChildren, sameType } from "../vnode-utils.ts";
 import {
@@ -39,21 +39,22 @@ interface OldChildIndex {
 }
 
 /**
- * Index `returnFiber`'s committed children. Matching an unkeyed new child pops the
+ * Index the committed children from `first` on (`firstIndex` is its position among them). Matching an unkeyed new child pops the
  * FIRST unused old child of the SAME type, so inserting or removing a child of one type
  * never strands the reusable same-type siblings that follow it. (A single forward
  * cursor instead CONSUMED candidates on a type mismatch: one front-insert would burn the
  * cursor past every real candidate and remount all trailing siblings — a whole-subtree
  * churn under any list that grows a differently-typed child at the front.)
  */
-function indexOldChildren(returnFiber: Fiber): OldChildIndex {
+function indexOldChildren(first: Fiber | null, firstIndex: number): OldChildIndex {
   const oldChildren: Fiber[] = [];
-  for (let c = returnFiber.child; c !== null; c = c.sibling) oldChildren.push(c);
+  for (let c = first; c !== null; c = c.sibling) oldChildren.push(c);
   const keyed = new Map<unknown, Fiber>();
   const unkeyedByType = new Map<unknown, Fiber[]>();
   const oldIndexOf = new Map<Fiber, number>();
-  oldChildren.forEach((c, i) => {
-    oldIndexOf.set(c, i);
+  for (let i = 0; i < oldChildren.length; i++) {
+    const c = oldChildren[i];
+    oldIndexOf.set(c, firstIndex + i);
     if (c.vnode.key != null) {
       keyed.set(c.vnode.key, c);
     } else {
@@ -61,7 +62,7 @@ function indexOldChildren(returnFiber: Fiber): OldChildIndex {
       if (q === undefined) unkeyedByType.set(c.vnode.type, q = []);
       q.push(c);
     }
-  });
+  }
   return { oldChildren, keyed, unkeyedByType, oldIndexOf };
 }
 
@@ -85,6 +86,40 @@ function claimReusable(match: Fiber | undefined, used: Set<Fiber>, nv: VNode): F
   return match;
 }
 
+/**
+ * Dev only: React's duplicate-key warning. Two siblings with one key cannot both keep their
+ * identity — the second never matches the first's old fiber and remounts on every render.
+ * Installed by the dev entries ({@linkcode installDuplicateKeyWarning}, via `installDevtools`);
+ * a production bundle never references the checker, so the check and its message are
+ * tree-shaken out and the reconciler pays one `?.` per reconcile.
+ */
+let checkKeys: ((children: VNode[]) => void) | null = null;
+
+function warnDuplicateKeys(children: VNode[]): void {
+  if (children.length < 2 || !devHydrationActive()) return;
+  const seen = new Set<unknown>();
+  for (const { key } of children) {
+    if (key == null) continue;
+    if (!seen.has(key)) {
+      seen.add(key);
+      continue;
+    }
+    console.error(
+      `denext: Encountered two children with the same key, \`${String(key)}\`. Keys ` +
+        "should be unique so that components maintain their identity across updates; " +
+        "non-unique keys may cause children to be duplicated, omitted or remounted.",
+    );
+  }
+}
+
+/**
+ * Install (`true`) or remove (`false`) the dev-only duplicate-key warning. Called from the
+ * dev path only (`installDevtools`), so production bundles never contain the check.
+ */
+export function installDuplicateKeyWarning(on = true): void {
+  checkKeys = on ? warnDuplicateKeys : null;
+}
+
 /** What every child fiber inherits from its parent during reconcile. */
 interface ChildLinks {
   host: Fiber | null;
@@ -93,7 +128,13 @@ interface ChildLinks {
   idParentScope: Fiber["idParentScope"];
 }
 
-function linkChildFiber(fiber: Fiber, returnFiber: Fiber, links: ChildLinks): void {
+/** Link `fiber` in after `prev` (as the first child when `prev` is null); returns it. */
+function linkChildFiber(
+  fiber: Fiber,
+  returnFiber: Fiber,
+  links: ChildLinks,
+  prev: Fiber | null,
+): Fiber {
   fiber.return = returnFiber;
   fiber.host = links.host;
   fiber.boundary = links.boundary;
@@ -108,6 +149,9 @@ function linkChildFiber(fiber: Fiber, returnFiber: Fiber, links: ChildLinks): vo
     fiber.listIndex = returnFiber.listIndex;
   }
   fiber.sibling = null;
+  if (prev) prev.sibling = fiber;
+  else returnFiber.child = fiber;
+  return fiber;
 }
 
 /** Queue every committed child no new vnode reused for deletion; true if any. */
@@ -123,30 +167,38 @@ function collectDeletions(returnFiber: Fiber, oldChildren: Fiber[], used: Set<Fi
   return changed;
 }
 
-export function reconcileChildren(
+/**
+ * Whether the old child in the same slot can be reused as-is by `nv` — the lockstep fast
+ * path: equal keys (or both unkeyed) and the same type. For an unkeyed pair this is exactly
+ * what the indexed matcher would pick (every earlier old child is already used, so this one
+ * is the first unused of its type).
+ */
+function sameSlot(old: Fiber, nv: VNode): boolean {
+  const ok = old.vnode.key;
+  if (nv.key != null ? ok !== nv.key : ok != null) return false;
+  return sameType(old.vnode, nv);
+}
+
+/**
+ * Pass 2 (a prepend, insert, removal or move): match the remaining new vnodes against the
+ * remaining old children by key / by type, mount the rest and queue the unused old ones for
+ * deletion; flags `ChildrenChanged` when membership or order changed. `prev` is the last
+ * child pass 1 linked.
+ */
+function reconcileRemaining(
   returnFiber: Fiber,
-  childrenRaw: VNodeChildren,
-  childHost: Fiber | null,
-  childBoundary: Fiber | null,
-  childInherited: Map<symbol, unknown>,
+  links: ChildLinks,
+  newVNodes: VNode[],
+  start: number,
+  oldFiber: Fiber | null,
+  prev: Fiber | null,
 ): void {
-  const newVNodes = normalizeChildren(childrenRaw);
-  const links: ChildLinks = {
-    host: childHost,
-    boundary: childBoundary,
-    inherited: childInherited,
-    // The id scope the children's components slot into: a component parent exposes
-    // its own scope; host/fragment/suspense/… levels pass their enclosing one through.
-    idParentScope: returnFiber.idScope ?? returnFiber.idParentScope,
-  };
-  const index = indexOldChildren(returnFiber);
+  const index = indexOldChildren(oldFiber, start);
   const used = new Set<Fiber>();
   let changed = false;
-  let lastMatchedOldIndex = -1;
-  let firstChild: Fiber | null = null;
-  let prev: Fiber | null = null;
-
-  for (const nv of newVNodes) {
+  let lastMatchedOldIndex = start - 1;
+  for (let j = start; j < newVNodes.length; j++) {
+    const nv = newVNodes[j];
     const match = claimReusable(matchOldChild(nv, index), used, nv);
     let fiber: Fiber;
     if (match !== null) {
@@ -160,15 +212,45 @@ export function reconcileChildren(
       fiber.flags |= Placement;
       changed = true;
     }
-    linkChildFiber(fiber, returnFiber, links);
-    if (prev) prev.sibling = fiber;
-    else firstChild = fiber;
-    prev = fiber;
+    prev = linkChildFiber(fiber, returnFiber, links, prev);
   }
+  if (collectDeletions(returnFiber, index.oldChildren, used) || changed) {
+    returnFiber.flags |= ChildrenChanged;
+  }
+}
 
-  if (collectDeletions(returnFiber, index.oldChildren, used)) changed = true;
-  returnFiber.child = firstChild;
-  if (changed) returnFiber.flags |= ChildrenChanged;
+export function reconcileChildren(
+  returnFiber: Fiber,
+  childrenRaw: VNodeChildren,
+  childHost: Fiber | null,
+  childBoundary: Fiber | null,
+  childInherited: Map<symbol, unknown>,
+): void {
+  const newVNodes = normalizeChildren(childrenRaw);
+  checkKeys?.(newVNodes);
+  const links: ChildLinks = {
+    host: childHost,
+    boundary: childBoundary,
+    inherited: childInherited,
+    // The id scope the children's components slot into: a component parent exposes
+    // its own scope; host/fragment/suspense/… levels pass their enclosing one through.
+    idParentScope: returnFiber.idScope ?? returnFiber.idParentScope,
+  };
+  let oldFiber = returnFiber.child;
+  returnFiber.child = null; // re-linked below, child by child
+  let prev: Fiber | null = null;
+  let j = 0;
+  // Pass 1, lockstep (React's first pass): reuse old children in place while each new vnode
+  // matches the old child in its slot — no maps, no allocation. Covers a re-render of an
+  // unchanged list and an append in O(n) with small constants.
+  for (; j < newVNodes.length && oldFiber !== null && sameSlot(oldFiber, newVNodes[j]); j++) {
+    const next: Fiber | null = oldFiber.sibling;
+    prev = linkChildFiber(createWorkInProgress(oldFiber, newVNodes[j]), returnFiber, links, prev);
+    oldFiber = next;
+  }
+  if (j < newVNodes.length || oldFiber !== null) {
+    reconcileRemaining(returnFiber, links, newVNodes, j, oldFiber, prev);
+  }
 }
 
 /** Clone a bailed-out fiber's current children into fresh work-in-progress. */

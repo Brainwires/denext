@@ -25,9 +25,17 @@
 // block each had at session start (recorded in the backup), then tries `cap copy` anyway.
 
 import { join, resolve } from "@std/path";
-import { commit, objectDeleteEdits, objectSetEdits, unwrap } from "./config-edit.ts";
-import { type Node, parseModule } from "./swc-ast.ts";
-import { CAPACITOR_CONFIGS, type CommandRunner } from "./mobile-capabilities.ts";
+import { commit, objectDeleteEdits } from "./config-edit.ts";
+import { parseModule } from "./swc-ast.ts";
+import type { CommandRunner } from "./mobile-capabilities.ts";
+import {
+  CAPACITOR_CONFIGS,
+  capacitorConfigFile,
+  exportedObject,
+  withCapacitorConfigValue,
+} from "./capacitor-config.ts";
+
+export { capacitorConfigFile } from "./capacitor-config.ts";
 import { withPlistDefault, withPlistDictTrue } from "./mobile-native-config.ts";
 
 /** A dev server `mobile dev` started or attached to. */
@@ -80,74 +88,6 @@ function backupPath(root: string): string {
   return join(root, ".denext", "mobile-dev-backup.json");
 }
 
-/** The Capacitor config file of `root`, in Capacitor's own lookup order. */
-export async function capacitorConfigFile(root: string): Promise<string | null> {
-  for (const name of CAPACITOR_CONFIGS) {
-    try {
-      if ((await Deno.stat(join(root, name))).isFile) return join(root, name);
-    } catch { /* not this one */ }
-  }
-  return null;
-}
-
-/** Top-level `const x = …` / `export const x = …` initialisers, by name. */
-function topLevelBindings(body: Node[]): Map<string, Node> {
-  const out = new Map<string, Node>();
-  for (const item of body) {
-    const decl = item.type === "ExportDeclaration" ? item.declaration : item;
-    if (decl?.type !== "VariableDeclaration") continue;
-    for (const d of decl.declarations ?? []) {
-      if (d.id?.type === "Identifier" && d.init) out.set(d.id.value, d.init);
-    }
-  }
-  return out;
-}
-
-/** The object literal an exported expression is: itself, a `const` it names, or a call's arg. */
-function objectOf(expr: Node, bindings: Map<string, Node>): Node | null {
-  let e = unwrap(expr ?? {});
-  if (e.type === "Identifier") e = unwrap(bindings.get(e.value) ?? {});
-  if (e.type === "CallExpression") e = unwrap(e.arguments?.[0]?.expression ?? {});
-  return e.type === "ObjectExpression" ? e : null;
-}
-
-/** Whether `node` is `module.exports`. */
-function isModuleExports(node: Node): boolean {
-  const n = unwrap(node ?? {});
-  return n.type === "MemberExpression" && n.object?.value === "module" &&
-    n.property?.value === "exports";
-}
-
-/** The exported config object: `export default {…}` / `config` / `defineConfig({…})` / CJS. */
-function exportedObject(body: Node[]): Node | null {
-  const bindings = topLevelBindings(body);
-  for (const item of body) {
-    if (item.type === "ExportDefaultExpression") return objectOf(item.expression, bindings);
-    const assign = item.type === "ExpressionStatement" ? item.expression : null;
-    if (assign?.type === "AssignmentExpression" && isModuleExports(assign.left)) {
-      return objectOf(assign.right, bindings);
-    }
-  }
-  return null;
-}
-
-/** Set one key path in a JS/TS config module's exported object, splicing only that value. */
-async function spliceModule(source: string, path: string[], value: unknown): Promise<string> {
-  const parsed = await parseModule(source);
-  const obj = parsed ? exportedObject(parsed.body) : null;
-  if (!parsed || !obj) {
-    throw new Error(
-      "could not find the exported config object (expected `export default {…}`, " +
-        "`export default config` with `const config = {…}`, or `module.exports = {…}`)",
-    );
-  }
-  const edits = objectSetEdits(parsed.ctx, obj, path, value);
-  if (!edits.ok) throw new Error(`cannot set ${path.join(".")}: ${edits.reason}`);
-  const result = await commit(source, parsed.ctx, edits.edits, "capacitor.config");
-  if (!result.ok) throw new Error(result.reason);
-  return result.source;
-}
-
 /**
  * The config source with `server.url` set to `url` and `server.cleartext` to `true` (Android
  * refuses plain http without it), keeping every other byte for a JS/TS module.
@@ -158,13 +98,47 @@ async function spliceModule(source: string, path: string[], value: unknown): Pro
  * @returns The edited source.
  */
 export async function withDevServerUrl(file: string, source: string, url: string): Promise<string> {
-  if (file.endsWith(".json")) {
-    const config = JSON.parse(source) as { server?: Record<string, unknown> };
-    config.server = { ...config.server, url, cleartext: true };
-    return JSON.stringify(config, null, 2) + "\n";
+  const withUrl = await withCapacitorConfigValue(file, source, ["server", "url"], url);
+  return await withCapacitorConfigValue(file, withUrl, ["server", "cleartext"], true);
+}
+
+/**
+ * The Capacitor key a session turns on in the native config copies: WebView debugging, so
+ * Safari's Web Inspector and `chrome://inspect` attach even to a build configured as a release.
+ * It goes into the copies `cap copy` wrote (what the app reads at runtime), never into
+ * `capacitor.config.*`: the source config stays as committed (and so does the native
+ * fingerprint), and the restore puts the copies back.
+ */
+const DEBUG_KEY = "webContentsDebuggingEnabled";
+
+/** The platform block of each native config copy. */
+const NATIVE_PLATFORM: Readonly<Record<string, "ios" | "android">> = {
+  "ios/App/App/capacitor.config.json": "ios",
+  "android/app/src/main/assets/capacitor.config.json": "android",
+};
+
+/**
+ * Turn WebView debugging on in each native config copy `cap copy` wrote (the platform's own
+ * `webContentsDebuggingEnabled`). Written only when it changes; an unreadable copy is skipped.
+ *
+ * @param root The Capacitor project.
+ * @returns The copies changed (project-relative).
+ */
+export async function enableSessionWebDebugging(root: string): Promise<string[]> {
+  const changed: string[] = [];
+  for (const [rel, platform] of Object.entries(NATIVE_PLATFORM)) {
+    const text = await Deno.readTextFile(join(root, rel)).catch(() => null);
+    const config = text === null ? null : jsonObject(text);
+    if (text === null || config === null) continue;
+    const block = typeof config[platform] === "object" && config[platform] !== null
+      ? config[platform] as Record<string, unknown>
+      : {};
+    if (block[DEBUG_KEY] === true) continue;
+    config[platform] = { ...block, [DEBUG_KEY]: true };
+    await Deno.writeTextFile(join(root, rel), sameLayoutJson(text, config));
+    changed.push(rel);
   }
-  const withUrl = await spliceModule(source, ["server", "url"], url);
-  return await spliceModule(withUrl, ["server", "cleartext"], true);
+  return changed;
 }
 
 /** `value` with every object's keys sorted, recursively (arrays keep their order). */
@@ -335,6 +309,59 @@ function withServer(text: string, server: unknown): string {
 }
 
 /**
+ * The native copy with each platform's `webContentsDebuggingEnabled` put back to what the
+ * backed-up original had (removed when it had none). Without a backup, a copy still pointing at a
+ * dev server (a killed session) loses a `true` flag; any other copy is left alone. Unchanged text
+ * when nothing differs.
+ */
+function withDebugFlags(text: string, original: string | null, devSession: boolean): string {
+  const config = jsonObject(text);
+  const before = original === null ? null : jsonObject(original);
+  if (config === null || (before === null && !devSession)) return text;
+  const changed = ["ios", "android"].filter((p) => restoreDebugFlag(config, p, before));
+  return changed.length === 0 ? text : sameLayoutJson(text, config);
+}
+
+/** `text` parsed as a JSON object, or null. */
+function jsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(text) as unknown;
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `config` serialised with `text`'s indent and trailing newline. */
+function sameLayoutJson(text: string, config: Record<string, unknown>): string {
+  const indent = /\n([ \t]+)"/.exec(text)?.[1] ?? "  ";
+  return JSON.stringify(config, null, indent) + (text.endsWith("\n") ? "\n" : "");
+}
+
+/**
+ * Put `platform`'s debugging flag in `config` back to `before`'s value (removed when absent;
+ * without `before`, only a `true` flag goes). Returns whether it changed.
+ */
+function restoreDebugFlag(
+  config: Record<string, unknown>,
+  platform: string,
+  before: Record<string, unknown> | null,
+): boolean {
+  const block = config[platform];
+  if (typeof block !== "object" || block === null) return false;
+  const flags = block as Record<string, unknown>;
+  if (!(DEBUG_KEY in flags)) return false;
+  const was = (before?.[platform] as Record<string, unknown> | undefined)?.[DEBUG_KEY];
+  if (before === null ? flags[DEBUG_KEY] !== true : flags[DEBUG_KEY] === was) return false;
+  if (was === undefined) delete flags[DEBUG_KEY];
+  else flags[DEBUG_KEY] = was;
+  if (Object.keys(flags).length === 0) delete config[platform];
+  return true;
+}
+
+/**
  * Take the dev server out of the native config copies `cap copy` wrote: each gets back the
  * `server` block its backed-up original had (none: the key goes). A copy with no backup entry
  * (an older backup, or none) loses a `server.url` that is a LAN/loopback `http` origin.
@@ -354,7 +381,11 @@ async function scrubNativeConfigs(root: string, backedUpNative: BackedUpFile[]):
     if (!current) continue;
     const entry = backedUpNative.find((e) => e.file === path);
     const original = entry ? jsonServer(entry.original) : null;
-    const next = withServer(text, original ? original.server : withoutDevServer(current.server));
+    const next = withDebugFlags(
+      withServer(text, original ? original.server : withoutDevServer(current.server)),
+      entry ? entry.original : null,
+      isDevServerUrl((current.server as { url?: unknown } | undefined)?.url),
+    );
     if (next === text) continue;
     await Deno.writeTextFile(path, next);
     written.push(path);
@@ -595,6 +626,8 @@ function nextSteps(server: MobileDevServer, ios: IosSession): string {
       ? "  The URL is loopback: only the iOS simulator (or Android with `adb reverse tcp:PORT " +
         "tcp:PORT`) reaches it. Use --lan for a physical device on your network."
       : "  The device must be on the same network as this machine.",
+    "  WebView debugging is on for the session: Safari → Develop → <device> (iOS), or",
+    "  chrome://inspect (Android); `denext mobile inspect` prints the steps.",
     `  Edits reload on the device. Ctrl-C restores capacitor.config` +
     (ios.plistChanged ? " and Info.plist," : "") + " and runs `cap copy` again.",
     "",
@@ -620,6 +653,7 @@ export async function runMobileDev(options: MobileDevOptions, deps: MobileDevDep
   try {
     const plistChanged = await applyDevSession(root, file, server.url, deps.log);
     await capCopy(deps, root);
+    await enableSessionWebDebugging(root);
     deps.log(nextSteps(server, { project: await xcodeProject(root), plistChanged }));
     const android = await androidCleartextWarning(root, server.url);
     if (android) deps.log(android);

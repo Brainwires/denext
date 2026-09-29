@@ -7,15 +7,17 @@
 > pillars in [MISSION.md](./MISSION.md); the standing engineering guardrails and
 > the security policy in [POLICIES.md](./POLICIES.md).
 >
-> `development` is closing out **2.10** (the version line `deno task bump`
-> rewrites): the Capacitor capability set, app extensions, the native
-> fingerprint, dev-server attach for phones and the Expo / React Native
-> compatibility layer — all in [CHANGELOG.md](./CHANGELOG.md) and
-> [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md). What remains is the
-> next-minor candidates (carried since 2.5), Android native feel and desktop
-> dev attach, the last build-time-purity item, the TanStack Start depth of the
-> router plugins, and the unscheduled candidates. Items target the next minor
-> unless marked otherwise; this file is rewritten each cycle.
+> `development` is building **2.11**: denext as a React Native / Expo
+> replacement (React Native mode's shell-backed overlay, lists on `VirtualList`,
+> `denext/navigation`, the Tier 1 and Tier 2 platform capabilities, store
+> tooling, the app backend) and its desktop twin (the Deno Desktop capability
+> bridge). What shipped is in the `[Unreleased]` section of
+> [CHANGELOG.md](./CHANGELOG.md) and in
+> [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md); what is left for 2.11 final is
+> the "2.11" section below. Beyond it: the next-minor candidates (carried since
+> 2.5), the last build-time-purity item, the TanStack Start depth of the router
+> plugins, and the unscheduled candidates. Items target the next minor unless
+> marked otherwise; this file is rewritten each cycle.
 
 ---
 
@@ -130,6 +132,15 @@ touches the zero-npm **runtime** guardrail; both are build-time.
 
 ## Next-minor candidates (carried since 2.5)
 
+**Reconciler:**
+
+- **A key scope per child array.** Sibling arrays under one parent share one key map today
+  (`normalizeChildren` flattens them, `indexOldChildren` keys the flat list), so overlapping
+  keys swap rows' state (KNOWN-LIMITATIONS: "Keys in sibling arrays share one scope"). Give each
+  nested array its own scope on the fiber, as React does, including hydration. The dev
+  duplicate-key warning should then only fire within one array. Un-`ignore` the test
+  "keyed: sibling arrays are separate key scopes" in `tests/keyed-reorder.test.ts`.
+
 **Auth:**
 
 - **Passkeys / WebAuthn** over the adapter's credential tables.
@@ -214,28 +225,50 @@ fenced block against the template would keep them that way).
   would not have to change. Committing to an agent-driveable write surface is a
   3.0 decision, not a 2.6 one.
 
-## Mobile (Capacitor) parity
+## 2.11: React Native / Expo replacement
 
-What a React Native / Expo app gets that `denext/mobile` + a Capacitor shell still
-lacks — measured against T3 Code's React Native app. The full comparison (what is
-already covered, what official Capacitor plugins cover) is
-[REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md); rendering stays WebView (see
-[POLICIES.md](./POLICIES.md#engineering-guardrails)).
+Measured against React Native's core exports, the Expo SDK 57 packages, the most-used
+third-party libraries and T3 Code's React Native app; rendering stays WebView (native rendering
+is out of scope, React Native APIs and apps are not: see
+[POLICIES.md](./POLICIES.md#engineering-guardrails)). The full status, including which items
+ran on an iPhone, is [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md).
 
-Shipped in the 2.10 line (see CHANGELOG): push notifications, deep links, auth
-sessions, the `denext mobile add <capability>` pattern (haptics, clipboard, share,
-filesystem, device, network, splash, camera / pickers, barcode, quick actions, secure
-storage, keep-awake, SQLite), app extensions (share extension, widgets, Live Activities),
-the native fingerprint + CI recipe, dev-server attach for phones AND desktop
-(`denext desktop dev`), and the Expo / React Native compatibility layer (`reactNative` mode,
-`denext/expo/*`, `migrate --from expo`), `showContextMenu`, the React Native surface-parity gate,
-and for Deno Desktop the OAuth loopback sheet and a signed UI self-updater. Still open:
+**Open for 2.11 final:**
 
-- **Android "native feel"** — the emulator comparison has run (2026-09-25, see
-  REACT-NATIVE-EXPO.md gap 5). Against the RN app, T3's Capacitor build starts in under half the
-  time and uses less memory, but misses vsync on 67–70% of fling frames against 25–28% for RN.
-  Next step: a real device. If the scroll gap holds there, profile the WebView list. The Android
-  capability halves are still built and unit-tested only.
+- **Deno Desktop, the rest of the plan:** the app menu, the navigation guard, single instance,
+  tray, global shortcuts, launch at login; runtime capabilities for context menus (needs an
+  upstream dismiss event), the clipboard and notifications (scheduling, click routing); a
+  Windows `secureStore` backend; real-window runs of the capabilities on each OS.
+- **iPhone items not yet validated:** the bottom safe-area inset and the example's button-row
+  layout (fixes in progress), biometrics with Face ID enrolled, native social login, a sandbox
+  purchase, Sentry, background tasks and background location, and the round-3 items built but
+  not run on the phone (native modules, context menus, `<SystemIcon>`, font scale, the maps /
+  video / symbols wiring of the Expo and community packages).
+- **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
+- **Android on a real device.** The emulator comparison (2026-09-25, REACT-NATIVE-EXPO.md gap 5)
+  has Capacitor starting in under half the time and using less memory, but missing vsync on
+  67–70% of fling frames against 25–28% for React Native. Every Android capability half is built
+  and unit-tested only. Hardware is the blocker (a device farm is an option); no Android parity
+  claim before a device run, then profile the WebView list if the gap holds.
+
+**Later (after 2.11):**
+
+- Focus management on navigation (move focus to the new screen), and bold text / grayscale
+  from the OS.
+- The remaining backable Expo shims: `expo-battery`, `expo-sms`, `expo-intent-launcher`,
+  `expo-video-thumbnails`, `expo-localization`, `expo-mesh-gradient`.
+- `denext migrate --from expo` advice for the native-only SDKs apps use most
+  (`@react-native-firebase/*`, `react-native-iap`, `@stripe/stripe-react-native`), pointing at
+  the [native SDK recipes](https://denext.dev/docs/native-sdk-recipes).
+- Background audio with lock-screen controls, multi-select / video image picking, file transfer
+  with progress, a notification service extension and badges, SQLite encryption and a
+  PowerSync recipe.
+- `denext profile --android` over remote CDP.
+- A Skia (CanvasKit) recipe; Tamagui / Unistyles verification.
+- The parity ledger's React Native gaps: the `*Base` / `*Component` aliases, the missing
+  members (`UIManager.dispatchViewManagerCommand` / `getViewManagerConfig`,
+  `AppRegistry.registerHeadlessTask` and others), and the lists' `renderScrollComponent`,
+  `automaticallyAdjustKeyboardInsets` and LegendList `snapToIndices` props.
 
 ## Candidate features (from the framework-gap survey)
 
@@ -244,26 +277,8 @@ Vetted gaps vs Next/Nuxt/Astro/SvelteKit/TanStack (the three picks that shipped
 CHANGELOG/FEATURES). The rest are kept here so they aren't lost; not yet
 scheduled.
 
-- **Dev server attach for desktop apps (the Metro model).** ~~A packaged desktop
-  window should be able to attach to `denext dev` and get HMR, the way a React
-  Native app attaches to Metro.~~ **Shipped** (see CHANGELOG). The phone half
-  shipped first (`allowedDevOrigins`, `denext dev --lan`, an explicit `--host`
-  allowing what it binds, and `denext mobile dev` for Capacitor live reload);
-  the desktop half is now `denext desktop dev`:
-  - **`denext desktop dev`** — a window whose runtime reverse-proxies EVERYTHING
-    (HTTP + HMR) over loopback to the dev server (reusing
-    `src/build/dev-proxy.ts`), so `location.origin` stays loopback and neither
-    the CSP nor the origin gate has to be relaxed. Proxy mode is reachable only
-    through the dev-only `DENEXT_DESKTOP_DEV_URL` env seam this verb sets; the
-    token-gated `/_denext/desktop/*` endpoints are never proxied; the per-launch
-    token is stripped before proxying; the target is loopback-only unless `--lan`;
-    and an attached dev server is left running on exit.
-  - **The dev-vs-release packaging permission split** is resolved by the proxy
-    design: the window needs net to the loopback dev port only, exactly what a
-    packaged build's baked `--allow-net=127.0.0.1,localhost` already grants, so
-    `denext desktop dev` widens no permission over a packaged build.
-  - Optional (still open): a spike on `deno desktop --inspect-renderer` (CDP into
-    the window, which `src/profile/browser.ts` already knows how to drive).
+- **A `deno desktop --inspect-renderer` spike** for `denext desktop dev`: CDP into the window,
+  which `src/profile/browser.ts` already knows how to drive.
 - **Deploy adapter API + presets** (the larger, separate bet — Nitro / Next 16
   Adapters): a typed build manifest (routes, prerenders, assets, cache rules) +
   a pluggable adapter seam with first-party presets. Achievable targets for a

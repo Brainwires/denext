@@ -5,6 +5,9 @@ node_modules/
 .denext/
 out/
 
+# `denext mobile build` artifacts (.apk / .aab / .ipa and their .json sidecars)
+dist/
+
 # Xcode / Gradle build output (ios/.gitignore and android/.gitignore cover the rest,
 # including the web assets `cap sync` copies into the native projects)
 ios/App/build/

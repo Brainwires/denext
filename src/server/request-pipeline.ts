@@ -37,6 +37,7 @@ import {
 } from "./pipeline-state.ts";
 import { htmlHeaders, notFound } from "./response-headers.ts";
 import { servePage } from "./page-response.ts";
+import { isPreflight, preflightResponse, routeCorsPolicy } from "./cors.ts";
 
 /**
  * Path canonicalization (before config rules, middleware, and routing): collapse runs
@@ -325,6 +326,7 @@ async function dispatchApi(
   const { config } = state.app;
   const apiRes = await handleApi(api, state.request, config.load, {
     maxBodyBytes: config.apiMaxBodyBytes,
+    cors: state.app.cors,
     onError: (err) =>
       reportRequestError(config, err, state.request, state.pathname, { routeType: "route" }),
   });
@@ -427,13 +429,38 @@ function subRequestNotFound(pathname: string): Response {
   );
 }
 
+/**
+ * A CORS preflight for an API route is answered here — before middleware — under the route's
+ * effective policy (its `export const cors`, else the app's `cors`). A preflight carries no
+ * credentials, so an auth guard in `middleware.ts` would otherwise refuse it and the browser
+ * would never send the real, authenticated request. Nothing covers the route → `null`, and the
+ * request continues as before (a route's own `OPTIONS` export, or a 405).
+ */
+async function answerApiPreflight(state: RequestState): Promise<Response | null> {
+  if (!isPreflight(state.request)) return null;
+  if (state.request.headers.get(BATCH_ITEM_HEADER) === "1") return null;
+  const manifest = await state.app.config.getManifest();
+  const locale = resolveLocale(state);
+  const api = matchApi(manifest, locale ? locale.rest : state.pathname);
+  if (!api) return null;
+  const mod = await state.app.config.load(api.route.filePath);
+  const policy = routeCorsPolicy(state.app.cors ?? null, mod);
+  return policy ? finalize(state, preflightResponse(state.request, policy)) : null;
+}
+
 /** The routing stages, in order; each either produces the response or hands on. */
 async function dispatch(state: RequestState): Promise<Response> {
+  // Universal link / App Link association files: iOS and Android refuse a redirected answer,
+  // so they are served before basePath, trailingSlash, redirects and middleware.
+  const association = state.app.appLinks?.(state.request);
+  if (association) return association;
   const redirected = canonicalizePath(state) ?? applyRedirectRules(state);
   if (redirected) return redirected;
   // Next's order: headers → redirects → MIDDLEWARE → rewrites → filesystem. Middleware
   // matchers must see the URL the client asked for, not a config rewrite's destination.
   applyHeaderRules(state);
+  const preflight = await answerApiPreflight(state);
+  if (preflight) return preflight;
   const fromMiddleware = await runMiddleware(state);
   if (fromMiddleware) return fromMiddleware;
   applyRewriteRules(state);

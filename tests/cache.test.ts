@@ -13,6 +13,7 @@ import {
   PageCache,
   pageCacheExpiry,
   pageCacheTiming,
+  pageStoreKey,
   revalidatePath,
   revalidateTag,
   safeKey,
@@ -483,7 +484,7 @@ Deno.test("app ISR: a stale entry is served immediately and regenerated in the b
   });
 
   // Seed a STALE cached entry (staleAt in the past, no hard expiry).
-  await store.setPage("/cached", staleEntry("/cached"));
+  await store.setPage(pageStoreKey("/cached"), staleEntry("/cached"));
 
   // The stale render is served immediately (STALE), and a background regen starts.
   const r1 = await app(new Request("http://localhost/cached"));
@@ -494,7 +495,7 @@ Deno.test("app ISR: a stale entry is served immediately and regenerated in the b
   // the store, not just the render counter — the store write trails the render).
   for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 10));
-    const probe = await store.getPage("/cached");
+    const probe = await store.getPage(pageStoreKey("/cached"));
     if (probe && probe.staleAt != null && probe.staleAt > Date.now()) break;
   }
   assertEquals(renders, 1, "background regeneration rendered the page once");
@@ -556,7 +557,7 @@ Deno.test({
     requestTimeout: 60,
   });
 
-  const seedStale = () => store.setPage("/h2", staleEntry("/h2"));
+  const seedStale = () => store.setPage(pageStoreKey("/h2"), staleEntry("/h2"));
 
   await seedStale();
   // Request 1: served STALE immediately; spawns regen #1 (which hangs).
@@ -634,7 +635,7 @@ Deno.test("app ISR: a failed background regen backs the key off (5 s, doubling),
   console.error = () => {};
   /** A stale hit: served STALE now; whether it ALSO triggers a regen is what's under test. */
   const hit = async (key = "/bo") => {
-    await store.setPage(key, staleEntry(key)); // a failed regen never wrote; keep it stale
+    await store.setPage(pageStoreKey(key), staleEntry(key)); // a failed regen never wrote; keep it stale
     const res = await app(new Request(`http://localhost${key}`));
     assertEquals(res.headers.get("x-denext-cache"), "STALE");
     await res.text();
@@ -666,7 +667,7 @@ Deno.test("app ISR: a failed background regen backs the key off (5 s, doubling),
     await hit();
     await settle(3); // 11 s: regen #3 runs and succeeds → the key's backoff is cleared
     for (let i = 0; i < 100; i++) {
-      const probe = await store.getPage("/bo");
+      const probe = await store.getPage(pageStoreKey("/bo"));
       if (probe && probe.staleAt != null && probe.staleAt > Date.now()) break;
       await new Promise((r) => setTimeout(r, 5));
     }

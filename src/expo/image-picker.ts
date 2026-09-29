@@ -22,6 +22,7 @@ import { bytesToBase64 } from "../mobile/base64.ts";
 import { type PickedImage, pickImage } from "../mobile/pickers.ts";
 import {
   createPermissionHook,
+  measureImage,
   type PermissionExpiration,
   type PermissionHookOptions,
   type PermissionResponse,
@@ -125,25 +126,13 @@ export interface ImagePickerErrorResult {
   exception?: string;
 }
 
-/** The pixel size of the image at `url`, or zeros when it cannot be loaded here. */
-function measure(url: string): Promise<{ width: number; height: number }> {
-  const ImageCtor = (globalThis as { Image?: new () => HTMLImageElement }).Image;
-  if (!ImageCtor) return Promise.resolve({ width: 0, height: 0 });
-  return new Promise((resolve) => {
-    const img = new ImageCtor();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => resolve({ width: 0, height: 0 });
-    img.src = url;
-  });
-}
-
 /** A `denext/mobile` picture as an Expo asset. */
 async function toAsset(picked: PickedImage, base64: boolean): Promise<ImagePickerAsset> {
   const uri = picked.webPath ?? picked.dataUrl ?? "";
   const mimeType = `image/${picked.format === "jpg" ? "jpeg" : picked.format}`;
   const asset: ImagePickerAsset = {
     uri,
-    ...(await measure(uri)),
+    ...(await measureImage(uri)),
     type: "image",
     fileName: `image.${picked.format}`,
     mimeType,

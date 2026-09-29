@@ -1,5 +1,6 @@
 // Per-generation client assets: the app CSS (import-map shims + per-route stylesheets)
-// and the build-transform redirect maps (auto-memo compiler, qrl handler extraction),
+// and the build-transform redirect maps (auto-memo compiler, qrl handler extraction, Fast
+// Refresh registrations),
 // merged into the client bundle's import map.
 
 import { reactCompilerEnabled } from "../../server/config.ts";
@@ -7,6 +8,7 @@ import { type AppCss, buildAppCss } from "../css.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { collectComponentSources, compileModules } from "../compiler.ts";
 import { compileQrlModules } from "../qrl-transform.ts";
+import { compileRefreshModules } from "../refresh-modules.ts";
 import { routeEntryFiles } from "../module-graph.ts";
 import type { DevState } from "./state.ts";
 
@@ -54,9 +56,24 @@ export async function getTransformMaps(st: DevState): Promise<Record<string, str
   return { ...st.compilerMap, ...st.qrlMap };
 }
 
-/** The merged client-bundle import map (CSS + compiler + qrl redirects). */
+/**
+ * Fast Refresh families for every component of the bundled client, over the compiler + qrl
+ * output (the bundled entries register only the route-structural components and the
+ * client-reference exports). Rebuilt per generation; the unbundled loop registers per module.
+ */
+async function getRefreshMap(st: DevState): Promise<Record<string, string>> {
+  if (st.refreshGen !== st.generation) {
+    const prior = await getTransformMaps(st);
+    const sources = await collectComponentSources(st.paths.projectDir);
+    st.refreshMap = await compileRefreshModules(sources, prior, { outDir: st.paths.outDir });
+    st.refreshGen = st.generation;
+  }
+  return st.refreshMap;
+}
+
+/** The merged client-bundle import map (CSS + compiler + qrl + Fast Refresh redirects). */
 export async function bundleImportMap(st: DevState): Promise<Record<string, string> | undefined> {
   const css = await getCss(st);
-  const merged = { ...css?.importMap, ...await getTransformMaps(st) };
+  const merged = { ...css?.importMap, ...await getRefreshMap(st) };
   return Object.keys(merged).length > 0 ? merged : undefined;
 }

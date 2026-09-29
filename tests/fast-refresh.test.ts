@@ -27,6 +27,7 @@ import { parsePattern } from "../src/router/segments.ts";
 import type { PageRoute } from "../src/router/manifest.ts";
 import type { BoundaryManifest } from "../src/build/module-graph.ts";
 import { makeDom } from "./helpers/dom.ts";
+import { devFamily, installDevFamilies } from "../src/client/dev-family.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -351,4 +352,48 @@ Deno.test("sameFamily: only same-id registrations match", () => {
   assertEquals(sameFamily(A1, A2), true);
   assertEquals(sameFamily(A1, B), false);
   assertEquals(sameFamily(A1, () => null), false); // unregistered
+});
+
+Deno.test("framework families (devFamily): a re-evaluated framework component matches its old copy", () => {
+  const g = globalThis as {
+    __denextDev?: boolean;
+    __denextRegisterFamily?: unknown;
+    __denextPendingFamilies?: unknown;
+    document?: unknown;
+  };
+  const saved = {
+    dev: g.__denextDev,
+    reg: g.__denextRegisterFamily,
+    pending: g.__denextPendingFamilies,
+    doc: g.document,
+  };
+  try {
+    // Off a dev browser nothing is queued or registered, and the component comes back as is.
+    g.__denextRegisterFamily = undefined;
+    g.__denextPendingFamilies = undefined;
+    g.__denextDev = undefined;
+    const Prod = () => null;
+    assertEquals(devFamily(Prod, "test:fw#Prod"), Prod);
+    assertEquals(g.__denextPendingFamilies, undefined);
+    // A dev page: a copy evaluated before the registrar is installed is queued, then drained.
+    g.__denextDev = true;
+    g.document = {};
+    const Old = devFamily(() => null, "test:fw#List");
+    assert(Array.isArray(g.__denextPendingFamilies));
+    installDevFamilies(registerFamily);
+    assertEquals(g.__denextPendingFamilies, undefined, "the queue is drained");
+    // The bundle is re-evaluated: its fresh copy registers directly, into the same family.
+    const Fresh = devFamily(() => null, "test:fw#List");
+    assert(sameFamily(Old, Fresh), "the fresh copy reconciles onto the old one");
+    assert(!sameFamily(Old, devFamily(() => null, "test:fw#Other")));
+  } finally {
+    const restore = (k: keyof typeof g, v: unknown) => {
+      if (v === undefined) delete g[k];
+      else (g as Record<string, unknown>)[k] = v;
+    };
+    restore("__denextDev", saved.dev);
+    restore("__denextRegisterFamily", saved.reg);
+    restore("__denextPendingFamilies", saved.pending);
+    restore("document", saved.doc);
+  }
 });

@@ -28,6 +28,37 @@ next-compat interop path — denext's own apps are unaffected):
   correctly, just not off-thread. A one-time dev warning fires. Self-host
   Partytown if you need true off-main-thread execution.
 
+- **Keys in sibling arrays share one scope.** React scopes keys per array, so two
+  arrays rendered side by side under one parent may reuse the same keys. denext flattens
+  nested child arrays and matches keys across the whole list, so overlapping keys in sibling
+  arrays can match the wrong row: a row may take another row's component state, DOM node and
+  uncontrolled input value. The dev duplicate-key warning also fires for this pattern, although
+  it is valid React. Minimal repro:
+
+  ```tsx
+  <ul>
+    {a.map((id) => <Row key={id} />)}
+    {b.map((id) => <Row key={id} />)}
+  </ul>;
+  // a = b = ["1", "2", "3"], then a = ["2", "3"]:
+  // A2 and A3 reuse B2's and B3's fibers (their state is swapped)
+  ```
+
+  Keys within one array, and arrays whose keys don't overlap, are unaffected. Until it is fixed
+  (see the roadmap), prefix the keys per array (`key={`a:${id}`}`) or wrap each array in its
+  own keyed `<Fragment>`. Tracked by an `ignore`d test in `tests/keyed-reorder.test.ts`.
+
+- **A root layout's `<html>`/`<body>` rendered by CLIENT code is re-created on hydration.**
+  denext owns the real document tags and nests a layout's `<html>`/`<head>`/`<body>` inside
+  its page container, where the browser's parser drops them. A Server Component layout is
+  handled: the server's Flight tree leaves the three tags out, so hydration adopts the
+  server DOM, and their attributes (`lang`, `dir`, `className`…) are moved onto the real
+  tags. When the layout is rendered in the browser instead — a `"use client"` root layout, or
+  a route without a client boundary that re-renders its whole tree from its own bundle — the
+  client tree still contains the tags, hydration mismatches at `<html>`, and the page DOM is
+  re-created once (silently in production). Keep the root layout a Server Component, or
+  render only the in-body chrome and let denext supply the document tags.
+
 - **`global-error.tsx` hydration is not wired on the next-compat / static-export paths.**
   global-error replaces the root layout and renders its own document, which now hydrates on the
   native `denext build` and `denext dev` paths, so `reset` and any author interactivity work
@@ -320,7 +351,7 @@ four documented bounds of the opt-in:
   `pages.afterSignIn`) with `?error=invalid_token`; a bad magic link or code goes to
   `pages.error` (else `pages.signIn`) with `?error=Verification`. Set `pages.error` to land
   both in one place.
-- **Two presets carry provider constraints**: Apple is `openid`-only (name and email require
+- **Two presets carry provider constraints**: the web `apple()` provider is `openid`-only (name and email require
   `response_mode=form_post`, a cross-site POST callback that would arrive without the
   `SameSite=Lax` transaction cookie, so the router does not serve it — tracked in
   [ROADMAP.md](./ROADMAP.md)), and `microsoftEntra`
@@ -329,6 +360,21 @@ four documented bounds of the opt-in:
 - **A session issued before 2.5.0-rc.3 has no `authTime`.** Enrolling a factor (the route or
   `enrollTotp()`) and minting an API token both need a recent sign-in, so such a session is
   asked to sign in again.
+- **Native session mode (`native`) has edges of its own.** A user with a second factor can't
+  use a native Apple / Google `id_token` sign-in (`403 mfa_required`; the browser flow runs
+  the step-up). Two concurrent refreshes with one refresh token revoke the family (the loser
+  reads as a replay) unless `native.refreshReuseInterval` sets a grace window —
+  `nativeSession()` is single-flight, a hand-rolled client must be too.
+  A custom-scheme redirect URI can be registered by another app; PKCE stops it redeeming an
+  intercepted code, a claimed `https://` URI stops it receiving one. See
+  [App backend](https://denext.dev/docs/app-backend#limitations).
+- **Deleting an account can't end stateless cookie sessions on other devices**, and Apple
+  token revocation needs the client-secret JWT (`native.apple.clientSecret`, minted from your
+  `.p8` key by you); without it deletion proceeds and reports `appleRevoked: false`.
+- **The `cors` config covers route handlers and the native auth endpoints only** — not pages,
+  Server Actions, the `/_denext/api-batch` endpoint or Live. The native auth endpoints answer
+  their preflights after `middleware.ts`, so a middleware guard must let `OPTIONS` under
+  `/auth` through.
 
 ### Project UI (`denext ui`)
 
@@ -371,9 +417,10 @@ four documented bounds of the opt-in:
   in; a device reaching the dev server by any other name (a second NIC's address, a DNS name
   you did not list) still gets a dead page. `--lan` binds only the LAN address, so
   `http://localhost` does not answer while it is on. Wildcard entries are not supported.
-- **Desktop dev attach is not supported yet.** A packaged `denext desktop` window cannot load
-  `denext dev` (tracked in [ROADMAP.md](./ROADMAP.md) as `denext desktop dev`); `denext desktop
-  run` serves a static export over loopback. The Capacitor half works (`denext mobile dev`).
+- **`denext desktop dev` runs the window under the `deno` CLI only.** A packaged app ignores
+  `DENEXT_DESKTOP_DEV_URL`, the target must be a loopback `http:` URL unless `--lan` opts in, and
+  with `--lan` the per-launch desktop token is not injected, so token-gated desktop features
+  (`openAuthSession`'s loopback sheet, the updater boot beacon) are refused in that mode.
 - **`denext mobile dev` edits `capacitor.config.*` (and, for iOS, `ios/App/App/Info.plist`)
   for the session.** Both are restored on every exit path Deno can observe; a `SIGKILL` or power
   loss leaves the edits and a backup in `.denext/`, restored by the next `mobile dev` or
@@ -386,10 +433,15 @@ four documented bounds of the opt-in:
   refuse the dev server's plain `http`; `mobile dev` warns, and the fix is a
   `<domain-config cleartextTrafficPermitted="true">` for the dev host (or an `https` dev
   server). The Android half of `mobile dev` has not been run on a device.
-- **Android is compiled, not device-tested.** Every Android half of `denext/mobile` and the
-  `denext mobile add` generators is unit-tested and builds with Gradle, but none has run on an
-  Android device or emulator yet (the iOS halves were run on an iPhone; see
-  [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md)).
+- **Android is compiled, not device-tested.** Every Android half of `denext/mobile`, the
+  `denext mobile add` generators and React Native mode's shell-backed APIs is unit-tested and
+  builds with Gradle, but none has run on an Android device (the iOS halves were run on an
+  iPhone; see [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md) for exactly which). Android-only
+  features (the back button and predictive back, process-death restore, `ToastAndroid`'s system
+  toast, in-app updates) have not run anywhere. Android performance is measured on an emulator
+  only: a whole-app comparison (T3 Code's Capacitor build against its React Native build, gap 5
+  there) found Capacitor starting faster and using less memory, and React Native scrolling a
+  long list more smoothly. There are no real-device Android numbers yet.
 - **Android push needs `google-services.json`.** `@capacitor/push-notifications` registers with
   FCM through Firebase, so without `android/app/google-services.json` (from your Firebase
   project) registration fails; `denext mobile add push` only warns that it is missing. There is
@@ -402,8 +454,10 @@ four documented bounds of the opt-in:
 - **Live Activities are iOS only.** `startLiveActivity` and the other Live Activity functions
   reject with code `unsupported` on Android and the web; push-to-start tokens need iOS 17.2+ and
   resolve `null` below it.
-- **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell and
-  a plain IndexedDB database in a browser or Deno Desktop window.
+- **`secureStore` is not secret on the web.** It uses the Keychain / Keystore in the shell, the
+  OS keychain in a Deno Desktop window with the `secure-store` capability (`denext desktop add
+  secure-store`; macOS and Linux only, see below), and a plain IndexedDB database in a browser
+  (or a desktop window without that capability, where it is also wiped on relaunch).
 - **Passkeys (WebAuthn) do not run in the iOS Capacitor WebView.** The page's origin is
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
   `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's
@@ -415,9 +469,15 @@ four documented bounds of the opt-in:
 - **The Deno Desktop self-updater replaces the UI, not the app.** `denext/desktop/updater`
   verifies and overlays a signed UI export in the app-support directory; the executable and
   the runtime are updated only by shipping a new build. Every manifest must be signed.
-- **`showContextMenu` is an in-page menu.** denext ships no native context-menu plugin: the
-  menu is an accessible popover in the WebView unless the app registers its own
-  `DenextContextMenu` Capacitor plugin.
+- **Native context menus need `denext mobile add context-menu`, and iOS's lifted preview needs
+  a bound element.** Without the plugin the menu is an accessible popover in the WebView. With
+  it, the long-press menu with the lifted preview is `useContextMenu` / `attachContextMenu` (the
+  system `UIContextMenuInteraction`, armed per press); `showContextMenu(items, { x, y })` from
+  code has no element to lift, so iOS presents its `UIMenu` through the edit-menu presentation
+  (iOS 16+; an action sheet on iOS 15). Android's `PopupMenu` lists submenus as labelled groups
+  and draws no icons or menu title. A Deno Desktop window shows the in-page popover: the
+  desktop runtime has no context-menu capability (a native menu needs a dismiss event Deno
+  Desktop does not emit yet).
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
@@ -463,6 +523,95 @@ four documented bounds of the opt-in:
   only the entry that applies now; `LiveActivityFactory.start` returns before ActivityKit has an
   id (`getId()` is `""` until then); a start URL, stale dates and widget interaction events are
   not supported.
+- **JavaScript does not run in the page in the background.** The OS suspends the WebView when
+  the app leaves the foreground: timers stop, and WebSockets and Live subscriptions drop and
+  reconnect on resume. `defineBackgroundTask` runs in Capacitor's Background Runner, a separate
+  runtime with no DOM and no app state (about 30 s on iOS, scheduled by the OS). There is no
+  background audio or lock-screen media control yet.
+- **A silent (data) push reaches your JavaScript only while the app is running.** iOS throttles
+  background pushes and does not wake the WebView for them; update a widget or Live Activity
+  with a push-to-start or Live Activity push instead.
+- **No native UI on watches, in cars or in App Clips.** watchOS / Wear OS UIs are native
+  (SwiftUI / Compose), CarPlay and Android Auto take template UIs only, and an App Clip has a
+  tight size budget; denext renders in a WebView.
+- **Certificate pinning does not cover the WebView's own `fetch` / XHR.** Neither WKWebView nor
+  Android WebView exposes a pinning hook for page requests; pinning plugins pin only requests
+  sent through `CapacitorHttp`.
+- **Service workers do not run on iOS's `capacitor://` origin.** Cache API data for offline use
+  in SQLite or Preferences, unless the app is served from `https` with `WKAppBoundDomains`.
+- **JavaScript-driven motion runs at 60 Hz on ProMotion iPhones.** WKWebView caps
+  `requestAnimationFrame` at 60 Hz on 120 Hz displays
+  ([WebKit bug 294338](https://bugs.webkit.org/show_bug.cgi?id=294338)); CSS and Web Animations
+  and native scrolling run at the display's rate. Anything JavaScript moves frame by frame (a
+  gesture-driven drag, Reanimated worklets, rows mounting during a fast fling) updates at half
+  the rate React Native reaches there. Unlocking it needs a private WebKit setting, an App
+  Review risk denext does not take. denext's smoothness checks ran on a 60 Hz iPhone 16e;
+  nothing has been measured on a 120 Hz display.
+- **Android WebView versions vary.** The WebView is a separately updated system app, so the
+  engine is whatever the device has: current on Play-updated phones, older on devices without
+  Play updates (some OEM, China-market and enterprise builds). Web features and bugs follow the
+  device's version (for example, `env(safe-area-inset-*)` is wrong below WebView 140;
+  `useSafeAreaInsets` reads the shell's insets instead). Only an emulator with WebView 124 has
+  been measured.
+- **Interactive keyboard dismissal is limited.** The swipe-down dismiss that tracks the keyboard
+  (iMessage-style) is at best available to the WebView's outer scroller; inner scroll
+  containers cannot drive it.
+- **Screen readers follow the WebView's DOM accessibility tree.** `denext/navigation`'s stacks,
+  tabs and React Native mode's navigators announce a screen change through an `aria-live`
+  region, but focus is not moved to the new screen (a screen reader keeps its place in the
+  page), plain App Router navigations outside them are not announced, and WKWebView may move
+  VoiceOver focus to the top of the page on a full load. Whether VoiceOver / TalkBack is on, and
+  the OS text size (Dynamic Type, Android's font scale), reach the page only through `denext
+  mobile add accessibility`; the text size applies to a page only through `applyFontScale()`
+  (or React Native mode's `Text`), and on Android `allowFontScaling={false}` cannot undo the
+  WebView's own text zoom.
+- **WebView storage is evictable; durable storage needs `denext mobile add storage`.** iOS and
+  Android may clear a WebView's `localStorage` and IndexedDB under storage pressure.
+  `openKeyValueStore` (and React Native mode's AsyncStorage / MMKV) write to the app's data folder
+  only with the `DenextStorage` plugin (or an installed `@capacitor-community/sqlite`); without
+  either they fall back to IndexedDB and warn. `denext mobile doctor` flags app code that keeps
+  data in web storage itself. The store is not encrypted (secrets go in `secureStore`), and on
+  Android a single value above about 2 MB cannot be read back (SQLite's cursor window), as with
+  React Native's AsyncStorage. The iOS plugin has run on an iPhone (AsyncStorage data kept
+  across launches in `examples/expo-app`); the Android one is compiled, not run on a device.
+- **No install attribution or deferred deep links.** Firebase Dynamic Links shut down on
+  2025-08-25; use an attribution SDK (Branch, AppsFlyer, Adjust).
+- **An OTA update cannot change what the app is.** Apple allows over-the-air updates to
+  interpreted code that keep the app's purpose (DPLA 3.3.1(B), guideline 2.5.2); new native
+  capabilities, permissions or payment flows need a store build. The `minNative` and fingerprint
+  gates enforce the native half, not the policy half.
+- **No hosted services.** There is no Expo Go-style prebuilt client, no hosted push service, no
+  hosted build or submit service and no hosted OTA CDN: denext provides the pieces
+  (`createPushSender`, the CI recipe, `createOtaHandler`) for your own infrastructure.
+- **An export is minified, not obfuscated, and client-side jailbreak or root detection is
+  advisory.** Anything in `out/` can be read from the app package; keep secrets and
+  authorization on the server.
+- **Enterprise MDM (managed app configuration) is not wrapped.** Use a community plugin.
+- **`NativeViewSlot` tracks some layout changes a frame late.** On iOS a scroll is followed
+  natively in the same frame (the plugin observes the WebKit scroll view the slot scrolls with).
+  On Android only the document's scroll is: a slot inside a scrolling element (a `VirtualList`)
+  is moved from the page's per-frame measurement and trails it by a frame or two during a
+  fling. Everywhere, a change that is not a scroll (a CSS transform or animation on an
+  ancestor, a resize, content inserted above) reaches `"under"` / `"over"` views a frame late,
+  or within 250 ms when no event announces it. A transformed ancestor is followed only as the
+  rect it produces (a rotation or skew is drawn as its bounding box). A clip other than an
+  `overflow` / `contain: paint` box (`clip-path`, a rounded `border-radius` corner, `mask`) is
+  not applied. An `"over"` view hides whole while page content covers any part of it (occlusion
+  is sampled at five points, so a cover smaller than the gaps between them is missed).
+  `"under"` needs every ancestor transparent over the slot. `"embed"` (iOS) depends on WebKit
+  backing the slot's `overflow: scroll` element with a native scroll view (as
+  `@capacitor/google-maps` does); if it does not within 2 s the view falls back to `"over"`.
+  UIKit controls inside an `"embed"` view (buttons, sliders) do not complete a tap there, since
+  the touch belongs to WebKit's scroll view: gesture-driven views (a map's pan, pinch and markers)
+  work, which is why the built-in `video` is drawn `"under"` by default. Give your own view type
+  with controls `placement="under"` (or `"over"`). An `"over"` view near the edge of a scrolling
+  list can flicker on iOS: the page's occlusion samples intermittently report it covered there
+  (the cause is not yet known), and an `"over"` view hides while covered; `"under"` does not hide
+  on occlusion (the page paints over it), so it is the placement to use.
+  A slot a virtualized list unmounts destroys its view (a map loses its position; a video
+  restarts). A drag that starts on an `"under"` / `"over"` view scrolls the page only on iOS
+  (`scrollPassthrough`); on Android every touch on the view stays the view's. Android is
+  compiled, not run on a device or emulator.
 
 - **Run the JSR CLI with `--node-modules-dir=none` inside a Node workspace.** In a folder under a
   `package.json`, Deno resolves `npm:` imports from `node_modules` (its manual mode), so
@@ -472,12 +621,135 @@ four documented bounds of the opt-in:
   intercept either (both happen while Deno loads the module graph), so pass
   `--node-modules-dir=none` (or `--no-config`) there.
 
+### Deno Desktop capabilities (`denext desktop add`, `denext/desktop/client`)
+
+- **Browser storage does not survive a relaunch of a Deno Desktop app.** The runtime binds a new
+  loopback port each launch (denoland/deno#35444), so the page's origin changes and
+  `localStorage`, IndexedDB, OPFS and the Cache API start empty. `secureStore`, the file
+  functions and `openSqlite` persist only with their desktop capability enabled (`secure-store`,
+  `fs`, `sqlite`); without it they fall back to browser storage and warn once.
+- **`context-menu`, `clipboard` and `notifications` are WebView-backed on desktop.** The desktop
+  runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store` and
+  your extensions; these three have no runtime capability, so `showContextMenu` is the in-page
+  popover, the clipboard is the WebView's `navigator.clipboard`, and notifications are the
+  WebView's Notification API (below). denext ships no app menu, tray, single-instance lock,
+  global shortcut or launch-at-login API (an extension can reach Deno's `BrowserWindow`).
+- **The desktop capabilities are unit-tested, not window-tested.** Each runtime capability is
+  tested against the bridge contract, with its OS commands through an injected runner. A real
+  `deno desktop` build with the derived flags launched and served its bundle on macOS; the
+  capabilities themselves, and the Linux and Windows backends (libsecret, zenity / kdialog,
+  PowerShell dialogs, `SetThreadExecutionState`), have no recorded run in a real window.
+- **Read and env stay broad in a packaged app.** The package scripts derive `--allow-*` from
+  `desktop.capabilities` instead of `-A`, but the baseline keeps `--allow-read` and
+  `--allow-env` unscoped (the served bundle and the per-user app-support folder are only known
+  at run time), and any capability that writes adds an unscoped `--allow-write`; the runtime
+  capabilities confine file access. An extension's own permissions are not derived: add its
+  `--allow-*` to the script by hand.
+- **The bridge token is readable by any script in the page.** The per-launch token lives in the
+  top-level document (never in frames), so script injected into the page (an XSS) can use every
+  capability the app enabled. Keep the strict CSP, enable only the capabilities you use, and
+  treat `dialogs`, `shell`, `secure-store` and `keep-awake` as trusting the page with that power.
+- **A path the user picks needs an unscoped file permission.** Deno Desktop bakes permissions at
+  build time, and a path chosen in a dialog is known only at run time, so `dialogs` implies
+  `--allow-read` and `--allow-write` without a list. The runtime narrows file access to the app's
+  folders and the paths picked this session; other code in the Deno process is not narrowed.
+- **FFI and spawned programs are full trust.** `secure-store` runs the OS credential tool
+  (`security` / `secret-tool`), `shell` and `keep-awake` run OS tools (`open` / `xdg-open` /
+  `explorer`, `caffeinate` / `systemd-inhibit`; `keep-awake` is FFI on Windows): each can do
+  anything the user can. Node-API (`.node`) addons do not load in
+  desktop builds on Linux and Windows (denoland/deno#36596); use FFI or a sidecar. FFI cannot
+  touch windows or AppKit / Win32 UI, because the runtime is not on the main thread.
+- **Desktop notifications are the WebView's.** Only a notification without a trigger shows
+  (through the Notification API, once the page has permission); a scheduled one rejects, as on
+  the web. A click is not routed to `onLocalNotificationTapped`, and there are no action
+  buttons, inline reply, channels or categories.
+- **Not on desktop:** drag-out of files, file paths from drag-in, the share sheet, Handoff,
+  Spotlight, the Touch Bar, passkeys in the webview (its loopback IP origin is not a valid
+  relying party; use `openAuthSession`), fullscreen / maximize / minimum-size / screen APIs, a
+  `hiddenInset` title bar or Mica, DevTools in the default WebView backend (use `--backend cef`),
+  and deep links or open-file events reaching an already-running macOS app.
+- **Deno Desktop's own limits.** The UI is a web page in WKWebView, WebView2 or WebKitGTK, so it
+  renders per OS (unless built with `--backend cef`, about 150 MB larger); there is no Mac App
+  Store, Microsoft Store (MSIX), Flatpak or Snap build; the self-updater replaces the UI only.
+  Deno Desktop itself is experimental in Deno 2.9, and its bugs (menus on Linux / Windows CEF,
+  window placement, a tray-only app still opening its window) reach denext apps.
+- **`react-native-windows` / `react-native-macos` are not native here.** A `reactNative` app runs
+  as react-native-web in the window; their C++ / C# / Objective-C native modules do not run
+  (write a desktop extension instead), and `Platform.OS` stays `"web"`
+  (`Platform.constants.denextDesktop` and `.os` tell the window apart). Their extra components
+  (`Flyout`, `Popup`, `Glyph`, `AppTheme`, `DynamicColorMacOS`) are DOM stand-ins, not native
+  controls, and the window-level `View` props (`acceptsFirstMouse`,
+  `mouseDownCanMoveWindow`, `allowsVibrancy`, `draggedTypes`) are accepted and do nothing.
+
 ### React Native mode & Expo shims (`reactNative`, `denext/expo/*`)
 
 - **Rendering stays DOM.** `reactNative` builds an app's source for the web through
-  react-native-web; native-only packages (TurboModules, Nitro, JSI modules such as
-  vision-camera frame processors) load but have no implementation, and need a web replacement
-  of the app's own (`.web.ts` beside the importer, or a `deno.json` `imports` entry).
+  react-native-web. A TurboModule / Fabric codegen package, or a `requireNativeComponent` view,
+  loads and fails only when its native module is used (unless the app ships a Capacitor plugin
+  of that name, below); Nitro HybridObjects throw on use, and an Expo module's top-level
+  `requireNativeModule` returns a stand-in that throws when called. A package whose `main` is
+  Flow source fails earlier, at build time, unless an [Expo shim](https://denext.dev/docs/react-native#expo-apis)
+  or [community alias](https://denext.dev/docs/react-native#community-packages) covers it.
+  Each needs a web replacement of the app's own (`.web.ts` beside the importer, or a
+  `deno.json` `imports` entry); `denext migrate --from expo` names the native-only packages it
+  finds, and [Native SDK recipes](https://denext.dev/docs/native-sdk-recipes) covers Firebase,
+  in-app purchases and Stripe.
+- **No UI-thread animation or gesture runtime.** Reanimated's worklets are stamped at build time
+  and run as plain JavaScript on the page's main thread, sharing it with React and layout; a
+  busy thread drops frames React Native would keep. The build moves declarative `transform` /
+  `opacity` animations (`withTiming`, `withSpring`, `withDelay`, `withSequence`, `withRepeat`,
+  driven by a shared value or returned from the style) to Web Animations on the compositor, but
+  gesture callbacks, `useFrameCallback`, derived values and reactions, `useAnimatedProps`,
+  animations of any other style key, `withDecay` / `withClamp`, and a nested animation with its
+  own callback stay on the main thread; so do libraries built on Reanimated (bottom-sheet, moti,
+  Skia animations, victory-native) wherever they use those. The pass patches Reanimated 4's
+  `lib/module` web build; another version's internals are left alone and keep the main-thread
+  loop. Worklet classes and context objects are not stamped, and `runOnUISync` throws on the web.
+- **Some native views have no WebView equivalent in React Native mode.** `expo-maps` and
+  `react-native-maps` are the native map view only where the app registered it (`denext
+  mobile add native-map`) and draw polylines, circles, callouts and other overlays nowhere; on
+  the web they are a labelled placeholder (use MapLibre or Leaflet in a `.web.tsx` twin).
+  `expo-video` / `react-native-video` fall back to an HTML `<video>` without the native view
+  (no Picture in Picture, AirPlay or subtitles there). Not provided: Liquid Glass
+  (`expo-glass-effect` reports it unavailable; `denext/navigation`'s platform theme approximates
+  it in CSS, without refraction), native tab bars and large-title headers (`denext/navigation`
+  draws them in the DOM), and `@expo/ui`'s SwiftUI / Compose
+  views (stand-ins that render their children). `react-native-webview` is an `<iframe>`:
+  script injection works only for inline HTML and same-origin pages.
+- **The parity ledger's open React Native gaps.** React Native's 32 `*Base` / `*Component`
+  type-alias exports are not exported, and 9 exports miss members (`UIManager`'s view-manager
+  commands, `AppRegistry`'s headless tasks and others;
+  `scripts/parity/native/baselines/known-gaps.json`).
+  `AppState`'s `memoryWarning` never fires, `Linking.sendIntent()` rejects, and
+  `ActionSheetIOS.dismissActionSheet()` closes nothing.
+- **`LayoutAnimation` animates positions, not sizes.** `configureNext` measures the page, waits
+  for the next DOM change and plays FLIP animations: a view that moved glides from its old place
+  (a transform), created views animate in and deleted views animate out (a snapshot clone in a
+  fixed layer, so its inherited styles can differ). A view that changed size snaps to it, the
+  `spring` type is a sampled curve (`ease-out` where CSS `linear()` is unsupported), and a page
+  with more than 3,000 elements is not animated. The first DOM change after the call is taken as
+  the commit, even an unrelated one.
+- **Lists keep a few React Native props unimplemented.** The FlatList / SectionList / FlashList /
+  LegendList adapters record their remaining gaps (such as LegendList's `snapToIndices` and
+  `renderScrollComponent`) in `scripts/parity/native/baselines/lists.known-gaps.json`;
+  `reactNative: { lists: "library" }` restores the libraries' own engines.
+- **Snap props are CSS scroll snap.** `snapToInterval` / `snapToOffsets` / `snapToAlignment`
+  end the platform's native momentum on a snap point, but `decelerationRate` only chooses
+  between stopping at the next snap point (`"fast"`) or not: the momentum curve is the
+  platform's. A virtualized list whose scroll space is scaled (past about 8M px) does not snap.
+- **`react-native-mmkv` is synchronous over an asynchronous store.** Reads come from an in-memory
+  copy seeded from `localStorage`; after the OS cleared the WebView's storage they miss those
+  keys until `mmkvReady()` resolves, writes reach the durable store a moment after they return,
+  and encryption (`encryptionKey`, `recrypt`) is refused.
+- **Your own native modules are asynchronous only.** `TurboModuleRegistry`, `NativeModules`
+  and Expo's `requireNativeModule` reach a Capacitor plugin (or a Deno Desktop extension) of the
+  same name, but every method returns a Promise: there is no JSI, so synchronous TurboModule
+  methods, `getConstants()`, Expo's sync `Function` / `Constants` and Nitro modules cannot be
+  served. React Native mode warns at build time where app code uses a native method's result
+  without awaiting it, and a dev build warns at run time. No codegen or autolinking runs: the
+  native side is a Capacitor plugin you write or generate (`denext mobile add native-module`).
+  See
+  [Your own native code](https://denext.dev/docs/native-code).
 - **The synchronous JSI Expo APIs are omitted.** The Capacitor bridge is asynchronous, so
   `expo-sqlite`'s `*Sync` API, `expo-secure-store`'s `getItem` / `setItem` and similar are not
   provided (use the `…Async` forms); `expo-file-system`'s sync calls act on an index the shim
@@ -487,10 +759,19 @@ four documented bounds of the opt-in:
   ships no npm runtime dependency; without the package, opening a database fails with an error
   naming it. Where OPFS is unavailable, or another tab of the origin holds the `opfs-sahpool`
   pool, the database is in memory for the session.
-- **Resolution variants are not picked by pixel ratio.** `require("./logo.png")` gets that file;
-  `logo@2x.png` / `logo@3x.png` are not chosen as Metro does.
-- **`reactNative` refuses `unbundled` dev** (the resolution lives in bundler plugins the
-  per-module loop does not run), and is valid only with `mode: "spa"`.
+- **Resolution variants are picked once, when the module loads.** `require("./logo.png")` next to
+  `logo@2x.png` / `logo@3x.png` bundles every variant and is the URL of the one the screen's
+  pixel ratio wants then; a window moved to a screen of another density keeps it.
+- **`reactNative` is valid only with `mode: "spa"`.** In `denext dev` an edit to a component
+  module hot-swaps it with its state kept (Fast Refresh), but some edits still reload the page
+  and lose state: the first import of a package, or of a name the app has not imported from it
+  before (the dependency bundle is rebuilt), adding or removing an expo-router route, a change
+  to `package.json` or a lockfile, and an edit to a module that is not a component (as in any
+  SPA).
+- **expo-router's `+api` and `+middleware` routes are not built.** Write them as denext route
+  handlers.
+- **Expo services are not provided.** `getExpoPushTokenAsync` rejects (send through your own
+  APNs / FCM sender, `createPushSender`); `expo-updates` maps to denext's OTA.
 - **uniwind needs importer-sensitive aliases denext's config cannot express yet**; the
   [recipe](https://denext.dev/docs/react-native#recipe-uniwind-and-tailwind) applies them with
   `denext patch`.
@@ -702,3 +983,10 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   denext does not parse, so `localFont({ adjustFontFallback: "Arial" })` type-checks and
   keeps a stable class name but emits no fallback face — the stack falls straight through
   to your `fallback` list.
+
+- **Desktop `secureStore` is not available on Windows.** In a Deno Desktop window it stores secrets
+  in the OS credential store on macOS (Keychain, via the `security` CLI) and Linux (libsecret, via
+  `secret-tool`). On Windows the desktop runtime fails closed: `secureStore` throws
+  `unsupported_platform` rather than storing plaintext or falling back to browser storage. A
+  PowerShell `Windows.Security.Credentials.PasswordVault` backend is feasible but not shipped in
+  2.11: it can't be verified without Windows hardware.

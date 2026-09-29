@@ -209,15 +209,18 @@ function Prod(): VNode {
   return h("p", null, String(n));
 }
 
-Deno.test("useDebugValue: production records nothing and never adds the fiber slot", () => {
+Deno.test("useDebugValue: production records nothing on the fiber", () => {
   withDev(() => {
     prodFormatCalls = 0;
     mount(h(Prod, null));
     prodBump();
     flushSync(); // a re-render through the double buffer (carryOver) as well
     const fiber = fiberOf(Prod);
-    assert(!("debugValues" in fiber), "no slot on the committed fiber");
-    assert(fiber.alternate !== null && !("debugValues" in fiber.alternate), "nor its alternate");
+    // Fibers declare every field up front (one V8 shape), so the slot exists; production must
+    // leave it empty on both buffers.
+    assertEquals(fiber.debugValues, undefined, "nothing recorded on the committed fiber");
+    assert(fiber.alternate !== null, "the re-render went through the double buffer");
+    assertEquals(fiber.alternate.debugValues, undefined, "nor on its alternate");
     assertEquals(prodFormatCalls, 0);
   }, false);
 });

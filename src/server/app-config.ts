@@ -3,7 +3,7 @@
 // bridge (`reportRequestError`). Imported by every pipeline module; imports none of them.
 
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
-import type { ApiBatchConfig } from "./config.ts";
+import type { ApiBatchConfig, AppLinksConfig, CompressConfig, CorsConfig } from "./config.ts";
 import type { ModuleLoader } from "./types.ts";
 import type { MiddlewareRunner } from "./middleware.ts";
 import type { I18nConfig } from "./i18n.ts";
@@ -166,6 +166,14 @@ export interface AppConfig {
    */
   cacheKeyParams?: string[];
   /**
+   * Compress dynamic responses per `Accept-Encoding` — default `true` (gzip, like Next.js's
+   * `compress`); `{ encodings: ["br", "gzip"] }` also sends brotli. See `compressResponse`
+   * (compress.ts) for the skip rules; a page/layout/route opts out with
+   * `export const compress = false`. `denext start`/`dev` take it from the config's
+   * `compress`.
+   */
+  compress?: boolean | CompressConfig;
+  /**
    * Extra origins allowed to invoke Server Actions, beyond the request's own
    * Host (for reverse-proxy / multi-host deployments). Actions are same-origin
    * only by default.
@@ -186,6 +194,17 @@ export interface AppConfig {
   apiMaxBodyBytes?: number;
   /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
   apiBatch?: ApiBatchConfig;
+  /**
+   * Cross-origin access to route handlers and the native auth endpoints (the config's `cors`).
+   * Validated when `createApp` runs: a malformed or `"null"` origin, or `"*"` with credentials,
+   * throws there. Unset → no CORS headers. See `src/server/cors.ts`.
+   */
+  cors?: CorsConfig;
+  /**
+   * The universal link / App Link association files (the config's `appLinks`), answered before
+   * any redirect or middleware. Unset → neither file is served. See `src/server/app-links.ts`.
+   */
+  appLinks?: AppLinksConfig;
   /**
    * An explicit public origin (e.g. `"https://example.com"`) used to build
    * absolute URLs (auto-populated `og:image`, canonical). Overrides request

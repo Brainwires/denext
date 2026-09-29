@@ -10,6 +10,10 @@ import { CONFIG_KEYS, EXPERIMENTAL_KEYS } from "./config-keys.generated.ts";
 import { editDistance } from "../utils/edit-distance.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { VERB_NAME } from "../cli/command.ts";
+import { resolveCors } from "./cors.ts";
+import { ROUTE_CSP_KEYS } from "./segment-config.ts";
+import { validateAppLinks } from "./app-links.ts";
+import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys — the generated
@@ -159,6 +163,54 @@ function numArray(fail: Fail, field: string, v: unknown, opts: NumOpts): void {
   else (v as unknown[]).forEach((el, i) => num(fail, `${field}[${i}]`, el, opts));
 }
 
+/**
+ * The `desktop` block: the capability allowlist's shape. Light — the runtime enforces the
+ * allowlist itself; this only catches obvious mistakes (a non-object, or a bad `extensions` list /
+ * `fs`/`shell` option). Unknown capability keys are allowed (forward-compat with `desktop add`).
+ */
+/** `desktop.extraPermissions`: an object of permission kinds to string arrays. */
+function validateExtraPermissions(extra: unknown, fail: Fail): void {
+  if (extra === undefined) return;
+  if (typeof extra !== "object" || extra === null || Array.isArray(extra)) {
+    fail("desktop.extraPermissions", "must be an object of permission kinds to string arrays");
+    return;
+  }
+  const KINDS = ["read", "write", "net", "run", "ffi", "env", "sys"];
+  for (const [k, v] of Object.entries(extra as Record<string, unknown>)) {
+    if (!(KINDS.includes(k) && Array.isArray(v) && v.every((s) => typeof s === "string"))) {
+      fail(
+        `desktop.extraPermissions.${k}`,
+        "must be an array of strings (kinds: read, write, net, run, ffi, env, sys)",
+      );
+    }
+  }
+}
+
+function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
+  if (desktop === undefined) return;
+  if (typeof desktop !== "object" || Array.isArray(desktop)) {
+    fail("desktop", "must be an object");
+  }
+  validateExtraPermissions((desktop as { extraPermissions?: unknown }).extraPermissions, fail);
+  const caps = (desktop as { capabilities?: unknown }).capabilities;
+  if (caps === undefined) return;
+  if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {
+    fail("desktop.capabilities", "must be an object of capability names to `true` or options");
+  }
+  const c = caps as Record<string, unknown>;
+  if (c.extensions !== undefined) {
+    const ok = Array.isArray(c.extensions) &&
+      c.extensions.every((p) => typeof p === "string" && p !== "");
+    if (!ok) fail("desktop.capabilities.extensions", "must be an array of module paths");
+  }
+  for (const key of ["fs", "shell"]) {
+    const v = c[key];
+    const ok = v === undefined || typeof v === "boolean" ||
+      (typeof v === "object" && v !== null && !Array.isArray(v));
+    if (!ok) fail(`desktop.capabilities.${key}`, "must be a boolean or an options object");
+  }
+}
+
 /** `mode` and, in SPA mode, the required `spa.entry`. */
 function validateMode(config: DenextConfig, fail: Fail): void {
   if (config.mode !== undefined && config.mode !== "spa") {
@@ -284,12 +336,26 @@ function validateImageNumerics(images: DenextConfig["images"], fail: Fail): void
   }
 }
 
-/** `csp`: `"strict"` | `"off"` | an opt-in object. */
-function validateCsp(csp: DenextConfig["csp"], fail: Fail): void {
-  if (csp === undefined) return;
-  const ok = csp === "strict" || csp === "off" || (typeof csp === "object" && csp !== null);
-  if (!ok) {
-    fail("csp", 'must be "strict", "off", or an opt-in object (e.g. `{ scriptSrc: [...] }`)');
+/**
+ * `csp` / `spa.csp`: `"strict"` | `"off"` | an opt-in object whose values are string
+ * arrays. An unknown opt-in key (a typo such as `frameSource`) warns with a suggestion —
+ * the policy would otherwise stay strict for that directive with no signal.
+ */
+function validateCsp(field: string, csp: DenextConfig["csp"], fail: Fail): void {
+  if (csp === undefined || csp === "strict" || csp === "off") return;
+  if (typeof csp !== "object" || csp === null || Array.isArray(csp)) {
+    fail(field, 'must be "strict", "off", or an opt-in object (e.g. `{ scriptSrc: [...] }`)');
+  }
+  for (const [key, value] of Object.entries(csp)) validateCspOptIn(field, key, value, fail);
+}
+
+/** One `csp` opt-in entry: a known directive key holding an array of source strings. */
+function validateCspOptIn(field: string, key: string, value: unknown, fail: Fail): void {
+  const known: readonly string[] = ROUTE_CSP_KEYS;
+  if (!known.includes(key)) {
+    console.warn(unknownKeyMessage(`\`${field}\``, key, didYouMean(key, known)));
+  } else if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
+    fail(`${field}.${key}`, 'must be an array of source strings (e.g. `["https://x.io"]`)');
   }
 }
 
@@ -305,19 +371,37 @@ function validateHsts(hsts: DenextConfig["hsts"], fail: Fail): void {
 
 /** `csp` (three-state) and `hsts` (object|false). */
 function validateSecurity(config: DenextConfig, fail: Fail): void {
-  validateCsp(config.csp, fail);
+  validateCsp("csp", config.csp, fail);
+  validateCsp("spa.csp", config.spa?.csp, fail);
   validateHsts(config.hsts, fail);
   validateApiBatch(config.apiBatch, fail);
+  validateCors(config.cors, fail);
+  validateAppLinks(config.appLinks, fail);
   if (config.apiMaxBodyBytes !== undefined) {
     num(fail, "apiMaxBodyBytes", config.apiMaxBodyBytes, { int: true, min: 1 });
   }
   validateServerOptions(config, fail);
 }
 
+/** `compress`: a boolean, or `{ encodings }` listing `"gzip"` / `"br"`. */
+function validateCompress(compress: unknown, fail: Fail): void {
+  if (compress === undefined || typeof compress === "boolean") return;
+  if (typeof compress !== "object" || compress === null || Array.isArray(compress)) {
+    fail("compress", 'must be a boolean or { encodings: ("gzip" | "br")[] }');
+  }
+  const encodings = (compress as { encodings?: unknown }).encodings;
+  if (
+    encodings !== undefined &&
+    (!Array.isArray(encodings) || !encodings.every((e) => e === "gzip" || e === "br"))
+  ) {
+    fail("compress.encodings", 'must be an array of "gzip" / "br"');
+  }
+}
+
 /**
- * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`,
- * `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`): a bare origin,
- * a boolean, whole numbers in range, a list of param names. A bad `canonicalOrigin` would
+ * The production-server knobs (`canonicalOrigin`, `trustForwardedHeaders`, `compress`,
+ * `requestTimeout`, `maxConcurrency`, `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams`):
+ * a bare origin, booleans, whole numbers in range, a list of param names. A bad `canonicalOrigin` would
  * otherwise silently 403 every Server Action (the origin check compares against it).
  */
 function validateServerOptions(config: DenextConfig, fail: Fail): void {
@@ -334,6 +418,7 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
   if (trustForwardedHeaders !== undefined && typeof trustForwardedHeaders !== "boolean") {
     fail("trustForwardedHeaders", "must be a boolean");
   }
+  validateCompress(config.compress, fail);
   if (config.requestTimeout !== undefined) {
     num(fail, "requestTimeout", config.requestTimeout, { int: true, min: 0 }); // ms; 0 disables
   }
@@ -350,6 +435,19 @@ function validateServerOptions(config: DenextConfig, fail: Fail): void {
     if (!Array.isArray(cacheKeyParams) || cacheKeyParams.some((p) => typeof p !== "string")) {
       fail("cacheKeyParams", "must be an array of query-parameter-name strings");
     }
+  }
+}
+
+/**
+ * `cors`: the same resolution `createApp` runs (exact origins, never `"null"`, `"*"` alone and
+ * never with credentials, a sane `maxAge`), so a bad policy fails at config load.
+ */
+function validateCors(cors: DenextConfig["cors"], fail: Fail): void {
+  if (cors === undefined) return;
+  try {
+    resolveCors(cors);
+  } catch (error) {
+    fail("cors", (error instanceof Error ? error.message : String(error)).replace(/^denext: /, ""));
   }
 }
 
@@ -490,6 +588,71 @@ function validateMomentumSafeScroll(value: unknown, fail: Fail): void {
   }
 }
 
+/** The string fields of a `mobile.flavors` entry. */
+const FLAVOR_STRINGS = [
+  "appId",
+  "appIdSuffix",
+  "appName",
+  "serverUrl",
+  "icon",
+  "splash",
+  "backgroundColor",
+] as const;
+
+/** A value-shape rule for one `mobile.flavors` field: the problem, or null. */
+const FLAVOR_RULES: Record<string, (v: string) => string | null> = {
+  appId: (v) =>
+    /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(v)
+      ? null
+      : "must be a reverse-DNS id like com.example.app.beta",
+  appIdSuffix: (v) =>
+    /^(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(v) ? null : 'must start with "." (e.g. ".staging")',
+  serverUrl: (v) => (URL.canParse(v) ? null : "must be an absolute URL"),
+  backgroundColor: (v) =>
+    /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? null : "must be a hex colour like #0f172a",
+};
+
+/** Whether `value` is a plain object of strings. */
+function isStringRecord(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.values(value).every((v) => typeof v === "string");
+}
+
+/** One `mobile.flavors.<name>` entry. */
+function validateMobileFlavor(name: string, value: unknown, fail: Fail): void {
+  const at = `mobile.flavors.${name}`;
+  if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+    return fail(at, "names a flavor with lowercase letters, digits and `-` only");
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return fail(at, "must be an object");
+  }
+  const flavor = value as Record<string, unknown>;
+  for (const key of FLAVOR_STRINGS) {
+    const field = flavor[key];
+    if (field === undefined) continue;
+    const problem = typeof field === "string" ? FLAVOR_RULES[key]?.(field) : "must be a string";
+    if (problem) fail(`${at}.${key}`, problem);
+  }
+  if (flavor.env !== undefined && !isStringRecord(flavor.env)) {
+    fail(`${at}.env`, "must be an object of string values");
+  }
+}
+
+/** `mobile`: `{ flavors?: { <name>: flavor } }`. */
+function validateMobile(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return fail("mobile", "must be an object");
+  }
+  const flavors = (value as Record<string, unknown>).flavors;
+  if (flavors === undefined) return;
+  if (typeof flavors !== "object" || flavors === null || Array.isArray(flavors)) {
+    return fail("mobile.flavors", "must be an object of flavor name → settings");
+  }
+  for (const [name, flavor] of Object.entries(flavors)) validateMobileFlavor(name, flavor, fail);
+}
+
 /**
  * `reactNative`: `true`/`false` or an options object, and only in SPA mode — the resolve mode
  * applies to the SPA bundle, so anywhere else it would be silently ignored.
@@ -505,8 +668,46 @@ function validateReactNative(config: DenextConfig, fail: Fail): void {
       fail(`reactNative.${key}`, "must be a boolean");
     }
   }
+  if (isObject) validateReactNativeObject(value as Record<string, unknown>, fail);
   if (config.mode !== "spa") {
     fail("reactNative", 'applies only in SPA mode — set `mode: "spa"` and `spa.entry`');
+  }
+}
+
+/** `reactNative`'s object options: `lists`, `desktopPackage` and `aliases`. */
+function validateReactNativeObject(value: Record<string, unknown>, fail: Fail): void {
+  if (value.lists !== undefined && value.lists !== "denext" && value.lists !== "library") {
+    fail("reactNative.lists", 'must be "denext" or "library"');
+  }
+  const desktop = value.desktopPackage;
+  if (
+    desktop !== undefined && desktop !== "react-native-macos" && desktop !== "react-native-windows"
+  ) {
+    fail("reactNative.desktopPackage", 'must be "react-native-macos" or "react-native-windows"');
+  }
+  validateReactNativeAliases(value.aliases, fail);
+}
+
+/**
+ * `reactNative.aliases`: a map of aliased package names (`COMMUNITY_ALIASES`) to booleans. An
+ * unknown name is a mistake (the alias it means to turn off stays on), so it fails with the
+ * closest package named.
+ */
+function validateReactNativeAliases(value: unknown, fail: Fail): void {
+  if (value === undefined) return;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("reactNative.aliases", "must be an object of package name → boolean");
+    return;
+  }
+  const known = Object.keys(COMMUNITY_ALIASES);
+  for (const [pkg, on] of Object.entries(value)) {
+    if (typeof on !== "boolean") fail(`reactNative.aliases.${pkg}`, "must be a boolean");
+    if (known.includes(pkg)) continue;
+    const near = known.map((k) =>
+      [k, editDistance(pkg, k)] as const
+    ).sort((a, b) => a[1] - b[1])[0];
+    const hint = near && near[1] <= 3 ? ` (did you mean "${near[0]}"?)` : "";
+    fail(`reactNative.aliases.${pkg}`, `is not an aliased package${hint}`);
   }
 }
 
@@ -602,6 +803,8 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateProxy(config.spa?.proxy, fail);
   validateSpaOta(config.spa?.ota, fail);
   validateMomentumSafeScroll(config.momentumSafeScroll, fail);
+  validateMobile(config.mobile, fail);
+  validateDesktop(config.desktop, fail);
   validateAllowedDevOrigins(config.allowedDevOrigins, fail);
   validateReactNative(config, fail);
   validateRouting(config, fail);

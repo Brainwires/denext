@@ -6,7 +6,16 @@
  */
 
 import { blobToBase64, isDismissal } from "./base64.ts";
+import { isNativeShell } from "./bridge.ts";
+import type { PickedHandle } from "./filesystem.ts";
 import { nativePlugin } from "./plugin.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
+import {
+  type FilePickerAcceptType,
+  isAbortError,
+  pickerTypes,
+  registerWebHandle,
+} from "./picked-web.ts";
 
 /**
  * Where {@linkcode pickImage} gets the picture: `"camera"` (take one), `"photos"` (the photo
@@ -59,8 +68,18 @@ export interface PickedDocument {
   readonly size: number;
   /** The contents as base64: always on the web, natively with `readData: true`. */
   readonly data?: string;
-  /** The native file path of the picked copy (native only). */
+  /**
+   * The file's path, for display only: the picked copy natively, the file itself on desktop
+   * (a browser hides it).
+   */
   readonly path?: string;
+  /**
+   * The file's read-only handle: `{ picked: handle }` with the path `""` reaches it through
+   * `readFile`, and it can be passed to `openPath` / `revealInFileManager`. On desktop, and in
+   * browsers with `showOpenFilePicker`; the iOS/Android pickers and `<input type="file">` have
+   * none.
+   */
+  readonly handle?: PickedHandle;
 }
 
 /** The JS side of `@capacitor/camera` (the call {@linkcode pickImage} makes). */
@@ -80,6 +99,29 @@ interface FilePickerPlugin {
       { name?: string; mimeType?: string; size?: number; data?: string; path?: string }
     >;
   }>;
+}
+
+/** A `Camera.getPhoto` result as a {@linkcode PickedImage}: `as` picks the field (else whichever is set). */
+export function pickedImageFrom(
+  photo: { webPath?: string; dataUrl?: string; format?: string },
+  as?: "webPath" | "dataUrl",
+): PickedImage {
+  const format = String(photo.format ?? "jpeg").toLowerCase();
+  const inline = as === "dataUrl" || (as === undefined && typeof photo.webPath !== "string");
+  return inline ? { dataUrl: photo.dataUrl, format } : { webPath: photo.webPath, format };
+}
+
+/** One file of a `FilePicker.pickFiles` result as a {@linkcode PickedDocument}. */
+export function pickedDocumentFrom(
+  file: { name?: string; mimeType?: string; size?: number; data?: string; path?: string },
+): PickedDocument {
+  const picked: PickedDocument = {
+    name: String(file.name ?? ""),
+    mimeType: file.mimeType || "application/octet-stream",
+    size: typeof file.size === "number" ? file.size : 0,
+    ...(typeof file.path === "string" ? { path: file.path } : {}),
+  };
+  return typeof file.data === "string" ? { ...picked, data: file.data } : picked;
 }
 
 /** {@linkcode ImageSource} → the Camera plugin's `CameraSource` value. */
@@ -191,11 +233,7 @@ export async function pickImage(options: PickImageOptions = {}): Promise<PickedI
         }),
       CAMERA_CANCEL_CODES,
     );
-    if (!photo) return null;
-    const format = String(photo.format ?? "jpeg").toLowerCase();
-    return as === "dataUrl"
-      ? { dataUrl: photo.dataUrl, format }
-      : { webPath: photo.webPath, format };
+    return photo ? pickedImageFrom(photo, as) : null;
   }
   const file = await chooseFile("pickImage", "image/*", source === "camera");
   if (!file) return null;
@@ -205,12 +243,47 @@ export async function pickImage(options: PickImageOptions = {}): Promise<PickedI
   return { dataUrl: `data:${type};base64,${await blobToBase64(file)}`, format };
 }
 
+/** The File System Access API's open picker, where the browser has it. */
+type OpenFilePicker = (options: {
+  multiple?: boolean;
+  types?: FilePickerAcceptType[];
+}) => Promise<FileSystemFileHandle[]>;
+
+/** A file from `showOpenFilePicker` (registered), or `null` when cancelled. */
+async function pickWithOpenPicker(
+  picker: OpenFilePicker,
+  types: readonly string[] | undefined,
+): Promise<PickedDocument | null> {
+  let handle: FileSystemFileHandle | undefined;
+  try {
+    const accept = pickerTypes(types);
+    [handle] = await picker({ multiple: false, ...(accept ? { types: accept } : {}) });
+  } catch (err) {
+    if (isAbortError(err)) return null;
+    throw err;
+  }
+  if (!handle) return null;
+  const file = await handle.getFile();
+  return {
+    name: file.name,
+    mimeType: file.type || "application/octet-stream",
+    size: file.size,
+    data: await blobToBase64(file),
+    handle: registerWebHandle(handle),
+  };
+}
+
 /**
  * Pick a document (any file, or the `types` given) with the system document picker.
  *
  * - Inside the native shell with `@capawesome/capacitor-file-picker` installed (`denext
  *   mobile add document-picker`), the iOS document picker / Android's system file picker; the
  *   result carries the picked copy's `path`, and `data` with `readData: true`.
+ * - In a Deno Desktop window (`denext desktop add dialogs`), the native open panel: the result
+ *   carries a read-only `handle` for the file (for `readFile` with `{ picked: handle }`, and the
+ *   shell functions), its absolute `path` for display, and `data` with `readData: true`.
+ * - In a browser with the File System Access API (`showOpenFilePicker`), the browser's open
+ *   dialog: the file's bytes as base64 `data` and a `handle` for this page.
  * - Otherwise a file chooser, and the file's bytes as base64 `data`.
  *
  * A dismissed picker resolves `null` rather than rejecting.
@@ -230,6 +303,10 @@ export async function pickDocument(
   options: PickDocumentOptions = {},
 ): Promise<PickedDocument | null> {
   const types = options.types ? [...options.types] : undefined;
+  const readData = options.readData === true;
+  const desktop = onDesktop() &&
+    await viaDesktop("dialogs", (d) => d.dialogOpenFile(types, readData));
+  if (desktop) return desktop.value;
   const plugin = nativePlugin<FilePickerPlugin>("FilePicker", ["pickFiles"]);
   if (plugin) {
     const result = await unlessDismissed(
@@ -242,14 +319,11 @@ export async function pickDocument(
       [],
     );
     const file = result?.files?.[0];
-    if (!file) return null;
-    const picked: PickedDocument = {
-      name: String(file.name ?? ""),
-      mimeType: file.mimeType || "application/octet-stream",
-      size: typeof file.size === "number" ? file.size : 0,
-      ...(typeof file.path === "string" ? { path: file.path } : {}),
-    };
-    return typeof file.data === "string" ? { ...picked, data: file.data } : picked;
+    return file ? pickedDocumentFrom(file) : null;
+  }
+  const picker = (globalThis as { showOpenFilePicker?: OpenFilePicker }).showOpenFilePicker;
+  if (!isNativeShell() && typeof picker === "function") {
+    return await pickWithOpenPicker(picker, types);
   }
   const file = await chooseFile("pickDocument", (types ?? []).join(","), false);
   if (!file) return null;

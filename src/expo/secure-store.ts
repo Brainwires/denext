@@ -5,8 +5,13 @@
  * the web, which is NOT secret).
  *
  * The synchronous `getItem` / `setItem` are not provided: the Capacitor bridge is
- * asynchronous. `keychainService` namespaces the key; the other options (biometric prompts,
- * accessibility classes, access groups) are accepted and ignored.
+ * asynchronous. `keychainService` namespaces the key. `requireAuthentication` stores the value
+ * biometric-gated (`secureStore.set(key, value, { requireBiometric: true })`): reading it asks
+ * for Face ID / Touch ID / a fingerprint first (`denext mobile add biometrics`), with
+ * `authenticationPrompt` as the reason. **The gate is in denext's code, not a Keychain access
+ * control** (the secure-storage plugin has none), so it is weaker than Expo's: native code in
+ * the app could read the item. On the web a gated value cannot be read (no biometrics). The
+ * accessibility class and access group are accepted and ignored.
  *
  * @example
  * ```ts
@@ -19,6 +24,7 @@
  * @module
  */
 
+import { biometricPlugin } from "../mobile/biometrics.ts";
 import { secureStore } from "../mobile/secure-store.ts";
 
 /** A Keychain accessibility class (accepted and ignored here). */
@@ -43,9 +49,9 @@ export const WHEN_UNLOCKED_THIS_DEVICE_ONLY: KeychainAccessibilityConstant = 6;
 export interface SecureStoreOptions {
   /** A namespace: the same key under another service is a different item. */
   keychainService?: string;
-  /** Ask for biometrics on access (ignored here). */
+  /** Ask for biometrics before the value can be read (set it when storing). */
   requireAuthentication?: boolean;
-  /** The biometric prompt (ignored here). */
+  /** The biometric prompt's reason, when reading a gated value. */
   authenticationPrompt?: string;
   /** The Keychain accessibility class (ignored here). */
   keychainAccessible?: KeychainAccessibilityConstant;
@@ -79,14 +85,18 @@ export function isAvailableAsync(): Promise<boolean> {
  * The value stored under `key`.
  *
  * @param key The key.
- * @param options `keychainService` namespaces it.
+ * @param options `keychainService` namespaces it; `authenticationPrompt` is the reason shown
+ * when the value is biometric-gated.
  * @returns The value, or null when there is none.
  */
 export async function getItemAsync(
   key: string,
   options?: SecureStoreOptions,
 ): Promise<string | null> {
-  return await secureStore.get(storeKey("getItemAsync", key, options));
+  const gate = options?.authenticationPrompt === undefined
+    ? undefined
+    : { reason: options.authenticationPrompt };
+  return await secureStore.get(storeKey("getItemAsync", key, options), gate);
 }
 
 /**
@@ -94,7 +104,8 @@ export async function getItemAsync(
  *
  * @param key The key.
  * @param value The value (a string).
- * @param options `keychainService` namespaces it.
+ * @param options `keychainService` namespaces it; `requireAuthentication` gates it behind
+ * biometrics.
  * @returns A promise that settles once stored.
  */
 export async function setItemAsync(
@@ -105,7 +116,9 @@ export async function setItemAsync(
   if (typeof value !== "string") {
     throw new Error("setItemAsync: the value must be a string (JSON.stringify it)");
   }
-  await secureStore.set(storeKey("setItemAsync", key, options), value);
+  await secureStore.set(storeKey("setItemAsync", key, options), value, {
+    requireBiometric: options?.requireAuthentication === true,
+  });
 }
 
 /**
@@ -120,10 +133,12 @@ export async function deleteItemAsync(key: string, options?: SecureStoreOptions)
 }
 
 /**
- * Whether items can be protected with biometrics: not here.
+ * Whether items can be protected with biometrics: inside the iOS/Android shell with the
+ * biometric plugin installed (`denext mobile add biometrics`). Synchronous, so it cannot tell
+ * whether a biometric is enrolled; `authenticateBiometric` reports that.
  *
- * @returns `false`.
+ * @returns `true` when the plugin is there.
  */
 export function canUseBiometricAuthentication(): boolean {
-  return false;
+  return biometricPlugin() !== undefined;
 }

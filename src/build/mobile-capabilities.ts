@@ -6,8 +6,8 @@
 // capability needs, and runs `npx cap sync`. A capability that takes options (deep-links:
 // --scheme / --domain) or needs more than plist keys and permissions (push: entitlements and
 // AppDelegate forwarding) computes its edits in a `configure` hook. A capability with no npm
-// package (auth-session, and the app extensions share-extension / widget / live-activity)
-// installs denext's own native plugin templates instead, through the
+// package (auth-session, system-bars, and the app extensions share-extension / widget /
+// live-activity) installs denext's own native plugin templates instead, through the
 // hook's `install` step; with no package to add, neither the install nor `cap sync` runs. Every
 // subprocess goes through a runner the caller passes in, so tests never spawn a real install.
 
@@ -17,15 +17,19 @@ import {
   withAppDelegatePushForwarding,
   withAppDelegateQuickActions,
   withGradleMinSdk,
+  withManifestApplicationAttribute,
   withManifestIntentFilter,
   withManifestPermission,
   withPlistDefault,
   withPlistString,
   withPlistStringArray,
+  withPlistTrue,
   withPlistUrlScheme,
   withSceneDelegateQuickActions,
 } from "./mobile-native-config.ts";
 import { addAuthSessionToProject } from "./mobile-auth-session-install.ts";
+import { addBackToProject, addEdgeToEdgeToProject } from "./mobile-system-ui-install.ts";
+import { SETTINGS_INSTALL } from "./mobile-settings-install.ts";
 import type { NativeInstallOptions, NativeInstallReport } from "./mobile-native-install.ts";
 import {
   addLiveActivitiesToProject,
@@ -36,6 +40,12 @@ import {
 import { parseWidgetParams } from "./widget-native-templates.ts";
 import { checkAppGroup } from "./mobile-app-group.ts";
 import { applicationTargetName, targetBuildSetting } from "./pbxproj.ts";
+import { CAPACITOR_CONFIGS, capacitorConfigFile, readCapacitorConfig } from "./capacitor-config.ts";
+import { addOfflineScreenToProject } from "./mobile-offline-screen.ts";
+import { privacyEntriesFor, privacyLabels, writePrivacyManifests } from "./mobile-privacy.ts";
+import { PLATFORM_CAPABILITIES } from "./mobile-capabilities-platform.ts";
+import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
+import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -99,6 +109,11 @@ export interface MobileCapability {
    * project that pins its `@capacitor/*` packages exactly gets the range's minimum, exactly.
    */
   readonly version?: string;
+  /**
+   * More packages added with it, as full specs (`@sentry/browser@10.69.0`): a sibling SDK the
+   * plugin's own package pins exactly.
+   */
+  readonly peers?: readonly string[];
   /** The `@capacitor/core` major the pinned plugin (or denext's plugin template) targets. */
   readonly capacitorMajor: number;
   /** Info.plist string keys to add when absent (key → default value; an app's own wins). */
@@ -203,7 +218,11 @@ function configureDeepLinks(options: CapabilityOptions): CapabilityConfig {
     manual: domains.flatMap((d) => [
       `serve https://${d}/.well-known/apple-app-site-association (applinks for <TEAM ID>.<bundle id>) ` +
       `and https://${d}/.well-known/assetlinks.json (package name + signing certificate SHA-256); ` +
-      "without them iOS and Android open the link in the browser instead of the app",
+      "without them iOS and Android open the link in the browser instead of the app. When " +
+      `${d} is served by denext, add to its denext.config.ts: appLinks: { apple: { appIds: ` +
+      '["<TEAM ID>.<bundle id>"] }, android: { packageName: "<application id>", ' +
+      'sha256CertFingerprints: ["<AB:CD:…>"] } } (`denext start` serves both files, and ' +
+      "`denext export` writes them)",
     ]).concat(
       domains.length === 0 ? [] : [
         `https links reach onDeepLink only when listed: accept: { hosts: [${
@@ -384,8 +403,168 @@ function configureBarcode(): CapabilityConfig {
   };
 }
 
+/**
+ * `camera`: in-page capture. `NSMicrophoneUsageDescription` is always added (when absent):
+ * expo-camera's `recordAsync` (and any `getUserMedia({ audio })`) records audio in the WebView,
+ * which WKWebView refuses without the string, and an unused usage string costs nothing at
+ * review. It is an edit, not one of the table's plist keys, because those are what `mobile
+ * doctor --store` requires of every app with the plugin, and a photo-only app needs no
+ * microphone. Android's runtime permissions for the WebView's own capture are the app's call
+ * (Play asks about RECORD_AUDIO), so they are a printed step.
+ */
+function configureCamera(): CapabilityConfig {
+  return {
+    infoPlist: [{
+      label: "NSMicrophoneUsageDescription (when absent: video recorded in the page has sound)",
+      apply: (text) => withPlistDefault(text, "NSMicrophoneUsageDescription", MICROPHONE_USAGE),
+    }],
+    manual: [
+      "Android: an in-page camera (expo-camera's CameraView, getUserMedia) needs " +
+      "android.permission.CAMERA in AndroidManifest.xml, and recording with sound (recordAsync) " +
+      "RECORD_AUDIO and MODIFY_AUDIO_SETTINGS too; pickImage() needs neither",
+    ],
+  };
+}
+
+/**
+ * `back`: denext's `DenextBack` plugin registered from MainActivity (Android's predictive-back
+ * events), and `android:enableOnBackInvokedCallback="true"` on `<application>`, which Android
+ * 13–15 need before they route back through the callback (and animate it, 14+); Android 16
+ * does it by default for apps targeting SDK 36. `@capacitor/app` (the npm package) is the
+ * fallback `onBack` listens to without the plugin, and leaves the app when nothing handles back.
+ */
+function configureBack(): CapabilityConfig {
+  return {
+    manifest: [{
+      label: 'android:enableOnBackInvokedCallback="true" on <application> (when unset)',
+      apply: (text) =>
+        withManifestApplicationAttribute(text, "android:enableOnBackInvokedCallback", "true"),
+    }],
+    install: {
+      label: "DenextBack plugin (Android OnBackPressedCallback: predictive-back progress) + its " +
+        "registration in MainActivity",
+      run: addBackToProject,
+    },
+  };
+}
+
+/**
+ * `system-bars`: Capacitor 8 bundles `SystemBars` in `@capacitor/core`, so there is no package.
+ * iOS needs `UIViewControllerBasedStatusBarAppearance` (true in Capacitor's template, set here
+ * when missing or false); Android gets `EdgeToEdge.enable(this)` in MainActivity.
+ */
+function configureSystemBars(): CapabilityConfig {
+  return {
+    infoPlist: [{
+      label: "UIViewControllerBasedStatusBarAppearance: true (SystemBars needs it)",
+      apply: (text) => withPlistTrue(text, "UIViewControllerBasedStatusBarAppearance"),
+    }],
+    install: {
+      label: "EdgeToEdge.enable(this) in MainActivity (edge to edge on every Android version)",
+      run: addEdgeToEdgeToProject,
+    },
+  };
+}
+
+/** `permissions` (and the capabilities that ask for one): the DenextSettings plugin. */
+function configureSettings(): CapabilityConfig {
+  return { install: SETTINGS_INSTALL };
+}
+
+/** `local-notifications`: DenextSettings, plus the Android exact-alarm note. */
+function configureLocalNotifications(): CapabilityConfig {
+  return {
+    install: SETTINGS_INSTALL,
+    manual: [
+      "Android: the plugin declares SCHEDULE_EXACT_ALARM; Google Play allows it only for " +
+      'alarm / calendar apps (else remove it with tools:node="remove" in AndroidManifest.xml ' +
+      "and accept inexact delivery). A small monochrome icon for the status bar goes in " +
+      "plugins.LocalNotifications.smallIcon in capacitor.config",
+    ],
+  };
+}
+
+/**
+ * `social-login`: the Sign in with Apple entitlement, and each `--scheme` (Google's reversed iOS
+ * client id, `com.googleusercontent.apps.<id>`) registered as a URL type for the Google SDK's
+ * redirect.
+ */
+function configureSocialLogin(options: CapabilityOptions): CapabilityConfig {
+  const schemes = options.schemes.map(checkScheme);
+  return {
+    infoPlist: schemeEdits(schemes).infoPlist,
+    entitlements: [{
+      label: "com.apple.developer.applesignin: Default (Sign in with Apple)",
+      apply: (text) => withPlistStringArray(text, "com.apple.developer.applesignin", ["Default"]),
+    }],
+    manual: [
+      "capacitor.config: set plugins.SocialLogin.providers to { apple: true, google: true, " +
+      "facebook: false, twitter: false } (a disabled provider is not bundled; Facebook's SDK adds " +
+      "the AD_ID permission Play asks about)",
+      "Apple: enable Sign in with Apple for the App ID (developer.apple.com → Identifiers); the " +
+      "server's apple provider lists the bundle id as a client id",
+      "Google: create OAuth clients of type iOS (bundle id), Android (package + signing SHA-1) and " +
+      "Web application; pass the web and iOS ids to signInWithGoogle and list both in the " +
+      "server's google provider",
+      ...(schemes.length > 0 ? [] : [
+        "Google on iOS: re-run with --scheme com.googleusercontent.apps.<id> (the iOS client id " +
+        "reversed) to register its redirect scheme",
+      ]),
+    ],
+  };
+}
+
+/** `purchases`: the store-side steps RevenueCat needs. */
+function configurePurchasesCapability(): CapabilityConfig {
+  return {
+    manual: [
+      "iOS: add the In-App Purchase capability (Xcode → Signing & Capabilities) and create the " +
+      "products in App Store Connect; Android: create them in the Play Console (billing needs an " +
+      "uploaded build on a testing track)",
+      "RevenueCat: add both apps, map products to entitlements and offerings, copy each app's " +
+      "public SDK key into configurePurchases({ apiKey: { ios, android } }), and point a webhook " +
+      "at a route that calls verifyRevenueCatWebhook (denext/server)",
+      "Digital goods must use in-app purchase (App Store Review Guideline 3.1.1; Google Play " +
+      "Payments policy)",
+    ],
+  };
+}
+
+/**
+ * `sentry`: crash reporting through `@sentry/capacitor` (native crashes via sentry-cocoa /
+ * sentry-android, JS errors via the sibling web SDK). Its 4.4.0 release installs on iOS through
+ * Swift Package Manager only (the podspec was removed), which Capacitor 8 projects use.
+ */
+function configureSentry(): CapabilityConfig {
+  return {
+    manual: [
+      'call initCrashReporting({ dsn, sdk: () => import("@sentry/capacitor"), sibling: () => ' +
+      'import("@sentry/browser") }) from denext/mobile once at startup (the release is the OTA ' +
+      "UI version, so uploaded source maps match)",
+      "export with `denext export --sourcemaps hidden` and upload .denext/sourcemaps with " +
+      "sentry-cli (see /docs/mobile#crash-reporting); keep @sentry/capacitor and @sentry/browser " +
+      "on the versions installed together (4.4.0 depends on @sentry/browser 10.69.0 exactly)",
+      "iOS: @sentry/capacitor 4.4 is Swift Package Manager only; a CocoaPods project (ios/App/" +
+      "Podfile) must move to SPM first",
+    ],
+  };
+}
+
+/** `offline-screen`: `public/offline.html` and `server.errorPath` pointing at it. */
+function configureOfflineScreen(): CapabilityConfig {
+  return {
+    install: {
+      label: "public/offline.html (the page Capacitor shows when the app cannot load) + " +
+        'server.errorPath: "offline.html" in capacitor.config',
+      run: addOfflineScreenToProject,
+    },
+  };
+}
+
 /** The camera usage string `camera` and `barcode` share. */
 const CAMERA_USAGE = "Take photos and scan codes with the camera.";
+/** The microphone usage string `camera` adds (video recording in the WebView records audio). */
+const MICROPHONE_USAGE = "Record sound with your videos.";
 
 /**
  * Every capability `denext mobile add` knows, keyed by the name on its command line. Ranges
@@ -488,6 +667,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
       NSPhotoLibraryAddUsageDescription: "Save photos to your library.",
     },
     notes: "pickImage({ source: camera | photos | prompt })",
+    configure: configureCamera,
   },
   "document-picker": {
     npm: "@capawesome/capacitor-file-picker",
@@ -538,6 +718,123 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     options: ["names", "appGroups"],
     configure: configureLiveActivity,
   },
+  keyboard: {
+    npm: "@capacitor/keyboard",
+    version: "^8.0.5",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "useKeyboard() / onKeyboardChange / <KeyboardAvoidingView> / <KeyboardStickyView> / " +
+      "hideKeyboard() / setKeyboardResizeMode(mode) (iOS)",
+  },
+  back: {
+    npm: "@capacitor/app",
+    version: "^8.1.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "onBack / useBackHandler / onBackProgress / useBackProgress (Android back button and " +
+      "predictive back; iOS has none)",
+    configure: configureBack,
+  },
+  "system-bars": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "setSystemBars({ style, hidden, animation, bar }) / useSystemBarsFollowTheme() " +
+      "(SystemBars ships in @capacitor/core 8)",
+    configure: configureSystemBars,
+  },
+  dialog: {
+    npm: "@capacitor/dialog",
+    version: "^8.0.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "React Native mode's Alert.alert / Alert.prompt as system dialogs (else an in-page " +
+      "dialog)",
+  },
+  toast: {
+    npm: "@capacitor/toast",
+    version: "^8.0.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "React Native mode's ToastAndroid.show as the system toast on Android (else an " +
+      "in-page toast)",
+  },
+  "action-sheet": {
+    npm: "@capacitor/action-sheet",
+    version: "^8.1.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "React Native mode's ActionSheetIOS.showActionSheetWithOptions as a native action " +
+      "sheet (else a dialog or an in-page menu)",
+  },
+  permissions: {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "checkPermission / requestPermission / usePermission (each capability's plugin " +
+      "answers) and openAppSettings()",
+    configure: configureSettings,
+  },
+  "local-notifications": {
+    npm: "@capacitor/local-notifications",
+    version: "^8.3.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    androidPermissions: ["android.permission.POST_NOTIFICATIONS"],
+    notes: "scheduleNotification / cancelNotification / pendingNotifications / " +
+      "createNotificationChannel / setNotificationCategories / onLocalNotificationTapped",
+    configure: configureLocalNotifications,
+  },
+  biometrics: {
+    npm: "@aparajita/capacitor-biometric-auth",
+    version: "^10.0.0",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: { NSFaceIDUsageDescription: "Unlock the app with Face ID." },
+    androidPermissions: ["android.permission.USE_BIOMETRIC"],
+    notes: "isBiometricAvailable() / authenticateBiometric({ reason }) / " +
+      "secureStore.set(key, value, { requireBiometric: true })",
+    configure: configureSettings,
+  },
+  "social-login": {
+    npm: "@capgo/capacitor-social-login",
+    version: "^8.5.11",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "signInWithApple() (iOS) / signInWithGoogle({ webClientId, iosClientId }) / " +
+      "signInNative(session, provider) (--scheme <Google's reversed iOS client id>)",
+    options: ["schemes"],
+    configure: configureSocialLogin,
+  },
+  geolocation: {
+    npm: "@capacitor/geolocation",
+    version: "^8.2.2",
+    capacitorMajor: CAPACITOR_MAJOR,
+    iosPlist: { NSLocationWhenInUseUsageDescription: "Show where you are in the app." },
+    androidPermissions: [
+      "android.permission.ACCESS_COARSE_LOCATION",
+      "android.permission.ACCESS_FINE_LOCATION",
+    ],
+    notes: "getCurrentPosition() / watchPosition(cb) / useLocation() (foreground only; " +
+      "navigator.geolocation on the web)",
+    configure: configureSettings,
+  },
+  purchases: {
+    npm: "@revenuecat/purchases-capacitor",
+    version: "^13.6.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "configurePurchases / getOfferings / purchasePackage / restorePurchases / " +
+      "getCustomerInfo / useEntitlement(id) (RevenueCat; no web fallback)",
+    configure: configurePurchasesCapability,
+  },
+  sentry: {
+    npm: "@sentry/capacitor",
+    version: "4.4.0",
+    peers: ["@sentry/browser@10.69.0"],
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "initCrashReporting({ dsn, sdk, sibling }) (native + JS crashes; release = the OTA UI " +
+      "version; hidden source maps with `denext export --sourcemaps hidden`)",
+    configure: configureSentry,
+  },
+  "offline-screen": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "installOfflineScreen() (an overlay while the network is gone; server.errorPath shows " +
+      "offline.html when the app cannot load)",
+    configure: configureOfflineScreen,
+  },
+  // app-review, app-update, screen-orientation, media-library, privacy-screen, tracking,
+  // background, restore: ./mobile-capabilities-platform.ts.
+  ...PLATFORM_CAPABILITIES,
+  "native-module": NATIVE_MODULE_CAPABILITY,
+  ...NATIVE_VIEW_CAPABILITIES,
 };
 
 /** A package manager `denext mobile add` can drive. */
@@ -571,9 +868,18 @@ export interface CapabilityPlan {
   /** The `@capacitor/core` major found, and where it was read. */
   readonly capacitorMajor: number;
   readonly capacitorSource: "installed" | "package.json";
-  /** The package install, then `cap sync` (neither when no capability has an npm package). */
+  /**
+   * The package install, then `cap sync` (neither when no capability has an npm package), or
+   * `cap update` when the web export is not built yet (see `webAssetsMissing`).
+   */
   readonly install?: PlannedCommand;
   readonly sync?: PlannedCommand;
+  /**
+   * The web export folder (capacitor.config `webDir`, project-relative) when it has no
+   * `index.html` yet: `cap sync` would fail copying it, so the plan runs `cap update` (the
+   * native half of sync) and warns to export and sync afterwards.
+   */
+  readonly webAssetsMissing?: string;
   /** Info.plist keys to add when absent. */
   readonly plist: ReadonlyArray<{ key: string; value: string }>;
   /** Android permissions to declare. */
@@ -588,6 +894,8 @@ export interface CapabilityPlan {
   readonly warnings: readonly string[];
   /** Steps to do by hand. */
   readonly manual: readonly string[];
+  /** Required-reason / data-use declarations merged into PrivacyInfo.xcprivacy (labels). */
+  readonly privacy: readonly string[];
 }
 
 /** The `configure` edits of every chosen capability, per native file. */
@@ -644,14 +952,6 @@ export interface AddCapabilitiesOptions {
   readonly force?: boolean;
 }
 
-/** The Capacitor config file names, in the order the Capacitor CLI looks for them. */
-export const CAPACITOR_CONFIGS: readonly string[] = [
-  "capacitor.config.ts",
-  "capacitor.config.js",
-  "capacitor.config.mjs",
-  "capacitor.config.cjs",
-  "capacitor.config.json",
-];
 const INFO_PLIST = "ios/App/App/Info.plist";
 const ANDROID_MANIFEST = "android/app/src/main/AndroidManifest.xml";
 const APP_DELEGATE = "ios/App/App/AppDelegate.swift";
@@ -854,6 +1154,20 @@ function packageSpec(cap: MobileCapability, exact: boolean): string {
   return `${cap.npm}@${version}`;
 }
 
+/**
+ * `specs` (`name@range`) with each package once, the first spec winning: two capabilities can
+ * share a package (`@capacitor/app` behind deep-links, back, restore and application).
+ */
+function uniquePackages(specs: readonly string[]): string[] {
+  const seen = new Set<string>();
+  return specs.filter((spec) => {
+    const name = spec.slice(0, spec.indexOf("@", 1));
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
+}
+
 /** The capability names, deduplicated, refusing unknown ones. */
 function pickCapabilities(
   names: readonly string[],
@@ -935,7 +1249,8 @@ function configureAll(
       manifest: dedupeByLabel(configs.flatMap((c) => c.manifest ?? [])),
       appDelegate: dedupeByLabel(configs.flatMap((c) => c.appDelegate ?? [])),
       variablesGradle: dedupeByLabel(configs.flatMap((c) => c.variablesGradle ?? [])),
-      installs: configs.flatMap((c) => c.install ? [c.install] : []),
+      // Several capabilities share one install (DenextSettings): run and list it once.
+      installs: [...new Set(configs.flatMap((c) => c.install ? [c.install] : []))],
     },
     requiredFiles: Object.assign({}, ...configs.map((c) => c.requiredFiles ?? {})),
     manual: configs.flatMap((c) => c.manual ?? []),
@@ -1054,6 +1369,43 @@ function uniquePlistKeys(caps: readonly MobileCapability[]): Array<{ key: string
 }
 
 /**
+ * The web export folder `cap sync` would copy, when it is missing: capacitor.config's `webDir`
+ * (Capacitor's default `www` when the config names none) without an `index.html`. Undefined
+ * when it is there, when the config loads the app from `server.url` (sync skips the copy check
+ * then), or when the config cannot be read literally (Capacitor itself decides).
+ */
+async function missingWebAssets(root: string): Promise<string | undefined> {
+  const file = await capacitorConfigFile(root);
+  if (!file) return undefined;
+  const source = await Deno.readTextFile(file);
+  const config = await readCapacitorConfig(file, source);
+  if (!config) return undefined;
+  const server = config.server as { url?: unknown } | undefined;
+  if (typeof server?.url === "string" && server.url !== "") return undefined;
+  const webDir = config.webDir ?? (/\bwebDir\b/.test(source) ? undefined : "www");
+  if (typeof webDir !== "string") return undefined;
+  return await exists(join(root, webDir, "index.html")) ? undefined : webDir;
+}
+
+/**
+ * The command after the install: `npx cap sync`, or `npx cap update` while the web export is
+ * missing, with the warning that says what is left.
+ */
+async function syncStep(
+  root: string,
+): Promise<{ sync: PlannedCommand; missing?: string; warning?: string }> {
+  const missing = await missingWebAssets(root);
+  if (missing === undefined) return { sync: { cmd: "npx", args: ["cap", "sync"], cwd: root } };
+  return {
+    sync: { cmd: "npx", args: ["cap", "update"], cwd: root },
+    missing,
+    warning: `no web export at ${missing}/index.html (capacitor.config webDir) yet, so ` +
+      "`npx cap update` runs instead of `npx cap sync` (it installs the native plugins; sync " +
+      "would stop at the missing folder). Run `denext export`, then `npx cap sync`",
+  };
+}
+
+/**
  * Work out what `denext mobile add` will do, without changing anything: the project root,
  * its package manager, the install and sync commands, and the native config edits. It throws
  * for an unknown capability, a folder without a Capacitor project, and an `@capacitor/core`
@@ -1087,8 +1439,11 @@ export async function planMobileCapabilities(
   const { manager, lockfile, packageManagerField } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
   const exact = await pinsCapacitorExactly(root);
-  const specs = caps.flatMap((c) => c.npm ? [packageSpec(c, exact)] : []);
+  const specs = uniquePackages(
+    caps.flatMap((c) => c.npm ? [packageSpec(c, exact), ...(c.peers ?? [])] : []),
+  );
   const target = await entitlementsTarget(root);
+  const after = specs.length > 0 ? await syncStep(root) : undefined;
   return {
     root,
     capabilities: names,
@@ -1098,17 +1453,22 @@ export async function planMobileCapabilities(
     capacitorMajor: core.major,
     capacitorSource: core.source,
     install: specs.length > 0 ? addCommand(manager, specs, root, exact) : undefined,
-    sync: specs.length > 0 ? { cmd: "npx", args: ["cap", "sync"], cwd: root } : undefined,
+    sync: after?.sync,
+    webAssetsMissing: after?.missing,
     plist: uniquePlistKeys(caps),
     permissions: [...new Set(caps.flatMap((c) => c.androidPermissions ?? []))],
     notes: names.flatMap((n) => table[n].notes ? [`${n}: ${table[n].notes}`] : []),
     native: configured.native,
     entitlementsFiles: target.files,
-    warnings: await missingFiles(root, configured.requiredFiles),
+    warnings: [
+      ...(await missingFiles(root, configured.requiredFiles)),
+      ...(after?.warning ? [after.warning] : []),
+    ],
     manual: [
       ...(await entitlementSteps(root, target, configured.native.entitlements)),
       ...configured.manual,
     ],
+    privacy: privacyLabels(privacyEntriesFor(names)),
   };
 }
 
@@ -1146,6 +1506,7 @@ export function formatCapabilityPlan(plan: CapabilityPlan): string {
     ...plan.permissions.map((p) => `  manifest       <uses-permission ${p}>`),
     ...plan.native.manifest.map((e) => `  manifest       ${e.label}`),
     ...plan.native.variablesGradle.map((e) => `  gradle         ${e.label}`),
+    ...plan.privacy.map((p) => `  privacy        ${p} (PrivacyInfo.xcprivacy)`),
     ...(plan.sync ? [`  sync           ${commandLine(plan.sync)}`] : []),
     ...plan.warnings.map((w) => `  WARNING        ${w}`),
   ];
@@ -1168,7 +1529,8 @@ export function formatCapabilityTable(
   table: Readonly<Record<string, MobileCapability>> = MOBILE_CAPABILITIES,
 ): string {
   return Object.entries(table).map(([name, c]) =>
-    `  ${name.padEnd(17)}${
+    // A name longer than the column (background-location) still gets one space.
+    `  ${name.padEnd(16)} ${
       (c.npm ? `${c.npm}@${c.version}` : "(denext native plugin)").padEnd(46)
     }${c.notes ?? ""}`
   ).join("\n");
@@ -1223,6 +1585,17 @@ function mergeInstall(report: AddCapabilitiesReport, done: NativeInstallReport):
   pushNew(report.written, done.written);
   pushNew(report.unchanged, done.unchanged);
   report.skipped.push(...done.skipped);
+  pushNew(report.manual, done.manual);
+}
+
+/** Merge the capabilities' required-reason declarations into the privacy manifests. */
+async function mergePrivacy(report: AddCapabilitiesReport): Promise<void> {
+  const entries = privacyEntriesFor(report.plan.capabilities);
+  if (entries.length === 0) return;
+  const done = await writePrivacyManifests(report.plan.root, entries);
+  pushNew(report.written, done.written);
+  pushNew(report.unchanged, done.unchanged.filter((p) => !report.written.includes(p)));
+  report.skipped.push(...done.skipped.filter((s) => !report.skipped.includes(s)));
   pushNew(report.manual, done.manual);
 }
 
@@ -1283,6 +1656,7 @@ export async function addMobileCapabilities(
   }));
   await editNative(report, ANDROID_MANIFEST, [...permissions, ...plan.native.manifest]);
   await editNative(report, VARIABLES_GRADLE, plan.native.variablesGradle);
+  await mergePrivacy(report);
   if (plan.sync) await runChecked(opts.run, plan.sync, report.ran);
   return { ...report, plan: await withResolvedEntitlementsNote(plan) };
 }

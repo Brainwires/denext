@@ -1,7 +1,7 @@
 // `denext create` scaffolding: the generated file set/content, and that the
 // generated app actually type-checks against the framework.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
 import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
@@ -146,6 +146,11 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   assertStringIncludes(desktop, "runDesktop");
   assertStringIncludes(desktop, "denext/desktop");
   assertStringIncludes(desktop, "import.meta.url");
+  // The entry resolves desktop.capabilities from the config (default deny when absent), so a
+  // desktop scaffold also emits denext.config.ts for the entry to import.
+  assertStringIncludes(desktop, "resolveDesktopCapabilities");
+  assertStringIncludes(desktop, 'import config from "./denext.config.ts"');
+  assert(paths.includes("denext.config.ts"), "desktop scaffold emits denext.config.ts");
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
   assertStringIncludes(dj.tasks.export, "export .");
   assertStringIncludes(dj.tasks.desktop, "deno desktop desktop.ts");
@@ -166,6 +171,27 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   // Windows packaging: a package-windows.ts + its task.
   assertStringIncludes(dj.tasks["desktop:package:windows"], "scripts/package-windows.ts");
   assertPackagingScript(files, "scripts/package-windows.ts", WINDOWS_PACKAGING_KEYWORDS);
+});
+
+Deno.test("desktop init refuses to overwrite an existing denext.config.ts", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_init_desktop_" });
+  try {
+    // A desktop scaffold now emits denext.config.ts (the entry imports it); init must never
+    // clobber a config the user already has — it refuses rather than merging or overwriting.
+    await Deno.writeTextFile(join(dir, "denext.config.ts"), "export default { csp: true };\n");
+    await assertRejects(
+      () => scaffoldProject({ dir, desktop: true, allowExisting: true }),
+      Error,
+      "denext.config.ts already exists",
+    );
+    // The user's config is untouched.
+    assertEquals(
+      await Deno.readTextFile(join(dir, "denext.config.ts")),
+      "export default { csp: true };\n",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("scaffoldFiles: scaffolded macOS package script matches the examples/native copy", async () => {

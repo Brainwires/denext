@@ -136,6 +136,22 @@ Deno.test("spaShellHtml: csp object adds global opt-ins (connect-src)", async ()
   assertStringIncludes(html, "connect-src 'self' https://api.example.com");
 });
 
+Deno.test("spaShellHtml: csp object adds frame-src / media-src opt-ins (Stripe, remote video)", async () => {
+  const html = await spaShellHtml({
+    spa: {
+      entry: "./src/main.tsx",
+      csp: {
+        frameSrc: ["https://js.stripe.com", "https://hooks.stripe.com"],
+        mediaSrc: ["https://media.example"],
+      },
+    },
+    scriptSrc: "/_denext/client/index.js",
+  });
+  assertStringIncludes(html, "frame-src 'self' https://js.stripe.com https://hooks.stripe.com");
+  assertStringIncludes(html, "media-src 'self' https://media.example");
+  assert(!html.includes("frame-ancestors"), "frame-ancestors stays header-only");
+});
+
 Deno.test("pnpmCatalogPackages: lists catalog:/workspace: deps across every group", async () => {
   const dir = await Deno.makeTempDir();
   try {
@@ -232,4 +248,26 @@ Deno.test("collectSpaPreloads: transitive STATIC import graph only (dynamic impo
   } finally {
     await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
+});
+
+Deno.test("generateSpaEntry (prod): seam installs ride a data: import AHEAD of the app entry", () => {
+  // ES imports are hoisted: an install STATEMENT would run after the app module evaluated
+  // (and an app entry mounts synchronously), so its first render met class components with
+  // no runtime installed. The installs must be an import that precedes the app import.
+  const lines = generateSpaEntry("file:///app/src/main.tsx", false, null, { activity: true })
+    .split("\n");
+  const seam = lines.findIndex((l) => l.startsWith("import 'data:text/javascript,"));
+  const app = lines.indexOf('import "file:///app/src/main.tsx";');
+  assert(seam !== -1 && seam < app, "the seam import precedes the app import");
+  assertStringIncludes(lines[seam], "installClassSupport();");
+  assertStringIncludes(lines[seam], "installActivitySupport();");
+  assert(
+    !lines.some((l) => /^install\w+\(\);$/.test(l)),
+    "no install statement is left at the top level (it would run after the app)",
+  );
+  assert(
+    !generateSpaEntry("file:///x.tsx", false, null, { classComponents: false })
+      .includes("data:"),
+    "nothing to install → no seam import",
+  );
 });

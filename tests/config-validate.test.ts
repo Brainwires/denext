@@ -231,6 +231,20 @@ Deno.test("production-server keys: a bare origin, a boolean, whole numbers in ra
     Error,
     "`cacheKeyParams` must be an array of query-parameter-name strings",
   );
+  // compress: a boolean, or { encodings } of "gzip" / "br".
+  validateDenextConfig({ compress: false });
+  validateDenextConfig({ compress: { encodings: ["br", "gzip"] } });
+  validateDenextConfig({ compress: {} });
+  assertThrows(
+    () => validateDenextConfig({ compress: "gzip" as never }),
+    Error,
+    "`compress` must be a boolean or { encodings",
+  );
+  assertThrows(
+    () => validateDenextConfig({ compress: { encodings: ["zstd"] } as never }),
+    Error,
+    '`compress.encodings` must be an array of "gzip" / "br"',
+  );
   // They are known top-level keys — no unknown-key warning.
   for (
     const key of [
@@ -256,4 +270,96 @@ Deno.test("validateDenextConfig: spa.ota must be a boolean", () => {
   validateDenextConfig(spa(false));
   validateDenextConfig(spa(undefined));
   assertThrows(() => validateDenextConfig(spa("yes")), Error, "`spa.ota` must be a boolean");
+});
+
+Deno.test("desktop.capabilities: valid shapes pass; bad shapes throw a field-scoped error", () => {
+  // Valid: booleans, an fs options object, a shell options object, an extensions list, or absent.
+  validateDenextConfig({
+    desktop: {
+      capabilities: {
+        secureStore: true,
+        fs: { read: ["$APPDATA"], write: ["$APPDATA"] },
+        shell: { openExternal: ["https:"] },
+        extensions: ["./desktop/extensions/scanner.ts"],
+      },
+    },
+  });
+  validateDenextConfig({ desktop: { capabilities: {} } });
+  validateDenextConfig({ desktop: {} });
+  validateDenextConfig({});
+
+  // Invalid shapes.
+  assertThrows(
+    () => validateDenextConfig({ desktop: [] as unknown as Record<never, never> }),
+    Error,
+    "`desktop` must be an object",
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig({ desktop: { capabilities: true } as unknown as Record<never, never> }),
+    Error,
+    "`desktop.capabilities`",
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig(
+        { desktop: { capabilities: { extensions: ["", 1] } } } as unknown as Record<never, never>,
+      ),
+    Error,
+    "`desktop.capabilities.extensions`",
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig(
+        { desktop: { capabilities: { fs: 5 } } } as unknown as Record<never, never>,
+      ),
+    Error,
+    "`desktop.capabilities.fs`",
+  );
+});
+
+Deno.test("csp / spa.csp: opt-in values must be string arrays; unknown keys warn", () => {
+  const all = {
+    scriptSrc: ["https://js.stripe.com"],
+    styleSrc: ["https://fonts.googleapis.com"],
+    imgSrc: ["https://cdn.example"],
+    connectSrc: ["https://api.stripe.com"],
+    fontSrc: ["https://fonts.gstatic.com"],
+    frameSrc: ["https://js.stripe.com", "https://hooks.stripe.com"],
+    mediaSrc: ["https://media.example"],
+    workerSrc: ["blob:"],
+  };
+  assertEquals(captureWarn(() => validateDenextConfig({ csp: all })), []);
+  validateDenextConfig({ csp: "strict" });
+  validateDenextConfig({ csp: "off" });
+  assertThrows(
+    () => validateDenextConfig({ csp: { frameSrc: "https://js.stripe.com" } as never }),
+    Error,
+    "`csp.frameSrc` must be an array of source strings",
+  );
+  assertThrows(
+    () => validateDenextConfig({ csp: { mediaSrc: [1] } as never }),
+    Error,
+    "`csp.mediaSrc` must be an array of source strings",
+  );
+  assertThrows(
+    () => validateDenextConfig({ csp: ["x"] as never }),
+    Error,
+    '`csp` must be "strict", "off", or an opt-in object',
+  );
+  assertThrows(
+    () =>
+      validateDenextConfig({
+        mode: "spa",
+        spa: { entry: "./src/main.tsx", csp: { workerSrc: "blob:" } as never },
+      }),
+    Error,
+    "`spa.csp.workerSrc` must be an array of source strings",
+  );
+  const warns = captureWarn(() =>
+    validateDenextConfig({ csp: { frameSource: ["https://x.io"] } as never })
+  );
+  assertEquals(warns.length, 1);
+  assert(warns[0].includes("unknown option `frameSource`"), warns[0]);
+  assert(warns[0].includes("did you mean `frameSrc`?"), warns[0]);
 });

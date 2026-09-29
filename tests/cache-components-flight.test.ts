@@ -37,12 +37,14 @@ async function Slow(): Promise<VNode> {
   );
 }
 
-const Page = () =>
+// `eager`: the shell widget has no directive, so the page ROOT hydrates it (and inlines its
+// Flight tree). Without it every client part is a carved island and the root inlines `null`.
+const makePage = (eager: boolean) => () =>
   h(
     "main",
     null,
     h("h1", null, "Shell"),
-    h(ShellWidget, { "client:visible": true } as never),
+    h(ShellWidget, (eager ? {} : { "client:visible": true }) as never),
     h(Suspense, { fallback: h("p", null, "loading…"), children: h(Slow, {}) }),
   );
 
@@ -71,12 +73,12 @@ const manifest: RouteManifest = {
   directives: new Map(),
 };
 
-const pageModule = { default: Page, revalidate: 60 };
+const pageModules = [false, true].map((eager) => ({ default: makePage(eager), revalidate: 60 }));
 
-const makeApp = () =>
+const makeApp = (eager = false) =>
   createApp({
     getManifest: () => manifest,
-    load: (fp) => Promise.resolve(fp === filePath ? pageModule : undefined),
+    load: (fp) => Promise.resolve(fp === filePath ? pageModules[eager ? 1 : 0] : undefined),
     clientEntryFor: () => "/_denext/entry.js",
     flight: true,
     appDir: "/app",
@@ -119,10 +121,10 @@ Deno.test("4b: Flight PPR caches the shell (with its Flight payload) and streams
   const islandsJson = /<script id="__denext_islands"[^>]*>([\s\S]*?)<\/script>/.exec(b1)![1];
   assertStringIncludes(islandsJson, "c_isl#ShellWidget");
   assertStringIncludes(islandsJson, "c_isl#HoleWidget");
-  // The filled Flight tree carries the resumed hole content (no unfilled `{$:"$"}`).
+  // Every client part is a carved island, so the root hydrates nothing: its Flight is `null`
+  // (the islands carry their own Flight above).
   const flightJson = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(b1)![1];
-  assert(!flightJson.includes(`"$":"$"`), "no unfilled Suspense holes remain in the flight");
-  assertStringIncludes(flightJson, "hi alice");
+  assertEquals(flightJson, "null");
 
   // Streamed, per-request, CSP-carrying (swap-runtime hash in script-src).
   assertStringIncludes(r1.headers.get("cache-control") ?? "", "no-store");
@@ -158,4 +160,20 @@ Deno.test("4b: the cached Flight shell is request-independent across users", asy
   }
   assertStringIncludes(a, "hi carol");
   assertStringIncludes(b, "hi dave");
+});
+
+Deno.test("4b: a Flight PPR page whose root hydrates inlines the filled Flight tree", async () => {
+  setCacheStore(inMemoryCacheStore());
+  const handler = makeApp(true);
+  for (const [user, cache] of [["alice", "MISS"], ["bob", "HIT"]]) {
+    const res = await get(handler, user);
+    const body = await res.text();
+    assertEquals(res.headers.get("x-denext-cache"), cache);
+    // The filled Flight tree carries the resumed hole content (no unfilled `{$:"$"}`) and the
+    // eager shell widget the root hydrates.
+    const flightJson = /<script id="__denext_flight"[^>]*>([\s\S]*?)<\/script>/.exec(body)![1];
+    assert(!flightJson.includes(`"$":"$"`), "no unfilled Suspense holes remain in the flight");
+    assertStringIncludes(flightJson, `hi ${user}`);
+    assertStringIncludes(flightJson, "c_isl#ShellWidget");
+  }
 });

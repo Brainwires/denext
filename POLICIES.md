@@ -24,8 +24,11 @@
   not marketed as "NestJS on Deno".
 - **No decorator-metadata transpile stage.** A proposal for `experimentalDecorators` /
   `emitDecoratorMetadata` must clear a much higher bar than "it's how Nest does it."
-- **Out of scope: React Native / native rendering.** Capacitor/WebView stays the mobile
-  story; a true RN target is a separate future frontier.
+- **Out of scope: native rendering.** Capacitor/WebView stays the mobile story, and a
+  native-view renderer is a separate future frontier. React Native APIs and apps are in scope:
+  they are supported through react-native-web plus denext's overlay (React Native mode,
+  `denext/expo/*`, the community-package aliases), with the gaps listed in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md).
 
 ## Security policy
 

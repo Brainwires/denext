@@ -1,0 +1,143 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@std/http@1": "1.1.4",
+    "jsr:@std/internal@^1.0.14": "1.0.14",
+    "jsr:@std/path@1": "1.1.6"
+  },
+  "jsr": {
+    "@std/http@1.1.4": {
+      "integrity": "4f1575226ca7c0df1df38b26d50265fed30869b2a63ab867edc5b92492150c8c"
+    },
+    "@std/internal@1.0.14": {
+      "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
+    },
+    "@std/path@1.1.6": {
+      "integrity": "c68485c2a4dfbb5ae3cc74fae4e8c4e5d874cf8a8ed12927917235c758b46cbe",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
+    }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@capacitor/app@8.1.1",
+        "npm:@capacitor/browser@8.0.4",
+        "npm:@capacitor/cli@8.5.2",
+        "npm:@capacitor/core@8.5.2",
+        "npm:@capacitor/device@8.0.3",
+        "npm:@capacitor/dialog@8.0.1",
+        "npm:@capacitor/haptics@8.0.2",
+        "npm:@capacitor/ios@8.5.2",
+        "npm:@capacitor/keyboard@8.0.5",
+        "npm:@capacitor/share@8.0.2",
+        "npm:@capacitor/splash-screen@8.0.2",
+        "npm:@expo/ui@~57.0.20",
+        "npm:@react-native-async-storage/async-storage@2.2.0",
+        "npm:@types/react@~19.2.2",
+        "npm:expo-constants@~57.0.19",
+        "npm:expo-device@~57.0.2",
+        "npm:expo-font@~57.0.4",
+        "npm:expo-glass-effect@~57.0.4",
+        "npm:expo-haptics@~57.0.3",
+        "npm:expo-image@~57.0.5",
+        "npm:expo-linking@~57.0.11",
+        "npm:expo-router@~57.0.23",
+        "npm:expo-splash-screen@~57.0.9",
+        "npm:expo-status-bar@~57.0.1",
+        "npm:expo-symbols@~57.0.3",
+        "npm:expo-system-ui@~57.0.4",
+        "npm:expo-web-browser@~57.0.3",
+        "npm:expo@~57.0.25",
+        "npm:react-dom@19.2.3",
+        "npm:react-native-gesture-handler@2.32",
+        "npm:react-native-reanimated@4.5.1",
+        "npm:react-native-safe-area-context@5.7",
+        "npm:react-native-screens@4.26",
+        "npm:react-native-web@0.21",
+        "npm:react-native-worklets@0.10.1",
+        "npm:react-native@0.86.3",
+        "npm:react@19.2.3",
+        "npm:typescript@~6.0.3"
+      ]
+    },
+    "links": {
+      "jsr:@denext/avif@0.1.2": {},
+      "jsr:@denext/content-collections@0.4.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.10.0",
+          "jsr:@std/front-matter@1",
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1",
+          "jsr:@std/yaml@1"
+        ]
+      },
+      "jsr:@denext/denext@2.10.0": {
+        "dependencies": [
+          "jsr:@astral/astral@~0.5.3",
+          "jsr:@denext/lightningcss@^1.0.0-rc.72",
+          "jsr:@denext/swc@76",
+          "jsr:@luca/esbuild-deno-loader@0.11",
+          "jsr:@std/assert@1",
+          "jsr:@std/async@1",
+          "jsr:@std/encoding@1",
+          "jsr:@std/fs@1",
+          "jsr:@std/http@1",
+          "jsr:@std/jsonc@1",
+          "jsr:@std/media-types@1",
+          "jsr:@std/path@1",
+          "jsr:@std/yaml@1",
+          "npm:@mdx-js/mdx@3",
+          "npm:effect@^3.22.0",
+          "npm:esbuild@0.24",
+          "npm:sass@^1.80.0",
+          "npm:ws@8"
+        ]
+      },
+      "jsr:@denext/effect@0.1.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.10.0",
+          "npm:effect@^3.22.0"
+        ]
+      },
+      "jsr:@denext/graphql@0.2.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.10.0",
+          "jsr:@std/path@1",
+          "npm:graphql-yoga@^5.10.0",
+          "npm:graphql@^16.9.0"
+        ]
+      },
+      "jsr:@denext/htmx@2.0.11": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.10.0",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/lightningcss@1.0.0-rc.72": {},
+      "jsr:@denext/og@0.1.1": {},
+      "jsr:@denext/openapi@0.3.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.10.0",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/pages-router@0.10.0": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.10.0",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/photon@0.3.6": {},
+      "jsr:@denext/react-router@0.1.1": {
+        "dependencies": [
+          "jsr:@denext/denext@^2.10.0",
+          "jsr:@std/fs@1",
+          "jsr:@std/path@1"
+        ]
+      },
+      "jsr:@denext/swc@76.0.1": {}
+    }
+  }
+}

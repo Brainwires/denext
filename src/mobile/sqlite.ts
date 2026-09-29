@@ -8,6 +8,7 @@
  */
 
 import { nativePlugin } from "./plugin.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 import {
   deleteWebSqlite,
   openWebSqlite,
@@ -432,6 +433,9 @@ function database(name: string, driver: SqliteDriver): SqliteDatabase {
  *
  * - Inside the native shell with `@capacitor-community/sqlite` installed (`denext mobile add
  *   sqlite`), it is a file in the app's storage, opened through the plugin.
+ * - In a Deno Desktop window (`denext desktop add sqlite`), it is a file in the app's folder
+ *   of the OS app-support directory, opened with `node:sqlite` in the desktop runtime
+ *   (`backend: "native"`).
  * - In the browser it runs the app's own `@sqlite.org/sqlite-wasm` (`npm install
  *   @sqlite.org/sqlite-wasm`; denext ships no npm runtime dependency) in a worker, persisted
  *   to the Origin Private File System through the engine's `opfs-sahpool` VFS, which needs
@@ -458,6 +462,8 @@ function database(name: string, driver: SqliteDriver): SqliteDatabase {
  */
 export async function openSqlite(name: string, options?: SqliteOptions): Promise<SqliteDatabase> {
   checkName("openSqlite", name);
+  const desktop = onDesktop() && await viaDesktop("sqlite", (d) => d.openDesktopSqlite(name), true);
+  if (desktop) return database(name, desktop.value);
   const plugin = sqlitePlugin();
   const driver = plugin
     ? await openNative(plugin, name)
@@ -474,6 +480,7 @@ export async function openSqlite(name: string, options?: SqliteOptions): Promise
  */
 export async function deleteSqlite(name: string, options?: SqliteOptions): Promise<void> {
   checkName("deleteSqlite", name);
+  if (onDesktop() && await viaDesktop("sqlite", (d) => d.deleteDesktopSqlite(name), true)) return;
   const plugin = sqlitePlugin();
   if (!plugin) return await deleteWebSqlite(name, await webUrls(options));
   const conn = { database: nativeName(name), readonly: false };

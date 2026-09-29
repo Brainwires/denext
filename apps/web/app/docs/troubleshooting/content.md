@@ -395,6 +395,166 @@ tree-shaken and not a leak), and a `typeof Deno` guard marks a module isomorphic
 by intent. See [Islands & hydration](/docs/islands) and the boundary section of
 [Known limitations](/docs/limitations).
 
+## Mobile (Capacitor)
+
+The entries below are for an app in a Capacitor shell. The full guide is
+[Mobile (Capacitor)](/docs/mobile).
+
+### The app stays on its splash screen under `denext mobile dev`
+
+**Cause.** One of two things stops the page before it hides the splash:
+
+1. denext before 2.10.0 sent a SPA's own CSS import (`import "./styles.css"`)
+   through the JavaScript transform in unbundled dev, which failed the page.
+2. On iOS 14 and later, a WebView reaches a server on the local network only
+   when the app's `Info.plist` has an `NSLocalNetworkUsageDescription` (and
+   `NSAppTransportSecurity` → `NSAllowsLocalNetworking` for plain `http`);
+   without them iOS denies the requests silently.
+
+**Fix.** Upgrade to denext 2.10.0 or later. `denext mobile dev` adds both
+`Info.plist` keys for the session, but a changed `Info.plist` is a native
+change: rebuild and run the app from Xcode after the first session. Allow the
+app when iOS asks for local network access (or turn it on under Settings →
+Privacy & Security → Local Network).
+
+See [Live reload on a device](/docs/mobile#live-reload-on-a-device).
+
+### A release build still loads the dev server
+
+**Cause.** A `denext mobile dev` session that was killed outright (`SIGKILL`, a
+crash, power loss) never restored `capacitor.config.*`, so the dev URL is still
+in the native config copies (`ios/App/App/capacitor.config.json`,
+`android/app/src/main/assets/capacitor.config.json`).
+
+**Fix.** Put everything back, then rebuild the web assets and copy them in:
+
+```sh
+denext mobile dev --restore   # capacitor.config, Info.plist, the dev URL in the native copies
+deno task export
+npx cap copy
+```
+
+The next `denext mobile dev` restores the backup first as well. See
+[Known limitations](/docs/limitations) (Desktop & mobile).
+
+### Sign-in fails with `origin_invalid` (or another origin error) inside the app
+
+**Cause.** The shell serves the app from its own origin, `capacitor://localhost`
+on iOS and `https://localhost` on Android. An auth provider that checks the
+request origin against an allow list (Clerk answers `origin_invalid`) refuses
+it.
+
+**Fix.** Add the app origins to the allowed origins in the provider's settings,
+when it lets you. If it only accepts origins it can verify, serve the iOS shell
+from a scheme and host of your own in `capacitor.config.ts`:
+
+```ts
+server: { iosScheme: "myapp", hostname: "app" }, // the iOS origin becomes myapp://app
+```
+
+The tradeoff: web storage (`localStorage`, IndexedDB, cookies) belongs to the
+origin, so an installed app that moves to the new origin starts with empty
+storage, and its users sign in again. Other origin allow lists need the new
+origin too, such as the CORS origins of your API and of `createOtaHandler`,
+whose `cors: true` covers only the default origins. For OAuth providers,
+[`openAuthSession`](/docs/mobile#auth-sessions) runs the sign-in on the
+provider's own page instead of in the WebView.
+
+### APNs answers `DeviceTokenNotForTopic` for a Live Activity push-to-start
+
+**Cause.** The push went to the app's regular push token (from
+`registerForPush`), or with the app's bundle id as the topic. Starting a Live
+Activity remotely takes the app's push-to-start token and the Live Activity
+topic.
+
+**Fix.** Send the token from `liveActivityPushToStartToken()` (iOS 17.2 and
+later; `null` below it) to your server, and push to it with the topic
+`<bundle id>.push-type.liveactivity`, the header `apns-push-type: liveactivity`,
+and a payload with `"event": "start"`,
+`"attributes-type": "DenextActivityAttributes"`, `"attributes"` and a
+`content-state`. The app needs the push entitlement
+(`denext mobile add push`). See [App extensions](/docs/mobile#app-extensions).
+
+### Push works on iOS, but Android never registers
+
+**Cause.** `@capacitor/push-notifications` registers with FCM through Firebase,
+which needs your Firebase project's `android/app/google-services.json`.
+`denext mobile add push` only warns when it is missing, and registration then
+fails at runtime.
+
+**Fix.** Download `google-services.json` for the app's package name from the
+Firebase console, put it in `android/app/`, and rebuild. See
+[Push notifications](/docs/mobile#push-notifications).
+
+### An over-the-air update is refused with `native_mismatch`
+
+**Cause.** The manifest's `nativeFingerprint` differs from the one the app
+binary embeds: the UI was built for another native layer (a plugin, a native
+file, a Capacitor version or `capacitor.config` changed), so the installed
+binary cannot run it.
+
+**Fix.** Ship a new binary: run `denext mobile fingerprint --write`, build and
+release the app, and stamp later UI releases with
+`denext ota manifest --native-fingerprint auto`.
+`denext mobile fingerprint --diff <old.json>` names the inputs that changed; a
+version or build number committed to the native sources counts, so set those on
+the build command line. See [Native fingerprint](/docs/mobile#native-fingerprint).
+
+## React Native mode
+
+The entries below are for an app built with `reactNative: true`. The full guide is
+[React Native / Expo apps](/docs/react-native).
+
+### The build fails on a package's Flow source, or the page is blank with `Cannot find native module`
+
+**Cause.** The package has no web build and no denext replacement. A package whose `main` is
+Flow source fails before any of its code is used (a parse error at build time). A module that
+asks for a native module no plugin provides loads, and throws
+`Cannot find native module '…'` when one of that module's functions is called (the app's own
+code, or a library at startup, then stops the page).
+
+**Fix.** Check the [Expo APIs](/docs/react-native#expo-apis) and
+[Community packages](/docs/react-native#community-packages) tables first: a listed package
+resolves to a denext implementation unless `reactNative.expoShims` or
+`reactNative.aliases` turned it off. Otherwise give it a web replacement of your own: a
+`.web.ts` beside the module that imports it, or a `deno.json` `imports` entry that maps the
+package to a shim. `denext migrate --from expo` names the native-only packages it finds. See
+[Other native-only packages](/docs/react-native#other-native-only-packages).
+
+### The build warns that a Reanimated hook's worklet is not a function it can see
+
+**Cause.** The build stamps Reanimated's worklets with the closure its web runtime re-runs them
+on, and it could not find the function a hook reads: the argument is the result of another
+call, such as `useAnimatedStyle(useCallback(…))`. Without the closure, `useAnimatedStyle`
+throws in dev and the hook never re-runs when a captured value changes.
+
+**Fix.** Pass the function inline, give it a `'worklet'` directive, or add an explicit
+dependency array: `useAnimatedStyle(fn, [dep1, dep2])`. See
+[Reanimated and worklets](/docs/react-native#reanimated-and-worklets).
+
+### Safe-area insets are 0 in the iOS shell
+
+**Cause.** The page does not cover the screen: a viewport meta of your own in `spa.head`
+without `viewport-fit=cover` replaces React Native mode's default, and
+`reactNative: { rootStyle: false }` drops that default too.
+
+**Fix.** Keep `viewport-fit=cover` in your viewport meta
+(`width=device-width, initial-scale=1, viewport-fit=cover`). `SafeAreaView` and
+react-native-safe-area-context then read the real insets. See
+[Safe areas](/docs/react-native#safe-areas).
+
+### A library takes its web path inside the iOS or Android shell
+
+**Cause.** `Platform.OS` is `"web"` in the shells, on purpose: react-native-web and libraries
+choose their DOM code paths by it, and the native modules the `"ios"` / `"android"` paths call
+do not exist in a WebView. Code that branches on `Platform.OS` for behaviour takes the web
+branch.
+
+**Fix.** Branch on `Platform.constants.denextShell` (`"ios"`, `"android"`, `"desktop"` or
+`"web"`) or `runtimePlatform()` from `denext/mobile`, or use `Platform.select`, which picks the
+shell's `ios` / `android` key when the spec has no `web` key. See
+[Platform.OS in the shell](/docs/react-native#platformos-in-the-shell).
+
 ## Still stuck?
 
 Run [`denext doctor`](/docs/doctor-audit) first — it checks your Deno version,

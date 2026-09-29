@@ -16,6 +16,15 @@
 
 import type { AuthSessionError, AuthSessionErrorCode } from "../mobile/auth-session.ts";
 
+/** The error codes the runtime may send back as-is; anything else becomes `unsupported`. */
+const AUTH_SESSION_CODES: ReadonlySet<string> = new Set<AuthSessionErrorCode>([
+  "cancelled",
+  "busy",
+  "invalid",
+  "unsupported",
+  "timeout",
+]);
+
 /** The path the desktop runtime serves the loopback auth-session endpoint at. */
 const AUTH_SESSION_PATH = "/_denext/desktop/auth-session";
 
@@ -88,7 +97,17 @@ export async function startDesktopAuthSession(
   }
 
   if (res.status !== 200) {
-    const code = typeof body?.code === "string" ? body.code as AuthSessionErrorCode : "unsupported";
+    // The runtime answers `unavailable` when the app hasn't enabled the `auth-session` desktop
+    // capability (`denext desktop add auth-session`); surface that as `unsupported` with the fix.
+    if (body?.code === "unavailable") {
+      throw authSessionError(
+        "unsupported",
+        "the desktop auth-session capability is not enabled: run `denext desktop add auth-session`",
+      );
+    }
+    const code = typeof body?.code === "string" && AUTH_SESSION_CODES.has(body.code)
+      ? body.code as AuthSessionErrorCode
+      : "unsupported";
     const message = typeof body?.message === "string"
       ? body.message
       : "the desktop auth session failed";

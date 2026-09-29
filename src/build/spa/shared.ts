@@ -63,10 +63,18 @@ export function generateSpaEntry(
   // "class components are disabled" at render; likewise `<Activity>`/`<ViewTransition>` would
   // silently no-op.
   const install = supportInstall(support);
+  const links = (support.reactNative ? REACT_NATIVE_SPLASH : "") +
+    (support.expoRouterLinks ? EXPO_ROUTER_LINKS : "");
   if (!dev) {
-    return `// denext generated SPA entry — do not edit.\n${prelude}${install}import ${
+    // The installs ride a `data:` module imported AHEAD of the app entry: ES imports are
+    // hoisted, so install STATEMENTS here would run only after the app module had evaluated —
+    // and an app entry mounts synchronously (`createRoot(el).render(<App/>)`, React Native's
+    // `AppRegistry` / `registerRootComponent`). Its first render would then meet class
+    // components with no runtime installed and commit them blank for a round trip (a
+    // gesture-handler `GestureDetector` finds its child missing and throws).
+    return `// denext generated SPA entry — do not edit.\n${prelude}${seamImport(install)}import ${
       JSON.stringify(entryUrl)
-    };\n`;
+    };\n${links}`;
   }
   // `__denextDev` is the FIRST statement (after the hoisted instrumentation import): the
   // DevTools panel and the whole inspector no-op unless the flag is set, and nothing else
@@ -78,7 +86,7 @@ export function generateSpaEntry(
     `import { enableFastRefresh } from "denext/client-runtime";\n` +
     `import { installDevtools } from "denext/devtools";\n` +
     `enableFastRefresh();\ninstallDevtools();\n` +
-    `await import(${JSON.stringify(entryUrl)});\n`;
+    `await import(${JSON.stringify(entryUrl)});\n${links}`;
 }
 
 /** Which reconciler-seam runtimes the SPA entry should install (class defaults on for SPA). */
@@ -89,10 +97,71 @@ export interface SpaEntrySupport {
   activity?: boolean;
   /** Install the per-element `<ViewTransition>` runtime (set when the app uses it). */
   viewTransition?: boolean;
+  /** Route the shell's deep links through expo-router (React Native mode with `app/`). */
+  expoRouterLinks?: boolean;
+  /** React Native mode: hide the shell's splash screen once the app has drawn. */
+  reactNative?: boolean;
+}
+
+/**
+ * React Native mode: hide the Capacitor shell's splash screen once the app has drawn its first
+ * frame (a frame after the root element first has content, at most ~10 s after boot), as
+ * expo-router hides Expo's native splash when its first screen is ready. An Expo app's web code never hides it (Expo's web
+ * build has no splash; the template's `hideAsync` call lives in its native-only variant), so
+ * the splash otherwise stayed until the plugin's own timeout. Outside the shell `hideSplash`
+ * does nothing; an app that calls `SplashScreen.hideAsync()` itself hides it the same way.
+ */
+export const REACT_NATIVE_SPLASH =
+  `import { hideSplash as __denextHideSplash } from "denext/mobile";
+(function __denextHideWhenDrawn(frames) {
+  var root = typeof document === "undefined" ? null : document.getElementById("root");
+  if (root && root.firstChild || frames > 600) {
+    requestAnimationFrame(function () { __denextHideSplash().catch(function () {}); });
+  } else {
+    requestAnimationFrame(function () { __denextHideWhenDrawn(frames + 1); });
+  }
+})(0);
+`;
+
+/**
+ * React Native mode with expo-router: the links that open the app in the Capacitor shell (its
+ * custom scheme, `myapp://settings`, at launch and while it runs) navigate expo-router to their
+ * path, as expo-router does on iOS and Android through expo-linking. Its web build reads the
+ * route from the page URL only, so without this a deep link brought the app forward and
+ * changed nothing. `router.navigate` is retried until the root layout has mounted; outside the
+ * shell `onDeepLink` does nothing.
+ *
+ * A namespace import: `router` is a CommonJS export behind React Mode's `expo-router` overlay
+ * (`export *` of the real package, which a dynamic `import()` chunk does not carry), and the
+ * dev loop's dependency bundle exposes the whole CommonJS module as `__denextCjs`.
+ */
+export const EXPO_ROUTER_LINKS = `import * as __denextExpoRouter from "expo-router";
+import { onDeepLink as __denextOnDeepLink } from "denext/mobile";
+function __denextRouteLink(path, tries) {
+  var m = __denextExpoRouter;
+  var router = m.router || (m.__denextCjs && m.__denextCjs.router) || (m.default && m.default.router);
+  try {
+    router.navigate(path);
+  } catch (err) {
+    if (tries < 100) setTimeout(function () { __denextRouteLink(path, tries + 1); }, 100);
+    else console.error(err);
+  }
+}
+__denextOnDeepLink(function () {}, { route: function (path) { __denextRouteLink(path, 0); } });
+`;
+
+/**
+ * The seam installs as one side-effect `import` of a `data:` module, evaluated before every
+ * later import of the entry (esbuild and `deno bundle` both inline it and resolve its bare
+ * `denext/*` imports as the entry's own). `""` when there is nothing to install.
+ */
+function seamImport(install: string): string {
+  if (!install) return "";
+  return `import 'data:text/javascript,${install.trim().split("\n").join("")}';\n`;
 }
 
 /** The `import`+`install()` lines for each seam runtime the entry needs. */
-function supportInstall(support: SpaEntrySupport): string {
+export function supportInstall(support: SpaEntrySupport): string {
   const lines: string[] = [];
   if (support.classComponents ?? true) {
     lines.push(
@@ -236,7 +305,10 @@ export async function spaShellHtml(opts: {
   devScriptSrc?: string;
   /** Client chunk URLs to `<link rel="modulepreload">` (the entry's static graph). */
   preload?: string[];
-  /** Inject Expo web's root style ahead of `spa.head` (`reactNative` mode). */
+  /**
+   * Inject Expo web's root style ahead of `spa.head`, and default the viewport to
+   * `viewport-fit=cover` (`reactNative` mode).
+   */
   reactNativeRootStyle?: boolean;
 }): Promise<string> {
   const { spa } = opts;
@@ -253,10 +325,15 @@ export async function spaShellHtml(opts: {
   const rnStyle = opts.reactNativeRootStyle ? reactNativeRootStyleTag(rootId) : "";
   const head = rnStyle + (spa.head ? `\n    ${spa.head}` : "");
   // An app-supplied viewport (`viewport-fit=cover` for iOS safe areas, `interactive-widget`)
-  // replaces the default instead of competing with it.
+  // replaces the default instead of competing with it. React Native mode's default covers the
+  // whole screen, as a React Native app does: without `viewport-fit=cover` every safe-area
+  // inset (SafeAreaView, react-native-safe-area-context) reads 0 in the iOS shell.
+  const viewportContent = opts.reactNativeRootStyle
+    ? "width=device-width, initial-scale=1, viewport-fit=cover"
+    : "width=device-width, initial-scale=1";
   const viewport = /<meta\b[^>]*\bname=["']viewport["']/i.test(spa.head ?? "")
     ? ""
-    : `\n    <meta name="viewport" content="width=device-width, initial-scale=1" />`;
+    : `\n    <meta name="viewport" content="${viewportContent}" />`;
   // Boot placeholder rendered inside #root; the app's first render replaces it.
   const loading = spa.loading ?? "";
   const devScript = opts.devScriptSrc

@@ -95,7 +95,10 @@ export interface ApiTokenRecord {
   name?: string;
   /** SHA-256 (hex) of the presented `tok_…` string. */
   tokenHash: string;
-  /** Creation time, epoch seconds. */
+  /**
+   * Creation time — the sign-in the family came from — epoch seconds; the anchor of
+   * `native.refreshTokenMaxAge`.
+   */
   createdAt: number;
   /** Expiry, epoch seconds; `undefined` never expires. */
   expiresAt?: number;
@@ -119,6 +122,50 @@ export interface MfaRecord {
   backupCodeHashes: string[];
   /** The last TOTP step already spent, for the replay guard. */
   lastStep?: number;
+}
+
+/**
+ * One native-app session: a refresh-token rotation chain (a "family"). The refresh token the
+ * app holds names this record and its {@linkcode NativeSessionRecord.generation}; each refresh
+ * advances the generation, so presenting an older one is a replay and revokes the family.
+ */
+export interface NativeSessionRecord {
+  /** The family id (random; carried inside the tokens, never a secret on its own). */
+  id: string;
+  /** The owning {@linkcode AdapterUser.id}. */
+  userId: string;
+  /** The current refresh generation — the only one a refresh may present. */
+  generation: number;
+  /** Per-family random salt mixed into the refresh-token MAC (never sent to the app). */
+  salt: string;
+  /** The session snapshot (JSON: user, provider, amr, authTime) the tokens act as. */
+  session: string;
+  /** Creation time, epoch seconds. */
+  createdAt: number;
+  /** When the family stops refreshing, epoch seconds (slides forward on each refresh). */
+  expiresAt: number;
+  /** When the family was revoked (sign-out, reuse detected, account deleted), epoch seconds. */
+  revokedAt?: number;
+  /**
+   * When the family last rotated, epoch seconds — the anchor of `native.refreshReuseInterval`.
+   * Absent until the first rotation.
+   */
+  rotatedAt?: number;
+}
+
+/**
+ * A single-use native grant: an authorization **code** (handed to the app's redirect URI) or
+ * a sign-in **nonce** (for a native id_token sign-in). Only the SHA-256 of the value is stored.
+ */
+export interface NativeGrantRecord {
+  /** SHA-256 (hex) of the presented value. */
+  hash: string;
+  /** Which kind of grant this is. */
+  kind: "code" | "nonce";
+  /** Expiry, epoch seconds. */
+  expiresAt: number;
+  /** Opaque payload the flow wants back on redemption (JSON). */
+  data?: string;
 }
 
 /** Identifies one linked provider account. */
@@ -363,6 +410,93 @@ export interface AuthAdapter {
    * @returns `true` when the step was claimed (i.e. not a replay).
    */
   claimTotpStep?(userId: string, step: number): MaybePromise<boolean>;
+
+  // ---- native app sessions (optional) --------------------------------------
+
+  /**
+   * Store a single-use native grant (a code or a nonce) — hash only (optional; the native
+   * session group gates `denextAuth({ native })`).
+   *
+   * @param grant The record to store.
+   */
+  createNativeGrant?(grant: NativeGrantRecord): MaybePromise<void>;
+
+  /**
+   * **Atomically** redeem a native grant: delete it and return what it was, or `undefined`
+   * when absent. Two concurrent redemptions must produce exactly one record. An expired grant
+   * is consumed too but resolves `undefined` (fail closed).
+   *
+   * @param hash SHA-256 (hex) of the presented value.
+   * @param kind The grant kind the caller expects (a code can never redeem as a nonce).
+   * @returns The consumed record, or `undefined`.
+   */
+  useNativeGrant?(
+    hash: string,
+    kind: NativeGrantRecord["kind"],
+  ): MaybePromise<NativeGrantRecord | undefined>;
+
+  /**
+   * Store a new native session family.
+   *
+   * @param session The record to store.
+   */
+  createNativeSession?(session: NativeSessionRecord): MaybePromise<void>;
+
+  /**
+   * A native session family by id, exactly as stored (revoked and expired ones included — the
+   * caller decides; reuse detection needs to see a revoked family).
+   *
+   * @param id The family id.
+   * @returns The record, or `undefined`.
+   */
+  getNativeSession?(id: string): MaybePromise<NativeSessionRecord | undefined>;
+
+  /**
+   * **Atomically** advance a family from `fromGeneration` to `fromGeneration + 1` — a
+   * compare-and-swap that succeeds only while the stored generation is still `fromGeneration`
+   * and the family is not revoked. Two concurrent refreshes with one token yield exactly one
+   * `true`. The same write stores `rotation.rotatedAt` as
+   * {@linkcode NativeSessionRecord.rotatedAt}.
+   *
+   * @param id The family id.
+   * @param fromGeneration The generation the presented refresh token carries.
+   * @param expiresAt The family's new expiry, epoch seconds.
+   * @param rotation The rotation time.
+   * @returns `true` when this call advanced the generation.
+   */
+  rotateNativeSession?(
+    id: string,
+    fromGeneration: number,
+    expiresAt: number,
+    rotation?: { rotatedAt: number },
+  ): MaybePromise<boolean>;
+
+  /**
+   * Revoke one family (sign-out, or refresh-token reuse). Revoking an unknown or already
+   * revoked family is a no-op.
+   *
+   * @param id The family id.
+   */
+  revokeNativeSession?(id: string): MaybePromise<void>;
+
+  /**
+   * Revoke every family of a user ("sign out everywhere", password reset).
+   *
+   * @param userId The owner.
+   */
+  revokeNativeSessionsByUser?(userId: string): MaybePromise<void>;
+
+  // ---- account deletion (optional) -----------------------------------------
+
+  /**
+   * Delete a user and everything keyed by them: linked accounts, the password hash, bearer
+   * API tokens, the MFA factor, native session families, and verification tokens issued to
+   * their address (optional; gates `POST {basePath}/account/delete`). Deleting an unknown user
+   * is not an error.
+   *
+   * @param id The {@linkcode AdapterUser.id}.
+   */
+  deleteUser?(id: string): MaybePromise<void>;
 
   // ---- sessions + lifecycle ------------------------------------------------
 

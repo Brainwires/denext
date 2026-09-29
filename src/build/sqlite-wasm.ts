@@ -7,7 +7,7 @@
 // exports nulls and the capability explains what to install. denext itself never ships the
 // engine: the app installs it, as it installs react-native-web.
 
-import { dirname, join, toFileUrl } from "@std/path";
+import { dirname, join, resolve, toFileUrl } from "@std/path";
 import type * as esbuild from "esbuild";
 
 /** The bare specifier the prebuilt runtime imports the engine's URLs through. */
@@ -107,4 +107,60 @@ export function registerSqliteWasmBridge(build: esbuild.PluginBuild): void {
     contents: await Deno.readFile(args.path),
     loader: "file",
   }));
+  // esbuild emits the target of every `import()` it parses, even one inside code tree
+  // shaking dropped: an app that imports only `onDeepLink` from `denext/mobile` would still
+  // ship the bridge chunk and the engine's two files (~1.5 MB) that nothing loads. The
+  // metafile tells a live dynamic import (an output imports the bridge chunk) from a dead
+  // one, so a dead bridge chunk and its engine files are removed after the build.
+  build.initialOptions.metafile = true;
+  build.onEnd((result) => pruneUnreachableBridge(result, fromDir));
+}
+
+/** The metafile input name of the generated bridge module. */
+const BRIDGE_INPUT = `${BRIDGE_NAMESPACE}:${SQLITE_WASM_BRIDGE}`;
+
+/**
+ * The bridge chunk and engine files of a build in which no output imports the bridge chunk
+ * (every `import()` of it sat in code tree shaking removed). Empty when the bridge is live,
+ * absent, or not its own chunk (a build without code splitting inlines it).
+ *
+ * @param metafile The build's metafile.
+ * @returns The output paths (metafile keys) to remove.
+ */
+function unreachableBridgeOutputs(metafile: esbuild.Metafile): string[] {
+  const outputs = metafile.outputs;
+  const bridge = Object.keys(outputs).find((o) => outputs[o].entryPoint === BRIDGE_INPUT);
+  if (bridge === undefined) return [];
+  const importedBy = (path: string, except: Set<string>) =>
+    Object.entries(outputs).some(([o, out]) =>
+      !except.has(o) && out.imports.some((i) => i.path === path)
+    );
+  if (importedBy(bridge, new Set([bridge]))) return [];
+  const dead = new Set([bridge]);
+  for (const i of outputs[bridge].imports) {
+    const asset = outputs[i.path];
+    const engineFile = asset !== undefined &&
+      Object.keys(asset.inputs).every((input) => input.startsWith(`${ASSET_NAMESPACE}:`));
+    if (i.kind === "file-loader" && engineFile) dead.add(i.path);
+  }
+  // An engine file another live output also imports stays.
+  return [...dead].filter((o) => o === bridge || !importedBy(o, dead));
+}
+
+/** Remove the dead bridge outputs from disk (or from `outputFiles`) and from the metafile. */
+async function pruneUnreachableBridge(result: esbuild.BuildResult, cwd: string): Promise<void> {
+  if (!result.metafile) return;
+  const dead = unreachableBridgeOutputs(result.metafile);
+  if (dead.length === 0) return;
+  // Metafile paths are relative to esbuild's working dir, which esbuild realpaths.
+  const base = await Deno.realPath(cwd).catch(() => cwd);
+  const abs = new Set(dead.map((o) => resolve(base, o)));
+  if (result.outputFiles) {
+    result.outputFiles = result.outputFiles.filter((f) =>
+      !abs.has(resolve(base, f.path)) && !abs.has(resolve(cwd, f.path))
+    );
+  } else {
+    await Promise.all([...abs].map((p) => Deno.remove(p).catch(() => {})));
+  }
+  for (const o of dead) delete result.metafile.outputs[o];
 }

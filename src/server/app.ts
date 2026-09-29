@@ -19,6 +19,10 @@ import { setBasePath } from "../client/navigation.ts";
 import { applyDefaultSecurityHeaders } from "./response-headers.ts";
 import { type AppRuntime, type CompiledRules, compileRules } from "./pipeline-state.ts";
 import { runPipeline } from "./request-pipeline.ts";
+import { resolveCors } from "./cors.ts";
+import { createAppLinksHandler } from "./app-links.ts";
+import { compressEncodings, compressOrPassThrough, type ContentCoding } from "./compress.ts";
+import type { RequestContext } from "./request-context.ts";
 
 export type { AppConfig, RequestHandler, RequestLogInfo } from "./app-config.ts";
 export { applyDefaultSecurityHeaders, hstsHeaderValue } from "./response-headers.ts";
@@ -54,6 +58,9 @@ export function createApp(config: AppConfig): RequestHandler {
     basePath,
     rules: () => (compiled ??= compileRules(config)),
     handle: null!, // wired below — the ISR background regen loops back through it
+    // Validated here, at boot: a malformed origin or `"*"` with credentials throws now.
+    cors: resolveCors(config.cors),
+    appLinks: config.appLinks ? createAppLinksHandler(config.appLinks) : undefined,
   };
   // The typed API client's server-side calls run in-process through this app's pipeline
   // (no loopback HTTP) — see src/server/api-dispatcher.ts.
@@ -92,6 +99,7 @@ function dispatch(
     trustForwardedHeaders: config.trustForwardedHeaders,
   });
   requestCtx.routes = { manifest: config.getManifest, load: config.load };
+  requestCtx.cors = app.cors ?? null;
   const startedAt = performance.now();
   // Per-request abort signal — fires on client disconnect or (when configured)
   // request timeout. Exposed on the context so handlers/components can thread it
@@ -113,9 +121,29 @@ function dispatch(
   pipeline = pipeline.then((res) => echoRequestId(res, requestCtx.requestId));
   const secure = isSecureRequest(config, originalRequest);
   pipeline = pipeline.then((res) => applyDefaultSecurityHeaders(res, secure, config.hsts));
+  // Response compression (config `compress`, default on). A background regen serves no
+  // client (its body is discarded), so it is never encoded.
+  const encodings = compressEncodings(config.compress);
+  if (encodings.length > 0 && !isBackgroundRegen) {
+    pipeline = pipeline.then((res) => maybeCompress(originalRequest, res, requestCtx, encodings));
+  }
   pipeline = withRequestLog(pipeline, config, originalRequest, requestCtx.requestId, startedAt);
   if (release) pipeline = withSlotRelease(pipeline, requestTimeout, config.slotBackstop, release);
   return pipeline;
+}
+
+/**
+ * Compress the response unless the served route opted out (`export const compress = false`
+ * on its page, a layout above it, or its route handler).
+ */
+function maybeCompress(
+  request: Request,
+  res: Response,
+  ctx: RequestContext,
+  encodings: readonly ContentCoding[],
+): Promise<Response> {
+  if (ctx.segmentConfig?.compress === false || ctx.compressOptOut) return Promise.resolve(res);
+  return compressOrPassThrough(request, res, encodings);
 }
 
 /** The request logger: the app's `onRequest`, else the DENEXT_LOG default, else none. */

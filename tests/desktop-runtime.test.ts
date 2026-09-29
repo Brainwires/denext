@@ -293,12 +293,32 @@ Deno.test("desktop handler (dev mode): token-gated local endpoints are served lo
     }, devProxy);
     const at = (p: string) => `http://127.0.0.1${p}`;
 
-    // auth-session: answered locally (a GET is 405), never proxied.
+    // auth-session: default-deny (no `auth-session` capability) — answered LOCALLY with
+    // `unavailable` (404), never proxied. The invariant under test is "served locally", which
+    // holds whether the cap is on or off.
     const auth = await handle(
       new Request(at("/_denext/desktop/auth-session")),
       new URL(at("/_denext/desktop/auth-session")),
     );
-    assertEquals(auth.status, 405);
+    assertEquals(auth.status, 404);
+    assertEquals((await auth.json()).code, "unavailable");
+
+    // With the capability enabled the endpoint is live locally (a GET is 405), still never proxied.
+    const handleAuth = createDesktopHandler(
+      { authSessionEnabled: true },
+      dir,
+      undefined,
+      token,
+      () => {
+        booted++;
+      },
+      devProxy,
+    );
+    const authOn = await handleAuth(
+      new Request(at("/_denext/desktop/auth-session")),
+      new URL(at("/_denext/desktop/auth-session")),
+    );
+    assertEquals(authOn.status, 405);
 
     // booted: a POST without the token is refused locally (403), never proxied.
     const noTok = await handle(

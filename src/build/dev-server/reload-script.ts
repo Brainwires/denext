@@ -134,11 +134,15 @@ export const DEV_RELOAD_SCRIPT = `
       })(links[i]);
     }
   }
+  // When the last hot update was applied: a VirtualList that a hot update remounts restores
+  // its scroll position (dev-only, src/client/virtual/dev-restore.ts).
+  function markHmr() { window.__denextHmrAt = Date.now(); }
   function refresh() {
     // Fast Refresh: re-import the route entry (cache-busted) so it re-runs
     // startClient -> retainedRoot.render(), reconciling edits in place and
     // preserving hook state. The entry falls back to a full reload if the
     // refresh is unsafe (hook-shape change) or hydration throws.
+    markHmr();
     try {
       var s = document.querySelector('script[type=module][src*="/_denext/"]');
       if (!s) { location.reload(); return; }
@@ -164,6 +168,7 @@ export const DEV_RELOAD_SCRIPT = `
     // intact. Any failure (or a cross-origin URL, defense-in-depth) falls back to a full
     // reload, so an edit is never silently half-applied.
     var urls;
+    markHmr();
     try { urls = JSON.parse(json); } catch (_) { location.reload(); return; }
     if (!urls || !urls.length) { location.reload(); return; }
     Promise.all(urls.map(function (u) {

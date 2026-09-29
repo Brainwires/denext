@@ -6,17 +6,25 @@ import { join, resolve } from "@std/path";
 import {
   featureFlags,
   momentumSafeScrollEnabled,
-  reactNativeOptions,
+  nodeResolveEnabled,
   type SpaConfig,
 } from "../../server/config.ts";
+import { appUsesActivity, appUsesViewTransition } from "../bundle.ts";
+import { reactNativeBundleOptions } from "../react-native.ts";
 import { buildAppCss, concatCss } from "../css.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { type SseClients, sseSend } from "../sse.ts";
 import { tailwindPaths } from "../tailwind.ts";
-import { bundleSpaInto } from "./bundle.ts";
-import { CLIENT_PREFIX, spaEntryPath } from "./shared.ts";
+import { bundleSpaInto, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
+import {
+  CLIENT_PREFIX,
+  EXPO_ROUTER_LINKS,
+  REACT_NATIVE_SPLASH,
+  spaEntryPath,
+  supportInstall,
+} from "./shared.ts";
 
 export interface SpaDevServerOptions {
   paths: ProjectPaths;
@@ -65,31 +73,12 @@ export interface SpaDevState {
 }
 
 /**
- * The unbundled loop's default: on unless `DENEXT_DEV_UNBUNDLED=0`, or the app is in React
- * Native mode — the react-native → react-native-web resolution, `.web.*` probing and `.js`
- * JSX loader live in the bundled (esbuild) path, so an RN app develops on the bundled loop.
- */
-function unbundledByDefault(paths: SpaDevServerOptions["paths"]): boolean {
-  if (reactNativeOptions(paths.config) !== null) return false;
-  return Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
-}
-
-/**
- * The unbundled opt-in: the explicit option, else the default. React Native mode refuses an
- * explicit `unbundled: true`: react-native → react-native-web, the `.web.*` probing, the
- * `.js` JSX loader, the RN globals and the `expo-*` → `denext/expo/*` aliases are esbuild
- * resolver plugins, and the per-module loop resolves imports without them (its npm
- * prebundle would reach the real, Flow-typed `react-native`), so it cannot build the app.
+ * The unbundled opt-in: the explicit option, else on unless `DENEXT_DEV_UNBUNDLED=0` — React
+ * Native mode included: its resolvers run inside the loop's dependency bundle (see
+ * `dev-unbundled/react-native.ts`).
  */
 function unbundledOptIn(options: SpaDevServerOptions): boolean {
-  if (options.unbundled === true && reactNativeOptions(options.paths.config) !== null) {
-    throw new Error(
-      "`reactNative` apps develop on the bundled dev loop: the react-native-web resolution " +
-        "lives in the bundler, which the unbundled per-module loop does not run. Drop " +
-        "`unbundled: true` (React Native mode already defaults it off).",
-    );
-  }
-  return options.unbundled ?? unbundledByDefault(options.paths);
+  return options.unbundled ?? Deno.env.get("DENEXT_DEV_UNBUNDLED") !== "0";
 }
 
 /** Create the dev state for `options.paths` (resolves + validates the SPA entry). */
@@ -178,7 +167,14 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
   return st.unbundledReady ??= (async () => {
     if (!st.unbundledOptIn) return false;
     const { paths, entryPath } = st;
-    const compat = await detectNextCompat(paths);
+    // React Native mode: react-native → react-native-web and the rest of its resolvers run in
+    // the loop's dependency bundle; it needs the compat (react→denext) runtime.
+    const rn = reactNativeBundleOptions(paths.config, paths.projectDir, true);
+    const compat = rn !== null || await detectNextCompat(paths);
+    const [activity, viewTransition] = await Promise.all([
+      appUsesActivity(paths.projectDir, [entryPath]),
+      appUsesViewTransition(paths.projectDir, [entryPath]),
+    ]);
     st.unbundled = createUnbundledDev({
       projectDir: paths.projectDir,
       appDir: resolve(entryPath, ".."),
@@ -190,6 +186,30 @@ export function ensureUnbundled(st: SpaDevState): Promise<boolean> {
       momentumSafeScroll: momentumSafeScrollEnabled(paths.config),
       instrumentationClient: paths.instrumentationClientPath,
       spaEntry: entryPath,
+      // The seam installs the bundled SPA entry runs (Expo Router's navigators need Activity).
+      spaInstall: supportInstall({
+        classComponents: paths.config?.classComponents ?? true,
+        activity: activity || rn !== null,
+        viewTransition,
+      }) + (rn ? REACT_NATIVE_SPLASH : "") + (await usesExpoRouter(paths) ? EXPO_ROUTER_LINKS : ""),
+      // The compat bundle's defines: `import.meta.env` (`spa.env`), React Native's globals,
+      // and `process.env.NODE_ENV` (the bundle injects a `process` shim; a module does not).
+      define: compat
+        ? {
+          ...spaDefines(st.spa, true),
+          ...rn?.define,
+          "process.env.NODE_ENV": JSON.stringify("development"),
+        }
+        : undefined,
+      reactNative: rn
+        ? {
+          plugins: rn.plugins,
+          platformExtensions: rn.platformExtensions,
+          define: rn.define,
+          resolveAllNodeModules: nodeResolveEnabled(paths.config),
+        }
+        : undefined,
+      onDepsRebuilt: () => broadcastFrame(st, "reload"),
     });
     return true;
   })();
@@ -205,7 +225,7 @@ export async function getUnbundledCss(st: SpaDevState): Promise<string> {
       configPath: paths.configPath,
       outDir: paths.outDir,
       minify: false,
-      entryFiles: [st.entryPath],
+      entryFiles: await spaCssRoots(paths, st.entryPath),
       tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
     });
     st.unbundledCss = appCss ? concatCss(appCss.css) : "";

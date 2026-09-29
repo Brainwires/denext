@@ -3,10 +3,12 @@
  * (`@capacitor/push-notifications` in the Capacitor shell: APNs on iOS, FCM on Android).
  *
  * Provided: permissions, the device push token, the received / response listeners (the tap
- * that cold-started the app included), `setNotificationHandler`, badges, delivered
- * notifications and Android channels. Expo's push service (`getExpoPushTokenAsync`), local
- * scheduling, categories, topics and background tasks are not (see the manifest): send
- * through APNs / FCM from your server with the device token.
+ * that cold-started the app included, remote and local), `setNotificationHandler`, badges,
+ * delivered notifications, Android channels, and local scheduling with categories over
+ * `denext/mobile`'s local notifications (`@capacitor/local-notifications`, `denext mobile add
+ * local-notifications`). Expo's push service is not: `getExpoPushTokenAsync` rejects with
+ * guidance, so send through APNs / FCM from your server with the device token. Channel groups,
+ * topics and background tasks are not provided (see the manifest).
  *
  * On the web there is no push: permissions follow the Notifications API and
  * `getDevicePushTokenAsync` rejects.
@@ -34,6 +36,17 @@ import {
   registerForPush,
   requestPushPermission,
 } from "../mobile/push.ts";
+import {
+  cancelNotification,
+  type LocalNotification,
+  type LocalNotificationTrigger,
+  localPlugin,
+  nextTriggerDate,
+  onLocalNotificationReceived,
+  onLocalNotificationTapped,
+  scheduleNotification,
+  setNotificationCategories,
+} from "../mobile/local-notifications.ts";
 import {
   createEmitter,
   type Emitter,
@@ -97,7 +110,7 @@ export enum AndroidNotificationPriority {
   MAX = "max",
 }
 
-/** Local-notification trigger kinds (scheduling is not provided; kept for compatibility). */
+/** Local-notification trigger kinds, for {@linkcode scheduleNotificationAsync}. */
 export enum SchedulableTriggerInputTypes {
   /** Calendar. */
   CALENDAR = "calendar",
@@ -151,8 +164,11 @@ export interface NotificationRequest {
   identifier: string;
   /** Its content. */
   content: NotificationContent;
-  /** What triggered it (`{ type: "push" }` for a remote notification). */
-  trigger: { type: "push"; payload?: Record<string, unknown> } | null;
+  /**
+   * What triggered it: `{ type: "push" }` for a remote notification, the trigger it was
+   * scheduled with for a local one.
+   */
+  trigger: { type: "push"; payload?: Record<string, unknown> } | NotificationTriggerInput;
 }
 
 /** A delivered notification. */
@@ -277,10 +293,21 @@ interface RawDelivered {
   data?: Record<string, unknown>;
 }
 
-/** The push plugin with `method`, when the shell has it. */
+/**
+ * The push plugin with `method`, when the shell has it; for the channel and delivered-list
+ * calls, the local-notifications plugin (which has the same methods) otherwise.
+ */
 function pushExtra<K extends keyof PushExtras>(method: K): Required<PushExtras>[K] | undefined {
-  const plugin = nativePlugin<PushExtras>("PushNotifications", [method]);
-  return plugin?.[method]?.bind(plugin) as Required<PushExtras>[K] | undefined;
+  for (const name of ["PushNotifications", "LocalNotifications"]) {
+    if (
+      name === "LocalNotifications" && (method === "unregister" || method === "checkPermissions")
+    ) {
+      continue;
+    }
+    const plugin = nativePlugin<PushExtras>(name, [method]);
+    if (plugin) return plugin[method]?.bind(plugin) as Required<PushExtras>[K] | undefined;
+  }
+  return undefined;
 }
 
 /** A `denext/mobile` notification as Expo's. */
@@ -368,6 +395,57 @@ export async function getDevicePushTokenAsync(): Promise<DevicePushToken> {
   return result;
 }
 
+/** An Expo push token, as Expo's push service issues it. */
+export interface ExpoPushToken {
+  /** Always `"expo"`. */
+  type: "expo";
+  /** The token (`ExponentPushToken[…]`). */
+  data: string;
+}
+
+/** Options Expo's `getExpoPushTokenAsync` takes (accepted and not used here). */
+export interface ExpoPushTokenOptions {
+  /** Expo's API base URL. */
+  baseUrl?: string;
+  /** The registration URL. */
+  url?: string;
+  /** The token type. */
+  type?: string;
+  /** The installation id. */
+  deviceId?: string;
+  /** Use the development push service. */
+  development?: boolean;
+  /** The EAS project id. */
+  projectId?: string;
+  /** The application id. */
+  applicationId?: string;
+  /** A device token to register instead of asking for one. */
+  devicePushToken?: DevicePushToken;
+}
+
+/**
+ * Expo's push-token call. denext has no Expo push service, and wrapping the native token in
+ * Expo's shape would hand your server a token Expo's push API rejects, so this always
+ * rejects with code `ERR_NOTIFICATIONS_NO_EXPO_PUSH_SERVICE`: register the device token from
+ * {@linkcode getDevicePushTokenAsync} with your own server and send through APNs / FCM
+ * with any APNs / FCM sender.
+ *
+ * @param _options Expo's options (not used).
+ * @returns Never resolves.
+ */
+export function getExpoPushTokenAsync(_options: ExpoPushTokenOptions = {}): Promise<ExpoPushToken> {
+  return Promise.reject(
+    Object.assign(
+      new Error(
+        "denext/expo: expo-notifications' getExpoPushTokenAsync needs Expo's push service, which " +
+          "denext does not have. Call getDevicePushTokenAsync() for the APNs / FCM device token, " +
+          "register it with your own server, and send through APNs / FCM.",
+      ),
+      { code: "ERR_NOTIFICATIONS_NO_EXPO_PUSH_SERVICE" },
+    ),
+  );
+}
+
 /**
  * Call `listener` whenever {@linkcode getDevicePushTokenAsync} obtains a token.
  *
@@ -392,13 +470,18 @@ let receivedEmitter: Emitter<Notification> | undefined;
 
 /** The received-notification fan-out, sharing one `denext/mobile` subscription. */
 function received(): Emitter<Notification> {
-  return receivedEmitter ??= createEmitter((emit) =>
-    onPushReceived((push) => {
-      const notification = toNotification(push);
+  return receivedEmitter ??= createEmitter((emit) => {
+    const deliver = (notification: Notification) => {
       runHandler(notification);
       emit(notification);
-    })
-  );
+    };
+    const stopPush = onPushReceived((push) => deliver(toNotification(push)));
+    const stopLocal = onLocalNotificationReceived((local) => deliver(fromLocal(local)));
+    return () => {
+      stopPush();
+      stopLocal();
+    };
+  });
 }
 
 /** Give `notification` to the handler, reporting success or failure to it. */
@@ -456,14 +539,28 @@ const clearedEmitter: { current?: Emitter<void> } = {};
  */
 function watchTaps(): Emitter<NotificationResponse> {
   responseEmitter ??= createEmitter();
-  stopWatchingTaps ??= onPushTapped((tap) => {
+  const respond = (notification: Notification, actionId: string, text: string | undefined) => {
     lastResponse = {
-      notification: toNotification(tap.notification),
-      actionIdentifier: tap.actionId === "tap" ? DEFAULT_ACTION_IDENTIFIER : tap.actionId,
-      ...(tap.inputValue === undefined ? {} : { userText: tap.inputValue }),
+      notification,
+      actionIdentifier: actionId === "tap" ? DEFAULT_ACTION_IDENTIFIER : actionId,
+      ...(text === undefined ? {} : { userText: text }),
     };
     responseEmitter!.emit(lastResponse);
-  }, { route: false });
+  };
+  if (!stopWatchingTaps) {
+    const stopPush = onPushTapped(
+      (tap) => respond(toNotification(tap.notification), tap.actionId, tap.inputValue),
+      { route: false },
+    );
+    const stopLocal = onLocalNotificationTapped(
+      (tap) => respond(fromLocal(tap.notification), tap.actionId, tap.inputValue),
+      { route: false },
+    );
+    stopWatchingTaps = () => {
+      stopPush();
+      stopLocal();
+    };
+  }
   return responseEmitter;
 }
 
@@ -686,4 +783,518 @@ export async function getNotificationChannelAsync(
  */
 export async function deleteNotificationChannelAsync(channelId: string): Promise<void> {
   await pushExtra("deleteChannel")?.({ id: channelId });
+}
+
+// ---- Local scheduling (over denext/mobile's local notifications) -----------------------------
+
+/** A trigger that only names the Android channel (delivered now). */
+export type ChannelAwareTriggerInput = {
+  /** The Android channel. */
+  channelId: string;
+};
+
+/** Whenever the given date components match (iOS; Android repeats it the same way here). */
+export type CalendarTriggerInput = {
+  /** The kind. */
+  type: SchedulableTriggerInputTypes.CALENDAR;
+  /** The Android channel. */
+  channelId?: string;
+  /** Repeat on every match (default `false`: the next match only). */
+  repeats?: boolean;
+  /** Not applied here. */
+  seconds?: number;
+  /** Not applied here (the device's time zone is used). */
+  timezone?: string;
+  /** The year. */
+  year?: number;
+  /** The month, 1–12. */
+  month?: number;
+  /** The weekday, 1–7 with 1 = Sunday. */
+  weekday?: number;
+  /** Not applied here. */
+  weekOfMonth?: number;
+  /** Not applied here. */
+  weekOfYear?: number;
+  /** Not applied here. */
+  weekdayOrdinal?: number;
+  /** The day of the month. */
+  day?: number;
+  /** The hour. */
+  hour?: number;
+  /** The minute. */
+  minute?: number;
+  /** The second. */
+  second?: number;
+};
+
+/** Every day at `hour`:`minute`. */
+export type DailyTriggerInput = {
+  /** The kind. */
+  type: SchedulableTriggerInputTypes.DAILY;
+  /** The Android channel. */
+  channelId?: string;
+  /** The hour. */
+  hour: number;
+  /** The minute. */
+  minute: number;
+};
+
+/** Every week on `weekday` (1–7, 1 = Sunday) at `hour`:`minute`. */
+export type WeeklyTriggerInput = {
+  /** The kind. */
+  type: SchedulableTriggerInputTypes.WEEKLY;
+  /** The Android channel. */
+  channelId?: string;
+  /** The weekday, 1–7 with 1 = Sunday. */
+  weekday: number;
+  /** The hour. */
+  hour: number;
+  /** The minute. */
+  minute: number;
+};
+
+/** Every month on `day` at `hour`:`minute`. */
+export type MonthlyTriggerInput = {
+  /** The kind. */
+  type: SchedulableTriggerInputTypes.MONTHLY;
+  /** The Android channel. */
+  channelId?: string;
+  /** The day of the month. */
+  day: number;
+  /** The hour. */
+  hour: number;
+  /** The minute. */
+  minute: number;
+};
+
+/** Every year on `month` (0–11, as Expo's) / `day` at `hour`:`minute`. */
+export type YearlyTriggerInput = {
+  /** The kind. */
+  type: SchedulableTriggerInputTypes.YEARLY;
+  /** The Android channel. */
+  channelId?: string;
+  /** The day of the month. */
+  day: number;
+  /** The month, 0–11. */
+  month: number;
+  /** The hour. */
+  hour: number;
+  /** The minute. */
+  minute: number;
+};
+
+/** Once, at `date`. */
+export type DateTriggerInput = {
+  /** The kind. */
+  type: SchedulableTriggerInputTypes.DATE;
+  /** When. */
+  date: Date | number;
+  /** The Android channel. */
+  channelId?: string;
+};
+
+/** `seconds` from now; with `repeats`, every `seconds` (at least 60). */
+export type TimeIntervalTriggerInput = {
+  /** The kind. */
+  type: SchedulableTriggerInputTypes.TIME_INTERVAL;
+  /** The Android channel. */
+  channelId?: string;
+  /** Repeat (default `false`). */
+  repeats?: boolean;
+  /** The interval in seconds. */
+  seconds: number;
+};
+
+/** A trigger that schedules the notification for later. */
+export type SchedulableNotificationTriggerInput =
+  | CalendarTriggerInput
+  | TimeIntervalTriggerInput
+  | DailyTriggerInput
+  | WeeklyTriggerInput
+  | MonthlyTriggerInput
+  | YearlyTriggerInput
+  | DateTriggerInput;
+
+/** When a notification is delivered: `null` for now. */
+export type NotificationTriggerInput =
+  | null
+  | ChannelAwareTriggerInput
+  | SchedulableNotificationTriggerInput;
+
+/** What a scheduled notification shows. */
+export type NotificationContentInput = {
+  /** The title. */
+  title?: string | null;
+  /** iOS: the subtitle (not supported by the plugin; ignored). */
+  subtitle?: string | null;
+  /** The body. */
+  body?: string | null;
+  /** Your payload (`path` / `url` route a tap, as for push). */
+  data?: Record<string, unknown>;
+  /** iOS: the badge number. */
+  badge?: number;
+  /** `true` / `"default"` for the default sound, or a bundled sound file's name. */
+  sound?:
+    | boolean
+    | "default"
+    | "defaultCritical"
+    | "defaultRingtone"
+    | (string & Record<never, never>);
+  /** iOS: the launch image (ignored). */
+  launchImageName?: string;
+  /** Android: the vibration pattern (set it on the channel instead; ignored). */
+  vibrate?: number[];
+  /** Android: the priority (set the channel's importance instead; ignored). */
+  priority?: string;
+  /** Android: the accent colour (use the plugin's `iconColor` config; ignored). */
+  color?: string;
+  /** Android: dismiss on tap (the plugin always does). */
+  autoDismiss?: boolean;
+  /** The category whose buttons it shows. */
+  categoryIdentifier?: string;
+  /** Android: ongoing (ignored). */
+  sticky?: boolean;
+  /** iOS: attachments (ignored). */
+  attachments?: unknown[];
+  /** iOS: the interruption level (ignored). */
+  interruptionLevel?: "passive" | "active" | "timeSensitive" | "critical";
+};
+
+/** A notification to schedule. */
+export interface NotificationRequestInput {
+  /** Its id (default: a new UUID); scheduling it again replaces it. */
+  identifier?: string;
+  /** What it shows. */
+  content: NotificationContentInput;
+  /** When. */
+  trigger: NotificationTriggerInput;
+}
+
+/** A button on a notification category. */
+export interface NotificationAction {
+  /** The id a tap on it reports as `actionIdentifier`. */
+  identifier: string;
+  /** The button's title. */
+  buttonTitle: string;
+  /** A text-input button. */
+  textInput?: {
+    /** The send button's title. */
+    submitButtonTitle: string;
+    /** The field's placeholder. */
+    placeholder: string;
+  };
+  /** How it behaves. */
+  options?: {
+    /** Show it as destructive. */
+    isDestructive?: boolean;
+    /** Require the device to be unlocked. */
+    isAuthenticationRequired?: boolean;
+    /** Open the app (default `true`). */
+    opensAppToForeground?: boolean;
+  };
+}
+
+/** Options for a category. */
+export type NotificationCategoryOptions = {
+  /** iOS: the body placeholder when previews are hidden. */
+  previewPlaceholder?: string;
+  /** iOS: Siri intents (ignored). */
+  intentIdentifiers?: string[];
+  /** iOS: the summary format (ignored). */
+  categorySummaryFormat?: string;
+  /** iOS: report a dismissal as an action. */
+  customDismissAction?: boolean;
+  /** iOS: allow in CarPlay (ignored). */
+  allowInCarPlay?: boolean;
+  /** iOS: show the title when previews are hidden (ignored). */
+  showTitle?: boolean;
+  /** iOS: show the subtitle when previews are hidden (ignored). */
+  showSubtitle?: boolean;
+  /** iOS: allow Siri to announce it (ignored). */
+  allowAnnouncement?: boolean;
+};
+
+/** A category: action buttons a notification opts into with `categoryIdentifier`. */
+export interface NotificationCategory {
+  /** Its id (on iOS also a remote push's `aps.category`). */
+  identifier: string;
+  /** Its buttons. */
+  actions: NotificationAction[];
+  /** Its options. */
+  options?: NotificationCategoryOptions;
+}
+
+/** The `extra` keys the shim stores its own bookkeeping under. */
+const ID_KEY = "__expoIdentifier";
+const TRIGGER_KEY = "__expoTrigger";
+
+/** Where the registered categories persist (the plugin cannot list them). */
+const CATEGORIES_KEY = "denext.expo.notificationCategories";
+
+/** A stable 31-bit positive number for a string identifier (a numeric one is used as is). */
+function numericId(identifier: string): number {
+  if (/^[1-9]\d{0,9}$/.test(identifier) && Number(identifier) <= 0x7fffffff) {
+    return Number(identifier);
+  }
+  let hash = 0x811c9dc5;
+  for (const ch of identifier) {
+    hash ^= ch.codePointAt(0)!;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 1) || 1;
+}
+
+/** A local notification as Expo's, its bookkeeping keys taken out of `data`. */
+function fromLocal(local: LocalNotification): Notification {
+  const { [ID_KEY]: identifier, [TRIGGER_KEY]: trigger, ...data } = local.data as Record<
+    string,
+    unknown
+  >;
+  return {
+    date: Date.now(),
+    request: {
+      identifier: typeof identifier === "string" ? identifier : String(local.id),
+      content: {
+        title: local.title ?? null,
+        subtitle: null,
+        body: local.body ?? null,
+        data,
+        categoryIdentifier: null,
+        sound: null,
+      },
+      trigger: (trigger ?? null) as NotificationTriggerInput,
+    },
+  };
+}
+
+/** Expo's trigger as denext's (null: deliver now). */
+function toTrigger(trigger: NotificationTriggerInput): LocalNotificationTrigger | null {
+  if (trigger === null || trigger === undefined) return null;
+  if (trigger instanceof Date || typeof trigger === "number") {
+    return { type: "date", date: trigger as Date | number };
+  }
+  if (!("type" in trigger)) return null;
+  switch (trigger.type) {
+    case SchedulableTriggerInputTypes.DATE:
+      return { type: "date", date: trigger.date };
+    case SchedulableTriggerInputTypes.TIME_INTERVAL:
+      return { type: "interval", seconds: trigger.seconds, repeats: trigger.repeats };
+    case SchedulableTriggerInputTypes.DAILY:
+      return { type: "daily", hour: trigger.hour, minute: trigger.minute };
+    case SchedulableTriggerInputTypes.WEEKLY:
+      return {
+        type: "weekly",
+        weekday: trigger.weekday,
+        hour: trigger.hour,
+        minute: trigger.minute,
+      };
+    case SchedulableTriggerInputTypes.MONTHLY:
+      return { type: "monthly", day: trigger.day, hour: trigger.hour, minute: trigger.minute };
+    case SchedulableTriggerInputTypes.YEARLY:
+      return {
+        type: "yearly",
+        month: trigger.month + 1,
+        day: trigger.day,
+        hour: trigger.hour,
+        minute: trigger.minute,
+      };
+    case SchedulableTriggerInputTypes.CALENDAR: {
+      const { year, month, day, weekday, hour, minute, second } = trigger;
+      return {
+        type: "calendar",
+        repeats: trigger.repeats === true,
+        ...Object.fromEntries(
+          Object.entries({ year, month, day, weekday, hour, minute, second }).filter(([, v]) =>
+            v !== undefined
+          ),
+        ),
+      };
+    }
+    default:
+      throw new TypeError(
+        `scheduleNotificationAsync: unsupported trigger type "${
+          String((trigger as { type?: unknown }).type)
+        }"`,
+      );
+  }
+}
+
+/** The sound to ask the plugin for (undefined: the default). */
+function soundOf(sound: NotificationContentInput["sound"]): string | undefined {
+  return typeof sound === "string" && !sound.startsWith("default") ? sound : undefined;
+}
+
+/**
+ * Schedule a local notification (`denext mobile add local-notifications`). A `null` trigger
+ * delivers it now; `identifier` defaults to a new UUID, and scheduling it again replaces it.
+ * Outside the shell a notification for now shows through the Notifications API, and a later one
+ * rejects (no scheduler).
+ *
+ * @param request The content, trigger and identifier.
+ * @returns The identifier.
+ */
+export async function scheduleNotificationAsync(
+  request: NotificationRequestInput,
+): Promise<string> {
+  const identifier = request.identifier ?? crypto.randomUUID();
+  const trigger = request.trigger ?? null;
+  const channelId = trigger && typeof trigger === "object" && "channelId" in trigger
+    ? trigger.channelId
+    : undefined;
+  const content = request.content ?? {};
+  await scheduleNotification({
+    id: numericId(identifier),
+    title: content.title ?? "",
+    body: content.body ?? "",
+    trigger: toTrigger(trigger),
+    data: { ...content.data, [ID_KEY]: identifier, [TRIGGER_KEY]: trigger },
+    channelId,
+    categoryId: content.categoryIdentifier,
+    sound: soundOf(content.sound),
+    badge: content.badge,
+  });
+  return identifier;
+}
+
+/**
+ * Cancel a scheduled notification.
+ *
+ * @param identifier Its identifier.
+ * @returns A promise that settles once cancelled.
+ */
+export async function cancelScheduledNotificationAsync(identifier: string): Promise<void> {
+  await cancelNotification(numericId(identifier));
+}
+
+/**
+ * Cancel every scheduled notification.
+ *
+ * @returns A promise that settles once cancelled.
+ */
+export async function cancelAllScheduledNotificationsAsync(): Promise<void> {
+  const pending = (await localPlugin()?.getPending())?.notifications ?? [];
+  await cancelNotification(pending.map((n) => Number(n.id)));
+}
+
+/**
+ * The scheduled (pending) notifications, with the triggers they were scheduled with.
+ *
+ * @returns The requests (none outside the shell).
+ */
+export async function getAllScheduledNotificationsAsync(): Promise<NotificationRequest[]> {
+  const pending = (await localPlugin()?.getPending())?.notifications ?? [];
+  return pending.map((raw) =>
+    fromLocal({
+      id: Number(raw.id),
+      title: typeof raw.title === "string" ? raw.title : undefined,
+      body: typeof raw.body === "string" ? raw.body : undefined,
+      data: (typeof raw.extra === "object" && raw.extra !== null ? raw.extra : {}) as Record<
+        string,
+        unknown
+      >,
+    }).request
+  );
+}
+
+/**
+ * When a trigger would next fire, computed here in the device's time zone.
+ *
+ * @param trigger The trigger.
+ * @returns The time in ms since the epoch, or null when it never fires.
+ */
+export function getNextTriggerDateAsync(
+  trigger: SchedulableNotificationTriggerInput,
+): Promise<number | null> {
+  try {
+    const local = toTrigger(trigger);
+    return Promise.resolve(local ? nextTriggerDate(local)?.getTime() ?? null : null);
+  } catch (err) {
+    return Promise.reject(err);
+  }
+}
+
+/** The categories registered so far (persisted: the plugin cannot list them). */
+function storedCategories(): NotificationCategory[] {
+  try {
+    const raw = (globalThis as { localStorage?: Storage }).localStorage?.getItem(CATEGORIES_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Persist `categories` and register the whole set with the plugin (it replaces them all). */
+async function registerCategories(categories: NotificationCategory[]): Promise<void> {
+  try {
+    (globalThis as { localStorage?: Storage }).localStorage?.setItem(
+      CATEGORIES_KEY,
+      JSON.stringify(categories),
+    );
+  } catch {
+    // Storage unavailable: the categories still register for this launch.
+  }
+  await setNotificationCategories(categories.map((c) => ({
+    id: c.identifier,
+    actions: c.actions.map((a) => ({
+      id: a.identifier,
+      title: a.buttonTitle,
+      foreground: a.options?.opensAppToForeground !== false,
+      destructive: a.options?.isDestructive === true,
+      requiresAuthentication: a.options?.isAuthenticationRequired === true,
+      ...(a.textInput
+        ? {
+          input: {
+            buttonTitle: a.textInput.submitButtonTitle,
+            placeholder: a.textInput.placeholder,
+          },
+        }
+        : {}),
+    })),
+    hiddenPreviewsPlaceholder: c.options?.previewPlaceholder,
+    customDismissAction: c.options?.customDismissAction,
+  })));
+}
+
+/**
+ * Register (or replace) a category of action buttons. On iOS it also applies to remote pushes
+ * whose `aps.category` names it.
+ *
+ * @param identifier The category id.
+ * @param actions Its buttons.
+ * @param options Its options.
+ * @returns The category.
+ */
+export async function setNotificationCategoryAsync(
+  identifier: string,
+  actions: NotificationAction[],
+  options?: NotificationCategoryOptions,
+): Promise<NotificationCategory> {
+  const category: NotificationCategory = { identifier, actions, ...(options ? { options } : {}) };
+  const rest = storedCategories().filter((c) => c.identifier !== identifier);
+  await registerCategories([...rest, category]);
+  return category;
+}
+
+/**
+ * The categories registered through {@linkcode setNotificationCategoryAsync}.
+ *
+ * @returns The categories.
+ */
+export function getNotificationCategoriesAsync(): Promise<NotificationCategory[]> {
+  return Promise.resolve(storedCategories());
+}
+
+/**
+ * Remove a category.
+ *
+ * @param identifier The category id.
+ * @returns Whether it existed.
+ */
+export async function deleteNotificationCategoryAsync(identifier: string): Promise<boolean> {
+  const all = storedCategories();
+  const rest = all.filter((c) => c.identifier !== identifier);
+  if (rest.length === all.length) return false;
+  await registerCategories(rest);
+  return true;
 }

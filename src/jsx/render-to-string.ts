@@ -87,7 +87,7 @@ const ON_ATTR_RE = /^on/i;
 // The prop key providers stash their context payload under (the PROVIDER symbol
 // coerced to a string). Hoisted so serializeAttributes doesn't recompute
 // `PROVIDER.toString()` on every attribute.
-const PROVIDER_KEY = PROVIDER.toString();
+const PROVIDER_KEY = /* @__PURE__ */ PROVIDER.toString();
 
 // Characters that must never appear in an HTML attribute name. An attacker who
 // controls a prop name (e.g. a component spreading untrusted keys) could

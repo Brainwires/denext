@@ -70,7 +70,7 @@ export class WireCodecError extends Error {
 }
 
 /** Sentinel returned by {@link decodeTagged} for an object that is not a codec tag. */
-export const NOT_TAGGED: unique symbol = Symbol("denext.wire.notTagged");
+export const NOT_TAGGED: unique symbol = /* @__PURE__ */ Symbol("denext.wire.notTagged");
 
 /** Max encode depth — deeper is a cycle or a pathological value (JSON's own failure mode). */
 const MAX_ENCODE_DEPTH = 64;

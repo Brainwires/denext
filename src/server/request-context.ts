@@ -10,6 +10,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { deleteCookie, getCookies, getSetCookies, setCookie } from "@std/http/cookie";
 import { postponeDynamic, shouldPostpone } from "../runtime/prerender.ts";
 import type { SegmentConfig } from "./segment-config.ts";
+import type { CorsPolicy } from "./cors.ts";
 import { currentCacheScope } from "./cache-scope.ts";
 import { lastForwardedHop, remoteAddrOf } from "./remote-addr.ts";
 
@@ -166,6 +167,11 @@ export interface RequestContext {
    * socket peer is used.
    */
   trustForwardedHeaders?: boolean;
+  /**
+   * The app-level CORS policy (`config.cors`), set by `createApp`. The native `denextAuth`
+   * endpoints read it to answer an app WebView's origin; `null`/absent means no CORS.
+   */
+  cors?: CorsPolicy | null;
   /** Headers accumulated to attach to the response (e.g. Set-Cookie, loader-set headers). */
   outgoingHeaders: Headers;
   /** Per-request render collectors (signal state, `useServerInsertedHTML`) — see `render-scope.ts`. */
@@ -196,8 +202,14 @@ export interface RequestContext {
   /** The slot state this render produced (shipped to the client in the nav/hydration data). */
   renderedSlotState?: Record<string, string>;
   /**
-   * Attributes a root component put on ITS `<html>`/`<body>` (a migrated Remix root's
-   * `<html className={theme}>`), merged onto the real document tags by the assembler.
+   * The rendered page's `export const screenOptions` (`denext/navigation`'s per-route stack
+   * options), shipped to the client in the nav/hydration data. Absent when the page has none.
+   */
+  screenOptions?: Record<string, unknown>;
+  /**
+   * Attributes a root component put on ITS `<html>`/`<body>` (a root layout's
+   * `<html lang="fr">`, a migrated Remix root's `<html className={theme}>`), merged onto the
+   * real document tags by the assembler.
    */
   documentAttrs?: { html?: Record<string, unknown>; body?: Record<string, unknown> };
   /** Per-request memoization store backing {@link cache}, keyed by function. */
@@ -232,6 +244,12 @@ export interface RequestContext {
    * dynamic (so it caches). Absent outside a page render (e.g. a route handler).
    */
   segmentConfig?: SegmentConfig;
+  /**
+   * The served route opted out of response compression (`export const compress = false`)
+   * on a path that does not resolve {@link segmentConfig} — an ISR cache hit. Read with
+   * `segmentConfig.compress` by the response compressor (compress.ts).
+   */
+  compressOptOut?: boolean;
   /**
    * Tags accrued from cached data read during this render (via
    * {@link unstable_cache}/{@link cachedFetch} `tags`). The page cache attaches
@@ -586,6 +604,17 @@ export function currentContext(): RequestContext | undefined {
 // Installed on the server only; absent in a client bundle.
 (globalThis as { __denextCurrentRequestContext?: () => RequestContext | undefined })
   .__denextCurrentRequestContext = currentContext;
+
+// The recorder the renderers (a root layout's `<html>`/`<body>`) and the Remix compat's
+// document components hand their attributes to: the assembler merges them onto the real
+// document tags, where the browser's parser would drop the nested ones' `lang` (denext's own
+// wins). A process-global seam, like the bridge above; the Remix server installs the same.
+(globalThis as {
+  __denextDocumentAttrsSink?: (part: "html" | "body", attrs: Record<string, unknown>) => void;
+}).__denextDocumentAttrsSink ??= (part, attrs) => {
+  const ctx = storage.getStore();
+  if (ctx) (ctx.documentAttrs ??= {})[part] = attrs;
+};
 
 /**
  * Record a serialized SSR resource-hint `<link>`/`<script>` on the current request

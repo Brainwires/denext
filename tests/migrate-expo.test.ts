@@ -7,11 +7,14 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
 import {
+  expoApiUsage,
+  expoDependencyReport,
   expoMobilePlan,
   readExpoAppConfig,
   readStaticAppConfig,
 } from "../src/build/expo-migrate.ts";
 import { migrateCommand } from "../src/cli/commands/migrate.ts";
+import { EXPO_SHIMS } from "../src/expo/manifest.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
 
 /** Write `files` (relative path → contents; objects are JSON) under `root`. */
@@ -48,12 +51,13 @@ const T3_LIKE: Record<string, unknown> = {
       "expo-secure-store": "~57.0.2",
       "expo-sqlite": "~57.0.2",
       "expo-camera": "~57.0.4",
-      "expo-location": "~57.0.1",
+      "expo-contacts": "~57.0.1",
       react: "19.2.3",
       "react-native": "0.86.3",
       "react-native-nitro-markdown": "^0.5.0",
       "react-native-webview": "^13.16.1",
       "react-native-reanimated": "4.5.5",
+      "react-native-worklets": "0.10.1",
       "@acme/terminal-native": "file:./modules/terminal",
       "@acme/pure-js": "1.0.0",
       "react-native-image-viewing": "^0.2.2",
@@ -113,6 +117,14 @@ export default config;
     codegenConfig: { name: "rnreanimated" },
   },
   "node_modules/react-native-reanimated/lib/module/js-reanimated/index.web.js": "export {};\n",
+  // Codegen too, and no `.web.*` file: its web build is the plain module beside each
+  // `.native.*` one (react-native-worklets). Not flagged.
+  "node_modules/react-native-worklets/package.json": {
+    name: "react-native-worklets",
+    codegenConfig: { name: "rnworklets" },
+  },
+  "node_modules/react-native-worklets/lib/module/threads.native.js": "export {};\n",
+  "node_modules/react-native-worklets/lib/module/threads.js": "export {};\n",
   "modules/terminal/package.json": { name: "@acme/terminal-native" },
   "modules/terminal/expo-module.config.json": { platforms: ["apple", "android"] },
   "node_modules/@acme/pure-js/package.json": { name: "@acme/pure-js" },
@@ -211,7 +223,7 @@ Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native mo
     const status = Object.fromEntries(e.deps.expo.map((p) => [p.name, p.status]));
     assertEquals(status["expo-sqlite"], "partial");
     assertEquals(status["expo-haptics"], "full");
-    assertEquals(status["expo-location"], "none");
+    assertEquals(status["expo-contacts"], "none");
     assertEquals(e.deps.nativeOnly, [
       { name: "@acme/terminal-native", kind: "Expo native module" },
       {
@@ -219,8 +231,13 @@ Deno.test("migrate --from expo: a T3-shaped app (dynamic config, pnpm, native mo
         kind: "iOS / Android files only (dist/components/ImageItem has no web or plain variant)",
       },
       { name: "react-native-nitro-markdown", kind: "Nitro module (JSI)" },
-      { name: "react-native-webview", kind: "TurboModule / Fabric component (codegen)" },
     ]);
+    // react-native-webview is codegen-only, but React Native mode replaces it.
+    assertEquals(e.deps.community.map((p) => p.name), ["react-native-webview"]);
+    assertStringIncludes(
+      e.mobile.capabilities.find((c) => c.capability === "camera")!.because,
+      "NSMicrophoneUsageDescription",
+    );
     assertEquals(e.metro, {
       file: "metro.config.js",
       extraModules: ["@acme/generated-licenses"],
@@ -377,6 +394,60 @@ Deno.test("migrate --from expo: expo-router gets its web entry without Metro's r
   });
 });
 
+Deno.test("migrate --from expo: a React Native macOS / Windows app gets reactNative.desktopPackage", async () => {
+  const app = (extra: Record<string, string>) => ({
+    "package.json": {
+      name: "desk",
+      main: "index.js",
+      dependencies: { expo: "~57.0.18", "react-native": "0.81.0", ...extra },
+    },
+    "index.js": 'import { registerRootComponent } from "expo";\n',
+    "app.json": { expo: { name: "Desk", slug: "desk" } },
+  });
+  await withApp(app({ "react-native-macos": "0.81.9" }), async (dir) => {
+    const r = await migrateProject(dir, { denextLocalPath: Deno.cwd() });
+    assertEquals(r.expo!.desktopPackages, ["react-native-macos"]);
+    const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assertStringIncludes(cfg, 'reactNative: { desktopPackage: "react-native-macos" },');
+    assert(!cfg.includes("reactNative: true"), cfg);
+    // The app's source is left as it is: Metro's resolution moves into the config.
+    assertEquals(
+      await Deno.readTextFile(join(dir, "index.js")),
+      'import { registerRootComponent } from "expo";\n',
+    );
+  });
+  await withApp(
+    app({ "react-native-macos": "0.81.9", "react-native-windows": "0.84.0" }),
+    async (dir) => {
+      const cap = capture();
+      try {
+        await migrateCommand.run(makeCtx({
+          positionals: [dir],
+          flags: { from: "expo", "denext-local-path": Deno.cwd() },
+        }));
+      } finally {
+        cap.restore();
+      }
+      const cfg = await Deno.readTextFile(join(dir, "denext.config.ts"));
+      assertStringIncludes(cfg, "  reactNative: true,\n");
+      assertStringIncludes(cfg, '// reactNative: { desktopPackage: "react-native-macos" },');
+      assertStringIncludes(cfg, '// reactNative: { desktopPackage: "react-native-windows" },');
+      assertStringIncludes(
+        cap.logs.join("\n"),
+        "react-native-macos and react-native-windows: pick one as reactNative.desktopPackage",
+      );
+    },
+  );
+  await withApp(app({}), async (dir) => {
+    const r = await migrateProject(dir, { denextLocalPath: Deno.cwd() });
+    assertEquals(r.expo!.desktopPackages, []);
+    assertStringIncludes(
+      await Deno.readTextFile(join(dir, "denext.config.ts")),
+      "  reactNative: true,\n",
+    );
+  });
+});
+
 Deno.test("expoMobilePlan: nothing to add → no command", () => {
   const plan = expoMobilePlan({ expo: "1" }, {
     source: null,
@@ -408,7 +479,7 @@ Deno.test("migrate CLI: the Expo report", async () => {
     assertStringIncludes(out, 'Expo app detected — wrote denext.config.ts (mode: "spa"');
     assertStringIncludes(out, "not statically readable (computed in code): ");
     assertStringIncludes(out, "expo-sqlite              partial");
-    assertStringIncludes(out, "expo-location            no shim");
+    assertStringIncludes(out, "expo-contacts            no shim");
     assertStringIncludes(out, "react-native-nitro-markdown — Nitro module (JSI)");
     assertStringIncludes(out, "install react-native-web @sqlite.org/sqlite-wasm");
     assertStringIncludes(out, "denext mobile add haptics secure-store deep-links");
@@ -450,8 +521,132 @@ Deno.test("expo app config: config-plugin permission options become usage string
     const plan = expoMobilePlan({ expo: "1", "expo-auth-session": "1" }, config);
     assertEquals(
       plan.command,
-      "denext mobile add secure-store auth-session barcode --scheme <scheme>",
+      "denext mobile add secure-store auth-session camera barcode geolocation --scheme <scheme>",
       "auth-session with no scheme in the config gets a placeholder",
     );
+  });
+});
+
+/** An empty static app config, for plans built from packages alone. */
+const NO_CONFIG = {
+  source: null,
+  schemes: [],
+  infoPlist: {},
+  androidPermissions: [],
+  plugins: [],
+  linkDomains: [],
+  runtimeConfig: {},
+  unresolved: [],
+  notes: [],
+};
+
+Deno.test("expoMobilePlan: the newly shimmed Expo packages and community aliases map to capabilities", () => {
+  const plan = expoMobilePlan(
+    {
+      expo: "1",
+      "expo-location": "1",
+      "expo-local-authentication": "1",
+      "expo-apple-authentication": "1",
+      "expo-tracking-transparency": "1",
+      "expo-application": "1",
+      "expo-camera": "1",
+      "expo-notifications": "1",
+      "react-native-keychain": "1",
+      "@react-native-community/netinfo": "1",
+    },
+    NO_CONFIG,
+    { localNotifications: true },
+  );
+  const caps = plan.capabilities.map((c) => c.capability);
+  for (
+    const cap of [
+      "camera",
+      "barcode",
+      "geolocation",
+      "biometrics",
+      "social-login",
+      "tracking",
+      "application",
+      "push",
+      "local-notifications",
+      "secure-store",
+      "network",
+    ]
+  ) {
+    assert(caps.includes(cap), `${cap} in ${caps.join(" ")}`);
+  }
+  const local = plan.capabilities.find((c) => c.capability === "local-notifications")!;
+  assertStringIncludes(local.because, "scheduleNotificationAsync");
+  // Without local scheduling in the source, expo-notifications is push only.
+  const pushOnly = expoMobilePlan({ "expo-notifications": "1" }, NO_CONFIG);
+  assertEquals(pushOnly.capabilities.map((c) => c.capability), ["push"]);
+});
+
+Deno.test("expoApiUsage: finds local-notification calls in the app's own source only", async () => {
+  await withApp({
+    "package.json": { name: "p" },
+    "src/notify.ts": "await Notifications.scheduleNotificationAsync({ content, trigger });\n",
+    "node_modules/x/index.js": "presentNotificationAsync();\n",
+  }, async (dir) => {
+    assertEquals(await expoApiUsage(dir), { localNotifications: true });
+    await Deno.remove(join(dir, "src/notify.ts"));
+    assertEquals(await expoApiUsage(dir), { localNotifications: false }, "node_modules is skipped");
+  });
+});
+
+Deno.test("expoDependencyReport: @expo/ui is an Expo package with per-subpath shims", async () => {
+  await withApp({ "package.json": { name: "p" } }, async (dir) => {
+    const report = await expoDependencyReport(dir, {
+      "@expo/ui": "57.0.20",
+      "@expo/vector-icons": "15.0.0",
+      "react-native-keychain": "10.0.0",
+    });
+    const ui = report.expo.find((p) => p.name === "@expo/ui")!;
+    assertEquals(ui.status, "partial");
+    assert(ui.subpaths!.includes("swift-ui"), "swift-ui is shimmed");
+    assert(ui.subpaths!.includes("community/masked-view"), "community/masked-view is shimmed");
+    assert(!report.expo.some((p) => p.name === "@expo/vector-icons"), "a plain @expo package");
+    assertEquals(report.nativeOnly, [], "@expo/ui is not native-only");
+    assertEquals(report.community.map((p) => p.name), ["react-native-keychain"]);
+  });
+});
+
+Deno.test("expoMobilePlan: a capability is suggested only where a shim reaches it", () => {
+  const plan = expoMobilePlan(
+    {
+      "expo-media-library": "1",
+      "expo-store-review": "1",
+      "expo-screen-orientation": "1",
+      "expo-screen-capture": "1",
+      "expo-navigation-bar": "1",
+      "expo-task-manager": "1",
+      "expo-background-task": "1",
+      "expo-background-fetch": "1",
+    },
+    NO_CONFIG,
+  );
+  const caps = plan.capabilities.map((c) => c.capability);
+  for (const cap of ["media-library", "app-review", "screen-orientation", "privacy-screen"]) {
+    assert(caps.includes(cap), `${cap} in ${caps.join(" ")}`);
+  }
+  assert(caps.includes("system-bars"), "expo-navigation-bar's shim drives SystemBars");
+  assert(!caps.includes("background"), "no shim runs Expo's background tasks");
+  for (const pkg of ["expo-media-library", "expo-store-review", "expo-screen-orientation"]) {
+    assert(pkg in EXPO_SHIMS, `${pkg} has a shim`);
+  }
+});
+
+Deno.test("expoDependencyReport: an unshimmed background package says what to use instead", async () => {
+  await withApp({ "package.json": { name: "p" } }, async (dir) => {
+    const report = await expoDependencyReport(dir, {
+      "expo-task-manager": "57.0.20",
+      "expo-store-review": "57.0.3",
+    });
+    const tasks = report.expo.find((p) => p.name === "expo-task-manager")!;
+    assertEquals(tasks.status, "none");
+    assertStringIncludes(tasks.advice!, "defineBackgroundTask");
+    const review = report.expo.find((p) => p.name === "expo-store-review")!;
+    assertEquals(review.status, "full");
+    assertEquals(review.advice, undefined);
   });
 });

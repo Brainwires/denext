@@ -444,6 +444,114 @@ const MFA_CASES: Record<string, Case> = {
   },
 };
 
+// ---- native app sessions + deletion ------------------------------------------
+
+/** A native session family for `userId`, far from expiry. */
+function family(id: string, userId: string) {
+  return {
+    id,
+    userId,
+    generation: 0,
+    salt: "salt",
+    session: "{}",
+    createdAt: 1,
+    expiresAt: 4_000_000_000,
+  };
+}
+
+const NATIVE_CASES: Record<string, Case> = {
+  "useNativeGrant consumes once, by kind, and fails closed on expiry": async (adapter) => {
+    const create = adapter.createNativeGrant;
+    const use = adapter.useNativeGrant;
+    assert(create && use);
+    await create.call(adapter, { hash: "h1", kind: "code", expiresAt: at(600), data: "d" });
+    assertEquals(await use.call(adapter, "h1", "nonce"), undefined, "a code is not a nonce");
+    assertEquals((await use.call(adapter, "h1", "code"))?.data, "d");
+    assertEquals(await use.call(adapter, "h1", "code"), undefined, "single use");
+    await create.call(adapter, { hash: "old", kind: "nonce", expiresAt: at(-1) });
+    assertEquals(await use.call(adapter, "old", "nonce"), undefined, "expired → miss");
+  },
+  "concurrent redemptions of one grant yield exactly one record": async (adapter) => {
+    const create = adapter.createNativeGrant;
+    const use = adapter.useNativeGrant;
+    assert(create && use);
+    await create.call(adapter, { hash: "race", kind: "code", expiresAt: at(600) });
+    const results = await Promise.all([
+      use.call(adapter, "race", "code"),
+      use.call(adapter, "race", "code"),
+    ]);
+    assertEquals(results.filter(Boolean).length, 1);
+  },
+  "rotateNativeSession is a compare-and-swap on the generation": async (adapter) => {
+    const create = adapter.createNativeSession;
+    const get = adapter.getNativeSession;
+    const rotate = adapter.rotateNativeSession;
+    const revoke = adapter.revokeNativeSession;
+    assert(create && get && rotate && revoke);
+    await create.call(adapter, family("f1", "u1"));
+    const both = await Promise.all([
+      rotate.call(adapter, "f1", 0, at(100)),
+      rotate.call(adapter, "f1", 0, at(100)),
+    ]);
+    assertEquals(both.filter(Boolean).length, 1, "one rotation per generation");
+    assertEquals((await get.call(adapter, "f1"))?.generation, 1);
+    assertEquals(await rotate.call(adapter, "f1", 0, at(100)), false, "an old generation loses");
+    await revoke.call(adapter, "f1");
+    assert((await get.call(adapter, "f1"))?.revokedAt !== undefined);
+    assertEquals(
+      await rotate.call(adapter, "f1", 1, at(100)),
+      false,
+      "a revoked family never rotates",
+    );
+    await revoke.call(adapter, "unknown"); // no-op
+  },
+  "rotateNativeSession records rotatedAt": async (adapter) => {
+    const create = adapter.createNativeSession;
+    const get = adapter.getNativeSession;
+    const rotate = adapter.rotateNativeSession;
+    assert(create && get && rotate);
+    await create.call(adapter, family("r1", "u1"));
+    assertEquals((await get.call(adapter, "r1"))?.rotatedAt, undefined, "none before a rotation");
+    assert(await rotate.call(adapter, "r1", 0, at(100), { rotatedAt: 50 }));
+    let stored = await get.call(adapter, "r1");
+    assertEquals([stored?.rotatedAt, stored?.expiresAt, stored?.createdAt], [50, at(100), 1]);
+    assert(await rotate.call(adapter, "r1", 1, at(200), { rotatedAt: 70 }));
+    stored = await get.call(adapter, "r1");
+    assertEquals([stored?.rotatedAt, stored?.generation], [70, 2]);
+    assertEquals(await rotate.call(adapter, "r1", 0, at(300), { rotatedAt: 90 }), false);
+    assertEquals((await get.call(adapter, "r1"))?.rotatedAt, 70, "a lost swap writes nothing");
+  },
+  "revokeNativeSessionsByUser revokes that user's families only": async (adapter) => {
+    const create = adapter.createNativeSession;
+    const get = adapter.getNativeSession;
+    const revokeAll = adapter.revokeNativeSessionsByUser;
+    assert(create && get && revokeAll);
+    await create.call(adapter, family("a1", "alice"));
+    await create.call(adapter, family("a2", "alice"));
+    await create.call(adapter, family("b1", "bob"));
+    await revokeAll.call(adapter, "alice");
+    assert((await get.call(adapter, "a1"))?.revokedAt !== undefined);
+    assert((await get.call(adapter, "a2"))?.revokedAt !== undefined);
+    assertEquals((await get.call(adapter, "b1"))?.revokedAt, undefined);
+  },
+  "deleteUser removes the user, their accounts and their families": async (adapter) => {
+    const del = adapter.deleteUser;
+    assert(del && adapter.createNativeSession && adapter.getNativeSession);
+    const user = await adapter.createUser({ email: "ada@x.test" });
+    await adapter.linkAccount({ userId: user.id, provider: "google", providerAccountId: "g1" });
+    await adapter.createNativeSession(family("fd", user.id));
+    await del.call(adapter, user.id);
+    assertEquals(await adapter.getUser(user.id), undefined);
+    assertEquals(await adapter.getUserByEmail("ada@x.test"), undefined);
+    assertEquals(
+      await adapter.getUserByAccount({ provider: "google", providerAccountId: "g1" }),
+      undefined,
+    );
+    assertEquals(await adapter.getNativeSession("fd"), undefined);
+    await del.call(adapter, user.id); // already gone: no throw
+  },
+};
+
 // ---- sessions + lifecycle --------------------------------------------------
 
 const SESSION_CASES: Record<string, Case> = {
@@ -511,7 +619,8 @@ async function runCases(
 /**
  * Run the shared {@link ../../src/server/auth/adapter.ts | AuthAdapter} contract against
  * one implementation: users, accounts, verification tokens, credentials, API tokens, MFA
- * (including the consume-once guarantees), the `sessions` store, and `close()`.
+ * (including the consume-once guarantees), native app sessions + `deleteUser`, the
+ * `sessions` store, and `close()`.
  *
  * denext's own adapters implement every optional group, so a missing method fails the
  * suite rather than skipping the case.
@@ -531,6 +640,7 @@ export async function adapterContract(
   await runCases(t, make, CREDENTIAL_CASES);
   await runCases(t, make, API_TOKEN_CASES);
   await runCases(t, make, MFA_CASES);
+  await runCases(t, make, NATIVE_CASES);
   await runCases(t, make, SESSION_CASES);
   await runCases(t, make, LIFECYCLE_CASES);
 }

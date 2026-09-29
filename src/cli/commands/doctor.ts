@@ -18,6 +18,10 @@ import {
   bundleReportMarkdown,
   readClientChunks,
 } from "../../build/bundle-report.ts";
+import { checkPrivacyManifest } from "../../build/mobile-privacy.ts";
+import { MOBILE_CAPABILITIES } from "../../build/mobile-capabilities.ts";
+import { capacitorConfigFile } from "../../build/capacitor-config.ts";
+import { leakedCssShimKeys } from "../../build/css-config-guard.ts";
 
 export const infoCommand: CommandSpec = {
   name: "info",
@@ -136,6 +140,51 @@ async function routeConformance(
 }
 
 /**
+ * The iOS privacy manifest check, for a project that is also a Capacitor project with `ios/`
+ * (advisory: `denext mobile privacy` has the details, `denext mobile doctor --store` gates it).
+ * Null for any other project.
+ */
+async function privacyManifestCheck(dir: string): Promise<Check | null> {
+  try {
+    if (!(await capacitorConfigFile(dir)) || !(await Deno.stat(join(dir, "ios"))).isDirectory) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  const { file, findings } = await checkPrivacyManifest(dir, MOBILE_CAPABILITIES);
+  const errors = findings.filter((f) => f.level === "error");
+  return {
+    name: "iOS privacy manifest",
+    ok: errors.length === 0,
+    detail: errors.length === 0
+      ? `${file}: ${findings.length === 0 ? "valid" : `${findings.length} warning(s)`}`
+      : `${errors[0].message} (${errors.length} error(s); \`denext mobile privacy\`)`,
+    critical: false,
+  };
+}
+
+/**
+ * The leaked css→shim import-map check: absolute `file:` css redirects an interrupted build
+ * or dev run left in the committed `deno.json`. They only resolve on the machine that wrote
+ * them, so a committed copy breaks every other checkout. Null when the config is clean.
+ */
+export async function cssShimLeakCheck(configPath: string, outDir: string): Promise<Check | null> {
+  const keys = await leakedCssShimKeys(configPath, outDir);
+  if (keys.length === 0) return null;
+  return {
+    name: "css-shim imports",
+    ok: false,
+    detail:
+      `${configPath} has ${keys.length} leaked css-shim import entr${
+        keys.length === 1 ? "y" : "ies"
+      } (${keys[0]}${keys.length > 1 ? ", …" : ""}); fix: run \`denext build\` or ` +
+      "`denext dev` once (it removes them), or delete those `imports` entries by hand",
+    critical: true,
+  };
+}
+
+/**
  * The last build's client chunks, or `null` when `outDir` holds no client build output.
  * Reads what `denext build` emitted; never builds.
  */
@@ -190,12 +239,16 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
     detail: paths.config ? `loaded & validated: ${paths.configPath}` : "none (using defaults)",
     critical: false,
   });
+  const leak = await cssShimLeakCheck(paths.configPath, paths.outDir);
+  if (leak) checks.push(leak);
   let routes: ConformanceReport | null = null;
   if (!isSpa && appOk) {
     const r = await routeConformance(dir);
     checks.push(r.check);
     routes = r.report;
   }
+  const privacy = await privacyManifestCheck(dir);
+  if (privacy) checks.push(privacy);
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
 }

@@ -754,9 +754,10 @@ Deno.test("useBackSwipe: opts and onBack are read live; the ref is stable and ne
 
 Deno.test("SAFE_AREA_CSS: defines the four --denext-safe-* properties from env()", () => {
   for (const side of ["top", "right", "bottom", "left"]) {
+    // Capacitor's injected --safe-area-inset-* first (Android WebView < 140), then env().
     assertStringIncludes(
       SAFE_AREA_CSS,
-      `--denext-safe-${side}: env(safe-area-inset-${side}, 0px);`,
+      `--denext-safe-${side}: var(--safe-area-inset-${side}, env(safe-area-inset-${side}, 0px));`,
     );
   }
   assert(SAFE_AREA_CSS.trimStart().startsWith(":root {"));

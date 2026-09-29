@@ -148,7 +148,10 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * Re-based 62 → 63 KB for the iOS momentum-safe scroll boot (after 2.8.2): every root runs a
  * user-agent test and, on iOS WebKit only, imports the shim as its own `momentum-scroll-*`
  * chunk — +389 B raw in the shared graph (61,950 → 62,339 B); the 4.4 KB shim itself is never
- * in this total.
+ * in this total. Re-based 63 → 64 KB for library elements (the compat build's `react-lib` /
+ * `jsx-runtime-lib` mark the elements npm code creates, and the component bailout keeps
+ * React's semantics for them): the reconciler's check is +106 B raw (62,932 → 63,038 B)
+ * in every app, and the marking runtime itself ships only in compat builds.
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -157,7 +160,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
       sharedTotal += (await Deno.stat(join(clientDir, e.name))).size;
     }
   }
-  assert(sharedTotal < 63_000, `shared chunks total ${sharedTotal} bytes (budget 63 KB raw)`);
+  assert(sharedTotal < 64_000, `shared chunks total ${sharedTotal} bytes (budget 64 KB raw)`);
   for (const f of ["about.js", "blog___slug_.js"]) {
     const n = (await Deno.stat(join(clientDir, f))).size;
     assert(n < 6_000, `${f} is ${n} bytes (budget 6 KB) — is the runtime inlined again?`);
@@ -178,6 +181,10 @@ async function assertGatedRuntimeAbsent(clientDir: string): Promise<void> {
     ["__REACT_DEVTOOLS_GLOBAL_HOOK__", "React-DevTools bridge"], // (Gate B)
     ["__denext_ge_data", "global-error client"], // per-route entries never carry it (Gate C)
     ["view-transition-name:", "ViewTransition marking runtime"], // (WS3 gate)
+    ["two children with the same key", "dev-only duplicate-key warning"], // installDevtools only
+    ["dnx-reveal:", "inline streaming swap runtime (a server string)"], // pure-built SWAP_RUNTIME
+    ["data-vl-", "VirtualList (0 bytes unless imported)"], // the list's row attributes
+    ["trailingMargin", "VirtualList controller's axis tables"], // module-scope objects
   ];
   let shared = "";
   for await (const e of Deno.readDir(clientDir)) {
@@ -227,6 +234,11 @@ Deno.test("build smoke: examples/hello emits a client entry, a code-split island
   // error boundary is interactive, so every route hydrates).
   assert(Array.isArray(manifest.staticRoutes), "manifest should list static routes");
   assertEquals(manifest.staticRoutes.length, 0, "examples/hello has no static routes");
+  // The build id that keys this build's cached pages (a redeploy never reads another's).
+  assert(
+    typeof manifest.buildId === "string" && manifest.buildId.length > 0,
+    "manifest records a build id",
+  );
 
   // The entry wires up hydration against the server-rendered root.
   const entry = await Deno.readTextFile(join(clientDir, "index.js"));

@@ -34,6 +34,13 @@ import {
 } from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
 import { decodeWire, WIRE_HEADER, WireCodecError } from "../runtime/wire-codec.ts";
+import {
+  applyCors,
+  type CorsPolicy,
+  isPreflight,
+  preflightResponse,
+  routeCorsPolicy,
+} from "./cors.ts";
 
 const METHODS: HttpMethod[] = [
   "GET",
@@ -54,6 +61,11 @@ export interface ApiDispatchOptions {
   maxBodyBytes?: number;
   /** Reports an unknown throw from a `defineApi` route (instrumentation) before it is redacted. */
   onError?: (err: unknown) => void | Promise<void>;
+  /**
+   * The app-level CORS policy (`config.cors`). A route's own `export const cors` overrides it;
+   * the effective policy answers a preflight and decorates every response the route produces.
+   */
+  cors?: CorsPolicy | null;
 }
 
 /**
@@ -72,6 +84,18 @@ export async function handleApi(
   options: ApiDispatchOptions = {},
 ): Promise<Response> {
   const mod = (await load(match.route.filePath)) as ApiModule;
+  const cors = routeCorsPolicy(options.cors ?? null, mod);
+  if (cors && isPreflight(request)) return preflightResponse(request, cors);
+  return applyCors(request, await dispatchToHandler(mod, match, request, options), cors);
+}
+
+/** Run the module's handler for the request's method (or the 405 / HEAD-from-GET fallbacks). */
+async function dispatchToHandler(
+  mod: ApiModule,
+  match: ApiMatch,
+  request: Request,
+  options: ApiDispatchOptions,
+): Promise<Response> {
   const method = request.method.toUpperCase() as HttpMethod;
   // Route segment config applies to handlers too: `dynamic = "error"` makes cookies()/
   // headers() throw, `force-static` makes them empty, and `revalidate` is honored by the

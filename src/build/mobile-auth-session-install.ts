@@ -8,7 +8,6 @@
 // `auth-session` capability's `--scheme`, not here. Running it twice changes nothing.
 
 import { join } from "@std/path";
-import { addSourceFiles } from "./pbxproj.ts";
 import {
   AUTH_SESSION_ANDROID_FILES,
   AUTH_SESSION_IOS_FILES,
@@ -16,6 +15,7 @@ import {
 import {
   AUTH_SESSION_TEMPLATES,
   BRIDGE_VC_FILE,
+  compileIntoAppAndWireBridge,
   hasAndroidApp,
   hasIosApp,
   installBridgeViewController,
@@ -23,9 +23,7 @@ import {
   NativeInstaller,
   type NativeInstallOptions,
   type NativeInstallReport,
-  PBXPROJ,
   registerInMainActivity,
-  wireBridgeViewController,
   writeTemplates,
 } from "./mobile-native-install.ts";
 
@@ -45,11 +43,7 @@ async function installIos(inst: Installer): Promise<void> {
   });
   await writeTemplates(inst, join(root, IOS_APP), AUTH_SESSION_IOS_FILES, AUTH_SESSION_TEMPLATES);
   const files = [BRIDGE_VC_FILE, ...Object.keys(AUTH_SESSION_IOS_FILES)];
-  await inst.edit(
-    join(root, PBXPROJ),
-    (t) => addSourceFiles(t, files, { randomId: inst.opts.randomId }).text,
-  );
-  await wireBridgeViewController(inst);
+  await compileIntoAppAndWireBridge(inst, files);
 }
 
 async function installAndroid(inst: Installer): Promise<void> {

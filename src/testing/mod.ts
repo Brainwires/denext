@@ -127,6 +127,7 @@ export async function createTestApp(projectDir: string): Promise<TestHandler> {
     getMiddleware,
     pageCache: new PageCache(),
     i18n: paths.i18n ?? undefined,
+    appLinks: paths.config?.appLinks,
     flight: flightRoutes.size > 0,
     appDir: paths.appDir,
     flightRoutes,

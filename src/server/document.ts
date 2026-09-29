@@ -15,6 +15,7 @@ import type {
 import type { RouteParams } from "../router/segments.ts";
 import type { FlightNode } from "../jsx/render-to-flight.ts";
 import { type IslandPayload, serializeFlight } from "../jsx/render-to-html-flight.ts";
+import { inlinedRootFlight } from "../jsx/flight-inline.ts";
 import type { Messages } from "../runtime/i18n-messages.ts";
 import { PUBLIC_ENV_ID } from "../runtime/public-env.ts";
 import { CLASS_MARKER_ID, takeClassRendered } from "../runtime/render-scope.ts";
@@ -46,6 +47,11 @@ export interface HydrationData {
    * it on soft-nav fetches so unmatched slots keep their content (`server/slot-state.ts`).
    */
   slotState?: Record<string, string>;
+  /**
+   * The page's `export const screenOptions` (a `denext/navigation` stack's per-route options:
+   * title, animation, presentation, header), when it exports them.
+   */
+  screenOptions?: Record<string, unknown>;
 }
 
 /**
@@ -239,8 +245,10 @@ function hydrationScripts(opts: DocumentOptions, clientEntry: string): string {
   if (imageConfigNeedsEmbed()) scripts += jsonIsland(IMAGE_CONFIG_ID, getImageRuntimeConfig());
   scripts += jsonIsland("__denext_data", opts.hydration);
   if (opts.flight !== undefined) {
+    // A page whose client parts are all carved islands inlines `null` (a root-less boot), not
+    // a JSON copy of its static HTML — see flight-inline.ts.
     scripts += `<script id="__denext_flight" type="application/json">${
-      serializeFlight(opts.flight)
+      serializeFlight(inlinedRootFlight(opts.flight))
     }</script>`;
   }
   if (opts.islands && opts.islands.length > 0) {

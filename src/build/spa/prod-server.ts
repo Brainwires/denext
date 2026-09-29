@@ -3,6 +3,7 @@
 
 import { join } from "@std/path";
 import { applyDefaultSecurityHeaders } from "../../server/app.ts";
+import { compressEncodings, compressOrPassThrough } from "../../server/compress.ts";
 
 import {
   displayHost,
@@ -10,6 +11,7 @@ import {
   serveWithPortFallback,
 } from "../../server/serve-utils.ts";
 import { serveStatic } from "../../server/static.ts";
+import { createAppLinksHandler } from "../../server/app-links.ts";
 import { resolveProject } from "../paths.ts";
 import { CLIENT_PREFIX, SHELL_FILE, wantsShell } from "./shared.ts";
 
@@ -50,15 +52,13 @@ export async function startSpaProdServer(
   // never pull in the proxy module (and its `npm:ws` dependency) at all.
   const proxyCfg = paths.config?.spa?.proxy;
   const proxy = proxyCfg ? await import("../dev-proxy.ts") : undefined;
+  const appLinks = createAppLinksHandler(paths.config?.appLinks);
+  // Response compression (config `compress`, default on — the same rules as `createApp`):
+  // the shell and uncompressed `public/` files are encoded per request; the precompressed
+  // client bundles already carry a Content-Encoding and pass through untouched.
+  const encodings = compressEncodings(paths.config?.compress);
 
-  const handler = async (request: Request): Promise<Response> => {
-    const url = new URL(request.url);
-    const secure = url.protocol === "https:";
-    // Proxied prefixes go to the backend before any local serving (an /api or /ws
-    // request must reach the backend even if a same-named asset happens to exist).
-    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
-      return await proxy.proxyToBackend(request, url, proxyCfg);
-    }
+  const serveLocal = async (request: Request, url: URL, secure: boolean): Promise<Response> => {
     if (url.pathname.startsWith(CLIENT_PREFIX)) {
       const rel = "/" + url.pathname.slice(CLIENT_PREFIX.length);
       return serveImmutableAsset(clientDir, rel, request, secure, hstsCfg);
@@ -70,6 +70,21 @@ export async function startSpaProdServer(
       ? shellResponse(request, shell)
       : new Response("not found", { status: 404 });
     return applyDefaultSecurityHeaders(res, secure, hstsCfg);
+  };
+
+  const handler = async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+    const secure = url.protocol === "https:";
+    const association = appLinks(request);
+    if (association) return applyDefaultSecurityHeaders(association, secure, hstsCfg);
+    // Proxied prefixes go to the backend before any local serving (an /api or /ws
+    // request must reach the backend even if a same-named asset happens to exist). The
+    // backend's response is relayed as-is: its encoding is the backend's business.
+    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
+      return await proxy.proxyToBackend(request, url, proxyCfg);
+    }
+    const res = await serveLocal(request, url, secure);
+    return encodings.length > 0 ? await compressOrPassThrough(request, res, encodings) : res;
   };
 
   return serveWithPortFallback(

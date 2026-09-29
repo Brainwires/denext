@@ -58,6 +58,45 @@ function extractInlineForCsp(html: string): { styles: string[] } {
   return { styles };
 }
 
+/** A directive's fixed base sources followed by the route's opt-ins for it. */
+function directive(base: string, extra: string[] = []): string {
+  return [base, ...extra].join(" ");
+}
+
+/** `<name> 'self' …extra` when the route opts into sources for it; nothing otherwise. */
+function optionalDirective(name: string, extra: string[] = []): string[] {
+  return extra.length ? [directive(`${name} 'self'`, extra)] : [];
+}
+
+/**
+ * Assemble the CSP header value from the resolved script/style sources plus the route's
+ * remaining opt-ins. Shared by the buffered ({@linkcode computeCsp}) and streaming
+ * ({@linkcode computeStreamingCsp}) paths so the two policies stay byte-identical apart
+ * from their script/style hashes.
+ *
+ * `frame-src`, `media-src` and `worker-src` are emitted only when the route opts into
+ * sources for them; absent, frames and media fall back to `default-src 'self'` and
+ * workers to `script-src`, so the strict default policy is unchanged.
+ */
+function assembleCsp(scriptSrc: string[], styleSrc: string[], route: RouteCsp = {}): string {
+  return [
+    "default-src 'self'",
+    `script-src ${scriptSrc.join(" ")}`,
+    `style-src ${styleSrc.join(" ")}`,
+    "style-src-attr 'unsafe-inline'",
+    directive("img-src 'self' data:", route.imgSrc),
+    directive("font-src 'self' data:", route.fontSrc),
+    directive("connect-src 'self'", route.connectSrc),
+    ...optionalDirective("frame-src", route.frameSrc),
+    ...optionalDirective("media-src", route.mediaSrc),
+    ...optionalDirective("worker-src", route.workerSrc),
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'self'",
+    "form-action 'self'",
+  ].join("; ");
+}
+
 /**
  * Build the `Content-Security-Policy` header value for a rendered document:
  * `script-src 'self'` (denext ships no executable inline scripts of its own),
@@ -66,32 +105,6 @@ function extractInlineForCsp(html: string): { styles: string[] } {
  * `style-src-attr 'unsafe-inline'` keeps React's `style={{}}` working (style
  * injection is cosmetic; script injection stays fully blocked).
  */
-/**
- * Assemble the CSP header value from the four resolved source lists. Shared by the
- * buffered ({@linkcode computeCsp}) and streaming ({@linkcode computeStreamingCsp})
- * paths so the two policies stay byte-identical apart from their script/style hashes.
- */
-function assembleCsp(
-  scriptSrc: string[],
-  styleSrc: string[],
-  imgSrc: string[],
-  connectSrc: string[],
-): string {
-  return [
-    "default-src 'self'",
-    `script-src ${scriptSrc.join(" ")}`,
-    `style-src ${styleSrc.join(" ")}`,
-    "style-src-attr 'unsafe-inline'",
-    `img-src ${imgSrc.join(" ")}`,
-    "font-src 'self' data:",
-    `connect-src ${connectSrc.join(" ")}`,
-    "object-src 'none'",
-    "base-uri 'self'",
-    "frame-ancestors 'self'",
-    "form-action 'self'",
-  ].join("; ");
-}
-
 export async function computeCsp(html: string, route?: RouteCsp): Promise<string> {
   const { styles } = extractInlineForCsp(html);
   const styleHashes = await Promise.all(
@@ -101,8 +114,7 @@ export async function computeCsp(html: string, route?: RouteCsp): Promise<string
   return assembleCsp(
     ["'self'", ...(route?.scriptSrc ?? [])],
     ["'self'", ...styleHashes, ...(route?.styleSrc ?? [])],
-    ["'self'", "data:", ...(route?.imgSrc ?? [])],
-    ["'self'", ...(route?.connectSrc ?? [])],
+    route,
   );
 }
 
@@ -129,8 +141,7 @@ export async function computeStreamingCsp(
   return assembleCsp(
     ["'self'", await swapRuntimeHash(), ...(route?.scriptSrc ?? [])],
     ["'self'", ...styleHashes, ...(route?.styleSrc ?? [])],
-    ["'self'", "data:", ...(route?.imgSrc ?? [])],
-    ["'self'", ...(route?.connectSrc ?? [])],
+    route,
   );
 }
 

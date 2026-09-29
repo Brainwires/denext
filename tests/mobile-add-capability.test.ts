@@ -68,6 +68,8 @@ async function project(files: Record<string, string | null> = {}): Promise<strin
     "capacitor.config.ts": "export default { appId: 'dev.example', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    // The web export `cap sync` copies (without it the run falls back to `cap update`).
+    "out/index.html": "<!doctype html>\n",
     [PLIST_PATH]: INFO_PLIST,
     [MANIFEST_PATH]: MANIFEST,
     // Bounds the package-manager walk to this folder, so no lockfile above the temp dir leaks in.
@@ -582,21 +584,88 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "share-extension",
     "widget",
     "live-activity",
+    "keyboard",
+    "back",
+    "system-bars",
+    "dialog",
+    "toast",
+    "action-sheet",
+    "permissions",
+    "local-notifications",
+    "biometrics",
+    "social-login",
+    "geolocation",
+    "purchases",
+    "sentry",
+    "offline-screen",
+    "app-review",
+    "app-update",
+    "screen-orientation",
+    "media-library",
+    "privacy-screen",
+    "tracking",
+    "background",
+    "restore",
+    "accessibility",
+    "storage",
+    "context-menu",
+    "system-icons",
+    "background-location",
+    "application",
+    "native-module",
+    "native-views",
+    "native-map",
   ]);
   for (const [name, cap] of Object.entries(MOBILE_CAPABILITIES)) {
     assertEquals(cap.capacitorMajor, 8, name);
-    // auth-session and the app extensions are denext's own native code: no npm package to pin.
+    // auth-session and the app extensions are denext's own native code, and system-bars is in
+    // @capacitor/core: no npm package to pin.
     if (cap.npm === undefined) continue;
-    // @capacitor/barcode-scanner numbers its own releases: 3.x targets Capacitor 8.
-    assert(cap.version?.startsWith(name === "barcode" ? "^3." : "^8."), name);
+    // Some plugins number their own releases: @capacitor/barcode-scanner 3.x,
+    // @aparajita/capacitor-biometric-auth 10.x and @revenuecat/purchases-capacitor 13.x target
+    // Capacitor 8.
+    // So do @sentry/capacitor (4.x, pinned exactly), @capacitor-community/media (9.x),
+    // @capacitor/privacy-screen (2.x), @capacitor/background-runner (3.x) and
+    // capacitor-plugin-app-tracking-transparency (3.x, which admits Capacitor 7 and 8).
+    const own: Record<string, string> = {
+      barcode: "^3.",
+      biometrics: "^10.",
+      purchases: "^13.",
+      sentry: "4.",
+      "media-library": "^9.",
+      "privacy-screen": "^2.",
+      background: "^3.",
+      tracking: "^3.",
+    };
+    assert(cap.version?.startsWith(own[name] ?? "^8."), name);
   }
   assertEquals(
     Object.keys(MOBILE_CAPABILITIES).filter((n) => MOBILE_CAPABILITIES[n].npm === undefined),
-    ["auth-session", "share-extension", "widget", "live-activity"],
+    [
+      "auth-session",
+      "share-extension",
+      "widget",
+      "live-activity",
+      "system-bars",
+      "permissions",
+      "offline-screen",
+      "accessibility",
+      "storage",
+      "context-menu",
+      "system-icons",
+      "native-module",
+      "native-views",
+      "native-map",
+    ],
   );
   assertStringIncludes(
     formatCapabilityTable(),
     "keep-awake       @capacitor-community/keep-awake@^8",
+  );
+  // A name longer than the column still gets a space before its package.
+  assertStringIncludes(
+    formatCapabilityTable(),
+    "background-location @capgo/background-geolocation@^8.4.7",
   );
 });
 
@@ -1106,7 +1175,8 @@ Deno.test("mobile add: the new capabilities install their pinned plugins; plist 
       "top level + nested",
     );
     assertStringIncludes(plist, "<key>NSPhotoLibraryAddUsageDescription</key>");
-    assertEquals(report.written, [PLIST_PATH]);
+    // filesystem and document-picker declare FileTimestamp reasons in the privacy manifest.
+    assertEquals(report.written, [PLIST_PATH, "ios/App/App/PrivacyInfo.xcprivacy"]);
     assertStringIncludes(report.skipped.join("\n"), "no android/variables.gradle");
     assertStringIncludes(report.plan.notes.join("\n"), "pickDocument({ types })");
     assertStringIncludes(

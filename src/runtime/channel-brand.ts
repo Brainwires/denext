@@ -6,7 +6,7 @@
 import type { Channel } from "./channel.ts";
 
 /** The symbol a `createChannel` result carries (shared across module instances). */
-export const CHANNEL_BRAND: unique symbol = Symbol.for("denext.channel") as never;
+export const CHANNEL_BRAND: unique symbol = /* @__PURE__ */ Symbol.for("denext.channel") as never;
 
 /**
  * Is `value` a server-side channel object?

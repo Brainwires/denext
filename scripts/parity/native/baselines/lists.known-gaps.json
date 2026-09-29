@@ -1,0 +1,120 @@
+{
+  "note": "Names the real lists declare that React Native mode's adapters do not provide. Burn this down; `deno task parity:native` fails on any gap NOT listed here. Regenerate with `deno task parity:native:gaps -- lists`.",
+  "gaps": [
+    {
+      "target": "@legendapp/list#LegendList",
+      "kind": "prop",
+      "name": "anchoredEndSpace"
+    },
+    {
+      "target": "@legendapp/list#LegendList",
+      "kind": "prop",
+      "name": "automaticallyAdjustKeyboardInsets"
+    },
+    {
+      "target": "@legendapp/list#LegendList",
+      "kind": "prop",
+      "name": "onItemSizeChanged"
+    },
+    {
+      "target": "@legendapp/list#LegendList",
+      "kind": "prop",
+      "name": "onMetricsChange"
+    },
+    {
+      "target": "@legendapp/list#LegendList",
+      "kind": "prop",
+      "name": "renderScrollComponent"
+    },
+    {
+      "target": "@legendapp/list#LegendList",
+      "kind": "prop",
+      "name": "snapToIndices"
+    },
+    {
+      "target": "@shopify/flash-list#FlashList",
+      "kind": "prop",
+      "name": "automaticallyAdjustKeyboardInsets"
+    },
+    {
+      "target": "@shopify/flash-list#FlashList",
+      "kind": "prop",
+      "name": "renderScrollComponent"
+    },
+    {
+      "target": "@shopify/flash-list",
+      "kind": "export",
+      "name": "autoScroll"
+    },
+    {
+      "target": "@shopify/flash-list",
+      "kind": "export",
+      "name": "Cancellable"
+    },
+    {
+      "target": "@shopify/flash-list",
+      "kind": "export",
+      "name": "JSFPSMonitor"
+    },
+    {
+      "target": "@shopify/flash-list",
+      "kind": "export",
+      "name": "useBenchmark"
+    },
+    {
+      "target": "@shopify/flash-list",
+      "kind": "export",
+      "name": "useDataMultiplier"
+    },
+    {
+      "target": "@shopify/flash-list",
+      "kind": "export",
+      "name": "useFlatListBenchmark"
+    },
+    {
+      "target": "react-native#FlatList",
+      "kind": "prop",
+      "name": "automaticallyAdjustKeyboardInsets"
+    },
+    {
+      "target": "react-native#FlatList",
+      "kind": "prop",
+      "name": "renderScrollComponent"
+    },
+    {
+      "target": "react-native#SectionList",
+      "kind": "prop",
+      "name": "automaticallyAdjustKeyboardInsets"
+    },
+    {
+      "target": "react-native#SectionList",
+      "kind": "prop",
+      "name": "data"
+    },
+    {
+      "target": "react-native#SectionList",
+      "kind": "prop",
+      "name": "getItem"
+    },
+    {
+      "target": "react-native#SectionList",
+      "kind": "prop",
+      "name": "getItemCount"
+    },
+    {
+      "target": "react-native#SectionList",
+      "kind": "prop",
+      "name": "renderScrollComponent"
+    },
+    {
+      "target": "react-native#VirtualizedList",
+      "kind": "prop",
+      "name": "automaticallyAdjustKeyboardInsets"
+    },
+    {
+      "target": "react-native#VirtualizedList",
+      "kind": "prop",
+      "name": "renderScrollComponent"
+    }
+  ]
+}

@@ -310,6 +310,39 @@ export interface SpaConfig {
   desktop?: SpaDesktopConfig;
 }
 
+/**
+ * One build flavor of the Capacitor shell under {@link MobileConfig.flavors}: what
+ * `denext mobile build --flavor <name>` changes for that build only. Every change is undone when
+ * the build ends (the native sources and `capacitor.config.*` are restored byte for byte).
+ */
+export interface MobileFlavorConfig {
+  /** The bundle id / applicationId for this flavor, replacing the app's (`com.example.app.beta`). */
+  appId?: string;
+  /** Appended to the app's id when `appId` is not set (`".staging"` → `com.example.app.staging`). */
+  appIdSuffix?: string;
+  /** The home-screen name (CFBundleDisplayName, Android's `app_name`). */
+  appName?: string;
+  /** `server.url` in the Capacitor config: the app loads this origin instead of the bundled UI. */
+  serverUrl?: string;
+  /** Icon source for `denext mobile assets` (relative to the Capacitor project). */
+  icon?: string;
+  /** Splash source for `denext mobile assets` (relative to the Capacitor project). */
+  splash?: string;
+  /** Icon and splash background, `#rrggbb`. */
+  backgroundColor?: string;
+  /** Environment variables for the flavor's `denext export` (e.g. `{ API_URL: "…" }`). */
+  env?: Record<string, string>;
+}
+
+/** Settings for `denext mobile build` / `denext mobile assets` (the Capacitor shell). */
+export interface MobileConfig {
+  /**
+   * Named build flavors (`staging`, `beta`, …), picked with `denext mobile build --flavor`.
+   * Names are lowercase letters, digits and `-`.
+   */
+  flavors?: Record<string, MobileFlavorConfig>;
+}
+
 /** `deno desktop` packaging settings under {@link SpaConfig.desktop}. */
 export interface SpaDesktopConfig {
   /**
@@ -406,6 +439,37 @@ export interface ReactNativeConfig {
    * @default true
    */
   expoShims?: boolean;
+  /**
+   * Which engine runs the app's lists. `"denext"` (the default): React Native's `FlatList`,
+   * `SectionList` and `VirtualizedList` (inside react-native-web), `@shopify/flash-list` and
+   * `@legendapp/list` (its React Native entry) run on denext's `VirtualList`, with the same
+   * props and ref methods. `"library"`: each resolves to the real implementation.
+   *
+   * @default "denext"
+   */
+  lists?: "denext" | "library";
+  /**
+   * Per-package switches for the community-package aliases. React Native mode resolves
+   * popular React Native libraries whose native half a WebView lacks to denext
+   * implementations (`react-native-webview` → an `<iframe>` WebView,
+   * `react-native-keychain` → `denext/mobile`'s `secureStore`, `@react-navigation/native-stack`
+   * → `denext/navigation`'s stack, …: the list is `/docs/react-native`'s "Community packages"
+   * table). Every alias is on by default; `{ "<package>": false }` resolves that package
+   * normally again (`"react-native-svg-transformer": false` keeps `.svg` imports as asset URLs).
+   *
+   * @default {}
+   */
+  aliases?: Readonly<Record<string, boolean>>;
+  /**
+   * Build a React Native macOS or Windows app's web version: a bare `react-native` import in
+   * the app's own source (not in node_modules) resolves as `react-native-macos` or
+   * `react-native-windows` does in React Native mode (react-native-web plus that package's
+   * additions: the desktop `View` props, `Flyout`, `Popup`, `DynamicColorMacOS`, …), as
+   * Metro's platform resolution does for a desktop build. The app's source stays unchanged.
+   * Unset, `react-native` is react-native-web and only an explicit
+   * `react-native-macos` / `react-native-windows` import gets the additions.
+   */
+  desktopPackage?: "react-native-macos" | "react-native-windows";
 }
 
 /** Limits for the typed-API batch endpoint (`POST /_denext/api-batch`). */
@@ -452,6 +516,92 @@ export interface ApiBatchConfig {
 }
 
 /**
+ * Cross-origin access to the app's route handlers (`route.ts`, `defineApi`) and the native
+ * `denextAuth` endpoints — what a Capacitor shell (`capacitor://localhost`,
+ * `https://localhost`) or another front end on a different origin needs to call this server.
+ * Origins match EXACTLY (scheme + host + port, byte for byte); there are no wildcards,
+ * prefixes or suffixes, and `"null"` is refused.
+ */
+export interface CorsConfig {
+  /**
+   * The origins allowed to call, e.g. `["capacitor://localhost", "https://localhost",
+   * "myapp://app", "https://web.example.com"]`. Each is a bare origin (scheme + host, an
+   * optional port, no path). `["*"]` allows any origin, and only without `credentials`.
+   */
+  origins: string[];
+  /**
+   * The methods a preflight may approve (default `GET, HEAD, POST, PUT, PATCH, DELETE`).
+   */
+  methods?: string[];
+  /**
+   * The request headers a preflight may approve, case-insensitive (default
+   * `authorization`, `content-type`, `x-denext-wire`).
+   */
+  headers?: string[];
+  /** Response headers the caller's script may read beyond the safelisted ones (default none). */
+  exposeHeaders?: string[];
+  /**
+   * Send `Access-Control-Allow-Credentials: true`, so the browser sends and accepts cookies
+   * cross-origin (default `false`). Never combined with `"*"`.
+   */
+  credentials?: boolean;
+  /**
+   * How long, in seconds, a browser may cache a preflight answer (default 600).
+   *
+   * @minimum 0
+   * @maximum 86400
+   */
+  maxAge?: number;
+}
+
+/** The iOS side of {@link AppLinksConfig}. */
+export interface AppleAppLinks {
+  /**
+   * The apps, as `<Team ID>.<bundle id>` (`ABCDE12345.com.example.app`): the Team ID from the
+   * Apple Developer account, the bundle id from Xcode.
+   */
+  appIds: string[];
+  /**
+   * The URL paths that open the app (`*` and `?` wildcards). A leading `!` excludes a path
+   * (`"!/admin/*"`); order matters, the first match wins. Default `["*"]`: every path.
+   */
+  paths?: string[];
+  /**
+   * Also list the apps under `webcredentials`, so iOS offers this domain's saved passwords
+   * and passkeys in the app. Default `true`.
+   */
+  webcredentials?: boolean;
+}
+
+/** The Android side of {@link AppLinksConfig}. */
+export interface AndroidAppLinks {
+  /** The application id (`com.example.app`). */
+  packageName: string;
+  /**
+   * The SHA-256 fingerprints of the certificates the app is signed with, as
+   * `AB:CD:…` (32 colon-separated hex bytes; plain hex is accepted too). With Play App
+   * Signing, list Play's app signing key (Play Console → App integrity) and your upload key.
+   */
+  sha256CertFingerprints: string[];
+  /**
+   * Also delegate `get_login_creds`, so Android's Credential Manager shares this domain's
+   * saved passwords and passkeys with the app. Default `true`.
+   */
+  loginCredentials?: boolean;
+}
+
+/**
+ * The domain-association files for the app's universal links / App Links (`appLinks` in
+ * `denext.config.ts`). Pair it with `denext mobile add deep-links --domain <host>`.
+ */
+export interface AppLinksConfig {
+  /** Serve `/.well-known/apple-app-site-association` for these iOS apps. */
+  apple?: AppleAppLinks;
+  /** Serve `/.well-known/assetlinks.json` for this Android app. */
+  android?: AndroidAppLinks;
+}
+
+/**
  * A project-local CLI verb declared in `denext.config.ts` under
  * {@link DenextConfig.commands} — the zero-ceremony half of denext's CLI extension
  * story: no plugin, no `setup`, just an object. It is structurally a CLI
@@ -483,6 +633,147 @@ export interface DenextCommand {
   positionals?: PositionalSpec[];
   /** The implementation, handed the parsed invocation. */
   run(ctx: CommandContext): void | Promise<void>;
+}
+
+/** The `shell` desktop capability's scoped options (an allowlist per action). */
+export interface DesktopShellConfig {
+  /** URL schemes `openExternal` may hand to the system browser (e.g. `["https:", "mailto:"]`). */
+  openExternal?: string[];
+  /** Allow `openPath` (open a path with its default app). */
+  openPath?: boolean;
+  /** Allow `reveal` (show a path in the file manager). */
+  reveal?: boolean;
+  /** Allow `trash` (move a path to the OS trash). */
+  trash?: boolean;
+}
+
+/**
+ * The `fs` desktop capability's scoped roots (path tokens `$APPDATA` / `$CACHE` / `$DOCUMENTS`,
+ * plus the per-session `$PICKED` set the user grows through native dialogs).
+ */
+export interface DesktopFsConfig {
+  /** Roots the app may read. */
+  read?: string[];
+  /** Roots the app may write. */
+  write?: string[];
+}
+
+/**
+ * `desktop.capabilities`: which native capabilities the page may reach, keyed by the name
+ * `denext desktop add <name>` writes. `true` enables a capability with its defaults; an object
+ * scopes it. Anything absent is denied. An unknown key is allowed (a newer `desktop add`) and the
+ * validator warns on it.
+ */
+export interface DesktopCapabilitiesConfig {
+  /** OS keychain (macOS Keychain / libsecret; not yet on Windows, where it fails closed). */
+  secureStore?: boolean;
+  /** App files under the OS app-support / cache folders. */
+  fs?: boolean | DesktopFsConfig;
+  /** An app SQLite database under the app-support folder. */
+  sqlite?: boolean;
+  /** `showContextMenu` (no runtime capability yet: the WebView's in-page menu). */
+  contextMenu?: boolean;
+  /** Open external URLs / paths / reveal / trash (scoped). */
+  shell?: boolean | DesktopShellConfig;
+  /**
+   * System-browser OAuth via `openAuthSession` (loopback redirect). The runtime's auth-session
+   * endpoint is default-deny unless this is enabled; the packaged app then bakes the browser
+   * opener's `--allow-run`.
+   */
+  authSession?: boolean;
+  /** Native open/save/folder dialogs returning paths. */
+  dialogs?: boolean;
+  /**
+   * Local notifications (no runtime capability yet: the WebView's Notification API, immediate
+   * only; a scheduled trigger rejects and a click is not routed).
+   */
+  notifications?: boolean;
+  /** Prevent the machine from sleeping while held. */
+  keepAwake?: boolean;
+  /** Clipboard text (no runtime capability yet: the WebView's `navigator.clipboard`). */
+  clipboard?: boolean;
+  /** Device info (`os`, `osVersion`, `model?`). */
+  device?: boolean;
+  /** The `echo` diagnostic capability (bridge connectivity check). */
+  echo?: boolean;
+  /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
+  extensions?: string[];
+}
+
+/**
+ * The `desktop` block of `denext.config.ts`: Deno Desktop native capabilities. The allowlist the
+ * desktop runtime's capability bridge serves (default deny), and the source the package scripts
+ * derive least-privilege `--allow-*` from. Written by `denext desktop add <cap>`. Distinct from
+ * {@link SpaDesktopConfig} (`spa.desktop`, packaging settings such as the icon); the two may be
+ * unified later. Docs: https://denext.dev/docs/desktop
+ */
+export interface DesktopConfig {
+  /**
+   * App identity for the RUNTIME. Its `identifier` keys the OS app-support/cache/documents folders
+   * and the `secureStore` keychain SERVICE, so it MUST be unique per app — a reverse-DNS id such as
+   * `"com.example.myapp"`. Without it, `secureStore`/`fs`/`sqlite` refuse to start (they would
+   * otherwise share one folder and one keychain service across every denext desktop app, letting
+   * one app read another's data and secrets). Keep it equal to `deno.json`'s `desktop.app.identifier`
+   * (which `deno desktop` uses for the bundle id); the scaffold writes both.
+   */
+  app?: {
+    /**
+     * A unique reverse-DNS id (e.g. `"com.example.myapp"`) that keys the OS app-support/cache/
+     * documents folders and the `secureStore` keychain service. Required once a data-storing cap
+     * (`secureStore`/`fs`/`sqlite`) is enabled. Keep it equal to `deno.json`'s `desktop.app.identifier`.
+     */
+    identifier?: string;
+    /** The app's display name for tooling; the packaged bundle name comes from `deno.json`. */
+    name?: string;
+  };
+  /** The capability allowlist (default deny). */
+  capabilities?: DesktopCapabilitiesConfig;
+  /**
+   * Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what
+   * the enabled {@link DesktopCapabilitiesConfig capabilities} imply — the escape hatch for what
+   * the capability catalog can't see: the desktop updater's feed host (`net`) and data dir
+   * (`write`), a `defineDesktopExtension` module's own `run`/`ffi`, or any custom need.
+   * `denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script).
+   */
+  extraPermissions?: DesktopExtraPermissions;
+}
+
+/**
+ * Extra `--allow-*` for the desktop packaging scripts (see {@link DesktopConfig.extraPermissions}).
+ * Each field is a list of Deno permission values, unioned into the derived flags.
+ */
+export interface DesktopExtraPermissions {
+  /** `--allow-read` paths (usually unnecessary — the baseline is already broad read). */
+  read?: string[];
+  /** `--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped). */
+  write?: string[];
+  /** `--allow-net` hosts, e.g. the updater's feed host. */
+  net?: string[];
+  /** `--allow-run` programs. */
+  run?: string[];
+  /** `--allow-ffi` libraries. */
+  ffi?: string[];
+  /** `--allow-env` variable names. */
+  env?: string[];
+  /** `--allow-sys` kinds. */
+  sys?: string[];
+}
+
+/**
+ * Response compression settings (DenextConfig.compress as an object: compression on, with
+ * these settings).
+ */
+export interface CompressConfig {
+  /**
+   * The content codings denext may produce, in the server's order of preference: the client's
+   * highest-q acceptable coding among them wins, and a tie goes to the earlier one here. The
+   * default is gzip only (Next.js's `compress`); list `"br"` to send brotli to clients that
+   * accept it (quality 5: markedly smaller output for about two to three times gzip's CPU).
+   * An empty list sends identity.
+   *
+   * @default ["gzip"]
+   */
+  encodings?: Array<"gzip" | "br">;
 }
 
 /** Project configuration exported from `denext.config.{ts,js}` (as `default` or named). */
@@ -581,7 +872,10 @@ export interface DenextConfig {
    * - `"off"` — emit no CSP header at all (set your policy at the edge, or for
    *   Next.js-style "CSP is the app's job" behavior). A route can still opt back in
    *   with its own `csp` export.
-   * - a {@link CspSetting} object — the strict policy plus these global opt-ins.
+   * - a {@link CspSetting} object — the strict policy plus these global opt-ins
+   *   (`scriptSrc`, `styleSrc`, `imgSrc`, `connectSrc`, `fontSrc`, `frameSrc`,
+   *   `mediaSrc`, `workerSrc`; e.g. `{ frameSrc: ["https://js.stripe.com"] }` for
+   *   Stripe's Payment Element iframes).
    *
    * A route's `csp` export overrides this for that route. Streamed responses (PPR /
    * incremental streaming) carry the **same** strict hash-based CSP, computed from the
@@ -634,6 +928,21 @@ export interface DenextConfig {
    * @minimum 1
    */
   apiMaxBodyBytes?: number;
+  /**
+   * Cross-origin (CORS) access to route handlers and the native `denextAuth` endpoints —
+   * what a Capacitor shell or a front end on another origin needs. Off by default (no CORS
+   * headers at all). A route overrides it with `export const cors = { … } | false`. See
+   * {@link CorsConfig}.
+   */
+  cors?: CorsConfig;
+  /**
+   * The domain-association files for the app's universal links (iOS) and App Links (Android):
+   * `denext start` and `denext dev` serve `/.well-known/apple-app-site-association` and
+   * `/.well-known/assetlinks.json` from it (`application/json`, `200`, never redirected), and
+   * `denext export` writes both into the export. Pair it with `denext mobile add deep-links
+   * --domain <host>`. See {@link AppLinksConfig}.
+   */
+  appLinks?: AppLinksConfig;
   /**
    * The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise
    * it only for actions that accept large payloads (multipart uploads); over the cap → 413
@@ -713,6 +1022,23 @@ export interface DenextConfig {
    * list every param whose value changes cacheable output. Unset, every param participates.
    */
   cacheKeyParams?: string[];
+  /**
+   * Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/
+   * JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as
+   * Next.js); brotli (quality 5: markedly smaller output for about two to three times gzip's
+   * CPU) only when listed in `{ encodings }` (`{ encodings: ["br", "gzip"] }`). Negotiated from
+   * `Accept-Encoding` (q-values; a tie goes to the earlier listed coding) through `node:zlib`,
+   * flushed explicitly; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a
+   * flush per chunk, so it still reaches the browser progressively. Skipped for bodies under
+   * 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives),
+   * a response that already has a `Content-Encoding`, `Cache-Control: no-transform`, range
+   * responses, `HEAD` and `204`/`304`. A page, layout or route handler opts out with
+   * `export const compress = false`. Build-time precompressed client bundles (`.gz`) are
+   * served as-is. Set `false` when a proxy in front (nginx, Cloudflare, a CDN) compresses.
+   *
+   * @default true
+   */
+  compress?: boolean | CompressConfig;
   /**
    * denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.
    *
@@ -832,6 +1158,20 @@ export interface DenextConfig {
    * @default true
    */
   momentumSafeScroll?: boolean;
+  /**
+   * Capacitor shell settings for `denext mobile build` and `denext mobile assets`: build flavors
+   * (per-flavor app id, name, server URL, icon and splash). See
+   * {@link https://denext.dev/docs/mobile-build}.
+   */
+  mobile?: MobileConfig;
+  /**
+   * Deno Desktop native capabilities: the allowlist the desktop runtime's capability bridge
+   * serves (default deny) and the source the package scripts derive least-privilege `--allow-*`
+   * from. Written by `denext desktop add <cap>`. Distinct from {@link SpaConfig.desktop} (packaging
+   * settings such as the icon); the two may be unified in a later release. Docs:
+   * https://denext.dev/docs/desktop
+   */
+  desktop?: DesktopConfig;
   /**
    * Build a React Native / Expo app's source for the web through `react-native-web` — SPA
    * mode only (`mode: "spa"`). `true` turns on the defaults; an object sets options.
@@ -1192,10 +1532,10 @@ export function resolveCacheComponents(
 /**
  * The production-server knobs `denext start` / `denext dev` hand to `createApp()`: the
  * config's `canonicalOrigin`, `trustForwardedHeaders`, `requestTimeout`, `maxConcurrency`,
- * `slotBackstop`, `actionMaxBodyBytes` and `cacheKeyParams`, each falling back to its env
- * var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`, `DENEXT_TRUST_PROXY=1`,
- * `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else `undefined` so `createApp`'s
- * own default applies — config > env > default. A malformed env value (a non-numeric
+ * `slotBackstop`, `actionMaxBodyBytes`, `cacheKeyParams` and `compress`, each falling back
+ * to its env var when the config leaves it unset (`DENEXT_CANONICAL_ORIGIN`,
+ * `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
+ * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
  * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
  * env is set by an operator, not type-checked like the config.
  */
@@ -1214,6 +1554,8 @@ export interface ServerOptions {
   actionMaxBodyBytes?: number;
   /** The ISR cache-key query-param allowlist. */
   cacheKeyParams?: string[];
+  /** Whether dynamic responses are compressed (`false` = off; default on, gzip). */
+  compress?: boolean | CompressConfig;
 }
 
 /** One env var, or `undefined` when unset, empty, or not permitted (a narrowed `--allow-env`). */
@@ -1266,6 +1608,7 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
     slotBackstop: config?.slotBackstop,
     actionMaxBodyBytes: config?.actionMaxBodyBytes,
     cacheKeyParams: config?.cacheKeyParams,
+    compress: config?.compress,
   };
 }
 

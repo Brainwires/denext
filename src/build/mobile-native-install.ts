@@ -12,6 +12,7 @@
 // and reported.
 
 import { join, relative } from "@std/path";
+import { addSourceFiles } from "./pbxproj.ts";
 import {
   markedTemplateIntact,
   renderMarkedTemplate,
@@ -35,9 +36,53 @@ import {
   isPristineAppExtensionTemplate,
   renderAppExtensionTemplate,
 } from "./app-extension-native-templates.ts";
+import {
+  BACK_TEMPLATE_VERSION,
+  isPristineBackTemplate,
+  renderBackTemplate,
+} from "./back-native-templates.ts";
+import {
+  isPristineSettingsTemplate,
+  renderSettingsTemplate,
+  SETTINGS_TEMPLATE_VERSION,
+} from "./settings-native-templates.ts";
+import {
+  ACCESSIBILITY_TEMPLATE_VERSION,
+  isPristineAccessibilityTemplate,
+  renderAccessibilityTemplate,
+} from "./accessibility-native-templates.ts";
+import { NATIVE_VIEWS_TEMPLATE_VERSION } from "./native-views-native-templates.ts";
+import {
+  isPristineStorageTemplate,
+  renderStorageTemplate,
+  STORAGE_TEMPLATE_VERSION,
+} from "./storage-native-templates.ts";
+
+import {
+  CONTEXT_MENU_TEMPLATE_VERSION,
+  isPristineContextMenuTemplate,
+  renderContextMenuTemplate,
+} from "./context-menu-native-templates.ts";
+import {
+  isPristineSystemIconTemplate,
+  renderSystemIconTemplate,
+  SYSTEM_ICON_TEMPLATE_VERSION,
+} from "./system-icon-native-templates.ts";
 
 /** A denext native feature that registers a plugin with the bridge. */
-export type NativeFeature = "ota" | "auth-session" | "share-receive" | "widgets" | "live-activity";
+export type NativeFeature =
+  | "ota"
+  | "auth-session"
+  | "share-receive"
+  | "widgets"
+  | "live-activity"
+  | "settings"
+  | "accessibility"
+  | "context-menu"
+  | "system-icons"
+  | "native-views"
+  | "native-modules"
+  | "storage";
 
 /** Every feature, in the order the bridge view controller registers them after OTA. */
 const ALL_FEATURES: readonly NativeFeature[] = [
@@ -46,6 +91,13 @@ const ALL_FEATURES: readonly NativeFeature[] = [
   "share-receive",
   "widgets",
   "live-activity",
+  "settings",
+  "accessibility",
+  "context-menu",
+  "system-icons",
+  "native-views",
+  "native-modules",
+  "storage",
 ];
 
 /** Every non-empty combination of `features`, for recognising a file denext composed. */
@@ -141,6 +193,13 @@ const TEMPLATE_GENERATIONS: Readonly<Record<string, number>> = {
   ota: OTA_TEMPLATE_VERSION,
   "auth-session": AUTH_SESSION_TEMPLATE_VERSION,
   "app-extension": APP_EXTENSION_TEMPLATE_VERSION,
+  back: BACK_TEMPLATE_VERSION,
+  settings: SETTINGS_TEMPLATE_VERSION,
+  accessibility: ACCESSIBILITY_TEMPLATE_VERSION,
+  "context-menu": CONTEXT_MENU_TEMPLATE_VERSION,
+  "system-icon": SYSTEM_ICON_TEMPLATE_VERSION,
+  "native-views": NATIVE_VIEWS_TEMPLATE_VERSION,
+  storage: STORAGE_TEMPLATE_VERSION,
 };
 
 /** The manual step for a shared file a newer denext wrote that lacks `step`'s registration. */
@@ -170,6 +229,42 @@ export const AUTH_SESSION_TEMPLATES: TemplateKind = {
 export const APP_EXTENSION_TEMPLATES: TemplateKind = {
   render: (template) => renderAppExtensionTemplate(template),
   isPristine: (_name, text) => isPristineAppExtensionTemplate(text),
+};
+
+/** The back-handling template (Android `DenextBackPlugin`): `// denext-back-template:`. */
+export const BACK_TEMPLATES: TemplateKind = {
+  render: (template) => renderBackTemplate(template),
+  isPristine: (_name, text) => isPristineBackTemplate(text),
+};
+
+/** The app-settings templates (`DenextSettings`): `// denext-settings-template:`. */
+export const SETTINGS_TEMPLATES: TemplateKind = {
+  render: (template) => renderSettingsTemplate(template),
+  isPristine: (_name, text) => isPristineSettingsTemplate(text),
+};
+
+/** The screen-reader templates (`DenextAccessibility`): `// denext-accessibility-template:`. */
+export const ACCESSIBILITY_TEMPLATES: TemplateKind = {
+  render: (template) => renderAccessibilityTemplate(template),
+  isPristine: (_name, text) => isPristineAccessibilityTemplate(text),
+};
+
+/** The durable-storage templates (`DenextStorage`): `// denext-storage-template:`. */
+export const STORAGE_TEMPLATES: TemplateKind = {
+  render: (template) => renderStorageTemplate(template),
+  isPristine: (_name, text) => isPristineStorageTemplate(text),
+};
+
+/** The native menu templates (`DenextContextMenu`): `// denext-context-menu-template:`. */
+export const CONTEXT_MENU_TEMPLATES: TemplateKind = {
+  render: (template) => renderContextMenuTemplate(template),
+  isPristine: (_name, text) => isPristineContextMenuTemplate(text),
+};
+
+/** The SF Symbol renderer template (`DenextSystemIcon`): `// denext-system-icon-template:`. */
+export const SYSTEM_ICON_TEMPLATES: TemplateKind = {
+  render: (template) => renderSystemIconTemplate(template),
+  isPristine: (_name, text) => isPristineSystemIconTemplate(text),
 };
 
 /** Accumulates the report while an installer runs. */
@@ -280,6 +375,13 @@ const IOS_FEATURE_FILES: Readonly<Record<NativeFeature, string>> = {
   "share-receive": "DenextShareReceivePlugin.swift",
   widgets: "DenextWidgetsPlugin.swift",
   "live-activity": "DenextLiveActivityPlugin.swift",
+  settings: "DenextSettingsPlugin.swift",
+  accessibility: "DenextAccessibilityPlugin.swift",
+  "context-menu": "DenextContextMenuPlugin.swift",
+  "system-icons": "DenextSystemIconPlugin.swift",
+  "native-views": "DenextNativeViewsPlugin.swift",
+  "native-modules": "DenextNativeModules.swift",
+  storage: "DenextStoragePlugin.swift",
 };
 
 /** Where the OTA bridge view controller registers its plugin; the others go after it. */
@@ -295,6 +397,21 @@ const IOS_REGISTRATIONS: Readonly<Record<Exclude<NativeFeature, "ota">, string>>
     "        bridge?.registerPluginInstance(DenextWidgetsPlugin())\n",
   "live-activity": "        // denext Live Activities: startLiveActivity() in denext/mobile.\n" +
     "        bridge?.registerPluginInstance(DenextLiveActivityPlugin())\n",
+  settings: "        // denext app settings: openAppSettings() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextSettingsPlugin())\n",
+  accessibility: "        // denext screen reader: isScreenReaderEnabled() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextAccessibilityPlugin())\n",
+  "context-menu":
+    "        // denext native menus: showContextMenu() / useContextMenu() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextContextMenuPlugin())\n",
+  "system-icons": "        // denext SF Symbols: <SystemIcon> in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextSystemIconPlugin())\n",
+  "native-views": "        // denext native views: NativeViewSlot in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextNativeViewsPlugin())\n",
+  "native-modules": "        // The app's own native modules (denext mobile add native-module).\n" +
+    "        DenextNativeModules.register(bridge)\n",
+  storage: "        // denext durable storage: openKeyValueStore() in denext/mobile.\n" +
+    "        bridge?.registerPluginInstance(DenextStoragePlugin())\n",
 };
 
 /** The registration lines of the non-OTA features in `features`, in their fixed order. */
@@ -493,8 +610,16 @@ export async function wireBridgeViewController(
 const STOCK_MAIN_ACTIVITY =
   /^\s*package\s+([\w.]+)\s*;\s*import\s+com\.getcapacitor\.BridgeActivity\s*;\s*public\s+class\s+MainActivity\s+extends\s+BridgeActivity\s*\{\s*\}\s*$/;
 
-/** The features that register an Android plugin (Live Activities are iOS only). */
-export type AndroidFeature = Exclude<NativeFeature, "live-activity">;
+/**
+ * What a MainActivity can set up before the bridge is built: every native feature but Live
+ * Activities and system icons (iOS only), plus two that are Android only: `back` (the `DenextBack` plugin behind
+ * onBack / useBackProgress) and `edge-to-edge` (`EdgeToEdge.enable`, from `mobile add
+ * system-bars`).
+ */
+export type AndroidFeature =
+  | Exclude<NativeFeature, "live-activity" | "system-icons">
+  | "back"
+  | "edge-to-edge";
 
 /** A plain `registerPlugin(<cls>.class)` registration of a plugin in package `pkg`. */
 function pluginRegistration(pkg: string, cls: string, what: string) {
@@ -512,6 +637,63 @@ function pluginRegistration(pkg: string, cls: string, what: string) {
 const ANDROID_REGISTRATIONS: Readonly<
   Record<AndroidFeature, { import: string; lines: string; call: string; step: string }>
 > = {
+  "edge-to-edge": {
+    import: "import androidx.activity.EdgeToEdge;\n",
+    lines:
+      "        // denext system bars: draw edge to edge on every Android version (15+ enforce it),\n" +
+      "        // with transparent bars. It must run before super.onCreate.\n" +
+      "        EdgeToEdge.enable(this);\n",
+    call: "EdgeToEdge.enable(",
+    step: "call `EdgeToEdge.enable(this);` (import androidx.activity.EdgeToEdge) in " +
+      "MainActivity.onCreate, before super.onCreate.",
+  },
+  "native-modules": {
+    import: "import dev.denext.nativemodules.DenextNativeModules;\n",
+    lines:
+      "        // The app's own native modules (denext mobile add native-module). It must run\n" +
+      "        // before super.onCreate, which builds the bridge.\n" +
+      "        DenextNativeModules.register(this);\n",
+    call: "DenextNativeModules.register(",
+    step: "call `DenextNativeModules.register(this);` (import " +
+      "dev.denext.nativemodules.DenextNativeModules) in MainActivity.onCreate, before " +
+      "super.onCreate.",
+  },
+  storage: pluginRegistration(
+    "dev.denext.storage",
+    "DenextStoragePlugin",
+    "denext durable storage: registers the DenextStorage plugin (openKeyValueStore in\n" +
+      "        // denext/mobile)",
+  ),
+  "native-views": pluginRegistration(
+    "dev.denext.nativeviews",
+    "DenextNativeViewsPlugin",
+    "denext native views: registers the DenextNativeViews plugin (NativeViewSlot in\n" +
+      "        // denext/mobile)",
+  ),
+  "context-menu": pluginRegistration(
+    "dev.denext.contextmenu",
+    "DenextContextMenuPlugin",
+    "denext native menus: registers the DenextContextMenu plugin (showContextMenu in\n" +
+      "        // denext/mobile)",
+  ),
+  accessibility: pluginRegistration(
+    "dev.denext.accessibility",
+    "DenextAccessibilityPlugin",
+    "denext screen reader: registers the DenextAccessibility plugin (isScreenReaderEnabled\n" +
+      "        // in denext/mobile)",
+  ),
+  settings: pluginRegistration(
+    "dev.denext.settings",
+    "DenextSettingsPlugin",
+    "denext app settings: registers the DenextSettings plugin (openAppSettings in\n" +
+      "        // denext/mobile)",
+  ),
+  back: pluginRegistration(
+    "dev.denext.back",
+    "DenextBackPlugin",
+    "denext back handling: registers the DenextBack plugin (onBack / useBackProgress in\n" +
+      "        // denext/mobile)",
+  ),
   "share-receive": pluginRegistration(
     "dev.denext.sharereceive",
     "DenextShareReceivePlugin",
@@ -551,6 +733,14 @@ const ANDROID_REGISTRATIONS: Readonly<
  * earlier releases wrote for OTA and auth sessions the same.
  */
 const FEATURE_ORDER: readonly AndroidFeature[] = [
+  "context-menu",
+  "storage",
+  "native-modules",
+  "native-views",
+  "accessibility",
+  "settings",
+  "edge-to-edge",
+  "back",
   "share-receive",
   "widgets",
   "auth-session",
@@ -559,8 +749,19 @@ const FEATURE_ORDER: readonly AndroidFeature[] = [
 
 /** The marker family of a MainActivity denext composed: `// denext-main-activity-template:`. */
 const MAIN_ACTIVITY_FAMILY = "main-activity";
-/** The generation of {@linkcode mainActivitySource}'s text, stamped into its marker line. */
-const MAIN_ACTIVITY_TEMPLATE_VERSION = 1;
+/**
+ * The generation of {@linkcode mainActivitySource}'s text, stamped into its marker line.
+ * Generation 2 (denext 2.11) added the `back`, `edge-to-edge`, `settings`, `accessibility`,
+ * `native-views` and `native-modules` features (the last is a
+ * `DenextNativeModules.register(this)` line, not a plugin registration, so 2.10.0 must not
+ * rewrite such a file either). The text of every
+ * generation-1 combination is unchanged (only the marker's number differs), and a marked
+ * generation-1 file is recognised by its intact marker, so no hash joins
+ * {@linkcode SHIPPED_MAIN_ACTIVITY_SHA256}. The bump keeps an older denext from rewriting a
+ * generation-2 file: it would keep the `DenextBackPlugin` registration it does not know as an
+ * edit, but silently drop the `EdgeToEdge.enable` line, which is not a plugin registration.
+ */
+const MAIN_ACTIVITY_TEMPLATE_VERSION = 2;
 
 /**
  * SHA-256 of every MainActivity denext wrote before the marker line existed, with the package
@@ -740,4 +941,20 @@ export async function hasIosApp(
   if (await isFile(join(inst.opts.dir, PBXPROJ))) return true;
   inst.report.skipped.push(`iOS: no ${PBXPROJ} (run \`cap add ios\` first).`);
   return false;
+}
+
+/**
+ * Compile `files` (in the iOS app folder) into the App target, then make the app use
+ * `DenextBridgeViewController` ({@linkcode wireBridgeViewController}): the tail every installer
+ * of a bridge-registered plugin shares.
+ */
+export async function compileIntoAppAndWireBridge(
+  inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
+  files: readonly string[],
+): Promise<void> {
+  await inst.edit(
+    join(inst.opts.dir, PBXPROJ),
+    (t) => addSourceFiles(t, files, { randomId: inst.opts.randomId }).text,
+  );
+  await wireBridgeViewController(inst);
 }

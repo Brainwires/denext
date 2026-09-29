@@ -55,10 +55,16 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "hsts",
     "publicEnv",
     "apiBatch",
+    // Which other origins (a Capacitor shell, a web front end) may call the API.
+    "cors",
+    // Which mobile apps this domain vouches for (universal links / App Links).
+    "appLinks",
     "apiMaxBodyBytes",
     "actionMaxBodyBytes",
     "canonicalOrigin",
     "trustForwardedHeaders",
+    // Response compression: a proxy that compresses in front of the server turns it off.
+    "compress",
     // The dev server's origin gate (which non-loopback hosts may load the dev assets).
     "allowedDevOrigins",
   ],
@@ -74,6 +80,8 @@ const GROUP_KEYS: Record<ConfigGroup, readonly string[]> = {
     "compatibilityMode",
     // The React Native resolve mode is a bundler switch too.
     "reactNative",
+    // `denext mobile build` flavors and asset settings for the Capacitor shell.
+    "mobile",
     "plugins",
     "commands",
   ],

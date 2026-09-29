@@ -52,6 +52,7 @@ import {
   verificationAdapter,
   type VerificationTokenAdapter,
 } from "./verification.ts";
+import { nativeAdapterOf } from "./native.ts";
 
 /** Which emailed-token flow a call belongs to. */
 export type EmailFlow = "email" | "reset";
@@ -454,6 +455,8 @@ async function revokeUserSessions(
   options: ResolvedAuthOptions,
   userId: string,
 ): Promise<void> {
+  // Native app session families end too (they don't depend on a session store).
+  await nativeAdapterOf(options.adapter)?.revokeNativeSessionsByUser(userId);
   if (!options.sessionStore) {
     if (!warnedStateless.has(config)) {
       warnedStateless.add(config);

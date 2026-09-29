@@ -4,8 +4,8 @@
  * declared — `routes.ts` only strips the prefix, matches a row, and calls it. The rows
  * come from the route modules: session + sign-in (`routes-session`, `routes-oauth`), the
  * per-provider callback verbs (`routes-credentials`, `routes-oauth`, `routes-email`),
- * bearer tokens (`routes-tokens`), account recovery (`routes-account`) and the second
- * factor (`routes-mfa`).
+ * bearer tokens (`routes-tokens`), account recovery (`routes-account`), the second
+ * factor (`routes-mfa`), and native app sessions + account deletion (`routes-native`).
  *
  * A row claims ONE method on its path: another verb falls through to the app (a plain
  * 404, or the app's own page — `GET {basePath}/reset` is where the reset link lands). Only
@@ -34,6 +34,7 @@ import { accountRoutes } from "./routes-account.ts";
 import { handleCredentials } from "./routes-credentials.ts";
 import { emailCallbacks } from "./routes-email.ts";
 import { mfaRoutes } from "./routes-mfa.ts";
+import { nativeRoutes } from "./routes-native.ts";
 import { handleOAuthCallback, handleSignin } from "./routes-oauth.ts";
 import { handleProviders, handleSession, handleSignout } from "./routes-session.ts";
 import {
@@ -189,6 +190,10 @@ const declaredRoutes: readonly AuthRoute[] = [
   // The second factor: POST `/mfa`, `/mfa/enroll`, `/mfa/confirm`, `/mfa/disable` — each
   // spends the per-user MFA budget itself, and answers `null` without the MFA group.
   ...mfaRoutes,
+  // Native app sessions (`native` config): authorize/complete in the browser sheet, the token /
+  // revoke / nonce calls, native Apple/Google id_token sign-in — plus `POST /account/delete`.
+  // They answer `null` when the feature (or the adapter group behind it) isn't configured.
+  ...nativeRoutes,
 ];
 
 /** The table the dispatcher matches against: every row with its `limit` gate applied. */

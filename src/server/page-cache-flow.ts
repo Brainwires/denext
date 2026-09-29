@@ -195,7 +195,12 @@ function scheduleBackgroundRegen(pr: PageRequest): void {
  * verbatim, routed through finalize so middleware headers (e.g. an app CSP) override
  * the stored default.
  */
-function serveCacheHit(pr: PageRequest, hit: CachedPage): Promise<Response> {
+async function serveCacheHit(pr: PageRequest, hit: CachedPage): Promise<Response> {
+  // A hit renders nothing, so the route's segment config (and its `compress` export) is
+  // never resolved: read the opt-out from the (already loaded) layout chain + page here.
+  if (pr.state.app.config.compress !== false) {
+    pr.state.ctx.compressOptOut = await routeOptsOutOfCompression(pr);
+  }
   const stale = hit.staleAt != null && hit.staleAt <= Date.now();
   if (stale) scheduleBackgroundRegen(pr);
   const cacheState: CacheState = stale ? "STALE" : "HIT";
@@ -205,9 +210,23 @@ function serveCacheHit(pr: PageRequest, hit: CachedPage): Promise<Response> {
     const loader = shell.flight ? pr.pageLoad : pr.state.app.config.load;
     return servePprShell(pr, shell, cacheState, loader);
   }
-  return Promise.resolve(
-    htmlResponse(pr.state, hit.body, hit.status, hit.csp, { "x-denext-cache": cacheState }),
-  );
+  return htmlResponse(pr.state, hit.body, hit.status, hit.csp, { "x-denext-cache": cacheState });
+}
+
+/** Whether the page's layout chain → page sets `export const compress = false` (last wins). */
+async function routeOptsOutOfCompression(pr: PageRequest): Promise<boolean> {
+  const { route } = pr.page;
+  const { load } = pr.state.app.config;
+  let compress: unknown;
+  try {
+    for (const file of [...route.layoutChain, route.filePath]) {
+      const value = ((await load(file)) as { compress?: unknown } | undefined)?.compress;
+      if (typeof value === "boolean") compress = value;
+    }
+  } catch {
+    return false; // a module that no longer loads: serve the hit, compression as configured
+  }
+  return compress === false;
 }
 
 /**

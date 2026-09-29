@@ -138,6 +138,11 @@ export interface AddSourceFilesOptions {
   group?: string;
   /** Id generator, for deterministic tests (default: random, checked for uniqueness). */
   randomId?: () => string;
+  /**
+   * The build phase the files join: `"sources"` (compiled; the default) or `"resources"`
+   * (copied into the bundle, e.g. a `PrivacyInfo.xcprivacy`).
+   */
+  phase?: "sources" | "resources";
 }
 
 /** What {@linkcode addSourceFiles} did. */
@@ -243,8 +248,12 @@ export function addSourceFiles(
   const group = options.group === undefined
     ? findGroup(objects, sources, targetName)
     : groupNamed(objects, options.group);
+  const phase = options.phase === "resources"
+    ? phaseOf(target, byId, "PBXResourcesBuildPhase", targetName)
+    : sources;
+  const phaseName = options.phase === "resources" ? "Resources" : "Sources";
   const groupChildren = listIds(group.body, "children");
-  const compiled = listIds(sources.body, "files").map((id) =>
+  const compiled = listIds(phase.body, "files").map((id) =>
     field(byId.get(id)?.body ?? "", "fileRef")
   );
 
@@ -253,7 +262,7 @@ export function addSourceFiles(
   const buildFileEnd = sectionEnd(text, "PBXBuildFile");
   const fileRefEnd = sectionEnd(text, "PBXFileReference");
   const groupPos = listEnd(text, group, "children");
-  const sourcesPos = listEnd(text, sources, "files");
+  const sourcesPos = listEnd(text, phase, "files");
   for (const name of fileNames) {
     const existingRef = objects.find((o) =>
       o.isa === "PBXFileReference" && groupChildren.includes(o.id) &&
@@ -274,11 +283,11 @@ export function addSourceFiles(
     insertions.push({
       at: buildFileEnd,
       text:
-        `\t\t${buildId} /* ${name} in Sources */ = {isa = PBXBuildFile; fileRef = ${refId} /* ${name} */; };\n`,
+        `\t\t${buildId} /* ${name} in ${phaseName} */ = {isa = PBXBuildFile; fileRef = ${refId} /* ${name} */; };\n`,
     });
     insertions.push({
       at: sourcesPos.at,
-      text: listEntry(sourcesPos, `${buildId} /* ${name} in Sources */`),
+      text: listEntry(sourcesPos, `${buildId} /* ${name} in ${phaseName} */`),
     });
     added.push(name);
   }
@@ -296,6 +305,19 @@ function applyInsertions(text: string, insertions: readonly Insertion[]): string
   return out;
 }
 
+/** The target's build phase of type `isa`. */
+function phaseOf(
+  target: PbxObject,
+  byId: Map<string, PbxObject>,
+  isa: string,
+  targetName: string,
+): PbxObject {
+  const phase = listIds(target.body, "buildPhases").map((id) => byId.get(id))
+    .find((o) => o?.isa === isa);
+  if (!phase) throw new Error(`project.pbxproj: target "${targetName}" has no ${isa}`);
+  return phase;
+}
+
 /** The group whose `path` or `name` is `name`. */
 function groupNamed(objects: PbxObject[], name: string): PbxObject {
   const group = objects.find((o) =>
@@ -310,6 +332,7 @@ function fileType(name: string): string {
   if (name.endsWith(".swift")) return "sourcecode.swift";
   if (name.endsWith(".plist")) return "text.plist.xml";
   if (name.endsWith(".entitlements")) return "text.plist.entitlements";
+  if (name.endsWith(".xcprivacy")) return "text.xml";
   if (name.endsWith(".m")) return "sourcecode.c.objc";
   if (name.endsWith(".h")) return "sourcecode.c.h";
   return "text";

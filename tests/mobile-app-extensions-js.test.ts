@@ -642,3 +642,15 @@ Deno.test("expo-widgets: start retries without push; a failed start drops the in
   );
   assert(warned.some((w) => String(w).includes("Live Activity start failed")));
 });
+
+Deno.test("share receiver (Android) SECURITY: refuses this app's own provider and caps the copy", async () => {
+  const { SHARE_RECEIVE_ANDROID_FILES } = await import(
+    "../src/build/app-extension-native-templates.ts"
+  );
+  const java = SHARE_RECEIVE_ANDROID_FILES["DenextShareReceivePlugin.java"];
+  // Another app naming `content://<this app>.fileprovider/…` must not get private files copied.
+  assert(java.includes("if (isOwnProvider(context, uri))"));
+  assert(java.includes('authority.startsWith(pkg + ".")'));
+  // A hostile stream cannot fill the cache dir.
+  assert(java.includes("total > MAX_SHARED_BYTES"));
+});

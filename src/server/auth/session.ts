@@ -136,6 +136,44 @@ function sealOwnedFields(result: AuthSession, minted: AuthSession): AuthSession 
 }
 
 /**
+ * Mint the session payload for `user` from `provider` — the framework-owned fields, then the
+ * app's `callbacks.session` (with those fields sealed back over its result) — without storing
+ * it anywhere. {@link issueAuthSession} puts it in the cookie / store; the native session mode
+ * snapshots it into a session family.
+ *
+ * @param config The app's auth config.
+ * @param user The authenticated user.
+ * @param provider The provider id that authenticated them.
+ * @param issue Pending-MFA marking, the methods proven so far, a shorter lifetime, and an
+ * `authTime` to carry over (default: now).
+ * @returns The payload.
+ */
+export async function buildSessionPayload(
+  config: AuthConfig,
+  user: AuthUser,
+  provider: string,
+  issue: IssueAuthSessionOptions & { authTime?: number } = {},
+): Promise<AuthSession> {
+  const maxAge = resolveAuthOptions(config).maxAge;
+  const now = Math.floor(Date.now() / 1000);
+  const lifetime = Math.min(maxAge, issue.lifetime ?? maxAge);
+  let payload: AuthSession = {
+    user,
+    provider,
+    expiresAt: now + lifetime,
+    v: 2,
+    issuedAt: now,
+    authTime: issue.authTime ?? now,
+  };
+  if (issue.mfaPending) payload.mfaPending = true;
+  if (issue.amr?.length) payload.amr = [...issue.amr];
+  if (config.callbacks?.session) {
+    payload = sealOwnedFields(await config.callbacks.session(payload), payload);
+  }
+  return payload;
+}
+
+/**
  * Issue (sign + set) a session for `user` from `provider`, applying the session callback.
  *
  * @param config The app's auth config.
@@ -151,22 +189,7 @@ export async function issueAuthSession(
   issue: IssueAuthSessionOptions = {},
 ): Promise<AuthSession> {
   const options = resolveAuthOptions(config);
-  const maxAge = options.maxAge;
-  const now = Math.floor(Date.now() / 1000);
-  const lifetime = Math.min(maxAge, issue.lifetime ?? maxAge);
-  let payload: AuthSession = {
-    user,
-    provider,
-    expiresAt: now + lifetime,
-    v: 2,
-    issuedAt: now,
-    authTime: now,
-  };
-  if (issue.mfaPending) payload.mfaPending = true;
-  if (issue.amr?.length) payload.amr = [...issue.amr];
-  if (config.callbacks?.session) {
-    payload = sealOwnedFields(await config.callbacks.session(payload), payload);
-  }
+  const payload = await buildSessionPayload(config, user, provider, issue);
   const session = await getSession<CookieData>(sessionOptions(config));
   if (!options.sessionStore) {
     await session.set(payload);

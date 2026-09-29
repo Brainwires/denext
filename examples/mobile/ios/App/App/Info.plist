@@ -89,5 +89,11 @@
 	<true/>
 	<key>DenextOtaPublicKey</key>
 	<string>MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEo4RPHP+nuUQmOf3IKEi67Wgn/CLX5A3quR2vADPho24Lr8FY/H4Jk7uPA9VhHUZB2g4rNZLBaHZo1i8kUPCLHg==</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Unlock the app with Face ID.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Show where you are in the app.</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>Your data is used to measure ads and deliver ones relevant to you.</string>
 </dict>
 </plist>

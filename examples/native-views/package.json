@@ -1,0 +1,13 @@
+{
+  "name": "denext-native-views-example",
+  "private": true,
+  "description": "The Capacitor shell of examples/native-views. The web app is built by denext (deno.json).",
+  "dependencies": {
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2",
+    "@capacitor/ios": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
+  }
+}

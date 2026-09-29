@@ -14,9 +14,11 @@
 
 import { diffSurfaces, type Finding } from "../diff.ts";
 import type { Baseline, Surface } from "../types.ts";
-import { rnwRuntimeSurface } from "./runtime.ts";
+import { rnBundleSurface } from "./bundle.ts";
 import { expoParitySetup, parseNativeArgs } from "./shared.ts";
 import { NATIVE_WAIVERS } from "./waivers.ts";
+import { writeListGaps } from "./lists.ts";
+import { desktopGaps, desktopPackages } from "./desktop.ts";
 import {
   expoBaselinePath,
   knownGapsPath,
@@ -59,9 +61,9 @@ async function reactNativeGaps(): Promise<Gap[]> {
     );
     return [];
   }
-  // EXPECTED = the committed react-native `.d.ts` baseline; ACTUAL = react-native-web's live
-  // runtime keys. No npm install needed — only the react-native-web runtime import.
-  const actual = await rnwRuntimeSurface(REACT_NATIVE_SPECIFIER);
+  // EXPECTED = the committed react-native `.d.ts` baseline; ACTUAL = the React Native mode
+  // bundle's exports and their members (bundle.ts).
+  const { surface: actual } = await rnBundleSurface(ROOT, REACT_NATIVE_SPECIFIER);
   return toGaps(diffSurfaces(baseline.surfaces, [actual], NATIVE_WAIVERS).errors);
 }
 
@@ -95,17 +97,24 @@ async function expoGaps(): Promise<Gap[]> {
 // fallow-ignore-next-line complexity -- CLI entrypoint; not unit-tested, CRAP is coverage-estimated
 async function main() {
   const { offline, only } = parseNativeArgs();
+  if (only.includes("lists")) return await writeListGaps(ROOT);
   const doRn = !offline && (only.length === 0 || only.includes("react-native"));
   const doExpo = only.length === 0 || only.includes("expo");
+  const doDesktop = !offline && (only.length === 0 || only.includes("desktop"));
 
   const existing = (await loadJson<{ gaps: Gap[] }>(LEDGER))?.gaps ?? [];
+  const desktop = new Set(desktopPackages());
+  const isExpo = (g: Gap) => g.specifier !== REACT_NATIVE_SPECIFIER && !desktop.has(g.specifier);
   const keptRn = doRn ? [] : existing.filter((g) => g.specifier === REACT_NATIVE_SPECIFIER);
-  const keptExpo = doExpo ? [] : existing.filter((g) => g.specifier !== REACT_NATIVE_SPECIFIER);
+  const keptDesktop = doDesktop ? [] : existing.filter((g) => desktop.has(g.specifier));
+  const keptExpo = doExpo ? [] : existing.filter(isExpo);
 
   const gaps = [
     ...keptRn,
+    ...keptDesktop,
     ...keptExpo,
     ...(doRn ? await reactNativeGaps() : []),
+    ...(doDesktop ? toGaps(await desktopGaps(ROOT)) : []),
     ...(doExpo ? await expoGaps() : []),
   ].sort((a, b) =>
     (a.specifier + a.symbol + a.category).localeCompare(b.specifier + b.symbol + b.category)

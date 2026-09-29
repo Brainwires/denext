@@ -387,6 +387,11 @@ export interface PageModule extends SegmentConfigExports {
    * (Next.js `generateStaticParams`), receiving the parent segments' params.
    */
   generateStaticParams?: StaticParamsGenerator;
+  /**
+   * Options for this page as a screen of a `denext/navigation` `StackLayout` (title,
+   * animation, gesture, presentation, header). Plain JSON; shipped with the page's data.
+   */
+  screenOptions?: Record<string, unknown>;
 }
 
 /** Shape of a layout module. */

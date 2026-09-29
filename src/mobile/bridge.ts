@@ -157,6 +157,9 @@ function asBrowserPlugin(plugin: unknown): BrowserPlugin | undefined {
  * - Inside the native shell, an http(s) URL opens in the in-app browser of the
  *   `@capacitor/browser` plugin when it is installed natively (read from
  *   `Capacitor.Plugins.Browser`; no JS import of the plugin is needed).
+ * - In a Deno Desktop window (`denext desktop add shell`), the OS opens it (the system
+ *   browser, mail or phone app), never the app's own webview; the runtime re-checks the
+ *   scheme against `desktop.capabilities.shell.openExternal`.
  * - Otherwise, including `mailto:`/`tel:` and on the web, it calls
  *   `window.open(url, "_blank", "noopener,noreferrer")`. The iOS shell hands a
  *   `window.open` to the OS (Safari, Mail, Phone); Android routes it to an intent.
@@ -183,6 +186,16 @@ export async function openExternal(url: string): Promise<void> {
   // async: a refused URL (a bad scheme, an unparseable string) is a rejection like every
   // other failure here, never a synchronous throw from a function that returns a promise.
   const target = externalUrl(url);
+  // Deno Desktop: the system browser / mail client through the runtime (lazy, so web and
+  // mobile bundles never load the desktop module). Without the `shell` capability it keeps the
+  // web path below.
+  if (runtimePlatform() === "desktop") {
+    try {
+      return await (await import("../desktop/native.ts")).shellOpenExternal(target.href);
+    } catch (err) {
+      if ((err as { code?: unknown })?.code !== "unavailable") throw err;
+    }
+  }
   const browser = isWebScheme(target.protocol)
     ? asBrowserPlugin(shellPlugin("Browser"))
     : undefined;

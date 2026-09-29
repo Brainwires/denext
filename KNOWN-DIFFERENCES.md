@@ -17,7 +17,13 @@ internal design choice with no observable difference lives in
   depends on changes. Put such inputs in state, a ref read inside an effect, or a
   context. Test suites ported from React that count renders will see fewer renders.
   Deliberate (it is a large part of why denext's runtime is small and fast), not a
-  bug — so it is listed here rather than fixed.
+  bug — so it is listed here rather than fixed. It applies to the app's own elements only:
+  in a compat build (npm React aliased to denext, and React Native mode) an element that
+  code inside `node_modules` creates keeps React's semantics — it re-renders whenever its
+  parent does, and is skipped only when its parent did not re-render (or it is a `memo()`).
+  Libraries written for React may rely on that: React Navigation's `useComponent`, which
+  expo-router/ui's tabs use, reads the navigator's latest render function from a ref, and
+  skipping it left a tab press changing the URL but not the screen.
 - **Errors thrown in DOM event handlers are routed to the nearest error boundary.**
   React lets them reach `window.onerror` and keeps the UI up; denext catches them
   (`onCaughtError` sees them) and shows the boundary's fallback, so one bad click
@@ -152,6 +158,21 @@ internal design choice with no observable difference lives in
   apply at once. `scrollIntoView` and smooth `scrollTo` drop the pending delta of the scroller
   they move. Documents inside iframes are not covered. React and Next leave scroll writes alone,
   so there a virtualized list's anchoring correction stops an iOS fling dead.
+
+## React Native mode
+
+- **`Platform.OS` is `"web"` in the iOS / Android shells and in Deno Desktop.** react-native-web
+  and libraries pick their DOM code paths by it, so React Native code that branches on `ios` /
+  `android` for behaviour (not for a native module) takes its web path. `Platform.select`
+  still picks the shell's `ios` / `android` key when the spec has no `web` key (and the host
+  OS's `macos` / `windows` / `linux` key in Deno Desktop), and `Platform.constants.denextShell`
+  tells the shells apart. Deliberate: reporting `ios` would send react-native-web and every
+  library down code paths that need a native renderer.
+- **`inverted` lists are a logical reversal, not a `scaleY(-1)` flip.** On `VirtualList`'s
+  FlatList / SectionList / VirtualizedList, FlashList and LegendList adapters the wheel, the
+  keyboard, text selection, copy order and the scrollbar all run the natural way, where
+  react-native-web's flipped list reverses them. A style that relied on the flip (a child
+  counter-transform) is not needed.
 
 ## Security posture — safe defaults
 

@@ -27,7 +27,7 @@ export type TranslateFn = (key: string, vars?: TranslationVars) => string;
  * {@linkcode useTranslations} during server rendering. Provided around the page
  * tree by the server renderer; empty by default.
  */
-export const MessagesContext: Context<Messages> = createContext<Messages>({});
+export const MessagesContext: Context<Messages> = /* @__PURE__ */ createContext<Messages>({});
 
 /**
  * Wrap `child` in a {@link MessagesContext} provider so descendants resolve

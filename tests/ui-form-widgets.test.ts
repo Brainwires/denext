@@ -92,6 +92,7 @@ Deno.test("the read-only set is exactly the values denext cannot serialise", () 
     "cache.store.getPage",
     "cache.store.setData",
     "cache.store.setPage",
+    "cache.store.sweepPages",
     // A project command's handler (its `flags`/`positionals` are typed lists).
     "commands[].run",
     // A message catalogue: `Record<string, unknown>` — a map whose values are opaque.
@@ -138,6 +139,8 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     streaming: "toggle",
     live: "group",
     apiBatch: "group",
+    cors: "group",
+    appLinks: "group",
     apiMaxBodyBytes: "number",
     actionMaxBodyBytes: "number",
     canonicalOrigin: "text",
@@ -147,6 +150,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     maxConcurrency: "number",
     slotBackstop: "number",
     cacheKeyParams: "chips",
+    compress: "union", // `boolean | CompressConfig`: a toggle branch + an options group
     nodeResolve: "toggle",
     cacheComponents: "toggle",
     reactCompiler: "toggle",
@@ -155,6 +159,8 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     optimizePackageImports: "union", // `string[] | false`: a chips branch + a `false` branch
     momentumSafeScroll: "toggle",
     reactNative: "union", // `boolean | ReactNativeConfig`: a toggle branch + an options group
+    mobile: "group",
+    desktop: "group",
     experimental: "group",
     classComponents: "toggle",
     compatibilityMode: "segmented",
@@ -255,7 +261,8 @@ Deno.test("a union branch is a widget of its own, rendered at the union's path",
   const object = csp.branches?.[2].spec;
   assertEquals(object?.kind, "group");
   assertEquals(object?.path, ["csp"]);
-  assertEquals(object?.children?.map((child) => child.kind), ["chips", "chips", "chips", "chips"]);
+  // One chips widget per opt-in directive (scriptSrc … workerSrc).
+  assertEquals(object?.children?.map((child) => child.kind), Array(8).fill("chips"));
   assertEquals(branchFor(csp.schema, "strict").enum, ["strict"]);
   assertEquals(branchFor(csp.schema, { scriptSrc: [] }).type, "object");
   // Nothing matches a number; the first branch is the honest fallback.
@@ -282,6 +289,8 @@ Deno.test("arrays split by what their items are", () => {
     "image/webp",
     "image/avif",
   ]);
+  // `compress: { encodings }` (the object branch of the union) is a checkbox group too.
+  assertEquals(kindAt("compress", "encodings"), "multi-select");
   assertEquals(kindAt("images", "deviceSizes"), "chips");
   assertEquals(specAt("images", "deviceSizes").items?.kind, "number");
   assertEquals(kindAt("publicEnv"), "chips");

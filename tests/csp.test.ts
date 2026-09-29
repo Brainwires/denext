@@ -64,6 +64,34 @@ Deno.test("per-route opt-ins append external sources", async () => {
   assertStringIncludes(csp, "connect-src 'self' https://api.example");
 });
 
+Deno.test("frame/media/worker/font opt-ins: frame-src, media-src and worker-src appear only when set", async () => {
+  const strict = await computeCsp("<html></html>");
+  assertStringIncludes(strict, "font-src 'self' data:;");
+  for (const d of ["frame-src", "media-src", "worker-src"]) {
+    assert(!strict.includes(d), `strict default carries no ${d} (falls back as before)`);
+  }
+  const route = {
+    fontSrc: ["https://fonts.gstatic.com"],
+    frameSrc: ["https://js.stripe.com", "https://hooks.stripe.com"],
+    mediaSrc: ["https://media.example"],
+    workerSrc: ["blob:"],
+  };
+  for (
+    const csp of [
+      await computeCsp("<html></html>", route),
+      await computeStreamingCsp("<div/>", route),
+    ]
+  ) {
+    assertStringIncludes(csp, "font-src 'self' data: https://fonts.gstatic.com;");
+    assertStringIncludes(csp, "frame-src 'self' https://js.stripe.com https://hooks.stripe.com;");
+    assertStringIncludes(csp, "media-src 'self' https://media.example;");
+    assertStringIncludes(csp, "worker-src 'self' blob:;");
+    // The opt-ins widen only their own directive: script-src stays exactly 'self' (+ swap hash).
+    assert(!/script-src[^;]*(stripe|blob:)/.test(csp), csp);
+    assertStringIncludes(csp, "frame-ancestors 'self'");
+  }
+});
+
 // ---- resolveCsp: three-state (strict / off / opt-ins), route over global -------
 
 Deno.test("resolveCsp: default (both unset) is strict", async () => {

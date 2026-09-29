@@ -16,8 +16,11 @@ export interface KeyboardInsetOptions {
   readonly property?: string;
 }
 
-/** Schedule `cb` for the next animation frame (a 16 ms timer where rAF is missing). */
-function requestFrame(cb: () => void): () => void {
+/**
+ * Schedule `cb` for the next animation frame (a 16 ms timer where rAF is missing). Internal to
+ * `denext/mobile` (the safe-area watcher shares it); not re-exported.
+ */
+export function requestFrame(cb: () => void): () => void {
   if (typeof requestAnimationFrame === "function") {
     const id = requestAnimationFrame(cb);
     return () => cancelAnimationFrame(id);
@@ -38,9 +41,9 @@ function measureInset(vv: VisualViewport): number {
 /**
  * Report the keyboard inset to `onInset` now and on every visual-viewport change, at most once
  * per animation frame. Where `visualViewport` is missing it reports `0` once. Returns a stop
- * function.
+ * function. Internal to `denext/mobile` (the keyboard views share it); not re-exported.
  */
-function watchInset(onInset: (px: number) => void): () => void {
+export function watchInset(onInset: (px: number) => void): () => void {
   const vv = globalThis.visualViewport ?? null;
   if (!vv) {
     onInset(0);

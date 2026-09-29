@@ -17,6 +17,7 @@ import {
   formatServerOnlyLeaks,
   type ServerOnlyLeak,
 } from "./server-only-scan.ts";
+import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 
 /**
  * The framework root as a URL, in whatever scheme the framework itself runs under:
@@ -512,10 +513,15 @@ export function appUsesClassComponents(
  * decides if the generated entry installs the offscreen scheduler (see
  * {@linkcode activitySupportBlock}). An app can't render one without naming `Activity` (its
  * import, `React.Activity`, or `<Activity>`); whole-word (`\b`) so `ActivityIndicator` /
- * `myActivity` don't trip it.
+ * `myActivity` don't trip it. `denext/navigation`'s `StackLayout` / `TabsLayout` / `StackView` /
+ * `TabsView` keep their hidden screens with `<Activity>`, so naming one of them counts too.
  */
 export function appUsesActivity(rootDir: string, extraFiles: string[] = []): Promise<boolean> {
-  return scanAppSources(rootDir, (c) => /\bActivity\b/.test(c), extraFiles);
+  return scanAppSources(
+    rootDir,
+    (c) => /\b(?:Activity|StackLayout|TabsLayout|StackView|TabsView)\b/.test(c),
+    extraFiles,
+  );
 }
 
 /**
@@ -577,7 +583,7 @@ function flightRefreshBlock(
  */
 function flightLiveBlock(usesLive: boolean) {
   const clientImport =
-    `import { flightClientIds, startClient, parseFlight, setFlightParser } from "denext/client-runtime";${
+    `import { flightClientIds, startClient, parseFlight, setFlightParser, setResumabilityReboot } from "denext/client-runtime";${
       usesLive ? `\nimport { navigate } from "denext/client";` : ""
     }`;
   if (!usesLive) return { clientImport, liveImport: "", liveRegister: "", liveConfigure: "" };
@@ -745,7 +751,6 @@ function flightMain(catchBody: string, classBoot: string): string {
   } catch {
     return;
   }
-  if (flight == null) return;
   // Adopt server-transported signal state BEFORE hydration, so useSignal/useStore
   // resume from it instead of recomputing their initializers. Parked on a global
   // (no framework import) so the signal runtime stays off the shared chunk unless
@@ -766,7 +771,9 @@ function flightMain(catchBody: string, classBoot: string): string {
     } catch { /* ignore malformed state */ }
   }
 ${classBoot}  await registry.ensure(flight); // this page's islands (code-split chunks)
-  const tree = parseFlight(flight, registry);
+  // A null tree is a root-less islands page (every client part a carved island): nothing to
+  // hydrate at the root — startClient only installs navigation, and the islands boot below.
+  const tree = flight == null ? null : parseFlight(flight, registry);
   try {
     startClient(el, tree);
   } catch (err) {
@@ -852,6 +859,15 @@ ${enableRefresh}${liveRegister}
 // route reconstructs its tree through this app-wide registry (no bundle re-run) —
 // loading that route's island chunks first.
 setFlightParser((flight) => registry.ensure(flight).then(() => parseFlight(flight, registry)));
+// A soft nav into a route with islands (or resumable handlers) from a page that never loaded
+// the resumability runtime loads it now; once loaded, bootResumability owns this hook.
+setResumabilityReboot((islands, state) => {
+  if (islands?.length || document.querySelector("[data-dnx-h]")) {
+    import("denext/lazy")
+      .then((m) => m.bootResumability(registry, true, islands?.length ? islands : undefined, state))
+      .catch((err) => console.warn("denext: resumability boot failed:", err && err.message));
+  }
+});
 
 ${liveConfigure}
 ${flightMain(hydrationCatch(dev, "denext: flight hydration failed:"), classBoot)}
@@ -999,6 +1015,11 @@ export interface BundleOutput {
   entry: string;
   /** Every emitted JS file (entry + split chunks) keyed by basename. */
   files: Map<string, string>;
+  /**
+   * External source maps keyed by `<file>.map`: present only for hidden source maps
+   * (`DENEXT_SOURCEMAPS=hidden`, see hidden-sourcemaps.ts).
+   */
+  maps?: Map<string, string>;
 }
 
 /** Convenience: the entry file's JavaScript source from a {@linkcode BundleOutput}. */
@@ -1200,6 +1221,8 @@ interface DenoBundleRun {
    * server-only leak check.
    */
   sources: Map<string, Set<string>>;
+  /** Each emitted file's external source map by `<file>.map`, kept only for hidden source maps. */
+  maps: Map<string, string>;
 }
 
 async function runDenoBundle(
@@ -1243,12 +1266,17 @@ async function runDenoBundle(
     throw new Error(bundleFailureMessage(code, new TextDecoder().decode(stderr)));
   }
   const files = new Map<string, string>();
+  const maps = new Map<string, string>();
+  // `denext export --sourcemaps hidden`: keep the external maps (nothing references them).
+  const keepMaps = !sourcemap && hiddenSourceMapsEnabled();
   for await (const dirEntry of Deno.readDir(outDir)) {
     if (dirEntry.isFile && dirEntry.name.endsWith(".js")) {
       files.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
+    } else if (keepMaps && dirEntry.isFile && dirEntry.name.endsWith(".js.map")) {
+      maps.set(dirEntry.name, await Deno.readTextFile(join(outDir, dirEntry.name)));
     }
   }
-  return { files, sources: await bundledSources(outDir, files) };
+  return { files, sources: await bundledSources(outDir, files), maps };
 }
 
 /**
@@ -1419,6 +1447,19 @@ async function assertNoServerOnlyLeaks(
 }
 
 /**
+ * A fresh `deno bundle` workspace (after checking the toolchain supports it): a temp dir with
+ * an empty `src/` for the entry sources and the `out/` path the bundle writes to. The caller
+ * removes `tmpDir` when done.
+ */
+async function bundleWorkspace(): Promise<{ tmpDir: string; srcDir: string; outDir: string }> {
+  await ensureBundleSupport();
+  const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
+  const srcDir = join(tmpDir, "src");
+  await Deno.mkdir(srcDir);
+  return { tmpDir, srcDir, outDir: join(tmpDir, "out") };
+}
+
+/**
  * Bundle an entry source string into browser JavaScript by shelling out to
  * `deno bundle` with code splitting. Returns the entry file plus any chunk files
  * emitted for dynamic imports.
@@ -1427,11 +1468,7 @@ export async function bundleSourceFiles(
   entrySource: string,
   opts: BundleOptions,
 ): Promise<BundleOutput> {
-  await ensureBundleSupport();
-  const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
-  const srcDir = join(tmpDir, "src");
-  const outDir = join(tmpDir, "out");
-  await Deno.mkdir(srcDir);
+  const { tmpDir, srcDir, outDir } = await bundleWorkspace();
   const entryPath = join(srcDir, "entry.tsx");
   try {
     await Deno.writeTextFile(entryPath, momentumScrollSeed(opts.momentumSafeScroll) + entrySource);
@@ -1445,7 +1482,7 @@ export async function bundleSourceFiles(
       );
     }
     await assertNoServerOnlyLeaks([{ source: entrySource, file: entry }], run, opts);
-    return { entry, files };
+    return run.maps.size > 0 ? { entry, files, maps: run.maps } : { entry, files };
   } finally {
     await Deno.remove(tmpDir, { recursive: true });
   }
@@ -1479,11 +1516,7 @@ export async function bundleRoutes(
   routeEntries: Array<{ key: string; source: string }>,
   opts: BundleOptions,
 ): Promise<MultiBundleOutput> {
-  await ensureBundleSupport();
-  const tmpDir = await Deno.makeTempDir({ prefix: "denext_bundle_" });
-  const srcDir = join(tmpDir, "src");
-  const outDir = join(tmpDir, "out");
-  await Deno.mkdir(srcDir);
+  const { tmpDir, srcDir, outDir } = await bundleWorkspace();
   try {
     // Distinct per-entry basenames so esbuild's outputs map back unambiguously.
     const bases = routeEntries.map((_, i) => `entry_${i}`);
@@ -1573,5 +1606,21 @@ export async function writeBundleOutput(
   for (const [name, code] of output.files) {
     const target = name === output.entry ? entryName : name;
     await Deno.writeTextFile(join(dir, target), code);
+  }
+  for (const [name, map] of output.maps ?? []) {
+    const renamed = name === `${output.entry}.map`;
+    await Deno.writeTextFile(
+      join(dir, renamed ? `${entryName}.map` : name),
+      renamed ? withMapFile(map, entryName) : map,
+    );
+  }
+}
+
+/** A source map's JSON with its `file` field naming `file` (after the entry is renamed). */
+function withMapFile(map: string, file: string): string {
+  try {
+    return JSON.stringify({ ...JSON.parse(map), file });
+  } catch {
+    return map;
   }
 }

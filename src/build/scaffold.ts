@@ -269,11 +269,19 @@ function desktopEntry(): string {
 // window (run \`deno task export\` first, or \`deno task desktop\`, which exports then
 // launches the window). The serve + window plumbing lives in denext's desktop runtime;
 // pass \`import.meta.url\` so \`out/\` resolves relative to this entry (works from the
-// packaged app too). To reverse-proxy a backend, add \`spa.proxy\` to \`denext.config.ts\`
-// and pass it here: \`import config from "./denext.config.ts"; ... proxy: config.spa?.proxy\`.
-import { runDesktop } from "denext/desktop";
+// packaged app too).
+//
+// Native capabilities (\`denext desktop add <cap>\`) are read from \`desktop.capabilities\`
+// in the config and served through the gated bridge — default deny when \`desktop\` is
+// absent. To reverse-proxy a backend, add \`spa.proxy\` to \`denext.config.ts\` and pass
+// \`proxy: (config as DenextConfig).spa?.proxy\` below.
+import config from "./denext.config.ts";
+import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
-await runDesktop({ importMetaUrl: import.meta.url });
+await runDesktop({
+  importMetaUrl: import.meta.url,
+  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+});
 `;
 }
 
@@ -481,6 +489,17 @@ function denextConfig(opts: ScaffoldOptions): string {
       `  reactCompiler: true, // auto-memoization`,
     );
   }
+  if (opts.desktop) {
+    lines.push(
+      `  desktop: {`,
+      `    // Unique per app: keys the OS storage dirs and the secureStore keychain service, so`,
+      `    // change it to YOUR reverse-DNS id (keep it equal to deno.json's desktop.app.identifier).`,
+      `    // secureStore / fs / sqlite refuse to start without it, to avoid sharing data across apps.`,
+      `    app: { identifier: "com.example.denext" },`,
+      `    // capabilities: { fs: true, secureStore: true, shell: true },  // denext desktop add <cap>`,
+      `  },`,
+    );
+  }
   return `import type { DenextConfig } from "denext/server";
 
 export default {
@@ -524,7 +543,9 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   } else {
     files.push({ path: "public/styles.css", content: GLOBAL_CSS_PLAIN });
   }
-  if (opts.tailwind || opts.compiler) {
+  // The desktop entry imports `./denext.config.ts` to resolve `desktop.capabilities`, so a
+  // desktop scaffold always needs the config file even without tailwind/compiler.
+  if (opts.tailwind || opts.compiler || opts.desktop) {
     files.push({ path: "denext.config.ts", content: denextConfig(opts) });
   }
   if (opts.desktop) {
@@ -719,6 +740,8 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * Developer ID Application certificate, storing notarytool credentials, Gatekeeper).
  */
 
+import { desktopPackageFlags } from "denext/desktop";
+
 const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
   x86_64: "x86_64-apple-darwin",
@@ -783,7 +806,13 @@ async function appName(): Promise<string> {
  * ad-hoc; the caller re-signs with the real identity afterwards. */
 async function buildApp(out: string, target?: string): Promise<void> {
   await Deno.remove(out, { recursive: true }).catch(() => {});
-  const cmd = ["deno", "desktop", "-A", "--include", "out"];
+  const cmd = [
+    "deno",
+    "desktop",
+    ...await desktopPackageFlags(import.meta.url, "darwin"),
+    "--include",
+    "out",
+  ];
   if (target) cmd.push("--target", target);
   cmd.push("--output", out, "desktop.ts");
   await run(cmd);
@@ -1081,6 +1110,8 @@ const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * that is a deploy-environment dependency, not baked into the bundle. Outputs into ./dist/.
  */
 
+import { desktopPackageFlags } from "denext/desktop";
+
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-unknown-linux-gnu",
   arm64: "aarch64-unknown-linux-gnu",
@@ -1151,7 +1182,7 @@ async function buildBundle(
   const cmd = [
     "deno",
     "desktop",
-    "-A",
+    ...await desktopPackageFlags(import.meta.url, "linux"),
     "--include",
     "out",
     "--target",
@@ -1282,6 +1313,8 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * baked into the bundle. Outputs into ./dist/.
  */
 
+import { desktopPackageFlags } from "denext/desktop";
+
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-pc-windows-msvc",
   arm64: "aarch64-pc-windows-msvc",
@@ -1363,7 +1396,7 @@ async function buildBundle(
   const cmd = [
     "deno",
     "desktop",
-    "-A",
+    ...await desktopPackageFlags(import.meta.url, "windows"),
     "--include",
     "out",
     "--target",

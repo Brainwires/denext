@@ -1,0 +1,59 @@
+{
+  "//": "`workspace: []` makes this example its own Deno workspace root: it sits inside the denext repo without being a member, and the esbuild deno-loader refuses a nested non-member config. An app in its own repo does not need it. The lint rule no-sloppy-imports is off: Expo's source imports without extensions, which sloppy imports resolve as Metro does.",
+  "workspace": [],
+  "tasks": {
+    "dev": "deno run -A --node-modules-dir=none ../../cli.ts dev .",
+    "build": "deno run -A --node-modules-dir=none ../../cli.ts build .",
+    "export": "deno run -A --node-modules-dir=none ../../cli.ts export .",
+    "start": "deno run -A --node-modules-dir=none ../../cli.ts start .",
+    "cap:sync": "deno task export && node_modules/.bin/cap sync ios",
+    "mobile:dev": "deno run -A --node-modules-dir=none ../../cli.ts mobile dev . --host 172.20.10.2",
+    "ios": "xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination generic/platform=iOS -derivedDataPath ios/DerivedData -jobs 2 -allowProvisioningUpdates DEVELOPMENT_TEAM=$DENEXT_IOS_TEAM build",
+    "ios:check": "xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination generic/platform=iOS -derivedDataPath ios/DerivedData -jobs 2 CODE_SIGNING_ALLOWED=NO build"
+  },
+  "nodeModulesDir": "manual",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "skipLibCheck": true
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/mobile": "../../src/mobile/mod.ts",
+    "react": "../../src/compat/react.ts",
+    "react-dom": "../../src/compat/react-dom.ts",
+    "react-dom/client": "../../src/compat/react-dom-client.ts",
+    "react/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "react/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "react-is": "../../src/compat/react-is.ts",
+    "@/": "./src/",
+    "@/assets/": "./assets/"
+  },
+  "exclude": [
+    "ios/",
+    "android/",
+    "node_modules/",
+    "out/",
+    ".denext/"
+  ],
+  "unstable": [
+    "sloppy-imports"
+  ],
+  "lint": {
+    "rules": {
+      "exclude": [
+        "no-sloppy-imports"
+      ]
+    }
+  }
+}

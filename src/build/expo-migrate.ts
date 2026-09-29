@@ -13,12 +13,14 @@
 //   - the Capacitor shell: appId / appName, and the `denext mobile add` capabilities the
 //     app's `expo-*` packages, config plugins, iOS usage strings, Android permissions,
 //     scheme and associated domains call for;
-//   - a dependency report: each `expo-*` package's shim status (`EXPO_SHIMS`) and the
-//     native-only React Native packages (Nitro, TurboModule / Fabric codegen, Expo native
-//     modules) that have no web build.
+//   - a dependency report: each `expo-*` / `@expo/*` package's shim status (`EXPO_SHIMS`),
+//     each community React Native package React Native mode aliases to a denext
+//     implementation (`COMMUNITY_ALIASES`), and the native-only React Native packages (Nitro,
+//     TurboModule / Fabric codegen, Expo native modules) that have no web build.
 
 import { dirname, join } from "@std/path";
 import { EXPO_SHIMS } from "../expo/manifest.ts";
+import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
 import { unwrap } from "./config-edit.ts";
 import { MOBILE_CAPABILITIES } from "./mobile-capabilities.ts";
 import { type Node, swcParse } from "./swc-ast.ts";
@@ -612,8 +614,12 @@ export interface CapabilitySuggestion {
   readonly because: string;
 }
 
-/** The capability each `expo-*` package's shim calls natively. */
-const PACKAGE_CAPABILITIES: Readonly<Record<string, string>> = {
+/**
+ * The capabilities each `expo-*` package's shim calls natively (only packages with a shim: a
+ * capability an unshimmed package's own web build never reaches is not suggested). A community
+ * package's come from its `COMMUNITY_ALIASES` entry.
+ */
+const PACKAGE_CAPABILITIES: Readonly<Record<string, string | readonly string[]>> = {
   "expo-haptics": "haptics",
   "expo-clipboard": "clipboard",
   "expo-sharing": "share",
@@ -628,11 +634,111 @@ const PACKAGE_CAPABILITIES: Readonly<Record<string, string>> = {
   "expo-notifications": "push",
   "expo-file-system": "filesystem",
   "expo-image-picker": "camera",
-  "expo-camera": "barcode",
+  // takePictureAsync / recordAsync (camera, whose usage strings include the microphone's) and
+  // the barcode scanner.
+  "expo-camera": ["camera", "barcode"],
   "expo-document-picker": "document-picker",
   "expo-quick-actions": "quick-actions",
   "expo-sqlite": "sqlite",
+  "expo-location": "geolocation",
+  "expo-local-authentication": "biometrics",
+  "expo-apple-authentication": "social-login",
+  "expo-tracking-transparency": "tracking",
+  // The app's name / id / version (@capacitor/app) and the vendor / Android id
+  // (@capacitor/device, a peer of the capability).
+  "expo-application": "application",
+  "expo-store-review": "app-review",
+  "expo-screen-orientation": "screen-orientation",
+  "expo-media-library": "media-library",
+  "expo-screen-capture": "privacy-screen",
+  "expo-status-bar": "system-bars",
+  "expo-navigation-bar": "system-bars",
 };
+
+/** Why a package's capability was chosen, when the package name alone does not say. */
+const CAPABILITY_NOTES: Readonly<Record<string, string>> = {
+  camera: "(writes NSCameraUsageDescription and NSMicrophoneUsageDescription, for recordAsync)",
+};
+
+/** The capabilities a dependency calls for: its Expo shim's, or its community alias's. */
+function packageCapabilities(pkg: string): readonly string[] {
+  const own = PACKAGE_CAPABILITIES[pkg];
+  if (own !== undefined) return typeof own === "string" ? [own] : own;
+  return Object.hasOwn(COMMUNITY_ALIASES, pkg) ? COMMUNITY_ALIASES[pkg].capabilities ?? [] : [];
+}
+
+/**
+ * The Expo APIs an app's source calls that a dependency alone does not reveal:
+ * `expo-notifications`' local scheduling (`scheduleNotificationAsync`, …) needs the
+ * `local-notifications` capability as well as `push`.
+ */
+export interface ExpoApiUsage {
+  /** The app schedules or presents local notifications. */
+  readonly localNotifications: boolean;
+}
+
+/** The calls that mean local notifications. */
+const LOCAL_NOTIFICATION_CALLS =
+  /\b(?:scheduleNotificationAsync|presentNotificationAsync|getAllScheduledNotificationsAsync|cancelScheduledNotificationAsync)\b/;
+
+/** Source files the usage scan reads. */
+const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
+
+/** How many source files the usage scan reads at most (a large monorepo stops early). */
+const MAX_SCANNED_FILES = 4000;
+
+/**
+ * Scan the app's own source (not `node_modules`, dot folders or native projects) for the
+ * calls in {@linkcode ExpoApiUsage}. Only reads files; nothing runs.
+ *
+ * @param dir The app directory.
+ */
+export async function expoApiUsage(dir: string): Promise<ExpoApiUsage> {
+  for await (const path of appSourceFiles(dir)) {
+    const text = await Deno.readTextFile(path).catch(() => "");
+    if (LOCAL_NOTIFICATION_CALLS.test(text)) return { localNotifications: true };
+  }
+  return { localNotifications: false };
+}
+
+/** Folders the usage scan skips: dependencies, native projects and build output. */
+const SKIPPED_FOLDERS = new Set(["node_modules", "ios", "android", "dist", "out", "build"]);
+
+/** A folder's entries, or none when it cannot be read. */
+async function readFolder(path: string): Promise<Deno.DirEntry[]> {
+  try {
+    return await Array.fromAsync(Deno.readDir(path));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The app's own source files under `dir` (not `node_modules`, dot folders, native projects or
+ * build output; not `.d.ts`), at most {@linkcode MAX_SCANNED_FILES}.
+ */
+async function* appSourceFiles(dir: string): AsyncGenerator<string> {
+  const pending = [dir];
+  let count = 0;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    for (const entry of await readFolder(current)) {
+      const kind = sourceEntryKind(entry);
+      if (kind === "folder") pending.push(join(current, entry.name));
+      else if (kind === "file") {
+        if (++count > MAX_SCANNED_FILES) return;
+        yield join(current, entry.name);
+      }
+    }
+  }
+}
+
+/** Whether the usage scan descends into `entry`, reads it, or skips it. */
+function sourceEntryKind(entry: Deno.DirEntry): "folder" | "file" | "skip" {
+  if (entry.name.startsWith(".") || SKIPPED_FOLDERS.has(entry.name)) return "skip";
+  if (entry.isDirectory) return "folder";
+  return SOURCE_FILE.test(entry.name) && !entry.name.endsWith(".d.ts") ? "file" : "skip";
+}
 
 /** iOS usage strings a capability writes itself (key → capability). */
 const PLIST_CAPABILITIES: Readonly<Record<string, string>> = {
@@ -668,17 +774,36 @@ export interface MobilePlan {
 /** Expo's Android permission shorthands that are not permissions of their own. */
 const IGNORED_PERMISSIONS = new Set(["android.permission.INTERNET"]);
 
-/** The capability plan for an app's packages and config. */
-export function expoMobilePlan(deps: Record<string, string>, config: ExpoAppConfig): MobilePlan {
+/**
+ * The capability plan for an app's packages and config.
+ *
+ * @param deps The app's dependencies (name → version spec).
+ * @param config The app config.
+ * @param usage What the app's source calls ({@linkcode expoApiUsage}); by default nothing
+ *   beyond what the packages imply.
+ */
+export function expoMobilePlan(
+  deps: Record<string, string>,
+  config: ExpoAppConfig,
+  usage: ExpoApiUsage = { localNotifications: false },
+): MobilePlan {
   const chosen = new Map<string, string>();
   const add = (capability: string | undefined, because: string) => {
     if (capability && Object.hasOwn(MOBILE_CAPABILITIES, capability) && !chosen.has(capability)) {
-      chosen.set(capability, because);
+      const note = CAPABILITY_NOTES[capability];
+      chosen.set(capability, note ? `${because} ${note}` : because);
     }
   };
-  for (const pkg of Object.keys(deps).sort()) add(PACKAGE_CAPABILITIES[pkg], pkg);
+  for (const pkg of Object.keys(deps).sort()) {
+    for (const capability of packageCapabilities(pkg)) add(capability, pkg);
+  }
   for (const plugin of config.plugins) {
-    add(PACKAGE_CAPABILITIES[plugin], `config plugin ${plugin}`);
+    for (const capability of packageCapabilities(plugin)) {
+      add(capability, `config plugin ${plugin}`);
+    }
+  }
+  if (usage.localNotifications && "expo-notifications" in deps) {
+    add("local-notifications", "expo-notifications scheduleNotificationAsync (local)");
   }
   const manualPlist = plistCapabilities(config.infoPlist, add);
   const manualPermissions = permissionCapabilities(config.androidPermissions, add);
@@ -744,12 +869,45 @@ function schemeArgs(chosen: Map<string, string>, config: ExpoAppConfig): string[
 
 // --- dependencies -------------------------------------------------------------------------
 
-/** One `expo-*` dependency's standing under denext. */
+/**
+ * What to do instead, for Expo packages with no shim whose own web build does not do the job
+ * (so no `denext mobile add` capability would reach them).
+ */
+const NO_SHIM_ADVICE: Readonly<Record<string, string>> = {
+  "expo-task-manager": "its web build defines tasks that never run; move the work to " +
+    "background/<name>.ts with denext/mobile's defineBackgroundTask (`denext mobile add " +
+    "background`)",
+  "expo-background-task": "its web build never schedules; use denext/mobile's " +
+    "defineBackgroundTask in background/<name>.ts (`denext mobile add background`)",
+  "expo-background-fetch": "its web build never schedules; use denext/mobile's " +
+    "defineBackgroundTask in background/<name>.ts (`denext mobile add background`)",
+};
+
+/** One `expo-*` / `@expo/*` dependency's standing under denext. */
 export interface ExpoPackageStatus {
   readonly name: string;
   /** `full` / `partial` / `stub`: the `denext/expo` shim; `none`: resolves to the real package. */
   readonly status: "full" | "partial" | "stub" | "none";
+  /** For a package with no shim that will not work as it is: what to use instead. */
+  readonly advice?: string;
   /** Exports the shim does not provide. */
+  readonly omitted: number;
+  /**
+   * The package's subpaths that have shims of their own when the package itself has none
+   * (`@expo/ui`: `swift-ui`, `community/masked-view`, …); every other subpath is the real
+   * package's.
+   */
+  readonly subpaths?: readonly string[];
+}
+
+/** One community React Native dependency React Native mode aliases to a denext implementation. */
+export interface CommunityPackageStatus {
+  readonly name: string;
+  /** How complete the stand-in is (`COMMUNITY_ALIASES`). */
+  readonly status: "full" | "partial" | "stub";
+  /** What implements it. */
+  readonly implementation: string;
+  /** Exports the stand-in does not provide. */
   readonly omitted: number;
 }
 
@@ -763,6 +921,11 @@ export interface NativeOnlyPackage {
 /** The dependency report. */
 export interface ExpoDependencyReport {
   readonly expo: ExpoPackageStatus[];
+  /**
+   * The community packages React Native mode resolves to denext implementations (not
+   * classified as native-only: their native half is replaced).
+   */
+  readonly community: CommunityPackageStatus[];
   readonly nativeOnly: NativeOnlyPackage[];
   /** Dependencies not installed, so not classified. */
   readonly notInstalled: string[];
@@ -802,16 +965,26 @@ async function packageDir(dir: string, name: string, spec: string): Promise<stri
   }
 }
 
-/** Whether the package tree carries a `.web.*` module (a web build), searched a few levels deep. */
+/**
+ * Whether the package tree carries a web build, searched a few levels deep: a `.web.*` module,
+ * or a `.native.*` module with a plain sibling (`threads.native.js` next to `threads.js`: Metro
+ * takes the `.native` file on iOS and Android, so the plain one is the web build, as in
+ * react-native-worklets).
+ */
 async function hasWebModule(root: string, depth = 0): Promise<boolean> {
   if (depth > 4) return false;
-  try {
-    for await (const entry of Deno.readDir(root)) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-      if (entry.isFile && /\.web\.[cm]?[jt]sx?$/.test(entry.name)) return true;
-      if (entry.isDirectory && await hasWebModule(join(root, entry.name), depth + 1)) return true;
+  const listing = await listDir(root);
+  if (!listing) return false;
+  for (const name of listing.files) {
+    if (/\.web\.[cm]?[jt]sx?$/.test(name)) return true;
+    const native = /^(.+)\.native(\.[cm]?[jt]sx?)$/.exec(name);
+    if (native && !native[1].endsWith(".d") && listing.files.has(native[1] + native[2])) {
+      return true;
     }
-  } catch { /* unreadable: no */ }
+  }
+  for (const d of listing.dirs) {
+    if (await hasWebModule(join(root, d), depth + 1)) return true;
+  }
   return false;
 }
 
@@ -906,15 +1079,22 @@ export async function expoDependencyReport(
   deps: Record<string, string>,
 ): Promise<ExpoDependencyReport> {
   const expo: ExpoPackageStatus[] = [];
+  const community: CommunityPackageStatus[] = [];
   const nativeOnly: NativeOnlyPackage[] = [];
   const notInstalled: string[] = [];
   for (const [name, spec] of Object.entries(deps).sort(([a], [b]) => a.localeCompare(b))) {
-    if (/^expo(-|$)/.test(name)) {
-      const shim = Object.hasOwn(EXPO_SHIMS, name) ? EXPO_SHIMS[name] : undefined;
-      expo.push({
+    const expoStatus = expoPackageStatus(name);
+    if (expoStatus) {
+      expo.push(expoStatus);
+      continue;
+    }
+    if (Object.hasOwn(COMMUNITY_ALIASES, name)) {
+      const alias = COMMUNITY_ALIASES[name];
+      community.push({
         name,
-        status: shim?.status ?? "none",
-        omitted: shim?.omitted?.length ?? 0,
+        status: alias.status,
+        implementation: alias.implementation,
+        omitted: alias.omitted?.length ?? 0,
       });
       continue;
     }
@@ -927,7 +1107,38 @@ export async function expoDependencyReport(
     const kind = await nativeOnlyKind(name, root);
     if (kind) nativeOnly.push({ name, kind });
   }
-  return { expo, nativeOnly, notInstalled };
+  return { expo, community, nativeOnly, notInstalled };
+}
+
+/**
+ * The shim standing of an Expo dependency, or null when `name` is not one: `expo` and every
+ * `expo-*` package, and an `@expo/*` package the manifest shims (itself or some of its
+ * subpaths — `@expo/ui`'s `swift-ui`, `community/masked-view`, …). Other `@expo/*` packages
+ * (`@expo/vector-icons`, the tooling) are ordinary dependencies.
+ */
+function expoPackageStatus(name: string): ExpoPackageStatus | null {
+  const own = Object.hasOwn(EXPO_SHIMS, name) ? EXPO_SHIMS[name] : undefined;
+  if (/^expo(-|$)/.test(name)) {
+    const advice = own ? undefined : NO_SHIM_ADVICE[name];
+    return {
+      name,
+      status: own?.status ?? "none",
+      omitted: own?.omitted?.length ?? 0,
+      ...(advice ? { advice } : {}),
+    };
+  }
+  if (!name.startsWith("@expo/")) return null;
+  const subKeys = Object.keys(EXPO_SHIMS).filter((key) => key.startsWith(`${name}/`));
+  if (!own && subKeys.length === 0) return null;
+  const omitted = [...(own ? [own] : []), ...subKeys.map((key) => EXPO_SHIMS[key])]
+    .reduce((n, shim) => n + (shim.omitted?.length ?? 0), 0);
+  if (own) return { name, status: own.status, omitted };
+  return {
+    name,
+    status: "partial",
+    omitted,
+    subpaths: subKeys.map((key) => key.slice(name.length + 1)).sort(),
+  };
 }
 
 // --- the Metro config ---------------------------------------------------------------------

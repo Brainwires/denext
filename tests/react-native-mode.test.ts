@@ -278,11 +278,16 @@ Deno.test("withNativeModuleExports: appended to an ES or CommonJS entry; existin
   const esm = withNativeModuleExports('export { default as View } from "./View";\n');
   assertStringIncludes(
     esm,
-    'export { TurboModuleRegistry, codegenNativeComponent, codegenNativeCommands } from "denext-react-native-native-modules";',
+    "export { TurboModuleRegistry, codegenNativeComponent, codegenNativeCommands, " +
+      "requireNativeComponent, NativeComponentRegistry, CodegenTypes, DevMenu, " +
+      'PushNotificationIOS, registerCallableModule, Systrace } from "denext-react-native-native-modules";',
   );
+  assert(!esm.includes("denext/react-native"), "no overlay additions unless it resolves");
   const partial = withNativeModuleExports(
     "export const TurboModuleRegistry = {};\nexport function codegenNativeComponent() {}\n" +
-      "export function codegenNativeCommands() {}\n",
+      "export function codegenNativeCommands() {}\nexport function requireNativeComponent() {}\n" +
+      "export { NativeComponentRegistry, CodegenTypes, DevMenu, PushNotificationIOS, " +
+      "registerCallableModule, Systrace } from './internals';\n",
   );
   assert(!partial.includes("denext-react-native-native-modules"), "all present: unchanged");
   const cjs = withNativeModuleExports("exports.View = 1;\nexports.TurboModuleRegistry = {};\n");
@@ -328,21 +333,39 @@ Deno.test("reactNativeDefines and reactNativeBundleOptions", () => {
   assertEquals(on.platformExtensions, [".web.tsx", ".web.ts", ".web.jsx", ".web.js"]);
   assertEquals(on.jsxInJs, true);
   assertEquals(on.plugins.map((p) => p.name), [
+    "denext-native-module-scan",
+    "denext-react-native-desktop",
     "denext-react-native-web",
+    "denext-react-native-patches",
     "denext-expo-router-ctx",
+    "denext-expo-router-navigators",
     "denext-expo-shims",
+    "denext-react-native-lists",
+    "denext-reanimated-worklets",
+    "denext-react-native-aliases",
   ]);
+  assertEquals(on.usesActivity, true, "the navigators need the Activity runtime");
   const off = reactNativeBundleOptions({ reactNative: { expoShims: false } }, "/p", false)!;
   assertEquals(
     off.plugins.map((p) => p.name),
-    ["denext-react-native-web", "denext-expo-router-ctx"],
+    [
+      "denext-native-module-scan",
+      "denext-react-native-desktop",
+      "denext-react-native-web",
+      "denext-react-native-patches",
+      "denext-expo-router-ctx",
+      "denext-expo-router-navigators",
+      "denext-react-native-lists",
+      "denext-reanimated-worklets",
+      "denext-react-native-aliases",
+    ],
     "expoShims: false",
   );
 });
 
 /**
  * The expo fixture: real `expo-haptics` and `expo` packages (which must NOT win), an
- * unshimmed `expo-location` (which must resolve normally), and react-native-web for the shims'
+ * unshimmed `expo-contacts` (which must resolve normally), and react-native-web for the shims'
  * bridge. `denext/expo/*` is stood in for by a plugin, as the prebuilt runtime is in a build.
  */
 const EXPO_FIXTURE: Record<string, string> = {
@@ -364,20 +387,19 @@ const EXPO_FIXTURE: Record<string, string> = {
   "node_modules/expo-file-system/i.js": 'export const File = "REAL_EXPO_FS";\n',
   "node_modules/expo-file-system/legacy.js":
     'export const readAsStringAsync = "REAL_EXPO_FS_LEGACY";\n',
-  "node_modules/expo-location/package.json": JSON.stringify({
-    name: "expo-location",
+  "node_modules/expo-contacts/package.json": JSON.stringify({
+    name: "expo-contacts",
     main: "i.js",
   }),
-  "node_modules/expo-location/i.js":
-    'export const getCurrentPositionAsync = "REAL_EXPO_LOCATION";\n',
+  "node_modules/expo-contacts/i.js": 'export const getContactsAsync = "REAL_EXPO_CONTACTS";\n',
   "entry.js": `import { impactAsync } from "expo-haptics";
 import { registerRootComponent } from "expo";
 import { fetch } from "expo/fetch";
 import { config } from "expo/config.js";
-import { getCurrentPositionAsync } from "expo-location";
+import { getContactsAsync } from "expo-contacts";
 import { readAsStringAsync } from "expo-file-system/legacy";
 import { View } from "denext-expo-react-native";
-export const result = { impactAsync, registerRootComponent, fetch, config, getCurrentPositionAsync, readAsStringAsync, View };
+export const result = { impactAsync, registerRootComponent, fetch, config, getContactsAsync, readAsStringAsync, View };
 `,
 };
 
@@ -435,8 +457,8 @@ Deno.test("reactNative bundle: expo-* resolves to its denext/expo shim; unshimme
     "a subpath with its own shim → that shim",
   );
   assertEquals(
-    r.getCurrentPositionAsync,
-    "REAL_EXPO_LOCATION",
+    r.getContactsAsync,
+    "REAL_EXPO_CONTACTS",
     "a package without a shim resolves normally",
   );
   assertEquals(r.View, "RNW_VIEW", "the shims' bridge → react-native-web");
@@ -454,7 +476,7 @@ Deno.test("reactNative bundle: expoShims: false resolves every expo-* package no
 const SPA = { entry: "./src/main.tsx" };
 const ROOT_STYLE = "html,body,#root{height:100%;margin:0}#root{display:flex}";
 
-Deno.test("spaShellHtml: Expo's root style only in reactNative mode, before spa.head", async () => {
+Deno.test("spaShellHtml: Expo's root style and viewport-fit=cover only in reactNative mode", async () => {
   const plain = await spaShellHtml({ spa: SPA, scriptSrc: "/x.js" });
   assert(!plain.includes("display:flex"), "no root style without reactNative");
   const rn = await spaShellHtml({
@@ -464,6 +486,19 @@ Deno.test("spaShellHtml: Expo's root style only in reactNative mode, before spa.
   });
   assertStringIncludes(rn, `<style>${ROOT_STYLE}</style>`);
   assert(rn.indexOf(ROOT_STYLE) < rn.indexOf("background:red"), "spa.head can override it");
+  assertStringIncludes(
+    rn,
+    'content="width=device-width, initial-scale=1, viewport-fit=cover"',
+    "React Native mode covers the screen, so safe-area insets are not 0 in the iOS shell",
+  );
+  assert(!plain.includes("viewport-fit"), "a plain SPA keeps the plain viewport");
+  const own = await spaShellHtml({
+    spa: { ...SPA, head: '<meta name="viewport" content="width=device-width" />' },
+    scriptSrc: "/x.js",
+    reactNativeRootStyle: true,
+  });
+  assertEquals((own.match(/name="viewport"/g) ?? []).length, 1, "the app's own viewport wins");
+  assert(!own.includes("viewport-fit"));
   const custom = await spaShellHtml({
     spa: { ...SPA, rootId: "app" },
     scriptSrc: "/x.js",
@@ -636,7 +671,7 @@ Deno.test("withAppearancePolyfill: inserted ahead of the default export; left al
   assertEquals(withAppearancePolyfill("module.exports = {};"), "module.exports = {};");
 });
 
-Deno.test("reactNative dev: an explicit unbundled: true is refused (the bundled loop is required)", async () => {
+Deno.test("reactNative dev: the per-module (unbundled) loop is the default, like any SPA", async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_rn_unbundled_" }));
   try {
     await writeTree(dir, {
@@ -646,13 +681,10 @@ Deno.test("reactNative dev: an explicit unbundled: true is refused (the bundled 
       "deno.json": "{}\n",
     });
     const paths = await resolveProject(dir);
-    assertThrows(
-      () => createSpaDevState({ paths, unbundled: true }),
-      Error,
-      "`reactNative` apps develop on the bundled dev loop",
-    );
-    assertEquals(createSpaDevState({ paths }).unbundledOptIn, false, "the default is bundled");
+    assertEquals(createSpaDevState({ paths, unbundled: true }).unbundledOptIn, true);
     assertEquals(createSpaDevState({ paths, unbundled: false }).unbundledOptIn, false);
+    const optOut = Deno.env.get("DENEXT_DEV_UNBUNDLED") === "0";
+    assertEquals(createSpaDevState({ paths }).unbundledOptIn, !optOut, "on unless opted out");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

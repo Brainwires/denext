@@ -94,6 +94,34 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "fontSrc": {
+                  "description": "Extra `font-src` sources (e.g. `https://fonts.gstatic.com`); `'self' data:` is always allowed.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "frameSrc": {
+                  "description": "Extra `frame-src` sources: third-party `<iframe>`s such as Stripe's Payment Element (`[\"https://js.stripe.com\", \"https://hooks.stripe.com\"]`), a video embed or a captcha. Without it, frames fall back to `default-src 'self'`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "mediaSrc": {
+                  "description": "Extra `media-src` sources (remote `<video>`/`<audio>`); without it, `default-src 'self'`.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "workerSrc": {
+                  "description": "Extra `worker-src` sources (e.g. `blob:` for a library that spawns a Worker from a Blob URL). Setting it emits `worker-src 'self' …`, which replaces the `script-src` fallback browsers otherwise use for workers.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -551,6 +579,9 @@
                 },
                 "expireByTag": {
                   "description": "Optional: **soft-expire** every entry carrying `tag` — rewrite its `staleAt`/`expiresAt` (stale-while-revalidate) instead of deleting it, so a `revalidateTag(tag, profile)` serves stale while refreshing. A store that omits this falls back to a hard deleteByTag (correct, just not SWR)."
+                },
+                "sweepPages": {
+                  "description": "Optional: delete every cached **page** whose key does not start with `keep` — the entries of other builds and older page-cache formats, which a PageCache never reads again. `denext start` passes its own prefix (`v2:<buildId>:`) once, after startup. Data entries (`unstable_cache` / `\"use cache\"`) and the kept pages' tags are untouched. Returns how many pages were deleted. A store that omits this is never swept; its unreachable pages age out through its own eviction."
                 }
               },
               "required": [
@@ -609,7 +640,7 @@
       ]
     },
     "csp": {
-      "description": "App-wide Content-Security-Policy default (three-state), overridable per file: - `\"strict\"` (default) — denext's hash-based strict policy on buffered pages. - `\"off\"` — emit no CSP header at all (set your policy at the edge, or for Next.js-style \"CSP is the app's job\" behavior). A route can still opt back in with its own `csp` export. - a CspSetting object — the strict policy plus these global opt-ins.",
+      "description": "App-wide Content-Security-Policy default (three-state), overridable per file: - `\"strict\"` (default) — denext's hash-based strict policy on buffered pages. - `\"off\"` — emit no CSP header at all (set your policy at the edge, or for Next.js-style \"CSP is the app's job\" behavior). A route can still opt back in with its own `csp` export. - a CspSetting object — the strict policy plus these global opt-ins (`scriptSrc`, `styleSrc`, `imgSrc`, `connectSrc`, `fontSrc`, `frameSrc`, `mediaSrc`, `workerSrc`; e.g. `{ frameSrc: [\"https://js.stripe.com\"] }` for Stripe's Payment Element iframes).",
       "anyOf": [
         {
           "enum": [
@@ -647,6 +678,34 @@
             },
             "connectSrc": {
               "description": "Extra `connect-src` sources (fetch/XHR/EventSource/WebSocket targets).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fontSrc": {
+              "description": "Extra `font-src` sources (e.g. `https://fonts.gstatic.com`); `'self' data:` is always allowed.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "frameSrc": {
+              "description": "Extra `frame-src` sources: third-party `<iframe>`s such as Stripe's Payment Element (`[\"https://js.stripe.com\", \"https://hooks.stripe.com\"]`), a video embed or a captcha. Without it, frames fall back to `default-src 'self'`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "mediaSrc": {
+              "description": "Extra `media-src` sources (remote `<video>`/`<audio>`); without it, `default-src 'self'`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "workerSrc": {
+              "description": "Extra `worker-src` sources (e.g. `blob:` for a library that spawns a Worker from a Blob URL). Setting it emits `worker-src 'self' …`, which replaces the `script-src` fallback browsers otherwise use for workers.",
               "type": "array",
               "items": {
                 "type": "string"
@@ -791,6 +850,111 @@
       "type": "number",
       "minimum": 1
     },
+    "cors": {
+      "description": "Cross-origin (CORS) access to route handlers and the native `denextAuth` endpoints — what a Capacitor shell or a front end on another origin needs. Off by default (no CORS headers at all). A route overrides it with `export const cors = { … } | false`. See CorsConfig.",
+      "type": "object",
+      "properties": {
+        "origins": {
+          "description": "The origins allowed to call, e.g. `[\"capacitor://localhost\", \"https://localhost\", \"myapp://app\", \"https://web.example.com\"]`. Each is a bare origin (scheme + host, an optional port, no path). `[\"*\"]` allows any origin, and only without `credentials`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "methods": {
+          "description": "The methods a preflight may approve (default `GET, HEAD, POST, PUT, PATCH, DELETE`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "headers": {
+          "description": "The request headers a preflight may approve, case-insensitive (default `authorization`, `content-type`, `x-denext-wire`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exposeHeaders": {
+          "description": "Response headers the caller's script may read beyond the safelisted ones (default none).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "credentials": {
+          "description": "Send `Access-Control-Allow-Credentials: true`, so the browser sends and accepts cookies cross-origin (default `false`). Never combined with `\"*\"`.",
+          "type": "boolean"
+        },
+        "maxAge": {
+          "description": "How long, in seconds, a browser may cache a preflight answer (default 600).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "origins"
+      ]
+    },
+    "appLinks": {
+      "description": "The domain-association files for the app's universal links (iOS) and App Links (Android): `denext start` and `denext dev` serve `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` from it (`application/json`, `200`, never redirected), and `denext export` writes both into the export. Pair it with `denext mobile add deep-links --domain <host>`. See AppLinksConfig.",
+      "type": "object",
+      "properties": {
+        "apple": {
+          "description": "Serve `/.well-known/apple-app-site-association` for these iOS apps.",
+          "type": "object",
+          "properties": {
+            "appIds": {
+              "description": "The apps, as `<Team ID>.<bundle id>` (`ABCDE12345.com.example.app`): the Team ID from the Apple Developer account, the bundle id from Xcode.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "paths": {
+              "description": "The URL paths that open the app (`*` and `?` wildcards). A leading `!` excludes a path (`\"!/admin/*\"`); order matters, the first match wins. Default `[\"*\"]`: every path.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "webcredentials": {
+              "description": "Also list the apps under `webcredentials`, so iOS offers this domain's saved passwords and passkeys in the app. Default `true`.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "appIds"
+          ]
+        },
+        "android": {
+          "description": "Serve `/.well-known/assetlinks.json` for this Android app.",
+          "type": "object",
+          "properties": {
+            "packageName": {
+              "description": "The application id (`com.example.app`).",
+              "type": "string"
+            },
+            "sha256CertFingerprints": {
+              "description": "The SHA-256 fingerprints of the certificates the app is signed with, as `AB:CD:…` (32 colon-separated hex bytes; plain hex is accepted too). With Play App Signing, list Play's app signing key (Play Console → App integrity) and your upload key.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "loginCredentials": {
+              "description": "Also delegate `get_login_creds`, so Android's Credential Manager shares this domain's saved passwords and passkeys with the app. Default `true`.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "packageName",
+            "sha256CertFingerprints"
+          ]
+        }
+      }
+    },
     "actionMaxBodyBytes": {
       "description": "The request-body cap for Server Actions, in bytes — default 1 MiB (Next's default). Raise it only for actions that accept large payloads (multipart uploads); over the cap → 413 before the action runs. `denext start`/`dev` forward it to the server; a custom server passes `actionMaxBodyBytes` to `createApp()` itself.",
       "type": "number",
@@ -832,6 +996,33 @@
       "items": {
         "type": "string"
       }
+    },
+    "compress": {
+      "description": "Compress dynamic responses (rendered HTML, Flight/JSON payloads, route-handler text/JSON/ JS/CSS/SVG/XML) — **on by default**, like Next.js's `compress`. gzip by default (as Next.js); brotli (quality 5: markedly smaller output for about two to three times gzip's CPU) only when listed in `{ encodings }` (`{ encodings: [\"br\", \"gzip\"] }`). Negotiated from `Accept-Encoding` (q-values; a tie goes to the earlier listed coding) through `node:zlib`, flushed explicitly; streamed (Suspense/PPR) HTML is compressed chunk by chunk with a flush per chunk, so it still reaches the browser progressively. Skipped for bodies under 1 KiB, `text/event-stream`, already-compressed types (images, fonts, video, archives), a response that already has a `Content-Encoding`, `Cache-Control: no-transform`, range responses, `HEAD` and `204`/`304`. A page, layout or route handler opts out with `export const compress = false`. Build-time precompressed client bundles (`.gz`) are served as-is. Set `false` when a proxy in front (nginx, Cloudflare, a CDN) compresses.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "encodings": {
+              "description": "The content codings denext may produce, in the server's order of preference: the client's highest-q acceptable coding among them wins, and a tie goes to the earlier one here. The default is gzip only (Next.js's `compress`); list `\"br\"` to send brotli to clients that accept it (quality 5: markedly smaller output for about two to three times gzip's CPU). An empty list sends identity.",
+              "type": "array",
+              "items": {
+                "enum": [
+                  "gzip",
+                  "br"
+                ]
+              },
+              "default": [
+                "gzip"
+              ]
+            }
+          }
+        }
+      ],
+      "default": true
     },
     "nodeResolve": {
       "description": "denext's tolerant node_modules resolver for the compat (npm-React) build — default ON.",
@@ -878,6 +1069,243 @@
       "type": "boolean",
       "default": true
     },
+    "mobile": {
+      "description": "Capacitor shell settings for `denext mobile build` and `denext mobile assets`: build flavors (per-flavor app id, name, server URL, icon and splash). See https://denext.dev/docs/mobile-build.",
+      "type": "object",
+      "properties": {
+        "flavors": {
+          "description": "Named build flavors (`staging`, `beta`, …), picked with `denext mobile build --flavor`. Names are lowercase letters, digits and `-`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "appId": {
+                "description": "The bundle id / applicationId for this flavor, replacing the app's (`com.example.app.beta`).",
+                "type": "string"
+              },
+              "appIdSuffix": {
+                "description": "Appended to the app's id when `appId` is not set (`\".staging\"` → `com.example.app.staging`).",
+                "type": "string"
+              },
+              "appName": {
+                "description": "The home-screen name (CFBundleDisplayName, Android's `app_name`).",
+                "type": "string"
+              },
+              "serverUrl": {
+                "description": "`server.url` in the Capacitor config: the app loads this origin instead of the bundled UI.",
+                "type": "string"
+              },
+              "icon": {
+                "description": "Icon source for `denext mobile assets` (relative to the Capacitor project).",
+                "type": "string"
+              },
+              "splash": {
+                "description": "Splash source for `denext mobile assets` (relative to the Capacitor project).",
+                "type": "string"
+              },
+              "backgroundColor": {
+                "description": "Icon and splash background, `#rrggbb`.",
+                "type": "string"
+              },
+              "env": {
+                "description": "Environment variables for the flavor's `denext export` (e.g. `{ API_URL: \"…\" }`).",
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "desktop": {
+      "description": "Deno Desktop native capabilities: the allowlist the desktop runtime's capability bridge serves (default deny) and the source the package scripts derive least-privilege `--allow-*` from. Written by `denext desktop add <cap>`. Distinct from SpaConfig.desktop (packaging settings such as the icon); the two may be unified in a later release. Docs: https://denext.dev/docs/desktop",
+      "type": "object",
+      "properties": {
+        "app": {
+          "description": "App identity for the RUNTIME. Its `identifier` keys the OS app-support/cache/documents folders and the `secureStore` keychain SERVICE, so it MUST be unique per app — a reverse-DNS id such as `\"com.example.myapp\"`. Without it, `secureStore`/`fs`/`sqlite` refuse to start (they would otherwise share one folder and one keychain service across every denext desktop app, letting one app read another's data and secrets). Keep it equal to `deno.json`'s `desktop.app.identifier` (which `deno desktop` uses for the bundle id); the scaffold writes both.",
+          "type": "object",
+          "properties": {
+            "identifier": {
+              "description": "A unique reverse-DNS id (e.g. `\"com.example.myapp\"`) that keys the OS app-support/cache/ documents folders and the `secureStore` keychain service. Required once a data-storing cap (`secureStore`/`fs`/`sqlite`) is enabled. Keep it equal to `deno.json`'s `desktop.app.identifier`.",
+              "type": "string"
+            },
+            "name": {
+              "description": "The app's display name for tooling; the packaged bundle name comes from `deno.json`.",
+              "type": "string"
+            }
+          }
+        },
+        "capabilities": {
+          "description": "The capability allowlist (default deny).",
+          "type": "object",
+          "properties": {
+            "secureStore": {
+              "description": "OS keychain (macOS Keychain / libsecret; not yet on Windows, where it fails closed).",
+              "type": "boolean"
+            },
+            "fs": {
+              "description": "App files under the OS app-support / cache folders.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "read": {
+                      "description": "Roots the app may read.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "write": {
+                      "description": "Roots the app may write.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "sqlite": {
+              "description": "An app SQLite database under the app-support folder.",
+              "type": "boolean"
+            },
+            "contextMenu": {
+              "description": "`showContextMenu` (no runtime capability yet: the WebView's in-page menu).",
+              "type": "boolean"
+            },
+            "shell": {
+              "description": "Open external URLs / paths / reveal / trash (scoped).",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "openExternal": {
+                      "description": "URL schemes `openExternal` may hand to the system browser (e.g. `[\"https:\", \"mailto:\"]`).",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "openPath": {
+                      "description": "Allow `openPath` (open a path with its default app).",
+                      "type": "boolean"
+                    },
+                    "reveal": {
+                      "description": "Allow `reveal` (show a path in the file manager).",
+                      "type": "boolean"
+                    },
+                    "trash": {
+                      "description": "Allow `trash` (move a path to the OS trash).",
+                      "type": "boolean"
+                    }
+                  }
+                }
+              ]
+            },
+            "authSession": {
+              "description": "System-browser OAuth via `openAuthSession` (loopback redirect). The runtime's auth-session endpoint is default-deny unless this is enabled; the packaged app then bakes the browser opener's `--allow-run`.",
+              "type": "boolean"
+            },
+            "dialogs": {
+              "description": "Native open/save/folder dialogs returning paths.",
+              "type": "boolean"
+            },
+            "notifications": {
+              "description": "Local notifications (no runtime capability yet: the WebView's Notification API, immediate only; a scheduled trigger rejects and a click is not routed).",
+              "type": "boolean"
+            },
+            "keepAwake": {
+              "description": "Prevent the machine from sleeping while held.",
+              "type": "boolean"
+            },
+            "clipboard": {
+              "description": "Clipboard text (no runtime capability yet: the WebView's `navigator.clipboard`).",
+              "type": "boolean"
+            },
+            "device": {
+              "description": "Device info (`os`, `osVersion`, `model?`).",
+              "type": "boolean"
+            },
+            "echo": {
+              "description": "The `echo` diagnostic capability (bridge connectivity check).",
+              "type": "boolean"
+            },
+            "extensions": {
+              "description": "User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "extraPermissions": {
+          "description": "Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what the enabled DesktopCapabilitiesConfig capabilities imply — the escape hatch for what the capability catalog can't see: the desktop updater's feed host (`net`) and data dir (`write`), a `defineDesktopExtension` module's own `run`/`ffi`, or any custom need. `denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script).",
+          "type": "object",
+          "properties": {
+            "read": {
+              "description": "`--allow-read` paths (usually unnecessary — the baseline is already broad read).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "write": {
+              "description": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped).",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "net": {
+              "description": "`--allow-net` hosts, e.g. the updater's feed host.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "run": {
+              "description": "`--allow-run` programs.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "ffi": {
+              "description": "`--allow-ffi` libraries.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "env": {
+              "description": "`--allow-env` variable names.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sys": {
+              "description": "`--allow-sys` kinds.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
     "reactNative": {
       "description": "Build a React Native / Expo app's source for the web through `react-native-web` — SPA mode only (`mode: \"spa\"`). `true` turns on the defaults; an object sets options.",
       "anyOf": [
@@ -896,6 +1324,29 @@
               "description": "Alias each `expo-*` package that has a `denext/expo/*` shim (`expo-haptics` → `denext/expo/haptics`, …: the list is `denext/expo/manifest`'s `EXPO_SHIMS`) to that shim, which implements the package's API over `denext/mobile` and web APIs. A package without a shim resolves normally. `false` resolves every `expo-*` package normally.",
               "type": "boolean",
               "default": true
+            },
+            "lists": {
+              "description": "Which engine runs the app's lists. `\"denext\"` (the default): React Native's `FlatList`, `SectionList` and `VirtualizedList` (inside react-native-web), `@shopify/flash-list` and `@legendapp/list` (its React Native entry) run on denext's `VirtualList`, with the same props and ref methods. `\"library\"`: each resolves to the real implementation.",
+              "enum": [
+                "denext",
+                "library"
+              ],
+              "default": "denext"
+            },
+            "aliases": {
+              "description": "Per-package switches for the community-package aliases. React Native mode resolves popular React Native libraries whose native half a WebView lacks to denext implementations (`react-native-webview` → an `<iframe>` WebView, `react-native-keychain` → `denext/mobile`'s `secureStore`, `@react-navigation/native-stack` → `denext/navigation`'s stack, …: the list is `/docs/react-native`'s \"Community packages\" table). Every alias is on by default; `{ \"<package>\": false }` resolves that package normally again (`\"react-native-svg-transformer\": false` keeps `.svg` imports as asset URLs).",
+              "type": "object",
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "default": {}
+            },
+            "desktopPackage": {
+              "description": "Build a React Native macOS or Windows app's web version: a bare `react-native` import in the app's own source (not in node_modules) resolves as `react-native-macos` or `react-native-windows` does in React Native mode (react-native-web plus that package's additions: the desktop `View` props, `Flyout`, `Popup`, `DynamicColorMacOS`, …), as Metro's platform resolution does for a desktop build. The app's source stays unchanged. Unset, `react-native` is react-native-web and only an explicit `react-native-macos` / `react-native-windows` import gets the additions.",
+              "enum": [
+                "react-native-macos",
+                "react-native-windows"
+              ]
             }
           }
         }

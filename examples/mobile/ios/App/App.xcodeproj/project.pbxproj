@@ -35,6 +35,12 @@
 		5E2EE75BD3EFBB82F34E057D /* DenextActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAA847E4E463922863C526AD /* DenextActivityAttributes.swift */; };
 		F29DCD8E9151CC1500719953 /* DenextOtaPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3317075A6081BEF1DAE46FA9 /* DenextOtaPlugin.swift */; };
 		8EE01B0186736C80F683B9B5 /* DenextOtaStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEC8CC7183EC316339850275 /* DenextOtaStore.swift */; };
+		26850C4644C71DAFB2F517FB /* DenextSettingsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89168FD541FA0B6B2A8DA282 /* DenextSettingsPlugin.swift */; };
+		A8922B1854C35FE63EF8FC70 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 3EE0AC18222ABABCAF2315FD /* PrivacyInfo.xcprivacy */; };
+		906A00A5DCC433815CB6BC8F /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D6A4C145E2EF5D6722341060 /* PrivacyInfo.xcprivacy */; };
+		22FC8934454AAA64DEB055DE /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = C4380BC15781DBC6B30D1B82 /* PrivacyInfo.xcprivacy */; };
+		D6984352E31A39A39D7B5722 /* DenextContextMenuPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C47A8EBD10974ADA5B99EED4 /* DenextContextMenuPlugin.swift */; };
+		717BCE699529CD84BB070AFC /* DenextSystemIconPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A66B6DA4A55A0864B67FBA /* DenextSystemIconPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,6 +108,12 @@
 		5305D90137C984DC4671882C /* BuildLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildLiveActivity.swift; sourceTree = "<group>"; };
 		3317075A6081BEF1DAE46FA9 /* DenextOtaPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextOtaPlugin.swift; sourceTree = "<group>"; };
 		CEC8CC7183EC316339850275 /* DenextOtaStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextOtaStore.swift; sourceTree = "<group>"; };
+		89168FD541FA0B6B2A8DA282 /* DenextSettingsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextSettingsPlugin.swift; sourceTree = "<group>"; };
+		3EE0AC18222ABABCAF2315FD /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		D6A4C145E2EF5D6722341060 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		C4380BC15781DBC6B30D1B82 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		C47A8EBD10974ADA5B99EED4 /* DenextContextMenuPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextContextMenuPlugin.swift; sourceTree = "<group>"; };
+		75A66B6DA4A55A0864B67FBA /* DenextSystemIconPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DenextSystemIconPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -170,6 +182,10 @@
 				C1AEF75715E71E3485AC4B55 /* DenextLiveActivityPlugin.swift */,
 				3317075A6081BEF1DAE46FA9 /* DenextOtaPlugin.swift */,
 				CEC8CC7183EC316339850275 /* DenextOtaStore.swift */,
+				89168FD541FA0B6B2A8DA282 /* DenextSettingsPlugin.swift */,
+				3EE0AC18222ABABCAF2315FD /* PrivacyInfo.xcprivacy */,
+				C47A8EBD10974ADA5B99EED4 /* DenextContextMenuPlugin.swift */,
+				75A66B6DA4A55A0864B67FBA /* DenextSystemIconPlugin.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -181,6 +197,7 @@
 				B6AED5BF7421260F97150749 /* DenextShareExtension.entitlements */,
 				2FA7A85668010288D11EA272 /* DenextShareInbox.swift */,
 				A8E5C7745787637D93C55F65 /* ShareViewController.swift */,
+				D6A4C145E2EF5D6722341060 /* PrivacyInfo.xcprivacy */,
 			);
 			path = DenextShareExtension;
 			sourceTree = "<group>";
@@ -196,6 +213,7 @@
 				EAA847E4E463922863C526AD /* DenextActivityAttributes.swift */,
 				553CA0B7781F9B391CA16428 /* DenextLiveActivities.swift */,
 				5305D90137C984DC4671882C /* BuildLiveActivity.swift */,
+				C4380BC15781DBC6B30D1B82 /* PrivacyInfo.xcprivacy */,
 			);
 			path = DenextWidgets;
 			sourceTree = "<group>";
@@ -310,6 +328,7 @@
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
+				A8922B1854C35FE63EF8FC70 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -317,6 +336,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				906A00A5DCC433815CB6BC8F /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -324,6 +344,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				22FC8934454AAA64DEB055DE /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -345,6 +366,9 @@
 				5E2EE75BD3EFBB82F34E057D /* DenextActivityAttributes.swift in Sources */,
 				F29DCD8E9151CC1500719953 /* DenextOtaPlugin.swift in Sources */,
 				8EE01B0186736C80F683B9B5 /* DenextOtaStore.swift in Sources */,
+				26850C4644C71DAFB2F517FB /* DenextSettingsPlugin.swift in Sources */,
+				D6984352E31A39A39D7B5722 /* DenextContextMenuPlugin.swift in Sources */,
+				717BCE699529CD84BB070AFC /* DenextSystemIconPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

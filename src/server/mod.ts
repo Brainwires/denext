@@ -53,6 +53,30 @@ export { renderDocument } from "./document.ts";
 export type { DocumentOptions, HydrationData } from "./document.ts";
 export { serveStatic } from "./static.ts";
 export { createOtaHandler, type OtaHandlerOptions } from "./ota-handler.ts";
+export {
+  inOtaRollout,
+  type OtaChannel,
+  type OtaChannelsFile,
+  type OtaRollout,
+  otaRolloutBucket,
+} from "./ota-rollout.ts";
+// Universal link / App Link association files (the config's `appLinks`), for a custom server.
+export { createAppLinksHandler } from "./app-links.ts";
+// Push from your own server: APNs (token auth, HTTP/2) and FCM HTTP v1, zero npm.
+export {
+  type ApnsConfig,
+  createPushSender,
+  type FcmConfig,
+  type FcmServiceAccount,
+  type LiveActivityPush,
+  type PushErrorCode,
+  type PushPayload,
+  type PushResult,
+  type PushSender,
+  type PushSenderConfig,
+  type PushTarget,
+  sendPush,
+} from "./push-send.ts";
 export { serveWithPortFallback } from "./serve-utils.ts";
 export type { ServeUtilOptions } from "./serve-utils.ts";
 // Typed route handlers: phantom-typed Request/Response so the typed-API-client generator
@@ -212,13 +236,25 @@ export type {
   RewriteCommand,
 } from "./middleware.ts";
 
+// The resolved CORS policy (`config.cors`) a request context and route dispatch carry.
+export type { CorsPolicy } from "./cors.ts";
 // Project configuration (denext.config): redirects / rewrites / headers / etc.
 export {
+  type AndroidAppLinks,
   type ApiBatchConfig,
+  type AppleAppLinks,
+  type AppLinksConfig,
   type CacheConfig,
   type CompiledPattern,
+  type CompressConfig,
+  type CorsConfig,
   type DenextCommand,
   type DenextConfig,
+  type DesktopCapabilitiesConfig,
+  type DesktopConfig,
+  type DesktopExtraPermissions,
+  type DesktopFsConfig,
+  type DesktopShellConfig,
   type ExperimentalConfig,
   type HeaderRule,
   type HstsConfig,
@@ -229,6 +265,8 @@ export {
   type LiveSubscriptionRequest,
   type LocalPattern,
   type MdxConfig,
+  type MobileConfig,
+  type MobileFlavorConfig,
   type ReactNativeConfig,
   type RedirectRule,
   type RemotePattern,
@@ -453,6 +491,8 @@ export type {
   AuthAdapter,
   MaybePromise,
   MfaRecord,
+  NativeGrantRecord,
+  NativeSessionRecord,
   VerificationPurpose,
   VerificationTokenRecord,
   VerificationTokenRef,
@@ -510,6 +550,7 @@ export type { TotpAuthUriOptions, TotpVerifyOptions, TotpVerifyResult } from "./
 export { backupCodeMatcher, generateBackupCodes } from "./auth/backup-codes.ts";
 export type { BackupCodes } from "./auth/backup-codes.ts";
 export type {
+  AccountDeletedPayload,
   AuthCallbacks,
   AuthConfig,
   AuthCookieConfig,
@@ -517,6 +558,7 @@ export type {
   AuthEvents,
   AuthLogger,
   AuthMfaConfig,
+  AuthNativeConfig,
   AuthorizedCallbackInput,
   AuthProvider,
   AuthSession,
@@ -524,6 +566,8 @@ export type {
   AuthUser,
   CredentialsProvider,
   EmailProvider,
+  NativeAppleConfig,
+  NativeIdTokenProviderConfig,
   OAuthProvider,
   ProfileInput,
   SendVerificationRequest,
@@ -595,3 +639,4 @@ export function serve(options: ServeOptions): Deno.HttpServer {
 // The current request context — the seam integrations (e.g. @denext/effect) read
 // per-request state through; app code uses cookies()/headers()/getSession() instead.
 export { currentContext } from "./request-context.ts";
+export * from "./revenuecat.ts";

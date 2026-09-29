@@ -15,7 +15,10 @@ import {
 } from "../src/build/mobile-native-install.ts";
 import { markedTemplateIntact, renderMarkedTemplate } from "../src/build/native-template-marker.ts";
 
+/** The features releases before the marker line registered (their shapes are pinned by hash). */
 const FEATURES: readonly AndroidFeature[] = ["share-receive", "widgets", "auth-session", "ota"];
+/** Every feature this release composes: 2.11 added `back` and `edge-to-edge` (generation 2). */
+const ALL_FEATURES: readonly AndroidFeature[] = ["edge-to-edge", "back", ...FEATURES];
 const PACKAGES = ["com.example.app", "com.brainwires.t3code"];
 
 /** Every non-empty combination of the Android features. */
@@ -85,14 +88,16 @@ async function assertUpgrades(
       await mainActivitySource(pkg, expected),
       label,
     );
-    assertEquals(report.upgraded, text.startsWith("// denext-") ? [] : [path], label);
+    // Only a file already at this release's generation is not an upgrade.
+    const current = text.startsWith("// denext-main-activity-template: 2 ");
+    assertEquals(report.upgraded, current ? [] : [path], label);
   });
 }
 
 Deno.test("MainActivity: written under an intact marker line, package on the next line", async () => {
   for (const set of combinations()) {
     const text = await mainActivitySource("com.example.app", new Set(set));
-    assert(text.startsWith("// denext-main-activity-template: 1 sha256="), set.join("+"));
+    assert(text.startsWith("// denext-main-activity-template: 2 sha256="), set.join("+"));
     assertEquals(await markedTemplateIntact("main-activity", text), true);
     assert(unmarked(text).startsWith("package com.example.app;\n"));
   }
@@ -150,6 +155,62 @@ Deno.test("MainActivity: a marked one is recognised and composes across features
         assertEquals(again.written, []);
         assertEquals(again.unchanged, [path]);
       }
+    },
+  );
+});
+
+Deno.test("MainActivity: back and edge-to-edge compose with every feature, before super.onCreate", async () => {
+  const pkg = "com.example.app";
+  const order: AndroidFeature[] = [
+    "back",
+    "ota",
+    "edge-to-edge",
+    "widgets",
+    "share-receive",
+    "auth-session",
+  ];
+  await withActivity(
+    pkg,
+    `package ${pkg};\n\nimport com.getcapacitor.BridgeActivity;\n\npublic class MainActivity extends BridgeActivity {}\n`,
+    async (dir, path) => {
+      const done = new Set<AndroidFeature>();
+      for (const feature of order) {
+        const report = await register(dir, feature);
+        done.add(feature);
+        assertEquals(report.manual, [], feature);
+        assertEquals(await Deno.readTextFile(join(dir, path)), await mainActivitySource(pkg, done));
+      }
+      const text = await Deno.readTextFile(join(dir, path));
+      assertStringIncludes(text, "import androidx.activity.EdgeToEdge;\n");
+      assertStringIncludes(text, "import dev.denext.back.DenextBackPlugin;\n");
+      const prepare = text.indexOf("DenextOta.prepare(this, bridgeBuilder);");
+      const back = text.indexOf("registerPlugin(DenextBackPlugin.class);");
+      const edge = text.indexOf("EdgeToEdge.enable(this);");
+      const superCall = text.indexOf("super.onCreate(savedInstanceState);");
+      assert(prepare >= 0 && prepare < back && back < edge && edge < superCall, "order");
+      for (const feature of ALL_FEATURES) {
+        assertEquals((await register(dir, feature)).unchanged, [path], `again: ${feature}`);
+      }
+    },
+  );
+});
+
+Deno.test("MainActivity: generation 1 files keep their bodies and upgrade to generation 2", async () => {
+  const pkg = "com.example.app";
+  for (const set of combinations()) {
+    const body = unmarked(await mainActivitySource(pkg, new Set(set)));
+    const gen1 = await renderMarkedTemplate("main-activity", 1, body);
+    await assertUpgrades(pkg, gen1, "back", new Set([...set, "back"]), `${set.join("+")} + back`);
+  }
+  // Re-adding a feature a generation-1 file has: brought up to generation 2, body unchanged.
+  const body = unmarked(await mainActivitySource(pkg, new Set(["ota", "widgets"])));
+  await withActivity(
+    pkg,
+    await renderMarkedTemplate("main-activity", 1, body),
+    async (dir, path) => {
+      const report = await register(dir, "ota");
+      assertEquals(report.upgraded, [path]);
+      assertEquals(unmarked(await Deno.readTextFile(join(dir, path))), body);
     },
   );
 });

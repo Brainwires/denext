@@ -253,6 +253,7 @@ export async function buildPageContext(
       `Page module ${match.route.filePath} has no default export component.`,
     );
   }
+  shipScreenOptions(pageModule);
   const config = await resolveSegmentConfig(match, pageModule, load);
   // `dynamicParams = false`: a param not enumerated by generateStaticParams 404s.
   // Decided here (module is loaded); the render entries throw notFound() for it.
@@ -286,6 +287,19 @@ export async function buildPageContext(
     await resolvePageViewport(pageModule, props, wrapped.layoutViewports),
   ]);
   return { tree, metadata, viewport, config, staticParamsNotFound, signal };
+}
+
+/**
+ * A page's `export const screenOptions` (the per-route options of a `denext/navigation`
+ * stack) onto the request context, which ships them to the client in the hydration / soft-nav
+ * data. Only a plain object is taken; it must be JSON (functions are dropped).
+ */
+function shipScreenOptions(pageModule: PageModule): void {
+  const options = pageModule.screenOptions;
+  const ctx = currentContext();
+  if (ctx && typeof options === "object" && options !== null && !Array.isArray(options)) {
+    ctx.screenOptions = options as Record<string, unknown>;
+  }
 }
 
 /**

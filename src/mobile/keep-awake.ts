@@ -7,6 +7,7 @@
 
 import { useEffect } from "../runtime/hooks.ts";
 import { nativePlugin } from "./plugin.ts";
+import { runtimePlatform } from "./bridge.ts";
 
 /** The JS side of `@capacitor-community/keep-awake`. */
 interface KeepAwakePlugin {
@@ -73,16 +74,45 @@ function holdWakeLock(wakeLock: WakeLockLike): () => void {
 }
 
 /**
- * Start keeping the screen on with whatever the platform offers; returns the release.
- * Internal (the `denext/expo/keep-awake` shim holds it imperatively); not re-exported.
+ * Hold the display awake through the Deno Desktop runtime (lazy, so web and mobile bundles
+ * never load the desktop module); when the `keepAwake` capability is not enabled, fall back to
+ * the page's wake lock.
  */
-export function holdAwake(): () => void {
-  const plugin = nativePlugin<KeepAwakePlugin>("KeepAwake", ["keepAwake", "allowSleep"]);
-  if (plugin) return holdNative(plugin);
+function holdDesktop(): () => void {
+  let released = false;
+  let stopDesktop = () => {};
+  let stopWeb = () => {};
+  import("../desktop/native.ts").then((d) => {
+    if (released) return;
+    stopDesktop = d.holdDesktopAwake(() => {
+      if (!released) stopWeb = holdWeb();
+    });
+  }, () => {});
+  return () => {
+    if (released) return;
+    released = true;
+    stopDesktop();
+    stopWeb();
+  };
+}
+
+/** The Screen Wake Lock path (nothing where the browser has none). */
+function holdWeb(): () => void {
   const wakeLock = (globalThis as { navigator?: { wakeLock?: Partial<WakeLockLike> } })
     .navigator?.wakeLock;
   if (typeof wakeLock?.request !== "function") return () => {};
   return holdWakeLock(wakeLock as WakeLockLike);
+}
+
+/**
+ * Start keeping the screen on with whatever the platform offers; returns the release.
+ * Internal (the `denext/expo/keep-awake` shim holds it imperatively); not re-exported.
+ */
+export function holdAwake(): () => void {
+  if (runtimePlatform() === "desktop") return holdDesktop();
+  const plugin = nativePlugin<KeepAwakePlugin>("KeepAwake", ["keepAwake", "allowSleep"]);
+  if (plugin) return holdNative(plugin);
+  return holdWeb();
 }
 
 /**
@@ -92,6 +122,9 @@ export function holdAwake(): () => void {
  * - Inside the native shell with `@capacitor-community/keep-awake` installed (`denext mobile
  *   add keep-awake`), the native flag. Several mounted callers share it: the screen may sleep
  *   again once the last one unmounts or turns `active` off.
+ * - In a Deno Desktop window (`denext desktop add keep-awake`), an OS assertion held by the
+ *   desktop runtime (`caffeinate`, `SetThreadExecutionState` or `systemd-inhibit`), which
+ *   also keeps the machine from sleeping.
  * - Otherwise the Screen Wake Lock API (`navigator.wakeLock`), re-acquired whenever the page
  *   becomes visible again, since the browser releases it on every hide. Where the browser has
  *   no wake lock, or refuses one, it does nothing.

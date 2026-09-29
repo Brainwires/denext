@@ -14,6 +14,7 @@ import { staticExport } from "../../build/export.ts";
 import { applyPatchesAtBoot } from "./patch.ts";
 import { lanBanner, pickLanAddress } from "../../build/dev-server/lan.ts";
 import { devOriginError } from "../../server/config-validate.ts";
+import { SOURCEMAPS_ENV } from "../../build/hidden-sourcemaps.ts";
 
 /** `--port`/`--host` shared by the two serving verbs. */
 const SERVE_FLAGS = [
@@ -169,7 +170,22 @@ export const exportCommand: CommandSpec = {
   summary: "Static export (SSG) to out/",
   loadsModules: true,
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
+  flags: [{
+    name: "sourcemaps",
+    type: "string",
+    valueName: "hidden",
+    help: "hidden: build source maps, keep them out of out/ (moved to .denext/sourcemaps for a " +
+      "crash reporter's upload; also DENEXT_SOURCEMAPS=hidden)",
+  }],
   run: async (ctx) => {
+    const sourcemaps = ctx.flags.sourcemaps;
+    if (sourcemaps !== undefined && sourcemaps !== "hidden") {
+      console.error(
+        `denext export: --sourcemaps takes "hidden" (got ${JSON.stringify(sourcemaps)}).`,
+      );
+      Deno.exit(1);
+    }
+    if (sourcemaps === "hidden") Deno.env.set(SOURCEMAPS_ENV, "hidden");
     const { dir } = await appProject(ctx);
     console.log(`\n  denext export (static)  ▸  ${dir}\n`);
     const result = await runBuildStep(() => staticExport(dir), "export");

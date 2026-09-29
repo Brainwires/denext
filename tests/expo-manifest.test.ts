@@ -5,6 +5,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { EXPO_SHIMS } from "../src/expo/manifest.ts";
 import {
+  EXPO_FILTER,
   expoRuntimeEntries,
   expoRuntimeFiles,
   expoShimName,
@@ -19,13 +20,24 @@ const EXPO_DIR = new URL("../src/expo/", import.meta.url);
 /** The shim name of a manifest module path. */
 const nameOf = (module: string) => module.replace(/^\.\//, "").replace(/\.ts$/, "");
 
-/** The npm package of a manifest key (`expo-file-system/legacy` → `expo-file-system`). */
-const packageOf = (key: string) => key.split("/")[0];
+/**
+ * The npm package of a manifest key (`expo-file-system/legacy` → `expo-file-system`,
+ * `@expo/ui/swift-ui` → `@expo/ui`).
+ */
+const packageOf = (key: string) =>
+  key.startsWith("@") ? key.split("/").slice(0, 2).join("/") : key.split("/")[0];
 
 Deno.test("expo manifest: every entry's module exists, exports something, and omits what it says", async () => {
   for (const [pkg, shim] of Object.entries(EXPO_SHIMS)) {
-    assert(/^expo(-[a-z0-9-]+)?(\/[a-z0-9-]+)?$/.test(pkg), `${pkg} is an expo package name`);
-    if (pkg.includes("/")) assert(packageOf(pkg) in EXPO_SHIMS, `${pkg}: its package has a shim`);
+    assert(
+      /^(expo(-[a-z0-9-]+)?(\/[a-z0-9-]+)*|@expo\/[a-z0-9-]+(\/[a-z0-9-]+)+)$/.test(pkg),
+      `${pkg} is an expo package name`,
+    );
+    // A subpath of an unscoped package extends that package's shim; a scoped package is
+    // shimmed per subpath only.
+    if (pkg.includes("/") && !pkg.startsWith("@")) {
+      assert(packageOf(pkg) in EXPO_SHIMS, `${pkg}: its package has a shim`);
+    }
     assert(["full", "partial", "stub"].includes(shim.status), `${pkg}: status`);
     assert(/^\d+\.\d+\.\d+$/.test(shim.pinned), `${pkg}: pinned is an exact version`);
     const mod = await import(new URL(shim.module, EXPO_DIR).href);
@@ -61,7 +73,7 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   }
   assertEquals(expoShimName("expo-haptics"), "haptics");
   assertEquals(expoShimName("expo-file-system/legacy"), "file-system/legacy");
-  assertEquals(expoShimName("expo-location"), null);
+  assertEquals(expoShimName("expo-contacts"), null);
   assertEquals(expoShimSpecifier("expo-file-system/legacy"), "denext/expo/file-system/legacy");
   assertEquals(files["denext/expo/file-system/legacy"], "expo-file-system-legacy.js");
   assertEquals(expoShimSpecifier("expo-file-system/next"), null);
@@ -72,6 +84,25 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   assertEquals(expoShimSpecifier("expo-sqlite"), "denext/expo/sqlite");
   assertEquals(expoShimSpecifier("expo-sqlite/kv-store"), null);
   assertEquals(expoShimSpecifier("react-native"), null);
+  assertEquals(expoShimName("@expo/ui/swift-ui"), "ui/swift-ui");
+  assertEquals(
+    expoShimSpecifier("@expo/ui/swift-ui/modifiers"),
+    "denext/expo/ui/swift-ui/modifiers",
+  );
+  assertEquals(files["denext/expo/ui/jetpack-compose"], "expo-ui-jetpack-compose.js");
+  assertEquals(expoShimSpecifier("@expo/ui"), null, "the scoped package itself is not shimmed");
+  assertEquals(
+    expoShimSpecifier("@expo/ui/community/masked-view"),
+    "denext/expo/ui/community/masked-view",
+  );
+  assertEquals(expoShimSpecifier("@expo/ui/community/slider"), null, "its web build works");
+  assertEquals(expoShimSpecifier("@expo/vector-icons"), null);
+  assertEquals(
+    expoShimSpecifier("expo-auth-session/providers/google"),
+    "denext/expo/auth-session/providers/google",
+  );
+  assertEquals(expoShimSpecifier("expo-auth-session/providers/github"), null);
+  assert(EXPO_FILTER.test("@expo/ui/swift-ui") && !EXPO_FILTER.test("@expo/vector-icons"));
 });
 
 Deno.test("expo bridge: only the shims' import of internal/react-native.ts is externalized", () => {
@@ -109,6 +140,25 @@ const T3_PACKAGE_JSON = Deno.env.get("T3_MOBILE_PACKAGE_JSON") ??
 /** The expo-* dependencies of T3's app that deliberately have no shim. */
 const NOT_SHIMMED: string[] = [];
 
+/**
+ * Shims for packages T3's app does not depend on, pinned to their Expo SDK 57 release instead
+ * (`expo-status-bar`: React Native mode's StatusBar makes it more than Expo's no-op web build).
+ */
+const BEYOND_T3: Readonly<Record<string, string>> = {
+  "expo-status-bar": "57.0.1",
+  "expo-apple-authentication": "57.0.2",
+  "expo-local-authentication": "57.0.3",
+  "expo-location": "57.0.20",
+  "expo-application": "57.0.3",
+  "expo-maps": "57.0.3",
+  "expo-tracking-transparency": "57.0.2",
+  "expo-media-library": "57.0.5",
+  "expo-navigation-bar": "57.0.2",
+  "expo-screen-capture": "57.0.3",
+  "expo-screen-orientation": "57.0.2",
+  "expo-store-review": "57.0.3",
+};
+
 let t3Present = false;
 try {
   t3Present = Deno.statSync(T3_PACKAGE_JSON).isFile;
@@ -124,6 +174,10 @@ Deno.test({
     >;
     for (const [key, shim] of Object.entries(EXPO_SHIMS)) {
       const pkg = packageOf(key);
+      if (Object.hasOwn(BEYOND_T3, pkg)) {
+        assertEquals(shim.pinned, BEYOND_T3[pkg], `${key} pin (SDK 57 release)`);
+        continue;
+      }
       assert(pkg in deps, `${pkg} is not a dependency of T3's app`);
       assertEquals(shim.pinned, deps[pkg].replace(/^[~^]/, ""), `${key} pin`);
     }

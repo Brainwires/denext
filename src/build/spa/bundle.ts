@@ -20,9 +20,12 @@ import {
 import { type AppCss, buildAppCss, extractRouteCss } from "../css.ts";
 import { buildNextCompatClientEntries } from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
+import { expoRouterRoot, expoRouterRouteFiles } from "../expo-router.ts";
 import { stopNextCompat } from "../next-compat.ts";
 import type { ProjectPaths } from "../paths.ts";
 import { spaSourceTransformPlugin } from "../spa-compiler-plugin.ts";
+import { spaFeatureFold } from "./features.ts";
+import { spaNativeRefresh } from "../refresh-modules.ts";
 import { spaRefreshPlugin } from "../spa-refresh-plugin.ts";
 import { optimizePackageImportsList } from "../optimize-package-imports.ts";
 import { reactNativeBundleOptions } from "../react-native.ts";
@@ -72,7 +75,7 @@ export async function pnpmCatalogPackages(projectDir: string): Promise<string[]>
  * (`spa.env`) — the Vite-`define` analogue. Only meaningful on the next-compat
  * (esbuild) path.
  */
-function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string> {
+export function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string> {
   // Vite's built-in `import.meta.env` values, with correct types (DEV/PROD/SSR are
   // booleans, not strings) so `if (import.meta.env.DEV)` etc. behave as in Vite.
   const out: Record<string, string> = {
@@ -89,8 +92,53 @@ function spaDefines(spa: SpaConfig, dev: boolean): Record<string, string> {
   return out;
 }
 
-/** The app's CSS assets, crawled from the SPA entry (the whole app's import root). */
-function spaCss(paths: ProjectPaths, entryPath: string, minify: boolean): Promise<AppCss | null> {
+/**
+ * Where the app's stylesheet imports are crawled from: the SPA entry, plus, in React Native
+ * mode, every expo-router route file and every `.web.*` platform file of the app's own source.
+ * The crawl (`deno info`) sees neither: route files are imported only by the route context
+ * generated at build time (`expo-router/_ctx`), and `./icon` resolves to `icon.tsx` there,
+ * while the bundle picks `icon.web.tsx`. Without them a route's `import "./global.css"` or a
+ * web component's CSS module was left out of `index.css`.
+ *
+ * @param paths The project.
+ * @param entryPath The SPA entry.
+ */
+export async function spaCssRoots(paths: ProjectPaths, entryPath: string): Promise<string[]> {
+  if (reactNativeOptions(paths.config) === null) return [entryPath];
+  // A Set: the entry is itself a `.web.*` file when migrate wrote it (index.web.ts).
+  return [
+    ...new Set([
+      entryPath,
+      ...await expoRouterRouteFiles(paths.projectDir),
+      ...await webPlatformFiles(paths.projectDir),
+    ]),
+  ];
+}
+
+/** Whether the app is a React Native mode app routed by expo-router (it has `app/`). */
+export async function usesExpoRouter(paths: ProjectPaths): Promise<boolean> {
+  return reactNativeOptions(paths.config) !== null &&
+    await expoRouterRoot(paths.projectDir) !== null;
+}
+
+/** Directories of an app that hold no source of its own. */
+const NOT_SOURCE = new Set(["node_modules", "out", "dist", "ios", "android"]);
+
+/** The app's own `.web.{ts,tsx,js,jsx}` files under `dir` (sorted). */
+async function webPlatformFiles(dir: string): Promise<string[]> {
+  const found: string[] = [];
+  for await (const entry of Deno.readDir(dir)) {
+    if (entry.name.startsWith(".")) continue;
+    const path = join(dir, entry.name);
+    if (entry.isDirectory && !NOT_SOURCE.has(entry.name)) {
+      found.push(...await webPlatformFiles(path));
+    } else if (entry.isFile && /\.web\.[jt]sx?$/.test(entry.name)) found.push(path);
+  }
+  return found.sort();
+}
+
+/** The app's CSS assets, crawled from `roots` (the SPA entry: the whole app's import root). */
+function spaCss(paths: ProjectPaths, roots: string[], minify: boolean): Promise<AppCss | null> {
   return buildAppCss({
     projectDir: paths.projectDir,
     configPath: paths.configPath,
@@ -99,7 +147,7 @@ function spaCss(paths: ProjectPaths, entryPath: string, minify: boolean): Promis
     // Crawling the entry finds `.scss`/`.css` in sibling workspace packages a monorepo
     // app pulls in (e.g. excalidraw's `../packages/*`), which the `projectDir` walk
     // alone can't reach.
-    entryFiles: [entryPath],
+    entryFiles: roots,
     tailwind: tailwindPaths(paths.projectDir, paths.config?.tailwind),
   });
 }
@@ -195,6 +243,38 @@ function spaBundlePlugins(
 }
 
 /**
+ * The denext-native SPA bundle: plain `deno bundle` (fast, no esbuild). The app already imports
+ * denext directly, so there is no react alias to rewrite; `features` are seeded and folded here,
+ * and in dev the app's components are registered for Fast Refresh (`deno bundle` has no define
+ * and no load plugins).
+ */
+async function bundleNativeSpa(
+  paths: ProjectPaths,
+  entrySource: string,
+  clientDir: string,
+  css: AppCss | null | undefined,
+  minify: boolean,
+  dev: boolean,
+): Promise<void> {
+  const fold = await spaFeatureFold(paths.projectDir, featureFlags(paths.config), !dev);
+  // Dev: the Fast Refresh family registrations the compat path's `spaRefreshPlugin` appends
+  // (dev folds no features, so the two never substitute the same module).
+  const refresh = dev ? await spaNativeRefresh(paths.projectDir) : null;
+  try {
+    const bundle = await bundleSourceFiles(fold.seed + entrySource, {
+      configPath: paths.configPath,
+      minify,
+      importMap: { ...css?.importMap, ...fold.importMap, ...refresh?.importMap },
+      dev,
+    });
+    await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
+  } finally {
+    await fold.cleanup();
+    await refresh?.cleanup();
+  }
+}
+
+/**
  * Bundle the SPA entry and extract its stylesheet. Writes the entry bundle (+ split
  * chunks) into `clientDir` as `index.js`, and — when the app has CSS reachable from the
  * entry graph — `index.css`.
@@ -209,16 +289,19 @@ export async function bundleSpaInto(
   dev = false,
 ): Promise<{ hasStyles: boolean }> {
   const spa = paths.config!.spa!;
-  const css = await spaCss(paths, entryPath, minify);
+  const cssRoots = await spaCssRoots(paths, entryPath);
+  const css = await spaCss(paths, cssRoots, minify);
   // Auto-detect which reconciler-seam runtimes the entry must install. Class components default
   // ON for SPA (an explicit `classComponents:false` opts out) — a compat SPA bundles npm deps
   // that can render class components, which a source scan wouldn't see. `<Activity>`/
   // `<ViewTransition>` are denext-only APIs the app itself must name, so a source scan detects
   // them precisely (and keeps their runtimes out of a bundle that never uses them).
-  const [activity, viewTransition] = await Promise.all([
+  const [scannedActivity, viewTransition] = await Promise.all([
     appUsesActivity(paths.projectDir, [entryPath]),
     appUsesViewTransition(paths.projectDir, [entryPath]),
   ]);
+  // React Native mode's Expo Router navigators keep hidden stack screens in an `Activity`.
+  const activity = scannedActivity || reactNativeOptions(paths.config) !== null;
   // The opt-out seed is an import, not a statement: `main.tsx` is imported statically and may
   // call `createRoot` while it evaluates, before any statement of this entry has run.
   const entrySource = momentumScrollSeedImport(momentumSafeScrollEnabled(paths.config)) +
@@ -226,7 +309,13 @@ export async function bundleSpaInto(
       toFileUrl(entryPath).href,
       dev,
       paths.instrumentationClientPath,
-      { classComponents: paths.config?.classComponents ?? true, activity, viewTransition },
+      {
+        classComponents: paths.config?.classComponents ?? true,
+        activity,
+        viewTransition,
+        expoRouterLinks: await usesExpoRouter(paths),
+        reactNative: reactNativeOptions(paths.config) !== null,
+      },
     );
   // React Native mode needs the esbuild path (its resolver and loaders live there).
   const compat = reactNativeOptions(paths.config) !== null || await detectNextCompat(paths);
@@ -242,18 +331,10 @@ export async function bundleSpaInto(
   if (compat) {
     await bundleCompatSpa(paths, entrySource, clientDir, css, minify, dev);
   } else {
-    // denext-native path: plain `deno bundle` (fast, no esbuild). The app already
-    // imports denext directly, so there is no react alias to rewrite.
-    const bundle = await bundleSourceFiles(entrySource, {
-      configPath: paths.configPath,
-      minify,
-      importMap: css?.importMap,
-      dev,
-    });
-    await writeBundleOutput(clientDir, bundle, ENTRY_FILE);
+    await bundleNativeSpa(paths, entrySource, clientDir, css, minify, dev);
   }
   if (!css) return { hasStyles: false };
-  const text = await extractRouteCss([entryPath], css);
+  const text = await extractRouteCss(cssRoots, css);
   if (text.trim().length === 0) return { hasStyles: false };
   await Deno.writeTextFile(join(clientDir, STYLE_FILE), text);
   return { hasStyles: true };

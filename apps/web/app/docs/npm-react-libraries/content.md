@@ -238,6 +238,14 @@ as an expectation, not a claim, and smoke-test the one you pick.
   mode is off, or the library was resolved outside the aliased graph. Set
   `compatibilityMode: true` and confirm `node_modules/react` exists.
 - `deno check` reports `@types/react` conflicts — set `skipLibCheck: true`.
+- A library's props type-check as missing (virtua's `style` / `className` on
+  `VList`) — its `.d.ts` reads the **global** `React` namespace that
+  `@types/react` declares (`React.HTMLAttributes<…>`), which denext's types do
+  not declare (JSR refuses a package that changes global types). Declare it in
+  the app: a `react-global.d.ts` holding `export type * from "react";` and
+  `export as namespace React;`, listed in `deno.json` as
+  `"compilerOptions": { "types": ["./react-global.d.ts"] }`. Type-only; nothing
+  ships.
 - `WorkspaceDiscoverError(ConfigNotWorkspaceMember)` — the app sits inside
   another Deno workspace; give it `"workspace": []`.
 

@@ -103,7 +103,8 @@ Deno.test("L9: a page response varies on the soft-nav header", async () => {
   const app = appWith();
   const res = await app(new Request("http://localhost/"));
   await res.text();
-  assertEquals(res.headers.get("vary"), "x-denext-nav");
+  // …and on Accept-Encoding: the page is a compressible type (response compression).
+  assertEquals(res.headers.get("vary"), "x-denext-nav, Accept-Encoding");
 });
 
 Deno.test("M1: a dynamic (cookies-reading) page is uncacheable by a shared cache", async () => {
@@ -130,7 +131,7 @@ Deno.test("M1: a static page is not marked no-store", async () => {
   const res = await app(new Request("http://localhost/"));
   await res.text();
   assertEquals(res.headers.get("cache-control"), null);
-  assertEquals(res.headers.get("vary"), "x-denext-nav"); // unchanged for static pages
+  assertEquals(res.headers.get("vary"), "x-denext-nav, Accept-Encoding"); // no Cookie
 });
 
 Deno.test("an app-set header overrides the default", async () => {

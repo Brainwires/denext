@@ -4,11 +4,12 @@
 // Two targets, both baseline-gated exactly like the React catalog (a frozen real-side
 // snapshot + a known-gaps ledger; see `../diff.ts` / `../waivers.ts`):
 //
-//   • react-native — NAME-LEVEL runtime parity. EXPECTED = the `react-native` package's
-//     own bundled `.d.ts` export names (pinned to T3's version); ACTUAL = the RUNTIME
-//     exports of `react-native-web` (`Object.keys` of its ESM namespace), which is exactly
-//     what `src/build/react-native.ts` aliases `react-native` to (see `./runtime.ts`). The
-//     gate flags react-native runtime values that the alias does not provide at runtime.
+//   • react-native — names + members. EXPECTED = the `react-native` package's own bundled
+//     `.d.ts` export names and object members (pinned to T3's version); ACTUAL = what an app
+//     gets: `export * from "react-native"` built with React Native mode's plugins over the
+//     pinned `react-native-web` (overlay, entry additions and all), its export names from the
+//     build's metafile and each export's runtime members (see `./bundle.ts`). The gate flags
+//     react-native runtime values, and members of them, that the bundle does not provide.
 //
 //   • expo — driven by `src/expo/manifest.ts` (`EXPO_SHIMS`). For each shim, denext's
 //     `denext/expo/<name>` file (`src/expo/<name>.ts`) is diffed against the pinned
@@ -30,8 +31,25 @@ export const REACT_NATIVE_PACKAGE = "react-native";
 export const REACT_NATIVE_PIN = "0.86.3";
 /** The package `src/build/react-native.ts` aliases every `react-native` import to (ACTUAL runtime). */
 export const REACT_NATIVE_WEB_PACKAGE = "react-native-web";
-/** The pinned react-native-web whose runtime namespace is the ACTUAL surface (see runtime.ts). */
+/** The pinned react-native-web the ACTUAL bundle is built over (see bundle.ts). */
 export const REACT_NATIVE_WEB_PIN = "0.21.2";
+
+/**
+ * The APIs react-native-web's compatibility table marks as a "Mock" ("no equivalent web APIs")
+ * or "Not started" (https://necolas.github.io/react-native-web/docs/react-native-compatibility/).
+ * React Native mode's shell overlay (`RN_OVERLAY_EXPORTS` in `src/build/react-native.ts`) must
+ * back every one of them with a denext implementation; `check.ts` fails when one is left mocked.
+ */
+export const REACT_NATIVE_WEB_MOCKS: readonly string[] = [
+  "AccessibilityInfo",
+  "Alert",
+  "BackHandler",
+  "I18nManager",
+  "Keyboard",
+  "KeyboardAvoidingView",
+  "RefreshControl",
+  "StatusBar",
+];
 
 /** EXPECTED-side target: `react-native` ↔ the `react-native` package's own bundled types. */
 export const REACT_NATIVE_EXPECTED_TARGET: RealTarget = {
@@ -135,5 +153,11 @@ const DIR = "scripts/parity/native/baselines";
 export const rnBaselinePath = (root: string) => `${root}/${DIR}/react-native.baseline.json`;
 /** Frozen per-expo-package surface baseline. */
 export const expoBaselinePath = (root: string) => `${root}/${DIR}/expo.baseline.json`;
-/** The native known-gaps ledger (react-native + expo). */
+/**
+ * Frozen `react-native-windows` / `react-native-macos` surface baseline (their pins live in
+ * `src/react-native/desktop-manifest.ts`; see `./desktop.ts`).
+ */
+export const desktopBaselinePath = (root: string) =>
+  `${root}/${DIR}/react-native-desktop.baseline.json`;
+/** The native known-gaps ledger (react-native + desktop + expo). */
 export const knownGapsPath = (root: string) => `${root}/${DIR}/known-gaps.json`;

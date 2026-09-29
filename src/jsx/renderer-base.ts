@@ -46,7 +46,7 @@ type Props = Record<string, unknown>;
  * caught the signal in a buffered render (see {@link VNodeRenderer.resolveHoleSignal}).
  * Private to the renderers: `useContext` looks contexts up by their own ids.
  */
-const SIGNAL_BOUNDARY: unique symbol = Symbol("denext.signalBoundary");
+const SIGNAL_BOUNDARY: unique symbol = /* @__PURE__ */ Symbol("denext.signalBoundary");
 
 /**
  * The hole replacement for a `redirect()`/`permanentRedirect()` thrown inside a streamed

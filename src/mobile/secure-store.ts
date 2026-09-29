@@ -7,13 +7,41 @@
  */
 
 import { nativePlugin } from "./plugin.ts";
+import { isNativeShell } from "./bridge.ts";
+import { authenticateBiometric } from "./biometrics.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
+
+/** Options for {@linkcode SecureStore.set}. */
+export interface SecureStoreSetOptions {
+  /**
+   * Gate every later `get` of this value behind {@linkcode authenticateBiometric} (Face ID /
+   * Touch ID / fingerprint; `denext mobile add biometrics`). On iOS the item is also stored
+   * "when passcode set, this device only": it is not backed up or migrated, and it is deleted
+   * if the passcode is removed. **The gate is enforced by denext's code, not by the Keychain
+   * item:** the secure-storage plugin has no biometric access control, so native code in the
+   * app could still read it. Default `false`.
+   */
+  readonly requireBiometric?: boolean;
+}
+
+/** Options for {@linkcode SecureStore.get}. */
+export interface SecureStoreGetOptions {
+  /** The prompt's reason when the value is biometric-gated (default "Unlock a saved secret"). */
+  readonly reason?: string;
+  /** Accept the device passcode too for a biometric-gated value (default `false`). */
+  readonly allowDeviceCredential?: boolean;
+}
 
 /** The store {@linkcode secureStore} implements. */
 export interface SecureStore {
-  /** The value stored under `key`, or `null` when there is none. */
-  get(key: string): Promise<string | null>;
+  /**
+   * The value stored under `key`, or `null` when there is none. A value stored with
+   * `requireBiometric` asks for biometrics first and rejects with a `BiometricError` when the
+   * user is not verified (always on the web, which has no biometrics).
+   */
+  get(key: string, options?: SecureStoreGetOptions): Promise<string | null>;
   /** Store `value` under `key`, replacing any earlier value. */
-  set(key: string, value: string): Promise<void>;
+  set(key: string, value: string, options?: SecureStoreSetOptions): Promise<void>;
   /** Remove `key` (a missing key is not an error). */
   delete(key: string): Promise<void>;
 }
@@ -41,6 +69,13 @@ interface SecureStoragePlugin {
 const NATIVE_PREFIX = "capacitor-storage_";
 /** `KeychainAccess.whenUnlocked`, the plugin's default. */
 const WHEN_UNLOCKED = 0;
+/** `KeychainAccess.whenPasscodeSetThisDeviceOnly`, for a biometric-gated value. */
+const WHEN_PASSCODE_SET_THIS_DEVICE_ONLY = 4;
+/**
+ * The prefix a biometric-gated value is stored with, so a later `get` knows to ask first. It
+ * starts with a NUL, which no ordinary string value is refused for except this exact prefix.
+ */
+const BIOMETRIC_PREFIX = "\u0000denext-biometric:";
 /** The web fallback's IndexedDB database and object store. */
 const DB_NAME = "denext-secure-store";
 const STORE = "kv";
@@ -54,11 +89,49 @@ function securePlugin(): SecureStoragePlugin | undefined {
   ]);
 }
 
+/** Whether the not-secret fallback has been reported this session (once is enough). */
+let warnedNativeFallback = false;
+
+/**
+ * Warn ONCE when a native shell (iOS/Android) has no secure-storage plugin: the IndexedDB fallback
+ * is the web's not-secret store, and inside the app it would silently hold refresh tokens in
+ * WebView storage. The web itself stays quiet (the fallback is documented there).
+ */
+function warnNativeFallback(): void {
+  if (warnedNativeFallback || !isNativeShell()) return;
+  warnedNativeFallback = true;
+  console.warn(
+    "denext: secureStore is running in the native shell WITHOUT the secure-storage plugin " +
+      "(`denext mobile add secure-store`); values fall back to WebView IndexedDB, which is NOT secret.",
+  );
+}
+
 /** Refuse an empty or non-string key (the native plugin rejects one too). */
 function checkKey(fn: string, key: string): void {
   if (typeof key !== "string" || key === "") {
     throw new TypeError(`secureStore.${fn}: the key must be a non-empty string`);
   }
+}
+
+/** `value` with its biometric prefix removed after the user is verified, else `value`. */
+async function ungated(value: string | null, options: SecureStoreGetOptions | undefined) {
+  if (value === null || !value.startsWith(BIOMETRIC_PREFIX)) return value;
+  await authenticateBiometric({
+    reason: options?.reason ?? "Unlock a saved secret",
+    allowDeviceCredential: options?.allowDeviceCredential === true,
+  });
+  return value.slice(BIOMETRIC_PREFIX.length);
+}
+
+/** The stored form of `value`: prefixed when biometric-gated; refuses a value that looks gated. */
+function stored(value: string, options: SecureStoreSetOptions | undefined): string {
+  if (options?.requireBiometric === true) return BIOMETRIC_PREFIX + value;
+  if (value.startsWith(BIOMETRIC_PREFIX)) {
+    throw new TypeError(
+      "secureStore.set: the value starts with denext's reserved biometric prefix",
+    );
+  }
+  return value;
 }
 
 /** A request's result, as a promise. */
@@ -113,11 +186,19 @@ async function withStore<T>(
  *   unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the
  *   plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same
  *   entries.
+ * - Inside a Deno Desktop window (`denext desktop add secure-store`), the OS keychain: the
+ *   macOS Keychain or libsecret, through the desktop runtime. Windows is not supported yet:
+ *   there the capability fails closed (a real error, never the plaintext web fallback).
  * - **On the web it is NOT secret.** The fallback is a plain IndexedDB database
  *   (`denext-secure-store`) that any script on the origin, and anyone with the device's
  *   browser profile, can read. It keeps a web build working; it does not protect anything.
  *
  * Values are strings: `JSON.stringify` anything else.
+ *
+ * `set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /
+ * Touch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a
+ * `BiometricError` when the user is not verified, including always on the web. The gate is in
+ * denext's code, not in the Keychain item (see {@linkcode SecureStoreSetOptions}).
  *
  * @example
  * ```ts
@@ -129,37 +210,46 @@ async function withStore<T>(
  * ```
  */
 export const secureStore: SecureStore = {
-  async get(key: string): Promise<string | null> {
+  async get(key: string, options?: SecureStoreGetOptions): Promise<string | null> {
     checkKey("get", key);
+    const desktop = onDesktop() && await viaDesktop("secureStore", (d) => d.secureGet(key), true);
+    if (desktop) return await ungated(desktop.value, options);
     const plugin = securePlugin();
     if (plugin) {
       const { data } = await plugin.internalGetItem({
         prefixedKey: NATIVE_PREFIX + key,
         sync: false,
       });
-      return typeof data === "string" ? data : null;
+      return await ungated(typeof data === "string" ? data : null, options);
     }
+    warnNativeFallback();
     const value = await withStore("readonly", (s) => s.get(key));
-    return typeof value === "string" ? value : null;
+    return await ungated(typeof value === "string" ? value : null, options);
   },
-  async set(key: string, value: string): Promise<void> {
+  async set(key: string, value: string, options?: SecureStoreSetOptions): Promise<void> {
     checkKey("set", key);
     if (typeof value !== "string") {
       throw new TypeError("secureStore.set: the value must be a string (JSON.stringify it)");
     }
+    const data = stored(value, options);
+    if (onDesktop() && await viaDesktop("secureStore", (d) => d.secureSet(key, data), true)) return;
     const plugin = securePlugin();
     if (plugin) {
       return await plugin.internalSetItem({
         prefixedKey: NATIVE_PREFIX + key,
-        data: value,
+        data,
         sync: false,
-        access: WHEN_UNLOCKED,
+        access: options?.requireBiometric === true
+          ? WHEN_PASSCODE_SET_THIS_DEVICE_ONLY
+          : WHEN_UNLOCKED,
       });
     }
-    await withStore("readwrite", (s) => s.put(value, key));
+    warnNativeFallback();
+    await withStore("readwrite", (s) => s.put(data, key));
   },
   async delete(key: string): Promise<void> {
     checkKey("delete", key);
+    if (onDesktop() && await viaDesktop("secureStore", (d) => d.secureDelete(key), true)) return;
     const plugin = securePlugin();
     if (plugin) {
       await plugin.internalRemoveItem({ prefixedKey: NATIVE_PREFIX + key, sync: false });

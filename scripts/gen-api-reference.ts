@@ -35,9 +35,32 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/live", file: `${ROOT}src/live.ts` },
   { module: "denext/lazy", file: `${ROOT}src/lazy.ts` },
   { module: "denext/desktop", file: `${ROOT}src/build/desktop.ts` },
+  { module: "denext/desktop/updater", file: `${ROOT}src/desktop/updater.ts` },
+  { module: "denext/desktop/client", file: `${ROOT}src/desktop/client.ts` },
   { module: "denext/mobile", file: `${ROOT}src/mobile/mod.ts` },
+  { module: "denext/navigation", file: `${ROOT}src/navigation/mod.ts` },
+  { module: "denext/virtual-masonry", file: `${ROOT}src/virtual-masonry.ts` },
+  { module: "denext/feature", file: `${ROOT}src/feature.ts` },
   { module: "denext/cli/command", file: `${ROOT}src/cli/command.ts` },
+  ...(await expoEntries()),
 ];
+
+/**
+ * The `denext/expo/*` shims (React Native mode), one entry per module, read from
+ * `deno.json`'s `exports` so a new shim is documented without editing this list. They come
+ * last and in export-map order; the docs site lists them in their own section.
+ */
+async function expoEntries(): Promise<{ module: string; file: string }[]> {
+  const cfg = JSON.parse(await Deno.readTextFile(`${ROOT}deno.json`)) as {
+    exports: Record<string, string>;
+  };
+  return Object.entries(cfg.exports)
+    .filter(([key]) => key.startsWith("./expo/"))
+    .map(([key, file]) => ({
+      module: `denext/${key.slice(2)}`,
+      file: `${ROOT}${file.replace(/^\.\//, "")}`,
+    }));
+}
 
 interface Param {
   name: string;
@@ -333,7 +356,10 @@ function symbolEntry(name: string, decl: Decl): Symbol {
 
 const groups: Group[] = [];
 for (const { module, file } of ENTRIES) {
-  groups.push({ module, symbols: await docFor(file) });
+  const symbols = await docFor(file);
+  // An Expo shim mirrors an `expo-*` package's API, so its exports have an upstream to read.
+  if (module.startsWith("denext/expo/")) { for (const s of symbols) s.denextOnly = false; }
+  groups.push({ module, symbols });
 }
 
 await Deno.mkdir(new URL(".", `file://${OUT}`).pathname, { recursive: true });

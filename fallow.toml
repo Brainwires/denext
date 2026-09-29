@@ -12,6 +12,12 @@
 # so that false positive doesn't block the commit gate. Each IS declared in deno.json —
 # verify against deno.json's `imports` before adding a new entry.
 ignoreDependencies = [
+  # React Native e2e fixtures import these community packages; RN mode aliases them to
+  # denext implementations at build time, so there is no package.json entry to read.
+  "@expo/vector-icons",
+  "react-native-fast-image",
+  "react-native-maps",
+  "react-native-video",
   "@mdx-js/mdx", # deno.json: npm:@mdx-js/mdx@^3 — MDX compilation on the compat build
   "esbuild", # deno.json: npm:esbuild@^0.24.0 — the compat/SPA bundler
   "@std/http", # deno.json: jsr:@std/http@^1.0.0 — std HTTP (file-server, etc.)
@@ -34,10 +40,26 @@ ignoreDependencies = [
   "zod", # examples/openapi/deno.json: npm:zod@^4 (defineApi schemas → OpenAPI via Standard JSON Schema)
   "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json
   "@tanstack/react-router", # examples/tanstack-router/package.json: installed into that example's manual node_modules
+  # examples/scroll-bench/web/package.json: the list libraries the scroll bench compares, installed
+  # into that app's manual node_modules (`react-native` resolves to react-native-web through
+  # denext's `reactNative: true` mode).
+  "@legendapp/list",
+  "@tanstack/react-virtual",
+  "virtua",
+  "react-native",
+  "react-native-web", # scroll-bench's rnw-flatlist-rnw imports react-native-web's vendored FlatList
   "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
   "tailwindcss", # examples/tailwind/styles/tailwind.css `@import "tailwindcss"` (Tailwind CLI)
+  # tests/e2e/fixtures/reanimated/package.json: installed into the e2e's temp copy of the fixture
+  "react-native-reanimated",
+  "react-native-gesture-handler",
+  # tests/e2e/fixtures/rn-desktop installs these itself (the desktop RN alias smoke).
+  "react-native-macos",
+  "react-native-windows",
+  # tests/e2e/fixtures/rn-expo-router installs it itself (the Expo Router navigators e2e).
+  "expo-router",
   # per-directory package.json / test-written import maps — see the note below the list
   "@radix-ui/react-dialog",
   "@radix-ui/react-collapsible",
@@ -114,9 +136,20 @@ entry = [
   # TanStack Router file-based routes (examples/tanstack-router): every module under
   # src/routes/ is wired by the generated src/routeTree.gen.ts (the TanStack Router CLI).
   "examples/tanstack-router/src/routes/**",
+  # React Native mode's community-package stand-ins: prebuilt runtime entries
+  # (`denext/react-native-compat/<name>`, src/build/react-native-aliases.ts) that an app reaches by
+  # importing the npm package they stand in for, so each export is that package's public API
+  # (the `src/expo/*` shims are entry points through deno.json's exports).
+  "src/react-native-compat/*.ts",
   # SPA mode: the entry (and worker) named by `spa.entry` in denext.config.ts.
   "**/src/main.tsx",
   "**/src/worker.ts",
+  # The Expo Router e2e fixture: its `spa.entry` and the routes React Native mode's generated
+  # `expo-router/_ctx` imports from app/ (Metro's require.context, which fallow cannot see).
+  "tests/e2e/fixtures/rn-expo-router/index.web.ts",
+  "tests/e2e/fixtures/rn-expo-router/app/**",
+  "tests/e2e/fixtures/rn-expo-router-ui/index.web.ts",
+  "tests/e2e/fixtures/rn-expo-router-ui/app/**",
   # Static assets served verbatim from public/ (fallow analyzes the .css files there), and
   # the Tailwind source stylesheet named by `tailwind.input` in denext.config.ts.
   "**/public/**",
@@ -125,10 +158,13 @@ entry = [
   # scripts, per-example setup scripts, and the import-map alias target for better-sqlite3.
   "examples/*/serve.ts",
   "examples/native/desktop.ts",
+  "examples/rn-desktop/desktop.ts",
   "examples/native/capacitor.config.ts",
   "examples/native/scripts/*.ts",
   "examples/prisma/scripts/*.ts",
   "examples/spa/bench.ts",
+  # The scroll bench's image generator (`deno task images` in examples/scroll-bench).
+  "examples/scroll-bench/shared/gen-images.ts",
   "examples/drizzle/vendor/**",
   # The Next→denext dependency probes and drop-in verifier: user-run tools documented in
   # https://denext.dev/docs/migrating (§1) (`deno run -A examples/next-compat-feasibility/probe-*.ts`).
@@ -167,13 +203,36 @@ ignorePatterns = [
   # (`deno task routes`) and `denext openapi types` output; their exported helper types are
   # for consumers, never imported here. Regenerated, never hand-edited.
   "examples/**/*.gen.ts",
+  # The React Native twin of the scroll benchmark: a self-contained Metro/npm project (its own
+  # package.json + node_modules, bundled by Metro, entry index.js via AppRegistry) that
+  # fallow cannot model. examples/scroll-bench/{web,shared,harness} stay analyzed.
+  "examples/scroll-bench/native/**",
+  # The Expo app (examples/expo-app): Expo's own `expo-template-default` (SDK 57) migrated with
+  # `denext migrate --from expo`, plus its self-test screens. Its routes are reached through
+  # the `expo-router/_ctx` context React Native mode generates from src/app/ (Metro's
+  # require.context, which fallow cannot see), its packages come from its own node_modules, and
+  # the template's code is upstream's, kept as shipped so the example tests the migrator.
+  "examples/expo-app/**",
+  # The scroll bench's device and browser drivers: `harness/measure.ts` drives an Android
+  # emulator over adb and `harness/web-smoke.ts` headless Chromium. Every function is I/O
+  # against a device/browser, untestable without one, so CRAP-on-zero-coverage is noise
+  # there. Their pure parts (harness/parse.ts, harness/matrix.ts) stay analyzed and tested.
+  "examples/scroll-bench/harness/measure.ts",
+  "examples/scroll-bench/harness/web-smoke.ts",
+  # harness/ssr-measure.ts drives the server-rendered list bench in headless Chromium (CDP I/O
+  # only; its pure parts live in harness/ssr-report.ts, which stays analyzed and tested).
+  "examples/scroll-bench/harness/ssr-measure.ts",
 ]
 
 # Loaded with `await import("./dev-proxy.ts")` only when `spa.proxy` is configured (it pulls
 # the npm `ws` relay, which the SPA/desktop servers must not load otherwise) and then called
 # through the module namespace (`proxy.proxyToBackend(...)`), which the static graph cannot
 # attribute to the export. Seeding the file as a runtime root credits its exports.
-dynamicallyLoaded = ["src/build/dev-proxy.ts"]
+#
+# The scroll bench's web list impls are loaded with `lazy(() => import("./<impl>.tsx"))`
+# (examples/scroll-bench/web/src/impls/index.ts), one chunk per list library; their default
+# exports are reached through that dynamic import.
+dynamicallyLoaded = ["src/build/dev-proxy.ts", "examples/scroll-bench/web/src/impls/*.tsx"]
 
 # DOM interface members implemented by the fake-DOM test doubles (tests/helpers/dom.ts,
 # src/testing/dom.ts). The framework invokes them through `Element`/`Node`/`Document`-typed

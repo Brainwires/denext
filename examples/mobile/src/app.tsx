@@ -4,11 +4,13 @@
 import { useState } from "denext";
 import {
   type DeepLinkEvent,
+  type LocalNotificationTap,
   type PushNotification,
   type PushTap,
   runtimePlatform,
   type SharedContent,
   useDeepLink,
+  useLocalNotificationTapped,
   usePushReceived,
   usePushTapped,
   useQuickAction,
@@ -20,6 +22,7 @@ import { Inbound } from "./sections/inbound.tsx";
 import { IosExtras } from "./sections/ios-extras.tsx";
 import { Ota } from "./sections/ota.tsx";
 import { navigate, usePathname } from "./ui.tsx";
+import { V211_SCREENS, V211List } from "./v211/index.tsx";
 
 /** The last thing each inbound channel delivered. */
 export interface Inbox {
@@ -28,6 +31,7 @@ export interface Inbox {
   pushTapped?: PushTap;
   quickAction?: string;
   shared?: SharedContent;
+  localTap?: LocalNotificationTap;
 }
 
 function useInbox(): Inbox {
@@ -46,6 +50,8 @@ function useInbox(): Inbox {
     }
   });
   useShareReceived((shared) => put({ shared }));
+  // A tapped local notification whose data has `path` routes there, as a push tap does.
+  useLocalNotificationTapped((localTap) => put({ localTap }));
   return inbox;
 }
 
@@ -69,6 +75,9 @@ export function App() {
   const path = usePathname();
   const inbox = useInbox();
   const detail = /^\/detail\/([^/]+)$/.exec(path);
+  // The 2.11 demo screens (and /selftest) take the whole viewport.
+  const screen = V211_SCREENS[path];
+  if (screen) return screen(inbox);
   return (
     <main>
       <header>
@@ -79,6 +88,7 @@ export function App() {
       </header>
       {detail ? <Detail id={decodeURIComponent(detail[1])} /> : (
         <>
+          <V211List />
           <Basics />
           <Files />
           <Inbound inbox={inbox} />

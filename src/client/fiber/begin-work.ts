@@ -25,7 +25,8 @@ import { toError } from "../../runtime/error-boundary.ts";
 import { normalizeChildren } from "../vnode-utils.ts";
 import { propsAndContextEqual, providerContexts } from "../context-map.ts";
 import { isClassComponent } from "../../compat/class-detect.ts";
-import { type Fiber, NoLane, type SuspenseListState } from "./fiber.ts";
+import { LIBRARY_ELEMENT } from "../../runtime/library-elements.ts";
+import { type Fiber, NoLane, Rendered, type SuspenseListState } from "./fiber.ts";
 import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
 import { renderLanes } from "./scheduler.ts";
 
@@ -56,7 +57,14 @@ function canSkipComponentRender(
       current.inherited,
       wip.inherited,
       current.readContexts,
-    );
+    ) &&
+    // An element third-party code created keeps React's bailout: skipped only when its props
+    // are the very object it rendered (its parent did not re-render), unless it is a memo()
+    // (React's memo object carries `compare`).
+    // Only component elements are marked, so `type` is a function or an object here.
+    (current.vnode.props === wip.vnode.props ||
+      (wip.vnode as unknown as Record<symbol, unknown>)[LIBRARY_ELEMENT] !== true ||
+      "compare" in (wip.vnode.type as object));
 }
 
 /**
@@ -99,6 +107,7 @@ function beginComponent(wip: Fiber, hasOwnUpdate: boolean): Fiber | null {
   wip.contexts = wip.inherited;
   const rendered = renderComponent(wip);
   wip.didRender = true; // this fiber re-ran its render → its hook baselines need promotion at commit
+  wip.flags |= Rendered; // …and lets the commit's flag reset prune clean subtrees
   if (__DENEXT_CLASS_COMPONENTS__ && wip.bailed) {
     // shouldComponentUpdate/PureComponent bailed. Like the function bailout,
     // still descend into children that have their own pending work, so a

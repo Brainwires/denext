@@ -4,6 +4,7 @@
 
 import type { AppConfig, RequestHandler } from "./app-config.ts";
 import type { RequestContext } from "./request-context.ts";
+import type { CorsPolicy } from "./cors.ts";
 import type { RequestErrorContext } from "./instrumentation.ts";
 import {
   type CompiledPattern,
@@ -45,6 +46,10 @@ export interface AppRuntime {
   rules(): CompiledRules;
   /** The app's own handler; the ISR background regeneration loops back through it. */
   handle: RequestHandler;
+  /** The app-level CORS policy (`config.cors`, resolved at `createApp`), or `null` for none. */
+  cors?: CorsPolicy | null;
+  /** The `appLinks` association-file handler (`null` for a request it does not answer). */
+  appLinks?: (request: Request) => Response | null;
 }
 
 /** The mutable routing state of one request as it moves through the pipeline. */

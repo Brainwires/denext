@@ -1,5 +1,15 @@
 :root {
   color-scheme: light dark;
+  /* Design tokens: every size, radius and accent below comes from here. */
+  --text-xl: 1.5rem;
+  --text-lg: 1.1rem;
+  --text-sm: 0.85rem;
+  --text-xs: 0.8rem;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --accent: #2563eb;
+  --on-accent: white;
   font-family: system-ui, -apple-system, sans-serif;
 }
 
@@ -21,25 +31,25 @@ main {
 
 h1 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: var(--text-xl);
 }
 
 h2 {
   margin: 0 0 8px;
-  font-size: 1.1rem;
+  font-size: var(--text-lg);
 }
 
 .card {
   margin: 12px 0;
   padding: 12px;
   border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
 }
 
 .note,
 .label {
   margin: 4px 0 8px;
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
   opacity: 0.7;
 }
 
@@ -56,7 +66,7 @@ input,
 select {
   font: inherit;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
 }
 
 input:not([type="checkbox"]) {
@@ -81,8 +91,8 @@ input:not([type="checkbox"]) {
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
-  font-size: 0.8rem;
-  border-radius: 8px;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, CanvasText 8%, transparent);
 }
 
@@ -90,5 +100,162 @@ input:not([type="checkbox"]) {
   max-width: 100%;
   max-height: 240px;
   margin-top: 8px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
+}
+
+/* denext 2.11 demo screens */
+.screen {
+  box-sizing: border-box;
+  padding: calc(var(--denext-safe-top, 0px) + 4px) var(--denext-safe-right, 0px)
+    0
+    var(--denext-safe-left, 0px);
+}
+
+.screen-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 4px 12px;
+}
+
+.todo {
+  margin: 4px 12px 8px;
+  font-size: var(--text-xs);
+  opacity: 0.75;
+}
+
+.screen-body {
+  padding: 0 12px calc(var(--denext-safe-bottom, 0px) + 24px);
+}
+
+.v211-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.v211-list > button {
+  text-align: left;
+}
+
+.list-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.sticky-head {
+  box-sizing: border-box;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, CanvasText 12%, Canvas);
+}
+
+.bubble {
+  max-width: 75%;
+  margin: 4px 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, CanvasText 10%, transparent);
+  word-break: break-word;
+}
+
+.bubble.mine {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.kb-readout {
+  padding: 0 12px 6px;
+  font-size: var(--text-xs);
+}
+
+.kb-readout button {
+  padding: 2px 8px;
+}
+
+button[aria-pressed="true"] {
+  font-weight: 700;
+  outline: 2px solid var(--accent);
+}
+
+/* A full-height screen: head, then a column whose `.fill` part takes the rest (in the flow,
+   so it always starts below whatever is above it, however tall that is). */
+.screen-fill {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.screen-col {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.screen-col > * {
+  flex: none;
+}
+
+.inset-bottom {
+  padding-bottom: var(--denext-safe-bottom, 0px);
+}
+
+.fill {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fill > * {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* Compact button rows: one line, scrolled sideways when they do not fit. */
+.btn-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.btn-row::-webkit-scrollbar {
+  display: none;
+}
+
+.btn-row > * {
+  flex: none;
+}
+
+.btn-row button {
+  padding: 4px 10px;
+  font-size: var(--text-sm);
+}
+
+.pad-x {
+  margin: 0;
+  padding: 0 12px 8px;
+}
+
+.bottom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 12px var(--denext-safe-bottom, 0px);
+  font-size: var(--text-xs);
+  background: color-mix(in srgb, var(--accent) 20%, Canvas);
+  border-top: 2px solid var(--accent);
 }

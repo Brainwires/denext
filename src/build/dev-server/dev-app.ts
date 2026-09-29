@@ -154,6 +154,8 @@ export function createDevApp(st: DevState): RequestHandler {
     hsts: paths.config?.hsts,
     apiBatch: paths.config?.apiBatch,
     apiMaxBodyBytes: paths.config?.apiMaxBodyBytes,
+    cors: paths.config?.cors,
+    appLinks: paths.config?.appLinks,
     // canonicalOrigin / trustForwardedHeaders / requestTimeout / maxConcurrency /
     // slotBackstop / actionMaxBodyBytes / cacheKeyParams — config, else their env vars.
     ...resolveServerOptions(paths.config),

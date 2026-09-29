@@ -34,7 +34,11 @@ export const SPA_DEV_RELOAD = `(function(){
       l.parentNode.insertBefore(n, l.nextSibling);
     })(links[i]);
   }
+  // When the last hot update was applied: a VirtualList that a hot update remounts restores
+  // its scroll position (dev-only, src/client/virtual/dev-restore.ts).
+  function markHmr(){ window.__denextHmrAt = Date.now(); }
   function refresh(){
+    markHmr();
     try {
       var s = document.querySelector('script[type=module][src*="${CLIENT_PREFIX}"]');
       if (!s) return reload();
@@ -53,6 +57,7 @@ export const SPA_DEV_RELOAD = `(function(){
     // Per-module HMR (unbundled SPA): re-import ONLY the changed accept-boundary
     // module(s), cache-busted (same-origin guard), then trigger the reconciler's
     // family-current substitution. Any failure falls back to a full reload.
+    markHmr();
     var urls; try { urls = JSON.parse(json); } catch (_) { return reload(); }
     if (!urls || !urls.length) return reload();
     Promise.all(urls.map(function(u){

@@ -63,6 +63,17 @@ async function routeKeys(root: string, dir = root): Promise<string[]> {
 }
 
 /**
+ * The absolute paths of the route modules the generated context imports for the app at
+ * `projectDir` (empty when it has no route directory).
+ *
+ * @param projectDir The app directory.
+ */
+export async function expoRouterRouteFiles(projectDir: string): Promise<string[]> {
+  const root = await expoRouterRoot(projectDir);
+  return root ? (await routeKeys(root)).map((key) => join(root, key.slice(2))) : [];
+}
+
+/**
  * The generated `expo-router/_ctx` module for the routes under `root`.
  *
  * @param root The route directory (absolute).

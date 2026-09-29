@@ -29,6 +29,11 @@ import {
   isExpoBridgeImport,
 } from "./expo-shims.ts";
 import {
+  communityRuntimeEntries,
+  communityRuntimeFiles,
+  isCommunityBridgeImport,
+} from "./react-native-aliases.ts";
+import {
   isSqliteWasmBridgeImport,
   registerSqliteWasmBridge,
   SQLITE_WASM_BRIDGE,
@@ -60,6 +65,7 @@ import { resolveOnBehalf } from "./esbuild-resolve.ts";
 import { withOptimizedPackageImports } from "./optimize-package-imports.ts";
 import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
 import { googleFontsPlugin } from "./google-fonts-plugin.ts";
+import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -86,6 +92,28 @@ export const REACT_ALIASES: Record<string, string> = {
   "react/jsx-runtime": "jsx-runtime.js",
   "react/jsx-dev-runtime": "jsx-runtime.js",
 };
+
+/**
+ * The react-family specifiers an importer inside `node_modules` gets instead: denext's React
+ * and JSX runtime whose elements keep React's re-render semantics (a library written for React
+ * may rely on a child re-rendering whenever its parent does; `src/runtime/library-elements.ts`).
+ */
+const LIBRARY_REACT_ALIASES: Readonly<Record<string, string>> = {
+  "react": "react-lib.js",
+  "react/jsx-runtime": "jsx-runtime-lib.js",
+  "react/jsx-dev-runtime": "jsx-runtime-lib.js",
+};
+
+/**
+ * The prebuilt runtime file third-party code gets for `spec`: its library variant when
+ * `importer` is inside `node_modules` and there is one, else undefined.
+ *
+ * @param spec The react-family specifier.
+ * @param importer The importing module's path.
+ */
+export function libraryReactFile(spec: string, importer: string): string | undefined {
+  return /[\\/]node_modules[\\/]/.test(importer) ? LIBRARY_REACT_ALIASES[spec] : undefined;
+}
 
 /**
  * `next/*` specifiers rewritten to denext's compat modules → prebuilt entry file.
@@ -146,6 +174,10 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "react-dom-test-utils": u("src/compat/test-utils.ts"),
     "react-is": u("src/compat/react-is.ts"),
     "jsx-runtime": u("src/jsx/jsx-runtime.ts"),
+    // What `react` and the JSX runtime are for importers inside node_modules (see
+    // LIBRARY_REACT_ALIASES): the same instance, with library elements recorded.
+    "react-lib": u("src/compat/react-lib.ts"),
+    "jsx-runtime-lib": u("src/jsx/jsx-runtime-lib.ts"),
     // The SSR renderer must come from the SAME prebuilt graph as the aliased
     // react, or the server renders with a different dispatcher than the app's
     // components use.
@@ -169,6 +201,11 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "feature": u("src/feature.ts"),
     // `denext/mobile` — the Capacitor-shell client runtime; shares the one hooks instance.
     "mobile": u("src/mobile/mod.ts"),
+    // `denext/navigation` — StackLayout / TabsLayout / Sheet; client components whose hooks
+    // must share the one instance (React Native mode's navigator adapters import it too).
+    "navigation": u("src/navigation/mod.ts"),
+    // `denext/virtual-masonry` — VirtualMasonry; shares the one hooks instance.
+    "virtual-masonry": u("src/virtual-masonry.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
     "next-index": u("src/compat/next/index.ts"),
@@ -190,6 +227,14 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     // The `denext/expo/*` shims (`expo-<name>`): React Native mode aliases `expo-*` to them,
     // and their hooks must share the one denext instance, as `denext/mobile`'s do.
     ...expoRuntimeEntries(u),
+    // React Native mode's shell overlay (`denext/react-native`): the react-native-web modules
+    // it replaces re-export from it (see react-native.ts), and its hooks share this instance.
+    "react-native": u("src/react-native/mod.ts"),
+    // React Native mode's FlashList / LegendList shims (see react-native-lists.ts).
+    "react-native-flash-list": u("src/react-native/flash-list.ts"),
+    "react-native-legend-list": u("src/react-native/legend-list.ts"),
+    // React Native mode's community-package stand-ins (see react-native-aliases.ts).
+    ...communityRuntimeEntries(u),
   };
 }
 
@@ -296,7 +341,8 @@ function expoBridgeExternalPlugin(): esbuild.Plugin {
       build.onResolve(
         { filter: /react-native\.ts$/ },
         (args) =>
-          isExpoBridgeImport(args.path, args.importer)
+          isExpoBridgeImport(args.path, args.importer) ||
+            isCommunityBridgeImport(args.path, args.importer)
             ? { path: EXPO_RN_BRIDGE, external: true }
             : null,
       );
@@ -358,7 +404,17 @@ export interface BundleNextCompatOptions {
  * import-map shim redirect) are left to the deno-loader by returning null.
  */
 /** Extensions probed when resolving an extensionless relative/alias import. */
-const SOURCE_EXTS = [".tsx", ".ts", ".jsx", ".js", ".mjs", ".cjs", ".json", ".mdx", ".md"];
+export const SOURCE_EXTS: readonly string[] = [
+  ".tsx",
+  ".ts",
+  ".jsx",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".json",
+  ".mdx",
+  ".md",
+];
 
 /**
  * The extension list to probe with `platformExtensions` (React Native's `.web.tsx`, …) tried
@@ -556,7 +612,7 @@ export function resolveReactFamilyFile(spec: string): { file: string; warning?: 
  * denext's own client/SSR/jsx specifiers, aliased to the SAME prebuilt graph so the
  * generated route entry shares the one denext instance.
  */
-const DENEXT_RUNTIME_FILES: Record<string, string> = {
+export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/ssr": "ssr.js",
   "denext/ssr-stream": "ssr-stream.js",
   "denext/client": "client.js",
@@ -567,12 +623,20 @@ const DENEXT_RUNTIME_FILES: Record<string, string> = {
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
   "denext/mobile": "mobile.js",
+  "denext/navigation": "navigation.js",
+  "denext/virtual-masonry": "virtual-masonry.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
   "denext/remix": "remix.js",
   // The `denext/expo/*` shims (see expo-shims.ts).
   ...expoRuntimeFiles(),
+  // React Native mode's shell overlay (see react-native.ts).
+  "denext/react-native": "react-native.js",
+  "denext/react-native/flash-list": "react-native-flash-list.js",
+  "denext/react-native/legend-list": "react-native-legend-list.js",
+  // React Native mode's community-package stand-ins (see react-native-aliases.ts).
+  ...communityRuntimeFiles(),
 };
 
 /**
@@ -626,6 +690,8 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // react-family bare specifiers → prebuilt runtime file, in our namespace.
       const filter = /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$/;
       build.onResolve({ filter }, (args) => {
+        const lib = libraryReactFile(args.path, args.importer);
+        if (lib) return runtimeFile(lib);
         const { file, warning } = resolveReactFamilyFile(args.path);
         return { ...runtimeFile(file), warnings: warning ? [{ text: warning }] : undefined };
       });
@@ -1984,6 +2050,9 @@ export async function bundleNextCompatModules(
     // re-exports from `"sideEffects": false` deps.
     treeShaking: true,
     metafile: analyze,
+    // `denext export --sourcemaps hidden`: external maps (no sourceMappingURL comment) for the
+    // browser bundle, moved out of the web root by the export (hidden-sourcemaps.ts).
+    ...(!deno && hiddenSourceMapsEnabled() ? { sourcemap: "external" as const } : {}),
     jsx: "automatic",
     jsxImportSource: "react",
     absWorkingDir: options.absWorkingDir,

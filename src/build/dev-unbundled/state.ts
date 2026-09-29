@@ -37,6 +37,8 @@ export const DEP_ENTRYPOINTS: Record<string, string> = {
   "denext_feature": "src/feature.ts",
   // The Capacitor-shell client runtime — imported only from "use client" modules.
   "denext_mobile": "src/mobile/mod.ts",
+  // VirtualMasonry — a client-only subpath of its own (VirtualList users bundle none of it).
+  "denext_virtual-masonry": "src/virtual-masonry.ts",
 };
 
 /** denext runtime specifiers → their prebuilt runtime file (compat client graph). */
@@ -51,6 +53,7 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
   "denext/mobile": "mobile.js",
+  "denext/virtual-masonry": "virtual-masonry.js",
 };
 
 /** The URL slug for a bare `denext`/`denext/x` specifier (matches DEP_ENTRYPOINTS keys). */
@@ -71,9 +74,13 @@ export function norm(p: string): string {
   }
 }
 
-/** esbuild loader for a source path's extension (default tsx — permissive for JSX). */
-export function loaderFor(path: string): esbuild.Loader {
+/**
+ * esbuild loader for a source path's extension (default tsx — permissive for JSX). With
+ * `jsxInJs` (React Native mode) a `.js` module parses as JSX, as Metro's Babel preset does.
+ */
+export function loaderFor(path: string, jsxInJs = false): esbuild.Loader {
   if (path.endsWith(".ts")) return "ts";
+  if (jsxInJs && path.endsWith(".js")) return "jsx";
   if (path.endsWith(".js") || path.endsWith(".mjs") || path.endsWith(".cjs")) return "js";
   if (path.endsWith(".json")) return "json";
   if (path.endsWith(".jsx")) return "jsx";
@@ -120,6 +127,41 @@ export interface UnbundledDevOptions {
    * app entry by its `@fs` URL — so a SPA's component edits hot-swap per-module too.
    */
   spaEntry?: string;
+  /**
+   * SPA mode: the reconciler-seam installs (`installClassSupport()`, …) the SPA entry runs
+   * before the app's entry module, as the bundled SPA entry does (`supportInstall` in spa/shared.ts).
+   */
+  spaInstall?: string;
+  /**
+   * Compile-time `define` entries applied to every first-party module (React Native's
+   * `__DEV__` / `global` / `process.env.EXPO_OS`, the SPA's `import.meta.env`).
+   */
+  define?: Record<string, string>;
+  /**
+   * React Native mode (`reactNative` in the config): the app's own modules are served per
+   * module with `.web.*` probed first and `.js` parsed as JSX, and every package import is
+   * served from one dependency bundle built through React Native mode's resolvers (see
+   * `./react-native.ts`).
+   */
+  reactNative?: ReactNativeDevOptions;
+  /**
+   * React Native mode: called when the dependency bundle is rebuilt under a live page (a new
+   * package or name was imported). A page holding the previous bundle's modules must reload
+   * rather than load a second copy of a package next to them.
+   */
+  onDepsRebuilt?: () => void;
+}
+
+/** What React Native mode adds to the unbundled loop (from `reactNativeBundleOptions`). */
+export interface ReactNativeDevOptions {
+  /** The react-native → react-native-web resolvers, run inside the dependency bundle. */
+  plugins: esbuild.Plugin[];
+  /** Extensions probed ahead of the defaults (`.web.tsx`, …). */
+  platformExtensions: readonly string[];
+  /** The dependency bundle's own `define` entries. */
+  define: Record<string, string>;
+  /** Resolve every bare package from `node_modules` (the app's `nodeResolve`). */
+  resolveAllNodeModules?: boolean;
 }
 
 /** Everything the unbundled dev stages share for one project. */
@@ -153,6 +195,17 @@ export interface UnbundledState {
   runtimeBuilt: Promise<void> | null;
   mergedConfigPath: string | null;
   aliasPrefixes: Array<[string, string]> | null;
+  /**
+   * React Native: the names the app's modules import from each package specifier, so the
+   * dependency bundle's entry for it can re-export them (CommonJS packages included).
+   */
+  readonly npmNames: Map<string, Set<string>>;
+  /** React Native: the specifier + names signature the current dependency bundle was built for. */
+  npmBuiltSig: string | null;
+  /** Bumped on every batch of edits: the app's import graph may have changed. */
+  graphEpoch: number;
+  /** React Native: the {@link graphEpoch} the dependency bundle was last checked against. */
+  npmCheckedEpoch: number;
 }
 
 /** Create the shared state for one project (dirs under `<outDir>/dev-unbundled/`). */
@@ -176,6 +229,10 @@ export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState 
     runtimeBuilt: null,
     mergedConfigPath: null,
     aliasPrefixes: null,
+    npmNames: new Map(),
+    npmBuiltSig: null,
+    graphEpoch: 0,
+    npmCheckedEpoch: -1,
   };
 }
 

@@ -31,13 +31,21 @@ function moduleName(module: string): string {
   return module.replace(/^\.\//, "").replace(/\.ts$/, "");
 }
 
-/** An `expo` or `expo-*` specifier, split into package and subpath. */
-const EXPO_SPECIFIER = /^(expo(?:-[a-z0-9-]+)?)(?:\/(.+))?$/;
+/**
+ * An `expo`, `expo-*` or `@expo/<name>` specifier, split into package and subpath. A scoped
+ * package (`@expo/ui`) is shimmed per subpath (`@expo/ui/swift-ui`), never as a whole.
+ */
+const EXPO_SPECIFIER = /^(expo(?:-[a-z0-9-]+)?|@expo\/[a-z0-9-]+)(?:\/(.+))?$/;
+
+/** The scope prefix a scoped Expo package's shim name drops (`@expo/ui` → `ui`). */
+const EXPO_SCOPE = "@expo/";
 
 /**
  * The `denext/expo/<name>` name of a manifest entry: the module's file name for a package
  * (`expo-haptics` → `haptics`), the package's name plus the subpath for a subpath entry
- * (`expo-file-system/legacy` → `file-system/legacy`).
+ * (`expo-file-system/legacy` → `file-system/legacy`,
+ * `expo-auth-session/providers/google` → `auth-session/providers/google`), and the unscoped
+ * package name plus the subpath for a scoped one (`@expo/ui/swift-ui` → `ui/swift-ui`).
  *
  * @param key The manifest key (`"expo-haptics"`, `"expo-file-system/legacy"`).
  * @returns The name, or null when the key is not in the manifest.
@@ -46,6 +54,11 @@ export function expoShimName(key: string): string | null {
   const shim = Object.hasOwn(EXPO_SHIMS, key) ? EXPO_SHIMS[key] : undefined;
   if (!shim) return null;
   const [, pkg, sub] = EXPO_SPECIFIER.exec(key) ?? [];
+  if (pkg?.startsWith(EXPO_SCOPE)) {
+    return sub === undefined
+      ? pkg.slice(EXPO_SCOPE.length)
+      : `${pkg.slice(EXPO_SCOPE.length)}/${sub}`;
+  }
   if (sub === undefined || !Object.hasOwn(EXPO_SHIMS, pkg)) return moduleName(shim.module);
   return `${moduleName(EXPO_SHIMS[pkg].module)}/${sub}`;
 }
@@ -85,14 +98,14 @@ export function expoRuntimeFiles(): Record<string, string> {
 }
 
 /** The esbuild filter for {@linkcode expoShimSpecifier}'s candidates. */
-export const EXPO_FILTER: RegExp = /^expo(?:-[a-z0-9-]+)?(?:\/.+)?$/;
+export const EXPO_FILTER: RegExp = /^(?:expo(?:-[a-z0-9-]+)?|@expo\/ui)(?:\/.+)?$/;
 
 /**
  * The `denext/expo/<name>` specifier an `expo-*` import is aliased to, or null when the
  * package (or that subpath of it) has no shim and resolves normally.
  *
  * @param spec The import specifier (`"expo-haptics"`, `"expo/fetch"`,
- *   `"expo-file-system/legacy"`).
+ *   `"expo-file-system/legacy"`, `"@expo/ui/swift-ui"`).
  * @returns The shim specifier, or null.
  */
 export function expoShimSpecifier(spec: string): string | null {

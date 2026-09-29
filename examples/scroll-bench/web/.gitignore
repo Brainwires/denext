@@ -1,0 +1,11 @@
+# npm packages for the list libraries and the Capacitor shell (npm install recreates them)
+node_modules/
+
+# denext build output and the static export Capacitor bundles
+.denext/
+out/
+
+# Gradle build output (android/.gitignore covers the rest, including the web assets
+# `cap sync` copies into the native project)
+android/build/
+android/app/build/

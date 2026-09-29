@@ -139,12 +139,21 @@ Every path is relative to `basePath` (default `/auth`).
 | `/mfa/enroll`         | POST        | Start a TOTP enrollment: `{ secret, uri }`. A complete session must have signed in recently, else `403 reauth_required`.                                             |
 | `/mfa/confirm`        | POST        | Confirm the enrollment; the backup codes come back once.                                                                                                             |
 | `/mfa/disable`        | POST        | Remove the factor, given a fresh second factor.                                                                                                                      |
+| `/native/authorize`   | GET         | Native session mode: start a sign-in for an app (PKCE `S256` challenge, registered `redirect_uri`). See [App backend](/docs/app-backend).                            |
+| `/native/complete`    | GET         | Where that sign-in lands: a one-time code to the app's redirect URI, only for a sign-in made after `/native/authorize` began.                                        |
+| `/native/token`       | POST        | Code + verifier → bearer access token + rotating refresh token; or rotate a refresh token. A replayed refresh token revokes its session family.                      |
+| `/native/revoke`      | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                |
+| `/native/nonce`       | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                              |
+| `/native/:provider`   | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                 |
+| `/account/delete`     | POST        | Delete the signed-in user (cookie, same-origin; or a native bearer). Needs a recent sign-in, else `403 reauth_required`. Revokes Sign in with Apple tokens.          |
 
 A row claims only its own verb, so `GET {basePath}/reset` and `GET {basePath}/mfa` fall
 through to your app — that is where a reset link and `pages.mfa` can land. The account rows
 exist only when the adapter can run them — `/verify` and `/reset*` need the
 verification-token group (`/reset*` also `setCredential`), `/mfa*` the whole MFA group —
-and are otherwise a plain 404, like `/tokens`.
+and are otherwise a plain 404, like `/tokens`. The `/native/*` rows exist only with a `native`
+config (and an adapter with the native session group), and `/account/delete` only with an
+adapter that implements `deleteUser`.
 
 `examples/auth` is a runnable app with adapter-backed credentials sign-in (scrypt-hashed
 passwords in `node:sqlite`, no `authorize`), the rate-limited login, revocable sessions and
@@ -1184,6 +1193,38 @@ the first request, so an API whose auth could never succeed fails where it is wr
 `listApiTokens(config, userId)` and `revokeApiToken(config, id)` are the programmatic
 half; records carry `tokenHash`, so redact before sending a list anywhere.
 
+## Native apps and account deletion
+
+An app whose WebView can't carry the `__Host-` cookie — a Capacitor shell at
+`capacitor://localhost` calling `https://api.example.com` — uses **native session mode**:
+
+```ts
+denextAuth({
+  // …
+  adapter: sqliteAuthAdapter({ path: "auth.db" }), // needs the native session group
+  native: {
+    redirectUris: ["com.example.app://auth/callback"], // exact match
+    refreshTokenMaxAge: 90 * 86_400, // optional: sign in again after 90 days, however active
+    apple: { clientIds: ["com.example.app"], clientSecret: () => appleClientSecretJwt() },
+    google: { clientIds: [IOS_CLIENT_ID, WEB_CLIENT_ID] },
+  },
+  onAccountDeleted: async ({ user }) => await db.deleteEverythingOf(user.id),
+});
+```
+
+The app signs in through a system browser sheet (`openAuthSession`) and receives a one-time
+code at its redirect URI, or sends a native Apple / Google sheet's `id_token`; either way it
+gets a short-lived bearer access token (`nat_…`) and a rotating refresh token (`nrt_…`).
+`auth()`, `requireAuth()` and `requireSession()` accept that bearer as a session (it never
+slides and sets no cookie); the `/tokens` and `/mfa*` endpoints still read the cookie only.
+`revokeAllSessions(userId)`, a password reset and a pre-account-hijacking eviction end the
+native sessions too. `POST {basePath}/account/delete` deletes the signed-in user after a
+recent sign-in, revoking their Sign in with Apple tokens.
+
+The whole flow — CORS for the app's origin, the client helper `nativeSession()`,
+`createApiClient({ base, auth })`, the id_token checks and deletion — is on
+[App backend](/docs/app-backend).
+
 ## Client
 
 ```tsx
@@ -1420,8 +1461,22 @@ client migration, or electing a single leader tab for a shared connection.
   read only the cookie, so a bearer token can neither step up nor enroll.
 - **Pre-account hijacking.** A first magic-link or code sign-in into an account whose
   address was never verified retires everything set up without that proof — the password,
-  any TOTP factor and backup codes, bearer tokens and server-side sessions — before marking
-  it verified.
+  any TOTP factor and backup codes, bearer tokens, server-side sessions and native app
+  sessions — before marking it verified.
+- **Native sessions.** The one-time code is hashed at rest, bound to the registered
+  redirect URI and a PKCE `S256` challenge, lives 60 seconds (`codeTtl`) and gets one try; it is
+  minted only for a sign-in made after `/native/authorize` began, so a lingering browser
+  session can't be handed to whatever app started the flow. Access tokens are HMAC-signed
+  under their own MAC domain and re-checked against their session family on every request,
+  so a revoked family stops at once. A replayed refresh token (an older generation with a
+  valid MAC) revokes its whole family; a forged one (bad MAC) is refused without touching
+  it. Two opt-ins adjust this: `native.refreshTokenMaxAge` caps a family absolutely from its
+  sign-in (default none), and `native.refreshReuseInterval` (default `0`, at most 60 seconds)
+  lets the immediately previous refresh token re-fetch the same pair shortly after its
+  rotation, for apps whose refreshes can race — at the cost of missing a replay inside that
+  window. The native POSTs take no ambient credential, so a request with no `Origin` (a native
+  HTTP client) passes, while a present `Origin` must be this app or one the `cors` config
+  allows, and `"null"` never is. See [App backend](/docs/app-backend#security).
 
 The [security posture guide](/docs/security) maps every Next.js, React and next-auth /
 Auth.js CVE class against denext's own implementation, with a live parity test suite.
@@ -1441,7 +1496,11 @@ What the first-party auth layer still does not do — the full ledger is
   every authenticator app supports.
 - **No QR renderer.** `enrollTotp` returns the `otpauth://` URI; render it with a library
   of your choice or show the secret for manual entry (`totpQrSvg` is planned for 2.6).
-- **No `response_mode=form_post` callback**, so Apple is `openid`-only.
+- **No `response_mode=form_post` callback**, so the web `apple()` provider is `openid`-only.
+  A native app gets the email through the native sheet's `id_token` instead
+  (`POST {basePath}/native/apple`).
+- **Deleting an account can't end stateless cookie sessions on other devices** — they
+  reference a user that no longer exists until they expire. Run a `sessionStore`.
 - **A GET spends a magic link**, so a mail gateway that pre-fetches links can burn one —
   prefer `emailOtp()` where link scanners are common.
 - **Rotating `secret` invalidates the one-time codes in flight**: they are keyed under the

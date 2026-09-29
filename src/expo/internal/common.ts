@@ -43,6 +43,36 @@ export function nativeOnly(pkg: string, name: string): Error {
   );
 }
 
+/**
+ * Expo's `UnavailabilityError` (code `ERR_UNAVAILABLE`): what a shim throws for a call that
+ * has no implementation on this platform, as the Expo package does on a platform without it.
+ *
+ * @param pkg The package (`"expo-application"`).
+ * @param name The call (`"getAndroidId"`).
+ * @param why Where it is available, or what to use instead.
+ */
+export function unavailable(pkg: string, name: string, why: string): Error & { code: string } {
+  return Object.assign(
+    new Error(`denext/expo: ${pkg}'s ${name} is not available here. ${why}`),
+    { code: "ERR_UNAVAILABLE" },
+  );
+}
+
+/**
+ * The pixel size of the image at `url` (through an image element), or zeros when it cannot
+ * be loaded here.
+ */
+export function measureImage(url: string): Promise<{ width: number; height: number }> {
+  const ImageCtor = (globalThis as { Image?: new () => HTMLImageElement }).Image;
+  if (!ImageCtor) return Promise.resolve({ width: 0, height: 0 });
+  return new Promise((resolve) => {
+    const img = new ImageCtor();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 0, height: 0 });
+    img.src = url;
+  });
+}
+
 /** A permission's state, as `expo-modules-core` reports it. */
 export enum PermissionStatus {
   /** The user granted it. */

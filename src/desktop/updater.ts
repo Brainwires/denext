@@ -41,6 +41,7 @@ import {
   sha256Hex,
 } from "../mobile/ota-manifest.ts";
 import { parseOtaPublicKey } from "../build/ota-signing.ts";
+import { env, osDataDir } from "./app-dirs.ts";
 
 /** The signed manifest format the feed serves, shared with mobile OTA (`denext/mobile`). */
 export type { OtaManifest, OtaManifestFile } from "../mobile/ota-manifest.ts";
@@ -197,34 +198,14 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Read an env var (trying the lowercase spelling too), or undefined without permission. */
-function env(name: string): string | undefined {
-  try {
-    return Deno.env.get(name) ?? Deno.env.get(name.toLowerCase()) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The user's home directory (best effort). */
-function homeDir(): string {
-  return env("HOME") ?? env("USERPROFILE") ?? ".";
-}
-
-/** The default OS app-support data dir for `appId`. */
-// fallow-ignore-next-line complexity -- per-OS path helper; branches not unit-tested, CRAP is coverage-estimated
+/**
+ * The default OS app-support data dir for `appId`: the shared per-OS data root ({@link osDataDir})
+ * plus `ui-updates`. Unchanged from when the per-OS logic lived here (byte-identical) — it now
+ * delegates so the app-support layout has one source; `tests/desktop-app-dirs.test.ts` pins the
+ * resolved directory for each OS.
+ */
 function defaultDataDir(appId: string): string {
-  const os = Deno.build.os;
-  if (os === "darwin") {
-    return join(homeDir(), "Library", "Application Support", appId, "ui-updates");
-  }
-  if (os === "windows") {
-    const appData = env("APPDATA") ?? join(homeDir(), "AppData", "Roaming");
-    return join(appData, appId, "ui-updates");
-  }
-  const xdg = env("XDG_DATA_HOME");
-  const base = xdg && xdg.trim() ? xdg : join(homeDir(), ".local", "share");
-  return join(base, appId, "ui-updates");
+  return join(osDataDir(appId), "ui-updates");
 }
 
 /** The resolved data dir for `config`. */
@@ -298,15 +279,36 @@ async function removeDir(path: string): Promise<void> {
   await Deno.remove(path, { recursive: true }).catch(() => {});
 }
 
-/** Whether `versions/<version>/index.html` exists (a "good" overlay dir). */
-async function versionDirIfGood(dir: string, version: string): Promise<string | null> {
+/**
+ * RE-VERIFY an active overlay at LAUNCH, then return its dir (or `null` to fall back to the bundled
+ * export). The applied overlay keeps its signed manifest at `versions/<version>/<OTA_MANIFEST_PATH>`,
+ * so this recomputes the signature + integrity and every file's SHA-256 FROM DISK — invariant 1
+ * again, on EVERY boot, not only at apply. So an overlay tampered with after it was applied — a page
+ * or a bug that wrote into the overlay directory despite the reserved-path guard, whatever the
+ * configured `dataDir` — is NEVER served: it cannot persist an injected script across relaunches or
+ * outlive a signed update. The cost is one hash per overlay file at startup (a UI export is small).
+ */
+async function verifyOverlay(
+  dir: string,
+  version: string,
+  publicKey: string,
+): Promise<string | null> {
   const vdir = versionDir(dir, version);
+  const manifest = await readJson(join(vdir, OTA_MANIFEST_PATH), isOtaManifest);
+  if (!manifest || manifest.version !== version) return null;
   try {
-    await Deno.stat(join(vdir, "index.html"));
-    return vdir;
+    await assertVerified(manifest, publicKey); // integrity + signature, re-checked every launch
+    for (const file of manifest.files) {
+      const src = safeJoin(vdir, file.path);
+      if (!src) return null;
+      const bytes = await Deno.readFile(src).catch(() => null);
+      if (!bytes || (await sha256Hex(bytes)) !== file.sha256) return null;
+    }
   } catch {
-    return null;
+    return null; // any signature/integrity/hash failure → do not serve the overlay
   }
+  // The runtime serves index.html as the shell; require it (normally a manifest file too).
+  return (await Deno.stat(join(vdir, "index.html")).then(() => true, () => false)) ? vdir : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -732,15 +734,16 @@ async function rollback(dir: string, pointer: Pointer): Promise<void> {
   }
 }
 
-/** Roll `pointer` back and serve the resulting good overlay (or the bundle). */
+/** Roll `pointer` back and serve the resulting overlay (re-verified) or the bundle. */
 async function rollbackAndServe(
   dir: string,
   pointer: Pointer,
   bundledOut: string,
+  publicKey: string,
 ): Promise<string> {
   await rollback(dir, pointer);
   const rolled = await readPointer(dir);
-  return rolled ? (await versionDirIfGood(dir, rolled.version)) ?? bundledOut : bundledOut;
+  return rolled ? (await verifyOverlay(dir, rolled.version, publicKey)) ?? bundledOut : bundledOut;
 }
 
 /**
@@ -761,23 +764,23 @@ export async function resolveDesktopUiDir(
   const pointer = await readPointer(dir);
   if (!pointer) return bundledOut;
 
-  // Confirmed pointer: no trial in progress — serve its overlay (or the bundle if it's gone).
+  // Confirmed pointer: no trial in progress — serve its overlay (re-verified) or the bundle.
   if (!pointer.pending) {
     await removeFile(bootingPath(dir));
-    return (await versionDirIfGood(dir, pointer.version)) ?? bundledOut;
+    return (await verifyOverlay(dir, pointer.version, config.publicKey)) ?? bundledOut;
   }
 
   // A marker for this pending version means a previous launch already tried it and never
   // confirmed → it failed to boot. Roll back.
   const marker = await readBooting(dir);
   if (marker && marker.version === pointer.version) {
-    return await rollbackAndServe(dir, pointer, bundledOut);
+    return await rollbackAndServe(dir, pointer, bundledOut, config.publicKey);
   }
 
-  // First trial launch: arm the watchdog marker and serve the pending overlay (roll back if its
-  // dir vanished).
-  const served = await versionDirIfGood(dir, pointer.version);
-  if (!served) return await rollbackAndServe(dir, pointer, bundledOut);
+  // First trial launch: arm the watchdog marker and serve the pending overlay (re-verified; roll
+  // back if it is missing or fails re-verification).
+  const served = await verifyOverlay(dir, pointer.version, config.publicKey);
+  if (!served) return await rollbackAndServe(dir, pointer, bundledOut, config.publicKey);
   await writeJsonAtomic(bootingPath(dir), { version: pointer.version } satisfies BootMarker);
   return served;
 }

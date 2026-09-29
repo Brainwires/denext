@@ -28,6 +28,7 @@ import {
   capacitorConfigSource,
   capacitorIdentity,
   capacitorTasks,
+  expoApiUsage,
   type ExpoAppConfig,
   expoConfigScript,
   type ExpoDependencyReport,
@@ -369,6 +370,12 @@ export interface ExpoMigrateInfo {
   missingPackages: string[];
   /** Module resolution the app's Metro config adds (the denext build does not run it). */
   metro: MetroResolution;
+  /**
+   * The React Native desktop packages the app depends on (`react-native-macos`,
+   * `react-native-windows`). One is written as `reactNative.desktopPackage`; with both the
+   * choice is left commented in the config.
+   */
+  desktopPackages: readonly string[];
 }
 
 async function readJson(path: string): Promise<Record<string, unknown> | null> {
@@ -1768,6 +1775,11 @@ function spaConfigSource(o: {
   rootId?: string;
   /** React Native mode (`reactNative: true`: an Expo / React Native app). */
   reactNative?: boolean;
+  /**
+   * The React Native desktop packages the app depends on: one becomes
+   * `reactNative: { desktopPackage }`; both leave `reactNative: true` with the choice commented.
+   */
+  desktopPackages?: readonly string[];
   /** Write `spa.precompress: false` (a Capacitor shell never loads `.gz` siblings). */
   noPrecompress?: boolean;
 }): string {
@@ -1794,7 +1806,7 @@ function spaConfigSource(o: {
     `export default {\n` +
     `  mode: "spa",\n` +
     `  compatibilityMode: true,\n` +
-    (o.reactNative ? `  reactNative: true,\n` : "") +
+    (o.reactNative ? reactNativeConfigLines(o.desktopPackages ?? []) : "") +
     // The Vite app ran React Compiler (auto-memoization); enable denext's own auto-memo
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
@@ -1820,6 +1832,28 @@ function spaConfigSource(o: {
       : "") +
     `  },\n` +
     `} satisfies DenextConfig;\n`;
+}
+
+/**
+ * The `reactNative` line(s) of a generated config. A React Native macOS / Windows app imports
+ * `react-native` (Metro resolves it to the desktop package), so one desktop package becomes
+ * `desktopPackage`, which does the same for the app's source; with both, the choice is left
+ * commented (one web build takes one flavor).
+ */
+function reactNativeConfigLines(desktopPackages: readonly string[]): string {
+  if (desktopPackages.length === 1) {
+    return `  // The app's \`react-native\` imports resolve as ${
+      desktopPackages[0]
+    } (as Metro does).\n` +
+      `  reactNative: { desktopPackage: ${JSON.stringify(desktopPackages[0])} },\n`;
+  }
+  if (desktopPackages.length > 1) {
+    return `  reactNative: true,\n` +
+      `  // Pick the desktop flavor the app's \`react-native\` imports resolve as:\n` +
+      desktopPackages.map((p) => `  // reactNative: { desktopPackage: ${JSON.stringify(p)} },\n`)
+        .join("");
+  }
+  return `  reactNative: true,\n`;
 }
 
 /** The generated stylesheet beside a Tailwind input: `./src/styles.css` → `./src/styles.gen.css`. */
@@ -1962,9 +1996,15 @@ function spaDesktopSource(): string {
     `// window (run \`deno task export\` first, or \`deno task desktop\`).\n` +
     `// Backend reverse proxy: set \`spa.proxy\` in denext.config.ts (e.g. to reach a\n` +
     `// local server same-origin so its session cookies persist).\n` +
-    `import { runDesktop } from "denext/desktop";\n` +
+    `import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";\n` +
     `import config from "./denext.config.ts";\n\n` +
-    `await runDesktop({ importMetaUrl: import.meta.url, proxy: config.spa?.proxy });\n`;
+    `await runDesktop({\n` +
+    `  importMetaUrl: import.meta.url,\n` +
+    `  proxy: config.spa?.proxy,\n` +
+    `  // Serve the enabled desktop.capabilities (denext desktop add <cap>); without this spread\n` +
+    `  // every bridge call answers \`unavailable\` and \`denext desktop add\` has no runtime effect.\n` +
+    `  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),\n` +
+    `});\n`;
 }
 
 /**
@@ -2370,6 +2410,9 @@ function spaMigrateResult(
 
 // ── Expo / React Native migration (React Native mode + a Capacitor shell) ─────
 
+/** The React Native desktop packages `reactNative.desktopPackage` can name. */
+const RN_DESKTOP_PACKAGES = ["react-native-macos", "react-native-windows"] as const;
+
 /** An Expo app: `expo` is a dependency, with an app config or React Native beside it. */
 async function isExpoApp(dir: string, deps: Record<string, string>): Promise<boolean> {
   if (!("expo" in deps)) return false;
@@ -2406,6 +2449,7 @@ async function migrateExpoProject(
   const config = await readExpoAppConfig(dir);
   const title = config.name ?? config.slug ?? (typeof pkg.name === "string" ? pkg.name : "App");
   const identity = capacitorIdentity(config, title);
+  const desktopPackages = RN_DESKTOP_PACKAGES.filter((p) => p in deps);
   const nodeModulesDir = manual ? "manual" : "auto";
   const written: string[] = [];
   if (entry.generated) {
@@ -2422,6 +2466,7 @@ async function migrateExpoProject(
     tailwind: null,
     head: expoConfigScript(config.runtimeConfig),
     reactNative: true,
+    desktopPackages,
     noPrecompress: true,
   };
   const configWritten = await writeIfWritable(
@@ -2478,7 +2523,7 @@ async function migrateExpoProject(
         { path: entry.generated.path, kind: entry.generated.kind },
       expoRouter: entry.expoRouter,
       capacitor: { ...identity, configWritten: capWritten },
-      mobile: expoMobilePlan(deps, config),
+      mobile: expoMobilePlan(deps, config, await expoApiUsage(dir)),
       // Runtime dependencies only: the dev toolchain never reaches the bundle.
       deps: await expoDependencyReport(
         dir,
@@ -2488,6 +2533,7 @@ async function migrateExpoProject(
       tailwindInput: tailwindInput ?? undefined,
       missingPackages,
       metro: await readMetroResolution(dir, deps),
+      desktopPackages,
     },
   };
 }

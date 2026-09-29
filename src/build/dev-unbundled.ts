@@ -39,6 +39,7 @@ import {
 } from "./dev-unbundled/entries.ts";
 import { handle } from "./dev-unbundled/handler.ts";
 import { onChange, propagate } from "./dev-unbundled/hmr.ts";
+import { reactNativeDepsInvalidated, seedReactNativeSpecs } from "./dev-unbundled/react-native.ts";
 import {
   createUnbundledState,
   type UnbundledDevOptions,
@@ -56,6 +57,7 @@ export type { UnbundledDevOptions } from "./dev-unbundled/state.ts";
  */
 export function createUnbundledDev(opts: UnbundledDevOptions) {
   const st: UnbundledState = createUnbundledState(opts);
+  if (opts.reactNative) seedReactNativeSpecs(st);
   return {
     /** Handle an unbundled dev request, or return null if the URL isn't ours. */
     handle: (_request: Request, url: URL, manifest: RouteManifest) => handle(st, url, manifest),
@@ -64,6 +66,20 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
     supportsRoute,
     serveFlightEntry: (boundary: BoundaryManifest) => serveFlightEntry(st, boundary),
     onChange: (changed: string[]) => onChange(st, changed),
+    /**
+     * Whether a batch of edits invalidates React Native mode's dependency bundle (a dependency
+     * manifest, an added or removed expo-router route): the caller reloads the page, which
+     * rebuilds it. Always false outside React Native mode.
+     */
+    depsInvalidated: (changed: string[]) => reactNativeDepsInvalidated(st, changed),
+    /**
+     * A framework source changed (denext run from a checkout): drop the denext pre-bundles, so
+     * the next page load rebuilds them from the edited sources.
+     */
+    invalidateFramework: (): void => {
+      st.depsBuilt = null;
+      st.runtimeBuilt = null;
+    },
     stop: async (): Promise<void> => {
       await esbuild.stop().catch(() => {});
     },
