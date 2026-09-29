@@ -2,7 +2,7 @@
 // Handlers are called directly with a fake DesktopCapCtx; the security-critical fs path-scoping
 // gets dedicated `..` / absolute / symlink-escape cases (the peer's e2e proves the wire).
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import type {
   DesktopCapability,
@@ -321,6 +321,32 @@ Deno.test("sqlite SECURITY: ATTACH / VACUUM INTO cannot reach a file outside the
   } finally {
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(outside, { recursive: true });
+  }
+});
+
+// CANARY: node:sqlite gives every error the same generic code ("ERR_SQLITE_ERROR", no errcode), so
+// the sqlite cap's guardSql keys the ATTACH→`forbidden` mapping off the MESSAGE text. Pin that
+// wording here: if a Deno/node:sqlite upgrade changes it, this fails loudly (and guardSql would
+// otherwise silently regress the ATTACH refusal to a generic `internal`).
+Deno.test("sqlite CANARY: node:sqlite refuses ATTACH with the wording guardSql keys off", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(":memory:");
+  const limits = (db as unknown as { limits?: Record<string, number> }).limits;
+  try {
+    assert(
+      limits && typeof limits === "object" && "attach" in limits,
+      "node:sqlite no longer exposes `limits.attach` — revisit confineDatabase()",
+    );
+    limits.attach = 0;
+    const err = assertThrows(() => db.exec("ATTACH DATABASE ':memory:' AS x")) as Error;
+    // guardSql matches "attached databas" (limits path) or "not authorized" (authorizer fallback).
+    const msg = err.message.toLowerCase();
+    assert(
+      msg.includes("attached databas") || msg.includes("not authorized"),
+      `node:sqlite ATTACH-refusal wording changed to "${err.message}" — update guardSql in sqlite.ts`,
+    );
+  } finally {
+    db.close();
   }
 });
 

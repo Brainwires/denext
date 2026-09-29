@@ -49,8 +49,14 @@ function badInput(message: string): DesktopCapError {
 /**
  * Run a SQLite call, mapping the confinement refusal ({@link confineDatabase}) to a specific
  * `forbidden` code instead of a generic `internal`: `ATTACH` / `VACUUM INTO` surfaces as an
- * attached-database-limit error (`limits.attach = 0`) or an authorizer denial ("not authorized"),
- * and the page deserves to see WHY. Other SQL errors (syntax, constraints) pass through unchanged.
+ * attached-database-limit error (`limits.attach = 0` → "too many attached databases") or an
+ * authorizer denial ("not authorized"), and the page deserves to see WHY. Other SQL errors (syntax,
+ * constraints) pass through unchanged.
+ *
+ * node:sqlite gives every SQLite error the same generic `code` ("ERR_SQLITE_ERROR") with no
+ * `errcode`/`errstr` (checked on Deno 2.9.7), so the only distinguisher is the message text. The
+ * "node:sqlite refuses ATTACH with the wording guardSql keys off" canary test pins that wording, so
+ * a Deno upgrade that changes it fails loudly rather than silently regressing this to `internal`.
  */
 function guardSql<T>(fn: () => T): T {
   try {
