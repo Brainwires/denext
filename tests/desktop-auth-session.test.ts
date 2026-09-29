@@ -213,10 +213,12 @@ Deno.test("injectDesktopGlobal: inserts the script with the token after <head>",
   const html =
     '<!doctype html><html><head><meta charset="utf-8"><title>x</title></head><body><div id="root"></div></body></html>';
   const out = await injectDesktopGlobal(html, "tok-123");
+  // The script opens with the __denext global (the window.close override follows in the same tag).
   assertStringIncludes(
     out,
-    `<script>globalThis.__denext={"desktop":true,"token":"tok-123","os":"${Deno.build.os}"}</script>`,
+    `<script>globalThis.__denext={"desktop":true,"token":"tok-123","os":"${Deno.build.os}"}`,
   );
+  assertStringIncludes(out, "window.close=function"); // the page-close→quit override
   // Injected immediately after the opening <head>, before the first meta.
   const scriptAt = out.indexOf("<script>globalThis.__denext");
   assert(scriptAt > out.indexOf("<head>"));
@@ -229,11 +231,15 @@ Deno.test("injectDesktopGlobal: adds the script's sha256 to a strict CSP meta's 
     `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}" />` +
     "<title>x</title></head><body></body></html>";
   const out = await injectDesktopGlobal(html, "tok-abc");
-  const body = `globalThis.__denext={"desktop":true,"token":"tok-abc","os":"${Deno.build.os}"}`;
+  // The injected script carries the __denext global plus the window.close override; the CSP hash
+  // must cover the WHOLE script body, so derive it from what was actually injected.
+  const body = out.match(/<script>([\s\S]*?)<\/script>/)![1];
+  assertStringIncludes(
+    body,
+    `globalThis.__denext={"desktop":true,"token":"tok-abc","os":"${Deno.build.os}"}`,
+  );
   const hash = `'sha256-${await sha256Base64(body)}'`;
-  // The injected script is present …
-  assertStringIncludes(out, `<script>${body}</script>`);
-  // … and the CSP meta's script-src now allows it by hash.
+  // The CSP meta's script-src now allows the injected script by hash.
   const metaContent = out.match(/content="([^"]*)"/)![1];
   assertStringIncludes(metaContent, `script-src 'self' ${hash}`);
 });
@@ -243,7 +249,7 @@ Deno.test("injectDesktopGlobal: no CSP meta ⇒ script injected, nothing to patc
   const out = await injectDesktopGlobal(html, "t");
   assertStringIncludes(
     out,
-    `<script>globalThis.__denext={"desktop":true,"token":"t","os":"${Deno.build.os}"}</script>`,
+    `<script>globalThis.__denext={"desktop":true,"token":"t","os":"${Deno.build.os}"}`,
   );
   assert(!out.includes("sha256-"));
 });

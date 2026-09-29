@@ -182,9 +182,10 @@ Deno.test("desktopBuildFlags: run/ffi/sys are baked exactly; read/env/net stay t
     "--allow-sys=osRelease",
     "--allow-run=security",
   ]);
-  // secure-store is unsupported on Windows → it bakes nothing there (baseline only).
+  // secure-store on Windows uses WinRT PasswordVault via powershell.exe (not on other OSes).
   assertEquals(desktopBuildFlags(caps({ secureStore: true }), "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
+    "--allow-run=powershell.exe",
   ]);
   // keep-awake's Windows backend is FFI, not a program.
   assertEquals(desktopBuildFlags(caps({ keepAwake: true }), "windows"), [
