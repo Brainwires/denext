@@ -1195,6 +1195,7 @@
     "defineDesktopExtension:function",
     "desktopBuildFlags:function",
     "desktopDevProxyDecision:function",
+    "desktopIncludeArgs:function",
     "desktopPackageFlags:function",
     "injectDesktopGlobal:function",
     "isDenoCliExecPath:function",

@@ -706,6 +706,66 @@ Deno.test("shell.openPath SECURITY: programs, scripts and launchers are refused 
   }
 });
 
+Deno.test("shell.openPath allowlist: openPathAllowExtensions re-allows specific extensions (safely)", async () => {
+  // Unit: the allow set removes an extension from the denylist — and ONLY that extension.
+  const allow = new Set(["sh", "py"]);
+  assert(isExecutableOpenTarget("/app/data/s.sh"), "sh is on the denylist by default");
+  assert(!isExecutableOpenTarget("/app/data/s.sh", undefined, allow), "sh opted back in");
+  assert(!isExecutableOpenTarget("/app/data/x.SH", undefined, allow), "case-insensitive");
+  assert(isExecutableOpenTarget("/app/data/x.bat", undefined, allow), "bat still refused");
+
+  if (OS === "windows") return; // the runtime cases below use Unix symlinks + exec bits
+  const root = await Deno.makeTempDir({ prefix: "denext-shell-allow-" });
+  try {
+    const spawned: string[][] = [];
+    const cap = shellCapability({
+      dirs: { data: root, cache: root, documents: root },
+      config: {
+        openExternal: [],
+        openPath: true,
+        reveal: true,
+        trash: false,
+        openPathAllowExtensions: ["sh"],
+      },
+      spawn: (_c, args) => {
+        spawned.push(args);
+        return Promise.resolve();
+      },
+    });
+    // An allowlisted .sh opens — even with the execute bit set (the user opted in for this ext).
+    await Deno.writeTextFile(join(root, "ok.sh"), "#!/bin/sh\necho hi\n");
+    await Deno.chmod(join(root, "ok.sh"), 0o755);
+    await call(cap, "openPath", { path: join(root, "ok.sh") });
+    assertEquals(spawned.length, 1);
+    // A NON-allowlisted script is still refused.
+    await Deno.writeTextFile(join(root, "no.py"), "print(1)");
+    await assertRejects(
+      () => call(cap, "openPath", { path: join(root, "no.py") }),
+      DesktopCapError,
+    );
+    // SAFETY: an allowlisted .sh that symlinks to a NON-allowlisted program is refused (the real
+    // target is checked too).
+    await Deno.writeTextFile(join(root, "run.bat"), "calc");
+    await Deno.symlink(join(root, "run.bat"), join(root, "trick.sh"));
+    await assertRejects(
+      () => call(cap, "openPath", { path: join(root, "trick.sh") }),
+      DesktopCapError,
+    );
+    // SAFETY: an allowlisted extension symlinked to an extension-less executable is still refused
+    // (the exec-bit guard keys off the resolved file, whose ext is not allowlisted).
+    await Deno.writeTextFile(join(root, "bin"), "#!/bin/sh\n");
+    await Deno.chmod(join(root, "bin"), 0o755);
+    await Deno.symlink(join(root, "bin"), join(root, "wrap.sh"));
+    await assertRejects(
+      () => call(cap, "openPath", { path: join(root, "wrap.sh") }),
+      DesktopCapError,
+    );
+    assertEquals(spawned.length, 1, "only the safe .sh opened");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 function shellFixture(config: Partial<Parameters<typeof shellCapability>[0]["config"]> = {}) {
   const spawned: Array<[string, string[]]> = [];
   const cap = shellCapability({
