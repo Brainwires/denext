@@ -4056,7 +4056,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 2.11.0-rc.1",
+          "signature": "VERSION: 3.0.0-rc.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -6471,8 +6471,8 @@
           "slug": "ExperimentalConfig",
           "kind": "interface",
           "signature": "interface ExperimentalConfig",
-          "doc": "The legacy experimental block of denext.config.ts. Every key in it graduated to a top-level DenextConfig field — what denext ships is its own finished work, and an \"experimental\" label only kept developers from using it — so each member is a deprecated alias of its top-level twin: still honored (with a dev warning) when the top-level field is absent, and ignored when both are set. The interface stays exported so a config written against 2.x keeps type-checking; it is removed in 3.0.",
-          "docFull": "The legacy `experimental` block of `denext.config.ts`. Every key in it graduated to a\ntop-level {@link DenextConfig} field — what denext ships is its own finished work, and an\n\"experimental\" label only kept developers from using it — so each member is a deprecated\nalias of its top-level twin: still honored (with a dev warning) when the top-level field\nis absent, and ignored when both are set. The interface stays exported so a config written\nagainst 2.x keeps type-checking; it is removed in 3.0.",
+          "doc": "Next.js's experimental block, as a migrated next.config carries it into denext.config.ts. Each member is Next.js's own spelling of a top-level DenextConfig field, kept as an obsolete alias for migrated Next apps: honored (with a dev warning) when the top-level field is absent, and ignored when both are set. Next 16's experimental.cacheComponents is honored the same way (see resolveCacheComponents) but is not a typed member. denext's own former experimental.* keys (compiler, asyncContext, features, nodeResolve) were removed in 3.0; the config validator rejects them.",
+          "docFull": "Next.js's `experimental` block, as a migrated `next.config` carries it into\n`denext.config.ts`. Each member is Next.js's own spelling of a top-level\n{@link DenextConfig} field, kept as an obsolete alias for migrated Next apps: honored\n(with a dev warning) when the top-level field is absent, and ignored when both are set.\nNext 16's `experimental.cacheComponents` is honored the same way (see\n{@linkcode resolveCacheComponents}) but is not a typed member. denext's own former\n`experimental.*` keys (`compiler`, `asyncContext`, `features`, `nodeResolve`) were removed\nin 3.0; the config validator rejects them.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -9097,10 +9097,19 @@
           "name": "redirect",
           "slug": "redirect",
           "kind": "function",
-          "signature": "redirect(location: string, status?: number): Response",
-          "doc": "",
-          "docFull": "",
-          "params": [],
+          "signature": "redirect(url: Href | parenthesized, typeOrStatus?: RedirectType | number): never",
+          "doc": "Throw to redirect to url from a component or action.",
+          "docFull": "Throw to redirect to `url` from a component or action.\n\nNext's 2nd argument is a {@link RedirectType} (`push`/`replace`) controlling client\nsoft-nav history; denext additionally accepts a numeric HTTP status (its own\nlong-standing extension). A temporary redirect defaults to 307.",
+          "params": [
+            {
+              "name": "url",
+              "doc": "The destination."
+            },
+            {
+              "name": "typeOrStatus",
+              "doc": "A RedirectType (soft-nav behavior) or an HTTP status number."
+            }
+          ],
           "returns": "",
           "examples": [],
           "denextOnly": false
@@ -15280,7 +15289,7 @@
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
-          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge): (request: Request, url: URL) => Promise<Response>",
+          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void): (request: Request, url: URL) => Promise<Response>",
           "doc": "The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
           "docFull": "The desktop request handler: the `onRequest` escape hatch, the token-gated local endpoints,\nthen — when `devProxy` is set (`denext desktop dev` only) — the reverse proxy to `denext dev`\nfor EVERYTHING else; otherwise the backend proxy, the export's static assets (`no-store`), the\n`index.html` shell for navigations, else 404. Exported for tests; {@linkcode runDesktop} wires\nit to `Deno.serve`.\n\nRequest order is load-bearing: the token-gated `/_denext/desktop/*` endpoints ({@link\nhandleLocalEndpoint}) run BEFORE the dev proxy, so they are always served LOCALLY and never\nforwarded to the dev server, even in live-reload mode.",
           "params": [],
@@ -15457,6 +15466,23 @@
           "docFull": "A bounded, replayable log of desktop bridge events. One instance per running app (created by the\nbridge); exported as a type so `DesktopBridge[\"events\"]` is documentable.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopIncludeArgs",
+          "slug": "desktopIncludeArgs",
+          "kind": "function",
+          "signature": "desktopIncludeArgs(entryUrl: string): Promise<string[]>",
+          "doc": "The extra --include <path> args a scaffolded packaging script must add so the packaged binary embeds each desktop.capabilities.extensions module — otherwise the app launches but the runtime fails to load the extension (\"Module not found\"), since --include out only bundles the export. Reads the project's denext.config.ts next to entryUrl (a scripts/ script → ../), like desktopPackageFlags; a project with no extensions gets [].",
+          "docFull": "The extra `--include <path>` args a scaffolded packaging script must add so the packaged binary\nembeds each `desktop.capabilities.extensions` module — otherwise the app launches but the runtime\nfails to load the extension (\"Module not found\"), since `--include out` only bundles the export.\nReads the project's `denext.config.ts` next to `entryUrl` (a `scripts/` script → `../`), like\n{@linkcode desktopPackageFlags}; a project with no extensions gets `[]`.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "The packaging script's import.meta.url."
+            }
+          ],
+          "returns": "[\"--include\", path, \"--include\", path, …], ready to splice into the deno desktop argv.",
           "examples": [],
           "denextOnly": true
         },
