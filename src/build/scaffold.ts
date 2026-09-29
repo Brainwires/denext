@@ -1488,7 +1488,8 @@ function slugify(name: string): string {
 async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
   if (Deno.build.os !== "windows" || arch !== hostArch) {
     console.warn(
-      "  not bundling the VC++ runtime (" + arch + " packaged on " + Deno.build.os + "/" + hostArch +
+      "  not bundling the VC++ runtime (" + arch + " packaged on " + Deno.build.os + "/" +
+        hostArch +
         ") — the target must install the VC++ 2015-2022 redistributable: " +
         "https://aka.ms/vs/17/release/vc_redist." + (arch === "arm64" ? "arm64" : "x64") + ".exe",
     );
