@@ -41,13 +41,17 @@ Deno.test("patch edit denext → create denext → list → delete round-trips t
   const dir = await project();
   try {
     const out = await run(["edit", "denext", "src/runtime/env-safe.ts", dir]);
-    assertStringIncludes(out, "edit patches/.work/denext/src/runtime/env-safe.ts");
+    // The CLI prints the working copy as a native path (backslashes on Windows).
+    assertStringIncludes(
+      out,
+      "edit " + join("patches", ".work", "denext", "src", "runtime", "env-safe.ts"),
+    );
     const work = join(dir, "patches", ".work", "denext", "src", "runtime", "env-safe.ts");
     const src = await Deno.readTextFile(work);
     await Deno.writeTextFile(work, src + "\nexport const PATCH_MARKER = 1;\n");
 
     const created = await run(["create", "denext", dir]);
-    assertStringIncludes(created, "✔ wrote patches/denext+");
+    assertStringIncludes(created, "✔ wrote " + join("patches", "denext+"));
     assertStringIncludes(created, "src/runtime/env-safe.ts");
     assertStringIncludes(created, "takes effect on the next start");
     const materialized = await Deno.readTextFile(

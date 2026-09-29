@@ -161,6 +161,7 @@ Deno.test("dev-stop: the graceful path — SIGTERM to the matching pid, and noth
     // The server answers as itself until the graceful signal lands, then drains (and, as the
     // real one does on drain, removes its own dev.json).
     const rec = recorder({
+      os: "linux", // the graceful path is POSIX's; Windows has none (its own test below)
       probe: async () => {
         if (rec.kills.length === 0) return { pid: PID, projectDir: dir };
         await Deno.remove(devJson).catch(() => {});

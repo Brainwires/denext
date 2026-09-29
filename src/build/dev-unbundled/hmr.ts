@@ -1,6 +1,6 @@
 // Unbundled dev: HMR change computation over the reverse import graph.
 
-import { bump, FS_PREFIX, norm, type UnbundledState, versionOf } from "./state.ts";
+import { bump, fsUrlPath, norm, type UnbundledState, versionOf } from "./state.ts";
 
 /**
  * Find the accept boundaries an edit to `abs` propagates to: `abs` itself if it
@@ -67,7 +67,7 @@ export function onChange(st: UnbundledState, changedRaw: string[]): HmrChange {
   }
   const epoch = Date.now();
   const updates = [...boundaries].map((abs) =>
-    `${FS_PREFIX}${abs}?t=${epoch}&v=${versionOf(st, abs)}`
+    `${fsUrlPath(abs)}?t=${epoch}&v=${versionOf(st, abs)}`
   );
   return { updates, reload: structuralReload, unknownOnly: !anyKnown };
 }

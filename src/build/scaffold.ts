@@ -4,7 +4,7 @@
 // that turn on the Deno LSP), optionally with Tailwind, a `src/` layout, and the
 // auto-memo compiler enabled.
 
-import { basename, join, relative } from "@std/path";
+import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
@@ -234,9 +234,18 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
  * @param opts The scaffold options (only the feature flags are read).
  * @returns The file's text.
  */
+/**
+ * The `minimumDependencyAge` a generated `deno.json` carries: Deno's default 24-hour hold on
+ * freshly published versions stays on for every dependency EXCEPT denext's own packages, so a
+ * project made right after a denext release installs the version that made it (the CLI running
+ * is already that release) instead of failing "blocked by the minimum dependency age policy".
+ */
+export const DENEXT_MIN_DEP_AGE = { exclude: ["jsr:@denext/*"] } as const;
+
 export function denoJson(opts: ScaffoldOptions): string {
   const config: Record<string, unknown> = {
     tasks: scaffoldTasks(opts),
+    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "denext",
@@ -595,7 +604,8 @@ export async function scaffoldProject(
   if (opts.vscode !== false) {
     const vscode: string[] = [];
     await ensureVscodeDeno(opts.dir, vscode);
-    written.push(...vscode.map((p) => relative(opts.dir, p)));
+    // `/`-separated like every other scaffolded path, on Windows too.
+    written.push(...vscode.map((p) => relative(opts.dir, p).split(SEPARATOR).join("/")));
   }
   return written;
 }
@@ -763,7 +773,7 @@ function parseOpts(argv: string[]): Opts {
     else if (a === "--dmg") o.dmg = true;
     else if (a === "-h" || a === "--help") {
       console.log(
-        new URL(import.meta.url).pathname,
+        import.meta.filename ?? import.meta.url,
         "\\nSee the header comment for usage.",
       );
       Deno.exit(0);
@@ -1143,7 +1153,7 @@ function parseOpts(argv: string[]): Opts {
     else if (a === "--appimage") o.appimage = true;
     else if (a === "-h" || a === "--help") {
       console.log(
-        new URL(import.meta.url).pathname,
+        import.meta.filename ?? import.meta.url,
         "\\nSee the header comment for usage.",
       );
       Deno.exit(0);
@@ -1351,7 +1361,7 @@ function parseOpts(argv: string[]): Opts {
     else if (a === "--no-sign") o.sign = false;
     else if (a === "-h" || a === "--help") {
       console.log(
-        new URL(import.meta.url).pathname,
+        import.meta.filename ?? import.meta.url,
         "\\nSee the header comment for usage.",
       );
       Deno.exit(0);
@@ -1477,6 +1487,44 @@ function slugify(name: string): string {
     "app";
 }
 
+/** Ship the VC++ 2015-2022 runtime DLLs the deno desktop binary imports (VCRUNTIME140,
+ * VCRUNTIME140_1, MSVCP140) next to the .exe, so the packaged app runs with NO redistributable
+ * installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found).
+ * Microsoft permits this app-local deployment. Sourced from System32 (the installed redist) when
+ * packaging on Windows; a DLL that can't be found (e.g. packaging off Windows) is skipped with a
+ * warning, and the target then needs the VC++ redist. System32 holds the HOST's architecture, so
+ * a bundle for the other architecture gets none (its target needs the redist). */
+async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
+  if (Deno.build.os !== "windows" || arch !== hostArch) {
+    console.warn(
+      "  not bundling the VC++ runtime (" + arch + " packaged on " + Deno.build.os + "/" +
+        hostArch +
+        ") — the target must install the VC++ 2015-2022 redistributable: " +
+        "https://aka.ms/vs/17/release/vc_redist." + (arch === "arm64" ? "arm64" : "x64") + ".exe",
+    );
+    return;
+  }
+  const sys = \`\${Deno.env.get("SystemRoot") ?? "C:/Windows"}/System32\`;
+  const dlls = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
+  const missing: string[] = [];
+  for (const dll of dlls) {
+    try {
+      await Deno.copyFile(\`\${sys}/\${dll}\`, \`\${dir}/\${dll}\`);
+    } catch {
+      missing.push(dll);
+    }
+  }
+  if (missing.length === 0) {
+    console.log("  bundled the VC++ runtime app-local (the target needs no VC++ redistributable)");
+  } else {
+    console.warn(
+      "  could not bundle the VC++ runtime (" + missing.join(", ") +
+        ") — package on Windows with the VC++ 2015-2022 redistributable installed, or the target " +
+        "must install it: https://aka.ms/vs/17/release/vc_redist.x64.exe",
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const opts = parseOpts(Deno.args);
   const name = slugify(await appName());
@@ -1490,6 +1538,7 @@ async function main(): Promise<void> {
   const artifacts: string[] = [];
   for (const arch of arches) {
     const dir = await buildBundle(name, arch);
+    await bundleVcRuntime(dir, arch);
     if (opts.sign) await sign(name, arch, dir);
     artifacts.push(await zipBundle(name, arch, dir));
   }
@@ -1497,7 +1546,8 @@ async function main(): Promise<void> {
   console.log("\\n  Built:");
   for (const a of artifacts) console.log("  " + a);
   console.log(
-    "\\n  (the target Windows machine needs the Microsoft Edge WebView2 runtime installed)",
+    "\\n  (the target needs the Microsoft Edge WebView2 runtime; the VC++ runtime is bundled" +
+      " app-local, so no VC++ redistributable is required)",
   );
 }
 

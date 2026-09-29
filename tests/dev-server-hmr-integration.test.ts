@@ -9,10 +9,11 @@
 
 import { assert, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { startDevOnDir } from "./e2e/harness.ts";
+import { fsUrlPath } from "../src/build/dev-unbundled/state.ts";
 
-const HELLO = new URL("../examples/hello", import.meta.url).pathname;
+const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
 
 /**
  * Copy the example without its `.denext/` build cache. Other tests build `examples/hello` in
@@ -24,7 +25,7 @@ async function copyExample(src: string, dest: string): Promise<void> {
     await copy(join(src, entry.name), join(dest, entry.name), { overwrite: true });
   }
 }
-const FRAMEWORK_ROOT = new URL("../", import.meta.url).pathname;
+const FRAMEWORK_ROOT = fromFileUrl(new URL("../", import.meta.url));
 
 /** Point the copied app's `denext*` imports at the framework checkout (absolute URLs). */
 async function patchImports(dir: string): Promise<void> {
@@ -153,7 +154,7 @@ Deno.test({
   // Prime the unbundled module graph so a page edit is a known accept boundary.
   await (await fetch(server.origin + "/")).text();
   await (await fetch(server.origin + "/_denext/@entry?p=" + encodeURIComponent("/"))).text();
-  await (await fetch(server.origin + "/_denext/@fs" + pageFile)).text();
+  await (await fetch(server.origin + fsUrlPath(pageFile))).text();
 
   const tap = new SseTap((await fetch(server.origin + "/_denext/reload")).body!);
   const ctx: Ctx = { origin: server.origin, tap, pageFile, cssFile, apiFile };

@@ -3,7 +3,7 @@
 // `--diff` explanation and the `--write` embedding.
 
 import { assert, assertEquals, assertNotEquals, assertRejects } from "@std/assert";
-import { join } from "@std/path";
+import { basename, join } from "@std/path";
 import {
   computeNativeFingerprint,
   diffNativeFingerprints,
@@ -356,7 +356,7 @@ Deno.test("denext mobile fingerprint --json / --diff explain what changed", asyn
     assertEquals(Object.keys(doc).sort(), ["fingerprint", "inputs"]);
     assertEquals(doc.fingerprint, await fp(dir));
     assertEquals((await mobile(["fingerprint", dir], {}))[0], doc.fingerprint);
-    const old = join(dir, "..", `${dir.split("/").pop()}.json`);
+    const old = join(dir, "..", `${basename(dir)}.json`);
     await Deno.writeTextFile(old, json);
     try {
       const same = await mobile(["fingerprint"], { dir, diff: old });

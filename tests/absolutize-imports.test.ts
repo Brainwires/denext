@@ -11,9 +11,15 @@ Deno.test("absolutizeImports preserves a trailing slash on prefix mappings", () 
 });
 
 Deno.test("absolutizeImports resolves relative paths to file URLs (no spurious slash)", () => {
-  const out = absolutizeImports({ denext: "./mod.ts", up: "../x.ts" }, "/base/sub");
-  assertEquals(out.denext, "file:///base/sub/mod.ts");
-  assertEquals(out.up, "file:///base/x.ts");
+  // The base is a real absolute directory on this OS (a drive-letter path on Windows).
+  const win = Deno.build.os === "windows";
+  const out = absolutizeImports(
+    { denext: "./mod.ts", up: "../x.ts" },
+    win ? "C:\\base\\sub" : "/base/sub",
+  );
+  const root = win ? "file:///C:/base" : "file:///base";
+  assertEquals(out.denext, `${root}/sub/mod.ts`);
+  assertEquals(out.up, `${root}/x.ts`);
 });
 
 Deno.test("absolutizeImports passes bare specifiers through unchanged", () => {

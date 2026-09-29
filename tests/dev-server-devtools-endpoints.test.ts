@@ -10,7 +10,7 @@
 // golden strings below were captured from the pre-split implementation.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { resolveProject } from "../src/build/paths.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createDevHandler } from "../src/build/dev-server/handler.ts";
@@ -239,7 +239,7 @@ Deno.test("routeMap split: formatRouteMap(routeMapData(…)) is byte-identical t
       "  layout: layout.tsx [server]\n  error: error.tsx\n  not-found: not-found.tsx",
     "/does/not/exist": 'No route matches "/does/not/exist". Try denext_list_routes.',
   };
-  const hello = new URL("../examples/hello", import.meta.url).pathname;
+  const hello = fromFileUrl(new URL("../examples/hello", import.meta.url));
   const paths = await resolveProject(hello);
   const manifest = await scanRoutes(paths.appDir);
   for (const [path, text] of Object.entries(golden)) {

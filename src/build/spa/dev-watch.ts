@@ -14,6 +14,7 @@ import {
 import { classifySpaChange } from "./shared.ts";
 import { isSelfWrite } from "../self-writes.ts";
 import { isFrameworkPath, linkedFrameworkDir } from "./framework-watch.ts";
+import { hasPathSegment, inNodeModules } from "../path-segments.ts";
 
 function existingPaths(candidates: string[]): string[] {
   return candidates.filter((p) => {
@@ -143,7 +144,7 @@ export function watch(st: SpaDevState): void {
   const watcher = Deno.watchFs(watched, { recursive: true });
   installShutdown(st, watcher);
   const ignored = (p: string): boolean =>
-    p.startsWith(paths.outDir) || p.includes("/node_modules/") || p.includes("/.git/") ||
+    p.startsWith(paths.outDir) || inNodeModules(p) || hasPathSegment(p, ".git") ||
     isSelfWrite(p);
   let debounce: ReturnType<typeof setTimeout> | undefined;
   const pending = new Set<string>();

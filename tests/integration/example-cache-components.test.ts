@@ -6,8 +6,9 @@
 import { assert, assertEquals } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { fromFileUrl } from "@std/path";
 
-const APP = new URL("../../examples/cache-components", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../../examples/cache-components", import.meta.url));
 
 const cachedStamp = (html: string): string => {
   const m = html.match(/data-cached-stamp="([^"]+)"/);

@@ -2,7 +2,7 @@
 // the dev black-box log/state endpoints, the async debounced type-check, and the
 // open-in-editor endpoint (in-project files only).
 
-import { basename, fromFileUrl, resolve } from "@std/path";
+import { basename, fromFileUrl, resolve, SEPARATOR } from "@std/path";
 import { browserLogEvent, type DevEventKind } from "../dev-events.ts";
 import { denoExecutable } from "../bundle.ts";
 import { isCompat } from "./compat.ts";
@@ -82,9 +82,12 @@ export function editorCommand(
   return { cmd, args: [file] };
 }
 
-/** Whether `p` is `dir` itself or a path under it (both already normalized/absolute). */
+/**
+ * Whether `p` is `dir` itself or a path under it (both already normalized/absolute, so both
+ * use the platform separator — `\` on Windows).
+ */
 export function withinDir(p: string, dir: string): boolean {
-  return p === dir || p.startsWith(dir + "/");
+  return p === dir || p.startsWith(dir.endsWith(SEPARATOR) ? dir : dir + SEPARATOR);
 }
 
 /** Launch the editor for `file:line:column`; returns whether the spawn started. */

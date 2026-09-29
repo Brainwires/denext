@@ -7,8 +7,9 @@
 
 import { TOOLS } from "../src/mcp/tools.ts";
 import { RESOURCES } from "../src/mcp/server.ts";
+import { dirname, fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const OUT = `${ROOT}apps/web/app/docs/mcp/mcp.json`;
 
 interface Param {
@@ -46,7 +47,7 @@ const resources = RESOURCES.map((r) => ({
   description: r.description,
 }));
 
-await Deno.mkdir(new URL(".", `file://${OUT}`).pathname, { recursive: true });
+await Deno.mkdir(dirname(OUT), { recursive: true });
 await Deno.writeTextFile(OUT, JSON.stringify({ tools, resources }, null, 2) + "\n");
 console.log(
   `mcp reference: ${tools.length} tools + ${resources.length} resources → ${OUT}`,

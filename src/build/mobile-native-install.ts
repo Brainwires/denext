@@ -11,7 +11,8 @@
 // release's or an earlier one's) is rewritten when a feature is added. An edited one is kept
 // and reported.
 
-import { join, relative } from "@std/path";
+import { join } from "@std/path";
+import { posixRelative } from "./mobile-paths.ts";
 import { addSourceFiles } from "./pbxproj.ts";
 import {
   markedTemplateIntact,
@@ -280,7 +281,7 @@ export class NativeInstaller<O extends NativeInstallOptions, R extends NativeIns
   constructor(readonly opts: O, readonly report: R, readonly dryRun = false) {}
 
   rel(path: string): string {
-    return relative(this.opts.dir, path);
+    return posixRelative(this.opts.dir, path);
   }
 
   /** The contents of `path` as this run left it (a dry run's pending write first). */

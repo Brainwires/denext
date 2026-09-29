@@ -5,7 +5,7 @@
 // naming the module, the route that pulled it in, and the fix.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { build } from "../src/build/build.ts";
 import { bundleRoutes } from "../src/build/bundle.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
@@ -151,9 +151,10 @@ Deno.test({
       // The module, why, and the route that shipped it.
       assertStringIncludes(
         err.message,
-        "lib/db.ts — imports a node: built-in; uses the Deno global",
+        // Module paths in the message are OS paths (`lib\db.ts` on Windows).
+        `${join("lib", "db.ts")} — imports a node: built-in; uses the Deno global`,
       );
-      assertStringIncludes(err.message, "shipped by the route of app/page.tsx");
+      assertStringIncludes(err.message, `shipped by the route of ${join("app", "page.tsx")}`);
       // The fix.
       assertStringIncludes(err.message, `"use client" component`);
       assertStringIncludes(err.message, `import "server-only"`);
@@ -256,7 +257,7 @@ Deno.test("bundleRoutes leaves a foreign (non-generated) entry unchecked", async
       join(dir, "env.ts"),
       `export const home = () => globalThis.Deno.env.get("HOME");\n`,
     );
-    const source = `import { home } from "${new URL("env.ts", `file://${dir}/`).href}";\n` +
+    const source = `import { home } from "${toFileUrl(join(dir, "env.ts")).href}";\n` +
       `console.log(home());\n`;
     const out = await bundleRoutes([{ key: "plugin", source }], {
       configPath: join(dir, "deno.json"),

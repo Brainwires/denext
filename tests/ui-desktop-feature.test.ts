@@ -216,12 +216,14 @@ Deno.test("the copy-paste export line single-quotes the identity, so a hostile n
     word,
     "'Developer ID Application: $(touch /tmp/pwned) `id` $HOME O'\\''Brien (TEAMID)'",
   );
-  // Round-trips through a real shell as the literal name, expansions and all.
+  assertEquals(shellQuote(""), "''", "an empty name is still one word");
+  // Round-trips through a real shell as the literal name, expansions and all. The line is POSIX
+  // sh (the signing identities are macOS keychain ones); Windows has no `sh` to run it with.
+  if (Deno.build.os === "windows") return;
   const line = `export DENEXT_CODESIGN_IDENTITY=${word}`;
   const { stdout } = new Deno.Command("sh", {
     args: ["-c", `${line}; printf '%s' "$DENEXT_CODESIGN_IDENTITY"`],
     env: { HOME: "/nope" },
   }).outputSync();
   assertEquals(new TextDecoder().decode(stdout), hostile);
-  assertEquals(shellQuote(""), "''", "an empty name is still one word");
 });

@@ -18,6 +18,7 @@ import {
   type ServerOnlyLeak,
 } from "./server-only-scan.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
+import { carryLinks } from "./config-links.ts";
 
 /**
  * The framework root as a URL, in whatever scheme the framework itself runs under:
@@ -1123,6 +1124,8 @@ async function prepareConfig(tmpDir: string, opts: BundleOptions): Promise<strin
     ...absolutizeImports(base.imports, dirname(configFsPath)),
     ...opts.importMap,
   };
+  // `links` name directories relative to the config, which now lives in `tmpDir`.
+  carryLinks(base, base, dirname(configFsPath), tmpDir);
   const configPath = join(tmpDir, "deno.merged.json");
   await Deno.writeTextFile(configPath, JSON.stringify(base));
   return configPath;

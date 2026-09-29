@@ -4,7 +4,7 @@
 // compiler path keeps the list live; and an app that never imports the list bundles none of it.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, isAbsolute, join, toFileUrl } from "@std/path";
 import * as esbuild from "esbuild";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -282,7 +282,7 @@ export function App() {
 
 // ---- tree-shaking --------------------------------------------------------------------------------
 
-const MOD = new URL("../mod.ts", import.meta.url).pathname;
+const MOD = fromFileUrl(new URL("../mod.ts", import.meta.url));
 
 /** Bundle `entry` source (importing from the real `mod.ts`); bare specifiers stay external. */
 async function bundle(entry: string): Promise<string> {
@@ -301,7 +301,9 @@ async function bundle(entry: string): Promise<string> {
       plugins: [{
         name: "externals",
         setup(b) {
-          b.onResolve({ filter: /^[^./]/ }, (args) => ({ path: args.path, external: true }));
+          b.onResolve({ filter: /^[^./]/ }, (args) =>
+            // A Windows absolute path (`C:\…`) is local, not a bare specifier.
+            isAbsolute(args.path) ? undefined : { path: args.path, external: true });
         },
       }],
     });

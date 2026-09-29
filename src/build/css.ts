@@ -12,6 +12,7 @@
 // The extracted, transformed CSS is collected separately and emitted next to the
 // route bundle.
 
+import { carryLinks } from "./config-links.ts";
 import { denoInfoGraph, reachableModules } from "./module-graph.ts";
 import { basename, dirname, fromFileUrl, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
@@ -499,10 +500,13 @@ async function writeCssConfig(
   const appCfgRaw = await readJson(opts.configPath) as {
     nodeModulesDir?: unknown;
     minimumDependencyAge?: unknown;
+    links?: unknown;
+    patch?: unknown;
   };
   const nmd = appCfgRaw?.nodeModulesDir;
   if (nmd && nmd !== "none" && nmd !== false) merged.nodeModulesDir = nmd;
   Object.assign(merged, minDepAgeConfig(appCfgRaw?.minimumDependencyAge));
+  carryLinks(merged, appCfgRaw, dirname(opts.configPath), opts.outDir);
   const configPath = join(opts.outDir, "css-config.json");
   await Deno.writeTextFile(configPath, JSON.stringify(merged, null, 2));
   return configPath;

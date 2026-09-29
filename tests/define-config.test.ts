@@ -73,7 +73,7 @@ Deno.test("defineConfig warns on a typo'd experimental.* key and on graduated al
 });
 
 Deno.test("defineConfig type-checks the config (accepts valid, rejects unknown fields)", async () => {
-  const mod = new URL("../src/server/define-config.ts", import.meta.url).pathname;
+  const mod = new URL("../src/server/define-config.ts", import.meta.url).href;
   const dir = await Deno.makeTempDir({ prefix: "denext-defineconfig-" });
   const check = async (body: string): Promise<number> => {
     await Deno.writeTextFile(`${dir}/t.ts`, body);

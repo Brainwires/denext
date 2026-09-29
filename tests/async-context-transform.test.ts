@@ -11,9 +11,7 @@ import {
 } from "../src/build/async-context-transform.ts";
 import { swcParse } from "../src/build/swc-ast.ts";
 
-const RUNTIME = toFileUrl(
-  new URL("../src/runtime/async-context.ts", import.meta.url).pathname,
-).href;
+const RUNTIME = new URL("../src/runtime/async-context.ts", import.meta.url).href;
 
 /** Transform `source` (helpers pointed at the real runtime), write it, import it. */
 // deno-lint-ignore no-explicit-any
@@ -206,7 +204,7 @@ Deno.test("compileAsyncContextModules: redirects changed modules + flips the mod
   // The mode module is redirected to a generated `= true`.
   const modeKey = Object.keys(map).find((k) => k.endsWith("async-context-mode.ts"));
   assert(modeKey, "mode module present in the map");
-  const modeText = await Deno.readTextFile(new URL(map[modeKey!]).pathname);
+  const modeText = await Deno.readTextFile(new URL(map[modeKey!]));
   assertEquals(modeText.trim(), "export const asyncContextScopingEnabled = true;");
 
   await Deno.remove(srcDir, { recursive: true }).catch(() => {});

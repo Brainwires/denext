@@ -2,7 +2,7 @@
 // generated app actually type-checks against the framework.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { join } from "@std/path";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
 import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
 
@@ -125,6 +125,10 @@ const WINDOWS_PACKAGING_KEYWORDS = [
   "DENEXT_WINDOWS_CERT",
   "WebView2",
   "--target",
+  // Ships the VC++ runtime app-local so the packaged app needs no redistributable installed
+  // (else it dies at launch with a silent 0xC0000135). Verified end-to-end on a real Windows box.
+  "bundleVcRuntime",
+  "vcruntime140.dll",
 ];
 
 /** Asserts the desktop scaffold emits `script` and that it mentions every keyword. */
@@ -441,7 +445,7 @@ Deno.test("a scaffolded app type-checks against the framework", async () => {
     await scaffoldProject({ dir });
     // The generated deno.json points at the (unpublished) JSR package; rewrite its
     // imports to this repo's local files so `deno check` can resolve them.
-    const repo = fromFileUrl(new URL("../../", import.meta.url));
+    const repo = new URL("../../", import.meta.url); // import-map values must be URLs
     const denoJson = {
       compilerOptions: {
         jsx: "react-jsx",
@@ -449,11 +453,11 @@ Deno.test("a scaffolded app type-checks against the framework", async () => {
         lib: ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"],
       },
       imports: {
-        "denext": join(repo, "mod.ts"),
-        "denext/jsx-runtime": join(repo, "src/jsx/jsx-runtime.ts"),
-        "denext/jsx-dev-runtime": join(repo, "src/jsx/jsx-runtime.ts"),
-        "denext/server": join(repo, "src/server/mod.ts"),
-        "denext/client": join(repo, "src/client/mod.ts"),
+        "denext": new URL("mod.ts", repo).href,
+        "denext/jsx-runtime": new URL("src/jsx/jsx-runtime.ts", repo).href,
+        "denext/jsx-dev-runtime": new URL("src/jsx/jsx-runtime.ts", repo).href,
+        "denext/server": new URL("src/server/mod.ts", repo).href,
+        "denext/client": new URL("src/client/mod.ts", repo).href,
       },
     };
     await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(denoJson, null, 2));

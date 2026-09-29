@@ -25,7 +25,7 @@
 
 import type { Plugin } from "esbuild";
 import { walk } from "@std/fs";
-import { dirname, fromFileUrl, isAbsolute, join, relative, resolve } from "@std/path";
+import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
 import { frameworkRootUrl, minDepAgeArgs, readFrameworkJson } from "./bundle.ts";
 import {
   applyFileDiff,
@@ -688,7 +688,9 @@ function escapeRe(s: string): string {
  */
 export function patchPlugin(set: DenextPatchSet, frameworkRoot = frameworkRootUrl()): Plugin {
   const rels = [...set.keys()];
-  const filter = new RegExp(`(?:${rels.map(escapeRe).join("|")})$`);
+  // Either separator: a checkout on Windows reports `…\src\server\document.ts`.
+  const anySep = (rel: string) => escapeRe(rel).replaceAll("/", "[\\\\/]");
+  const filter = new RegExp(`(?:${rels.map(anySep).join("|")})$`);
   // esbuild reports REAL paths (macOS: /var → /private/var), so compare against the real root.
   const fileRoot = frameworkRoot.startsWith("file://") ? realDir(fromFileUrl(frameworkRoot)) : null;
   const httpsRoot = frameworkRoot.startsWith("https://")
@@ -701,7 +703,8 @@ export function patchPlugin(set: DenextPatchSet, frameworkRoot = frameworkRootUr
         build.onLoad({ filter, namespace }, async (args) => {
           const root = namespace === "file" ? fileRoot : httpsRoot;
           if (!root || !args.path.startsWith(root)) return undefined;
-          const rel = args.path.slice(root.length);
+          // The patch set is keyed `/`-separated; a Windows file path is not.
+          const rel = args.path.slice(root.length).split(SEPARATOR).join("/");
           const diff = set.get(rel);
           if (!diff) return undefined;
           const pristine = namespace === "file"
@@ -724,7 +727,7 @@ async function fetchPristine(url: string): Promise<string> {
 
 function realDir(dir: string): string {
   try {
-    return Deno.realPathSync(dir) + "/";
+    return Deno.realPathSync(dir) + SEPARATOR;
   } catch {
     return dir;
   }

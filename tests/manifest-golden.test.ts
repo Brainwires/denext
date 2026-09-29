@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { join, SEPARATOR } from "@std/path";
 import { scanRoutes } from "../src/router/manifest.ts";
 
 /**
@@ -141,7 +141,9 @@ Deno.test("scanRoutes golden manifest (all conventions)", async () => {
       await Deno.writeTextFile(full, "export default function () {}\n");
     }
     const m = await scanRoutes(dir);
-    const rel = (p: string | null) => (p == null ? null : p.slice(dir.length + 1));
+    // Manifest paths are OS paths; the golden is written with `/`.
+    const rel = (p: string | null) =>
+      p == null ? null : p.slice(dir.length + 1).split(SEPARATOR).join("/");
     const relArr = (a: string[]) => a.map((p) => rel(p)!);
 
     // Compare order-independently by routePath: relative order among

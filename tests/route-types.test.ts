@@ -56,7 +56,7 @@ Deno.test("route-types: an empty manifest yields never", () => {
 });
 
 Deno.test("route-types: registering routes narrows Href and rejects unknown paths", async () => {
-  const nav = new URL("../src/client/navigation.ts", import.meta.url).pathname;
+  const nav = new URL("../src/client/navigation.ts", import.meta.url).href;
   const check = async (body: string): Promise<number> => {
     const dir = await Deno.makeTempDir({ prefix: "denext-href-" });
     try {

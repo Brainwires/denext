@@ -123,7 +123,7 @@ Deno.test("a slot-only URL routes to the level's default.* as children", async (
     const manifest = await scanRoutes(dir);
     const demo = manifest.pages.find((p) => p.routePath === "/dash/demographics");
     assertExists(demo, "slot-only URL synthesized");
-    assertEquals(demo.filePath.endsWith("dash/default.tsx"), true, demo.filePath);
+    assertEquals(demo.filePath.endsWith(join("dash", "default.tsx")), true, demo.filePath);
     assertEquals(demo.layoutChain.length, 1, "the level's layout wraps it");
     assertEquals(manifest.pages.find((p) => p.routePath === "/nodefault/stats"), undefined);
   } finally {

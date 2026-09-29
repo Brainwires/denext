@@ -2,6 +2,7 @@
 // (JSR) as well as a checkout — the run-from-JSR production case.
 
 import { assert, assertEquals } from "@std/assert";
+import { join, toFileUrl } from "@std/path";
 Deno.test("runtimeEntryPoints accepts a remote (JSR) framework root, not just file:// or a path", async () => {
   const { runtimeEntryPoints } = await import("../src/build/next-compat.ts");
   const jsr = runtimeEntryPoints("https://jsr.io/@denext/denext/2.0.0/");
@@ -18,7 +19,7 @@ Deno.test("resolveNodeFrom resolves a package SELF-reference through its exports
   try {
     // packages/lib is a workspace package; pnpm links it into CONSUMERS' node_modules, never
     // its own — a module inside it importing "@acme/lib/util" must still resolve.
-    const lib = `${root}/packages/lib`;
+    const lib = join(root, "packages", "lib");
     await Deno.mkdir(`${lib}/src/deep`, { recursive: true });
     await Deno.writeTextFile(
       `${lib}/package.json`,
@@ -29,8 +30,14 @@ Deno.test("resolveNodeFrom resolves a package SELF-reference through its exports
     );
     await Deno.writeTextFile(`${lib}/src/util.ts`, "export const u = 1;");
     await Deno.writeTextFile(`${lib}/src/index.ts`, "export const i = 1;");
-    assertEquals(await resolveNodeFrom(`${lib}/src/deep`, "@acme/lib/util"), `${lib}/src/util.ts`);
-    assertEquals(await resolveNodeFrom(`${lib}/src/deep`, "@acme/lib"), `${lib}/src/index.ts`);
+    assertEquals(
+      await resolveNodeFrom(join(lib, "src", "deep"), "@acme/lib/util"),
+      join(lib, "src", "util.ts"),
+    );
+    assertEquals(
+      await resolveNodeFrom(join(lib, "src", "deep"), "@acme/lib"),
+      join(lib, "src", "index.ts"),
+    );
     // Not a self-reference: an unrelated name still resolves to nothing (deno-loader's turn).
     assertEquals(await resolveNodeFrom(`${lib}/src/deep`, "@acme/other"), null);
     // A dependency's tree is not "self" for the app: stop at the node_modules boundary.
@@ -41,8 +48,8 @@ Deno.test("resolveNodeFrom resolves a package SELF-reference through its exports
     );
     await Deno.writeTextFile(`${root}/node_modules/@acme/lib/u.js`, "");
     assertEquals(
-      await resolveNodeFrom(`${root}/app`, "@acme/lib/util"),
-      `${root}/node_modules/@acme/lib/u.js`,
+      await resolveNodeFrom(join(root, "app"), "@acme/lib/util"),
+      join(root, "node_modules", "@acme", "lib", "u.js"),
     );
   } finally {
     await Deno.remove(root, { recursive: true });
@@ -72,8 +79,8 @@ Deno.test("min-dep-age policy: env override > the app's own config > nothing", a
       assert(wrapped !== cfg && wrapped.startsWith(dir));
       const json = JSON.parse(await Deno.readTextFile(wrapped));
       assertEquals(json.minimumDependencyAge, "0");
-      assertEquals(json.imports["denext"], `file://${dir}/mod.ts`);
-      assertEquals(json.imports["x/"], `file://${dir}/src/`);
+      assertEquals(json.imports["denext"], toFileUrl(join(dir, "mod.ts")).href);
+      assertEquals(json.imports["x/"], toFileUrl(join(dir, "src")).href + "/");
       // A config that already declares a policy is handed over as-is (the user's choice wins).
       const own = `${dir}/own.json`;
       await Deno.writeTextFile(own, JSON.stringify({ minimumDependencyAge: "P1D", imports: {} }));

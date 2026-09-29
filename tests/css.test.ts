@@ -151,13 +151,13 @@ Deno.test("generateCssAssets writes shims + import map + extracted css", async (
     // Import map redirects both css files to shim modules.
     assertEquals(Object.keys(assets.importMap).length, 2);
     // Module shim exports the scoped class map as default.
-    const moduleShimUrl = assets.importMap[new URL(`file://${mod}`).href];
+    const moduleShimUrl = assets.importMap[toFileUrl(mod).href];
     const shimSrc = await Deno.readTextFile(new URL(moduleShimUrl));
     const scoped = assets.classMaps.get(mod)!.title;
     assert(scoped && scoped !== "title");
     assertStringIncludes(shimSrc, scoped);
     // Global shim exports {}.
-    const globShimUrl = assets.importMap[new URL(`file://${glob}`).href];
+    const globShimUrl = assets.importMap[toFileUrl(glob).href];
     assertStringIncludes(await Deno.readTextFile(new URL(globShimUrl)), "export default {}");
     // Concatenated CSS contains both stylesheets' rules.
     const all = concatCss(assets.css);

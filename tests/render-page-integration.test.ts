@@ -18,9 +18,10 @@ import {
 } from "../src/server/render-page.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { Metadata, ModuleLoader } from "../src/server/types.ts";
+import { fromFileUrl } from "@std/path";
 
-const HELLO = new URL("../examples/hello", import.meta.url).pathname;
-const ISLANDS = new URL("../examples/islands", import.meta.url).pathname;
+const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
+const ISLANDS = fromFileUrl(new URL("../examples/islands", import.meta.url));
 
 // ── End-to-end via the no-JS client (drives renderPage + layout chain) ─────────
 

@@ -14,7 +14,7 @@
 // puts every path it resolved through `uiSafeUnder`, so an `app/` that is a symlink out of the
 // project is refused even though the name itself was innocent. An absolute name is refused too.
 
-import { isAbsolute, relative } from "@std/path";
+import { isAbsolute, relative, SEPARATOR } from "@std/path";
 import {
   GENERATE_KINDS,
   generateArtifact,
@@ -145,7 +145,7 @@ async function submitPanel(ctx: UiContext): Promise<Response> {
   const written = rels(ctx.dir, result.written);
   const skipped = rels(ctx.dir, result.skipped);
   const preview = result.preview?.map((file) => ({
-    path: relative(ctx.dir, file.path) || file.path,
+    path: projectRel(ctx.dir, file.path),
     contents: file.contents,
   }));
   if (ctx.json) {
@@ -376,7 +376,15 @@ function asKind(value: string | null): GenerateKind | null {
   return value !== null && kinds.includes(value) ? value as GenerateKind : null;
 }
 
+/**
+ * An absolute path as a project-relative one, for display and the JSON twin: `/`-separated
+ * on every OS (`app/users/route.ts`, never `app\users\route.ts`).
+ */
+function projectRel(dir: string, path: string): string {
+  return (relative(dir, path) || path).split(SEPARATOR).join("/");
+}
+
 /** Absolute paths as project-relative ones, for display. */
 function rels(dir: string, paths: readonly string[]): string[] {
-  return paths.map((path) => relative(dir, path) || path);
+  return paths.map((path) => projectRel(dir, path));
 }

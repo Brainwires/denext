@@ -21,6 +21,7 @@
 // (app id, version, build number, SHA-256) that `denext mobile submit` reads.
 
 import { basename, join } from "@std/path";
+import { toPosixPath } from "./mobile-paths.ts";
 import type { MobileFlavorConfig } from "../server/config.ts";
 import type { PlannedCommand } from "./mobile-capabilities.ts";
 import { checkArtifact } from "./mobile-artifact.ts";
@@ -346,7 +347,8 @@ function androidSigning(
     throw new Error(`signing with ${s.keystore} needs the ${missing.join(" and the ")}`);
   }
   const values = {
-    "store.file": s.keystore,
+    // `/` on every OS: Gradle takes it on Windows too, and a `\` cannot ride GRADLE_OPTS.
+    "store.file": toPosixPath(s.keystore),
     "store.password": s.keystorePassword!,
     "key.alias": s.keyAlias!,
     "key.password": s.keyPassword ?? s.keystorePassword!,
@@ -416,6 +418,33 @@ interface NativePlan {
   warnings: string[];
 }
 
+/**
+ * The Gradle wrapper as a command: `./gradlew`, or the `gradlew.bat` Capacitor's Android project
+ * ships beside it on Windows (which cannot run the shell script).
+ *
+ * @param os The host OS.
+ */
+export function gradlewCommand(os: typeof Deno.build.os = Deno.build.os): string {
+  return os === "windows" ? "./gradlew.bat" : "./gradlew";
+}
+
+/**
+ * Why this host cannot run an iOS `step` (`build` needs xcodebuild, `submit` altool, both only in
+ * Xcode on macOS), or undefined on macOS. A `--dry-run` plan and checks still work anywhere.
+ *
+ * @param step What the caller is about to do.
+ * @param os The host OS.
+ */
+export function iosHostError(
+  step: "build" | "submit",
+  os: typeof Deno.build.os = Deno.build.os,
+): string | undefined {
+  if (os === "darwin") return undefined;
+  const tool = step === "build" ? "xcodebuild" : "xcrun altool";
+  return `the iOS ${step} needs macOS with Xcode (${tool}), and this host is ${os}: run it on a ` +
+    `Mac (\`denext mobile ${step} ios --dry-run\` still checks and plans here)`;
+}
+
 /** The Android native plan: one Gradle task, signed through the environment. */
 function androidNative(opts: MobileBuildOptions): NativePlan {
   const signing = androidSigning(opts);
@@ -423,7 +452,7 @@ function androidNative(opts: MobileBuildOptions): NativePlan {
   const env = Object.keys(signing.env).length ? { env: signing.env } : {};
   return {
     commands: [{
-      cmd: "./gradlew",
+      cmd: gradlewCommand(),
       args: [task, ...(opts.jobs ? [`--max-workers=${opts.jobs}`] : [])],
       cwd: join(opts.root, "android"),
       ...env,

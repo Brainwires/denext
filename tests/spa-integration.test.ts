@@ -6,7 +6,7 @@
 // The full browser round-trip lives in tests/e2e/spa*.e2e.test.ts (opt-in).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   buildSpa,
   classifySpaChange,
@@ -16,7 +16,7 @@ import {
 import { resolveProject } from "../src/build/paths.ts";
 import { startSpaDevOnDir } from "./e2e/harness.ts";
 
-const SPA = new URL("../examples/spa", import.meta.url).pathname;
+const SPA = fromFileUrl(new URL("../examples/spa", import.meta.url));
 
 /** Read the first SSE chunk from an endpoint, then cancel (the stream never ends). */
 async function firstSseChunk(url: string): Promise<string> {

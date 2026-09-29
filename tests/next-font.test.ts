@@ -207,7 +207,7 @@ function stubGoogleFetch(origFetch: typeof fetch): typeof fetch {
 
 /** A one-page app using next/font/google, with an import map aliased to this checkout. */
 async function writeFontApp(dir: string): Promise<void> {
-  const root = new URL("../", import.meta.url).pathname;
+  const root = new URL("../", import.meta.url).href;
   await Deno.writeTextFile(
     join(dir, "deno.json"),
     JSON.stringify({

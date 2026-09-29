@@ -23,6 +23,7 @@ import {
 } from "../src/ui/security.ts";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
+import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
 
 /**
  * A started server, handshaken: `cookie` is the `Cookie` header value the exchange minted and
@@ -396,7 +397,7 @@ Deno.test("uiSafeJoin rejects .., absolute paths, and a symlink escaping the roo
   try {
     await Deno.writeTextFile(join(root, "ok.txt"), "in");
     await Deno.writeTextFile(join(outside, "secret.txt"), "out");
-    await Deno.symlink(outside, join(root, "escape"));
+    await symlinkDir(outside, join(root, "escape"));
 
     assertEquals(await uiSafeJoin(root, "ok.txt"), join(root, "ok.txt"));
     assertEquals(await uiSafeJoin(root, "sub/new.txt"), join(root, "sub/new.txt"));
@@ -433,7 +434,7 @@ Deno.test("readContained reads inside the project and refuses an escape", async 
   try {
     await Deno.writeTextFile(join(root, "denext.config.ts"), "export default {};\n");
     await Deno.writeTextFile(join(outside, "secret.txt"), "AKIA-not-yours");
-    await Deno.symlink(outside, join(root, "escape"));
+    await symlinkDir(outside, join(root, "escape"));
 
     assertEquals(await readContained(root, "denext.config.ts"), "export default {};\n");
     // A missing file is `null`, not a throw: "this project has no config yet" is ordinary.
@@ -592,7 +593,7 @@ Deno.test("uiSafeUnder refuses an absolute path that resolves out through a syml
   const outside = await Deno.makeTempDir({ prefix: "denext_out_" });
   const dir = await Deno.makeTempDir({ prefix: "denext_in_" });
   try {
-    await Deno.symlink(outside, join(dir, "app"));
+    await symlinkDir(outside, join(dir, "app"));
     assertEquals(await uiSafeUnder(dir, join(dir, "pages", "x.tsx")), join(dir, "pages", "x.tsx"));
     await assertRejects(
       () => uiSafeUnder(dir, join(dir, "app", "x.tsx")),
@@ -610,16 +611,19 @@ Deno.test("writeFileAtomic renames into place, contains, and leaves no temp behi
   const outside = await Deno.makeTempDir({ prefix: "denext_out_" });
   const dir = await Deno.makeTempDir({ prefix: "denext_in_" });
   try {
-    const secret = join(outside, "secret.ts");
-    await Deno.writeTextFile(secret, "keep me\n");
-    await Deno.symlink(secret, join(dir, "denext.config.ts"));
+    // A FILE symlink needs the symlink privilege on Windows; the rest runs everywhere.
+    if (FILE_SYMLINKS) {
+      const secret = join(outside, "secret.ts");
+      await Deno.writeTextFile(secret, "keep me\n");
+      await Deno.symlink(secret, join(dir, "denext.config.ts"));
 
-    await assertRejects(
-      () => writeFileAtomic(dir, "denext.config.ts", "pwned"),
-      Error,
-      "outside the project",
-    );
-    assertEquals(await Deno.readTextFile(secret), "keep me\n");
+      await assertRejects(
+        () => writeFileAtomic(dir, "denext.config.ts", "pwned"),
+        Error,
+        "outside the project",
+      );
+      assertEquals(await Deno.readTextFile(secret), "keep me\n");
+    }
 
     const written = await writeFileAtomic(dir, "nested/deno.json", "{}\n");
     assertEquals(written, join(dir, "nested", "deno.json"));

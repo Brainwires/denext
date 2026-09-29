@@ -24,8 +24,9 @@
 import { denoDocJson } from "./deno-doc.ts";
 import { description, interfaceSchema, type Schema, symbolTable } from "./lib/ts-to-schema.ts";
 import { readmeSummary } from "./readme-blurb.ts";
+import { fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 /** Where the generated catalog is committed (it ships inside the published package). */
 export const CATALOG_OUT = `${ROOT}src/plugin/catalog.json`;
 const DOCS_DIR = `${ROOT}apps/web/app/docs`;

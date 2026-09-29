@@ -7,6 +7,7 @@
 // import map". This module builds that config; cli.ts drives the re-exec.
 
 import { dirname, join, resolve, toFileUrl } from "@std/path";
+import { carryLinks } from "./config-links.ts";
 import { ensureDir } from "@std/fs";
 import { parse as parseJsonc } from "@std/jsonc";
 import { denoExecutable, minDepAgeConfig, readFrameworkJson } from "./bundle.ts";
@@ -21,6 +22,10 @@ export interface DenoConfigView {
   imports?: Record<string, string>;
   /** Compiler options passed through to the merged config. */
   compilerOptions?: unknown;
+  /** Local-package overrides (`links`; `patch` before Deno 2.2), relative to the config. */
+  links?: unknown;
+  /** The pre-2.2 spelling of {@link links}. */
+  patch?: unknown;
 }
 
 /**
@@ -313,21 +318,22 @@ async function installFwdeps(fwDir: string, nm: string, denoJson: string): Promi
  * entry first (unlinking the symlink itself, not following it), then points manual-mode
  * resolution at the framework deps. A missing link leaves the framework's build deps
  * unresolvable under manual mode, which then fails later with a cryptic "npm:esbuild not
- * found" — symlinks commonly fail on Windows without Developer Mode / elevation, so that
- * is surfaced clearly here.
+ * found", so a failure is surfaced clearly here. Windows gets a junction, which (unlike a
+ * symlink) needs no Developer Mode or elevation.
  */
 async function linkFrameworkNodeModules(outDir: string, nm: string): Promise<boolean> {
   const link = join(outDir, "node_modules");
   await Deno.remove(link).catch(() => {});
   try {
-    await Deno.symlink(nm, link);
+    // On Windows a directory JUNCTION: unlike a symlink it needs no privilege (no Developer
+    // Mode, no elevation), and resolution follows it the same way.
+    await Deno.symlink(nm, link, Deno.build.os === "windows" ? { type: "junction" } : undefined);
     return true;
   } catch (err) {
     console.error(
       `denext: could not link the framework's build deps into ${link} ` +
-        `(${err instanceof Error ? err.message : err}). On Windows, enable Developer ` +
-        `Mode or run elevated so Deno can create symlinks; the build may otherwise fail ` +
-        `to resolve esbuild/sass/….`,
+        `(${err instanceof Error ? err.message : err}); the build may fail to resolve ` +
+        `esbuild/sass/….`,
     );
     return false;
   }
@@ -356,6 +362,7 @@ export async function writeMergedModuleConfig(
     appCfg,
   );
   await ensureDir(outDir);
+  carryLinks(merged, appCfg, dirname(appConfigPath), outDir);
   const configPath = join(outDir, "module-config.json");
   // Remove any pre-existing entry before writing: Deno.writeTextFile follows a
   // symlink and truncates its target, so a symlink planted at this predictable

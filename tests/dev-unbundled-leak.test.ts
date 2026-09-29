@@ -55,7 +55,7 @@ Deno.test("an interactive route that reaches a server-only module is refused wit
       assertNoDevServerOnlyLeaks(st, route(join(dir, "app/page.tsx")))
     );
     const message = err instanceof Error ? err.message : String(err);
-    assertStringIncludes(message, "lib/db.ts");
+    assertStringIncludes(message, join("lib", "db.ts")); // named as an OS path
     assertStringIncludes(message, "imports a node: built-in");
     assertStringIncludes(message, "the route of /x");
   } finally {

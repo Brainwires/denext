@@ -10,6 +10,7 @@
 // never guessed at.
 
 import { dirname, join, relative } from "@std/path";
+import { posixRelative } from "./mobile-paths.ts";
 import type { MobileConfig, MobileFlavorConfig } from "../server/config.ts";
 import {
   capacitorConfigFile,
@@ -65,7 +66,7 @@ export class NativeSnapshot {
 
   /** The files saved so far, relative to the project. */
   get files(): string[] {
-    return [...this.#saved.keys()].map((p) => relative(this.root, p));
+    return [...this.#saved.keys()].map((p) => posixRelative(this.root, p));
   }
 
   /** Record `path`'s current bytes (once), in memory and in the on-disk backup. */
@@ -85,7 +86,7 @@ export class NativeSnapshot {
       await Deno.writeFile(join(dir, "files", rel), bytes);
     }
     const index = Object.fromEntries(
-      [...this.#saved].map(([p, b]) => [relative(this.root, p), b !== null]),
+      [...this.#saved].map(([p, b]) => [posixRelative(this.root, p), b !== null]),
     );
     await Deno.mkdir(dir, { recursive: true });
     await Deno.writeTextFile(join(dir, BACKUP_INDEX), JSON.stringify(index, null, 2));

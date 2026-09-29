@@ -1,0 +1,5 @@
+# Check out every text file with LF endings on every OS (a Windows clone with
+# core.autocrlf=true would otherwise get CRLF, which `deno fmt` rejects and the
+# committed goldens never contain). Binary files are detected and left alone.
+* text=auto eol=lf
+*.bat text eol=crlf

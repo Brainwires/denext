@@ -3,7 +3,7 @@
 // the standing guarantee that the UI's module graph never reaches the bundler.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { basename, fromFileUrl, join } from "@std/path";
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { cliInvocation } from "../src/ui/proc.ts";
 import { projectTasks, UI_ROUTES } from "../src/ui/routes.ts";
@@ -308,7 +308,7 @@ Deno.test("the overview falls back to the directory name, 'not pinned' and 'not 
   const h = await ui({ denoJson: null });
   try {
     const body = await (await fetch(`${h.base}/`, { headers: h.headers })).text();
-    assertStringIncludes(body, `<dt>Project</dt><dd>${h.dir.split("/").pop()}</dd>`);
+    assertStringIncludes(body, `<dt>Project</dt><dd>${basename(h.dir)}</dd>`);
     assertStringIncludes(
       body,
       '<dt>denext</dt><dd><span class="badge warn">not pinned</span></dd>',
@@ -415,7 +415,7 @@ Deno.test("the UI module graph never reaches the bundler or npm", async () => {
   // in the command module (or anything it reaches) counts just as much as one in the server.
   const output = await new Deno.Command(Deno.execPath(), {
     args: ["info", "--json", "src/cli/commands/ui.ts"],
-    cwd: new URL("../", import.meta.url).pathname,
+    cwd: fromFileUrl(new URL("../", import.meta.url)),
     stdout: "piped",
     stderr: "piped",
   }).output();

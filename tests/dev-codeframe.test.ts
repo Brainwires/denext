@@ -2,19 +2,26 @@
 // editor-launch command shaping (all pure — no spawn, no IO).
 
 import { assert, assertEquals } from "@std/assert";
+import { join } from "@std/path";
 import { codeframe, parseStackFrame } from "../src/build/dev-codeframe.ts";
 import { editorCommand } from "../src/build/dev-server.ts";
+
+// The project root as this OS spells it: Deno's stack frames are file URLs, and a Windows one
+// carries its drive (`file:///C:/proj/…`), which the frame pattern must read through.
+const WIN = Deno.build.os === "windows";
+const ROOT = WIN ? "C:\\proj" : "/proj";
+const URL_ROOT = WIN ? "file:///C:/proj" : "file:///proj";
 
 Deno.test("parseStackFrame returns the first in-project frame, skipping deps", () => {
   const stack = [
     "Error: boom",
-    "    at dep (file:///proj/node_modules/x/x.ts:1:1)",
-    "    at gen (file:///proj/.denext/entry.js:2:2)",
-    "    at Page (file:///proj/app/page.tsx:12:5)",
+    `    at dep (${URL_ROOT}/node_modules/x/x.ts:1:1)`,
+    `    at gen (${URL_ROOT}/.denext/entry.js:2:2)`,
+    `    at Page (${URL_ROOT}/app/page.tsx:12:5)`,
     "    at run (file:///other/root/main.ts:3:3)",
   ].join("\n");
-  assertEquals(parseStackFrame(stack, "/proj"), {
-    file: "/proj/app/page.tsx",
+  assertEquals(parseStackFrame(stack, ROOT), {
+    file: join(ROOT, "app", "page.tsx"),
     line: 12,
     column: 5,
   });

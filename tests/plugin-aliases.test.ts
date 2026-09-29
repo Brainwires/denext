@@ -4,12 +4,12 @@
 // routes that render through the ordinary core pipeline.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { createApp, defaultLoader, scanRoutes } from "../src/server/mod.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import { aliasesPlugin } from "../examples/plugin-aliases/plugin.ts";
 
-const APP = new URL("../examples/plugin-aliases/app", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../examples/plugin-aliases/app", import.meta.url));
 
 async function manifestWithPlugin() {
   await applyPlugins({

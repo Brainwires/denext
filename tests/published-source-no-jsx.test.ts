@@ -12,10 +12,10 @@
 // (2.10.0-rc.4's first publish failed on it). Read an injected global through a cast instead.
 
 import { assertEquals } from "@std/assert";
-import { globToRegExp, join } from "@std/path";
+import { fromFileUrl, globToRegExp, join } from "@std/path";
 
 /** The repository root. */
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
 /** A file in JSX syntax. */
 const JSX_FILE = /\.[jt]sx$/;

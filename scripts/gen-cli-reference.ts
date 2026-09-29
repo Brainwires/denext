@@ -22,8 +22,9 @@
 import { GLOBAL_FLAGS } from "../src/cli/command.ts";
 import type { CommandSpec, FlagSpec, PositionalSpec } from "../src/cli/command.ts";
 import { buildRegistry } from "../src/cli/register.ts";
+import { dirname, fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 /** Where the generated reference is committed (the docs page imports it). */
 export const CLI_OUT = `${ROOT}apps/web/app/docs/cli/cli.json`;
 
@@ -156,7 +157,7 @@ export function generateCliReference(): string {
 
 if (import.meta.main) {
   const json = generateCliReference();
-  await Deno.mkdir(new URL(".", `file://${CLI_OUT}`).pathname, { recursive: true });
+  await Deno.mkdir(dirname(CLI_OUT), { recursive: true });
   await Deno.writeTextFile(CLI_OUT, json);
   const n = JSON.parse(json).commands.length;
   console.log(`cli reference: ${n} commands → ${CLI_OUT}`);

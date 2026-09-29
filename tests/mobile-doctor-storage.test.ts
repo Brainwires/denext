@@ -52,6 +52,35 @@ Deno.test("mobile doctor web-storage: localStorage / IndexedDB / redux-persist i
   assertStringIncludes(found[0].fix, "denext mobile add storage");
 });
 
+Deno.test("mobile doctor web-storage: a project inside a dist / build / out folder is still scanned", async () => {
+  const parent = await Deno.makeTempDir({ prefix: "denext_doctor_storage_parent_" });
+  try {
+    for (const outer of ["dist", "build/out"]) {
+      const dir = join(parent, outer, "app");
+      const files: Record<string, string> = {
+        "capacitor.config.json": JSON.stringify({ appId: "dev.example", webDir: "out" }),
+        "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
+        "src/prefs.ts": 'export const theme = () => localStorage.getItem("theme");\n',
+        // Inside the project the skip list still applies.
+        "dist/bundle.js": "localStorage.setItem('x', 1);\n",
+        "android/app/web.js": "indexedDB.open('x');\n",
+      };
+      for (const [path, content] of Object.entries(files)) {
+        await Deno.mkdir(join(dir, path, ".."), { recursive: true });
+        await Deno.writeTextFile(join(dir, path), content);
+      }
+      const report = await runMobileDoctor({ root: dir, profile: "release" });
+      const found = report.findings.filter((f) => f.check === "web-storage");
+      assertEquals(found.length, 1, outer);
+      assertStringIncludes(found[0].message, "src/prefs.ts");
+      assert(!found[0].message.includes("bundle.js"), found[0].message);
+      assert(!found[0].message.includes("web.js"), found[0].message);
+    }
+  } finally {
+    await Deno.remove(parent, { recursive: true });
+  }
+});
+
 Deno.test("mobile doctor web-storage: AsyncStorage / MMKV need a durable native store", async () => {
   const deps = {
     "package.json": JSON.stringify({

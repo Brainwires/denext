@@ -6,8 +6,9 @@
 import { assert, assertStringIncludes } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { fromFileUrl } from "@std/path";
 
-const APP = new URL("../../examples/streaming", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../../examples/streaming", import.meta.url));
 
 async function dashboardResolvesBuffered(origin: string) {
   const html = await (await fetch(`${origin}/dashboard`)).text();

@@ -20,8 +20,9 @@ import {
   stopNextCompat,
   toImportUrl,
 } from "../src/build/next-compat.ts";
+import { fromFileUrl } from "@std/path";
 
-const NEXT_COMPAT = new URL("../examples/next-compat", import.meta.url).pathname;
+const NEXT_COMPAT = fromFileUrl(new URL("../examples/next-compat", import.meta.url));
 
 // ── Full compat build (in-process; exercises the bundle pipeline) ──────────────
 

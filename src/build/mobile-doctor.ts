@@ -14,7 +14,8 @@
 // Nothing here runs the project: configs are read as data (the native copies `cap sync` writes
 // are what ships, and are preferred), the export is scanned as text.
 
-import { join, relative } from "@std/path";
+import { join } from "@std/path";
+import { posixRelative } from "./mobile-paths.ts";
 import { walk } from "@std/fs";
 import { capacitorConfigFile, readCapacitorConfig } from "./capacitor-config.ts";
 import { MOBILE_CAPABILITIES } from "./mobile-capabilities.ts";
@@ -110,7 +111,7 @@ async function readConfigs(root: string): Promise<ConfigSource[]> {
   const file = await capacitorConfigFile(root);
   if (file) {
     const config = await readCapacitorConfig(file, await Deno.readTextFile(file));
-    if (config) out.push({ label: relative(root, file), config });
+    if (config) out.push({ label: posixRelative(root, file), config });
   }
   for (const rel of NATIVE_CONFIGS) {
     const text = await readText(join(root, rel));
@@ -415,7 +416,7 @@ async function* exportTexts(webDir: string): AsyncGenerator<{ rel: string; text:
   ) {
     const size = (await Deno.stat(e.path)).size;
     if (size > 8 * 1024 * 1024) continue;
-    yield { rel: relative(webDir, e.path), text: await Deno.readTextFile(e.path) };
+    yield { rel: posixRelative(webDir, e.path), text: await Deno.readTextFile(e.path) };
   }
 }
 
@@ -621,18 +622,38 @@ const splash: Check = {
   },
 };
 
+/** Folders the source scan never enters: dependencies, builds, native projects, the export. */
+const SKIPPED_SOURCE_DIRS = new Set([
+  "node_modules",
+  ".denext",
+  ".git",
+  "ios",
+  "android",
+  "out",
+  "dist",
+  "build",
+]);
+const SOURCE_FILE = /\.(?:tsx?|jsx?|mjs)$/;
+
+/**
+ * The project-relative (`/`-separated) source files under `dir`. The skip list is matched per
+ * folder name inside the project only, so a project that itself lives under a `dist` / `build` /
+ * `out` folder is still scanned. Symlinks are not followed.
+ */
+async function* sourceFiles(dir: string, rel = ""): AsyncGenerator<string> {
+  for await (const entry of Deno.readDir(rel ? join(dir, rel) : dir)) {
+    const path = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory && !SKIPPED_SOURCE_DIRS.has(entry.name)) yield* sourceFiles(dir, path);
+    else if (entry.isFile && SOURCE_FILE.test(entry.name)) yield path;
+  }
+}
+
 /** The app's own source files (not dependencies, builds, native projects or the export). */
 async function* appSources(dir: string): AsyncGenerator<{ rel: string; text: string }> {
-  const skip = [
-    /node_modules/,
-    /(^|\/)\.denext(\/|$)/,
-    /(^|\/)(ios|android|out|dist|build|\.git)(\/|$)/,
-  ];
-  for await (
-    const e of walk(dir, { includeDirs: false, exts: [".ts", ".tsx", ".js", ".jsx", ".mjs"], skip })
-  ) {
-    if ((await Deno.stat(e.path)).size > 1024 * 1024) continue;
-    yield { rel: relative(dir, e.path), text: await Deno.readTextFile(e.path) };
+  for await (const rel of sourceFiles(dir)) {
+    const path = join(dir, rel);
+    if ((await Deno.stat(path)).size > 1024 * 1024) continue;
+    yield { rel, text: await Deno.readTextFile(path) };
   }
 }
 

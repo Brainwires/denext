@@ -33,7 +33,9 @@ Deno.test("runDeno: output with no newline arrives in bounded pieces", async () 
  */
 const SPAWNING_CONFIG = `let spawned = "not tried";
 try {
-  const out = new Deno.Command("sh", { args: ["-c", "echo grandchild"] }).outputSync();
+  // Deno itself, not \`sh\`: a binary that exists on every OS, so a refusal is the permission's.
+  const out = new Deno.Command(Deno.execPath(), { args: ["eval", "console.log('grandchild')"] })
+    .outputSync();
   spawned = new TextDecoder().decode(out.stdout).trim();
 } catch (e) {
   spawned = "refused: " + (e as Error).name;

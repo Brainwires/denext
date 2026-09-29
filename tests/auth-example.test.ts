@@ -16,6 +16,8 @@ import {
   runDeferred,
   runWithContext,
 } from "../src/server/request-context.ts";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { removeTempDirSync } from "./helpers/temp.ts";
 
 // A throwaway database file + a fixed secret — set before the app loads any module. It is a
 // real file, not ":memory:", because the admin page opens a second read handle onto it.
@@ -23,7 +25,7 @@ const TMP = Deno.makeTempDirSync({ prefix: "denext-auth-example-" });
 Deno.env.set("AUTH_DB", `${TMP}/auth.db`);
 Deno.env.set("AUTH_SECRET", "auth-example-test-secret-at-least-32-chars");
 
-const APP = new URL("../examples/auth", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../examples/auth", import.meta.url));
 
 /**
  * The example's `denext.config.ts` plugin, set up the way `applyPlugins` does it, and
@@ -33,7 +35,7 @@ const APP = new URL("../examples/auth", import.meta.url).pathname;
  * everything else to the app (pages, Server Actions, middleware).
  */
 async function appWithAuth(): Promise<TestHandler> {
-  const config = (await import(`${APP}/denext.config.ts`)).default as {
+  const config = (await import(toFileUrl(join(APP, "denext.config.ts")).href)).default as {
     plugins: DenextPlugin[];
   };
   const handlers: PluginRequestHandler[] = [];
@@ -102,7 +104,7 @@ async function registerThroughForm({ client }: Ctx) {
   assertStringIncludes(res.location ?? "", "/login?registered=1");
   // The account went into the ADAPTER: a user record, its scrypt credential, and the
   // `credentials` account row registration linked to it.
-  const { adapter, findUser } = await import(`${APP}/lib/users.ts`);
+  const { adapter, findUser } = await import(toFileUrl(join(APP, "lib/users.ts")).href);
   const ada = await findUser("ada@denext.dev");
   assert(ada, "the adapter holds the registered user");
   assertStringIncludes(await adapter.getCredential(ada.id), "scrypt$N=");
@@ -194,7 +196,7 @@ async function sixthFailedAttemptIs429({ handler }: Ctx) {
 }
 
 async function sessionIsTheAdapterIdentity({ client }: Ctx) {
-  const { findUser } = await import(`${APP}/lib/users.ts`);
+  const { findUser } = await import(toFileUrl(join(APP, "lib/users.ts")).href);
   const ada = await findUser("ada@denext.dev");
   assertEquals(
     ada.roles,
@@ -282,7 +284,7 @@ type Mail = { identifier: string; purpose: string; url: string; token: string };
 
 /** Every message the example's dev mailer captured so far, oldest first. */
 async function sentMail(): Promise<Mail[]> {
-  const { listMail } = await import(`${APP}/lib/outbox.ts`);
+  const { listMail } = await import(toFileUrl(join(APP, "lib/outbox.ts")).href);
   return [...(listMail() as Mail[])].reverse();
 }
 
@@ -326,7 +328,7 @@ async function verifyEmail({ client }: Ctx) {
   assertEquals(opened.location, "/check-email?verified=1");
   assertStringIncludes((await client.get("/check-email?verified=1")).text, "Address verified");
 
-  const { findUser } = await import(`${APP}/lib/users.ts`);
+  const { findUser } = await import(toFileUrl(join(APP, "lib/users.ts")).href);
   assertEquals(typeof (await findUser("ada@denext.dev")).emailVerified, "number");
   assertStringIncludes((await client.get("/verify-email")).text, "verified on");
   assertEquals((await client.get(pathOf(mail))).location, "/check-email?error=invalid_token");
@@ -410,7 +412,7 @@ async function magicLinkRetiresUnverifiedAccess({ handler }: Ctx) {
   assertEquals((await squatter.get("/dashboard")).status, 302, "the squatter's session is gone");
   const old = await postCredentials(squatter, "grace@denext.dev", "squatter password");
   assertEquals(old.status, 401, "and so is the password nobody proved");
-  const { findUser } = await import(`${APP}/lib/users.ts`);
+  const { findUser } = await import(toFileUrl(join(APP, "lib/users.ts")).href);
   assertEquals(typeof (await findUser("grace@denext.dev")).emailVerified, "number");
 }
 
@@ -591,6 +593,6 @@ Deno.test("examples/auth: the full app works with JavaScript disabled", async (t
   try {
     for (const [name, fn] of STEPS) await t.step(name, () => fn(ctx));
   } finally {
-    Deno.removeSync(TMP, { recursive: true });
+    removeTempDirSync(TMP); // the example app keeps its sqlite handles open
   }
 });

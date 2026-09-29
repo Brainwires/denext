@@ -55,8 +55,16 @@ See [Migrating from Remix](/docs/migrating-remix) § 1.
 **Cause.** Deno's minimum-dependency-age policy refuses a JSR version for
 roughly its first 24 hours. A supply-chain delay, not an error.
 
-**Fix.** Pass the flag on `deno run`, or set the env var so the `deno bundle`
-child a `denext build` spawns inherits it too.
+**Fix.** Projects made by `denext create` or `denext migrate` (3.0 and later) already
+exempt denext's own packages, and only those, keeping the 24-hour hold for every
+other dependency. For an older project, add the same to its `deno.json`:
+
+```json
+"minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }
+```
+
+For a one-off run, pass the flag on `deno run`, or set the env var so the
+`deno bundle` child a `denext build` spawns inherits it too:
 
 ```sh
 deno run --min-dep-age=0 -A jsr:@denext/denext/cli build

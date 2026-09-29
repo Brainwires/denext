@@ -36,7 +36,9 @@ async function write(dir: string, files: Record<string, string>): Promise<void> 
 
 async function filesUnder(dir: string): Promise<string[]> {
   const out: string[] = [];
-  for await (const e of walk(dir, { includeDirs: false })) out.push(relative(dir, e.path));
+  for await (const e of walk(dir, { includeDirs: false })) {
+    out.push(relative(dir, e.path).replaceAll("\\", "/"));
+  }
   return out.sort();
 }
 

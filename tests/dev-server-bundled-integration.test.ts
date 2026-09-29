@@ -6,8 +6,9 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { startDevOnDir } from "./e2e/harness.ts";
+import { fromFileUrl } from "@std/path";
 
-const HELLO = new URL("../examples/hello", import.meta.url).pathname;
+const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
 
 type Ctx = { origin: string; routeJs: string };
 

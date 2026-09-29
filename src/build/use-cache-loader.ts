@@ -47,7 +47,7 @@ function toUrl(filePath: string): string {
 /** True if `fileUrl` is a `file:` URL located under `rootDir`. */
 function underRoot(fileUrl: string, rootDir: string): boolean {
   if (!fileUrl.startsWith("file:")) return false;
-  const rootUrl = toFileUrl(rootDir.endsWith("/") ? rootDir : rootDir + "/").href;
+  const rootUrl = toFileUrl(/[\\/]$/.test(rootDir) ? rootDir : rootDir + "/").href; // or `\`
   return fileUrl.startsWith(rootUrl);
 }
 

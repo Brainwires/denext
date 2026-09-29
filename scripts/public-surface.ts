@@ -5,9 +5,10 @@
 //   deno task surface:refresh   # rewrite tests/fixtures/public-surface.json
 
 import { denoDocJson } from "./deno-doc.ts";
+import { fromFileUrl } from "@std/path";
 
 const ROOT = new URL("../", import.meta.url);
-export const SURFACE_FIXTURE = new URL("tests/fixtures/public-surface.json", ROOT).pathname;
+export const SURFACE_FIXTURE = fromFileUrl(new URL("tests/fixtures/public-surface.json", ROOT));
 
 interface DocSymbol {
   name: string;
@@ -22,7 +23,7 @@ export async function publicSurface(): Promise<Record<string, string[]>> {
   const out: Record<string, string[]> = {};
   for (const [key, file] of Object.entries(denoJson.exports)) {
     const module = key === "." ? "denext" : `denext/${key.slice(2)}`;
-    out[module] = symbolsOf(await denoDocJson(new URL(file, ROOT).pathname));
+    out[module] = symbolsOf(await denoDocJson(fromFileUrl(new URL(file, ROOT))));
   }
   return out;
 }

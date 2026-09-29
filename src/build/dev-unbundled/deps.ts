@@ -1,7 +1,7 @@
 // Unbundled dev: the dependency pre-bundles — the native denext `@dep` set, the compat
 // react→denext runtime, and the compat on-demand npm bundle (Vite optimizeDeps).
 
-import { denoPlugins } from "@luca/esbuild-deno-loader";
+import { denoLoaderPlugins } from "../deno-loader-plugins.ts";
 import * as esbuild from "esbuild";
 import { ensureDir } from "@std/fs";
 import {
@@ -46,7 +46,7 @@ async function buildDeps(st: UnbundledState): Promise<void> {
     external: ["@denext/photon", "@denext/avif", "@denext/og"],
     plugins: [
       ...(await frameworkPatchPlugins(st.opts.projectDir, base)),
-      ...denoPlugins({ configPath: cfg }),
+      ...denoLoaderPlugins({ configPath: cfg }),
     ],
   });
 }

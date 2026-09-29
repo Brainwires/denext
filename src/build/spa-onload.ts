@@ -7,6 +7,7 @@
 
 import type * as esbuild from "esbuild";
 import { SEPARATOR } from "@std/path";
+import { hasPathSegment, inNodeModules } from "./path-segments.ts";
 
 /** Options for {@linkcode firstPartyTsxPlugin}. */
 export interface FirstPartyOnLoadOptions {
@@ -58,8 +59,8 @@ export function firstPartyTsxPlugin(
         // wrapper (`.entries/index.tsx`), which has no components and whose `import` already
         // pulls the real modules in.
         if (
-          args.path.includes("/node_modules/") ||
-          args.path.includes("/.entries/") ||
+          inNodeModules(args.path) ||
+          hasPathSegment(args.path, ".entries") ||
           !isInsideProject(args.path, projectDir)
         ) {
           return null; // let the deno-loader load it unchanged

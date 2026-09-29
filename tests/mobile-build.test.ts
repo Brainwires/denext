@@ -15,6 +15,8 @@ import {
   type BuildCommand,
   formatBuildPlan,
   formatCommand,
+  gradlewCommand,
+  iosHostError,
   type MobileBuildOptions,
   planMobileBuild,
   runMobileBuild,
@@ -183,7 +185,7 @@ Deno.test("mobile build: Android plans — debug, unsigned release, keystore via
     assertStringIncludes(gradle.env!.GRADLE_OPTS, "key.password=s3cret-pw");
     const shown = formatBuildPlan(signed);
     assert(!shown.includes("s3cret-pw"), "no secret in the printed plan");
-    assertStringIncludes(shown, "[env: GRADLE_OPTS] ./gradlew assembleRelease");
+    assertStringIncludes(shown, `[env: GRADLE_OPTS] ${gradlewCommand()} assembleRelease`);
     assertStringIncludes(shown, "upload keystore /k/upload.jks, alias upload");
 
     await assertRejects(
@@ -317,7 +319,7 @@ Deno.test("mobile build: run applies the flavor around the native build, restore
       now: () => new Date("2026-09-27T00:00:00Z"),
       run: async (cmd) => {
         const entry: (typeof seen)[number] = { cmd };
-        if (cmd.cmd === "./gradlew") {
+        if (cmd.cmd === gradlewCommand()) {
           entry.gradle = await Deno.readTextFile(join(dir, "android/app/build.gradle"));
           entry.strings = await Deno.readTextFile(
             join(dir, "android/app/src/main/res/values/strings.xml"),
@@ -333,7 +335,7 @@ Deno.test("mobile build: run applies the flavor around the native build, restore
         return { code: 0 };
       },
     });
-    assertEquals(seen.map((s) => s.cmd.cmd), ["deno", "npx", "./gradlew"]);
+    assertEquals(seen.map((s) => s.cmd.cmd), ["deno", "npx", gradlewCommand()]);
     // The export ran before the flavor was applied; the native build saw it.
     const during = seen[2];
     assertStringIncludes(during.gradle!, 'applicationId "dev.example.staging"');
@@ -376,7 +378,7 @@ Deno.test("mobile build: a failed native build still restores the flavor edits",
       () =>
         runMobileBuild(plan, {}, {
           log: () => {},
-          run: (c) => Promise.resolve({ code: c.cmd === "./gradlew" ? 1 : 0 }),
+          run: (c) => Promise.resolve({ code: c.cmd === gradlewCommand() ? 1 : 0 }),
         }),
       Error,
       "exited with 1",
@@ -519,6 +521,34 @@ Deno.test("denext mobile build / assets --dry-run through the verb", async () =>
     );
   } finally {
     Deno.env.delete("DENEXT_ANDROID_KEYSTORE_PASSWORD");
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("mobile build: the Gradle wrapper per host; iOS steps name macOS off a Mac", () => {
+  assertEquals(gradlewCommand("darwin"), "./gradlew");
+  assertEquals(gradlewCommand("linux"), "./gradlew");
+  assertEquals(gradlewCommand("windows"), "./gradlew.bat");
+  assertEquals(iosHostError("build", "darwin"), undefined);
+  assertStringIncludes(iosHostError("build", "windows")!, "needs macOS with Xcode (xcodebuild)");
+  assertStringIncludes(iosHostError("submit", "linux")!, "xcrun altool");
+  assertStringIncludes(iosHostError("submit", "windows")!, "--dry-run");
+});
+
+Deno.test("mobile build: a Windows keystore path reaches GRADLE_OPTS with forward slashes", {
+  ignore: Deno.build.os !== "windows", // the `\` → `/` rewrite only applies to Windows paths
+}, async () => {
+  const dir = await project();
+  try {
+    const plan = await planMobileBuild(options(dir, {
+      release: true,
+      signing: { keystore: "C:\\keys\\upload.jks", keyAlias: "a", keystorePassword: "pw" },
+    }));
+    assertStringIncludes(
+      plan.commands.at(-1)!.env!.GRADLE_OPTS,
+      "signing.store.file=C:/keys/upload.jks",
+    );
+  } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });

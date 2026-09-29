@@ -29,6 +29,15 @@ async function tick(ms = 5): Promise<void> {
   await settle();
 }
 
+/**
+ * Tick until `done()` holds (at most ~2 s): chained 0 ms timers can take a timer-resolution step
+ * each (~16 ms on Windows), so a fixed wait is too short there. The assertions after still check.
+ */
+async function tickUntil(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !done(); i++) await tick(10);
+  await tick();
+}
+
 /** A `DenextBack` plugin, `@capacitor/app` and `history` for an Android shell test. */
 function androidEnv(app: { minimize?: boolean } = {}) {
   const back = fakePlugin(["setEnabled"]);
@@ -257,7 +266,8 @@ Deno.test("onBack (web): a sentinel entry turns the browser's back into the hand
 
       consume = false;
       nav.history.back();
-      await tick(20);
+      // Three chained 0 ms timers (the pop, the real back's pop, the re-arm): wait for the last.
+      await tickUntil(() => calls === 2 && nav.index() === 1);
       assertEquals(calls, 2);
       assertEquals(routed, ["https://app.test/a"], "unconsumed: the real back reached the router");
       assertEquals(nav.location.href, "https://app.test/a");

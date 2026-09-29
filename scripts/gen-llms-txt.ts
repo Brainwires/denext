@@ -12,8 +12,9 @@
 
 import { publicGuide } from "../src/mcp/guide.ts";
 import { TOOLS } from "../src/mcp/tools.ts";
+import { fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const OUT_DIR = `${ROOT}apps/web/public`;
 const SITE = "https://denext.dev";
 const REPO = "https://github.com/Brainwires/denext";

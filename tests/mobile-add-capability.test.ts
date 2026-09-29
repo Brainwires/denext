@@ -240,7 +240,7 @@ Deno.test("mobile add: a workspace lockfile two levels up picks its manager; ins
     async (root) => {
       const plan = await planIn(root);
       assertEquals(plan.packageManager, "pnpm");
-      assertEquals(plan.lockfile, join("..", "..", "pnpm-lock.yaml"));
+      assertEquals(plan.lockfile, "../../pnpm-lock.yaml");
       assertEquals(plan.install, {
         cmd: "pnpm",
         args: ["add", "@capacitor/haptics@^8.0.2"],
@@ -258,7 +258,7 @@ Deno.test("mobile add: a workspace lockfile two levels up picks its manager; ins
     async (root) => {
       const plan = await planIn(root);
       assertEquals(plan.packageManager, "pnpm");
-      assertEquals(plan.lockfile, join("..", "..", "pnpm-workspace.yaml"));
+      assertEquals(plan.lockfile, "../../pnpm-workspace.yaml");
     },
   );
 });
@@ -271,7 +271,7 @@ Deno.test("mobile add: a packageManager field names the manager when there is no
       const plan = await planIn(root);
       assertEquals(plan.packageManager, "pnpm");
       assertEquals(plan.lockfile, undefined);
-      assertEquals(plan.packageManagerField, join("..", "..", "package.json"));
+      assertEquals(plan.packageManagerField, "../../package.json");
       assertStringIncludes(
         formatCapabilityPlan(plan),
         "package mgr    pnpm (packageManager in ../../package.json)",
@@ -311,7 +311,7 @@ Deno.test("mobile add: the nearest lockfile beats an outer one", async () => {
     async (root) => {
       const plan = await planIn(root);
       assertEquals(plan.packageManager, "yarn");
-      assertEquals(plan.lockfile, join("..", "yarn.lock"));
+      assertEquals(plan.lockfile, "../yarn.lock");
     },
   );
 });

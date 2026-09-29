@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import {
   loadInstrumentation,
   runRegister,
@@ -61,7 +61,7 @@ Deno.test("an instrumentation onRequest export is the app's per-request hook (me
   });
   const res = await app(new Request("http://localhost/nowhere"));
   await res.body?.cancel();
-  const { seen } = await import(`file://${path}`) as {
+  const { seen } = await import(toFileUrl(path).href) as {
     seen: { method: string; path: string; status: number; durationMs: number; requestId: string }[];
   };
   assertEquals(seen.length, 1);

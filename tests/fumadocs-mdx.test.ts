@@ -12,6 +12,7 @@ import {
   fumadocsMdxPlugin,
 } from "../src/build/fumadocs-mdx.ts";
 import { resolveNodeFrom, SSR_CONDITIONS } from "../src/build/next-compat.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 const resolve = (dir: string, spec: string) => resolveNodeFrom(dir, spec, SSR_CONDITIONS);
 
@@ -114,6 +115,6 @@ Deno.test({
   } finally {
     disposeFumadocsHosts();
     await esbuild.stop();
-    await Deno.remove(app, { recursive: true });
+    await removeTempDir(app); // the disposed loader worker lets go of its files a beat later
   }
 });

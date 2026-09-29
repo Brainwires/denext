@@ -7,11 +7,12 @@
 // Target app: examples/spa.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { startSpaDevOnDir } from "./e2e/harness.ts";
 import { generateSpaEntry } from "../src/build/spa/shared.ts";
+import { fsUrlPath } from "../src/build/dev-unbundled/state.ts";
 
-const SPA = new URL("../examples/spa", import.meta.url).pathname;
+const SPA = fromFileUrl(new URL("../examples/spa", import.meta.url));
 
 /** Fetch, retrying a transient 500 from a cold esbuild build (first-run dep prebundle). */
 async function okFetch(url: string, init?: RequestInit): Promise<Response> {
@@ -57,7 +58,7 @@ async function stepEntry({ origin }: Ctx): Promise<void> {
 }
 
 async function stepFsMain({ origin }: Ctx): Promise<void> {
-  const res = await okFetch(origin + "/_denext/@fs" + join(SPA, "src/main.tsx"));
+  const res = await okFetch(origin + fsUrlPath(join(SPA, "src/main.tsx")));
   assertEquals(res.status, 200);
   assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
   await res.text();

@@ -4,6 +4,7 @@
 // with a clickable, source-mapped-ish frame + snippet in the browser overlay.
 
 import { fromFileUrl } from "@std/path";
+import { hasPathSegment, inNodeModules } from "./path-segments.ts";
 
 /** A source location parsed out of a stack trace. */
 export interface StackFrame {
@@ -15,14 +16,15 @@ export interface StackFrame {
   column: number;
 }
 
-// Matches `file:///abs/x.ts:12:34` and bare `/abs/x.ts:12:34` occurrences in a stack.
-const FRAME_RE = /(file:\/\/\/[^\s():]+|\/[^\s():]+):(\d+):(\d+)/g;
+// Matches `file:///abs/x.ts:12:34` (a Windows one carries its drive: `file:///C:/app/x.ts:12:34`)
+// and bare `/abs/x.ts:12:34` occurrences in a stack.
+const FRAME_RE = /(file:\/\/\/(?:[A-Za-z]:)?[^\s():]+|\/[^\s():]+):(\d+):(\d+)/g;
 
 /** Whether a frame path belongs to app source (not a dep cache / build output). */
 function isAppFrame(file: string, rootDir: string): boolean {
   if (!file.startsWith(rootDir)) return false;
   // Skip generated/vendored trees even when they live under the project root.
-  return !file.includes("/.denext/") && !file.includes("/node_modules/");
+  return !hasPathSegment(file, ".denext") && !inNodeModules(file);
 }
 
 /**

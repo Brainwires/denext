@@ -11,12 +11,12 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { copy } from "@std/fs";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
 
-const SOURCE = new URL("../../examples/hello", import.meta.url).pathname;
-const APP = new URL("../../examples/.hello-gz-test", import.meta.url).pathname;
+const SOURCE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
+const APP = fromFileUrl(new URL("../../examples/.hello-gz-test", import.meta.url));
 
 type Ctx = { origin: string; url: string; identity: string };
 

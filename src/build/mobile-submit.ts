@@ -147,7 +147,9 @@ function altoolCommand(ipa: string, creds: AscCredentials, keysDir: string): Bui
 
 /**
  * A directory altool finds the key in, and how to clean it up: the key's own directory when the
- * file is already named `AuthKey_<id>.p8`, else a private temporary directory holding a symlink.
+ * file is already named `AuthKey_<id>.p8`, else a private temporary directory holding a symlink
+ * (a private copy where the OS refuses the link, as Windows does without the symlink privilege;
+ * the directory is removed either way).
  */
 async function altoolKeysDir(
   creds: AscCredentials,
@@ -156,9 +158,26 @@ async function altoolKeysDir(
     return { dir: dirname(creds.keyPath), cleanup: () => Promise.resolve() };
   }
   const dir = await Deno.makeTempDir({ prefix: "denext_asc_" });
-  await Deno.chmod(dir, 0o700);
-  await Deno.symlink(creds.keyPath, join(dir, `AuthKey_${creds.keyId}.p8`));
-  return { dir, cleanup: () => Deno.remove(dir, { recursive: true }) };
+  const cleanup = () => Deno.remove(dir, { recursive: true });
+  try {
+    await Deno.chmod(dir, 0o700);
+    await linkOrCopy(creds.keyPath, join(dir, `AuthKey_${creds.keyId}.p8`));
+  } catch (err) {
+    await cleanup().catch(() => {});
+    throw err;
+  }
+  return { dir, cleanup };
+}
+
+/** Symlink `target` at `path`, or copy it (owner-only) when the OS refuses the link. */
+async function linkOrCopy(target: string, path: string): Promise<void> {
+  try {
+    await Deno.symlink(target, path);
+  } catch (err) {
+    if (Deno.build.os !== "windows") throw err;
+    await Deno.copyFile(target, path);
+    await Deno.chmod(path, 0o600).catch(() => {});
+  }
 }
 
 /** A Google service account's fields that the token exchange needs. */

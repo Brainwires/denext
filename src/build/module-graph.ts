@@ -10,7 +10,7 @@
 // build-time graph split (which modules the browser bundle may contain) and the
 // runtime registration of client-component and server references.
 
-import { fromFileUrl, join, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
+import { fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { type Directive, readDirective } from "./directives.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./bundle.ts";
@@ -43,6 +43,11 @@ export function shortHash(input: string): string {
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(36);
+}
+
+/** `dir` with exactly one trailing platform separator, for a prefix test on local paths. */
+function dirPrefix(dir: string): string {
+  return dir.endsWith(SEPARATOR) ? dir : dir + SEPARATOR;
 }
 
 /** The app-relative, forward-slashed path of a module (the id/hash basis). */
@@ -119,7 +124,8 @@ export function serializeBoundary(b: BoundaryManifest, projectDir: string): Seri
   const rel = (m: Map<string, BoundaryRef>) =>
     Object.fromEntries(
       [...m].map(([id, ref]) => [id, {
-        path: relative(projectDir, fromFileUrl(ref.url)),
+        // `/`-separated so a manifest built on Windows reads the same everywhere.
+        path: relative(projectDir, fromFileUrl(ref.url)).split(SEPARATOR).join("/"),
         exports: ref.exports,
       }]),
     );
@@ -266,14 +272,21 @@ async function spawnDenoInfo(
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
   graphSpawns++;
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_graph_" });
-  const barrel = `${tmpDir}/barrel.ts`;
+  const barrel = join(tmpDir, "barrel.ts");
   try {
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
     const command = new Deno.Command(denoExecutable(), {
       // sloppy-imports so extensionless Next.js app imports resolve in the graph
       // crawl (permissive fallback; see runDenoBundle in bundle.ts).
-      args: ["info", "--unstable-sloppy-imports", ...minDepAgeArgs(), "--json", barrel],
+      args: [
+        "info",
+        "--unstable-sloppy-imports",
+        ...minDepAgeArgs(),
+        "--json",
+        // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
+        toFileUrl(barrel).href,
+      ],
       stdout: "piped",
       stderr: "piped",
     });
@@ -537,7 +550,7 @@ export async function localModulesOutside(
   const entries = [...new Set(routes.flatMap(routeEntryFiles))];
   try {
     const local = await crawlLocalModules(entries);
-    const root = projectDir.endsWith("/") ? projectDir : projectDir + "/";
+    const root = dirPrefix(projectDir);
     return local.filter((f) => !f.startsWith(root) && !isFrameworkSource(f));
   } catch {
     return [];
@@ -557,10 +570,10 @@ export async function localModulesOutside(
  */
 export function isFrameworkSource(path: string): boolean {
   const fw = frameworkRoot();
-  if (!fw.startsWith("/")) return false; // a remote framework root has no local modules
-  const root = fw.endsWith("/") ? fw : fw + "/";
+  if (!isAbsolute(fw)) return false; // a remote framework root has no local modules
+  const root = dirPrefix(fw);
   if (!path.startsWith(root)) return false;
-  const rel = path.slice(root.length);
+  const rel = path.slice(root.length).split(SEPARATOR).join("/");
   return rel.startsWith("src/") || rel.startsWith("packages/") || !rel.includes("/");
 }
 

@@ -8,6 +8,7 @@
 
 import "./helpers/activity-runtime.ts";
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { join } from "@std/path";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -969,7 +970,8 @@ Deno.test("expoRouterNavigatorsPlugin: app imports get the adapter; expo-router'
     "expo-router/build/react-navigation/native",
     "@react-navigation/native",
   ]);
-  assertEquals(resolved[1].opts.importer, "/app/denext-generated.js");
+  // The host path esbuild resolves from (a `\` path on Windows).
+  assertEquals(resolved[1].opts.importer, join("/app", "denext-generated.js"));
   const loaded = loader!({ path: "expo-router/tabs", pluginData: { resolveDir: "/app" } });
   assertEquals(loaded.resolveDir, "/app");
   assertStringIncludes(loaded.contents, "export default Tabs;");

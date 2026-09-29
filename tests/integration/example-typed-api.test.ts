@@ -4,8 +4,9 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { fromFileUrl } from "@std/path";
 
-const APP = new URL("../../examples/typed-api", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../../examples/typed-api", import.meta.url));
 
 type Ctx = { origin: string; html: string };
 

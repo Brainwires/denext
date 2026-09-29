@@ -20,7 +20,7 @@
 // project verb receives carries exactly the declared flags).
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../../", import.meta.url));
 const CLI = join(ROOT, "cli.ts");
@@ -172,7 +172,9 @@ async function project(
   files: Readonly<Record<string, string>> = {},
 ): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_e2e_" });
-  const deno = { imports: { "denext": MOD, "denext/": ROOT }, tasks: { hello: "eval 1" } };
+  // Import-map values are URLs (a Windows path there would read `C:` as a scheme).
+  const imports = { "denext": toFileUrl(MOD).href, "denext/": toFileUrl(ROOT).href };
+  const deno = { imports, tasks: { hello: "eval 1" } };
   await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(deno, null, 2) + "\n");
   await Deno.mkdir(join(dir, "app"));
   await Deno.writeTextFile(
@@ -955,7 +957,16 @@ Deno.test("`denext ui` serves, guards and writes over real HTTP", (t) =>
     await t.step("docker previews a diff without writing", () => checkDockerPreview(ui));
   }));
 
-Deno.test("SIGTERM exits promptly with a browser tab holding /_ui/events open", () =>
+/**
+ * Windows has no SIGTERM: Deno's `kill("SIGTERM")` there is `TerminateProcess`, a hard stop
+ * (exit code 1) that no handler sees — the graceful drain is Ctrl+C in the UI's own console,
+ * which one process cannot send another. So the drain is only observable on POSIX.
+ */
+const NO_SIGTERM = Deno.build.os === "windows";
+
+Deno.test("SIGTERM exits promptly with a browser tab holding /_ui/events open", {
+  ignore: NO_SIGTERM,
+}, () =>
   withUi({}, async (ui, launch) => {
     await handshake(ui);
     // A real page keeps this stream open for the life of the tab. Before the SSE controllers
@@ -1032,7 +1043,8 @@ Deno.test("`--read-only` refuses every mutation, and SIGTERM drains the port", (
       SHUTDOWN_TIMEOUT_MS,
       "the server to drain after SIGTERM",
     );
-    assertEquals(status.code, 0, "a signalled `denext ui` exits cleanly");
+    // A hard stop on Windows (see NO_SIGTERM): the port must still come free.
+    if (!NO_SIGTERM) assertEquals(status.code, 0, "a signalled `denext ui` exits cleanly");
     assert(await portFree(launch.port), "the port is released");
   }));
 

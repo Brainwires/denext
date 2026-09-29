@@ -344,7 +344,7 @@ Deno.test("module graph cache: a crawl over a subset of an earlier crawl's entri
     assertEquals(onlyA.map((p) => p.slice(app.length + 1)).sort(), ["a.ts", "shared.ts"]);
     // The raw graph API agrees and reports resolved roots.
     const g = await denoInfoGraph([join(app, "b.ts")]);
-    assertEquals(g.roots, [`file://${app}/b.ts`]);
+    assertEquals(g.roots, [toFileUrl(join(app, "b.ts")).href]);
     assertEquals(moduleGraphSpawnCount(), before + 1);
     // A NAMED cache is independent: the CSS crawl (a different resolution) never reads the
     // default graph, and its own crawl doesn't feed it either.
@@ -366,21 +366,22 @@ Deno.test("module graph cache: a crawl over a subset of an earlier crawl's entri
 // startup crawl; node_modules islands outside the project dir round-trip through `../`.
 Deno.test("boundary manifest serializes to project-relative paths and back", async () => {
   const { deserializeBoundary, serializeBoundary } = await import("../src/build/module-graph.ts");
-  const project = "/repo/apps/web";
+  // A real absolute root on this OS (`C:\repo` on Windows), so the paths are local ones.
+  const repo = Deno.build.os === "windows" ? "C:\\repo" : "/repo";
+  const url = (rel: string) => toFileUrl(join(repo, rel)).href;
+  const project = join(repo, "apps", "web");
   const b = {
     client: new Map([
-      ["c_a", { url: "file:///repo/apps/web/components/a.tsx", exports: ["A"] }],
-      ["c_nm", { url: "file:///repo/node_modules/vaul/dist/index.mjs", exports: ["Drawer"] }],
+      ["c_a", { url: url("apps/web/components/a.tsx"), exports: ["A"] }],
+      ["c_nm", { url: url("node_modules/vaul/dist/index.mjs"), exports: ["Drawer"] }],
     ]),
-    server: new Map([["s_x", { url: "file:///repo/apps/web/app/actions.ts", exports: ["save"] }]]),
+    server: new Map([["s_x", { url: url("apps/web/app/actions.ts"), exports: ["save"] }]]),
   };
   const s = serializeBoundary(b, project);
+  // The manifest is `/`-separated on every OS.
   assertEquals(s.client.c_a.path, "components/a.tsx");
   assertEquals(s.client.c_nm.path, "../../node_modules/vaul/dist/index.mjs");
   const back = deserializeBoundary(JSON.parse(JSON.stringify(s)), project);
-  assertEquals(back.client.get("c_nm")?.url, "file:///repo/node_modules/vaul/dist/index.mjs");
-  assertEquals(back.server.get("s_x"), {
-    url: "file:///repo/apps/web/app/actions.ts",
-    exports: ["save"],
-  });
+  assertEquals(back.client.get("c_nm")?.url, url("node_modules/vaul/dist/index.mjs"));
+  assertEquals(back.server.get("s_x"), { url: url("apps/web/app/actions.ts"), exports: ["save"] });
 });

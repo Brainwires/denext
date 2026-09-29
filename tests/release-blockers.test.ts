@@ -10,11 +10,17 @@ import { scaffoldFiles } from "../src/build/scaffold.ts";
 import { PAGES_ROUTER_SPEC } from "../src/build/migrate.ts";
 import { bundleFailureMessage, minDepAgeArgs } from "../src/build/bundle.ts";
 import { fsPathAllowed } from "../src/build/dev-unbundled/handler.ts";
-import { createUnbundledState } from "../src/build/dev-unbundled/state.ts";
+import {
+  createUnbundledState,
+  FS_PREFIX,
+  fsPathOfUrl,
+  fsUrlPath,
+} from "../src/build/dev-unbundled/state.ts";
 import { createApp } from "../src/server/app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { foldPrereleases, isStable, withLinkRef } from "../scripts/release.ts";
 import { VERSION } from "../mod.ts";
+import { FILE_SYMLINKS } from "./helpers/symlink.ts";
 
 Deno.test("self-exec: a JSR/https CLI re-execs its module URL; only a file URL becomes a path", () => {
   assertEquals(
@@ -22,7 +28,7 @@ Deno.test("self-exec: a JSR/https CLI re-execs its module URL; only a file URL b
     "https://jsr.io/@denext/denext/2.0.0/cli.ts",
   );
   assertEquals(entrypointArg("jsr:@denext/denext/cli"), "jsr:@denext/denext/cli");
-  assert(entrypointArg("file:///tmp/denext/cli.ts").endsWith("/tmp/denext/cli.ts"));
+  assertEquals(entrypointArg("file:///tmp/denext/cli.ts"), join("/tmp", "denext", "cli.ts"));
   // Tests never run inside a compiled binary.
   assertEquals(isStandaloneBinary(), false);
 });
@@ -60,7 +66,6 @@ Deno.test("dev @fs: only project files (real paths) or graph-known modules are s
     const realDir = await Deno.realPath(dir);
     await Deno.writeTextFile(join(realDir, "a.ts"), "export const a = 1;");
     await Deno.writeTextFile(join(outside, "secret.json"), "{}");
-    await Deno.symlink(join(outside, "secret.json"), join(realDir, "link.json"));
     const st = createUnbundledState({
       projectDir: realDir,
       appDir: realDir,
@@ -70,7 +75,11 @@ Deno.test("dev @fs: only project files (real paths) or graph-known modules are s
     assert(fsPathAllowed(st, join(realDir, "a.ts")), "in-project file");
     assert(!fsPathAllowed(st, "/etc/passwd"), "arbitrary absolute path");
     assert(!fsPathAllowed(st, join(realDir, "..", "..", "etc", "passwd")), "dot-dot escape");
-    assert(!fsPathAllowed(st, join(realDir, "link.json")), "symlink pointing outside");
+    // A FILE symlink needs the symlink privilege on Windows; everything else runs everywhere.
+    if (FILE_SYMLINKS) {
+      await Deno.symlink(join(outside, "secret.json"), join(realDir, "link.json"));
+      assert(!fsPathAllowed(st, join(realDir, "link.json")), "symlink pointing outside");
+    }
     assert(!fsPathAllowed(st, realDir), "the directory itself");
     // A module the dev graph imported (e.g. a workspace package) is allowed by registration.
     const pkg = join(outside, "secret.json");
@@ -80,6 +89,17 @@ Deno.test("dev @fs: only project files (real paths) or graph-known modules are s
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(outside, { recursive: true });
   }
+});
+
+Deno.test("dev @fs URLs carry a platform path as forward slashes behind one leading slash", () => {
+  const windows = Deno.build.os === "windows";
+  const abs = windows ? "C:\\app\\my page.tsx" : "/app/my page.tsx";
+  const url = fsUrlPath(abs);
+  assertEquals(url, FS_PREFIX + (windows ? "/C:/app/my page.tsx" : "/app/my page.tsx"));
+  assertEquals(fsPathOfUrl(url.slice(FS_PREFIX.length)), abs, "round-trips");
+  // What the browser actually requests: the same URL, percent-encoded.
+  const requested = new URL(url, "http://localhost").pathname;
+  assertEquals(fsPathOfUrl(requested.slice(FS_PREFIX.length)), abs, "survives the browser");
 });
 
 Deno.test("soft-nav POST: the echo body is capped (413) instead of buffered unbounded", async () => {

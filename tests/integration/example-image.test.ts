@@ -5,8 +5,9 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { fromFileUrl } from "@std/path";
 
-const APP = new URL("../../examples/image", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../../examples/image", import.meta.url));
 
 // `next/og` renders through denext's first-party `@denext/og` codec (a workspace member
 // locally, JSR when published). The OG step self-skips when it can't be resolved.

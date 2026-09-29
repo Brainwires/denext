@@ -81,7 +81,7 @@ Deno.test("a module without the import is returned verbatim", async () => {
 // Shells out to `deno bundle`, so give it room.
 async function bundleWithFold(flag: boolean): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_feature_" });
-  const root = new URL("../", import.meta.url).pathname; // repo root
+  const root = new URL("../", import.meta.url).href; // repo root
   const modPath = join(dir, "mod.ts");
   const markerPath = join(dir, "marker.ts");
   await Deno.writeTextFile(markerPath, `export const gated = () => "GATED_MARKER_TOKEN";\n`);

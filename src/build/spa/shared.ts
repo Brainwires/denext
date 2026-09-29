@@ -1,7 +1,7 @@
 // SPA mode: the pieces every SPA path (build, export, prod, dev) shares — URL/file
 // constants, the generated entry, the HTML shell, and the config/entry resolution.
 
-import { join, resolve, toFileUrl } from "@std/path";
+import { join, normalize, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import type { SpaConfig } from "../../server/config.ts";
 import { computeCsp } from "../../server/csp.ts";
 import type { ProjectPaths } from "../paths.ts";
@@ -200,9 +200,13 @@ export function classifySpaChange(
   entryPath: string,
   publicDir: string,
 ): "reload" | "refresh" {
-  for (const p of changed) {
-    if (p === entryPath) return "reload";
-    if (p === publicDir || p.startsWith(publicDir + "/")) return "reload";
+  // Normalized first: on Windows a watcher path, a config path and a joined one may disagree
+  // on separators (`C:\app\public` vs `C:/app/public`) while naming the same file.
+  const entry = normalize(entryPath);
+  const pub = normalize(publicDir);
+  for (const p of changed.map((c) => normalize(c))) {
+    if (p === entry) return "reload";
+    if (p === pub || p.startsWith(pub + SEPARATOR)) return "reload";
   }
   return "refresh";
 }

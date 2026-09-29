@@ -8,10 +8,11 @@
 // Target app: examples/hello (native App Router; the unbundled loop is default-on).
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { startDevOnDir } from "./e2e/harness.ts";
+import { fsUrlPath } from "../src/build/dev-unbundled/state.ts";
 
-const HELLO = new URL("../examples/hello", import.meta.url).pathname;
+const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
 
 /** Drain + discard a response body so no reader leaks (SSE especially). */
 async function drop(res: Response): Promise<void> {
@@ -188,7 +189,7 @@ async function stepEntryNope({ origin }: Ctx): Promise<void> {
 
 async function stepFsPage({ origin }: Ctx): Promise<void> {
   const file = join(HELLO, "app/page.tsx");
-  const res = await okFetch(origin + "/_denext/@fs" + file);
+  const res = await okFetch(origin + fsUrlPath(file));
   assertEquals(res.status, 200);
   assertStringIncludes(res.headers.get("content-type") ?? "", "javascript");
   const js = await res.text();

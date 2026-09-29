@@ -30,6 +30,7 @@ import {
   type BuildCommand,
   type BuildRunner,
   formatBuildPlan,
+  iosHostError,
   type MobileBuildOptions,
   planMobileBuild,
   runMobileBuild,
@@ -155,15 +156,22 @@ export async function mobileAssets(ctx: CommandContext): Promise<void> {
 
 /** Run a command with the terminal attached; `env` is added to the inherited environment. */
 const runInherit: BuildRunner = async ({ cmd, args, cwd, env }) => {
-  const { code } = await new Deno.Command(cmd, {
-    args: [...args],
-    cwd,
-    ...(env ? { env: { ...env } } : {}),
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  }).output();
-  return { code };
+  try {
+    const { code } = await new Deno.Command(cmd, {
+      args: [...args],
+      cwd,
+      ...(env ? { env: { ...env } } : {}),
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).output();
+    return { code };
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) {
+      throw new Error(`\`${cmd}\` was not found (is it installed, and on PATH?)`);
+    }
+    throw err;
+  }
 };
 
 /** A positive integer flag, or undefined. */
@@ -253,6 +261,12 @@ async function recoverFirst(root: string): Promise<void> {
   }
 }
 
+/** Refuse, saying why, a build this host cannot run (iOS off macOS). */
+function assertHostBuilds(platform: MobilePlatform): void {
+  const hostError = platform === "ios" ? iosHostError("build") : undefined;
+  if (hostError) throw new Error(hostError);
+}
+
 /**
  * `denext mobile build ios|android`.
  *
@@ -277,6 +291,7 @@ export async function mobileBuild(
       console.log(`\n  denext mobile build ${platform} --dry-run (nothing runs)\n`);
       return console.log(formatBuildPlan(plan));
     }
+    assertHostBuilds(platform);
     if (ctx.flags.bump === true) {
       const b = await bumpBuildNumber(opts.root, platform);
       console.log(`  build number ${b.from} → ${b.to} (${b.file}; commit it)`);
@@ -338,6 +353,8 @@ interface SubmitTarget {
 
 /** `submit ios`: the API key from flags / env. */
 function submitIosFrom(ctx: CommandContext, t: SubmitTarget, deps: SubmitVerbDeps) {
+  const hostError = t.dryRun ? undefined : iosHostError("submit");
+  if (hostError) throw new Error(hostError);
   const s = signingInputs(
     {
       ascKeyPath: pathFlag(ctx, "asc-key"),

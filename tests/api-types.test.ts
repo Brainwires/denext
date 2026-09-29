@@ -16,7 +16,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { generateApiTypes } from "../src/build/api-types.ts";
@@ -33,7 +33,7 @@ import { batchApp, ORIGIN } from "./helpers/batch-app.ts";
 import { API_BATCH_PATH } from "../src/runtime/api-batch-protocol.ts";
 import { ApiError, apiErrorResponse } from "../src/server/api-error.ts";
 
-const REPO_CONFIG = new URL("../deno.json", import.meta.url).pathname;
+const REPO_CONFIG = fromFileUrl(new URL("../deno.json", import.meta.url));
 
 /** Write a set of `{ relPath: source }` files under a fresh temp app dir. */
 async function makeApp(files: Record<string, string>): Promise<{ dir: string; outDir: string }> {

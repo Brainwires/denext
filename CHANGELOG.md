@@ -8,7 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-## [3.0.0-rc.1] - 2026-09-29
+## [3.0.0] - 2026-09-29
 
 ### Breaking
 
@@ -26,14 +26,70 @@ and this project adheres to
   say to add a header, must call `redirectResponse`.
 - **`InspectNode.sourceId` is removed** from the DevTools inspector tree — read `source`
   (`{ file, export, line, column }`) instead.
+  Unchanged: Next.js's own spellings — `experimental.reactCompiler`, `experimental.cacheComponents`
+  and `experimental.optimizePackageImports` — stay honored as obsolete aliases with a dev warning,
+  and `unstable_noStore`, `io`, `useFormState` and `images.domains` stay as compatible aliases
+  because React / Next still export or accept them.
 
-Unchanged: Next.js's own spellings — `experimental.reactCompiler`, `experimental.cacheComponents`
-and `experimental.optimizePackageImports` — stay honored as obsolete aliases with a dev warning,
-and `unstable_noStore`, `io`, `useFormState` and `images.domains` stay as compatible aliases
-because React / Next still export or accept them.
+### Added
+
+- **`desktop.capabilities.shell.openPathAllowExtensions`** — bare file extensions (`["py",
+  "sh"]`) `openPath` may open despite its executable/script denylist.
 
 ### Fixed
 
+- **A `deno.json` with `links` builds.** The configs denext generates from the app's (the
+  `deno bundle` config, `.denext/module-config.json`, `.denext/css-config.json`) copied `links`
+  unchanged or dropped them, so a relative link resolved against the wrong directory
+  ("Could not find link member …") or the linked package was silently not used. The entries are
+  now re-based for each copy's location, on every OS.
+- **A project made right after a denext release installs it.** `denext create` and
+  `denext migrate` write `"minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }`, so Deno's
+  24-hour hold on freshly published versions no longer blocks the denext version that made the
+  project; every other dependency keeps the hold.
+- **Packaged Windows apps run without the Visual C++ redistributable.** The `deno desktop` binary
+  imports `VCRUNTIME140`, `VCRUNTIME140_1` and `MSVCP140`; on a Windows machine without the
+  redistributable a packaged app died at launch with a silent `0xC0000135`. `package-windows.ts`
+  now ships those three DLLs next to the `.exe` (Microsoft's app-local deployment), copied from
+  System32 when packaging on Windows for the host architecture; otherwise it says the target needs
+  the redistributable and links the right one. The prerequisite note now lists only WebView2.
+  Verified on a real Windows 11 machine with no redistributable installed. Re-run
+  `denext desktop package --regenerate-scripts` to update an existing project's script.
+- **Windows: the framework builds, serves and develops on a Windows host.** Found by running the
+  whole test suite on a real Windows 11 machine, where every framework test now passes.
+  - The build finds client islands and `"use client"` boundaries again: the module-graph crawl
+    handed `deno info` a drive-letter path, which it reads as an external URL.
+  - esbuild-path builds (compat, SPA) and the dev dependency pre-bundle no longer fail with
+    `WorkspaceDiscoverError` or "Could not resolve \\Users\\…".
+  - `denext dev` serves `/_denext/@fs/C:/…` module URLs; open-in-editor accepts project files, and
+    dev error overlays link to the right source frame.
+  - The server-only leak check (e.g. `node:sqlite` reaching the browser) works; before, no app
+    module was ever recognised on Windows.
+  - `"sideEffects": false` tree-shaking, `optimizePackageImports` and the Reanimated / `use cache`
+    transforms recognise `node_modules` paths.
+  - SPA dev reloads on edits to the entry module or `public/`; a linked framework's edits are
+    picked up; plugin `watch` globs watch the right directory.
+  - `denext patch` applies denext patches in esbuild bundles.
+  - Apps with a manual `node_modules` (migrated Remix apps, say) link the framework's build deps
+    with a directory junction: no Developer Mode or elevation needed.
+  - Adding or removing an expo-router route in `denext dev` rebuilds the dependency bundle.
+  - `denext ui` Generate, the route map (MCP / DevTools), the Prisma migrate report and
+    `denext create`'s file list report project paths with `/` on every OS.
+  - The repository checks out with LF line endings on Windows (`.gitattributes`).
+- **Windows: `denext mobile` works on a Windows host.**
+  - `mobile add` / `add-ota` / app extensions no longer report `\` paths or list the Xcode project
+    twice; project-relative paths are always `/`.
+  - `mobile build android --release` accepts a Windows keystore path (it was refused as unsafe
+    for `GRADLE_OPTS`), and runs `gradlew.bat` instead of the `gradlew` shell script.
+  - `mobile build ios` / `mobile submit ios` stop off macOS with a clear "needs macOS with Xcode"
+    message (the `--dry-run` plan still works), and a missing build tool is named instead of a raw
+    spawn error.
+  - `mobile submit ios` no longer needs the symlink privilege: the App Store Connect key is copied,
+    owner-only, into the temporary key folder, which is removed afterwards.
+  - The interrupted-build backup and `--restore` list, and `mobile assets`, report `/` paths.
+- **`denext mobile doctor`'s web-storage check skipped every source file when the project itself
+  lived under a folder named `dist`, `build` or `out`** (or `ios`, `android`, `.git`,
+  `node_modules`); skipped folders are now matched inside the project only, on every OS.
 - **React Native mode dev: importing a new name no longer reload-loops the page.** An edit that
   imported a name the dev dependency bundle did not yet export (one a package re-exports
   through CommonJS `__exportStar`, say) was hot-swapped against the page's old bundle, failed to
@@ -93,11 +149,6 @@ because React / Next still export or accept them.
   POST the per-launch token to a token-gated quit endpoint (like the boot beacon), which exits the
   single-window app — the same outcome as the native window close. Verified end-to-end against a
   real packaged app.
-
-### Added
-
-- **`desktop.capabilities.shell.openPathAllowExtensions`** — bare file extensions (`["py",
-  "sh"]`) `openPath` may open despite its executable/script denylist.
 
 ## [2.11.0-rc.1] - 2026-09-29
 
@@ -9631,6 +9682,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[3.0.0]: https://jsr.io/@denext/denext@3.0.0
 [3.0.0-rc.1]: https://jsr.io/@denext/denext@3.0.0-rc.1
 [2.11.0-rc.1]: https://jsr.io/@denext/denext@2.11.0-rc.1
 [2.10.0]: https://jsr.io/@denext/denext@2.10.0

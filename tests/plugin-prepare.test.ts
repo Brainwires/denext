@@ -11,6 +11,7 @@ import {
 } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { DenextPlugin } from "../src/plugin/mod.ts";
+import { join } from "@std/path";
 
 const ROOT = "/proj";
 const ctx: PluginBuildContext = {
@@ -56,7 +57,8 @@ Deno.test("addPrepareStep: watch dirs are the globs' literal prefix directories"
   resetPlugins();
   await setup(["content/**/*.md", "content.config.ts"], () => {});
   const dirs = getPluginPrepareWatchDirs(ROOT).sort();
-  assertEquals(dirs, ["/proj/content", "/proj/content.config.ts"]);
+  // Local paths: the platform separator (`\proj\content` on Windows).
+  assertEquals(dirs, [join(ROOT, "content"), join(ROOT, "content.config.ts")]);
   resetPlugins();
 });
 

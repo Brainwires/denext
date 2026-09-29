@@ -18,7 +18,7 @@ import type { ModuleLoader } from "../server/types.ts";
 import type { RouteSynthesizer } from "../router/manifest.ts";
 import { registerRouteSynthesizer } from "../router/manifest.ts";
 import type { CommandSpec } from "../cli/command.ts";
-import { globToRegExp, isAbsolute, join } from "@std/path";
+import { globToRegExp, isAbsolute, join, SEPARATOR, SEPARATOR_PATTERN } from "@std/path";
 
 /** Where denext is running when a plugin's {@linkcode DenextPlugin.setup} fires. */
 export type PluginMode = "dev" | "build" | "prod" | "export";
@@ -252,11 +252,12 @@ function resolveGlob(projectRoot: string, glob: string): string {
  */
 function globBaseDir(absGlob: string): string {
   const base: string[] = [];
-  for (const s of absGlob.split("/")) {
+  // The platform's separators: a glob joined onto a Windows root reads `C:\app\content\**`.
+  for (const s of absGlob.split(SEPARATOR_PATTERN)) {
     if (/[*?[\]{}]/.test(s)) break;
     base.push(s);
   }
-  return base.join("/") || "/";
+  return base.join(SEPARATOR) || SEPARATOR;
 }
 
 /**

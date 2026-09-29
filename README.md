@@ -11,43 +11,35 @@
 [![fallow health](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Brainwires/denext/main/.github/badges/fallow.json)](./CONTRIBUTING.md#the-health-score)
 [![Source](https://img.shields.io/badge/source-github-181717?logo=github)](https://github.com/Brainwires/denext)
 
-**A Next.js-compatible web framework for [Deno](https://deno.com) with a zero-npm runtime** — the
-familiar App Router API, ~7× smaller output, and a dependency tree you can actually audit. One
-unified stack, no Vercel lock-in.
+**denext is a TypeScript app framework for [Deno](https://deno.com): write your app once with the
+Next.js App Router API, and ship it to the web, iOS, Android and the desktop.**
+
+- **Next.js, reimplemented.** Same `app/` router, file conventions, hooks, Server Components,
+  Server Actions, middleware, `<Link>` and `<Image>`. Your Next.js knowledge transfers, and
+  `denext migrate` converts an existing Next.js, Remix or Vite app in one pass.
+- **Its own tiny React.** JSX, hooks, context and a fiber reconciler built in: **~7× less
+  JavaScript** than Next.js, and **zero npm packages** in what you ship (CI-enforced).
+- **Web, mobile and desktop from one codebase.** iOS and Android through Capacitor (native
+  capabilities, native maps and video, app extensions, signed over-the-air updates, store
+  builds), and a single-binary desktop app through Deno Desktop with a least-privilege native
+  bridge (macOS, Windows, Linux).
+- **Your React Native / Expo app runs on it.** `reactNative: true` builds `react-native`,
+  `expo-*`, expo-router, React Navigation and FlatList code as-is; your own Turbo Modules become
+  Capacitor plugins.
+- **Any React SPA, too.** `mode: "spa"` hosts client-only React and Vite apps on the same runtime
+  and packages them for desktop.
+- **Things stock React can't do.** Qwik-style resumability, Astro-style islands, and Live Server
+  Components that push re-rendered UI when data changes.
+- **Batteries included.** First-party auth (OAuth, passwords, magic links, 2FA), a typed API layer,
+  cron tasks, a durable cache, `denext ui` (a local project dashboard), and first-party plugins for
+  content collections, OpenAPI and GraphQL.
 
 **Docs:** [denext.dev](https://denext.dev/) · **Package:** [jsr.io/@denext/denext](https://jsr.io/@denext/denext) · **Source:** [github.com/Brainwires/denext](https://github.com/Brainwires/denext) · **License:** [MIT](./LICENSE)
 
-**One codebase for the web, iOS, Android and the desktop — including the React Native / Expo app
-you already have.** The same denext app ships as a Capacitor app (native capabilities, native
-views such as maps and video, app extensions, signed over-the-air UI updates, store builds without
-a hosted service) and as a single-binary Deno Desktop app with a least-privilege native bridge. An
-Expo or React Native codebase runs through `reactNative: true` — `react-native`, `expo-*`, expo-router,
-React Navigation, FlatList and the popular native libraries resolve to denext implementations, and your
-own Turbo Modules become Capacitor plugins. See [Mobile](https://denext.dev/docs/mobile),
-[React Native mode](https://denext.dev/docs/react-native), [Desktop](https://denext.dev/docs/desktop)
-and [denext vs React Native](https://denext.dev/docs/vs-react-native).
-
-You already know the API — `app/`, `page.tsx`, `layout.tsx`, `"use client"`, Server Actions,
-`<Link>`, `next/image`, middleware. denext reimplements that Next.js core — App Router, streaming
-SSR, hydration, Suspense — as native Deno/TypeScript. What's different is **underneath**: it ships
-its **own tiny React-equivalent** (JSX runtime, hooks, context, a fiber reconciler) instead of
-React + ReactDOM + a framework runtime, so there's **nothing to install from npm** and **zero npm
-in what you ship** (CI-enforced). The only third-party runtime code is a handful of audited `@std`
-modules, Deno's built-in `node:sqlite` for the durable cache, and denext's own first-party JSR
-wasm codecs (`@denext/photon`), loaded only by the opt-in image-optimization / `next/og` routes.
-
-**And it's not just Next-shaped apps.** A first-class **SPA mode** (`mode: "spa"`) hosts _any_
-client-only React app — **React but not Next** — on the same tiny runtime (**~4.5× less
-JavaScript** than React + ReactDOM) and packages it as a single-binary desktop app; real Vite apps
-come along unchanged, down to a 200k-LOC React 19 pnpm-workspace monorepo bundling on denext's
-_single_ React. See [SPA mode](https://denext.dev/docs/spa) and [`examples/spa`](./examples/spa).
-
-**And it does things stock React can't.** Because denext is React _at the reconciler level_, it
-ships **Qwik-style resumability** (`export const resumable = true` — the page resumes from
-serialized server state instead of replaying your tree) and **Astro-style islands** with full 6/6
-directive parity (`client:load | idle | visible | interaction | media | only`). As far as we can
-find, denext is the **only framework delivering Qwik-style resumability on React's own API**. See
-[Resumability](https://denext.dev/docs/resumability) and [Islands](https://denext.dev/docs/islands).
+```sh
+deno run -A jsr:@denext/denext/cli create my-app   # scaffold (web, desktop, mobile)
+cd my-app && deno task dev                        # → http://localhost:3000
+```
 
 ```tsx
 // app/page.tsx
@@ -61,9 +53,10 @@ export default function Home() {
 }
 ```
 
-```
-deno run -A cli.ts dev examples/hello   # → http://localhost:3000
-```
+Start with [Getting started](https://denext.dev/docs/getting-started),
+[Migrating from Next.js](https://denext.dev/docs/migrating),
+[React Native / Expo apps](https://denext.dev/docs/react-native) or
+[denext vs React Native](https://denext.dev/docs/vs-react-native).
 
 ---
 
@@ -174,7 +167,7 @@ app needs from the page — safe areas, the keyboard inset, the back swipe, app 
 opening links in the system browser and over-the-air UI updates — with no `@capacitor/*`
 dependency.
 
-New in 2.11:
+New in 3.0:
 
 - **React Native and Expo apps, unchanged.** `reactNative: true` builds an app's own source
   through react-native-web and replaces its mocked APIs (`Keyboard`, `BackHandler`, `StatusBar`,
@@ -200,7 +193,7 @@ New in 2.11:
 - **An app backend**: `cors`, native auth sessions, native Sign in with Apple / Google, account
   deletion and zero-npm push sending ([App backend](https://denext.dev/docs/app-backend)).
 - **Deno Desktop capabilities**: the same `denext/mobile` calls reach the OS keychain (macOS,
-  Linux), files, SQLite, native file dialogs and the shell through `denext desktop add`, and
+  Linux, Windows), files, SQLite, native file dialogs and the shell through `denext desktop add`, and
   packaged apps get least-privilege `--allow-*` flags derived from those capabilities instead
   of `-A` ([Desktop apps](https://denext.dev/docs/desktop)).
 

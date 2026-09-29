@@ -75,7 +75,7 @@ Deno.test("staticExport renders static + dynamic (generateStaticParams) pages", 
   const dir = await Deno.makeTempDir({ prefix: "denext_export_" });
   try {
     // Minimal standalone denext app that maps `denext` to this repo.
-    const root = new URL("../../", import.meta.url).pathname; // tests/integration/ -> repo root
+    const root = new URL("../../", import.meta.url).href; // tests/integration/ -> repo root
     await Deno.writeTextFile(
       join(dir, "deno.json"),
       JSON.stringify({

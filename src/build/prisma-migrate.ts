@@ -111,7 +111,7 @@ async function transformPrismaApp(
 
   // 1. Rewrite the schema generator to the ESM/Deno client (the query-compiler client with
   //    no Rust engine binary). Leave the datasource block untouched.
-  let schemaPath = relative(dir, schemaAbs);
+  let schemaPath = relative(dir, schemaAbs).replace(/\\/g, "/"); // reported `/`-separated
   if (hasSchema) {
     await rewriteSchema(schemaAbs, warnings);
   } else {
@@ -163,7 +163,7 @@ async function rewritePrismaSources(
     const original = await Deno.readTextFile(file);
     if (!original.includes("@prisma/client") && !original.includes("new PrismaClient")) continue;
     if (original.includes("__denextPrismaAdapter")) continue;
-    const relFile = relative(dir, file);
+    const relFile = relative(dir, file).replace(/\\/g, "/"); // reported `/`-separated
     const rel = relToGenerated(dir, file);
     let text = original;
     if (/["']@prisma\/client["']/.test(text)) {

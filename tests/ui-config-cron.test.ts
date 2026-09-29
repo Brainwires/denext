@@ -13,6 +13,7 @@ import { parseJsonDocument } from "../src/ui/child-json.ts";
 import { cronPanel, nextRuns } from "../src/ui/features/config-cron.ts";
 import { readTaskHistory, taskHistoryRecorder } from "../src/server/task-history.ts";
 import { browserPost, formContaining } from "./helpers/browser-form.ts";
+import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
 
 /** A project with a denext config, a tasks/ directory, and an app — enough for discovery. */
 async function project(
@@ -20,8 +21,8 @@ async function project(
   tasks: Record<string, string> = {},
 ): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_ui_cron_" });
-  const mod = new URL("../mod.ts", import.meta.url).pathname;
-  const root = new URL("../", import.meta.url).pathname;
+  const mod = new URL("../mod.ts", import.meta.url).href;
+  const root = new URL("../", import.meta.url).href;
   await Deno.writeTextFile(
     join(dir, "deno.json"),
     JSON.stringify({ imports: { denext: mod, "denext/": root } }),
@@ -632,46 +633,50 @@ Deno.test("clearing history is refused read-only, and the runs survive", async (
   }
 });
 
-Deno.test("a history database symlinked out of the project is neither read nor cleared", async () => {
-  const dir = await project(HISTORY_ON, { cleanup: task() });
-  // The real database lives OUTSIDE the project; the project's `.denext/tasks.db` points at it.
-  const outside = await Deno.makeTempDir({ prefix: "denext_ui_cron_outside_" });
-  const target = join(outside, "tasks.db");
-  const store = taskHistoryRecorder({ path: target });
-  store.record({
-    name: "cleanup",
-    trigger: "manual",
-    startedAt: Date.now(),
-    durationMs: 1,
-    ok: true,
-  });
-  store.close();
-  await Deno.mkdir(join(dir, ".denext"));
-  await Deno.symlink(target, join(dir, ".denext", "tasks.db"));
-  try {
-    const page = await (await call(dir)).text();
-    assertStringIncludes(page, "resolves outside the project");
-    assert(!page.includes("Last result"), "no rows from a file outside the project");
-    const twin = await (await call(dir, { json: true })).json();
-    assertEquals(twin.history.enabled, true);
-    assertEquals(twin.history.available, false);
-    assertStringIncludes(twin.history.reason, "resolves outside the project");
+Deno.test(
+  "a history database symlinked out of the project is neither read nor cleared",
+  { ignore: !FILE_SYMLINKS }, // a FILE symlink: needs the Windows symlink privilege
+  async () => {
+    const dir = await project(HISTORY_ON, { cleanup: task() });
+    // The real database lives OUTSIDE the project; the project's `.denext/tasks.db` points at it.
+    const outside = await Deno.makeTempDir({ prefix: "denext_ui_cron_outside_" });
+    const target = join(outside, "tasks.db");
+    const store = taskHistoryRecorder({ path: target });
+    store.record({
+      name: "cleanup",
+      trigger: "manual",
+      startedAt: Date.now(),
+      durationMs: 1,
+      ok: true,
+    });
+    store.close();
+    await Deno.mkdir(join(dir, ".denext"));
+    await Deno.symlink(target, join(dir, ".denext", "tasks.db"));
+    try {
+      const page = await (await call(dir)).text();
+      assertStringIncludes(page, "resolves outside the project");
+      assert(!page.includes("Last result"), "no rows from a file outside the project");
+      const twin = await (await call(dir, { json: true })).json();
+      assertEquals(twin.history.enabled, true);
+      assertEquals(twin.history.available, false);
+      assertStringIncludes(twin.history.reason, "resolves outside the project");
 
-    const clears: Array<Record<string, string>> = [
-      { intent: "clear-history" },
-      { intent: "clear-history", confirm: "1" },
-    ];
-    for (const form of clears) {
-      const res = await call(dir, { form });
-      assertEquals(res.status, 403, JSON.stringify(form));
-      assertStringIncludes(await res.text(), "resolves outside the project");
+      const clears: Array<Record<string, string>> = [
+        { intent: "clear-history" },
+        { intent: "clear-history", confirm: "1" },
+      ];
+      for (const form of clears) {
+        const res = await call(dir, { form });
+        assertEquals(res.status, 403, JSON.stringify(form));
+        assertStringIncludes(await res.text(), "resolves outside the project");
+      }
+      assertEquals(readTaskHistory({ path: target }).recent.length, 1, "the outside rows survive");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
     }
-    assertEquals(readTaskHistory({ path: target }).recent.length, 1, "the outside rows survive");
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-    await Deno.remove(outside, { recursive: true });
-  }
-});
+  },
+);
 
 Deno.test("a history database whose .denext is itself a symlink out of the project is refused too", async () => {
   const dir = await project(HISTORY_ON, { cleanup: task() });
@@ -686,7 +691,7 @@ Deno.test("a history database whose .denext is itself a symlink out of the proje
     ok: true,
   });
   store.close();
-  await Deno.symlink(outside, join(dir, ".denext"));
+  await symlinkDir(outside, join(dir, ".denext"));
   try {
     assertStringIncludes(await (await call(dir)).text(), "resolves outside the project");
     const res = await call(dir, { form: { intent: "clear-history", confirm: "1" } });

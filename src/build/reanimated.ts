@@ -85,6 +85,7 @@ import {
   RUNTIME_FILTER as OFFLOAD_RUNTIME_FILTER,
   runtimeSource,
 } from "./reanimated-offload.ts";
+import { inNodeModules } from "./path-segments.ts";
 
 /** A module the pass looks at: it names a worklet-using package or has a worklet directive. */
 export const WORKLETS_GATE = /react-native-(?:reanimated|worklets|gesture-handler)|["']worklet["']/;
@@ -843,7 +844,7 @@ export function reanimatedWorkletsPlugin(
           }
           const gated = WORKLETS_GATE.test(source);
           if (!gated && !OFFLOAD_MODULE_FILTER.test(args.path)) return undefined;
-          const app = !args.path.includes("/node_modules/") &&
+          const app = !inNodeModules(args.path) &&
             inside(args.path, projectDir);
           const result = gated
             ? await transformWorklets(source, args.path, { diagnostics: app, helper: "import" })

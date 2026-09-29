@@ -42,6 +42,16 @@ function fakeLocalStorage(initial: Record<string, string> = {}): Storage {
   } as Storage;
 }
 
+/** Resolves once the durable store `name` holds `value` at `key` (fails after ~2 s). */
+async function durableHas(name: string, key: string, value: string): Promise<void> {
+  const store = openKeyValueStore(name);
+  for (let i = 0; i < 400; i++) {
+    if (await store.get(key) === value) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`the durable store ${name} never got ${key}`);
+}
+
 /** Run `fn` on a fresh browser: IndexedDB (kept across calls via `idb`) and localStorage. */
 async function inBrowser(
   fn: () => unknown,
@@ -161,7 +171,7 @@ Deno.test("async-storage: the first call moves what the web build left in localS
 // ---- react-native-mmkv ------------------------------------------------------------------------
 
 Deno.test("mmkv: synchronous reads and writes, typed getters, listeners", async () => {
-  await inBrowser(() => {
+  await inBrowser(async () => {
     const storage = createMMKV();
     const changed: string[] = [];
     const listener = storage.addOnValueChangedListener((k) => changed.push(k));
@@ -188,6 +198,9 @@ Deno.test("mmkv: synchronous reads and writes, typed getters, listeners", async 
     assertEquals(v3.contains("k"), false);
     // The same id shares data.
     assertEquals(createMMKV().getNumber("age"), 36);
+    // Let the write-behind land in this browser's store: once the globals are swapped it would
+    // write into the next test's (a coarse timer, as on Windows, makes that likely).
+    await durableHas("mmkv:mmkv.default", "quiet", "x");
   });
 });
 

@@ -12,6 +12,7 @@ import {
   EMPTY_MODULE,
   ENTRY_PATH,
   FS_PREFIX,
+  fsPathOfUrl,
   norm,
   NPM_PREFIX,
   type UnbundledState,
@@ -113,7 +114,7 @@ export function fsPathAllowed(st: UnbundledState, abs: string): boolean {
 function serveFs(st: UnbundledState, path: string): Promise<Response> {
   let abs: string;
   try {
-    abs = norm(decodeURIComponent(path.slice(FS_PREFIX.length)));
+    abs = norm(fsPathOfUrl(path.slice(FS_PREFIX.length)));
   } catch {
     return Promise.resolve(js("// bad @fs path", 400));
   }

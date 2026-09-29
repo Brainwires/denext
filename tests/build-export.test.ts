@@ -5,10 +5,10 @@
 // src/build/spa.ts's `exportSpa`.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
 
-const REPO = new URL("../", import.meta.url).pathname;
+const REPO = fromFileUrl(new URL("../", import.meta.url));
 const HELLO = join(REPO, "examples", "hello");
 const SPA = join(REPO, "examples", "spa");
 
