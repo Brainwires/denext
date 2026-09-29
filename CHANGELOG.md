@@ -34,6 +34,10 @@ because React / Next still export or accept them.
 
 ### Fixed
 
+- **A project made right after a denext release installs it.** `denext create` and
+  `denext migrate` write `"minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }`, so Deno's
+  24-hour hold on freshly published versions no longer blocks the denext version that made the
+  project; every other dependency keeps the hold.
 - **Packaged Windows apps run without the Visual C++ redistributable.** The `deno desktop` binary
   imports `VCRUNTIME140`, `VCRUNTIME140_1` and `MSVCP140`; on a Windows machine without the
   redistributable a packaged app died at launch with a silent `0xC0000135`. `package-windows.ts`

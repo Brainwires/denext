@@ -234,9 +234,18 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
  * @param opts The scaffold options (only the feature flags are read).
  * @returns The file's text.
  */
+/**
+ * The `minimumDependencyAge` a generated `deno.json` carries: Deno's default 24-hour hold on
+ * freshly published versions stays on for every dependency EXCEPT denext's own packages, so a
+ * project made right after a denext release installs the version that made it (the CLI running
+ * is already that release) instead of failing "blocked by the minimum dependency age policy".
+ */
+export const DENEXT_MIN_DEP_AGE = { exclude: ["jsr:@denext/*"] } as const;
+
 export function denoJson(opts: ScaffoldOptions): string {
   const config: Record<string, unknown> = {
     tasks: scaffoldTasks(opts),
+    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     compilerOptions: {
       jsx: "react-jsx",
       jsxImportSource: "denext",

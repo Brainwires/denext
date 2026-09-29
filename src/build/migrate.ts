@@ -19,7 +19,7 @@ import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { appendGitignore } from "./gitignore.ts";
-import { ensureVscodeDeno } from "./scaffold.ts";
+import { DENEXT_MIN_DEP_AGE, ensureVscodeDeno } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
 import CATALOG from "../plugin/catalog.json" with { type: "json" };
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
@@ -671,6 +671,7 @@ async function writeAppRouterDenoJson(
     // Prisma needs a real node_modules (the generated client + adapter + `links` shim);
     // otherwise the App-Router native passes resolve npm deps via `auto`.
     nodeModulesDir: prismaWiring?.nodeModulesDir ?? "auto",
+    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     ...(prismaWiring ? { links: prismaWiring.links } : {}),
     unstable: ["sloppy-imports"],
     compilerOptions: {
@@ -2205,6 +2206,7 @@ function spaDenoJson(
   return {
     tasks,
     nodeModulesDir,
+    minimumDependencyAge: DENEXT_MIN_DEP_AGE,
     unstable: ["sloppy-imports"],
     compilerOptions: {
       jsx: "react-jsx",
