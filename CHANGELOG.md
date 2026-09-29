@@ -32,6 +32,11 @@ because React / Next still export or accept them.
 
 ### Fixed
 
+- **React Native mode dev: importing a new name no longer reload-loops the page.** An edit that
+  imported a name the dev dependency bundle did not yet export (one a package re-exports
+  through CommonJS `__exportStar`, say) was hot-swapped against the page's old bundle, failed to
+  link ("does not provide an export named …"), fell back to a reload and then reloaded again for
+  the rebuild. `denext dev` now rebuilds the bundle before deciding, and reloads the page once.
 - **Keys are scoped per array, as in React.** Two `.map()`s rendered side by side under one
   parent may reuse the same keys: each nested array is its own key scope, so overlapping keys
   no longer hand one row another row's state, DOM node or input value, and the dev

@@ -143,9 +143,27 @@ async function ensureReactNativeBundle(st: UnbundledState): Promise<void> {
     await ensureRuntime(st);
     await buildReactNativeDeps(st);
     st.npmBuiltSig = sig;
-    if (underLivePage) st.opts.onDepsRebuilt?.();
+    if (underLivePage) {
+      st.npmLiveRebuilds++;
+      st.opts.onDepsRebuilt?.();
+    }
   }
   st.npmCheckedEpoch = epoch;
+}
+
+/**
+ * React Native mode, after a batch of edits: bring the dependency bundle up to date with the
+ * edited modules' imports BEFORE the page is told to hot-swap them. An edit that imports a new
+ * name (or package) needs a rebuilt bundle; hot-swapping first would link the new module
+ * against the page's old bundle ("does not provide an export named …") and fall into a
+ * reload, then the rebuild's own reload. Resolves true when the bundle was rebuilt — the
+ * rebuild has already told the page to reload, so the caller sends nothing else.
+ */
+export async function refreshReactNativeDeps(st: UnbundledState): Promise<boolean> {
+  if (!st.opts.reactNative || st.npmBuiltSig === null) return false;
+  const before = st.npmLiveRebuilds;
+  await ensureNpmBundle(st);
+  return st.npmLiveRebuilds !== before;
 }
 
 /**

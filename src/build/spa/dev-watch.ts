@@ -69,7 +69,11 @@ async function unbundledAction(st: SpaDevState, batch: string[]): Promise<void> 
     broadcastFrame(st, classifySpaChange(batch, entryPath, paths.publicDir));
     return;
   }
-  broadcastHmr(st, st.unbundled!.onChange(batch));
+  const change = st.unbundled!.onChange(batch);
+  // React Native mode: an edit importing a name the dependency bundle lacks rebuilds it, and
+  // the rebuild reloads the page — a hot-swap now would link against the old bundle.
+  if (await st.unbundled!.refreshDeps()) return;
+  broadcastHmr(st, change);
 }
 
 /**

@@ -30,7 +30,7 @@
 import * as esbuild from "esbuild";
 import type { RouteManifest } from "../router/manifest.ts";
 import type { BoundaryManifest } from "./module-graph.ts";
-import { ensureDeps } from "./dev-unbundled/deps.ts";
+import { ensureDeps, refreshReactNativeDeps } from "./dev-unbundled/deps.ts";
 import {
   entryUrlFor,
   serveFlightEntry,
@@ -72,6 +72,12 @@ export function createUnbundledDev(opts: UnbundledDevOptions) {
      * rebuilds it. Always false outside React Native mode.
      */
     depsInvalidated: (changed: string[]) => reactNativeDepsInvalidated(st, changed),
+    /**
+     * React Native mode, after {@linkcode onChange}: rebuild the dependency bundle if the edits
+     * import something it lacks. True when it was rebuilt (the page has been told to reload,
+     * so the hot-swap must not be sent). Always false outside React Native mode.
+     */
+    refreshDeps: (): Promise<boolean> => refreshReactNativeDeps(st),
     /**
      * A framework source changed (denext run from a checkout): drop the denext pre-bundles, so
      * the next page load rebuilds them from the edited sources.
