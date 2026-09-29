@@ -98,6 +98,9 @@ async function buildApp(out: string, target?: string): Promise<void> {
   const cmd = [
     "deno",
     "desktop",
+    // Baked least-privilege flags mean an unbaked permission should fail fast, not block on a
+    // prompt the packaged GUI has no TTY to answer.
+    "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
     "--include",
     "out",

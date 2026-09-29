@@ -583,7 +583,16 @@ async function spliceCapabilities(
     source = edit.source;
     added.push(name);
   }
+  // Once a real `capabilities` block exists, drop the scaffold's commented placeholder hint so it
+  // doesn't linger beside it (`// capabilities: { … },  // denext desktop add <cap>`).
+  if (added.length > 0 || kept.length > 0) source = removeCapabilitiesHint(source);
   return { source, added, kept };
+}
+
+/** Remove the scaffold's commented `// capabilities: … // denext desktop add <cap>` placeholder
+ * line (only that specific hint — any other comment is preserved). */
+function removeCapabilitiesHint(source: string): string {
+  return source.replace(/^[ \t]*\/\/ capabilities:.*denext desktop add.*\r?\n/m, "");
 }
 
 /** The highest trust among `names`. */

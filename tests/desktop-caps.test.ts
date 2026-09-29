@@ -310,7 +310,11 @@ Deno.test("sqlite SECURITY: ATTACH / VACUUM INTO cannot reach a file outside the
         `VACUUM INTO '${join(outside, "y.db")}'`,
       ]
     ) {
-      await assertRejects(() => call(cap, "exec", { handle, sql }));
+      const err = await assertRejects(
+        () => call(cap, "exec", { handle, sql }),
+        DesktopCapError,
+      );
+      assertEquals(err.code, "forbidden", sql); // a specific code, not a generic `internal`
     }
     assertEquals([...Deno.readDirSync(outside)].length, 0, "nothing was created outside");
     await call(cap, "close", { handle });

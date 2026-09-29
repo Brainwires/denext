@@ -80,6 +80,21 @@ Deno.test("desktop add: a key the user customised is kept", async () => {
   assertStringIncludes(text, "clipboard: true");
 });
 
+Deno.test("desktop add: drops the scaffold's commented capabilities hint once a real block exists", async () => {
+  const dir = await project(
+    "export default {\n  desktop: {\n" +
+      '    app: { identifier: "com.example.denext" },\n' +
+      "    // capabilities: { fs: true, secureStore: true, shell: true },  // denext desktop add <cap>\n" +
+      "  },\n};\n",
+  );
+  const report = await addDesktopCapabilities({ capabilities: ["fs"], dir });
+  assertEquals(report.added, ["fs"]);
+  const text = await Deno.readTextFile(join(dir, "denext.config.ts"));
+  assertStringIncludes(text, "$APPDATA"); // the real fs block was written
+  assert(!text.includes("denext desktop add <cap>"), "the commented hint line is gone");
+  assert(!text.includes("// capabilities:"), "no commented capabilities placeholder remains");
+});
+
 Deno.test("desktop add: creates denext.config.ts when the project has none", async () => {
   const dir = await project();
   const report = await addDesktopCapabilities({ capabilities: ["context-menu"], dir });
