@@ -34,6 +34,20 @@ because React / Next still export or accept them.
 
 ### Fixed
 
+- **Windows: `denext mobile` works on a Windows host.**
+  - `mobile add` / `add-ota` / app extensions no longer report `\` paths or list the Xcode project
+    twice; project-relative paths are always `/`.
+  - `mobile build android --release` accepts a Windows keystore path (it was refused as unsafe
+    for `GRADLE_OPTS`), and runs `gradlew.bat` instead of the `gradlew` shell script.
+  - `mobile build ios` / `mobile submit ios` stop off macOS with a clear "needs macOS with Xcode"
+    message (the `--dry-run` plan still works), and a missing build tool is named instead of a raw
+    spawn error.
+  - `mobile submit ios` no longer needs the symlink privilege: the App Store Connect key is copied,
+    owner-only, into the temporary key folder, which is removed afterwards.
+  - The interrupted-build backup and `--restore` list, and `mobile assets`, report `/` paths.
+- **`denext mobile doctor`'s web-storage check skipped every source file when the project itself
+  lived under a folder named `dist`, `build` or `out`** (or `ios`, `android`, `.git`,
+  `node_modules`); skipped folders are now matched inside the project only, on every OS.
 - **React Native mode dev: importing a new name no longer reload-loops the page.** An edit that
   imported a name the dev dependency bundle did not yet export (one a package re-exports
   through CommonJS `__exportStar`, say) was hot-swapped against the page's old bundle, failed to

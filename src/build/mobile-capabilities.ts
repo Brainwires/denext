@@ -11,7 +11,8 @@
 // hook's `install` step; with no package to add, neither the install nor `cap sync` runs. Every
 // subprocess goes through a runner the caller passes in, so tests never spawn a real install.
 
-import { dirname, join, relative, resolve } from "@std/path";
+import { dirname, join, resolve } from "@std/path";
+import { posixRelative } from "./mobile-paths.ts";
 import {
   EMPTY_ENTITLEMENTS,
   withAppDelegatePushForwarding,
@@ -1099,11 +1100,13 @@ async function detectPackageManager(root: string): Promise<DetectedPackageManage
   const dirs = await workspaceAncestors(root);
   for (const dir of dirs) {
     const found = await lockfileIn(dir);
-    if (found) return { manager: found.manager, lockfile: relative(root, found.path) };
+    if (found) return { manager: found.manager, lockfile: posixRelative(root, found.path) };
   }
   for (const dir of dirs) {
     const manager = await packageManagerFieldIn(dir);
-    if (manager) return { manager, packageManagerField: relative(root, join(dir, "package.json")) };
+    if (manager) {
+      return { manager, packageManagerField: posixRelative(root, join(dir, "package.json")) };
+    }
   }
   return { manager: "npm" };
 }

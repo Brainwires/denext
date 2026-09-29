@@ -14,7 +14,8 @@
 // Image work is @denext/photon (decode, Lanczos resize) plus ./png-raster.ts (compose, encode):
 // no npm, no native tools. Nothing here loads the project's modules.
 
-import { dirname, join, relative } from "@std/path";
+import { dirname, join } from "@std/path";
+import { posixRelative } from "./mobile-paths.ts";
 import {
   circleMasked,
   coverInto,
@@ -478,7 +479,7 @@ export async function generateMobileAssets(
 export function formatAssetsReport(report: AssetsReport): string {
   const verb = report.dryRun ? "would write" : "wrote";
   const lines = report.files.map((f) =>
-    `  ${verb}  ${relative(report.root, join(report.root, f.path))}  ${f.size ?? ""} ${f.what}`
+    `  ${verb}  ${posixRelative(report.root, join(report.root, f.path))}  ${f.size ?? ""} ${f.what}`
       .trimEnd()
   );
   for (const w of report.warnings) lines.push(`  warning: ${w}`);
