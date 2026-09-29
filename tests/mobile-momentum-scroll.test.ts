@@ -32,7 +32,8 @@ const MEMBERS = [
   "scrollHeight",
   "scrollWidth",
 ];
-const SETTLE_MS = 10;
+// Well above a coarse timer tick (~16 ms on Windows), so the timing tests hold there too.
+const SETTLE_MS = 100;
 
 // ---- stubs -------------------------------------------------------------------
 
@@ -327,7 +328,9 @@ Deno.test("momentum scroll: settleMs without a scroll event flushes; scroll even
     scroller.scrollBy(0, 64);
     await delay(SETTLE_MS / 2);
     env.fling(-5); // restarts the quiet period
-    await delay(SETTLE_MS / 2 + 2);
+    // Past the ORIGINAL deadline, still short of the restarted one — a quarter period of margin
+    // on each side, wider than a coarse (~16 ms, Windows) timer tick.
+    await delay(SETTLE_MS * 3 / 4);
     assertEquals(scroller.top, 990, "still flinging: nothing applied yet");
     await delay(SETTLE_MS * 3);
     assertEquals(scroller.top, 990 + 64);
