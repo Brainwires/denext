@@ -54,6 +54,7 @@ export {
 export {
   DESKTOP_BASELINE_FLAGS,
   desktopBuildFlags,
+  desktopIncludeArgs,
   type DesktopOs,
   desktopPackageFlags,
 } from "./desktop-capabilities.ts";

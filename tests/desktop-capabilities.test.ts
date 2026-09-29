@@ -9,6 +9,7 @@ import {
   DESKTOP_BASELINE_FLAGS,
   DESKTOP_CAPABILITIES,
   desktopBuildFlags,
+  desktopIncludeArgs,
   desktopPackageFlags,
   desktopPermissionFlags,
   formatDesktopAddReport,
@@ -295,5 +296,42 @@ Deno.test("desktopPackageFlags: reads denext.config.ts next to the script (missi
   } finally {
     await Deno.remove(bare, { recursive: true });
     await Deno.remove(withCfg, { recursive: true });
+  }
+});
+
+Deno.test("desktopIncludeArgs: one --include per desktop.capabilities.extensions path (none → [])", async () => {
+  // No config, and a config with no extensions → nothing extra to embed.
+  const bare = await Deno.makeTempDir({ prefix: "denext-inc-bare-" });
+  const noExt = await Deno.makeTempDir({ prefix: "denext-inc-noext-" });
+  // A config that declares extension modules → one `--include <path>` each (so the packaged
+  // binary embeds them, not just the export dir).
+  const withExt = await Deno.makeTempDir({ prefix: "denext-inc-ext-" });
+  try {
+    await Deno.mkdir(join(noExt, "scripts"));
+    await Deno.mkdir(join(withExt, "scripts"));
+    await Deno.writeTextFile(
+      join(noExt, "denext.config.ts"),
+      "export default { desktop: { capabilities: { fs: true } } };\n",
+    );
+    await Deno.writeTextFile(
+      join(withExt, "denext.config.ts"),
+      'export default { desktop: { capabilities: { extensions: ["./desktop/diag.ts", "./desktop/tools.ts"] } } };\n',
+    );
+    assertEquals(
+      await desktopIncludeArgs(`file://${join(bare, "scripts", "package-macos.ts")}`),
+      [],
+    );
+    assertEquals(
+      await desktopIncludeArgs(`file://${join(noExt, "scripts", "package-macos.ts")}`),
+      [],
+    );
+    assertEquals(
+      await desktopIncludeArgs(`file://${join(withExt, "scripts", "package-macos.ts")}`),
+      ["--include", "./desktop/diag.ts", "--include", "./desktop/tools.ts"],
+    );
+  } finally {
+    await Deno.remove(bare, { recursive: true });
+    await Deno.remove(noExt, { recursive: true });
+    await Deno.remove(withExt, { recursive: true });
   }
 });

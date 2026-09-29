@@ -27,7 +27,7 @@
  * baked into the bundle. Outputs into ./dist/.
  */
 
-import { desktopPackageFlags } from "denext/desktop";
+import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-pc-windows-msvc",
@@ -113,6 +113,7 @@ async function buildBundle(
     ...await desktopPackageFlags(import.meta.url, "windows"),
     "--include",
     "out",
+    ...await desktopIncludeArgs(import.meta.url),
     "--target",
     TARGETS[arch],
   ];

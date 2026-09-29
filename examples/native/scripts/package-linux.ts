@@ -21,7 +21,7 @@
  * that is a deploy-environment dependency, not baked into the bundle. Outputs into ./dist/.
  */
 
-import { desktopPackageFlags } from "denext/desktop";
+import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-unknown-linux-gnu",
@@ -96,6 +96,7 @@ async function buildBundle(
     ...await desktopPackageFlags(import.meta.url, "linux"),
     "--include",
     "out",
+    ...await desktopIncludeArgs(import.meta.url),
     "--target",
     TARGETS[arch],
   ];

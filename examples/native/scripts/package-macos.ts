@@ -29,7 +29,7 @@
  * Developer ID Application certificate, storing notarytool credentials, Gatekeeper).
  */
 
-import { desktopPackageFlags } from "denext/desktop";
+import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
@@ -101,9 +101,12 @@ async function buildApp(out: string, target?: string): Promise<void> {
     ...await desktopPackageFlags(import.meta.url, "darwin"),
     "--include",
     "out",
+    ...await desktopIncludeArgs(import.meta.url),
   ];
   if (target) cmd.push("--target", target);
-  cmd.push("--output", out, "desktop.ts");
+  // deno desktop appends ".app" to --output on macOS, so pass the base name (strip a trailing
+  // ".app") to land exactly at `out` — else it writes `out.app` and sign/lipo/dmg miss it.
+  cmd.push("--output", out.replace(/\.app$/, ""), "desktop.ts");
   await run(cmd);
 }
 

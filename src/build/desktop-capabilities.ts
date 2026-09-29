@@ -435,6 +435,38 @@ export async function desktopPackageFlags(entryUrl: string, os: DesktopOs): Prom
   return desktopBuildFlags(config, os);
 }
 
+/** The `desktop.capabilities.extensions` module paths from a config object (each a project-relative
+ * path a packaging build must embed), else `[]`. */
+function configExtensionPaths(config: unknown): string[] {
+  const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
+  const caps = cfg.desktop?.capabilities;
+  const exts = (typeof caps === "object" && caps !== null)
+    ? (caps as { extensions?: unknown }).extensions
+    : undefined;
+  return Array.isArray(exts) ? exts.filter((p): p is string => typeof p === "string") : [];
+}
+
+/**
+ * The extra `--include <path>` args a scaffolded packaging script must add so the packaged binary
+ * embeds each `desktop.capabilities.extensions` module — otherwise the app launches but the runtime
+ * fails to load the extension ("Module not found"), since `--include out` only bundles the export.
+ * Reads the project's `denext.config.ts` next to `entryUrl` (a `scripts/` script → `../`), like
+ * {@linkcode desktopPackageFlags}; a project with no extensions gets `[]`.
+ *
+ * @param entryUrl The packaging script's `import.meta.url`.
+ * @returns `["--include", path, "--include", path, …]`, ready to splice into the `deno desktop` argv.
+ */
+export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
+  let config: unknown;
+  try {
+    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
+    config = (mod as { default?: unknown }).default;
+  } catch {
+    // no denext.config.ts (or it exports no config) → no extensions to embed
+  }
+  return configExtensionPaths(config).flatMap((p) => ["--include", p]);
+}
+
 /**
  * The `--list` table: name, config key, trust, note.
  *

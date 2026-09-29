@@ -740,7 +740,7 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * Developer ID Application certificate, storing notarytool credentials, Gatekeeper).
  */
 
-import { desktopPackageFlags } from "denext/desktop";
+import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
@@ -812,9 +812,12 @@ async function buildApp(out: string, target?: string): Promise<void> {
     ...await desktopPackageFlags(import.meta.url, "darwin"),
     "--include",
     "out",
+    ...await desktopIncludeArgs(import.meta.url),
   ];
   if (target) cmd.push("--target", target);
-  cmd.push("--output", out, "desktop.ts");
+  // deno desktop appends ".app" to --output on macOS, so pass the base name (strip a trailing
+  // ".app") to land exactly at \`out\` — else it writes \`out.app\` and sign/lipo/dmg miss it.
+  cmd.push("--output", out.replace(/\\.app$/, ""), "desktop.ts");
   await run(cmd);
 }
 
@@ -1110,7 +1113,7 @@ const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * that is a deploy-environment dependency, not baked into the bundle. Outputs into ./dist/.
  */
 
-import { desktopPackageFlags } from "denext/desktop";
+import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-unknown-linux-gnu",
@@ -1185,6 +1188,7 @@ async function buildBundle(
     ...await desktopPackageFlags(import.meta.url, "linux"),
     "--include",
     "out",
+    ...await desktopIncludeArgs(import.meta.url),
     "--target",
     TARGETS[arch],
   ];
@@ -1313,7 +1317,7 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * baked into the bundle. Outputs into ./dist/.
  */
 
-import { desktopPackageFlags } from "denext/desktop";
+import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-pc-windows-msvc",
@@ -1399,6 +1403,7 @@ async function buildBundle(
     ...await desktopPackageFlags(import.meta.url, "windows"),
     "--include",
     "out",
+    ...await desktopIncludeArgs(import.meta.url),
     "--target",
     TARGETS[arch],
   ];

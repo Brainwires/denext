@@ -210,6 +210,14 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
     Deno.exit(1);
   }
   console.log(`\n  denext desktop — packaging (${targetOs})  ▸  ${dir}\n`);
+  // The `denext` CLI re-execs itself once to load lightningcss / the project config, setting
+  // DENEXT_CSS_ACTIVE / DENEXT_MODULE_ACTIVE as a loop guard (cli.ts). Those must NOT leak into the
+  // packaging script's own `deno task export` child: it would see the guard, skip its own CSS
+  // re-exec, and fail with `Import "denext/desktop/client" not a dependency` for any project with a
+  // stylesheet (the default scaffold has public/styles.css). Deno.Command inherits the parent env,
+  // so clear the guards here before spawning.
+  Deno.env.delete("DENEXT_CSS_ACTIVE");
+  Deno.env.delete("DENEXT_MODULE_ACTIVE");
   await spawnDenoAndExit(["run", "-A", script, ...ctx.rest], dir);
 }
 
