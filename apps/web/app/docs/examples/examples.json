@@ -35,7 +35,7 @@
     {
       "name": "cache-components",
       "title": "Cache Components (use cache + PPR)",
-      "blurb": "A minimal demo of Next.js 16 Cache Components on denext, a stable opt-in enabled by top-level cacheComponents: true in denext.config.ts (the legacy experimental: { cacheComponents: true } still works…",
+      "blurb": "A minimal demo of Next.js 16 Cache Components on denext, a stable opt-in enabled by top-level cacheComponents: true in denext.config.ts (Next.js's experimental: { cacheComponents: true } spelling…",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/cache-components",
       "tags": [
         "app-router"
