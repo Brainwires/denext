@@ -19,8 +19,9 @@ import {
 } from "../src/build/dev-events.ts";
 import { fetchDevState, readDevInfo } from "../src/mcp/dev-client.ts";
 import { llmsFull, llmsIndex } from "../scripts/gen-llms-txt.ts";
+import { fromFileUrl } from "@std/path";
 
-const HELLO = new URL("../examples/hello", import.meta.url).pathname;
+const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
 
 // ── Snippet checker ───────────────────────────────────────────────────────────
 

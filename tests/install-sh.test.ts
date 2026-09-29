@@ -6,11 +6,16 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { encodeHex } from "@std/encoding/hex";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 
 const ROOT = new URL("../", import.meta.url);
-const SCRIPT = new URL("scripts/install.sh", ROOT).pathname;
-const WORKFLOW = new URL(".github/workflows/publish.yml", ROOT).pathname;
+/**
+ * install.sh is the POSIX installer (`curl … | sh`); Windows installs from the release's
+ * Windows archive instead, and has no `sh` on PATH to run the script with.
+ */
+const NO_SH = Deno.build.os === "windows";
+const SCRIPT = fromFileUrl(new URL("scripts/install.sh", ROOT));
+const WORKFLOW = fromFileUrl(new URL(".github/workflows/publish.yml", ROOT));
 
 /** The target the stub `uname` (Linux x86_64) makes the script pick. */
 const TARGET = "x86_64-unknown-linux-gnu";
@@ -158,7 +163,7 @@ class Release {
   }
 }
 
-Deno.test("install.sh: a good checksum installs the binary", async () => {
+Deno.test("install.sh: a good checksum installs the binary", { ignore: NO_SH }, async () => {
   const r = await Release.create();
   try {
     const run = await r.run();
@@ -178,7 +183,7 @@ Deno.test("install.sh: a good checksum installs the binary", async () => {
   }
 });
 
-Deno.test("install.sh: a wrong checksum installs nothing", async () => {
+Deno.test("install.sh: a wrong checksum installs nothing", { ignore: NO_SH }, async () => {
   const r = await Release.create();
   try {
     const bad = `${"f".repeat(64)}  ${ASSET}\n`;
@@ -197,31 +202,37 @@ Deno.test("install.sh: a wrong checksum installs nothing", async () => {
   }
 });
 
-Deno.test("install.sh: no checksum at all is fatal unless DENEXT_INSECURE=1", async () => {
-  const r = await Release.create({ withSums: false, withPerAsset: false });
-  try {
-    const run = await r.run();
-    assertEquals(run.code, 1);
-    assertStringIncludes(run.stderr, "no checksum could be fetched");
-    assertStringIncludes(run.stderr, "DENEXT_INSECURE=1");
-    assertEquals(await r.installed(), false);
-    assert(
-      run.urls.includes(
-        `https://github.com/Brainwires/denext/releases/download/v9.9.9/${ASSET}.sha256`,
-      ),
-      "the per-archive checksum is tried after the combined file",
-    );
-    const forced = await r.run({ DENEXT_INSECURE: "1" });
-    assertEquals(forced.code, 0, forced.stderr);
-    assertStringIncludes(forced.stderr, "WARNING");
-    assertStringIncludes(forced.stderr, "UNVERIFIED");
-    assert(await r.installed());
-  } finally {
-    await r.remove();
-  }
-});
+Deno.test(
+  "install.sh: no checksum at all is fatal unless DENEXT_INSECURE=1",
+  { ignore: NO_SH },
+  async () => {
+    const r = await Release.create({ withSums: false, withPerAsset: false });
+    try {
+      const run = await r.run();
+      assertEquals(run.code, 1);
+      assertStringIncludes(run.stderr, "no checksum could be fetched");
+      assertStringIncludes(run.stderr, "DENEXT_INSECURE=1");
+      assertEquals(await r.installed(), false);
+      assert(
+        run.urls.includes(
+          `https://github.com/Brainwires/denext/releases/download/v9.9.9/${ASSET}.sha256`,
+        ),
+        "the per-archive checksum is tried after the combined file",
+      );
+      const forced = await r.run({ DENEXT_INSECURE: "1" });
+      assertEquals(forced.code, 0, forced.stderr);
+      assertStringIncludes(forced.stderr, "WARNING");
+      assertStringIncludes(forced.stderr, "UNVERIFIED");
+      assert(await r.installed());
+    } finally {
+      await r.remove();
+    }
+  },
+);
 
-Deno.test("install.sh: the per-archive .sha256 is the fallback when SHA256SUMS is missing", async () => {
+Deno.test("install.sh: the per-archive .sha256 is the fallback when SHA256SUMS is missing", {
+  ignore: NO_SH,
+}, async () => {
   const r = await Release.create({ withSums: false });
   try {
     const run = await r.run();
@@ -233,7 +244,9 @@ Deno.test("install.sh: the per-archive .sha256 is the fallback when SHA256SUMS i
   }
 });
 
-Deno.test("install.sh: DENEXT_VERSION picks the release and skips the latest lookup", async () => {
+Deno.test("install.sh: DENEXT_VERSION picks the release and skips the latest lookup", {
+  ignore: NO_SH,
+}, async () => {
   const r = await Release.create();
   try {
     const run = await r.run({ DENEXT_VERSION: "v2.5.0-rc.9" });
@@ -249,21 +262,25 @@ Deno.test("install.sh: DENEXT_VERSION picks the release and skips the latest loo
   }
 });
 
-Deno.test("install.sh: an unsupported platform exits 1 with the JSR alternative", async () => {
-  const r = await Release.create({ os: "FreeBSD", arch: "amd64" });
-  try {
-    const run = await r.run();
-    assertEquals(run.code, 1);
-    assertStringIncludes(run.stderr, "no prebuilt binary for FreeBSD-amd64");
-    assertStringIncludes(run.stderr, "deno install -A -g -n denext jsr:@denext/denext/cli");
-    assertEquals(run.urls, [], "nothing is fetched");
-    assertEquals(await r.installed(), false);
-  } finally {
-    await r.remove();
-  }
-});
+Deno.test(
+  "install.sh: an unsupported platform exits 1 with the JSR alternative",
+  { ignore: NO_SH },
+  async () => {
+    const r = await Release.create({ os: "FreeBSD", arch: "amd64" });
+    try {
+      const run = await r.run();
+      assertEquals(run.code, 1);
+      assertStringIncludes(run.stderr, "no prebuilt binary for FreeBSD-amd64");
+      assertStringIncludes(run.stderr, "deno install -A -g -n denext jsr:@denext/denext/cli");
+      assertEquals(run.urls, [], "nothing is fetched");
+      assertEquals(await r.installed(), false);
+    } finally {
+      await r.remove();
+    }
+  },
+);
 
-Deno.test("install.sh: with deno on PATH there is no warning", async () => {
+Deno.test("install.sh: with deno on PATH there is no warning", { ignore: NO_SH }, async () => {
   const r = await Release.create();
   try {
     const withDeno = join(r.dir, "with-deno");
@@ -277,7 +294,7 @@ Deno.test("install.sh: with deno on PATH there is no warning", async () => {
   }
 });
 
-Deno.test("install.sh: a truncated download runs nothing", async () => {
+Deno.test("install.sh: a truncated download runs nothing", { ignore: NO_SH }, async () => {
   // `curl … | sh` executes what arrived; everything is inside main(), called on the last line,
   // so a script cut short anywhere before that line does nothing at all.
   const r = await Release.create();

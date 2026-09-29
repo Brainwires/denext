@@ -4,7 +4,7 @@
 // `@dep` set / the compat runtime), so such an edit drops that pre-bundle and reloads the page.
 // denext served from JSR (https:// sources) has nothing local to watch.
 
-import { fromFileUrl } from "@std/path";
+import { fromFileUrl, SEPARATOR } from "@std/path";
 
 /**
  * The framework's `src/` directory when denext runs from local files, else null.
@@ -16,7 +16,7 @@ export function linkedFrameworkDir(moduleUrl: string = import.meta.url): string 
   const url = new URL("../../", moduleUrl);
   if (url.protocol !== "file:") return null;
   try {
-    return Deno.realPathSync(fromFileUrl(url)).replace(/\/$/, "");
+    return Deno.realPathSync(fromFileUrl(url)).replace(/[\\/]$/, "");
   } catch {
     return null;
   }
@@ -30,5 +30,5 @@ export function linkedFrameworkDir(moduleUrl: string = import.meta.url): string 
  * @returns Whether it is a framework source.
  */
 export function isFrameworkPath(path: string, dir: string | null): boolean {
-  return dir !== null && (path === dir || path.startsWith(dir + "/"));
+  return dir !== null && (path === dir || path.startsWith(dir + SEPARATOR));
 }

@@ -6,12 +6,13 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { createTestApp, createTestClient, type TestClient } from "denext/testing";
+import { fromFileUrl } from "@std/path";
 
 // An ephemeral database and a fixed secret — set before the app loads any module.
 Deno.env.set("NOTES_DB", ":memory:");
 Deno.env.set("SESSION_SECRET", "notes-example-test-secret");
 
-const APP = new URL("../../examples/notes", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../../examples/notes", import.meta.url));
 
 // Seeded (deterministic order): note 1 = demo "Welcome" (public), 2 = demo private,
 // 3 = alice "Alice says hi" (public). Used for the authz + not-found cases.

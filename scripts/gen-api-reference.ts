@@ -18,8 +18,9 @@
 //     would otherwise clobber e.g. `draftMode` vs `DraftMode` on static export).
 
 import { denoDocJson } from "./deno-doc.ts";
+import { dirname, fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const OUT = `${ROOT}apps/web/app/docs/api/reference.json`;
 const PARITY_BASELINE = `${ROOT}tests/fixtures/react-surface.baseline.json`;
 
@@ -362,7 +363,7 @@ for (const { module, file } of ENTRIES) {
   groups.push({ module, symbols });
 }
 
-await Deno.mkdir(new URL(".", `file://${OUT}`).pathname, { recursive: true });
+await Deno.mkdir(dirname(OUT), { recursive: true });
 await Deno.writeTextFile(OUT, JSON.stringify({ groups }, null, 2) + "\n");
 const total = groups.reduce((n, g) => n + g.symbols.length, 0);
 const denextOnly = groups.reduce((n, g) => n + g.symbols.filter((s) => s.denextOnly).length, 0);

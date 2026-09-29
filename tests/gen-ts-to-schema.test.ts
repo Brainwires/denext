@@ -20,6 +20,7 @@ import {
   type PackageSource,
   type PluginCatalog,
 } from "../scripts/gen-plugin-catalog.ts";
+import { fromFileUrl } from "@std/path";
 
 const ctx = { table: new Map(), stack: [] };
 const kw = (v: string): DocType => ({ kind: "keyword", value: v });
@@ -175,7 +176,7 @@ export interface C {
 
 Deno.test("mapper: the real OpenApiOptions interface maps to an options schema", async () => {
   const table = symbolTable(
-    await denoDocJson(new URL("../packages/openapi/mod.ts", import.meta.url).pathname),
+    await denoDocJson(fromFileUrl(new URL("../packages/openapi/mod.ts", import.meta.url))),
   );
   const schema = interfaceSchema("OpenApiOptions", { table, stack: [], maxDepth: 4 });
   const properties = props(schema);

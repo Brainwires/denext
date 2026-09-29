@@ -7,7 +7,7 @@ import type { BoundaryManifest } from "../src/build/module-graph.ts";
 Deno.test("flight bundle contains client code but NOT server-component code", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_flightbundle_" });
   try {
-    const root = new URL("../", import.meta.url).pathname; // repo root
+    const root = new URL("../", import.meta.url).href; // repo root
     await Deno.writeTextFile(
       join(dir, "deno.json"),
       JSON.stringify({

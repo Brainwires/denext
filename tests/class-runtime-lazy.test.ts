@@ -6,7 +6,7 @@
 // runtime out entirely.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
@@ -160,12 +160,12 @@ Deno.test("route entry: lazy makes main() async and loads the chunk before start
 // ---- the build scan as a preload hint ----------------------------------------------------
 
 Deno.test("the sibling-package crawl never hands the framework's own sources to the scans", () => {
-  const fw = new URL("../", import.meta.url).pathname; // this checkout's framework root
-  assertEquals(isFrameworkSource(fw + "src/compat/react.ts"), true);
-  assertEquals(isFrameworkSource(fw + "packages/pages-router/mod.ts"), true);
-  assertEquals(isFrameworkSource(fw + "mod.ts"), true);
-  assertEquals(isFrameworkSource(fw + "examples/hello/app/page.tsx"), false, "an in-repo app");
-  assertEquals(isFrameworkSource(fw + "examples/shared/ui.tsx"), false, "a sibling package");
+  const fw = fromFileUrl(new URL("../", import.meta.url)); // this checkout's framework root
+  assertEquals(isFrameworkSource(join(fw, "src/compat/react.ts")), true);
+  assertEquals(isFrameworkSource(join(fw, "packages/pages-router/mod.ts")), true);
+  assertEquals(isFrameworkSource(join(fw, "mod.ts")), true);
+  assertEquals(isFrameworkSource(join(fw, "examples/hello/app/page.tsx")), false, "an in-repo app");
+  assertEquals(isFrameworkSource(join(fw, "examples/shared/ui.tsx")), false, "a sibling package");
   assertEquals(isFrameworkSource("/somewhere/else/ui.tsx"), false);
 });
 

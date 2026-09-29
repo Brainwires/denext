@@ -55,7 +55,7 @@ function parseOpts(argv: string[]): Opts {
     else if (a === "--no-sign") o.sign = false;
     else if (a === "-h" || a === "--help") {
       console.log(
-        new URL(import.meta.url).pathname,
+        import.meta.filename ?? import.meta.url,
         "\nSee the header comment for usage.",
       );
       Deno.exit(0);

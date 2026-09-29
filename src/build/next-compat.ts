@@ -20,7 +20,7 @@
  * @module
  */
 
-import { denoPlugins } from "@luca/esbuild-deno-loader";
+import { denoLoaderPlugins } from "./deno-loader-plugins.ts";
 import { loadDenextPatchSet, patchPlugin } from "./patches.ts";
 import {
   EXPO_RN_BRIDGE,
@@ -66,6 +66,7 @@ import { withOptimizedPackageImports } from "./optimize-package-imports.ts";
 import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
 import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
+import { inNodeModules } from "./path-segments.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -319,7 +320,7 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
       plugins: [
         expoBridgeExternalPlugin(),
         ...(await frameworkPatchPlugins(options.projectDir, rootUrl)),
-        ...denoPlugins({ configPath: tmpConfig }),
+        ...denoLoaderPlugins({ configPath: tmpConfig }),
       ],
     });
   } finally {
@@ -937,7 +938,7 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
   if (options.platform !== "deno") plugins.push(nodeBuiltinStubPlugin());
   if (options.denoLoader ?? true) {
     // The portable loader resolves npm/jsr in-process (no spawned `deno`).
-    plugins.push(...denoPlugins({
+    plugins.push(...denoLoaderPlugins({
       configPath: await loaderConfigPath(options.configPath, dirname(options.outfile)),
       loader: "portable",
     }));
@@ -1652,7 +1653,7 @@ async function resolvedIsSideEffectFree(file: string): Promise<boolean> {
 export async function withPackageSideEffects(
   path: string,
 ): Promise<{ path: string; sideEffects?: false }> {
-  return path.includes("/node_modules/") && await resolvedIsSideEffectFree(path)
+  return inNodeModules(path) && await resolvedIsSideEffectFree(path)
     ? { path, sideEffects: false }
     : { path };
 }
@@ -1675,14 +1676,14 @@ export function catalogResolverPlugin(
         // always plain package names, so this only gates the `"all"` path.)
         if (all && /^[a-z][a-z0-9+.-]*:/.test(args.path)) return null;
         const [name] = splitPackageSpecifier(args.path);
-        const inNodeModules = args.importer.includes("/node_modules/");
+        const importerInNodeModules = inNodeModules(args.importer);
         // `"all"`: always walk up from the importer's own dir (Node semantics) — this is
         // what lets a workspace package's SOURCE file (outside the app root) resolve its
         // deps from its own `node_modules`, not just the app's. The narrow catalog set
         // keeps its app-root bias for hoisted direct deps (backward-compatible).
         const fromDir = all
           ? (args.importer ? dirname(args.importer) : projectDir)
-          : (packages.has(name) && !inNodeModules) || !args.importer
+          : (packages.has(name) && !importerInNodeModules) || !args.importer
           ? projectDir
           : dirname(args.importer);
         const resolved = await resolveNodeFrom(fromDir, args.path, conditions, platformExtensions);
@@ -1879,7 +1880,7 @@ export function cacheDirectivePlugin(): esbuild.Plugin {
     name: "denext-use-cache",
     setup(build) {
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/, namespace: "file" }, async (args) => {
-        if (args.path.includes("/node_modules/")) return undefined;
+        if (inNodeModules(args.path)) return undefined;
         const source = await Deno.readTextFile(args.path);
         if (!source.includes("use cache")) return undefined;
         const { code, changed } = await transformUseCache(source, toFileUrl(args.path).href);
@@ -1949,7 +1950,7 @@ async function compatPlugins(
   if (!deno) plugins.push(nodeBuiltinStubPlugin());
   plugins = optimizeImports(plugins, options);
   if (options.denoLoader ?? true) {
-    plugins.push(...denoPlugins({
+    plugins.push(...denoLoaderPlugins({
       configPath: await loaderConfigPath(options.configPath, options.outdir),
       loader: options.denoLoaderMode ?? "portable",
     }));

@@ -313,21 +313,22 @@ async function installFwdeps(fwDir: string, nm: string, denoJson: string): Promi
  * entry first (unlinking the symlink itself, not following it), then points manual-mode
  * resolution at the framework deps. A missing link leaves the framework's build deps
  * unresolvable under manual mode, which then fails later with a cryptic "npm:esbuild not
- * found" — symlinks commonly fail on Windows without Developer Mode / elevation, so that
- * is surfaced clearly here.
+ * found", so a failure is surfaced clearly here. Windows gets a junction, which (unlike a
+ * symlink) needs no Developer Mode or elevation.
  */
 async function linkFrameworkNodeModules(outDir: string, nm: string): Promise<boolean> {
   const link = join(outDir, "node_modules");
   await Deno.remove(link).catch(() => {});
   try {
-    await Deno.symlink(nm, link);
+    // On Windows a directory JUNCTION: unlike a symlink it needs no privilege (no Developer
+    // Mode, no elevation), and resolution follows it the same way.
+    await Deno.symlink(nm, link, Deno.build.os === "windows" ? { type: "junction" } : undefined);
     return true;
   } catch (err) {
     console.error(
       `denext: could not link the framework's build deps into ${link} ` +
-        `(${err instanceof Error ? err.message : err}). On Windows, enable Developer ` +
-        `Mode or run elevated so Deno can create symlinks; the build may otherwise fail ` +
-        `to resolve esbuild/sass/….`,
+        `(${err instanceof Error ? err.message : err}); the build may fail to resolve ` +
+        `esbuild/sass/….`,
     );
     return false;
   }

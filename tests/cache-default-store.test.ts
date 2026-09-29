@@ -14,6 +14,7 @@ import {
   resolveDefaultCacheStore,
   setCacheStore,
 } from "../src/server/cache.ts";
+import { removeTempDirSync } from "./helpers/temp.ts";
 
 const entry = (value: unknown): DataEntry => ({
   value,
@@ -52,7 +53,7 @@ Deno.test("chooseCacheStore: a durable-store path resolves to a functional node:
     const store = await chooseCacheStore({ path: `${tmp}/cache.db` });
     await assertFunctional(store, "default-key");
   } finally {
-    Deno.removeSync(tmp, { recursive: true });
+    removeTempDirSync(tmp); // the store keeps its sqlite handle
   }
 });
 
@@ -128,7 +129,7 @@ Deno.test("cacheStoreKind: sqlite for the durable default, memory for the fallba
     assertEquals(cacheStoreKind(), "custom");
   } finally {
     setCacheStore(saved);
-    Deno.removeSync(tmp, { recursive: true });
+    removeTempDirSync(tmp); // the store keeps its sqlite handle
   }
 });
 

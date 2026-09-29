@@ -9,12 +9,12 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
 
-const SOURCE = new URL("../../examples/hello", import.meta.url).pathname;
-const APP = new URL("../../examples/.hello-prod-test", import.meta.url).pathname;
+const SOURCE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
+const APP = fromFileUrl(new URL("../../examples/.hello-prod-test", import.meta.url));
 
 async function healthProbeIsHardened(origin: string) {
   const res = await fetch(`${origin}/_denext/health`);

@@ -6,8 +6,9 @@
 import { assert, assertEquals } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { fromFileUrl } from "@std/path";
 
-const APP = new URL("../../examples/caching", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../../examples/caching", import.meta.url));
 
 /** Extract the cached "fetched at" timestamp the /data page renders. */
 function cachedAt(html: string): string {

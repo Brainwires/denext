@@ -304,9 +304,10 @@ Deno.test("denext: edit → create writes the patch, materializes with absolutiz
     const entry = join(dir, "entry.ts");
     await Deno.writeTextFile(
       entry,
-      `import { doc } from "${
-        join(fw, "src", "server", "document.ts")
-      }";\nconsole.log(doc({ title: "x" }));\n`,
+      // JSON-quoted: a Windows path's backslashes must survive as a JS string literal.
+      `import { doc } from ${
+        JSON.stringify(join(fw, "src", "server", "document.ts"))
+      };\nconsole.log(doc({ title: "x" }));\n`,
     );
     const out = await esbuild.build({
       entryPoints: [entry],

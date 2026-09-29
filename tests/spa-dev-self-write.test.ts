@@ -6,7 +6,7 @@
 // real edit to the same file still must.
 
 import { assertEquals } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { resolveProject } from "../src/build/paths.ts";
 import { createSpaDevState, getUnbundledCss } from "../src/build/spa/dev-state.ts";
 import { watch } from "../src/build/spa/dev-watch.ts";
@@ -25,7 +25,12 @@ async function rootEntrySpa(): Promise<{ dir: string; config: string; original: 
   await Deno.writeTextFile(join(dir, "main.tsx"), 'import "./a.css";\nconsole.log("hi");\n');
   await Deno.writeTextFile(join(dir, "a.css"), "body { color: red; }\n");
   const original = JSON.stringify(
-    { imports: { [`file://${dir}/a.css`]: `file://${dir}/.denext/css-shims/a.css.js` } },
+    {
+      imports: {
+        [toFileUrl(join(dir, "a.css")).href]:
+          toFileUrl(join(dir, ".denext/css-shims/a.css.js")).href,
+      },
+    },
     null,
     2,
   ) + "\n";

@@ -48,7 +48,7 @@ Deno.test("generateServerStub emits client dispatch stubs per export", () => {
 Deno.test("bundleFlightEntry strips server-action code, keeps a dispatch stub", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_serveraction_" });
   try {
-    const root = new URL("../", import.meta.url).pathname;
+    const root = new URL("../", import.meta.url).href;
     await Deno.writeTextFile(
       join(dir, "deno.json"),
       JSON.stringify({

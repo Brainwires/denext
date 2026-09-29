@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertExists, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, SEPARATOR } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { createApp } from "../src/server/app.ts";
@@ -246,7 +246,7 @@ Deno.test("scanner captures nearest loading/error/not-found per page", async () 
     const dash = matchPage(manifest, "/dashboard");
     assertExists(dash);
     // dashboard inherits root error/not-found, has its own loading.
-    assertStringIncludes(dash.route.loading ?? "", "dashboard/loading.tsx");
+    assertStringIncludes(dash.route.loading ?? "", join("dashboard", "loading.tsx"));
     assertStringIncludes(dash.route.error ?? "", "error.tsx");
     assertStringIncludes(dash.route.notFound ?? "", "not-found.tsx");
 
@@ -277,7 +277,8 @@ async function scannedApp(
     getManifest: () => manifest,
     load: (fp) => {
       // Longest suffix wins ("shop/layout.tsx" over "layout.tsx").
-      const key = Object.keys(mods).filter((k) => fp.endsWith("/" + k))
+      const slashed = fp.split(SEPARATOR).join("/"); // manifest paths are OS paths
+      const key = Object.keys(mods).filter((k) => slashed.endsWith("/" + k))
         .sort((a, b) => b.length - a.length)[0];
       return Promise.resolve(key ? mods[key] : undefined);
     },
@@ -325,7 +326,7 @@ Deno.test("scanner records each level's own not-found/forbidden/unauthorized fil
     const match = matchPage(manifest, "/shop/shoes");
     assertExists(match);
     const levels = match.route.levels ?? [];
-    assertEquals(levels.map((l) => l.notFound?.split("/").slice(-2).join("/") ?? null), [
+    assertEquals(levels.map((l) => l.notFound?.split(SEPARATOR).slice(-2).join("/") ?? null), [
       null,
       "shop/not-found.tsx",
       "[s]/not-found.tsx",

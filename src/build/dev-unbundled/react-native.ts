@@ -25,7 +25,7 @@
 //
 // @module
 
-import { basename, dirname, join, resolve } from "@std/path";
+import { basename, dirname, join, resolve, SEPARATOR } from "@std/path";
 import { ensureDir } from "@std/fs";
 import type * as esbuild from "esbuild";
 import { EXPO_RN_BRIDGE } from "../expo-shims.ts";
@@ -46,12 +46,13 @@ import { CODE_FILE, libraryDepUrl, runtimeDepUrl } from "./resolve.ts";
 import {
   addImporter,
   depSlug,
-  FS_PREFIX,
+  fsUrlPath,
   norm,
   NPM_PREFIX,
   type UnbundledState,
   versionOf,
 } from "./state.ts";
+import { inNodeModules } from "../path-segments.ts";
 
 /**
  * The importer key the dependency bundle's edges to app modules are recorded under. It starts
@@ -324,8 +325,8 @@ export async function crawlReactNativeGraph(
 /** Whether `abs` is one of the app's own code modules (served per module, never bundled). */
 function isAppModule(st: UnbundledState, abs: string): boolean {
   const { projectDir, outDir } = st.opts;
-  return CODE_FILE.test(abs) && !abs.includes("/node_modules/") &&
-    abs.startsWith(norm(projectDir) + "/") && !abs.startsWith(norm(outDir) + "/");
+  return CODE_FILE.test(abs) && !inNodeModules(abs) &&
+    abs.startsWith(norm(projectDir) + SEPARATOR) && !abs.startsWith(norm(outDir) + SEPARATOR);
 }
 
 /**
@@ -338,14 +339,14 @@ function appModuleExternalPlugin(st: UnbundledState, exts: readonly string[]): e
     name: "denext-dev-rn-app-modules",
     setup(build) {
       build.onResolve({ filter: /^(?:\.\.?(?:\/|$)|\/)/ }, (args) => {
-        if (args.importer.includes("/node_modules/")) return null;
+        if (inNodeModules(args.importer)) return null;
         const base = args.path.startsWith("/") ? args.path : resolve(args.resolveDir, args.path);
         const hit = probeSourceFile(base, exts);
         if (!hit) return null;
         const abs = norm(hit);
         if (!isAppModule(st, abs)) return null;
         addImporter(st, abs, NPM_IMPORTER);
-        return externalModule(`${FS_PREFIX}${abs}?v=${versionOf(st, abs)}`, args.kind);
+        return externalModule(`${fsUrlPath(abs)}?v=${versionOf(st, abs)}`, args.kind);
       });
     },
   };
@@ -475,6 +476,11 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+/** A local path with `/` separators (Windows `\` included), for prefix comparisons. */
+function slashed(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
 /**
  * Whether a batch of changed paths invalidates the dependency bundle (the caller then reloads
  * the page, which rebuilds it): a dependency manifest changed, or an expo-router route was
@@ -492,10 +498,11 @@ export async function reactNativeDepsInvalidated(
   let invalid = changed.some((p) => DEPENDENCY_MANIFESTS.has(basename(p)));
   if (!invalid) {
     const root = await expoRouterRoot(st.opts.projectDir);
-    const routes = root ? norm(root) + "/" : null;
+    // Compared `/`-separated: a watcher path and a realpath may disagree on Windows separators.
+    const routes = root ? slashed(norm(root)) + "/" : null;
     for (const raw of changed) {
       const abs = norm(raw);
-      if (!routes || !abs.startsWith(routes) || !/\.[jt]sx?$/.test(abs)) continue;
+      if (!routes || !slashed(abs).startsWith(routes) || !/\.[jt]sx?$/.test(abs)) continue;
       if (!st.known.has(abs) || !(await exists(abs))) invalid = true;
     }
   }

@@ -15,6 +15,7 @@ import { generatePanel } from "../src/ui/features/generate.ts";
 import type { UiContext } from "../src/ui/html.ts";
 import { GENERATE_KINDS } from "../src/build/generate.ts";
 import { stubExit } from "./_cli-coverage-helpers.ts";
+import { symlinkDir } from "./helpers/symlink.ts";
 
 interface Harness {
   server: UiServer;
@@ -380,7 +381,7 @@ Deno.test("an `app/` that is a symlink out of the project refuses the write", as
   const exit = stubExit();
   try {
     await Deno.writeTextFile(join(dir, "deno.json"), "{}");
-    await Deno.symlink(outside, join(dir, "app"));
+    await symlinkDir(outside, join(dir, "app"));
 
     const res = await genPost(dir, { kind: "page", name: "pwned", op: "apply" });
     assertEquals(res.status, 400);

@@ -13,7 +13,7 @@
 // These run in-process, so they resolve against the project's own `deno.json` — which is the
 // config the MCP server picks up when launched from the project directory (the normal case).
 
-import { isAbsolute, relative, resolve, toFileUrl } from "@std/path";
+import { isAbsolute, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { resolveProject } from "../build/paths.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
@@ -235,7 +235,8 @@ export function routeMapData(
   appDir: string,
   path: string,
 ): RouteMapData {
-  const rel = (p: string) => relative(appDir, p);
+  // App-relative and `/`-separated on every OS: this is data for an agent / the devtools panel.
+  const rel = (p: string) => relative(appDir, p).split(SEPARATOR).join("/");
   const api = matchApi(manifest, path);
   const page = matchPage(manifest, path);
   const data: RouteMapData = { path, matched: Boolean(page || api), appDir };

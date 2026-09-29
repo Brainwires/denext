@@ -13,8 +13,9 @@ import { readmeSummary } from "./readme-blurb.ts";
 export { plainText, readmeSummary, truncate } from "./readme-blurb.ts";
 
 import { stripComments } from "../src/utils/strip-comments.ts";
+import { dirname, fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const EXAMPLES_DIR = `${ROOT}examples`;
 export const OUT = `${ROOT}apps/web/app/docs/examples/examples.json`;
 const REPO_TREE = "https://github.com/Brainwires/denext/tree/main/examples";
@@ -141,7 +142,7 @@ export function generateExamplesIndex(): string {
 
 if (import.meta.main) {
   const json = generateExamplesIndex();
-  await Deno.mkdir(new URL(".", `file://${OUT}`).pathname, { recursive: true });
+  await Deno.mkdir(dirname(OUT), { recursive: true });
   await Deno.writeTextFile(OUT, json);
   const { examples } = JSON.parse(json) as { examples: ExampleEntry[] };
   console.log(`examples index: ${examples.length} examples → ${OUT}`);

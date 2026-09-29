@@ -17,6 +17,7 @@ import { widgetFor } from "../src/ui/form/widget.ts";
 import { encode } from "../src/ui/form/value.ts";
 import { browserPostByName, formContaining } from "./helpers/browser-form.ts";
 import { readContained, stampOf } from "../src/ui/security.ts";
+import { FILE_SYMLINKS } from "./helpers/symlink.ts";
 
 const CONFIG = `import { openapi } from "@denext/openapi";
 
@@ -678,33 +679,37 @@ Deno.test("/config/next reports a config it could not evaluate instead of guessi
 
 // ── containment and lost updates ─────────────────────────────────────────────
 
-Deno.test("a denext.config.ts symlinked out of the project is neither read nor written", async () => {
-  const outside = await Deno.makeTempDir({ prefix: "denext_cfg_out_" });
-  const dir = await Deno.makeTempDir({ prefix: "denext_cfg_link_" });
-  try {
-    const secret = join(outside, "credentials.ts");
-    await Deno.writeTextFile(secret, "export default { AWS_SECRET: 'AKIA-not-yours' };\n");
-    await Deno.symlink(secret, join(dir, "denext.config.ts"));
+Deno.test(
+  "a denext.config.ts symlinked out of the project is neither read nor written",
+  { ignore: !FILE_SYMLINKS }, // a FILE symlink: needs the Windows symlink privilege
+  async () => {
+    const outside = await Deno.makeTempDir({ prefix: "denext_cfg_out_" });
+    const dir = await Deno.makeTempDir({ prefix: "denext_cfg_link_" });
+    try {
+      const secret = join(outside, "credentials.ts");
+      await Deno.writeTextFile(secret, "export default { AWS_SECRET: 'AKIA-not-yours' };\n");
+      await Deno.symlink(secret, join(dir, "denext.config.ts"));
 
-    const payload = await (await call(dir, "/api/config")).json();
-    assertEquals(payload.file, null, "the linked file is not treated as this project's config");
-    assert(!JSON.stringify(payload).includes("AKIA-not-yours"), "nothing outside leaks in");
+      const payload = await (await call(dir, "/api/config")).json();
+      assertEquals(payload.file, null, "the linked file is not treated as this project's config");
+      assert(!JSON.stringify(payload).includes("AKIA-not-yours"), "nothing outside leaks in");
 
-    const write = await call(dir, "/config?raw=1", {
-      form: { raw: "export default { basePath: '/pwned' };\n", confirm: "1" },
-    });
-    assertEquals(write.status, 403);
-    await write.body?.cancel();
-    assertEquals(
-      await Deno.readTextFile(secret),
-      "export default { AWS_SECRET: 'AKIA-not-yours' };\n",
-      "the file outside the project is untouched",
-    );
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-    await Deno.remove(outside, { recursive: true });
-  }
-});
+      const write = await call(dir, "/config?raw=1", {
+        form: { raw: "export default { basePath: '/pwned' };\n", confirm: "1" },
+      });
+      assertEquals(write.status, 403);
+      await write.body?.cancel();
+      assertEquals(
+        await Deno.readTextFile(secret),
+        "export default { AWS_SECRET: 'AKIA-not-yours' };\n",
+        "the file outside the project is untouched",
+      );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
 
 Deno.test("a browser form without _base is refused as stale, for every writer; the JSON twin may omit it", async () => {
   const dir = await project();

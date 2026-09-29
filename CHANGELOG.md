@@ -34,6 +34,27 @@ because React / Next still export or accept them.
 
 ### Fixed
 
+- **Windows: the framework builds, serves and develops on a Windows host.** Found by running the
+  whole test suite on a real Windows 11 machine, where every framework test now passes.
+  - The build finds client islands and `"use client"` boundaries again: the module-graph crawl
+    handed `deno info` a drive-letter path, which it reads as an external URL.
+  - esbuild-path builds (compat, SPA) and the dev dependency pre-bundle no longer fail with
+    `WorkspaceDiscoverError` or "Could not resolve \\Users\\…".
+  - `denext dev` serves `/_denext/@fs/C:/…` module URLs; open-in-editor accepts project files, and
+    dev error overlays link to the right source frame.
+  - The server-only leak check (e.g. `node:sqlite` reaching the browser) works; before, no app
+    module was ever recognised on Windows.
+  - `"sideEffects": false` tree-shaking, `optimizePackageImports` and the Reanimated / `use cache`
+    transforms recognise `node_modules` paths.
+  - SPA dev reloads on edits to the entry module or `public/`; a linked framework's edits are
+    picked up; plugin `watch` globs watch the right directory.
+  - `denext patch` applies denext patches in esbuild bundles.
+  - Apps with a manual `node_modules` (migrated Remix apps, say) link the framework's build deps
+    with a directory junction: no Developer Mode or elevation needed.
+  - Adding or removing an expo-router route in `denext dev` rebuilds the dependency bundle.
+  - `denext ui` Generate, the route map (MCP / DevTools), the Prisma migrate report and
+    `denext create`'s file list report project paths with `/` on every OS.
+  - The repository checks out with LF line endings on Windows (`.gitattributes`).
 - **Windows: `denext mobile` works on a Windows host.**
   - `mobile add` / `add-ota` / app extensions no longer report `\` paths or list the Xcode project
     twice; project-relative paths are always `/`.

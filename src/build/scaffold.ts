@@ -4,7 +4,7 @@
 // that turn on the Deno LSP), optionally with Tailwind, a `src/` layout, and the
 // auto-memo compiler enabled.
 
-import { basename, join, relative } from "@std/path";
+import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
@@ -595,7 +595,8 @@ export async function scaffoldProject(
   if (opts.vscode !== false) {
     const vscode: string[] = [];
     await ensureVscodeDeno(opts.dir, vscode);
-    written.push(...vscode.map((p) => relative(opts.dir, p)));
+    // `/`-separated like every other scaffolded path, on Windows too.
+    written.push(...vscode.map((p) => relative(opts.dir, p).split(SEPARATOR).join("/")));
   }
   return written;
 }
@@ -763,7 +764,7 @@ function parseOpts(argv: string[]): Opts {
     else if (a === "--dmg") o.dmg = true;
     else if (a === "-h" || a === "--help") {
       console.log(
-        new URL(import.meta.url).pathname,
+        import.meta.filename ?? import.meta.url,
         "\\nSee the header comment for usage.",
       );
       Deno.exit(0);
@@ -1143,7 +1144,7 @@ function parseOpts(argv: string[]): Opts {
     else if (a === "--appimage") o.appimage = true;
     else if (a === "-h" || a === "--help") {
       console.log(
-        new URL(import.meta.url).pathname,
+        import.meta.filename ?? import.meta.url,
         "\\nSee the header comment for usage.",
       );
       Deno.exit(0);
@@ -1351,7 +1352,7 @@ function parseOpts(argv: string[]): Opts {
     else if (a === "--no-sign") o.sign = false;
     else if (a === "-h" || a === "--help") {
       console.log(
-        new URL(import.meta.url).pathname,
+        import.meta.filename ?? import.meta.url,
         "\\nSee the header comment for usage.",
       );
       Deno.exit(0);

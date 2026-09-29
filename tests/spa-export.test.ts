@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { walk } from "@std/fs";
-import { basename, join, relative } from "@std/path";
+import { basename, join, relative, SEPARATOR } from "@std/path";
 import { staticExport } from "../src/build/export.ts";
 import { resolveExportOutDir, swapStagingDir } from "../src/build/export-pipeline/out-dir.ts";
 import type { ProjectPaths } from "../src/build/paths.ts";
@@ -19,6 +19,7 @@ import {
   OTA_SIGNING_KEY_ENV,
   verifyOtaManifest,
 } from "../src/build/ota-signing.ts";
+import { symlinkDir } from "./helpers/symlink.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -65,7 +66,9 @@ async function spaFixture(spaExtra = ""): Promise<string> {
 /** Every file under `dir`, relative and sorted. */
 async function filesUnder(dir: string): Promise<string[]> {
   const files: string[] = [];
-  for await (const e of walk(dir, { includeDirs: false })) files.push(relative(dir, e.path));
+  for await (const e of walk(dir, { includeDirs: false })) {
+    files.push(relative(dir, e.path).split(SEPARATOR).join("/")); // URL-style, on every OS
+  }
   return files.sort();
 }
 
@@ -205,18 +208,20 @@ Deno.test({
 });
 
 Deno.test("resolveExportOutDir: refuses a dir the export must not replace wholesale", async () => {
+  // A real absolute root on this OS (a drive-letter path on Windows); results are OS paths.
+  const proj = Deno.build.os === "windows" ? "C:\\proj" : "/proj";
   const paths = {
-    projectDir: "/proj",
-    appDir: "/proj/app",
-    publicDir: "/proj/public",
-    outDir: "/proj/.denext",
+    projectDir: proj,
+    appDir: join(proj, "app"),
+    publicDir: join(proj, "public"),
+    outDir: join(proj, ".denext"),
     config: { mode: "spa", spa: { entry: "./src/main.tsx" } },
   } as unknown as ProjectPaths;
-  assertEquals(await resolveExportOutDir(paths), "/proj/out");
-  assertEquals(await resolveExportOutDir(paths, "build/web"), "/proj/build/web");
+  assertEquals(await resolveExportOutDir(paths), join(proj, "out"));
+  assertEquals(await resolveExportOutDir(paths, "build/web"), join(proj, "build", "web"));
   // A name that merely STARTS like a protected path (or like `..`) is its own directory.
-  assertEquals(await resolveExportOutDir(paths, "app-out"), "/proj/app-out");
-  assertEquals(await resolveExportOutDir(paths, "..out"), "/proj/..out");
+  assertEquals(await resolveExportOutDir(paths, "app-out"), join(proj, "app-out"));
+  assertEquals(await resolveExportOutDir(paths, "..out"), join(proj, "..out"));
   const refused: Array<[string, string]> = [
     [".", "the project root"],
     ["", "the project root"],
@@ -226,7 +231,7 @@ Deno.test("resolveExportOutDir: refuses a dir the export must not replace wholes
     ["public/out", "overlaps the project's public"],
     ["app", "overlaps the project's app"],
     [".denext", "overlaps the project's .denext"],
-    ["src", "overlaps the project's src/main.tsx"],
+    ["src", `overlaps the project's ${join("src", "main.tsx")}`], // named as an OS path
     ["node_modules", "overlaps the project's node_modules"],
     [".git", "overlaps the project's .git"],
   ];
@@ -326,7 +331,7 @@ Deno.test("resolveExportOutDir: symlinks are compared by where they really lead"
   const { dir, paths } = await guardedProject();
   const outside = await Deno.makeTempDir({ prefix: "denext_out_guard_outside_" });
   try {
-    const link = (name: string, to: string) => Deno.symlink(to, join(dir, name), { type: "dir" });
+    const link = (name: string, to: string) => symlinkDir(to, join(dir, name));
     await link("to-root", dir);
     await link("to-git", join(dir, ".git"));
     await link("to-outside", outside);
@@ -387,7 +392,7 @@ Deno.test({
 }, async () => {
   const dir = await pagesFixture();
   try {
-    await Deno.symlink(join(dir, ".git"), join(dir, "to-git"), { type: "dir" });
+    await symlinkDir(join(dir, ".git"), join(dir, "to-git"));
     const before = await filesUnder(dir);
     const refused: Array<[string, string]> = [
       [".", "the project root"],
@@ -444,7 +449,11 @@ Deno.test({
       Error,
       "outside the project",
     );
-    await assertRejects(() => staticExport(dir, { outDir: "src" }), Error, "src/main.ts");
+    await assertRejects(
+      () => staticExport(dir, { outDir: "src" }),
+      Error,
+      join("src", "main.ts"),
+    );
     assertEquals(await filesUnder(dir), before, "the SPA project is untouched");
     assertEquals(await filesUnder(sibling), ["keep.txt"], "the outside dir is untouched");
 

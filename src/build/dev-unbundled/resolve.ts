@@ -17,7 +17,7 @@ import {
   DEP_PREFIX,
   depSlug,
   EMPTY_MODULE,
-  FS_PREFIX,
+  fsUrlPath,
   norm,
   NPM_PREFIX,
   type TransformEntry,
@@ -203,7 +203,7 @@ export function rewriteSpecifier(
   if (firstParty) {
     const v = versionOf(st, firstParty);
     entry.deps.push({ abs: firstParty, v });
-    return `${FS_PREFIX}${firstParty}?v=${v}`;
+    return `${fsUrlPath(firstParty)}?v=${v}`;
   }
   if (st.compat) {
     const u = compatDepUrl(st, spec, names);

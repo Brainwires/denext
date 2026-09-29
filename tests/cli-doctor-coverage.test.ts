@@ -3,12 +3,12 @@
 // doctor's config-load-failure branch (which reports a failed critical check and exits).
 
 import { assert, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { doctorCommand, infoCommand } from "../src/cli/commands/doctor.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 
 /** A conforming, all-static example app (used by the conformance suite). */
-const DOCS = new URL("../apps/web", import.meta.url).pathname;
+const DOCS = fromFileUrl(new URL("../apps/web", import.meta.url));
 
 async function tempApp(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_doctor_" });

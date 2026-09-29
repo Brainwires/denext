@@ -8,7 +8,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, SEPARATOR } from "@std/path";
 import * as esbuild from "esbuild";
 import {
   analyzeBarrel,
@@ -47,7 +47,7 @@ async function analyze(dir: string): Promise<Record<string, string>> {
   const map = await analyzeBarrel(barrel, resolvers);
   const out: Record<string, string> = {};
   for (const [name, where] of map) {
-    const rel = where.file.slice(join(BARRELS, dir).length + 1);
+    const rel = where.file.slice(join(BARRELS, dir).length + 1).split(SEPARATOR).join("/");
     out[name] = `${rel}:${where.importName}`;
   }
   return out;
@@ -421,7 +421,7 @@ async function bundleApp(optimize: boolean): Promise<{ bare: string[]; files: st
       logLevel: "silent",
       plugins,
     });
-    const main = result.outputFiles!.find((f) => f.path.endsWith("/main.js"))!;
+    const main = result.outputFiles!.find((f) => /[\\/]main\.js$/.test(f.path))!;
     const text = new TextDecoder().decode(main.contents);
     return {
       bare: [...text.matchAll(/^import\s*"\.\/(chunk-[^"]+\.js)";/gm)].map((m) => m[1]),
@@ -443,7 +443,7 @@ Deno.test("e2e: with the rewrite, the entry chunk no longer pulls every icon chu
   const { bare, files } = await bundleApp(true);
   assert(bare.length <= 2, `expected at most a couple of bare imports, got ${bare.length}`);
   // Every icon is still its own lazily-loaded chunk for `dynamicIconImports`.
-  assert(files.filter((f) => /\/icon-\d+-/.test(f)).length >= 12, files.join("\n"));
+  assert(files.filter((f) => /[\\/]icon-\d+-/.test(f)).length >= 12, files.join("\n"));
 });
 
 Deno.test("e2e: the rewritten icon and the dynamic import are ONE module (no duplicate copy)", async () => {

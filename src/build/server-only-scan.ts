@@ -9,7 +9,7 @@
 // when the page runs there. These helpers make that a build-time error naming the module,
 // the entry that pulled it in, and the fix.
 
-import { relative } from "@std/path";
+import { relative, SEPARATOR } from "@std/path";
 
 // ---- Literal / comment stripping -----------------------------------------------------------
 
@@ -315,7 +315,8 @@ export interface ServerOnlyLeak {
  * and the bundler's temp entry/stub files all fall outside.
  */
 function isAppModule(path: string, projectDir: string): boolean {
-  return path.startsWith(projectDir + "/") && !path.includes("/node_modules/");
+  return path.startsWith(projectDir + SEPARATOR) &&
+    !path.includes(`${SEPARATOR}node_modules${SEPARATOR}`);
 }
 
 /**

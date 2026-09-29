@@ -7,7 +7,7 @@
 // islands do what the prose says — the note hides optimistically, the button reads pending.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { act, createTestApp, createTestClient, render } from "../src/testing/mod.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 
@@ -41,7 +41,7 @@ function islandBlocks(markdown: string): IslandBlock[] {
 /** Copy examples/notes (minus its database) and write the chapter's files over it. */
 async function stageApp(blocks: IslandBlock[]): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_tutorial_islands_" });
-  const src = new URL(`${EXAMPLE}/`, REPO).pathname;
+  const src = fromFileUrl(new URL(`${EXAMPLE}/`, REPO));
   for await (const e of Deno.readDir(src)) {
     if (e.name === "notes.db" || e.name === ".denext") continue;
     await copy(join(src, e.name), join(dir, e.name));
@@ -52,7 +52,6 @@ async function stageApp(blocks: IslandBlock[]): Promise<string> {
   }
   // The example's deno.json points at `../../mod.ts`; from a temp dir that is nowhere, so
   // give `deno check` an import map that resolves to this checkout.
-  const repo = REPO.pathname;
   await Deno.writeTextFile(
     join(dir, "deno.json"),
     JSON.stringify({
@@ -62,12 +61,12 @@ async function stageApp(blocks: IslandBlock[]): Promise<string> {
         lib: ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"],
       },
       imports: {
-        "denext": join(repo, "mod.ts"),
-        "denext/jsx-runtime": join(repo, "src/jsx/jsx-runtime.ts"),
-        "denext/jsx-dev-runtime": join(repo, "src/jsx/jsx-runtime.ts"),
-        "denext/server": join(repo, "src/server/mod.ts"),
-        "denext/client": join(repo, "src/client/mod.ts"),
-        "denext/testing": join(repo, "src/testing/mod.ts"),
+        "denext": new URL("mod.ts", REPO).href,
+        "denext/jsx-runtime": new URL("src/jsx/jsx-runtime.ts", REPO).href,
+        "denext/jsx-dev-runtime": new URL("src/jsx/jsx-runtime.ts", REPO).href,
+        "denext/server": new URL("src/server/mod.ts", REPO).href,
+        "denext/client": new URL("src/client/mod.ts", REPO).href,
+        "denext/testing": new URL("src/testing/mod.ts", REPO).href,
       },
     }),
   );

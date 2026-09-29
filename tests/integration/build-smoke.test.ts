@@ -5,12 +5,12 @@
 // broken client bundle. It also covers the ssr:false code-split path end to end.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { build } from "../../src/build/build.ts";
 
 const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
 
-const EXAMPLE = new URL("../../examples/hello", import.meta.url).pathname;
+const EXAMPLE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
 
 /** File names directly in `dir`. */
 async function fileNames(dir: string): Promise<string[]> {

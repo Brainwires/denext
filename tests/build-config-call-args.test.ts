@@ -6,12 +6,13 @@ import {
   setCallArguments,
 } from "../src/build/call-args-edit.ts";
 import { parseModule } from "../src/build/swc-ast.ts";
+import { fromFileUrl } from "@std/path";
 
 const OPENAPI: CallTarget = { arrayKey: "plugins", callee: "openapi" };
 
 /** Format `source` the way `deno task check` would, so a test can assert fmt-stability. */
 async function denoFmt(source: string): Promise<string> {
-  const config = new URL("../deno.json", import.meta.url).pathname;
+  const config = fromFileUrl(new URL("../deno.json", import.meta.url));
   const cmd = new Deno.Command(Deno.execPath(), {
     args: ["fmt", "--config", config, "--ext", "ts", "-"],
     stdin: "piped",
@@ -257,6 +258,7 @@ Deno.test("setCallArguments: an empty path is refused", async () => {
 Deno.test("setCallArguments: every written source is deno fmt stable and re-parses", async () => {
   const src = `import { htmx } from "@denext/htmx";
 import { openapi } from "@denext/openapi";
+import { fromFileUrl } from "@std/path";
 
 export default {
   // plugins load in this order

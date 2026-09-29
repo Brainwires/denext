@@ -14,7 +14,7 @@ import {
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
 import type { VNode } from "../src/jsx/types.ts";
 
-const NAV = new URL("../src/client/navigation.ts", import.meta.url).pathname;
+const NAV = new URL("../src/client/navigation.ts", import.meta.url).href;
 
 /** `deno check` a standalone module; return its exit code (0 = type-checks). */
 async function check(body: string): Promise<number> {
@@ -102,7 +102,7 @@ Deno.test("typed nav: useSearchParams(schema) output type flows to the caller", 
     await check(
       `import { useSearchParams } from "${NAV}";\n` +
         `import type { StandardSchemaV1 } from "${
-          new URL("../src/runtime/define-action.ts", import.meta.url).pathname
+          new URL("../src/runtime/define-action.ts", import.meta.url).href
         }";\n` +
         `declare const schema: StandardSchemaV1<{ page: number }>;\n` +
         `function C() { const q = useSearchParams(schema); const n: number = q.page; return n; }\n` +

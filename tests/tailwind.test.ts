@@ -59,10 +59,12 @@ Deno.test("tailwindVersion honors DENEXT_TAILWIND_VERSION", () => {
 });
 
 Deno.test("tailwindPaths resolves relative input/output against the project", () => {
-  assertEquals(tailwindPaths("/proj", null), undefined);
+  // Absolute local paths as this OS resolves them (`C:\proj\…` on Windows).
+  const proj = Deno.build.os === "windows" ? "C:\\proj" : "/proj";
+  assertEquals(tailwindPaths(proj, null), undefined);
   assertEquals(
-    tailwindPaths("/proj", { input: "styles/tw.css", output: "app/globals.css" }),
-    { input: "/proj/styles/tw.css", output: "/proj/app/globals.css" },
+    tailwindPaths(proj, { input: "styles/tw.css", output: "app/globals.css" }),
+    { input: join(proj, "styles", "tw.css"), output: join(proj, "app", "globals.css") },
   );
 });
 

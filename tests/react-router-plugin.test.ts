@@ -7,14 +7,14 @@
 // route answers GET, the thrown Response reaches the route's ErrorBoundary with its status.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { reactRouter } from "../packages/react-router/mod.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createApp } from "../src/server/app.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 
-const DSL = toFileUrl(new URL("../packages/react-router/routes.ts", import.meta.url).pathname).href;
+const DSL = new URL("../packages/react-router/routes.ts", import.meta.url).href;
 
 async function writeApp(root: string): Promise<void> {
   const app = join(root, "app");
@@ -128,7 +128,7 @@ Deno.test("react-router plugin: routes.ts → generated wrappers → the core Ap
   resetPlugins();
   // Inside the repo: the generated wrappers import `denext/remix/server`, which a real app
   // resolves through ITS deno.json; here the workspace import map has to apply.
-  const tmpBase = new URL("./.tmp/", import.meta.url).pathname;
+  const tmpBase = fromFileUrl(new URL("./.tmp/", import.meta.url));
   await Deno.mkdir(tmpBase, { recursive: true });
   const root = await Deno.makeTempDir({ dir: tmpBase, prefix: "rr7_" });
   try {
@@ -145,16 +145,18 @@ Deno.test("react-router plugin: routes.ts → generated wrappers → the core Ap
     assertEquals(pages, ["/", "/about", "/boom", "/teams", "/teams/[id]"]);
     assertEquals(manifest.api.map((a) => a.routePath).sort(), ["/api/health", "/teams/[id]"]);
     assert(
-      manifest.rootLayout?.endsWith("/.denext/react-router/root/layout.tsx"),
+      manifest.rootLayout?.endsWith(join(".denext", "react-router", "root", "layout.tsx")),
       manifest.rootLayout ?? "",
     );
     const team = manifest.pages.find((p) => p.routePath === "/teams/[id]")!;
     assertEquals(team.layoutChain.length, 2, "root + the pathless shell layout");
     assertEquals(team.layoutDepths, [0, 0]);
-    assert(team.filePath.includes("/.denext/react-router/routes__teams__team/page.tsx"));
+    assert(
+      team.filePath.includes(join(".denext", "react-router", "routes__teams__team", "page.tsx")),
+    );
     const boom = manifest.pages.find((p) => p.routePath === "/boom")!;
     assert(
-      boom.error?.endsWith("/routes__boom/error.tsx"),
+      boom.error?.endsWith(join("routes__boom", "error.tsx")),
       "the route's ErrorBoundary is its error.tsx",
     );
 

@@ -1,11 +1,12 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { applyArrayOps, setConfigValue } from "../src/build/config-edit.ts";
+import { fromFileUrl } from "@std/path";
 
 const RULE = { source: "/x", destination: "/y", permanent: false };
 
 /** Format `source` the way `deno task check` would, so a test can assert fmt-stability. */
 async function denoFmt(source: string): Promise<string> {
-  const config = new URL("../deno.json", import.meta.url).pathname;
+  const config = fromFileUrl(new URL("../deno.json", import.meta.url));
   const cmd = new Deno.Command(Deno.execPath(), {
     args: ["fmt", "--config", config, "--ext", "ts", "-"],
     stdin: "piped",

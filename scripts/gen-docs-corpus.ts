@@ -8,8 +8,9 @@
 //   deno task docs:build     # regenerate + export the site
 
 import { publicGuide } from "../src/mcp/guide.ts";
+import { fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const REF = `${ROOT}apps/web/app/docs/api/reference.json`;
 const GUIDE = `${ROOT}AGENTS.md`;
 const OUT = `${ROOT}src/mcp/docs-corpus.json`;

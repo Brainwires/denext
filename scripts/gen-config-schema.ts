@@ -34,19 +34,20 @@ import {
   type SymbolTable,
   symbolTable,
 } from "./lib/ts-to-schema.ts";
+import { fromFileUrl } from "@std/path";
 
 /** The repo root (this script lives in `scripts/`). */
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fromFileUrl(new URL("../", import.meta.url));
 /** The module whose `DenextConfig` / `ExperimentalConfig` interfaces are the source. */
 export const CONFIG_SOURCE = `${ROOT}src/server/config.ts`;
 /** Sibling modules whose exported interfaces `DenextConfig` fields reference. */
 const CONFIG_TYPE_SOURCES = [
-  new URL("../src/server/i18n.ts", import.meta.url).pathname,
-  new URL("../src/server/segment-config.ts", import.meta.url).pathname,
-  new URL("../src/server/cache.ts", import.meta.url).pathname,
-  new URL("../src/plugin/mod.ts", import.meta.url).pathname,
+  fromFileUrl(new URL("../src/server/i18n.ts", import.meta.url)),
+  fromFileUrl(new URL("../src/server/segment-config.ts", import.meta.url)),
+  fromFileUrl(new URL("../src/server/cache.ts", import.meta.url)),
+  fromFileUrl(new URL("../src/plugin/mod.ts", import.meta.url)),
   // `commands[].flags` / `commands[].positionals` (`FlagSpec` / `PositionalSpec`).
-  new URL("../src/cli/command.ts", import.meta.url).pathname,
+  fromFileUrl(new URL("../src/cli/command.ts", import.meta.url)),
 ];
 /** Output: the import-free runtime key list. */
 export const KEYS_OUT = `${ROOT}src/server/config-keys.generated.ts`;

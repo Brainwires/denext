@@ -11,7 +11,7 @@ Deno.test("serverAction: the ref runs the handler and carries a stable id (serve
 });
 
 Deno.test("serverAction: calls are type-checked (wrong args / return are compile errors)", async () => {
-  const mod = new URL("../src/runtime/server-action.ts", import.meta.url).pathname;
+  const mod = new URL("../src/runtime/server-action.ts", import.meta.url).href;
   const dir = await Deno.makeTempDir({ prefix: "denext-action-types-" });
   try {
     // A passing `deno check` here proves BOTH that a correct call type-checks AND that a

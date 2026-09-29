@@ -12,10 +12,11 @@
 
 import { REAL_PACKAGES } from "./spec.ts";
 import type { Baseline, Surface } from "./types.ts";
+import { fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fromFileUrl(new URL("../../", import.meta.url)).replace(/[\\/]$/, "");
 const BASELINE = `${ROOT}/tests/fixtures/react-surface.baseline.json`;
-const RUNNER = new URL("./_real-runner.ts", import.meta.url).pathname;
+const RUNNER = fromFileUrl(new URL("./_real-runner.ts", import.meta.url));
 
 /** Install the real packages into `dir` and extract their surface in a child deno. */
 async function captureReal(

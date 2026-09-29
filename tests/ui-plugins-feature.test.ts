@@ -13,6 +13,7 @@ import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 import { setProcRunner } from "../src/ui/features/plugins.ts";
 import type { ProcResult, RunDenoOptions } from "../src/ui/proc.ts";
+import { FILE_SYMLINKS } from "./helpers/symlink.ts";
 
 /** The catalogued specs the tests exercise (kept in sync by tests/plugin-catalog.test.ts). */
 const OPENAPI = "@denext/openapi";
@@ -373,27 +374,31 @@ Deno.test("a stream-capable client gets the deno output as SSE frames", async ()
 
 // ── containment ──────────────────────────────────────────────────────────────
 
-Deno.test("a denext.config.ts symlinked out of the project is never read or rewritten", async () => {
-  const outside = await Deno.makeTempDir({ prefix: "denext_plug_out_" });
-  const victim = join(outside, "victim.ts");
-  await Deno.writeTextFile(victim, WIRED_CONFIG);
-  const h = await ui({ "deno.json": "{}" });
-  try {
-    await Deno.symlink(victim, join(h.dir, "denext.config.ts"));
+Deno.test(
+  "a denext.config.ts symlinked out of the project is never read or rewritten",
+  { ignore: !FILE_SYMLINKS }, // a FILE symlink: needs the Windows symlink privilege
+  async () => {
+    const outside = await Deno.makeTempDir({ prefix: "denext_plug_out_" });
+    const victim = join(outside, "victim.ts");
+    await Deno.writeTextFile(victim, WIRED_CONFIG);
+    const h = await ui({ "deno.json": "{}" });
+    try {
+      await Deno.symlink(victim, join(h.dir, "denext.config.ts"));
 
-    const payload = await (await get(h, "/api/plugins")).json();
-    assertEquals(payload.config, null, "the linked file is not this project's config");
-    assertEquals(payload.installed, [], "nothing outside the project is reported as installed");
+      const payload = await (await get(h, "/api/plugins")).json();
+      assertEquals(payload.config, null, "the linked file is not this project's config");
+      assertEquals(payload.installed, [], "nothing outside the project is reported as installed");
 
-    const res = await post(h, "/plugins", { name: OPENAPI, op: "add", confirm: "1" });
-    await res.body?.cancel();
-    assertEquals(res.status, 403, "the write is refused, not attempted");
-    assertEquals(await Deno.readTextFile(victim), WIRED_CONFIG, "the outside file is untouched");
-  } finally {
-    await stop(h);
-    await Deno.remove(outside, { recursive: true });
-  }
-});
+      const res = await post(h, "/plugins", { name: OPENAPI, op: "add", confirm: "1" });
+      await res.body?.cancel();
+      assertEquals(res.status, 403, "the write is refused, not attempted");
+      assertEquals(await Deno.readTextFile(victim), WIRED_CONFIG, "the outside file is untouched");
+    } finally {
+      await stop(h);
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+);
 
 Deno.test("--offline refuses every catalog add and remove with a 503, preview included", async () => {
   const h = await ui({ "denext.config.ts": WIRED_CONFIG }, { offline: true });

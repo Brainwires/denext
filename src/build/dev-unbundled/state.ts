@@ -56,6 +56,36 @@ export const DENEXT_RUNTIME_FILE: Record<string, string> = {
   "denext/virtual-masonry": "virtual-masonry.js",
 };
 
+const WINDOWS = Deno.build.os === "windows";
+
+/**
+ * The `@fs` dev URL path of a first-party module: `/_denext/@fs/home/app/page.tsx`, and on
+ * Windows `/_denext/@fs/C:/app/page.tsx` — forward slashes and a leading slash, never a raw
+ * `C:\…` a browser would rewrite on its own.
+ *
+ * @param abs The module's absolute filesystem path.
+ * @returns The URL path (no query).
+ */
+export function fsUrlPath(abs: string): string {
+  if (!WINDOWS) return FS_PREFIX + abs;
+  const slashed = abs.replaceAll("\\", "/");
+  return FS_PREFIX + (slashed.startsWith("/") ? "" : "/") + slashed;
+}
+
+/**
+ * Inverse of {@link fsUrlPath}: the filesystem path an `@fs` URL path names (percent-decoded).
+ * On Windows `/C:/app/x.tsx` (and a raw `C:/app/x.tsx`) become `C:\app\x.tsx`.
+ *
+ * @param rest The URL path after {@link FS_PREFIX}.
+ * @returns The absolute filesystem path. Throws on a malformed percent-encoding.
+ */
+export function fsPathOfUrl(rest: string): string {
+  const decoded = decodeURIComponent(rest);
+  if (!WINDOWS) return decoded;
+  const path = /^\/[A-Za-z]:\//.test(decoded) ? decoded.slice(1) : decoded;
+  return path.replaceAll("/", "\\");
+}
+
 /** The URL slug for a bare `denext`/`denext/x` specifier (matches DEP_ENTRYPOINTS keys). */
 export function depSlug(spec: string): string {
   return spec.replace(/[^\w.-]/g, "_");

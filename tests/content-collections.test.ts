@@ -4,7 +4,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
-import { join, toFileUrl } from "@std/path";
+import { join } from "@std/path";
 import { glob } from "../packages/content-collections/config.ts";
 import { buildContent, discoverContentConfig } from "../packages/content-collections/build.ts";
 import { createContentCommand } from "../packages/content-collections/command.ts";
@@ -20,8 +20,7 @@ import {
   setContentStorePath,
 } from "../packages/content-collections/runtime.ts";
 
-const CONFIG_URL =
-  toFileUrl(new URL("../packages/content-collections/config.ts", import.meta.url).pathname).href;
+const CONFIG_URL = new URL("../packages/content-collections/config.ts", import.meta.url).href;
 
 /** A temp project: three blog posts (one invalid, one draft) + a content.config.ts. */
 async function makeProject(): Promise<string> {

@@ -4,7 +4,7 @@ import { staticExport } from "../src/build/export.ts";
 
 /** Scaffold a throwaway app in `dir`: a deno.json aliasing `denext` to this checkout + `app/` files. */
 async function scaffoldApp(dir: string, files: Record<string, string>) {
-  const root = new URL("../", import.meta.url).pathname;
+  const root = new URL("../", import.meta.url).href;
   await Deno.writeTextFile(
     join(dir, "deno.json"),
     JSON.stringify({

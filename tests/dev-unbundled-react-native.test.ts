@@ -22,7 +22,7 @@ import { resolveFirstParty, rewriteSpecifier } from "../src/build/dev-unbundled/
 import {
   createUnbundledState,
   depSlug,
-  FS_PREFIX,
+  fsUrlPath,
   loaderFor,
   norm,
   NPM_PREFIX,
@@ -192,7 +192,11 @@ Deno.test("React Native: the app's modules transform per module; the dependency 
     const out = (await transform(st, main)).code;
     assertStringIncludes(out, `"${NPM_PREFIX}react-native.js"`);
     assertStringIncludes(out, `"${NPM_PREFIX}cjs-pkg.js"`);
-    assertStringIncludes(out, `${FS_PREFIX}${norm(join(dir, "src/platform.web.tsx"))}?v=0`);
+    // As the JS string literal the import carries (a Windows path's `\` is escaped in it).
+    assertStringIncludes(
+      out,
+      JSON.stringify(`${fsUrlPath(norm(join(dir, "src/platform.web.tsx")))}?v=0`),
+    );
     assert(!out.includes("__DEV__") && !out.includes("process.env"), "defines applied");
     assertEquals([...st.npmNames.get("react-native")!], ["View"]);
     assertEquals([...st.npmNames.get("cjs-pkg")!], ["hello"]);

@@ -7,8 +7,9 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { build } from "../../src/build/build.ts";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
+import { fromFileUrl } from "@std/path";
 
-const APP = new URL("../../examples/actions", import.meta.url).pathname;
+const APP = fromFileUrl(new URL("../../examples/actions", import.meta.url));
 
 type Ctx = { origin: string; actionUrl: string };
 

@@ -7,11 +7,11 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { join, toFileUrl } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { buildAndServe } from "./e2e/harness.ts";
 
-const SPA = new URL("../examples/spa", import.meta.url).pathname;
-const FRAMEWORK_ROOT = new URL("../", import.meta.url).pathname;
+const SPA = fromFileUrl(new URL("../examples/spa", import.meta.url));
+const FRAMEWORK_ROOT = fromFileUrl(new URL("../", import.meta.url));
 
 /** A minimal loopback backend the proxy forwards to (HTTP echo + WS echo + a cookie). */
 async function startBackend(): Promise<{ port: number; close: () => Promise<void> }> {

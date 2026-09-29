@@ -55,33 +55,38 @@ Deno.test("applyFileDiff tolerates a shifted file and names a hunk that no longe
   assertThrows(() => applyFileDiff(broken, file), Error, "hunk #1");
 });
 
-Deno.test("the emitted diff is what the system `patch` tool applies (interop)", async () => {
-  const NEW = edit(OLD, (l) => {
-    l[0] = "line 1 CHANGED";
-    l.push("appended");
-  });
-  const dir = await Deno.makeTempDir({ prefix: "denext_patch_" });
-  try {
-    await Deno.writeTextFile(join(dir, "x.txt"), OLD);
-    await Deno.writeTextFile(join(dir, "x.patch"), createUnifiedDiff(OLD, NEW, "x.txt"));
-    const out = await new Deno.Command("patch", {
-      args: ["-p0", "-i", "x.patch"],
-      cwd: dir,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    if (!out.success) {
-      console.warn(
-        "patch tool unavailable/failed — skipping interop:",
-        new TextDecoder().decode(out.stderr),
-      );
-      return;
+Deno.test(
+  "the emitted diff is what the system `patch` tool applies (interop)",
+  // Windows ships no `patch(1)`; denext itself never spawns it (patch-diff.ts is pure TS).
+  { ignore: Deno.build.os === "windows" },
+  async () => {
+    const NEW = edit(OLD, (l) => {
+      l[0] = "line 1 CHANGED";
+      l.push("appended");
+    });
+    const dir = await Deno.makeTempDir({ prefix: "denext_patch_" });
+    try {
+      await Deno.writeTextFile(join(dir, "x.txt"), OLD);
+      await Deno.writeTextFile(join(dir, "x.patch"), createUnifiedDiff(OLD, NEW, "x.txt"));
+      const out = await new Deno.Command("patch", {
+        args: ["-p0", "-i", "x.patch"],
+        cwd: dir,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (!out.success) {
+        console.warn(
+          "patch tool unavailable/failed — skipping interop:",
+          new TextDecoder().decode(out.stderr),
+        );
+        return;
+      }
+      assertEquals(await Deno.readTextFile(join(dir, "x.txt")), NEW);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
     }
-    assertEquals(await Deno.readTextFile(join(dir, "x.txt")), NEW);
-  } finally {
-    await Deno.remove(dir, { recursive: true });
-  }
-});
+  },
+);
 
 Deno.test("reverseFileDiff undoes a patch; fileDiffApplies is the dry run", () => {
   const NEW = edit(OLD, (l) => {
@@ -171,12 +176,14 @@ Deno.test("trailing newline: removing or adding the final newline round-trips th
   try {
     await Deno.writeTextFile(join(dir, "f"), "a\nb\n");
     await Deno.writeTextFile(join(dir, "x.patch"), removed.replace("a/f", "f").replace("b/f", "f"));
-    const out = await new Deno.Command("patch", {
-      args: ["-p0", "-i", "x.patch"],
-      cwd: dir,
-      stdout: "piped",
-      stderr: "piped",
-    }).output().catch(() => null);
+    // Async wrapper: a missing binary throws at spawn, which must land in the soft gate too.
+    const out = await (async () =>
+      await new Deno.Command("patch", {
+        args: ["-p0", "-i", "x.patch"],
+        cwd: dir,
+        stdout: "piped",
+        stderr: "piped",
+      }).output())().catch(() => null);
     if (out?.success) assertEquals(await Deno.readTextFile(join(dir, "f")), "a\nB");
     else console.warn("patch(1) unavailable — interop check skipped");
   } finally {

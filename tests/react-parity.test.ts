@@ -20,8 +20,9 @@ import { extractDenextSurfaces } from "../scripts/parity/extract-denext.ts";
 import { diffSurfaces, findingKey, formatReport } from "../scripts/parity/diff.ts";
 import { WAIVERS } from "../scripts/parity/waivers.ts";
 import type { Baseline } from "../scripts/parity/types.ts";
+import { fromFileUrl } from "@std/path";
 
-const ROOT = new URL("../", import.meta.url).pathname.replace(/\/$/, "");
+const ROOT = fromFileUrl(new URL("../", import.meta.url)).replace(/[\\/]$/, "");
 const BASELINE = `${ROOT}/tests/fixtures/react-surface.baseline.json`;
 const LEDGER = `${ROOT}/tests/fixtures/react-parity-known-gaps.json`;
 
