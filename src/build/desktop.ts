@@ -67,6 +67,9 @@ export type ProxyModule = typeof import("./dev-proxy.ts");
 const AUTH_SESSION_PATH = "/_denext/desktop/auth-session";
 /** The token-gated boot-confirm endpoint the injected beacon POSTs to (updater watchdog). */
 const BOOTED_PATH = "/_denext/desktop/booted";
+/** The token-gated quit endpoint the injected `window.close` override POSTs to (page-initiated
+ * close). A single-window desktop app quits, mirroring the native window-close handler. */
+const QUIT_PATH = "/_denext/desktop/quit";
 /** The per-launch token header the desktop client half presents to the local endpoints. */
 const DESKTOP_TOKEN_HEADER = "x-denext-desktop-token";
 
@@ -323,6 +326,18 @@ const BOOT_BEACON_JS = ';(function(){function b(){try{fetch("/_denext/desktop/bo
   'if(document.readyState==="complete")b();else addEventListener("load",b)})()';
 
 /**
+ * Override `window.close()` so a page-initiated close quits the app. The WebView does not forward
+ * `window.close()` to the native window, so it would otherwise be a no-op; this POSTs the per-launch
+ * token to {@link QUIT_PATH} (fire-and-forget), which exits the process — the same outcome as the
+ * native window-close handler for this single-window shell. Token-gated so only the real top-level
+ * page (which receives the token) can trigger it; a subframe / cross-origin page cannot.
+ */
+const QUIT_OVERRIDE_JS = ";(function(){var c=window.close;window.close=function(){try{" +
+  'fetch("/_denext/desktop/quit",{method:"POST",headers:{"x-denext-desktop-token":' +
+  'globalThis.__denext.token}})["catch"](function(){})}catch(e){}' +
+  "try{return c.call(window)}catch(e){}}})()";
+
+/**
  * Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately
  * after the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is
  * `JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode
@@ -342,6 +357,7 @@ export async function injectDesktopGlobal(
     ? { desktop: true, token, os: Deno.build.os }
     : { desktop: true, os: Deno.build.os };
   const body = `globalThis.__denext=${JSON.stringify(globals)}` +
+    (token !== null ? QUIT_OVERRIDE_JS : "") +
     (token !== null && beacon ? BOOT_BEACON_JS : "");
   const scriptTag = `<script>${body}</script>`;
   const headMatch = html.match(/<head\b[^>]*>/i);
@@ -397,6 +413,7 @@ async function handleLocalEndpoint(
   token: string,
   authSessionEnabled: boolean,
   onBooted?: () => void | Promise<void>,
+  onQuit?: () => void,
 ): Promise<Response | null> {
   if (url.pathname === AUTH_SESSION_PATH) {
     // Default-deny: without the `auth-session` capability the endpoint answers `unavailable` and
@@ -406,12 +423,29 @@ async function handleLocalEndpoint(
       : authSessionUnavailable();
   }
   if (onBooted && url.pathname === BOOTED_PATH) {
-    if (request.method !== "POST") return new Response(null, { status: 405 });
-    const presented = request.headers.get(DESKTOP_TOKEN_HEADER) ?? "";
-    if (!timingSafeEqual(presented, token)) return new Response(null, { status: 403 });
+    const reject = requireTokenedPost(request, token);
+    if (reject) return reject;
     await onBooted();
     return new Response(null, { status: 204 });
   }
+  if (url.pathname === QUIT_PATH) {
+    // The page called `window.close()` (see QUIT_OVERRIDE_JS); quit the single-window app, as native
+    // close. queueMicrotask lets the 204 flush before the process goes away.
+    const reject = requireTokenedPost(request, token);
+    if (reject) return reject;
+    queueMicrotask(() => onQuit?.());
+    return new Response(null, { status: 204 });
+  }
+  return null;
+}
+
+/** Guard a token-gated POST endpoint: a `Response` to reject (405 for a non-POST, 403 for a missing
+ * or non-constant-time-matching token, so a cross-origin / subframe page cannot reach it), or `null`
+ * when the request is a POST carrying the valid per-launch token. */
+function requireTokenedPost(request: Request, token: string): Response | null {
+  if (request.method !== "POST") return new Response(null, { status: 405 });
+  const presented = request.headers.get(DESKTOP_TOKEN_HEADER) ?? "";
+  if (!timingSafeEqual(presented, token)) return new Response(null, { status: 403 });
   return null;
 }
 
@@ -435,6 +469,7 @@ export function createDesktopHandler(
   devProxy?: DesktopProxyFn,
   devInjectToken = false,
   bridge?: DesktopBridge,
+  onQuit?: () => void,
 ): (request: Request, url: URL) => Promise<Response> {
   const proxyCfg = options.proxy;
   const indexHtmlPath = join(outDir, "index.html");
@@ -497,6 +532,7 @@ export function createDesktopHandler(
       token,
       options.authSessionEnabled === true,
       onBooted,
+      onQuit,
     );
     if (endpoint) return endpoint;
     // The capability bridge (RPC + events) — gated, and like the local endpoints it runs BEFORE any
@@ -608,6 +644,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
     devProxy,
     devInjectToken,
     bridge,
+    () => Deno.exit(0), // a page-initiated window.close() quits, like the native window close
   );
   Deno.serve({
     port,

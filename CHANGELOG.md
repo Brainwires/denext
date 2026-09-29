@@ -86,6 +86,11 @@ because React / Next still export or accept them.
   the page sees why the statement was rejected.
 - **`denext desktop add` removes the scaffold's commented `capabilities` placeholder** once it
   writes the real block, instead of leaving the hint beside it.
+- **A page-initiated `window.close()` quits the desktop app.** The WebView does not forward
+  `window.close()` to the native window, so it was a no-op; the injected shell now overrides it to
+  POST the per-launch token to a token-gated quit endpoint (like the boot beacon), which exits the
+  single-window app — the same outcome as the native window close. Verified end-to-end against a
+  real packaged app.
 
 ### Added
 
