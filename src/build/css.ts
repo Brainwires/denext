@@ -570,6 +570,12 @@ export async function buildAppCss(opts: {
    * input; the compiled *output* flows through the pipeline normally).
    */
   tailwind?: { input: string; output: string };
+  /**
+   * SPA mode: Deno never imports the app's modules (esbuild bundles them for the browser), so
+   * the app's own `deno.json` is never patched ({@link AppCss.appConfigRedirects} stays
+   * `undefined`) and a killed `denext dev` cannot leave redirects in the committed config.
+   */
+  spa?: boolean;
 }): Promise<AppCss | null> {
   // Compile Tailwind first so its output exists for the walk below.
   if (opts.tailwind) {
@@ -596,7 +602,9 @@ export async function buildAppCss(opts: {
     ...aliasCssRedirectsFor(appImports, cssFiles, assets.importMap),
   };
   const configPath = await writeCssConfig(opts, appImports, redirects);
-  const appConfigRedirects = await appConfigRedirectsFor(opts.configPath, redirects);
+  const appConfigRedirects = opts.spa
+    ? undefined
+    : await appConfigRedirectsFor(opts.configPath, redirects);
   return { ...assets, configPath, appConfigPath: opts.configPath, cssFiles, appConfigRedirects };
 }
 
