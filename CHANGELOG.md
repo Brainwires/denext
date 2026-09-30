@@ -8,6 +8,45 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Deno Desktop: a stable app origin.** `desktop.app.origin` (e.g. `"myapp://app"`) gives the
+  window one origin on every launch and machine, so a server that checks `Origin` can allow-list
+  it and origin-keyed storage keeps its key. It is validated exactly as the runtime validates it
+  (a custom scheme, no port or path) and requires `desktop.app.identifier`. The packaging scripts
+  write `.deno-desktop/app.json`, add it to deno.json `compile.include` (keeping existing
+  entries), and put `laufey-launch.json` (app id, the origin's scheme, `singleInstance`) in the
+  packaged app; `denext desktop run` / `dev` write the same `app.json`, and `denext doctor`
+  reports files out of line with the config. The origin takes effect only under the
+  denext-pinned Deno Desktop runtime, which denext does not download yet; the stock runtime keeps
+  serving the window on a loopback port. Run `denext desktop package --regenerate-scripts` to
+  adopt the new scripts.
+- **Desktop config keys, validated ahead of their runtime support:** `desktop.app.deepLinks`,
+  `desktop.app.singleInstance`, `desktop.inspectable`, `desktop.preload`, `desktop.window`,
+  `desktop.titleBar`, `desktop.backdrop`, `desktop.minSize` / `maxSize`. They are type-checked
+  and validated, but not applied yet.
+- **`runDesktop` resolves to `{ window, trust, emit }`**: the adopted window, and a hook that
+  pushes an event to the page's bridge stream (`subscribeDesktopEvent` in
+  `denext/desktop/client`).
+
+### Changed
+
+- **The desktop gates detect which runtime serves them.** Under the denext-pinned runtime
+  (detected from `DENO_DESKTOP_APP_ORIGIN`) a bridge call, the auth-session endpoint, the boot
+  beacon and the quit endpoint are trusted only when `Deno.serve` reports the in-process memory
+  transport (never from the request URL, which an absolute-form request target over TCP can
+  forge) and carry the token; an `Origin`, when present, must equal the app origin exactly. The
+  token is injected only into a top-level document served over that transport, and a WebSocket
+  upgrade must carry the app origin. Under the stock runtime the loopback rules are unchanged.
+
+### Fixed
+
+- **Desktop capabilities now receive the window.** `runDesktop` passes the adopted
+  `Deno.BrowserWindow` to the bridge, so `ctx.window` is set (it was always `undefined`).
+- **`examples/rn-desktop` and `examples/native`** spread `resolveDesktopCapabilities` into
+  `runDesktop`, and rn-desktop sets the `desktop.app.identifier` its `secureStore` capability
+  requires.
+
 ## [3.0.2] - 2026-09-30
 
 ### Fixed

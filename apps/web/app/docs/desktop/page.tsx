@@ -852,10 +852,70 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         the app, a deep link) are kept by the runtime and delivered to the first subscriber.
       </p>
 
+      <h2 id="desktop-app-origin">A stable app origin</h2>
+      <p>
+        The stock Deno Desktop runtime serves the window from{" "}
+        <code>http://127.0.0.1:&lt;port&gt;</code>{" "}
+        with a new port every launch, so the page's origin changes each time. Set{" "}
+        <code>desktop.app.origin</code>{" "}
+        to give the window one origin that never changes, on every launch and machine:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    app: {
+      identifier: "com.example.myapp", // required with an origin
+      origin: "myapp://app",
+    },
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          The origin is <code>&lt;scheme&gt;://&lt;host&gt;</code> with a custom scheme.{" "}
+          <code>http</code>, <code>https</code>, <code>file</code>, <code>ws</code>,{" "}
+          <code>wss</code>, <code>ftp</code>, <code>blob</code>, <code>data</code>,{" "}
+          <code>about</code>{" "}
+          and the browser-internal schemes are refused, as are a port, a path and userinfo. Scheme
+          and host are lower-cased.
+        </li>
+        <li>
+          An origin needs <code>desktop.app.identifier</code>{" "}
+          (a reverse-DNS id): web storage is keyed by origin, so two apps sharing an origin would
+          otherwise share it. Config validation, <code>denext doctor</code>{" "}
+          and the desktop entry all refuse an origin without one.
+        </li>
+        <li>
+          The packaging scripts write <code>.deno-desktop/app.json</code>{" "}
+          (the origin and identifier), add it to <code>compile.include</code> in{" "}
+          <code>deno.json</code> (keeping your other entries), and put a{" "}
+          <code>laufey-launch.json</code> in the packaged app (<code>Contents/Resources</code>{" "}
+          on macOS, next to the executable on Windows and Linux) with the app id and the origin's
+          scheme. <code>denext desktop run</code> and <code>dev</code> write the same{" "}
+          <code>app.json</code>. Run <code>denext desktop package --regenerate-scripts</code>{" "}
+          to adopt this in an older project.
+        </li>
+        <li>
+          In the window, the app's server code reads the origin from{" "}
+          <code>DENO_DESKTOP_APP_ORIGIN</code>. WebSockets cannot use the custom scheme: the page
+          dials the loopback relay in <code>DENO_DESKTOP_WS_ORIGIN</code>{" "}
+          (<code>ws://127.0.0.1:&lt;port&gt;</code>), which admits only requests whose{" "}
+          <code>Origin</code> is the app origin.
+        </li>
+      </ul>
+      <Callout kind="warn">
+        The custom origin needs the denext-pinned Deno Desktop runtime. denext does not download it
+        yet, so today a packaged app runs on the stock runtime, which ignores the origin and serves
+        the window on a loopback port as before (the desktop entry logs that the origin is not in
+        effect). Nothing breaks either way: the security gates detect which runtime they are under.
+      </Callout>
+
       <h2 id="desktop-security">Security model</h2>
       <p>
-        Any local process can reach the app's loopback port, so the page's only power is one gated
-        bridge, and every request must pass all of: the per-launch token in{" "}
+        Under the stock runtime any local process can reach the app's loopback port, so the page's
+        only power is one gated bridge, and every request must pass all of: the per-launch token in
+        {" "}
         <code>x-denext-desktop-token</code>, an <code>Origin</code> exactly equal to the window's,
         {" "}
         <code>content-type: application/json</code>{" "}
@@ -865,6 +925,18 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         bridge endpoints outside the desktop runtime, and off desktop the page never requests one.
       </p>
       <ul>
+        <li>
+          <strong>With a stable app origin.</strong>{" "}
+          Under the denext-pinned runtime the page is served in-process, with no loopback port for
+          HTTP. The gates then trust a request only when it arrived over that in-process transport
+          (as <code>Deno.serve</code>{" "}
+          reports it, never from the URL, which a client can forge) and carries the token; an{" "}
+          <code>Origin</code>, when present, must be the app origin exactly, and a request without
+          one is accepted only over the in-process transport. A WebSocket upgrade must carry the app
+          origin, checked by the runtime's relay and again by the app. The runtime is detected at
+          startup from{" "}
+          <code>DENO_DESKTOP_APP_ORIGIN</code>; without it the loopback rules above apply unchanged.
+        </li>
         <li>
           <strong>The token and the page.</strong>{" "}
           The runtime injects the token into the top-level document only (never into frames), behind
