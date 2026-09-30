@@ -123,3 +123,42 @@ Deno.test("SPA prod server: compress:false serves identity", async () => {
     assertEquals(await json.text(), DATA);
   });
 });
+
+Deno.test("SPA prod server: a proxied backend body is compressed again; an event stream is not", async () => {
+  // The backend gzips its JSON; the proxy relays it decoded (Deno's fetch decodes), so without
+  // re-encoding here a LAN client would get it uncompressed.
+  const gzipped = new Uint8Array(
+    await new Response(
+      new Blob([DATA]).stream().pipeThrough(new CompressionStream("gzip")),
+    ).arrayBuffer(),
+  );
+  const backend = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen() {} }, (req) => {
+    if (new URL(req.url).pathname === "/api/events") {
+      return new Response("data: hi\n\n", { headers: { "content-type": "text/event-stream" } });
+    }
+    return new Response(gzipped, {
+      headers: { "content-type": "application/json", "content-encoding": "gzip" },
+    });
+  });
+  try {
+    const target = `http://127.0.0.1:${backend.addr.port}`;
+    const dir = await spaProject(
+      `{ mode: "spa", spa: { entry: "./main.tsx", proxy: { prefixes: ["/api"], target: ${
+        JSON.stringify(target)
+      } } } }`,
+    );
+    await withServer(dir, async (origin) => {
+      const json = await get(origin + "/api/rows", "gzip");
+      assertEquals(json.headers.get("content-encoding"), "gzip");
+      assertEquals(await json.text(), DATA);
+      const plain = await get(origin + "/api/rows", "identity");
+      assertEquals(plain.headers.get("content-encoding"), null);
+      assertEquals(await plain.text(), DATA);
+      const events = await get(origin + "/api/events", "gzip");
+      assertEquals(events.headers.get("content-encoding"), null, "never buffer an event stream");
+      assertEquals(await events.text(), "data: hi\n\n");
+    });
+  } finally {
+    await backend.shutdown();
+  }
+});
