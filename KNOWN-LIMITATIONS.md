@@ -972,10 +972,3 @@ A few capabilities aren't built yet (none affects the zero-npm runtime):
   denext does not parse, so `localFont({ adjustFontFallback: "Arial" })` type-checks and
   keeps a stable class name but emits no fallback face — the stack falls straight through
   to your `fallback` list.
-
-- **Desktop `secureStore` is not available on Windows.** In a Deno Desktop window it stores secrets
-  in the OS credential store on macOS (Keychain, via the `security` CLI) and Linux (libsecret, via
-  `secret-tool`). On Windows the desktop runtime fails closed: `secureStore` throws
-  `unsupported_platform` rather than storing plaintext or falling back to browser storage. A
-  PowerShell `Windows.Security.Credentials.PasswordVault` backend is feasible but not shipped in
-  2.11: it can't be verified without Windows hardware.

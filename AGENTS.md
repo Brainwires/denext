@@ -372,7 +372,7 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS / Linux; fails closed on Windows) and your `defineDesktopExtension` modules (from
+(macOS Keychain, Linux libsecret, Windows PasswordVault) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`) — but only when `desktop.ts`
 spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
 `runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
