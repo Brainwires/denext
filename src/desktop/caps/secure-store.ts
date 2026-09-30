@@ -4,7 +4,8 @@
  * app-specific service name + the caller's key.
  *
  * Backends are the OS credential CLIs (subprocess, argv — no shell), chosen for safety over raw FFI:
- * - macOS: `security add/find/delete-generic-password` (the login Keychain).
+ * - macOS: `security add/find/delete-generic-password` (the login Keychain). A write runs
+ *   `security -i` and sends the command line on STDIN, so the secret is never argv.
  * - Linux: `secret-tool store/lookup/clear` (libsecret / the Secret Service). The secret is written
  *   on STDIN, never argv.
  * - Windows: WinRT `PasswordVault` via Windows PowerShell (see WINDOWS_VAULT_SCRIPT). Every value
@@ -16,10 +17,11 @@
  * `secret-tool`, or no running Secret Service), a write/read is a real error, not a silent success
  * or a plaintext fallback.
  *
- * NOTE (macOS argv exposure): `security add-generic-password -w <b64>` passes the (base64) secret as
- * an argv element, briefly visible in `ps` to OTHER processes of the SAME USER — the same
- * local-process trust boundary the bridge already accepts (see `bridge.ts`). `secret-tool` avoids
- * this via stdin; a future macOS FFI backend (SecItemAdd) would too.
+ * NOTE (macOS): `security -i` exits 0 even when a command it read fails, so a write is confirmed
+ * by reading the value back. Items written through `security` trust `/usr/bin/security` in their
+ * ACL, so another process of the SAME USER that runs `security find-generic-password` can read
+ * them without a prompt — the same local-process trust boundary the bridge already accepts (see
+ * `bridge.ts` and KNOWN-LIMITATIONS.md).
  *
  * Runtime-only (imported by the desktop entry via the caps resolver, never a client bundle).
  *
@@ -41,7 +43,8 @@ export type SecureRunner = (
   signal?: AbortSignal,
 ) => Promise<{ code: number; stdout: string }>;
 
-/** A credential-CLI invocation: the command, its argv, and optional stdin (the secret, on Linux). */
+/** A credential-CLI invocation: the command, its argv, and optional stdin (the secret, on every OS
+ * that writes one). */
 export interface SecureCommand {
   readonly cmd: string;
   readonly args: string[];
@@ -73,9 +76,20 @@ const WINDOWS_VAULT_SCRIPT = [
 ].join("\n");
 
 /**
- * The credential-CLI invocation for `op`. Pure + exported so every OS's argv (and Windows' stdin
- * payload) is unit-tested. The value (already base64) is argv on macOS (`security`) and STDIN on
- * Linux (`secret-tool`) / Windows (`powershell.exe` + WinRT PasswordVault).
+ * Quote one argument for the `security -i` command-line parser: double quotes, with `\` and `"`
+ * backslash-escaped. Keys reaching here have no control characters (see `safeKey`).
+ *
+ * @param value The argument.
+ * @returns The quoted argument.
+ */
+function securityQuote(value: string): string {
+  return `"${value.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+}
+
+/**
+ * The credential-CLI invocation for `op`. Pure + exported so every OS's argv and stdin are
+ * unit-tested. The value (already base64) is never argv: it travels on STDIN to macOS
+ * (`security -i`), Linux (`secret-tool`) and Windows (`powershell.exe` + WinRT PasswordVault).
  *
  * @param os The target OS.
  * @param op `get` / `set` / `delete`.
@@ -105,10 +119,11 @@ export function secureStoreCommand(
     if (op === "delete") {
       return { cmd: "security", args: ["delete-generic-password", "-a", key, "-s", service] };
     }
-    return {
-      cmd: "security",
-      args: ["add-generic-password", "-U", "-a", key, "-s", service, "-w", b64 ?? ""],
-    };
+    // `security -i` reads commands from stdin, so the secret never appears in `ps`.
+    const line = ["add-generic-password", "-U", "-a", securityQuote(key), "-s"]
+      .concat(securityQuote(service), "-w", securityQuote(b64 ?? ""))
+      .join(" ");
+    return { cmd: "security", args: ["-i"], stdin: `${line}\n` };
   }
   // linux (secret-tool): the secret travels on stdin, never argv.
   if (op === "get") {
@@ -124,9 +139,9 @@ export function secureStoreCommand(
   };
 }
 
-/** The default runner: spawn the CLI, feed `stdin` if given, capture stdout; map a missing binary to
+/** The default runner (exported for the real-Keychain test): spawn the CLI, feed `stdin` if given, capture stdout; map a missing binary to
  * a fail-closed error. */
-async function defaultRun(
+export async function runSecureCli(
   cmd: string,
   args: string[],
   stdin?: string,
@@ -205,7 +220,7 @@ function safeKey(key: string): string {
  */
 export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability {
   const os = deps.os ?? (Deno.build.os as Os);
-  const run = deps.run ?? defaultRun;
+  const run = deps.run ?? runSecureCli;
   const service = deps.service;
 
   // One permission descriptor + one Windows-refuse-and-read-key preamble, shared by all methods.
@@ -250,7 +265,11 @@ export function secureStoreCapability(deps: SecureStoreDeps): DesktopCapability 
           const value = str((args as { value?: unknown })?.value, "value");
           const b64 = bytesToBase64(new TextEncoder().encode(value));
           const { code } = await exec("set", key, b64, ctx.signal);
-          if (code !== 0) {
+          // `security -i` exits 0 whatever its commands did, so on macOS read the value back.
+          const stored = os === "darwin" && code === 0
+            ? (await exec("get", key, undefined, ctx.signal)).stdout.trim() === b64
+            : code === 0;
+          if (!stored) {
             throw new DesktopCapError("store_failed", "the secure store rejected the write");
           }
           return { ok: true };

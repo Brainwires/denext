@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **Deno Desktop `secureStore` on macOS no longer puts the secret on a command line.** A write
+  passed the (base64) value to `security add-generic-password -w`, where other processes of the
+  same user could see it in a process listing. It is now sent to `security -i` on stdin, and the
+  write is confirmed by reading it back, because `security -i` exits 0 even when its command fails.
+
 ## [3.0.1] - 2026-09-29
 
 ### Fixed

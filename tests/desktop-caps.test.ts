@@ -29,6 +29,7 @@ import {
 } from "../src/desktop/caps/shell.ts";
 import { keepAwakeCapability } from "../src/desktop/caps/keep-awake.ts";
 import {
+  runSecureCli as realSecureRun,
   type SecureRunner,
   secureStoreCapability,
   secureStoreCommand,
@@ -896,12 +897,14 @@ Deno.test("keepAwake: a new page load releases the previous page's holds", async
 
 // --- secureStore -------------------------------------------------------------
 
-Deno.test("secureStoreCommand: per-OS argv; the secret is argv on macOS, stdin on Linux", () => {
-  const mac = secureStoreCommand("darwin", "set", "svc", "tok", "QjY0");
+Deno.test("secureStoreCommand: per-OS argv; the secret is stdin on every OS, never argv", () => {
+  const mac = secureStoreCommand("darwin", "set", "svc", 'to "k\\', "QjY0");
   assertEquals(mac.cmd, "security");
-  assert(mac.args.includes("add-generic-password") && mac.args.includes("-U"));
-  assertEquals(mac.args[mac.args.indexOf("-w") + 1], "QjY0");
-  assertEquals(mac.stdin, undefined);
+  assertEquals(mac.args, ["-i"]); // `ps` shows only `security -i`
+  assertEquals(
+    mac.stdin,
+    'add-generic-password -U -a "to \\"k\\\\" -s "svc" -w "QjY0"\n',
+  );
   assertEquals(secureStoreCommand("darwin", "get", "svc", "tok").args[0], "find-generic-password");
 
   const lin = secureStoreCommand("linux", "set", "svc", "tok", "QjY0");
@@ -924,15 +927,26 @@ Deno.test("secureStoreCommand: per-OS argv; the secret is argv on macOS, stdin o
   assertEquals(JSON.parse(win.stdin!), { op: "set", service: "svc", key: "tok", value: "QjY0" });
 });
 
-/** A fake macOS `security` backing an in-memory keychain, for the handler round-trip. */
-function darwinKeychain(): { run: SecureRunner; store: Map<string, string> } {
+/** Split a `security -i` command line the way its parser does (double quotes, `\` escapes). */
+function securityWords(line: string): string[] {
+  return [...line.matchAll(/"((?:[^"\\]|\\.)*)"|(\S+)/g)].map((m) =>
+    m[1] !== undefined ? m[1].replace(/\\(.)/g, "$1") : m[2]
+  );
+}
+
+/** A fake macOS `security` backing an in-memory keychain, for the handler round-trip. `failWrites`
+ * mimics `security -i`, which exits 0 even when the command it read failed. */
+function darwinKeychain(
+  failWrites = false,
+): { run: SecureRunner; store: Map<string, string> } {
   const store = new Map<string, string>();
   const after = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
-  const run: SecureRunner = (_cmd, args) => {
+  const run: SecureRunner = (_cmd, argv, stdin) => {
+    const args = argv[0] === "-i" ? securityWords(stdin ?? "") : argv;
     const op = args[0];
     const key = after(args, "-a");
     if (op === "add-generic-password") {
-      store.set(key, after(args, "-w"));
+      if (!failWrites) store.set(key, after(args, "-w"));
       return Promise.resolve({ code: 0, stdout: "" });
     }
     if (op === "find-generic-password") {
@@ -954,6 +968,40 @@ Deno.test("secureStore: set/get round-trips a value with newlines and unicode (b
   assertEquals(await call(cap, "get", { key: "absent" }), null);
   await call(cap, "delete", { key: "token" });
   assertEquals(await call(cap, "get", { key: "token" }), null);
+  // A key with quotes and backslashes survives the `security -i` quoting.
+  await call(cap, "set", { key: 'we ird "k\\', value: "v" });
+  assertEquals(await call(cap, "get", { key: 'we ird "k\\' }), "v");
+});
+
+Deno.test("secureStore: a macOS write that `security -i` silently dropped is an error", async () => {
+  const { run } = darwinKeychain(true);
+  const cap = secureStoreCapability({ service: "com.example.app", os: "darwin", run });
+  await assertRejects(() => call(cap, "set", { key: "token", value: "v" }), Error, "rejected");
+});
+
+Deno.test({
+  name: "secureStore (real macOS Keychain): round-trips without the secret in any argv",
+  ignore: OS !== "darwin" || Deno.env.get("DENEXT_KEYCHAIN_TEST") !== "1",
+  fn: async () => {
+    const seen: string[][] = [];
+    const cap = secureStoreCapability({
+      service: `dev.denext.test.${crypto.randomUUID()}`,
+      run: (cmd, args, stdin, signal) => {
+        seen.push([cmd, ...args]);
+        return realSecureRun(cmd, args, stdin, signal);
+      },
+    });
+    const secret = `s3cret-${crypto.randomUUID()}`;
+    const b64 = btoa(secret);
+    try {
+      await call(cap, "set", { key: 'k "q\\', value: secret });
+      assertEquals(await call(cap, "get", { key: 'k "q\\' }), secret);
+    } finally {
+      await call(cap, "delete", { key: 'k "q\\' });
+    }
+    assertEquals(await call(cap, "get", { key: 'k "q\\' }), null);
+    assert(!seen.flat().some((a) => a.includes(secret) || a.includes(b64)), "secret in argv");
+  },
 });
 
 /** A fake Windows PasswordVault backed by the stdin JSON payload (an in-memory store), for the
