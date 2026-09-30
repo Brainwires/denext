@@ -261,6 +261,14 @@ Deno.test("only a manual node_modules or an npm: import gets the app config patc
       });
       assert(css);
       assertEquals(css.appConfigRedirects !== undefined, patched, config);
+      // SPA mode never loads the app's modules in Deno, so its config is never patched.
+      const spa = await buildAppCss({
+        projectDir: dir,
+        configPath: join(dir, "deno.json"),
+        outDir: join(dir, ".denext"),
+        spa: true,
+      });
+      assertEquals(spa?.appConfigRedirects, undefined, config);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

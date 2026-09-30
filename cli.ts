@@ -87,6 +87,7 @@ async function maybeReexecForCss(dir: string, minify: boolean, heal = true): Pro
     outDir: paths.outDir,
     minify,
     tailwind: tailwindPaths(dir, paths.config?.tailwind),
+    spa: paths.config?.mode === "spa",
   });
   if (!css) return false; // no CSS in the project — run normally
 

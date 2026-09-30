@@ -78,12 +78,13 @@ export async function startSpaProdServer(
     const association = appLinks(request);
     if (association) return applyDefaultSecurityHeaders(association, secure, hstsCfg);
     // Proxied prefixes go to the backend before any local serving (an /api or /ws
-    // request must reach the backend even if a same-named asset happens to exist). The
-    // backend's response is relayed as-is: its encoding is the backend's business.
-    if (proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)) {
-      return await proxy.proxyToBackend(request, url, proxyCfg);
-    }
-    const res = await serveLocal(request, url, secure);
+    // request must reach the backend even if a same-named asset happens to exist). The proxy
+    // relays a gzip/br backend body decoded (Deno's fetch decodes it), so it is encoded again
+    // here, as the local responses are: a LAN client would otherwise get it uncompressed. An
+    // upgrade, an event stream or a body in another encoding passes through untouched.
+    const res = proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)
+      ? await proxy.proxyToBackend(request, url, proxyCfg)
+      : await serveLocal(request, url, secure);
     return encodings.length > 0 ? await compressOrPassThrough(request, res, encodings) : res;
   };
 

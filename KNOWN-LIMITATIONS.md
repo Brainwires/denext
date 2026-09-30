@@ -439,6 +439,10 @@ four documented bounds of the opt-in:
   secure-store`; macOS `security`, Linux libsecret, Windows WinRT PasswordVault — the Windows
   backend is verified by the Windows CI round-trip), and a plain IndexedDB database in a browser
   (or a desktop window without that capability, where it is also wiped on relaunch).
+- **On macOS, other programs of the same user can read Deno Desktop `secureStore` items.** The
+  items are written by `/usr/bin/security`, so their Keychain access list trusts that tool, and
+  any process running as the user can read them with `security find-generic-password` without a
+  prompt. The secret never appears in a process listing (it is sent to `security -i` on stdin).
 - **Passkeys (WebAuthn) do not run in the iOS Capacitor WebView.** The page's origin is
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
   `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's

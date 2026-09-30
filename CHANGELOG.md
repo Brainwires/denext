@@ -8,6 +8,34 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-09-30
+
+### Fixed
+
+- **`denext dev`: an app module's own asset imports** (`import url from "../assets/click.mp3?url"`,
+  `?raw`, `?inline`, `?worker`, or a bare `./logo.png`) failed the dependency pre-bundle in compat
+  and SPA mode: the `?query` hid the file from the first-party resolver, so the import reached the
+  npm bundle as a relative specifier that resolved against the project root. Such imports now
+  ride the bundle by absolute path, and every file it emits gets an absolute `/_denext/@npm/` URL
+  (it was page-relative before).
+- **SPA mode no longer edits the app's `deno.json` at all.** For an app with a manual
+  `node_modules` or `npm:` imports, `denext dev` / `build` / `start` wrote css→shim redirects
+  into the committed config for the length of the run. A `denext dev` killed hard (SIGKILL, a
+  crash) left them there until the next run healed them, and a commit in between captured them.
+  SPA mode never loads the app's modules in Deno (esbuild bundles them), so it no longer needs
+  the redirects; App Router apps keep the transient edit, the restore on exit and the heal.
+- **`denext start` (SPA) compresses `spa.proxy` responses.** Deno's `fetch` decodes a gzip or br
+  backend body, so since 3.0.1 the proxy relayed it uncompressed, a large cost for a client on
+  the LAN. Proxied responses now go through the same compression as local ones; an upgrade, an
+  event stream, or a body in another encoding still passes through untouched.
+
+### Security
+
+- **Deno Desktop `secureStore` on macOS no longer puts the secret on a command line.** A write
+  passed the (base64) value to `security add-generic-password -w`, where other processes of the
+  same user could see it in a process listing. It is now sent to `security -i` on stdin, and the
+  write is confirmed by reading it back, because `security -i` exits 0 even when its command fails.
+
 ## [3.0.1] - 2026-09-29
 
 ### Fixed
@@ -9697,6 +9725,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[3.0.2]: https://jsr.io/@denext/denext@3.0.2
 [3.0.1]: https://jsr.io/@denext/denext@3.0.1
 [3.0.0]: https://jsr.io/@denext/denext@3.0.0
 [3.0.0-rc.1]: https://jsr.io/@denext/denext@3.0.0-rc.1
