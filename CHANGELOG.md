@@ -15,6 +15,15 @@ and this project adheres to
   same user could see it in a process listing. It is now sent to `security -i` on stdin, and the
   write is confirmed by reading it back, because `security -i` exits 0 even when its command fails.
 
+### Fixed
+
+- **`denext dev`: an app module's own asset imports** (`import url from "../assets/click.mp3?url"`,
+  `?raw`, `?inline`, `?worker`, or a bare `./logo.png`) failed the dependency pre-bundle in compat
+  and SPA mode: the `?query` hid the file from the first-party resolver, so the import reached the
+  npm bundle as a relative specifier that resolved against the project root. Such imports now
+  ride the bundle by absolute path, and every file it emits gets an absolute `/_denext/@npm/` URL
+  (it was page-relative before).
+
 ## [3.0.1] - 2026-09-29
 
 ### Fixed

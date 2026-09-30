@@ -1351,7 +1351,7 @@ function cssShimPlugin(cssImportMap: Record<string, string>): esbuild.Plugin {
 }
 
 /** Default extension→loader map for Vite-style bare asset imports (emitted as files → URL). */
-const DEFAULT_ASSET_LOADERS: Record<string, esbuild.Loader> = {
+export const DEFAULT_ASSET_LOADERS: Record<string, esbuild.Loader> = {
   ".wasm": "file",
   ".woff": "file",
   ".woff2": "file",

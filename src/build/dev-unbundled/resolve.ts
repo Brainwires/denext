@@ -98,6 +98,8 @@ function resolveWith(
   exts?: readonly string[],
 ): string | null {
   let hit: string | null = null;
+  // A Vite asset query (`./click.mp3?url`) names the file before it.
+  spec = spec.replace(/[?#].*$/, "");
   if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
     hit = probeSourceFile(resolve(dirname(importerAbs), spec), exts);
   } else {
@@ -179,6 +181,27 @@ export function runtimeDepUrl(spec: string): string | null | undefined {
 }
 
 /**
+ * The dev URL of an asset of the app's (an image, a font, a sound) or a Vite query import
+ * (`./x.mp3?url`, `./shader.glsl?raw`), or undefined for a plain code module. It rides the
+ * dependency bundle, whose asset loaders give it the URL (or module) a build gives it, by
+ * absolute path, so the bundle (rooted at the project) finds it wherever the importer lives.
+ * Only compat / React Native mode builds that bundle; elsewhere a query import is left as is.
+ */
+function appAssetUrl(
+  st: UnbundledState,
+  spec: string,
+  firstParty: string,
+  names?: Iterable<string>,
+): string | undefined {
+  const query = spec.match(/[?#].*$/)?.[0] ?? "";
+  if (!query && CODE_FILE.test(firstParty)) return undefined;
+  if (st.compat || st.opts.reactNative) {
+    return `${NPM_PREFIX}${noteNpm(st, firstParty + query, names)}.js`;
+  }
+  return query ? spec : undefined;
+}
+
+/**
  * Dev URL for a resolved import. First-party paths → `/_denext/@fs<abs>?v=<version>`
  * (records the graph edge + baked version); `denext`/`denext/*` → a pre-bundled dep;
  * a stylesheet, first-party or not → the empty shim (CSS is linked separately); anything else
@@ -195,11 +218,8 @@ export function rewriteSpecifier(
   // A stylesheet is linked separately, so even the app's own `./styles.css` must not reach
   // the JS transform (it would 500 the module and the whole page with it).
   if (/\.(css|scss|sass)(?:[?#].*)?$/i.test(spec)) return EMPTY_MODULE;
-  // React Native mode: an image / font / other asset of the app's rides the dependency bundle,
-  // whose asset loaders give it the URL (or module) a build gives it.
-  if (firstParty && st.opts.reactNative && !CODE_FILE.test(firstParty)) {
-    return `${NPM_PREFIX}${noteNpm(st, firstParty, names)}.js`;
-  }
+  const asset = firstParty ? appAssetUrl(st, spec, firstParty, names) : undefined;
+  if (asset !== undefined) return asset;
   if (firstParty) {
     const v = versionOf(st, firstParty);
     entry.deps.push({ abs: firstParty, v });

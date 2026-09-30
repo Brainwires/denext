@@ -7,6 +7,7 @@ import { ensureDir } from "@std/fs";
 import {
   BROWSER_CONDITIONS,
   catalogResolverPlugin,
+  DEFAULT_ASSET_LOADERS,
   frameworkPatchPlugins,
   nodeBuiltinStubPlugin,
   prebuildDenextRuntime,
@@ -113,7 +114,9 @@ async function buildNpmBundle(st: UnbundledState): Promise<void> {
  * One esbuild pass into the npm dir: the dependency bundle, or a `?worker` module one of its
  * packages imports. Vite-style asset imports (`x.mp3?url`, `?raw`, `?inline`, `?worker`), which
  * a workspace package may use as it does in a Vite app, go through the build's own asset plugin
- * and are served from the npm dir like the chunks.
+ * and are served from the npm dir like the chunks. The app's own asset imports ride here too
+ * (see `rewriteSpecifier`): a bare `./logo.png` loads as a file, and every emitted file's URL
+ * is absolute under the npm prefix, so it resolves from any page.
  */
 async function npmBuild(st: UnbundledState, entryPoints: Record<string, string>): Promise<void> {
   const workerBuild = (entryPath: string, outName: string) =>
@@ -129,6 +132,8 @@ async function npmBuild(st: UnbundledState, entryPoints: Record<string, string>)
     jsx: "automatic",
     jsxImportSource: "react",
     absWorkingDir: st.opts.projectDir,
+    loader: DEFAULT_ASSET_LOADERS,
+    publicPath: NPM_PREFIX,
     logLevel: "silent",
     plugins: [
       viteAssetPlugin({ publicPath: NPM_PREFIX }, workerBuild),
