@@ -8,12 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Security
-
-- **Deno Desktop `secureStore` on macOS no longer puts the secret on a command line.** A write
-  passed the (base64) value to `security add-generic-password -w`, where other processes of the
-  same user could see it in a process listing. It is now sent to `security -i` on stdin, and the
-  write is confirmed by reading it back, because `security -i` exits 0 even when its command fails.
+## [3.0.2] - 2026-09-30
 
 ### Fixed
 
@@ -33,6 +28,13 @@ and this project adheres to
   backend body, so since 3.0.1 the proxy relayed it uncompressed, a large cost for a client on
   the LAN. Proxied responses now go through the same compression as local ones; an upgrade, an
   event stream, or a body in another encoding still passes through untouched.
+
+### Security
+
+- **Deno Desktop `secureStore` on macOS no longer puts the secret on a command line.** A write
+  passed the (base64) value to `security add-generic-password -w`, where other processes of the
+  same user could see it in a process listing. It is now sent to `security -i` on stdin, and the
+  write is confirmed by reading it back, because `security -i` exits 0 even when its command fails.
 
 ## [3.0.1] - 2026-09-29
 
@@ -9723,6 +9725,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[3.0.2]: https://jsr.io/@denext/denext@3.0.2
 [3.0.1]: https://jsr.io/@denext/denext@3.0.1
 [3.0.0]: https://jsr.io/@denext/denext@3.0.0
 [3.0.0-rc.1]: https://jsr.io/@denext/denext@3.0.0-rc.1
