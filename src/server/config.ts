@@ -729,14 +729,66 @@ export interface DesktopConfig {
     /**
      * A unique reverse-DNS id (e.g. `"com.example.myapp"`) that keys the OS app-support/cache/
      * documents folders and the `secureStore` keychain service. Required once a data-storing cap
-     * (`secureStore`/`fs`/`sqlite`) is enabled. Keep it equal to `deno.json`'s `desktop.app.identifier`.
+     * (`secureStore`/`fs`/`sqlite`) is enabled, and once {@link origin} is set (then it must be a
+     * valid bundle identifier: ASCII letters, digits, `-` and `.`, at least one dot). Keep it equal
+     * to `deno.json`'s `desktop.app.identifier`.
      */
     identifier?: string;
     /** The app's display name for tooling; the packaged bundle name comes from `deno.json`. */
     name?: string;
+    /**
+     * The stable page origin, `<scheme>://<host>` (e.g. `"myapp://app"`): the window's
+     * `location.origin` and the `Origin` header its requests carry, the same on every launch and
+     * machine — so a server that validates `Origin` can allow-list it, and origin-keyed browser
+     * storage survives a relaunch. The scheme is a custom one (not `http`, `https`, `file`, `ws`,
+     * `wss`, `ftp`, `blob`, `data`, `about`, …); the host carries no port or path. Requires
+     * {@link identifier}. The packaging scripts write it into `.deno-desktop/app.json`.
+     *
+     * Needs the denext-pinned Deno Desktop runtime; the stock runtime ignores it and serves the app
+     * on a loopback port (`http://127.0.0.1:<port>`). Default: `app://localhost` under the pinned
+     * runtime.
+     */
+    origin?: string;
+    /**
+     * URL schemes the app registers with the OS as deep links (bare, e.g. `["myapp"]`).
+     * **Validated only for now:** registering and delivering them is not implemented yet.
+     */
+    deepLinks?: string[];
+    /**
+     * Keep one running instance per identifier: a second launch hands its arguments to the first
+     * and exits. Written to the packaged app's `laufey-launch.json`; **takes effect once the desktop
+     * runtime supports it** (not yet).
+     */
+    singleInstance?: boolean;
   };
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
+  /**
+   * Whether the packaged app's web inspector (DevTools) can be opened. **Validated only for now:**
+   * not applied by the desktop runtime yet.
+   */
+  inspectable?: boolean;
+  /**
+   * A module run in the window before the page's scripts (Electron's preload). **Validated only for
+   * now:** not injected yet.
+   */
+  preload?: string;
+  /** The initial window. **Validated only for now:** not applied by the desktop runtime yet. */
+  window?: DesktopWindowConfig;
+  /**
+   * The title bar style: `"hiddenInset"` keeps the macOS traffic lights over the content.
+   * **Validated only for now:** not applied yet.
+   */
+  titleBar?: "default" | "hidden" | "hiddenInset";
+  /**
+   * The window backdrop material (`"mica"` / `"acrylic"` on Windows, `"vibrancy"` on macOS).
+   * **Validated only for now:** not applied yet.
+   */
+  backdrop?: "none" | "mica" | "acrylic" | "vibrancy";
+  /** The smallest window size. **Validated only for now:** not applied yet. */
+  minSize?: DesktopSize;
+  /** The largest window size. **Validated only for now:** not applied yet. */
+  maxSize?: DesktopSize;
   /**
    * Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what
    * the enabled {@link DesktopCapabilitiesConfig capabilities} imply — the escape hatch for what
@@ -745,6 +797,42 @@ export interface DesktopConfig {
    * `denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script).
    */
   extraPermissions?: DesktopExtraPermissions;
+}
+
+/** A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}). */
+export interface DesktopSize {
+  /**
+   * Width in CSS pixels.
+   *
+   * @minimum 1
+   */
+  width: number;
+  /**
+   * Height in CSS pixels.
+   *
+   * @minimum 1
+   */
+  height: number;
+}
+
+/** The initial window ({@link DesktopConfig.window}). Not applied by the runtime yet. */
+export interface DesktopWindowConfig {
+  /**
+   * Initial width in CSS pixels.
+   *
+   * @minimum 1
+   */
+  width?: number;
+  /**
+   * Initial height in CSS pixels.
+   *
+   * @minimum 1
+   */
+  height?: number;
+  /** The window title (defaults to the page's `<title>`). */
+  title?: string;
+  /** Whether the user can resize the window (default `true`). */
+  resizable?: boolean;
 }
 
 /**

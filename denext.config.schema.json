@@ -1128,12 +1128,27 @@
           "type": "object",
           "properties": {
             "identifier": {
-              "description": "A unique reverse-DNS id (e.g. `\"com.example.myapp\"`) that keys the OS app-support/cache/ documents folders and the `secureStore` keychain service. Required once a data-storing cap (`secureStore`/`fs`/`sqlite`) is enabled. Keep it equal to `deno.json`'s `desktop.app.identifier`.",
+              "description": "A unique reverse-DNS id (e.g. `\"com.example.myapp\"`) that keys the OS app-support/cache/ documents folders and the `secureStore` keychain service. Required once a data-storing cap (`secureStore`/`fs`/`sqlite`) is enabled, and once origin is set (then it must be a valid bundle identifier: ASCII letters, digits, `-` and `.`, at least one dot). Keep it equal to `deno.json`'s `desktop.app.identifier`.",
               "type": "string"
             },
             "name": {
               "description": "The app's display name for tooling; the packaged bundle name comes from `deno.json`.",
               "type": "string"
+            },
+            "origin": {
+              "description": "The stable page origin, `<scheme>://<host>` (e.g. `\"myapp://app\"`): the window's `location.origin` and the `Origin` header its requests carry, the same on every launch and machine — so a server that validates `Origin` can allow-list it, and origin-keyed browser storage survives a relaunch. The scheme is a custom one (not `http`, `https`, `file`, `ws`, `wss`, `ftp`, `blob`, `data`, `about`, …); the host carries no port or path. Requires identifier. The packaging scripts write it into `.deno-desktop/app.json`.",
+              "type": "string"
+            },
+            "deepLinks": {
+              "description": "URL schemes the app registers with the OS as deep links (bare, e.g. `[\"myapp\"]`). **Validated only for now:** registering and delivering them is not implemented yet.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "singleInstance": {
+              "description": "Keep one running instance per identifier: a second launch hands its arguments to the first and exits. Written to the packaged app's `laufey-launch.json`; **takes effect once the desktop runtime supports it** (not yet).",
+              "type": "boolean"
             }
           }
         },
@@ -1255,6 +1270,95 @@
               }
             }
           }
+        },
+        "inspectable": {
+          "description": "Whether the packaged app's web inspector (DevTools) can be opened. **Validated only for now:** not applied by the desktop runtime yet.",
+          "type": "boolean"
+        },
+        "preload": {
+          "description": "A module run in the window before the page's scripts (Electron's preload). **Validated only for now:** not injected yet.",
+          "type": "string"
+        },
+        "window": {
+          "description": "The initial window. **Validated only for now:** not applied by the desktop runtime yet.",
+          "type": "object",
+          "properties": {
+            "width": {
+              "description": "Initial width in CSS pixels.",
+              "type": "number",
+              "minimum": 1
+            },
+            "height": {
+              "description": "Initial height in CSS pixels.",
+              "type": "number",
+              "minimum": 1
+            },
+            "title": {
+              "description": "The window title (defaults to the page's `<title>`).",
+              "type": "string"
+            },
+            "resizable": {
+              "description": "Whether the user can resize the window (default `true`).",
+              "type": "boolean"
+            }
+          }
+        },
+        "titleBar": {
+          "description": "The title bar style: `\"hiddenInset\"` keeps the macOS traffic lights over the content. **Validated only for now:** not applied yet.",
+          "enum": [
+            "default",
+            "hidden",
+            "hiddenInset"
+          ]
+        },
+        "backdrop": {
+          "description": "The window backdrop material (`\"mica\"` / `\"acrylic\"` on Windows, `\"vibrancy\"` on macOS). **Validated only for now:** not applied yet.",
+          "enum": [
+            "none",
+            "mica",
+            "acrylic",
+            "vibrancy"
+          ]
+        },
+        "minSize": {
+          "description": "The smallest window size. **Validated only for now:** not applied yet.",
+          "type": "object",
+          "properties": {
+            "width": {
+              "description": "Width in CSS pixels.",
+              "type": "number",
+              "minimum": 1
+            },
+            "height": {
+              "description": "Height in CSS pixels.",
+              "type": "number",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ]
+        },
+        "maxSize": {
+          "description": "The largest window size. **Validated only for now:** not applied yet.",
+          "type": "object",
+          "properties": {
+            "width": {
+              "description": "Width in CSS pixels.",
+              "type": "number",
+              "minimum": 1
+            },
+            "height": {
+              "description": "Height in CSS pixels.",
+              "type": "number",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "width",
+            "height"
+          ]
         },
         "extraPermissions": {
           "description": "Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what the enabled DesktopCapabilitiesConfig capabilities imply — the escape hatch for what the capability catalog can't see: the desktop updater's feed host (`net`) and data dir (`write`), a `defineDesktopExtension` module's own `run`/`ffi`, or any custom need. `denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script).",

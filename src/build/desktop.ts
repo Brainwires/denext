@@ -17,9 +17,18 @@ import { isLoopbackHost } from "./dev-server/lan.ts";
 import { wantsShell } from "./spa/shared.ts";
 import {
   authSessionUnavailable,
+  type DesktopRequestAccess,
   handleDesktopAuthSession,
   timingSafeEqual,
 } from "../desktop/auth-session-runtime.ts";
+import {
+  DESKTOP_APP_ORIGIN_ENV,
+  type DesktopServeInfo,
+  type DesktopTrust,
+  LOOPBACK_TRUST,
+  memoryGate,
+  resolveDesktopTrust,
+} from "../desktop/transport.ts";
 import { sha256Base64 } from "../server/csp.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
@@ -41,6 +50,26 @@ export {
   DesktopCapError,
   type DesktopPermissions,
 } from "../desktop/extension.ts";
+
+// Which desktop world the app runs in (stock loopback vs the denext-pinned runtime's in-process
+// memory transport at a stable origin): the env the runtime publishes, and the types the handler's
+// signature uses.
+export {
+  DESKTOP_APP_ORIGIN_ENV,
+  DESKTOP_WS_ORIGIN_ENV,
+  type DesktopServeInfo,
+  type DesktopTrust,
+} from "../desktop/transport.ts";
+
+// The packager's per-app files: `.deno-desktop/app.json` (+ `compile.include`) and the packaged
+// `laufey-launch.json`, called by the scaffolded `scripts/package-*.ts`.
+export {
+  DESKTOP_APP_CONFIG_FILE,
+  type DesktopAppSyncReport,
+  LAUFEY_LAUNCH_FILE,
+  syncDesktopAppConfig,
+  writeLaufeyLaunchConfig,
+} from "./desktop-app-config.ts";
 
 // The config→capabilities resolver the generated `desktop.ts` entry spreads into `runDesktop`.
 export {
@@ -277,6 +306,30 @@ export interface RunDesktopOptions {
    * is a full-trust `--allow-run` of the browser opener, so it is opt-in like every other run cap.
    */
   authSessionEnabled?: boolean;
+  /**
+   * The configured `desktop.app.origin`, normalized (from {@link resolveDesktopCapabilities}). Only
+   * compared against the origin the runtime publishes, to warn about a stale package; the gates
+   * trust the PUBLISHED origin ({@link resolveDesktopTrust}).
+   */
+  appOrigin?: string;
+}
+
+/**
+ * What {@linkcode runDesktop} hands back once the server is up: the app window and a hook that
+ * pushes an event down the page's bridge stream (what `subscribeDesktopEvent(cap, event, …)` in
+ * `denext/desktop/client` receives) — the seam OS events (deep links, open-file, …) are emitted
+ * through.
+ */
+export interface DesktopRuntime {
+  /** The adopted initial `Deno.BrowserWindow`, or `undefined` outside the desktop runtime. */
+  readonly window: unknown;
+  /** The desktop world the gates enforce. */
+  readonly trust: DesktopTrust;
+  /**
+   * Push an event to the page (`cap` need not be a registered capability's). Events are retained
+   * for replay, so one emitted before the page subscribes is still delivered.
+   */
+  emit(cap: string, event: string, data: unknown): void;
 }
 
 // The SPA entry is stably named (`/_denext/client/index.js`), so the WebView would
@@ -386,19 +439,27 @@ export function resolveOutDir(options: RunDesktopOptions): string {
 /**
  * Closing the window (macOS red light / Cmd-W) quits the app. `Deno.serve` is a
  * permanently-live task, so deno desktop won't auto-exit on close; adopt the initial
- * window and exit on its `close`. Guarded so a non-desktop run is a no-op.
+ * window and exit on its `close`. Guarded so a non-desktop run is a no-op. Returns the adopted
+ * window (handed to capabilities as `ctx.window`), or `undefined` outside the desktop runtime.
+ *
+ * @param BrowserWindow The runtime's window constructor (`Deno.BrowserWindow`); a parameter so a
+ *   test can stand one in.
  */
-function installWindowCloseHandler(): void {
+export function installWindowCloseHandler(
+  // deno-lint-ignore no-explicit-any
+  BrowserWindow: unknown = (Deno as any).BrowserWindow,
+  exit: (code: number) => void = Deno.exit,
+): unknown {
   try {
-    // deno-lint-ignore no-explicit-any
-    const BrowserWindow = (Deno as any).BrowserWindow;
     if (typeof BrowserWindow === "function") {
-      const appWindow = new BrowserWindow();
-      appWindow.addEventListener("close", () => Deno.exit(0));
+      const appWindow = new (BrowserWindow as new () => EventTarget)();
+      appWindow.addEventListener("close", () => exit(0));
+      return appWindow;
     }
   } catch (err) {
     console.error("desktop: window-close handler not installed", err);
   }
+  return undefined;
 }
 
 /**
@@ -412,6 +473,7 @@ async function handleLocalEndpoint(
   url: URL,
   token: string,
   authSessionEnabled: boolean,
+  access: DesktopRequestAccess,
   onBooted?: () => void | Promise<void>,
   onQuit?: () => void,
 ): Promise<Response | null> {
@@ -419,11 +481,11 @@ async function handleLocalEndpoint(
     // Default-deny: without the `auth-session` capability the endpoint answers `unavailable` and
     // never opens the system browser, so the opener's `--allow-run` is only baked when opted in.
     return authSessionEnabled
-      ? await handleDesktopAuthSession(request, token)
+      ? await handleDesktopAuthSession(request, token, undefined, access)
       : authSessionUnavailable();
   }
   if (onBooted && url.pathname === BOOTED_PATH) {
-    const reject = requireTokenedPost(request, token);
+    const reject = requireTokenedPost(request, token, access);
     if (reject) return reject;
     await onBooted();
     return new Response(null, { status: 204 });
@@ -431,7 +493,7 @@ async function handleLocalEndpoint(
   if (url.pathname === QUIT_PATH) {
     // The page called `window.close()` (see QUIT_OVERRIDE_JS); quit the single-window app, as native
     // close. queueMicrotask lets the 204 flush before the process goes away.
-    const reject = requireTokenedPost(request, token);
+    const reject = requireTokenedPost(request, token, access);
     if (reject) return reject;
     queueMicrotask(() => onQuit?.());
     return new Response(null, { status: 204 });
@@ -441,12 +503,59 @@ async function handleLocalEndpoint(
 
 /** Guard a token-gated POST endpoint: a `Response` to reject (405 for a non-POST, 403 for a missing
  * or non-constant-time-matching token, so a cross-origin / subframe page cannot reach it), or `null`
- * when the request is a POST carrying the valid per-launch token. */
-function requireTokenedPost(request: Request, token: string): Response | null {
+ * when the request is a POST carrying the valid per-launch token. In the memory world the request
+ * must also come over the memory transport with an absent-or-exact `Origin`; a `refuse` world
+ * refuses. */
+function requireTokenedPost(
+  request: Request,
+  token: string,
+  access: DesktopRequestAccess,
+): Response | null {
   if (request.method !== "POST") return new Response(null, { status: 405 });
   const presented = request.headers.get(DESKTOP_TOKEN_HEADER) ?? "";
   if (!timingSafeEqual(presented, token)) return new Response(null, { status: 403 });
+  const { trust } = access;
+  if (trust.kind === "refuse") return new Response(null, { status: 403 });
+  if (trust.kind === "memory" && memoryGate(trust, request, access.info) !== null) {
+    return new Response(null, { status: 403 });
+  }
   return null;
+}
+
+/**
+ * Whether the per-launch token may be injected into the document this request fetches: a
+ * TOP-LEVEL document only (`Sec-Fetch-Dest`, `document` when absent), so a subframe gets the
+ * desktop global without the token. Then, per world: loopback — a LOOPBACK `Host`, so a
+ * DNS-rebinding Host gets no token; memory — the in-process memory transport and an `Origin` that
+ * is absent or exactly the app origin; refuse — never.
+ */
+export function shouldInjectDesktopToken(
+  request: Request,
+  url: URL,
+  trust: DesktopTrust,
+  info?: DesktopServeInfo,
+): boolean {
+  if ((request.headers.get("sec-fetch-dest") ?? "document") !== "document") return false;
+  if (trust.kind === "refuse") return false;
+  if (trust.kind === "memory") return memoryGate(trust, request, info) === null;
+  return isLoopbackHost(url.hostname);
+}
+
+/**
+ * The app side of the WebSocket check in the memory world: an upgrade reaches `Deno.serve` only
+ * through the runtime's loopback relay, which admits nothing but an `Origin` equal to the app
+ * origin — checked again here (memory transport + that exact `Origin`, which an upgrade must carry)
+ * so the app does not rely on the relay alone. `null` to proceed, else a 403. Other worlds and
+ * non-upgrade requests pass through unchanged.
+ */
+function refuseForeignWebSocket(
+  request: Request,
+  trust: DesktopTrust,
+  info?: DesktopServeInfo,
+): Response | null {
+  if (trust.kind === "loopback" || !isWebSocketUpgrade(request)) return null;
+  if (trust.kind === "memory" && memoryGate(trust, request, info, true) === null) return null;
+  return new Response("forbidden", { status: 403 });
 }
 
 /**
@@ -470,7 +579,8 @@ export function createDesktopHandler(
   devInjectToken = false,
   bridge?: DesktopBridge,
   onQuit?: () => void,
-): (request: Request, url: URL) => Promise<Response> {
+  trust: DesktopTrust = LOOPBACK_TRUST,
+): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response> {
   const proxyCfg = options.proxy;
   const indexHtmlPath = join(outDir, "index.html");
 
@@ -519,7 +629,11 @@ export function createDesktopHandler(
     return new Response("not found", { status: 404 });
   };
 
-  return async (request, url) => {
+  return async (request, url, info) => {
+    // Memory world: a WebSocket upgrade must carry the exact app origin (the relay checked it
+    // too) — before even the onRequest escape hatch, so no app code sees a foreign upgrade.
+    const foreignWs = refuseForeignWebSocket(request, trust, info);
+    if (foreignWs) return foreignWs;
     if (options.onRequest) {
       const r = await options.onRequest(request, url);
       if (r) return r;
@@ -531,6 +645,7 @@ export function createDesktopHandler(
       url,
       token,
       options.authSessionEnabled === true,
+      { trust, info },
       onBooted,
       onQuit,
     );
@@ -538,14 +653,14 @@ export function createDesktopHandler(
     // The capability bridge (RPC + events) — gated, and like the local endpoints it runs BEFORE any
     // proxy so it is always served locally and never forwarded.
     if (bridge) {
-      const bridged = await bridge.handle(request, url, token);
+      const bridged = await bridge.handle(request, url, token, info);
       if (bridged) return bridged;
     }
     // The per-launch token is injected only into a TOP-LEVEL document (Sec-Fetch-Dest, default
-    // document when absent) served to a LOOPBACK Host — so a subframe AND a DNS-rebinding Host each
-    // get the desktop global without the token, and cannot reach the bridge.
-    const injectToken = (request.headers.get("sec-fetch-dest") ?? "document") === "document" &&
-      isLoopbackHost(url.hostname);
+    // document when absent) served over the memory transport (the pinned runtime) or to a LOOPBACK
+    // Host (the stock runtime) — so a subframe AND a DNS-rebinding Host each get the desktop global
+    // without the token, and cannot reach the bridge.
+    const injectToken = shouldInjectDesktopToken(request, url, trust, info);
     // A top-level NAVIGATION (a reload or a new page) ends the previous page: release what it
     // held through the bridge (keep-awake holds…). Only a real browser navigation counts.
     if (bridge && injectToken && request.method === "GET" && isPageNavigation(request)) {
@@ -571,10 +686,11 @@ function isPageNavigation(request: Request): boolean {
 /**
  * Serve a denext SPA export in a `deno desktop` window. Adopts the initial
  * `Deno.BrowserWindow` and quits the process on window close; under a plain
- * `deno run` (no desktop runtime) it just starts the server.
+ * `deno run` (no desktop runtime) it just starts the server. Resolves once the server is started,
+ * with the window and an event hook ({@linkcode DesktopRuntime}).
  */
 // fallow-ignore-next-line complexity -- server bootstrap (starts Deno.serve); not unit-tested, CRAP is coverage-estimated
-export async function runDesktop(options: RunDesktopOptions = {}): Promise<void> {
+export async function runDesktop(options: RunDesktopOptions = {}): Promise<DesktopRuntime> {
   const bundledOut = resolveOutDir(options);
   // With the updater on, prefer the verified overlay in the app-support dir (the boot watchdog
   // rolls back a version that failed to boot last launch); without it, serve the bundle as before.
@@ -602,7 +718,17 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
   const devInjectToken = devDecision.proxy && !devDecision.allowNonLoopback;
   // Imported lazily so proxy-less apps never pull in the proxy module (and its `npm:ws`).
   const proxy = (options.proxy || devUrl) ? await import("./dev-proxy.ts") : undefined;
-  installWindowCloseHandler();
+  const appWindow = installWindowCloseHandler();
+  // Which desktop world this is, decided ONCE from what the runtime published: the pinned runtime's
+  // in-process memory transport at a stable origin, or the stock runtime's loopback port.
+  const { trust, warning: trustWarning } = resolveDesktopTrust(
+    Deno.env.get(DESKTOP_APP_ORIGIN_ENV),
+    options.appOrigin,
+  );
+  if (trustWarning) console.error(`desktop: ${trustWarning}`);
+  if (trust.kind === "refuse") {
+    console.error(`desktop: ${trust.reason}; every desktop endpoint is refused.`);
+  }
   // A stray WebSocket/proxy rejection must never take down the server process.
   globalThis.addEventListener("unhandledrejection", (e) => {
     e.preventDefault();
@@ -633,7 +759,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
   // its message; a packaged build stays generic.
   const bridge = createDesktopBridge(options.capabilities ?? [], {
     appSupportDir: options.appSupportDir,
+    getWindow: () => appWindow,
     dev: devDecision.proxy,
+    trust,
   });
   const handle = createDesktopHandler(
     options,
@@ -645,7 +773,10 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
     devInjectToken,
     bridge,
     () => Deno.exit(0), // a page-initiated window.close() quits, like the native window close
+    trust,
   );
+  // Under the pinned runtime `DENO_SERVE_ADDRESS=memory:…` overrides this port/hostname, so the
+  // server listens on the in-process memory transport; under the stock runtime it is loopback.
   Deno.serve({
     port,
     hostname: "127.0.0.1",
@@ -653,5 +784,6 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<void>
       console.error("desktop: handler error", e);
       return new Response("desktop error", { status: 502 });
     },
-  }, (req) => handle(req, new URL(req.url)));
+  }, (req, info) => handle(req, new URL(req.url), info as DesktopServeInfo));
+  return { window: appWindow, trust, emit: (cap, event, data) => bridge.emit(cap, event, data) };
 }

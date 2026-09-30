@@ -26,6 +26,12 @@ import { DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
+import { resolveProject } from "../../build/paths.ts";
+import {
+  desktopLaunchConfig,
+  laufeyLaunchEnv,
+  syncDesktopAppConfigAt,
+} from "../../build/desktop-app-config.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -119,16 +125,35 @@ function fail(message: string): never {
 }
 
 /**
+ * Prepare an UNPACKAGED `deno desktop` window: sync `.deno-desktop/app.json` (the configured origin
+ * + identifier, embedded through deno.json `compile.include`) and return the webview backend's
+ * launch settings as `LAUFEY_*` env (there is no bundle to hold `laufey-launch.json`). Single
+ * instance is left out on purpose: a dev window must never hand itself to an installed copy of the
+ * same app and exit.
+ */
+async function prepareDesktopWindow(dir: string): Promise<Record<string, string>> {
+  const { config } = await resolveProject(dir);
+  await syncDesktopAppConfigAt(dir, config);
+  const launch = desktopLaunchConfig(config);
+  return laufeyLaunchEnv(launch && { appId: launch.appId, customSchemes: launch.customSchemes });
+}
+
+/**
  * Spawn `deno desktop <entry>` with the dev-only env seam `DENEXT_DESKTOP_DEV_URL` set to the dev
  * server URL — the ONLY switch that puts the desktop runtime into proxy mode. The permission split
  * (invariant 4): the window needs net to the loopback dev port only, exactly what the baked
  * `--allow-net=127.0.0.1,localhost` already grants, so nothing is widened vs a packaged build.
  */
-function spawnDesktopWindow(project: string, entry: string, devUrl: string): DesktopWindow {
+function spawnDesktopWindow(
+  project: string,
+  entry: string,
+  devUrl: string,
+  launchEnv: Record<string, string>,
+): DesktopWindow {
   const { finished, stop } = spawnDenoChild(["desktop", entry], {
     cwd: project,
     stdin: "inherit",
-    env: { [DESKTOP_DEV_URL_ENV]: devUrl },
+    env: { ...launchEnv, [DESKTOP_DEV_URL_ENV]: devUrl },
   });
   return { finished, stop };
 }
@@ -162,10 +187,16 @@ async function runDesktopDevSession(
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   }
+  let launchEnv: Record<string, string>;
+  try {
+    launchEnv = await prepareDesktopWindow(dir);
+  } catch (err) {
+    fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
+  }
   try {
     await runDesktopDev({
       startServer: () => startOrAttachDevServer(dir, target.host, target.url),
-      spawnWindow: (devUrl) => Promise.resolve(spawnDesktopWindow(dir, entry, devUrl)),
+      spawnWindow: (devUrl) => Promise.resolve(spawnDesktopWindow(dir, entry, devUrl, launchEnv)),
       waitForStop: waitForShutdownSignal,
       log: (line) => console.log(line),
     });
@@ -186,7 +217,15 @@ async function runDesktop(dir: string, entry: string): Promise<void> {
     );
     Deno.exit(1);
   }
+  let launchEnv: Record<string, string>;
+  try {
+    launchEnv = await prepareDesktopWindow(dir);
+  } catch (err) {
+    fail(`denext desktop run: ${err instanceof Error ? err.message : String(err)}`);
+  }
   await exportSpa(dir);
+  // spawnDenoAndExit inherits this process's env.
+  for (const [k, v] of Object.entries(launchEnv)) Deno.env.set(k, v);
   console.log("  Opening desktop window (deno desktop)…\n");
   // `deno desktop <entry>` wraps the entry's Deno.serve() in a native window;
   // needs Deno 2.9+. Replaces this process with the child.

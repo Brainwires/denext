@@ -30,6 +30,11 @@ import { keepAwakeCapability } from "./keep-awake.ts";
 import { secureStoreCapability } from "./secure-store.ts";
 import { PickedPaths } from "../picked-paths.ts";
 import { dialogsCapability } from "./dialogs.ts";
+import {
+  desktopAppIdentifierError,
+  originWithoutIdentifierMessage,
+  parseDesktopAppOrigin,
+} from "../app-origin.ts";
 
 /** The app-support subdirectory name when the config gives no identifier (matches the updater). */
 const DEFAULT_APP_ID = "denext-desktop";
@@ -55,6 +60,11 @@ export interface ResolvedDesktop {
    * (`openAuthSession`), which is default-deny (answers `unavailable`) unless this is true. It is
    * not a bridge capability, so it is surfaced here rather than in {@link ResolvedDesktop.capabilities}. */
   readonly authSessionEnabled: boolean;
+  /**
+   * The configured `desktop.app.origin`, normalized, when one is set. `runDesktop` compares it with
+   * the origin the runtime publishes (a mismatch means a stale package); the gates trust the latter.
+   */
+  readonly appOrigin?: string;
 }
 
 /** The default URL schemes `shell.openExternal` allows when enabled with `shell: true`. */
@@ -147,11 +157,33 @@ export async function resolveDesktopCapabilities(
   // `auth-session` is a runtime endpoint, not a bridge capability, so it never becomes a
   // `DesktopCapability`; the flag only gates the loopback OAuth endpoint in `runDesktop`.
   const authSessionEnabled = (caps as { authSession?: unknown } | undefined)?.authSession === true;
+  const appOrigin = resolveAppOrigin(
+    (desktop as { app?: { origin?: unknown } } | undefined)?.app?.origin,
+    explicitId,
+  );
+  const origin = appOrigin === undefined ? {} : { appOrigin };
 
-  if (!caps) return { capabilities: [], appSupportDir: dirs.data, authSessionEnabled };
+  if (!caps) return { capabilities: [], appSupportDir: dirs.data, authSessionEnabled, ...origin };
   assertAppIdentity(Boolean(explicitId), caps);
   const capabilities = await buildBuiltinCaps(caps, { dirs, appId, base: options.base });
-  return { capabilities, appSupportDir: dirs.data, authSessionEnabled };
+  return { capabilities, appSupportDir: dirs.data, authSessionEnabled, ...origin };
+}
+
+/**
+ * The configured `desktop.app.origin`, normalized, or `undefined` when unset. The desktop entry
+ * imports `denext.config.ts` directly (the config loader's validation never ran), so the runtime's
+ * rules are enforced here too: an invalid origin, or an origin without a valid identifier, fails
+ * fast at launch.
+ */
+function resolveAppOrigin(raw: unknown, identifier: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string") throw new Error("desktop: `desktop.app.origin` must be a string");
+  const parsed = parseDesktopAppOrigin(raw);
+  if (!parsed.ok) throw new Error(`desktop: invalid desktop.app.origin "${raw}": ${parsed.error}`);
+  if (identifier === undefined) throw new Error(`desktop: ${originWithoutIdentifierMessage(raw)}`);
+  const idError = desktopAppIdentifierError(identifier);
+  if (idError) throw new Error(`desktop: invalid desktop.app.identifier: ${idError}`);
+  return parsed.value.origin;
 }
 
 /**

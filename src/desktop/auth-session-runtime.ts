@@ -13,6 +13,21 @@
  */
 
 import type { AuthSessionErrorCode } from "../mobile/auth-session.ts";
+import {
+  type DesktopServeInfo,
+  type DesktopTrust,
+  LOOPBACK_TRUST,
+  memoryGate,
+} from "./transport.ts";
+
+/**
+ * Which desktop world a request is judged in ({@link resolveDesktopTrust}) and the `Deno.serve`
+ * info it arrived with. Omitted, the stock runtime's loopback rules apply.
+ */
+export interface DesktopRequestAccess {
+  readonly trust: DesktopTrust;
+  readonly info?: DesktopServeInfo;
+}
 
 /** Default timeout: 5 minutes (RFC 8252 loopback flows are user-interactive). */
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -114,19 +129,40 @@ async function defaultOpenBrowser(url: string): Promise<void> {
  * is an absolute `https:` URL with a loopback, fragment-less `redirect_uri` and an optional
  * positive `timeoutMs` (400 `invalid`). Returns the parsed inputs, or the error {@link Response}.
  */
-/** Method (405), constant-time token (403), loopback Origin (403), JSON content-type (415). */
-function validateAuthHeaders(request: Request, token: string): Response | null {
-  if (request.method !== "POST") return fail(405, "unsupported", "method not allowed");
-  // Constant-time compare, no early return on a mismatched byte.
-  const presented = request.headers.get("x-denext-desktop-token") ?? "";
-  if (!timingSafeEqual(presented, token)) return fail(403, "unsupported", "bad token");
-  // Exact-origin: the Origin must equal the desktop server's OWN origin (this request's), not just
-  // any loopback — so another local app's dev server on a different port can't reach the endpoint.
+/**
+ * Where the request came from (403 when refused). Memory world: the in-process memory transport
+ * and an `Origin` that is absent or exactly the app origin. Loopback world: an `Origin` equal to
+ * the desktop server's OWN loopback origin (this request's), not just any loopback — so another
+ * local app's dev server on a different port can't reach the endpoint.
+ */
+function authPlace(request: Request, access: DesktopRequestAccess): Response | null {
+  const { trust } = access;
+  if (trust.kind === "refuse") return fail(403, "unsupported", "desktop runtime not trusted");
+  if (trust.kind === "memory") {
+    const why = memoryGate(trust, request, access.info);
+    if (why === null) return null;
+    return fail(403, "unsupported", why === "transport" ? "bad transport" : "bad origin");
+  }
   const origin = request.headers.get("origin");
   const selfOrigin = new URL(request.url).origin;
   if (origin === null || origin !== selfOrigin || !isLoopbackOrigin(origin)) {
     return fail(403, "unsupported", "bad origin");
   }
+  return null;
+}
+
+/** Method (405), constant-time token (403), where-from (403), JSON content-type (415). */
+function validateAuthHeaders(
+  request: Request,
+  token: string,
+  access: DesktopRequestAccess,
+): Response | null {
+  if (request.method !== "POST") return fail(405, "unsupported", "method not allowed");
+  // Constant-time compare, no early return on a mismatched byte.
+  const presented = request.headers.get("x-denext-desktop-token") ?? "";
+  if (!timingSafeEqual(presented, token)) return fail(403, "unsupported", "bad token");
+  const place = authPlace(request, access);
+  if (place) return place;
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("application/json")) {
     return fail(415, "unsupported", "content-type must be application/json");
@@ -176,8 +212,9 @@ async function parseAuthBody(
 async function validateAuthRequest(
   request: Request,
   token: string,
+  access: DesktopRequestAccess,
 ): Promise<{ authUrl: URL; redirectUri: URL; timeoutMs: number | undefined } | Response> {
-  return validateAuthHeaders(request, token) ?? await parseAuthBody(request);
+  return validateAuthHeaders(request, token, access) ?? await parseAuthBody(request);
 }
 
 /**
@@ -188,7 +225,9 @@ async function validateAuthRequest(
  * Validation runs in order, each failing closed:
  * 1. method `POST`, else 405;
  * 2. `x-denext-desktop-token` constant-time-equal to `token`, else 403;
- * 3. `Origin` present and a loopback origin, else 403;
+ * 3. where from, else 403: in the loopback world an `Origin` equal to this server's own loopback
+ *    origin; in the memory world the memory transport and an `Origin` absent or equal to the app
+ *    origin ({@link DesktopRequestAccess});
  * 4. `content-type` starts with `application/json`, else 415;
  * 5. body `{ authUrl, timeoutMs? }`: `authUrl` parses and is `https:` with a loopback,
  *    fragment-less `redirect_uri`, and `timeoutMs` (if present) is a positive finite number,
@@ -201,8 +240,9 @@ export async function handleDesktopAuthSession(
   request: Request,
   token: string,
   openBrowser: (url: string) => Promise<void> | void = defaultOpenBrowser,
+  access: DesktopRequestAccess = { trust: LOOPBACK_TRUST },
 ): Promise<Response> {
-  const parsed = await validateAuthRequest(request, token);
+  const parsed = await validateAuthRequest(request, token, access);
   if (parsed instanceof Response) return parsed;
   const { authUrl: authParsed, redirectUri, timeoutMs } = parsed;
 

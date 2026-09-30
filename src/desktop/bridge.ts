@@ -8,13 +8,20 @@
  *   `{ ok: false, error: { code, message, data? } }` (the client reads the envelope at any status).
  * - `GET /_denext/desktop/events` is an SSE stream ({@link ./bridge-events.ts}).
  *
- * The gate, in order, for RPC: POST only; the per-launch token (constant-time); a loopback `Host`
- * header ({@link isLoopbackHostHeader}, the DNS-rebinding defence — a browser puts the URL's DNS
- * NAME in `Host`, so a rebinding domain resolving to 127.0.0.1 carries a non-loopback `Host`); an
- * `Origin` exactly equal to `http://<Host>` (so the origin is derived from the validated Host, NOT
- * from the attacker-controlled request URL); and `content-type: application/json`. A CORS preflight
- * is refused with no `Access-Control-Allow-Origin`. For events (a same-origin GET, which browsers
- * send with no `Origin`): the token, the loopback `Host`, and an `Origin` that is absent OR matches.
+ * The gate, in order, for RPC: POST only; the per-launch token (constant-time); where the request
+ * came from; and `content-type: application/json`. A CORS preflight is refused with no
+ * `Access-Control-Allow-Origin`. "Where from" depends on the desktop world ({@link
+ * ./transport.ts}):
+ * - **memory** (the denext-pinned runtime, a stable custom origin): the request came over the
+ *   in-process memory transport, and its `Origin`, when present, equals the app origin exactly. A
+ *   request without `Origin` is accepted only because it came over the memory transport.
+ * - **loopback** (the stock runtime): a loopback `Host` header ({@link isLoopbackHost}, the
+ *   DNS-rebinding defence — a browser puts the URL's DNS NAME in `Host`, so a rebinding domain
+ *   resolving to 127.0.0.1 carries a non-loopback `Host`) and an `Origin` exactly equal to
+ *   `http://<Host>` (so the origin is derived from the validated Host, NOT from the
+ *   attacker-controlled request URL).
+ * For events (a same-origin GET, which browsers send with no `Origin`): the token, and the same
+ * where-from check with an `Origin` that is absent OR matches.
  *
  * THREAT MODEL: the token defends against BROWSER cross-origin/subframe/rebinding access. It does
  * NOT defend against another process of the SAME USER, which can read the served HTML (and so the
@@ -34,6 +41,12 @@
 import { timingSafeEqual } from "./auth-session-runtime.ts";
 import { isLoopbackHost } from "../utils/loopback.ts";
 import { DesktopEventLog } from "./bridge-events.ts";
+import {
+  type DesktopServeInfo,
+  type DesktopTrust,
+  LOOPBACK_TRUST,
+  memoryGate,
+} from "./transport.ts";
 import {
   type DesktopCapability,
   type DesktopCapCtx,
@@ -62,6 +75,11 @@ export interface DesktopBridgeOptions {
   readonly dev?: boolean;
   /** The retained-event buffer size for replay (see {@link DesktopEventLog}). */
   readonly eventBuffer?: number;
+  /**
+   * The desktop world the gates enforce ({@link resolveDesktopTrust}); default `loopback` (the
+   * stock runtime's rules).
+   */
+  readonly trust?: DesktopTrust;
 }
 
 /** The runtime bridge: a request handler for its two paths, and an event emitter. */
@@ -70,7 +88,12 @@ export interface DesktopBridge {
    * Handle a request when it targets the bridge, else return `null` so the caller falls through.
    * Must run BEFORE any reverse proxy so the endpoints are always served locally.
    */
-  handle(request: Request, url: URL, token: string): Promise<Response | null>;
+  handle(
+    request: Request,
+    url: URL,
+    token: string,
+    info?: DesktopServeInfo,
+  ): Promise<Response | null>;
   /** Push an event to the page's stream (its `cap` need not be a registered capability's). */
   emit(cap: string, event: string, data: unknown): void;
   /**
@@ -111,22 +134,43 @@ function rejectOnAbort(signal: AbortSignal): Promise<never> {
 }
 
 /**
- * The RPC gate (method, token, loopback Host, exact Origin, JSON content type), failing closed in
- * order. Returns an error {@link Response}, or `null` to proceed. `Origin` is compared to
- * `http://<Host>` where the Host is first proven loopback, so the origin comes from the validated
- * Host and not the attacker-controlled request URL (DNS-rebinding defence).
+ * Where an RPC came from, per desktop world: `null` to proceed, else the 403. In the memory world
+ * the memory transport plus an absent-or-exact `Origin`; in the loopback world a loopback `Host`
+ * and an `Origin` exactly equal to `http://<Host>` — compared to the validated (loopback) Host, NOT
+ * the attacker-controlled request URL (DNS-rebinding defence).
  */
-function gateRpc(request: Request, token: string): Response | null {
-  if (request.method === "OPTIONS") return refusePreflight();
-  if (request.method !== "POST") return fail(405, "forbidden", "method not allowed");
-  const presented = request.headers.get(TOKEN_HEADER) ?? "";
-  if (!timingSafeEqual(presented, token)) return fail(403, "forbidden", "bad token");
+function rpcPlace(request: Request, trust: DesktopTrust, info?: DesktopServeInfo): Response | null {
+  if (trust.kind === "refuse") return fail(403, "forbidden", "desktop runtime not trusted");
+  if (trust.kind === "memory") {
+    const why = memoryGate(trust, request, info);
+    if (why === null) return null;
+    return fail(403, "forbidden", why === "transport" ? "bad transport" : "bad origin");
+  }
   // `request.url`'s host IS the Host header under Deno.serve, so a rebinding domain carries a
   // non-loopback host here; refuse it, and compare Origin to this (loopback) origin, not raw Host.
   const self = new URL(request.url);
   if (!isLoopbackHost(self.hostname)) return fail(403, "forbidden", "bad host");
   const origin = request.headers.get("origin");
   if (origin === null || origin !== self.origin) return fail(403, "forbidden", "bad origin");
+  return null;
+}
+
+/**
+ * The RPC gate (method, token, where-from, JSON content type), failing closed in order. Returns an
+ * error {@link Response}, or `null` to proceed.
+ */
+function gateRpc(
+  request: Request,
+  token: string,
+  trust: DesktopTrust,
+  info?: DesktopServeInfo,
+): Response | null {
+  if (request.method === "OPTIONS") return refusePreflight();
+  if (request.method !== "POST") return fail(405, "forbidden", "method not allowed");
+  const presented = request.headers.get(TOKEN_HEADER) ?? "";
+  if (!timingSafeEqual(presented, token)) return fail(403, "forbidden", "bad token");
+  const place = rpcPlace(request, trust, info);
+  if (place) return place;
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().startsWith("application/json")) {
     return fail(415, "forbidden", "content-type must be application/json");
@@ -134,16 +178,28 @@ function gateRpc(request: Request, token: string): Response | null {
   return null;
 }
 
-/** The events gate (a same-origin GET: no `Origin`): method, token, loopback host, matching Origin. */
-function gateEvents(request: Request, token: string): Response | null {
+/** Whether an event-stream request came from an allowed place (an `Origin` is optional). */
+function eventsPlaceOk(request: Request, trust: DesktopTrust, info?: DesktopServeInfo): boolean {
+  if (trust.kind === "refuse") return false;
+  if (trust.kind === "memory") return memoryGate(trust, request, info) === null;
+  const self = new URL(request.url);
+  if (!isLoopbackHost(self.hostname)) return false;
+  const origin = request.headers.get("origin");
+  return origin === null || origin === self.origin;
+}
+
+/** The events gate (a same-origin GET: no `Origin`): method, token, where-from. */
+function gateEvents(
+  request: Request,
+  token: string,
+  trust: DesktopTrust,
+  info?: DesktopServeInfo,
+): Response | null {
   if (request.method === "OPTIONS") return refusePreflight();
   if (request.method !== "GET") return new Response(null, { status: 405 });
   const presented = request.headers.get(TOKEN_HEADER) ?? "";
   if (!timingSafeEqual(presented, token)) return new Response(null, { status: 403 });
-  const self = new URL(request.url);
-  if (!isLoopbackHost(self.hostname)) return new Response(null, { status: 403 });
-  const origin = request.headers.get("origin");
-  if (origin !== null && origin !== self.origin) return new Response(null, { status: 403 });
+  if (!eventsPlaceOk(request, trust, info)) return new Response(null, { status: 403 });
   return null;
 }
 
@@ -252,6 +308,7 @@ export function createDesktopBridge(
   }
   const events = new DesktopEventLog(options.eventBuffer);
   const dev = options.dev ?? false;
+  const trust = options.trust ?? LOOPBACK_TRUST;
 
   /** Validate input, run the handler under its deadline, strip output — into an envelope. */
   /** The context a handler runs with; `signal` is the deadline's abort signal. */
@@ -286,8 +343,12 @@ export function createDesktopBridge(
     return out instanceof Response ? out : ok(out.value);
   };
 
-  const handleRpc = async (request: Request, token: string): Promise<Response> => {
-    const gate = gateRpc(request, token);
+  const handleRpc = async (
+    request: Request,
+    token: string,
+    info?: DesktopServeInfo,
+  ): Promise<Response> => {
+    const gate = gateRpc(request, token, trust, info);
     if (gate) return gate;
     const call = await readRpcCall(request);
     if (call instanceof Response) return call;
@@ -304,8 +365,8 @@ export function createDesktopBridge(
     return await invokeMethod(cap, method, call.args);
   };
 
-  const handleEvents = (request: Request, token: string): Response => {
-    const gate = gateEvents(request, token);
+  const handleEvents = (request: Request, token: string, info?: DesktopServeInfo): Response => {
+    const gate = gateEvents(request, token, trust, info);
     if (gate) return gate;
     const stream = events.open(request.headers.get("last-event-id"));
     return new Response(stream, {
@@ -318,9 +379,9 @@ export function createDesktopBridge(
   };
 
   return {
-    handle: async (request, url, token) => {
-      if (url.pathname === RPC_PATH) return await handleRpc(request, token);
-      if (url.pathname === EVENTS_PATH) return handleEvents(request, token);
+    handle: async (request, url, token, info) => {
+      if (url.pathname === RPC_PATH) return await handleRpc(request, token, info);
+      if (url.pathname === EVENTS_PATH) return handleEvents(request, token, info);
       return null;
     },
     emit: (cap, event, data) => {

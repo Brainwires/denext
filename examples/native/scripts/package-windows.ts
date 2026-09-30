@@ -27,7 +27,12 @@
  * baked into the bundle. Outputs into ./dist/.
  */
 
-import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
+import {
+  desktopIncludeArgs,
+  desktopPackageFlags,
+  syncDesktopAppConfig,
+  writeLaufeyLaunchConfig,
+} from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-pc-windows-msvc",
@@ -38,6 +43,7 @@ const TARGETS: Record<string, string> = {
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
 const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
+const OS = "windows";
 
 interface Opts {
   arch: "host" | "x86_64" | "arm64" | "both";
@@ -130,6 +136,9 @@ async function buildBundle(
   }
   cmd.push("--output", out, "desktop.ts");
   await run(cmd);
+  // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
+  // read from next to the executable at launch.
+  await writeLaufeyLaunchConfig(import.meta.url, OS, out);
   return out;
 }
 
@@ -222,6 +231,8 @@ async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
 async function main(): Promise<void> {
   const opts = parseOpts(Deno.args);
   const name = slugify(await appName());
+  // .deno-desktop/app.json (the app origin + identifier) and its deno.json compile.include.
+  await syncDesktopAppConfig(import.meta.url);
   await Deno.mkdir("dist", { recursive: true });
   if (opts.export) await run(["deno", "task", "export"]);
 

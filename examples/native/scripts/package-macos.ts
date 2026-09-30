@@ -29,7 +29,12 @@
  * Developer ID Application certificate, storing notarytool credentials, Gatekeeper).
  */
 
-import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
+import {
+  desktopIncludeArgs,
+  desktopPackageFlags,
+  syncDesktopAppConfig,
+  writeLaufeyLaunchConfig,
+} from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
@@ -111,7 +116,16 @@ async function buildApp(out: string, target?: string): Promise<void> {
   // ".app") to land exactly at `out` — else it writes `out.app` and sign/lipo/dmg miss it.
   cmd.push("--output", out.replace(/\.app$/, ""), "desktop.ts");
   await run(cmd);
+  // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
+  // read from Contents/Resources at launch. Writing into the bundle breaks deno desktop's ad-hoc
+  // seal, so a bundle that got one is always re-signed.
+  if (await writeLaufeyLaunchConfig(import.meta.url, "darwin", out)) {
+    resealNeeded = true;
+  }
 }
+
+/** Set when a bundle was modified after `deno desktop` signed it (see buildApp). */
+let resealNeeded = false;
 
 /** List the Mach-O files inside a .app bundle (executables + dylibs). */
 async function machOFiles(app: string): Promise<string[]> {
@@ -338,7 +352,7 @@ async function finishArtifacts(
   s: Signing,
 ): Promise<void> {
   for (const app of artifacts) {
-    if (s.identity || opts.arch === "universal") {
+    if (s.identity || opts.arch === "universal" || resealNeeded) {
       await sign(app, s.identity, s.entitlements);
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
@@ -366,6 +380,8 @@ async function main(): Promise<void> {
   const opts = parseOpts(Deno.args);
   const signing = signingFromEnv();
   const name = await appName();
+  // .deno-desktop/app.json (the app origin + identifier) and its deno.json compile.include.
+  await syncDesktopAppConfig(import.meta.url);
   if (opts.export) await run(["deno", "task", "export"]);
   await Deno.mkdir("dist", { recursive: true });
   const artifacts = await buildArtifacts(opts, name);

@@ -257,6 +257,8 @@ export {
   type DesktopExtraPermissions,
   type DesktopFsConfig,
   type DesktopShellConfig,
+  type DesktopSize,
+  type DesktopWindowConfig,
   type ExperimentalConfig,
   type HeaderRule,
   type HstsConfig,
