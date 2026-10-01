@@ -31,18 +31,12 @@
 import type { DesktopCapability } from "../extension.ts";
 import { DesktopCapError } from "../extension.ts";
 import { type DesktopAppApi, desktopAppApi } from "../launch-events.ts";
+import { isPasskeyEnvelope, passkeyFailure as failure } from "../passkey-envelope.ts";
 
-/** The error codes a passkey envelope may carry (`@clerk/electron`'s `NATIVE_ERROR_CODES`). */
-const ERROR_CODES = ["cancelled", "invalid_rp", "not_supported", "timeout", "unknown"];
 /** The largest options JSON accepted. */
 const MAX_OPTIONS_CHARS = 64 * 1024;
 /** How long one ceremony may take before the bridge gives up (the OS has its own timeouts). */
 const CEREMONY_TIMEOUT_MS = 5 * 60_000;
-
-/** A passkey result envelope (the `@clerk/electron-passkeys` shape). */
-export type PasskeyEnvelope =
-  | { readonly ok: true; readonly credential: unknown }
-  | { readonly ok: false; readonly error: { readonly code: string; readonly message: string } };
 
 /** Options for {@linkcode passkeysCapability}. */
 export interface PasskeysCapabilityOptions {
@@ -52,19 +46,6 @@ export interface PasskeysCapabilityOptions {
   readonly api?: DesktopAppApi;
   /** The OS (default the running one); tests pass one. */
   readonly os?: typeof Deno.build.os;
-}
-
-/** A failure envelope. */
-function failure(code: string, message: string): PasskeyEnvelope {
-  return { ok: false, error: { code, message } };
-}
-
-/** Whether `value` is a passkey envelope (`@clerk/electron`'s `isPasskeyIpcResult`). */
-export function isPasskeyEnvelope(value: unknown): value is PasskeyEnvelope {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as { ok?: unknown; credential?: unknown; error?: { code?: unknown } };
-  if (typeof v.ok !== "boolean") return false;
-  return v.ok ? v.credential !== undefined : ERROR_CODES.includes(v.error?.code as string);
 }
 
 /** The `optionsJson` argument, parsed (the RP check reads it). */

@@ -1256,6 +1256,18 @@
     "isDesktopBridgeError:function",
     "onDesktopEvent:function"
   ],
+  "denext/desktop/clerk": [
+    "ClerkBrowserSignInOptions:interface",
+    "ClerkDesktopBridge:interface",
+    "ClerkDesktopBridgeOptions:interface",
+    "ClerkLike:interface",
+    "ClerkOAuthTransport:interface",
+    "ClerkPasskeyBridge:interface",
+    "ClerkTokenCache:interface",
+    "PasskeyEnvelope:typeAlias",
+    "installClerkDesktopBridge:function",
+    "startClerkBrowserSignIn:function"
+  ],
   "denext/live": [
     "ChannelRef:interface",
     "Live:function",

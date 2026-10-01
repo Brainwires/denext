@@ -4,7 +4,8 @@
 // `capabilities` mirrors @clerk/electron's `{ available, platformAuthenticator, securityKeys }`.
 
 import { assertEquals, assertRejects } from "@std/assert";
-import { isPasskeyEnvelope, passkeysCapability } from "../src/desktop/caps/passkeys.ts";
+import { passkeysCapability } from "../src/desktop/caps/passkeys.ts";
+import { isPasskeyEnvelope } from "../src/desktop/passkey-envelope.ts";
 import type { DesktopAppApi } from "../src/desktop/launch-events.ts";
 import { DesktopCapError } from "../src/desktop/extension.ts";
 
