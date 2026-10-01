@@ -26,7 +26,8 @@ import { DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
-import { resolveProject } from "../../build/paths.ts";
+import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
+import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import {
   desktopLaunchConfig,
   laufeyLaunchEnv,
@@ -153,15 +154,36 @@ function fail(message: string): never {
  * verified on first use; nothing under `DENEXT_DESKTOP_RUNTIME=stock`). Single instance is left
  * out on purpose: a dev window must never hand itself to an installed copy of the same app and exit.
  */
-async function prepareDesktopWindow(dir: string): Promise<Record<string, string>> {
-  const { config } = await resolveProject(dir);
+async function prepareDesktopWindow(dir: string, dev = false): Promise<Record<string, string>> {
+  const paths = await resolveProject(dir);
+  const { config } = paths;
   await syncDesktopAppConfigAt(dir, config);
   const launch = desktopLaunchConfig(config);
   const runtime = await resolveDesktopRuntimeEnv({ projectDir: dir, deno: denoExecutable() });
   return {
     ...laufeyLaunchEnv(launch && { appId: launch.appId, customSchemes: launch.customSchemes }),
     ...runtime.env,
+    ...(dev ? await devPreloadEnv(paths) : {}),
   };
+}
+
+/**
+ * `desktop dev` only: bundle `desktop.preload` (unminified) into `.denext/` and point the window's
+ * runtime at it — live-reload mode serves the dev server's pages, not the export, so the export's
+ * preload would be stale or missing. Rebuilt per session (edit the preload → restart the session).
+ */
+async function devPreloadEnv(paths: ProjectPaths): Promise<Record<string, string>> {
+  const preload = paths.config?.desktop?.preload;
+  if (!preload) return {};
+  const outFile = join(paths.outDir, "desktop-preload.dev.js");
+  await bundleDesktopPreload({
+    projectDir: paths.projectDir,
+    preload,
+    configPath: paths.configPath,
+    outFile,
+    minify: false,
+  });
+  return { [DESKTOP_PRELOAD_ENV]: outFile };
 }
 
 /**
@@ -215,7 +237,7 @@ async function runDesktopDevSession(
   }
   let launchEnv: Record<string, string>;
   try {
-    launchEnv = await prepareDesktopWindow(dir);
+    launchEnv = await prepareDesktopWindow(dir, true);
   } catch (err) {
     fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
   }

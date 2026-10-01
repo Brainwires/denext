@@ -32,6 +32,11 @@ import {
 import { sha256Base64 } from "../server/csp.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
+import {
+  DESKTOP_PRELOAD_ENV,
+  DESKTOP_PRELOAD_FILE,
+  readDesktopPreload,
+} from "../desktop/preload.ts";
 import type { DesktopCapability } from "../desktop/extension.ts";
 
 /** The gated capability bridge {@linkcode createDesktopHandler} dispatches to (re-exported so the
@@ -227,6 +232,7 @@ async function devProxyResponse(
   devProxy: DesktopProxyFn,
   token: string,
   injectToken: boolean,
+  preload?: string,
 ): Promise<Response> {
   const res = await devProxy(stripDesktopCredentials(request), url);
   const type = (res.headers.get("content-type") ?? "").toLowerCase();
@@ -239,6 +245,7 @@ async function devProxyResponse(
     await res.text(),
     injectToken ? token : null,
     injectToken,
+    injectToken ? preload : undefined,
   );
   const headers = new Headers(res.headers);
   headers.delete("content-length");
@@ -352,9 +359,10 @@ function noStore(res: Response): Response {
  * `spa/shared.ts`). If the served shell carries such a meta with a `script-src` directive, add
  * `hash` to it so the injected desktop `<script>` is allowed — an unpatched strict CSP would
  * silently block the script and break desktop detection (and the whole auth flow). When the
- * shell carries no CSP meta (the SPA default), there is nothing to patch.
+ * shell carries no CSP meta (the SPA default), there is nothing to patch. One hash per injected
+ * script (the desktop global, and the `desktop.preload` when there is one).
  */
-function addScriptHashToCspMeta(html: string, hash: string): string {
+function addScriptHashToCspMeta(html: string, hashes: readonly string[]): string {
   const metaRe = /<meta\b[^>]*http-equiv=["']content-security-policy["'][^>]*>/i;
   const tag = html.match(metaRe)?.[0];
   if (!tag) return html;
@@ -363,8 +371,9 @@ function addScriptHashToCspMeta(html: string, hash: string): string {
   if (!cm) return html;
   const policy = cm[2];
   // No explicit script-src ⇒ default-src governs scripts; leave the policy untouched.
-  if (!/script-src\b/i.test(policy) || policy.includes(hash)) return html;
-  const newPolicy = policy.replace(/(script-src\b[^;]*)/i, (d) => `${d} ${hash}`);
+  const missing = hashes.filter((hash) => !policy.includes(hash));
+  if (!/script-src\b/i.test(policy) || missing.length === 0) return html;
+  const newPolicy = policy.replace(/(script-src\b[^;]*)/i, (d) => `${d} ${missing.join(" ")}`);
   const newTag = tag.replace(contentRe, (_full, q: string) => `content=${q}${newPolicy}${q}`);
   return html.replace(tag, newTag);
 }
@@ -401,11 +410,17 @@ const QUIT_OVERRIDE_JS = ";(function(){var c=window.close;window.close=function(
  * BOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell
  * carries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so
  * the script survives a strict policy.
+ *
+ * `preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline
+ * script right after the global — so it runs after `__denext` exists and before any page script —
+ * with its own hash. It is injected only together with the token (a top-level document); the
+ * caller additionally limits it to the memory world.
  */
 export async function injectDesktopGlobal(
   html: string,
   token: string | null,
   beacon = false,
+  preload?: string,
 ): Promise<string> {
   // A null token marks the window desktop WITHOUT handing it the per-launch token (the --lan
   // live-reload case): runtimePlatform() reads "desktop", but the token-gated endpoints stay
@@ -416,7 +431,8 @@ export async function injectDesktopGlobal(
   const body = `globalThis.__denext=${JSON.stringify(globals)}` +
     (token !== null ? QUIT_OVERRIDE_JS : "") +
     (token !== null && beacon ? BOOT_BEACON_JS : "");
-  const scriptTag = `<script>${body}</script>`;
+  const scripts = token !== null && preload !== undefined ? [body, preload] : [body];
+  const scriptTag = scripts.map((code) => `<script>${code}</script>`).join("");
   const headMatch = html.match(/<head\b[^>]*>/i);
   const bodyMatch = headMatch ? null : html.match(/<body\b[^>]*>/i);
   let out: string;
@@ -429,7 +445,10 @@ export async function injectDesktopGlobal(
   } else {
     out = scriptTag + html;
   }
-  return addScriptHashToCspMeta(out, `'sha256-${await sha256Base64(body)}'`);
+  const hashes = await Promise.all(
+    scripts.map(async (code) => `'sha256-${await sha256Base64(code)}'`),
+  );
+  return addScriptHashToCspMeta(out, hashes);
 }
 
 /** The export dir: `outDir` (relative to the entry module when given), else `out/`. */
@@ -584,9 +603,14 @@ export function createDesktopHandler(
   bridge?: DesktopBridge,
   onQuit?: () => void,
   trust: DesktopTrust = LOOPBACK_TRUST,
+  preload?: string,
 ): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response> {
   const proxyCfg = options.proxy;
   const indexHtmlPath = join(outDir, "index.html");
+  // `desktop.preload` runs only in the memory world (the pinned runtime at its stable origin), and
+  // only where the token goes (a top-level document over the memory transport): never into an
+  // iframe, and never into a loopback-world page.
+  const memoryPreload = trust.kind === "memory" ? preload : undefined;
 
   /** Serve the export's `index.html` shell with the desktop global (and, with the updater on, the
    * boot-confirm beacon) injected. `injectToken` gates the per-launch TOKEN: a subframe or a
@@ -599,6 +623,7 @@ export function createDesktopHandler(
       html,
       injectToken ? token : null,
       onBooted !== undefined,
+      injectToken ? memoryPreload : undefined,
     );
     return noStore(
       new Response(isHead ? null : injected, {
@@ -675,10 +700,27 @@ export function createDesktopHandler(
     // injected into a buffered HTML navigation only for a loopback dev target (`devInjectToken`)
     // that is also a top-level loopback-Host document, never in --lan mode.
     if (devProxy) {
-      return await devProxyResponse(request, url, devProxy, token, devInjectToken && injectToken);
+      return await devProxyResponse(
+        request,
+        url,
+        devProxy,
+        token,
+        devInjectToken && injectToken,
+        memoryPreload,
+      );
     }
     return await serveBackendOrExport(request, url, injectToken);
   };
+}
+
+/**
+ * The bundled `desktop.preload` to inline, or `undefined` without one: the export's copy, or — in
+ * live-reload proxy mode only, where the export is not rebuilt — the dev build `denext desktop dev`
+ * points {@link DESKTOP_PRELOAD_ENV} at. Read once at startup.
+ */
+async function loadDesktopPreload(outDir: string, devProxy: boolean): Promise<string | undefined> {
+  const devFile = devProxy ? Deno.env.get(DESKTOP_PRELOAD_ENV) : undefined;
+  return await readDesktopPreload(devFile || join(outDir, DESKTOP_PRELOAD_FILE));
 }
 
 /** Whether `request` is a browser's top-level navigation (`Sec-Fetch-Mode: navigate`, document). */
@@ -778,6 +820,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     bridge,
     () => Deno.exit(0), // a page-initiated window.close() quits, like the native window close
     trust,
+    await loadDesktopPreload(outDir, devDecision.proxy),
   );
   // Under the pinned runtime `DENO_SERVE_ADDRESS=memory:…` overrides this port/hostname, so the
   // server listens on the in-process memory transport; under the stock runtime it is loopback.
