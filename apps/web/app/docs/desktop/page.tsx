@@ -329,7 +329,7 @@ export async function signIn() {
     desktop ? "http://127.0.0.1/auth/callback" : "myapp://auth/callback",
   );
   authorize.searchParams.set("state", state);
-  // callbackScheme is required by the type, and ignored on desktop.
+  // callbackScheme is required by the type, and ignored with a loopback redirect_uri.
   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
   const params = new URL(url).searchParams;
   if (params.get("state") !== state) throw new Error("state mismatch");
@@ -339,7 +339,7 @@ export async function signIn() {
       <ul>
         <li>
           <strong>
-            <code>callbackScheme</code> is ignored,
+            <code>callbackScheme</code> is ignored with a loopback <code>redirect_uri</code>,
           </strong>{" "}
           and the <code>redirect_uri</code> must be a loopback <code>http</code>{" "}
           URI with no fragment: <code>http://127.0.0.1/...</code> (<code>localhost</code> and{" "}
@@ -373,6 +373,148 @@ export async function signIn() {
         carrying the per-launch token it injects into the page (compared in constant time), from the
         app's own loopback origin, and it never logs the authorization or callback URL.
       </p>
+
+      <h3 id="desktop-scheme-callback">A custom-scheme callback</h3>
+      <p>
+        Under denext's pinned runtime, the callback can come back as a deep link instead, for a
+        provider whose redirect allowlist holds the app's scheme: give the authorization URL a{" "}
+        <code>redirect_uri</code> with a scheme from <code>desktop.app.deepLinks</code> (or pass
+        {" "}
+        <code>callbackPrefix</code>{" "}
+        when the provider redirects through its own server first). A loopback{" "}
+        <code>redirect_uri</code>{" "}
+        keeps the loopback flow above. The custom scheme is not owned by anyone — any program of the
+        user can register for it and receive the callback (RFC 8252 §8.6) — so every check fails
+        closed:
+      </p>
+      <ul>
+        <li>
+          <code>callbackScheme</code> must be in <code>desktop.app.deepLinks</code>{" "}
+          (<code>scheme_not_declared</code>).
+        </li>
+        <li>
+          <strong>PKCE S256 is mandatory:</strong> the URL carries <code>code_challenge</code> and
+          {" "}
+          <code>code_challenge_method=S256</code>{" "}
+          (<code>pkce_required</code>). The only exception is an explicit{" "}
+          <code>pkce: "not-applicable"</code> with a{" "}
+          <code>reason</code>, for a provider that binds the callback another way (Clerk's native
+          flow, below).
+        </li>
+        <li>
+          The callback must match the <code>redirect_uri</code> (or{" "}
+          <code>callbackPrefix</code>) exactly on scheme, host and path, and carry the URL's{" "}
+          <code>state</code> (with <code>callbackPrefix</code>, the <code>state</code>{" "}
+          option you pass). A callback with a missing or different <code>state</code>{" "}
+          is dropped and the session keeps waiting.
+        </li>
+        <li>
+          Before the browser opens, the runtime asks the OS who handles the scheme. Nobody → it
+          registers the app (never forcing) and checks again. Another app →{" "}
+          <code>scheme_owned_by_other_app</code>, with that app in <code>err.handler</code>{" "}
+          (for display; any program can write it). Fall back to the loopback flow, or ask the user
+          and call <code>claimDeepLinkScheme(scheme)</code> from <code>denext/desktop/client</code>
+          {" "}
+          — only on an explicit user action, since the other app loses the scheme. This check is
+          advisory (a program can re-register at any time); PKCE and <code>state</code>{" "}
+          are the defence. An unpackaged dev run cannot register (<code>
+            scheme_not_registered
+          </code>).
+        </li>
+        <li>
+          One session at a time (<code>session_in_progress</code>), a 10-minute default timeout, and
+          {" "}
+          <code>signal</code>{" "}
+          to cancel. The system browser on Windows and Linux reports no cancellation, so give the
+          user a Cancel button wired to an{" "}
+          <code>AbortController</code>. A page reload cancels the session.
+        </li>
+        <li>
+          The callback is consumed before deep-link routing: it never reaches{" "}
+          <code>onDeepLink</code> or the router.
+        </li>
+      </ul>
+
+      <h3 id="desktop-clerk">Clerk on Deno Desktop</h3>
+      <p>
+        <code>denext/desktop/clerk</code> fills the bridge <code>@clerk/electron</code>{" "}
+        reads, so an app's <code>ClerkProvider</code> from <code>@clerk/electron/react</code> and
+        {" "}
+        <code>passkeys</code> from <code>@clerk/electron/passkeys</code>{" "}
+        run unchanged in a Deno Desktop window. Call it from the{" "}
+        <a href="#desktop-preload">preload</a>:
+      </p>
+      <Code lang="ts">
+        {`// desktop/preload.ts
+import { installClerkDesktopBridge } from "denext/desktop/clerk";
+installClerkDesktopBridge({ passkeys: true });
+
+// denext.config.ts
+export default {
+  desktop: {
+    app: {
+      identifier: "com.example.myapp",
+      origin: "myapp://app", // the page origin Clerk's FAPI sees and allows
+      deepLinks: ["myapp"], // OAuth comes back to myapp://app/
+      singleInstance: true,
+    },
+    preload: "./desktop/preload.ts",
+    capabilities: {
+      secureStore: true, // the client JWT, in the OS keychain
+      authSession: true,
+      passkeys: { rpIds: ["clerk.example.com"] },
+    },
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          <code>window.__clerk_internal_electron</code> gets{" "}
+          <code>exposeClerkBridge</code>'s shape: a <code>tokenCache</code> over{" "}
+          <code>secureStore</code> (keys prefixed{" "}
+          <code>clerk.</code>; in memory, with a warning, when <code>secure-store</code>{" "}
+          is off) and an <code>oauthTransport</code> with{" "}
+          <code>@clerk/electron</code>'s main-process semantics: the redirect is the page origin
+          plus <code>/</code>{" "}
+          (<code>myapp://app/</code>), one flow at a time, 3 minutes, resolved by a callback with
+          that scheme, host and path — through the custom-scheme flow above, owner check included.
+        </li>
+        <li>
+          Add <code>myapp://app/</code>{" "}
+          to the Clerk instance's allowed redirect URLs (Clerk dashboard → Native applications), and
+          the origin <code>myapp://app</code> to its allowed origins.
+        </li>
+        <li>
+          Clerk's OAuth URL carries no PKCE (it is the provider's), so the transport uses{" "}
+          <code>pkce: "not-applicable"</code>: clerk-js redeems the callback's{" "}
+          <code>rotating_token_nonce</code> with{" "}
+          <code>signIn.reload()</code>, a request signed by this client's own client JWT on this
+          client's sign-in. Whether Clerk's servers refuse that nonce from another client cannot be
+          read from the client code, so the custom scheme is used only when this app handles it.
+        </li>
+        <li>
+          <code>window.__clerk_internal_electron_passkeys</code> runs ceremonies through the{" "}
+          <code>passkeys</code>{" "}
+          capability (Touch ID / iCloud Keychain, Windows Hello). On macOS the app's signature needs
+          the <code>com.apple.developer.associated-domains</code> entitlement{" "}
+          (<code>webcredentials:&lt;rp-id&gt;</code>) with a provisioning profile, and the RP's{" "}
+          <code>apple-app-site-association</code> must list{" "}
+          <code>&lt;TeamID&gt;.&lt;bundle id&gt;</code>
+          ; otherwise every request is{" "}
+          <code>invalid_rp</code>. Then the bridge stops offering native passkeys for that launch
+          (Clerk hides them; a custom-scheme page cannot use the webview's WebAuthn either) and
+          continues a passkey sign-in in the system browser through Clerk's hosted pages (<code>
+            startClerkBrowserSignIn
+          </code>: <code>@clerk/expo</code>'s hosted-auth protocol, with <code>state</code>{" "}
+          and S256 PKCE bound to this page), where the RP's own domain makes passkeys work.{" "}
+          <code>passkeyFallback: "none"</code> turns that off.
+        </li>
+        <li>
+          Linux has no native passkeys: <code>capabilities()</code>{" "}
+          reports none, Clerk does not offer them, and the hosted browser sign-in is the way to use
+          one.
+        </li>
+      </ul>
 
       <h2 id="desktop-updates">Desktop UI self-updates</h2>
       <p>
@@ -1002,6 +1144,72 @@ export default {
         entry logs that the origin is not in effect). Nothing breaks either way: the security gates
         detect which runtime they are under.
       </Callout>
+
+      <h2 id="desktop-preload">A preload script</h2>
+      <p>
+        <code>desktop.preload</code>{" "}
+        is Electron's preload for Deno Desktop: a module that runs in the window before any of the
+        page's scripts, to expose bridges such as <code>window.desktopBridge</code>{" "}
+        or Clerk's before the app reads them.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default { desktop: { preload: "./desktop/preload.ts" } };`}
+      </Code>
+      <ul>
+        <li>
+          The export bundles it into one classic script (<code>out/_denext/desktop-preload.js</code>
+          , imports and dynamic imports inlined). The runtime inlines it right after the{" "}
+          <code>__denext</code>{" "}
+          global, before the page's first script, into every top-level document it serves over the
+          memory transport, and adds its <code>sha256</code> hash to a strict CSP's{" "}
+          <code>script-src</code>. <code>denext desktop dev</code>{" "}
+          bundles it per session (restart the session after editing it).
+        </li>
+        <li>
+          It is not injected into an iframe, and not under the stock runtime (loopback). It needs
+          {" "}
+          <a href="#desktop-runtime">denext's pinned runtime</a>.
+        </li>
+        <li>
+          <strong>It is trusted app code with the page's privileges.</strong>{" "}
+          A webview has no isolated world, so unlike an Electron preload under{" "}
+          <code>contextIsolation</code> it shares <code>window</code>{" "}
+          with the page: it is a way to run early, not a sandbox.
+        </li>
+      </ul>
+
+      <h2 id="desktop-deep-links">Deep links and opened files</h2>
+      <p>
+        <code>desktop.app.deepLinks</code>{" "}
+        (<code>["myapp"]</code>) registers URL schemes with the OS (packaging writes them to
+        deno.json <code>desktop.app.deepLinks</code>, where <code>deno desktop</code>{" "}
+        puts them in the bundle, and to <code>.deno-desktop/app.json</code>{" "}
+        for the runtime). Under denext's pinned runtime a link with one of these schemes reaches
+        {" "}
+        <a href="/docs/mobile#deep-links">
+          <code>onDeepLink</code> / <code>useDeepLink</code>
+        </a>{" "}
+        from{" "}
+        <code>denext/mobile</code>, unchanged: the link that started the app (cold start), one
+        opened while it runs (macOS), and one a second launch forwards (Windows and Linux, with{" "}
+        <code>desktop.app.singleInstance: true</code>{" "}
+        — the second process hands its arguments to the first, which comes to the front, and exits).
+        The same <code>accept</code>{" "}
+        filter and once-only routing apply; the runtime delivers each link once (a cold-start link
+        waits for the first subscriber, none is replayed after a reload), and a link whose scheme is
+        not declared is dropped.
+      </p>
+      <p>
+        Files opened with the app arrive through <code>onOpenFile</code> / <code>useOpenFile</code>
+        {" "}
+        as <strong>read-only</strong> picked handles (read with{" "}
+        <code>readFile("", {"{ directory: { picked: handle } }"})</code>, which needs the{" "}
+        <code>fs</code>{" "}
+        capability). Any program of the user can open any path with the app, so a link or a file is
+        untrusted input. <code>denext desktop run</code> and <code>dev</code>{" "}
+        windows never take the single-instance lock.
+      </p>
 
       <h2 id="desktop-security">Security model</h2>
       <p>

@@ -37,10 +37,43 @@ and this project adheres to
   Deno Desktop runtime (below); under `DENEXT_DESKTOP_RUNTIME=stock` the stock runtime keeps
   serving the window on a loopback port. Run `denext desktop package --regenerate-scripts` to
   adopt the new scripts.
-- **Desktop config keys, validated ahead of their runtime support:** `desktop.app.deepLinks`,
-  `desktop.app.singleInstance`, `desktop.inspectable`, `desktop.preload`, `desktop.window`,
-  `desktop.titleBar`, `desktop.backdrop`, `desktop.minSize` / `maxSize`. They are type-checked
-  and validated, but not applied yet.
+- **Desktop config keys, validated ahead of their runtime support:** `desktop.inspectable`,
+  `desktop.window`, `desktop.titleBar`, `desktop.backdrop`, `desktop.minSize` / `maxSize`. They
+  are type-checked and validated, but not applied yet.
+- **Deno Desktop: `desktop.preload`.** Electron-preload parity: the export bundles the module into
+  one classic script (`out/_denext/desktop-preload.js`), and the runtime inlines it right after the
+  `__denext` global, before any page script, into every top-level document it serves over the
+  memory transport, with its own CSP hash (never into an iframe or the stock runtime's loopback
+  pages). It runs in the page's world with the page's privileges. `denext desktop dev` bundles it
+  per session.
+- **Deno Desktop: deep links and opened files.** `desktop.app.deepLinks` and
+  `desktop.app.singleInstance` are now applied: packaging writes the schemes to deno.json
+  `desktop.app.deepLinks` (the OS registration `deno desktop` performs) and both keys to
+  `.deno-desktop/app.json`. Under denext's pinned runtime a link with a declared scheme — cold
+  start, opened while running, or forwarded by a second launch — reaches `onDeepLink` /
+  `useDeepLink` (`denext/mobile`) with the same `accept` filter and once-only routing; each link is
+  delivered once (a cold-start link waits for the first subscriber, nothing replays after a
+  reload). Files opened with the app arrive through the new `onOpenFile` / `useOpenFile` as
+  read-only picked handles. `deepLinkSchemeOwner` / `claimDeepLinkScheme` (`denext/desktop/client`)
+  read and (on an explicit user action) take over a scheme.
+- **Deno Desktop: `openAuthSession` with a custom-scheme callback.** A `redirect_uri` with a scheme
+  from `desktop.app.deepLinks` (or `callbackPrefix`) takes the callback as a deep link instead of
+  the loopback listener: PKCE S256 is mandatory (`pkce_required`; `pkce: "not-applicable"` +
+  `reason` for a provider that binds the callback otherwise), the callback must match scheme, host
+  and path exactly and round-trip `state` (a forged one is dropped and the session keeps waiting),
+  the scheme's owner is checked first (`scheme_owned_by_other_app` with the handler, never forced),
+  one session at a time, a 10-minute default timeout and `signal` to cancel. The callback never
+  reaches `onDeepLink`. New error codes: `scheme_not_declared`, `pkce_required`,
+  `scheme_owned_by_other_app`, `scheme_not_registered`, `session_in_progress`.
+- **Deno Desktop: `denext/desktop/clerk` and the `passkeys` capability.**
+  `installClerkDesktopBridge()` (from the preload) fills `__clerk_internal_electron` and
+  `__clerk_internal_electron_passkeys` with `@clerk/electron`'s shapes, so `@clerk/electron/react`
+  and `@clerk/electron/passkeys` run unchanged: the client JWT in the OS keychain, OAuth over the
+  custom-scheme flow with `@clerk/electron`'s semantics, native passkeys over the new `passkeys`
+  capability (`denext desktop add passkeys`, `{ rpIds }` to pin relying parties). After an
+  `invalid_rp` (a build not signed by the RP's team) it hides native passkeys and continues the
+  sign-in in the browser through Clerk's hosted pages (`startClerkBrowserSignIn`, state + PKCE
+  bound).
 - **`runDesktop` resolves to `{ window, trust, emit }`**: the adopted window, and a hook that
   pushes an event to the page's bridge stream (`subscribeDesktopEvent` in
   `denext/desktop/client`).
