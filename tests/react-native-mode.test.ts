@@ -696,6 +696,72 @@ Deno.test("withViewManagerCommandsSource: UIManager gains the view manager API f
   assertEquals("added" in run({}), false, "an overlay without it leaves UIManager alone");
 });
 
+Deno.test("reactNative bundle: UIManager gets both the LayoutAnimation routing and the view manager API", async () => {
+  // Regression: the overlay's UIManager onLoad (view manager API) ran ahead of the worklets
+  // plugin's and returned contents, so esbuild never applied the LayoutAnimation routing and
+  // `LayoutAnimation.configureNext` was react-native-web's no-op again.
+  const dir = await Deno.makeTempDir({ prefix: "denext_rn_uimanager_" });
+  const overlay: esbuild.Plugin = {
+    name: "denext-overlay-stand-in",
+    setup(build) {
+      build.onResolve({ filter: /^denext\/react-native$/ }, (args) => ({
+        path: args.path,
+        namespace: "overlay-stand-in",
+      }));
+      build.onLoad({ filter: /.*/, namespace: "overlay-stand-in" }, () => ({
+        contents: "export function withViewManagerCommands(u) { u.viewManagerApi = true; }",
+        loader: "js",
+      }));
+    },
+  };
+  try {
+    await writeTree(dir, {
+      "node_modules/react-native-web/package.json": JSON.stringify({
+        name: "react-native-web",
+        module: "dist/index.js",
+      }),
+      "node_modules/react-native-web/dist/index.js":
+        'export { default as UIManager } from "./exports/UIManager";\n',
+      "node_modules/react-native-web/dist/exports/UIManager/index.js": `var UIManager = {
+  configureNextLayoutAnimation(config, onAnimationDidEnd) {
+    // react-native-web's no-op
+  },
+};
+export default UIManager;
+`,
+      "entry.js": 'export { UIManager } from "react-native";\n',
+    });
+    const options = reactNativeBundleOptions({ reactNative: true }, dir, false)!;
+    const result = await esbuild.build({
+      entryPoints: [join(dir, "entry.js")],
+      bundle: true,
+      write: false,
+      format: "esm",
+      logLevel: "silent",
+      absWorkingDir: dir,
+      plugins: [...options.plugins, overlay],
+    });
+    const code = new TextDecoder().decode(result.outputFiles![0].contents);
+    const url = `data:text/javascript;base64,${btoa(unescape(encodeURIComponent(code)))}`;
+    const { UIManager } = await import(url);
+    assertEquals(UIManager.viewManagerApi, true, "the view manager API is added");
+    // Routed to denext's configureNext: with no document it calls back on a microtask (the
+    // no-op never would).
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const ended = await Promise.race([
+      new Promise<boolean>((resolve) =>
+        UIManager.configureNextLayoutAnimation({ duration: 1 }, () => resolve(true))
+      ),
+      new Promise<boolean>((resolve) => timer = setTimeout(() => resolve(false), 200)),
+    ]);
+    clearTimeout(timer);
+    assertEquals(ended, true, "configureNextLayoutAnimation is routed to denext's LayoutAnimation");
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("reactNative dev: the per-module (unbundled) loop is the default, like any SPA", async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_rn_unbundled_" }));
   try {

@@ -83,6 +83,7 @@ import { expoRouterContextPlugin } from "./expo-router.ts";
 import { expoRouterNavigatorsPlugin } from "./expo-router-navigators.ts";
 import { listAdaptersPlugin } from "./react-native-lists.ts";
 import { reanimatedWorkletsPlugin } from "./reanimated.ts";
+import { patchForOffload } from "./reanimated-offload.ts";
 import { desktopReactNativePlugin } from "./react-native-desktop.ts";
 import { reactNativeAliasesPlugin, resolveInstead } from "./react-native-aliases.ts";
 import { nativeModuleScanPlugin } from "./native-module-scan.ts";
@@ -750,6 +751,22 @@ export function withViewManagerCommandsSource(source: string, cjs: boolean): str
 }
 
 /**
+ * react-native-web's `UIManager` module as React Native mode serves it with the overlay: the
+ * compositor pass's `LayoutAnimation` routing ({@linkcode patchForOffload}) and the view manager
+ * API ({@linkcode withViewManagerCommandsSource}). esbuild runs only the first `onLoad` that
+ * returns contents, and this plugin's runs ahead of the worklets plugin's, so both patches are
+ * applied here; without the routing, `LayoutAnimation.configureNext` is react-native-web's no-op.
+ *
+ * @param path The module's file path.
+ * @param source The module source.
+ * @param cjs Whether it is react-native-web's CommonJS build.
+ * @returns The module source.
+ */
+function uiManagerSource(path: string, source: string, cjs: boolean): string {
+  return withViewManagerCommandsSource(patchForOffload(path, source) ?? source, cjs);
+}
+
+/**
  * The react-native-web modules the shell overlay replaces, by export name: `"value"` re-exports
  * denext's export of the same name; `"view"` is a component built by denext's
  * `create<Name>(View)` from react-native-web's own `View`; `"press"` is one built by
@@ -960,7 +977,7 @@ export function reactNativeWebPlugin(projectDir: string): esbuild.Plugin {
         if (!(await overlayResolves(build, resolveDir))) return undefined;
         const cjs = UIMANAGER_MODULE.exec(args.path)![1] !== undefined;
         return {
-          contents: withViewManagerCommandsSource(await Deno.readTextFile(args.path), cjs),
+          contents: uiManagerSource(args.path, await Deno.readTextFile(args.path), cjs),
           loader: "js",
           resolveDir,
         };
