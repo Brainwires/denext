@@ -624,11 +624,13 @@ four documented bounds of the opt-in:
   host's executable suffix, so a Windows bundle can't be built from macOS or Linux (nor a Linux
   one from Windows) on the pinned runtime; `DENEXT_DESKTOP_RUNTIME=stock` cross-builds with the
   stock runtime. There is no pinned Windows arm64 build.
-- **`context-menu`, `clipboard` and `notifications` are WebView-backed on desktop.** The desktop
-  runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store` and
-  your extensions; these three have no runtime capability, so `showContextMenu` is the in-page
-  popover, the clipboard is the WebView's `navigator.clipboard`, and notifications are the
-  WebView's Notification API (below). denext ships no app menu, tray, single-instance lock,
+- **`context-menu` and `notifications` are WebView-backed on desktop.** The desktop runtime
+  answers `fs`, `sqlite`, `device`, `dialogs`, `clipboard`, `shell`, `keep-awake`,
+  `secure-store`, `passkeys` and your extensions; these two have no runtime capability, so
+  `showContextMenu` is the in-page popover and notifications are the WebView's Notification API
+  (below). Under the stock runtime (`DENEXT_DESKTOP_RUNTIME=stock`) `clipboard` falls back to the
+  WebView's `navigator.clipboard` (text only), and `dialogs` drives the OS dialog programs
+  (osascript / PowerShell / zenity or kdialog) instead of the runtime's native panels. denext ships no app menu, tray, single-instance lock,
   global shortcut or launch-at-login API (an extension can reach Deno's `BrowserWindow`).
 - **The desktop capabilities are unit-tested, not window-tested.** Each runtime capability is
   tested against the bridge contract, with its OS commands through an injected runner. A real
@@ -659,11 +661,20 @@ four documented bounds of the opt-in:
   (through the Notification API, once the page has permission); a scheduled one rejects, as on
   the web. A click is not routed to `onLocalNotificationTapped`, and there are no action
   buttons, inline reply, channels or categories.
-- **Not on desktop:** drag-out of files, file paths from drag-in, the share sheet, Handoff,
-  Spotlight, the Touch Bar, passkeys in the webview (its loopback IP origin is not a valid
-  relying party; use `openAuthSession`), fullscreen / maximize / minimum-size / screen APIs, a
-  `hiddenInset` title bar or Mica, DevTools in the default WebView backend (use `--backend cef`),
-  and deep links or open-file events reaching an already-running macOS app.
+- **Not on desktop:** the share sheet, Handoff, Spotlight, the Touch Bar, passkeys in the webview
+  (its loopback IP origin is not a valid relying party; use `openAuthSession`), DevTools in the
+  default WebView backend (use `--backend cef`), and deep links or open-file events reaching an
+  already-running macOS app. The window API (`denext/desktop/window`), file drag and drop, the
+  `hiddenInset` title bar, Mica / Acrylic and vibrancy need denext's pinned runtime; the stock
+  runtime keeps only size, position, title and visibility.
+- **Window API limits per OS.** Title bar styles and the traffic-light position are macOS only;
+  Mica, Acrylic and tabbed are Windows 11 (Acrylic and tabbed 22H2), and the CEF backend has no
+  backdrops; Wayland cannot move a window (`setWindowPosition`, and so the page-driven drag
+  region, do nothing there). `app-region: drag` is native only on the CEF backend; on the system
+  WebView backends `makeWindowDraggable` moves the window from the pointer through the bridge.
+  `onCloseRequested` cannot hold a quit from the macOS app menu (Cmd+Q), and a page that never
+  answers a close request loses its hold after 5 seconds. On Windows' WebView2 a drag reveals
+  the dropped paths only on the drop.
 - **Deno Desktop's own limits.** The UI is a web page in WKWebView, WebView2 or WebKitGTK, so it
   renders per OS (unless built with `--backend cef`, about 150 MB larger); there is no Mac App
   Store, Microsoft Store (MSIX), Flatpak or Snap build; the self-updater replaces the UI only.
@@ -674,8 +685,10 @@ four documented bounds of the opt-in:
   (write a desktop extension instead), and `Platform.OS` stays `"web"`
   (`Platform.constants.denextDesktop` and `.os` tell the window apart). Their extra components
   (`Flyout`, `Popup`, `Glyph`, `AppTheme`, `DynamicColorMacOS`) are DOM stand-ins, not native
-  controls, and the window-level `View` props (`acceptsFirstMouse`,
-  `mouseDownCanMoveWindow`, `allowsVibrancy`, `draggedTypes`) are accepted and do nothing.
+  controls. Of the window-level `View` props, `mouseDownCanMoveWindow` (a drag region),
+  `allowsVibrancy` (the window's vibrancy) and `draggedTypes` (file drops) work in a Deno Desktop
+  window; `acceptsFirstMouse` is accepted and does nothing (the web view decides first-mouse
+  clicks, and laufey has no per-view hook for it).
 
 ### React Native mode & Expo shims (`reactNative`, `denext/expo/*`)
 

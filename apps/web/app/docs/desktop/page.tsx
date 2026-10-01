@@ -873,7 +873,8 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>dialogs</code>
             </td>
             <td>
-              <code>pickDocument</code>, <code>saveFile</code>, <code>pickFolder</code> (paths)
+              <code>pickDocument</code>, <code>saveFile</code>, <code>pickFolder</code>{" "}
+              (the OS&apos;s own panels under the pinned runtime, filtered by <code>types</code>)
             </td>
             <td>
               unscoped <code>--allow-read</code> /{" "}
@@ -910,9 +911,11 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>clipboard</code>
             </td>
             <td>
-              <code>readClipboard</code>, <code>writeClipboard</code> (the WebView clipboard)
+              <code>readClipboard</code>, <code>writeClipboard</code>, <code>clipboardFormats</code>
+              {" "}
+              (text, HTML and PNG images; the WebView clipboard under the stock runtime)
             </td>
-            <td>none</td>
+            <td>none (a runtime API)</td>
             <td>none</td>
           </tr>
           <tr>
@@ -970,14 +973,27 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         <code>PasswordVault</code> via <code>powershell.exe</code>{" "}
         — the Windows backend is verified by the Windows CI round-trip); <code>shell</code>,{" "}
         <code>dialogs</code> and <code>keep-awake</code>{" "}
-        drive OS programs. Three lean on the WebView instead, because the WebView already provides
-        them and the Deno process cannot improve on them: <code>clipboard</code>{" "}
-        uses the WebView clipboard (so <code>desktop add clipboard</code>{" "}
-        needs no runtime capability), <code>notifications</code>{" "}
+        drive OS programs. Under denext&apos;s pinned runtime, <code>dialogs</code>{" "}
+        shows the OS&apos;s own panels (<code>NSOpenPanel</code> as a sheet on the window,{" "}
+        <code>IFileOpenDialog</code>, <code>GtkFileChooserNative</code>{" "}
+        — the portal under Flatpak / Snap) with the page&apos;s MIME <code>types</code>{" "}
+        as file-type filters, and <code>clipboard</code>{" "}
+        reads and writes the OS clipboard — text, HTML (<code>
+          {`readClipboard({ format: "html" })`}
+        </code>, <code>{`writeClipboard({ html, text })`}</code>) and PNG images (base64,{" "}
+        <code>{`{ format: "image" }`}</code> / <code>{`{ image }`}</code>), with{" "}
+        <code>clipboardFormats()</code> listing what it holds. Under the stock runtime{" "}
+        <code>dialogs</code>{" "}
+        drives the OS dialog programs instead (osascript · PowerShell · zenity/kdialog) and{" "}
+        <code>clipboard</code> answers <code>unavailable</code> so the page keeps the WebView&apos;s
+        {" "}
+        <code>navigator.clipboard</code>. A handle from either dialog path has the same scope. Two
+        capabilities lean on the WebView: <code>notifications</code>{" "}
         shows immediate notifications through the WebView Notification API (there is no desktop
         scheduler yet), and <code>context-menu</code>{" "}
         renders the in-page menu (a native menu awaits a menu-dismiss event upstream).{" "}
-        <code>dialogs</code> answers <code>unavailable</code> on a headless Linux with no{" "}
+        <code>dialogs</code> answers <code>unavailable</code>{" "}
+        under the stock runtime on a headless Linux with no{" "}
         <code>zenity</code>/<code>kdialog</code>, so the page&apos;s{" "}
         <code>&lt;input type=&quot;file&quot;&gt;</code> runs.
       </Callout>
@@ -1049,6 +1065,131 @@ if (folder) {
           <code>{"{ picked }"}</code> rejects <code>unavailable</code>.
         </li>
       </ul>
+
+      <h2 id="desktop-window">The window</h2>
+      <p>
+        <code>denext/desktop/window</code>{" "}
+        is the page&apos;s control over its own window: maximize, minimize, fullscreen and their
+        events, size and size limits, the displays, the title bar, a backdrop, a cancelable close,
+        quitting, and files dragged in and out. It needs no <code>denext desktop add</code>{" "}
+        (the runtime registers it for every app). The basics (size, position, title, show / hide)
+        work on every runtime; the rest needs denext&apos;s pinned runtime and otherwise rejects
+        {" "}
+        <code>unsupported</code> — ask <code>windowCapabilities()</code>{" "}
+        what this OS and backend can do. Off desktop every call rejects <code>unavailable</code>.
+      </p>
+      <Code lang="ts">
+        {`import {
+  getWindowState,
+  makeWindowDraggable,
+  onCloseRequested,
+  onWindowStateChange,
+  setWindowBackdrop,
+  setWindowBounds,
+} from "denext/desktop/window";
+
+// Reopen where the user left it.
+const saved = JSON.parse(localStorage.getItem("bounds") ?? "null");
+if (saved) await setWindowBounds(saved);
+onWindowStateChange(async () => {
+  const { normalBounds } = await getWindowState();
+  if (normalBounds) localStorage.setItem("bounds", JSON.stringify(normalBounds));
+});
+
+// A hidden title bar needs a drag region; vibrancy shows where the page is transparent.
+makeWindowDraggable(document.querySelector("header")!);
+await setWindowBackdrop("vibrancy", { material: "sidebar" });
+
+// Ask before closing (the close button, Cmd+W / Alt+F4, or quitApp()).
+onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"));`}
+      </Code>
+      <ul>
+        <li>
+          <strong>State</strong>: <code>maximizeWindow</code>, <code>unmaximizeWindow</code>,{" "}
+          <code>minimizeWindow</code>, <code>restoreWindow</code>, <code>setFullScreen</code>,{" "}
+          <code>getWindowState</code> (with <code>normalBounds</code>, what to persist) and{" "}
+          <code>onWindowStateChange</code>.
+        </li>
+        <li>
+          <strong>Size and place</strong>: <code>setWindowSize</code>,{" "}
+          <code>setWindowPosition</code>, <code>setWindowBounds</code>,{" "}
+          <code>setMinimumWindowSize</code> / <code>setMaximumWindowSize</code> (<code>0</code>{" "}
+          = no limit), <code>getScreens</code> and{" "}
+          <code>onDisplayChanged</code>. Sizes are CSS pixels; screen positions are points on macOS
+          and Linux and physical pixels on Windows&apos; WebView2 backend. Wayland cannot move a
+          window.
+        </li>
+        <li>
+          <strong>Chrome</strong>: <code>setTitleBarStyle</code> (<code>"hidden"</code> /{" "}
+          <code>"hiddenInset"</code>, macOS), <code>setWindowButtonPosition</code>{" "}
+          (the traffic lights), <code>setWindowBackdrop</code> (<code>"mica"</code>,{" "}
+          <code>"acrylic"</code>, <code>"tabbed"</code> on Windows 11; <code>"vibrancy"</code>{" "}
+          on macOS; none on the CEF backend), each resolving whether it applied, plus{" "}
+          <code>setWindowTitle</code>, <code>setWindowResizable</code>, <code>setAlwaysOnTop</code>.
+          {" "}
+          <code>makeWindowDraggable(element)</code> turns a toolbar into a drag region: CSS{" "}
+          <code>app-region: drag</code>{" "}
+          (native on CEF) and, on the system WebView backends, the window follows the pointer.
+          Buttons, links and inputs inside it keep working.
+        </li>
+        <li>
+          <strong>Closing</strong>: while an <code>onCloseRequested</code>{" "}
+          handler is registered, the runtime holds every close and asks the page; the window closes
+          unless a handler returns{" "}
+          <code>false</code>. A page that never answers loses its hold: a close requested again 5
+          seconds later goes through. <code>closeWindow()</code> closes without asking;{" "}
+          <code>quitApp()</code> asks first (Electron&apos;s{" "}
+          <code>app.quit()</code>). Cmd+Q from the macOS app menu is never held. A reload drops the
+          hold.
+        </li>
+      </ul>
+      <p>
+        The same settings for the first window go in{" "}
+        <code>denext.config.ts</code>; the runtime applies them when it adopts the window:
+      </p>
+      <Code lang="ts">
+        {`export default {
+  desktop: {
+    window: { width: 1200, height: 800, title: "Notes", resizable: true },
+    titleBar: "hiddenInset", // macOS: the page under the title bar, the traffic lights inset
+    backdrop: "vibrancy", // or "mica" / "acrylic" (Windows 11), "none"
+    minSize: { width: 640, height: 480 },
+    maxSize: { width: 2560, height: 1600 },
+  },
+};`}
+      </Code>
+      <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
+      <p>
+        <code>onFileDrop</code>{" "}
+        calls its handler once per drop with a READ-ONLY handle for each file or folder (a folder
+        handle reads recursively inside it), plus where it was dropped in the page&apos;s CSS
+        pixels. A dropped path is untrusted input like an opened file, so the page reads it through
+        the handle (with the <code>fs</code>{" "}
+        capability), never by path. The page keeps its own DOM drag events for a hover style; on
+        Windows&apos; WebView2 the paths arrive only with the drop.{" "}
+        <code>startFileDrag(items)</code>{" "}
+        drags files out to another app or the desktop, as a copy: call it from the page&apos;s{" "}
+        <code>dragstart</code> (after{" "}
+        <code>preventDefault()</code>) while the button is held. It takes picked handles or files in
+        the app&apos;s own folders (<code>"data"</code>, <code>"cache"</code>,{" "}
+        <code>"documents"</code>), never a raw path, and resolves <code>"dropped"</code>,{" "}
+        <code>"cancelled"</code> or <code>"failed"</code>.
+      </p>
+      <Code lang="ts">
+        {`import { onFileDrop, startFileDrag } from "denext/desktop/window";
+import { readFile } from "denext/mobile";
+
+onFileDrop(async ({ files }) => {
+  for (const f of files.filter((f) => f.kind === "file")) {
+    show(f.name, await readFile("", { directory: { picked: f.handle } }));
+  }
+});
+
+exportRow.addEventListener("dragstart", (e) => {
+  e.preventDefault();
+  void startFileDrag([{ directory: "cache", path: "export/report.pdf" }]);
+});`}
+      </Code>
 
       <h2 id="desktop-extensions">Your own native extensions</h2>
       <p>
@@ -1489,9 +1630,16 @@ export default { desktop: { preload: "./desktop/preload.ts" } };`}
               / <code>validKeysDown</code>{" "}
               → a key filter (listed keys are handled; macOS passes only those to{" "}
               <code>onKeyDown</code>, Windows every key); <code>enableFocusRing</code> → the{" "}
-              <code>:focus-visible</code> ring; <code>acceptsFirstMouse</code>,{" "}
-              <code>mouseDownCanMoveWindow</code>, <code>allowsVibrancy</code>,{" "}
-              <code>draggedTypes</code> → accepted, with a dev warning
+              <code>:focus-visible</code>{" "}
+              ring. In a Deno Desktop window (denext&apos;s pinned runtime):{" "}
+              <code>mouseDownCanMoveWindow</code>{" "}
+              → a window drag region (<code>makeWindowDraggable</code>); <code>allowsVibrancy</code>
+              {" "}
+              → the window&apos;s macOS vibrancy; <code>draggedTypes</code>{" "}
+              (<code>"fileUrl"</code>) → <code>onDragEnter</code> / <code>onDragLeave</code> /{" "}
+              <code>onDrop</code> with read-only handles (the DOM&apos;s{" "}
+              <code>File</code>s in a browser). <code>acceptsFirstMouse</code>{" "}
+              → accepted, with a dev warning
             </td>
           </tr>
         </tbody>

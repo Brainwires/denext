@@ -50,9 +50,54 @@ and this project adheres to
   Deno Desktop runtime (below); under `DENEXT_DESKTOP_RUNTIME=stock` the stock runtime keeps
   serving the window on a loopback port. Run `denext desktop package --regenerate-scripts` to
   adopt the new scripts.
-- **Desktop config keys, validated ahead of their runtime support:** `desktop.inspectable`,
-  `desktop.window`, `desktop.titleBar`, `desktop.backdrop`, `desktop.minSize` / `maxSize`. They
-  are type-checked and validated, but not applied yet.
+- **Deno Desktop: the initial-window config is applied.** `desktop.window` (`width`, `height`,
+  `title`, `resizable`), `desktop.titleBar` (`"hidden"` / `"hiddenInset"`, macOS),
+  `desktop.backdrop` (`"mica"` / `"acrylic"` on Windows 11, `"vibrancy"` on macOS) and
+  `desktop.minSize` / `maxSize` are applied by `runDesktop` to the window it adopts
+  (`resolveDesktopCapabilities` now returns them as `window`, failing fast on a bad value). The
+  size, title and resizability work on every runtime; the rest needs denext's pinned runtime and
+  is skipped with a warning under the stock one. `desktop.inspectable` is still validated only.
+- **Deno Desktop: `denext/desktop/window`.** The page's control over its own window, through a
+  `window` capability `runDesktop` registers for every app: `maximizeWindow` /
+  `unmaximizeWindow` / `minimizeWindow` / `restoreWindow` / `setFullScreen` with
+  `onWindowStateChange`, `getWindowState` (bounds, content and normal bounds, display, size
+  limits), `setWindowSize` / `setWindowPosition` / `setWindowBounds`,
+  `setMinimumWindowSize` / `setMaximumWindowSize`, `getScreens` with `onDisplayChanged`,
+  `setTitleBarStyle`, `setWindowButtonPosition`, `setWindowBackdrop` (Mica / Acrylic / tabbed,
+  macOS vibrancy materials), `setWindowTitle` / `setWindowResizable` / `setAlwaysOnTop` /
+  `showWindow` / `hideWindow` / `focusWindow`, and `windowCapabilities()`. `onCloseRequested`
+  makes the close cancelable: the runtime holds every close (the close button, Cmd+W / Alt+F4,
+  `quitApp()`), the page acknowledges and answers, and a page that never answers loses its hold
+  after 5 seconds; `closeWindow()` closes without asking and `quitApp()` is Electron's
+  `app.quit()`. `makeWindowDraggable(element)` turns a toolbar into a drag region for a hidden
+  title bar (`app-region: drag`, native on CEF; the window follows the pointer on the system
+  WebView backends). Basics work under the stock runtime; the rest needs the pinned runtime and
+  rejects `unsupported` elsewhere.
+- **Deno Desktop: file drag and drop.** `onFileDrop` (in `denext/desktop/window`) delivers files
+  and folders dropped on the window as READ-ONLY picked handles (a folder handle reads
+  recursively; a new `readFolder` picked mode), with the drop point; drops are pulled by the page,
+  so a reload never replays one. `startFileDrag(items)` drags picked handles or files in the app's
+  own folders out to another app or the desktop (never a raw path), resolving `"dropped"`,
+  `"cancelled"` or `"failed"`.
+- **Deno Desktop: native dialogs.** Under denext's pinned runtime the `dialogs` capability
+  (`pickDocument` / `saveFile` / `pickFolder`) shows the OS's own panels
+  (`Deno.desktop.dialog`: `NSOpenPanel` / `NSSavePanel` as a sheet on the window,
+  `IFileOpenDialog` / `IFileSaveDialog`, `GtkFileChooserNative`) with the page's MIME `types` as
+  file-type filters; a second dialog while one is open answers `busy`. Handles and scoping are
+  unchanged. The osascript / PowerShell / zenity programs remain the stock-runtime fallback.
+- **Deno Desktop: the `clipboard` capability.** `denext desktop add clipboard` now reaches the
+  OS clipboard through the pinned runtime's `Deno.desktop.clipboard`: `readClipboard` /
+  `writeClipboard` (no permission prompt or user gesture), plus rich formats everywhere:
+  `readClipboard({ format: "html" | "image" })`, `writeClipboard({ html, text? })` /
+  `writeClipboard({ image })` (base64 PNG) and `clipboardFormats()` in `denext/mobile` — the
+  WebView's `ClipboardItem` in a browser, `@capacitor/clipboard` for images in the shell. Under
+  the stock runtime the capability answers `unavailable` and the page keeps
+  `navigator.clipboard`; a backend without HTML or images falls back the same way.
+- **React Native desktop: the window `View` props work.** In a Deno Desktop window
+  `mouseDownCanMoveWindow` makes the view a window drag region, `allowsVibrancy` turns on the
+  window's macOS vibrancy, and `draggedTypes` (`"fileUrl"`) calls `onDragEnter` / `onDragLeave` /
+  `onDrop` with react-native-macos' `dataTransfer.files` shape (read-only handles on desktop, the
+  DOM's `File`s in a browser). `acceptsFirstMouse` stays accepted with a dev warning.
 - **Deno Desktop: `desktop.preload`.** Electron-preload parity: the export bundles the module into
   one classic script (`out/_denext/desktop-preload.js`), and the runtime inlines it right after the
   `__denext` global, before any page script, into every top-level document it serves over the
