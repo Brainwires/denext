@@ -243,7 +243,8 @@ Deno.test("desktop View: tooltip → title, onDoubleClick, focus ring, no-op pro
         onDoubleClick: (e: Any) => clicks.push(e),
         enableFocusRing: false,
         acceptsFirstMouse: true,
-        mouseDownCanMoveWindow: false,
+        mouseDownCanMoveWindow: true,
+        allowsVibrancy: false,
       }, "x")
     );
     const el = container.firstChild as Any;
@@ -253,7 +254,11 @@ Deno.test("desktop View: tooltip → title, onDoubleClick, focus ring, no-op pro
     assertEquals(clicks.length, 1);
     assertEquals(clicks[0].nativeEvent, clicks[0], "the event carries nativeEvent");
     rerender();
-    assertEquals(warnings.length, 2, "acceptsFirstMouse and mouseDownCanMoveWindow, once each");
+    assertEquals(
+      warnings.length,
+      2,
+      "acceptsFirstMouse and (off desktop) mouseDownCanMoveWindow, once each",
+    );
     root.unmount();
   } finally {
     console.warn = warn;
@@ -449,4 +454,85 @@ Deno.test("Flyout content is rendered with flushSync-stable identity", () => {
   const style = JSON.parse((container.firstChild as Any).childNodes[1].getAttribute("data-style"));
   assertEquals([style.left, style.top], ["50%", "50%"], "no target: centred");
   root.unmount();
+});
+
+Deno.test("desktop View: draggedTypes — files dragged onto the view (web: the DOM's File objects)", () => {
+  const View = createDesktopView(fakeView as Any, "macos");
+  const seen: Array<[string, Any]> = [];
+  const { container, root } = mount(() =>
+    h(View as Any, {
+      draggedTypes: ["fileUrl"],
+      onDragEnter: (e: Any) => seen.push(["enter", e]),
+      onDragLeave: (e: Any) => seen.push(["leave", e]),
+      onDrop: (e: Any) => seen.push(["drop", e]),
+    }, "x")
+  );
+  const el = container.firstChild as Any;
+  const file = { name: "a.png", type: "image/png", size: 3 };
+  let prevented = 0;
+  const preventDefault = () => void prevented++;
+  el.dispatch("dragenter", { dataTransfer: { files: [file] }, preventDefault });
+  el.dispatch("dragover", { preventDefault });
+  el.dispatch("drop", { dataTransfer: { files: [file] }, preventDefault });
+  el.dispatch("dragleave", { dataTransfer: { files: [] } });
+  assertEquals(seen.map(([k]) => k), ["enter", "drop", "leave"]);
+  const dropped = seen[1][1].nativeEvent.dataTransfer;
+  assertEquals(dropped.types, ["fileUrl"]);
+  assertEquals(
+    [dropped.files[0].name, dropped.files[0].type, dropped.files[0].size],
+    ["a.png", "image/png", 3],
+  );
+  assertEquals(dropped.files[0].file, file);
+  assertEquals(prevented, 3, "dragenter, dragover and drop accept the drag");
+  // Without draggedTypes the view takes no drags.
+  root.unmount();
+});
+
+Deno.test("desktop View in a Deno Desktop window: native drops, drag region and vibrancy", async () => {
+  const { createFakeDesktopRuntime, until } = await import("./helpers/desktop-fake-runtime.ts");
+  const { resetDesktopBridgeForTesting } = await import("../src/desktop/bridge-client.ts");
+  let queue: unknown[] = [];
+  const rt = createFakeDesktopRuntime({
+    window: {
+      capabilities: () => ({ fileDrop: true }),
+      takeDrops: () => queue.splice(0, queue.length),
+      setBackdrop: () => ({ applied: true }),
+    },
+  });
+  const restore = rt.install();
+  try {
+    assertEquals(runtimePlatform(), "desktop");
+    const View = createDesktopView(fakeView as Any, "macos");
+    const drops: Any[] = [];
+    const { container, root } = mount(() =>
+      h(View as Any, {
+        draggedTypes: "fileUrl",
+        onDrop: (e: Any) => drops.push(e.nativeEvent.dataTransfer.files),
+        mouseDownCanMoveWindow: true,
+        allowsVibrancy: true,
+      }, "x")
+    );
+    const el = container.firstChild as Any;
+    await until(() => rt.calls.some((c) => c.method === "capabilities"));
+    await until(() => rt.calls.some((c) => c.method === "setBackdrop"));
+    assertEquals(rt.calls.find((c) => c.method === "setBackdrop")!.args, { backdrop: "vibrancy" });
+    await until(() => String(el.getAttribute("style") ?? "").includes("app-region"));
+    await new Promise((r) => setTimeout(r, 20));
+    // The DOM drop is only accepted: the files come from the runtime, with handles.
+    el.dispatch("drop", { dataTransfer: { files: [{ name: "dom.txt" }] } });
+    queue = [
+      { x: 0, y: 0, files: [{ handle: "h1", name: "a.txt", path: "/tmp/a.txt", size: 1 }] },
+      { x: 500, y: 500, files: [{ handle: "h2", name: "b.txt", path: "/tmp/b.txt", size: 1 }] },
+    ];
+    rt.emit("window", "drop", null);
+    await until(() => drops.length === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(drops.length, 1, "the drop outside the view is not its drop");
+    assertEquals(drops[0][0].handle, "h1");
+    assertEquals(drops[0][0].uri, "file:///tmp/a.txt");
+    root.unmount();
+  } finally {
+    resetDesktopBridgeForTesting();
+    restore();
+  }
 });

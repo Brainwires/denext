@@ -57,17 +57,14 @@ export const DESKTOP_ALIASES: Readonly<Record<string, DesktopAlias>> = {
       "unstable_batchedUpdates",
       "View",
     ],
-    omitted: [
-      "View.acceptsFirstMouse",
-      "View.mouseDownCanMoveWindow",
-      "View.allowsVibrancy",
-      "View.draggedTypes",
-    ],
+    omitted: ["View.acceptsFirstMouse"],
     notes: "DynamicColorMacOS is a light-dark() color (as DynamicColorIOS); " +
       "ColorWithSystemEffectMacOS a CSS color-mix(). PlatformColor knows the NSColor names. " +
       "View maps tooltip, onDoubleClick, keyDownEvents / validKeysDown (only listed keys reach " +
-      "onKeyDown) and enableFocusRing; acceptsFirstMouse, mouseDownCanMoveWindow, " +
-      "allowsVibrancy and draggedTypes are accepted with a dev warning. Platform.OS stays " +
-      '"web"; Platform.select picks `macos` in Deno Desktop on macOS.',
+      "onKeyDown) and enableFocusRing; in a Deno Desktop window mouseDownCanMoveWindow is a " +
+      "window drag region, allowsVibrancy the window's vibrancy and draggedTypes (fileUrl) " +
+      "onDragEnter / onDragLeave / onDrop with read-only handles; acceptsFirstMouse is accepted " +
+      'with a dev warning. Platform.OS stays "web"; Platform.select picks `macos` in Deno ' +
+      "Desktop on macOS.",
   },
 };
