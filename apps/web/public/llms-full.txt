@@ -391,6 +391,13 @@ packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Deskto
 `denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. `runDesktop` resolves to `{ window, emit }` for pushing OS events to the page.
+Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
+top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
+links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
+custom-scheme callback (a declared scheme, PKCE S256 mandatory, exact redirect + `state`, owner-checked;
+`claimDeepLinkScheme` only on a user action); `installClerkDesktopBridge()` from `denext/desktop/clerk`
+makes `@clerk/electron`'s React provider and `passkeys` run unchanged
+(`denext desktop add secure-store auth-session passkeys`).
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
