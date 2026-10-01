@@ -915,13 +915,17 @@ export interface DesktopExtraPermissions {
   write?: string[];
   /** `--allow-net` hosts, e.g. the updater's feed host. */
   net?: string[];
-  /** `--allow-run` programs. */
+  /** `--allow-run` programs; `["*"]` bakes an unscoped `--allow-run`. */
   run?: string[];
-  /** `--allow-ffi` libraries. */
+  /**
+   * `--allow-ffi` libraries; `["*"]` bakes an unscoped `--allow-ffi`, which a Node-API addon (an
+   * npm package's prebuilt `.node`) needs: the packaged app loads it from its embedded file system,
+   * whose path cannot be named at package time.
+   */
   ffi?: string[];
   /** `--allow-env` variable names. */
   env?: string[];
-  /** `--allow-sys` kinds. */
+  /** `--allow-sys` kinds; `["*"]` bakes an unscoped `--allow-sys`. */
   sys?: string[];
 }
 

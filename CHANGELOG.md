@@ -23,6 +23,10 @@ and this project adheres to
   confirmed by its next launch is rolled back. `denext desktop publish-update` packs and signs an
   update (archive + `app-update.json`, one manifest for every platform of a release), and
   `desktop.update.manifestUrl` / `hosts` join the packaged app's `--allow-net`.
+- **Deno Desktop: unscoped extra permissions.** `desktop.extraPermissions.ffi` / `run` / `sys`
+  accept `"*"`, which the package scripts bake as the unscoped flag (`--allow-ffi`). A Node-API
+  addon needs it: the packaged app loads the npm package's prebuilt `.node` from its embedded file
+  system, whose path cannot be named at package time.
 - **Deno Desktop: full-app updates confirm themselves.** `runDesktop` confirms a swapped-in
   version's trial launch once its window has loaded (the token-gated boot beacon the page sends on
   `load`), so an app that never calls `confirmAppUpdate()` no longer rolls every update back; a

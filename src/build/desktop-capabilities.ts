@@ -434,8 +434,14 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
   // write: broad when a capability writes or extraPermissions asks (per-user paths can't be baked).
   const needsWrite = capFlags.some((f) => kindOfFlag(f) === "--allow-write") ||
     (extra.write?.length ?? 0) > 0;
+  // `"*"` grants the whole kind (an unscoped `--allow-ffi`): a Node-API addon extracted from the
+  // compiled app's virtual file system has no path that can be named at package time.
   const listFlag = (kind: string, set: Set<string>): string[] =>
-    set.size > 0 ? [`--allow-${kind}=${[...set].sort().join(",")}`] : [];
+    set.has("*")
+      ? [`--allow-${kind}`]
+      : set.size > 0
+      ? [`--allow-${kind}=${[...set].sort().join(",")}`]
+      : [];
 
   return [
     `--allow-net=${[...net].sort().join(",")}`,

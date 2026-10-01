@@ -289,6 +289,21 @@ Deno.test("desktopBuildFlags: extraPermissions is the escape hatch (updater net+
   assert(flags.includes("--allow-sys=osRelease"), "device's sys still baked");
 });
 
+Deno.test('desktopBuildFlags: an extraPermissions "*" bakes the unscoped flag (Node-API addons)', () => {
+  const flags = desktopBuildFlags(
+    { desktop: { capabilities: { device: true }, extraPermissions: { ffi: ["*"] } } },
+    "darwin",
+  );
+  assert(flags.includes("--allow-ffi"), flags.join(" "));
+  assert(!flags.some((f) => f.startsWith("--allow-ffi=")), "unscoped, not a list containing *");
+  assert(flags.includes("--allow-sys=osRelease"), "the other kinds keep their scopes");
+  const sys = desktopBuildFlags(
+    { desktop: { capabilities: { device: true }, extraPermissions: { sys: ["*"] } } },
+    "linux",
+  );
+  assert(sys.includes("--allow-sys") && !sys.some((f) => f.startsWith("--allow-sys=")));
+});
+
 Deno.test("desktopPackageFlags: reads denext.config.ts next to the script (missing → baseline)", async () => {
   // No config next to the script → baseline only (the examples/native case).
   const bare = await Deno.makeTempDir({ prefix: "denext-pkgflags-bare-" });

@@ -1406,14 +1406,14 @@
               }
             },
             "run": {
-              "description": "`--allow-run` programs.",
+              "description": "`--allow-run` programs; `[\"*\"]` bakes an unscoped `--allow-run`.",
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "ffi": {
-              "description": "`--allow-ffi` libraries.",
+              "description": "`--allow-ffi` libraries; `[\"*\"]` bakes an unscoped `--allow-ffi`, which a Node-API addon (an npm package's prebuilt `.node`) needs: the packaged app loads it from its embedded file system, whose path cannot be named at package time.",
               "type": "array",
               "items": {
                 "type": "string"
@@ -1427,7 +1427,7 @@
               }
             },
             "sys": {
-              "description": "`--allow-sys` kinds.",
+              "description": "`--allow-sys` kinds; `[\"*\"]` bakes an unscoped `--allow-sys`.",
               "type": "array",
               "items": {
                 "type": "string"
