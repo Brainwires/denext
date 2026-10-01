@@ -90,6 +90,10 @@ and this project adheres to
 
 ### Fixed
 
+- **React Native mode: `LayoutAnimation.configureNext` animates again.** Since 3.0.0 a second
+  build hook for react-native-web's `UIManager` (the view-manager commands) shadowed the one that
+  routes `configureNextLayoutAnimation` to denext's LayoutAnimation, so layout changes jumped
+  instead of animating. One hook now applies both patches.
 - **Desktop capabilities now receive the window.** `runDesktop` passes the adopted
   `Deno.BrowserWindow` to the bridge, so `ctx.window` is set (it was always `undefined`).
 - **`examples/rn-desktop` and `examples/native`** spread `resolveDesktopCapabilities` into
