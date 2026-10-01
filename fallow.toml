@@ -221,6 +221,13 @@ ignorePatterns = [
   # there. Their pure parts (harness/parse.ts, harness/matrix.ts) stay analyzed and tested.
   "examples/scroll-bench/harness/measure.ts",
   "examples/scroll-bench/harness/web-smoke.ts",
+  # The desktop kitchen sink (examples/desktop-kitchen-sink): its checks run only inside a packaged
+  # Deno Desktop window, its `kitchen` extension only in that app's Deno process, and its
+  # e2e/window-test.ts packages and drives the real app. Every function is I/O against a native
+  # window, untestable without one, so CRAP-on-zero-coverage is noise there; the window test
+  # itself (`deno task test:window`) is its guard. Its packaging scripts are not vendored (the
+  # test writes them from the scaffold template, gitignored).
+  "examples/desktop-kitchen-sink/**",
   # harness/ssr-measure.ts drives the server-rendered list bench in headless Chromium (CDP I/O
   # only; its pure parts live in harness/ssr-report.ts, which stays analyzed and tested).
   "examples/scroll-bench/harness/ssr-measure.ts",

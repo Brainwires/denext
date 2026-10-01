@@ -1,0 +1,31 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+body {
+  margin: 0;
+  background: Canvas;
+  color: CanvasText;
+}
+.content {
+  padding: 16px 24px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+td {
+  padding: 4px 8px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+  vertical-align: top;
+}
+tr[data-status="fail"] {
+  color: #c62828;
+}
+tr[data-status="skip"] {
+  opacity: 0.6;
+}
+.status {
+  font-weight: 600;
+}

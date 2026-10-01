@@ -155,6 +155,7 @@
     "example:concurrency": "deno run -A --config deno.json examples/concurrency/serve.ts",
     "example:animation": "deno run -A --config deno.json examples/animation/serve.ts",
     "example:tailwind": "cd examples/tailwind && deno task dev",
+    "e2e:desktop-kitchen-sink": "cd examples/desktop-kitchen-sink && deno task test:window",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
     "gen:config-schema": "deno run -A scripts/gen-config-schema.ts",
     "gen:google-fonts": "deno run -A scripts/gen-google-fonts.ts",

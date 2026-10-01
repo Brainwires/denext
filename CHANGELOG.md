@@ -23,6 +23,16 @@ and this project adheres to
   confirmed by its next launch is rolled back. `denext desktop publish-update` packs and signs an
   update (archive + `app-update.json`, one manifest for every platform of a release), and
   `desktop.update.manifestUrl` / `hosts` join the packaged app's `--allow-net`.
+- **examples/desktop-kitchen-sink: every Deno Desktop capability, window-tested.** A desktop app
+  that enables every shipped capability (secureStore, fs, sqlite, device, keepAwake, clipboard
+  text/HTML/PNG, shell, dialogs, the window API, drag and drop, deep links and opened files with a
+  second instance, the preload, the stable app origin, a Node-API addon and the full-app updater)
+  and calls each from the page, plus `deno task test:window` (root: `deno task
+  e2e:desktop-kitchen-sink`): it writes the package scripts from the scaffold, packages the app on
+  denext's pinned runtime, launches it with a link and a file, starts a second instance, serves
+  signed update manifests on loopback and asserts the page's report, exiting non-zero on any
+  failure. Node-API addons (an npm package's prebuilt `.node`, imported in a desktop extension)
+  are documented as working on macOS, Windows and Linux.
 - **Deno Desktop: unscoped extra permissions.** `desktop.extraPermissions.ffi` / `run` / `sys`
   accept `"*"`, which the package scripts bake as the unscoped flag (`--allow-ffi`). A Node-API
   addon needs it: the packaged app loads the npm package's prebuilt `.node` from its embedded file

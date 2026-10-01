@@ -1,0 +1,56 @@
+{
+  "workspace": [],
+  "version": "1.0.0",
+  "tasks": {
+    "dev": "deno run -A ../../cli.ts dev .",
+    "export": "deno run -A ../../cli.ts export .",
+    "desktop": "deno run -A ../../cli.ts desktop run .",
+    "desktop:scripts": "deno run -A ../../cli.ts desktop package --regenerate-scripts .",
+    "desktop:package": "deno run -A ../../cli.ts desktop package --regenerate-scripts . && deno run -A ../../cli.ts desktop package .",
+    "test:window": "deno run -A e2e/window-test.ts"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "denext",
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ]
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/mobile": "../../src/mobile/mod.ts",
+    "denext/desktop": "../../src/build/desktop.ts",
+    "denext/desktop/client": "../../src/desktop/client.ts",
+    "denext/desktop/window": "../../src/desktop/window.ts",
+    "denext/desktop/updater": "../../src/desktop/updater.ts",
+    "@node-rs/crc32": "npm:@node-rs/crc32@1.10.8",
+    "@std/path": "jsr:@std/path@^1"
+  },
+  "lint": {
+    "plugins": [
+      "../../src/lint/denext-plugin.ts"
+    ]
+  },
+  "desktop": {
+    "app": {
+      "name": "denext kitchen sink",
+      "identifier": "dev.denext.kitchen-sink",
+      "deepLinks": ["kitchensink-link"]
+    }
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "compile": { "include": [".deno-desktop/app.json"] }
+}

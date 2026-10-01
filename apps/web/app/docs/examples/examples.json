@@ -83,6 +83,17 @@
       "hasReadme": true
     },
     {
+      "name": "desktop-kitchen-sink",
+      "title": "Desktop kitchen sink (every Deno Desktop capability, window-tested)",
+      "blurb": "A denext desktop app that turns on every shipped Deno Desktop capability and calls each one from the page, plus an automated window test that packages the app, launches it and asserts every result:…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/desktop-kitchen-sink",
+      "tags": [
+        "desktop",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
       "name": "drizzle",
       "title": "Drizzle ORM on denext",
       "blurb": "Typed SQL with Drizzle ORM over Deno's built-in node:sqlite — no native addon, no query engine.",

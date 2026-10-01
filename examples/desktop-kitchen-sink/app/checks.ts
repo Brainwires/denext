@@ -1,0 +1,634 @@
+// The kitchen sink's checks: every shipped Deno Desktop capability, driven from the page through
+// the public APIs an app uses (`denext/mobile`, `denext/desktop/window`, `denext/desktop/client`).
+// The storage checks also read the result back through the raw bridge or straight from disk (the
+// `kitchen` extension), because the public APIs fall back to browser storage when a capability is
+// off: a pass here means the native path ran.
+//
+// Imported by the "use client" component only (it runs in the window, never on the server).
+
+import {
+  clipboardFormats,
+  type DeepLinkEvent,
+  deleteFile,
+  deviceInfo,
+  listDir,
+  moveToTrash,
+  type OpenedFile,
+  openSqlite,
+  readClipboard,
+  readFile,
+  runtimePlatform,
+  secureStore,
+  writeClipboard,
+  writeFile,
+} from "denext/mobile";
+import { desktopExtension, onDesktopEvent } from "denext/desktop/client";
+import {
+  getScreens,
+  getWindowState,
+  maximizeWindow,
+  onCloseRequested,
+  onFileDrop,
+  quitApp,
+  setMaximumWindowSize,
+  setMinimumWindowSize,
+  setWindowBackdrop,
+  setWindowSize,
+  setWindowTitle,
+  startFileDrag,
+  unmaximizeWindow,
+  windowCapabilities,
+} from "denext/desktop/window";
+
+/** What `kitchen.setup` returns (see `desktop/kitchen.ts`). */
+export interface KitchenSetup {
+  readonly autorun: boolean;
+  readonly updateUrls:
+    | { good: string; badSignature: string; downgrade: string }
+    | null;
+  readonly os: "darwin" | "windows" | "linux";
+  readonly target: string;
+  readonly pinnedRuntime: boolean;
+  readonly dataDir: string;
+}
+
+/** One check's outcome. */
+export interface CheckResult {
+  readonly name: string;
+  readonly status: "pass" | "fail" | "skip";
+  readonly detail: string;
+  readonly ms: number;
+}
+
+/** What the checks share: the setup, and what the launch delivered. */
+export interface CheckContext {
+  readonly setup: KitchenSetup;
+  readonly links: DeepLinkEvent[];
+  readonly files: OpenedFile[];
+}
+
+/** Thrown by a check that does not apply here; reported as `skip` with the reason. */
+class Skip extends Error {}
+
+type Check = readonly [
+  name: string,
+  run: (ctx: CheckContext) => string | Promise<string>,
+];
+
+/** The raw bridge clients (the same RPCs `denext/mobile` makes on desktop). */
+type Raw = Record<
+  string,
+  // deno-lint-ignore no-explicit-any
+  (args?: unknown, options?: { timeoutMs?: number | false }) => Promise<any>
+>;
+const raw = (cap: string) => desktopExtension(cap) as unknown as Raw;
+export const kitchen = raw("kitchen");
+
+/** The Node-API addon's CRC-32 of "hello". */
+const CRC32_HELLO = 907060870;
+/** The file the window test asks the OS to open with the app, and its content. */
+const OPEN_FILE_NAME = "open me.txt";
+const OPEN_FILE_TEXT = "opened by the kitchen sink window test";
+/** A 1x1 transparent PNG, base64. */
+const PNG_1X1 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function eq(actual: unknown, expected: unknown, what: string): void {
+  if (actual !== expected) {
+    throw new Error(
+      `${what}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
+    );
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Poll `probe` until it returns a truthy value, or fail after `ms`. */
+async function waitFor<T>(
+  probe: () => T | Promise<T>,
+  what: string,
+  ms = 5000,
+  observed?: () => string | Promise<string>,
+): Promise<NonNullable<T>> {
+  const end = Date.now() + ms;
+  do {
+    const last = await probe();
+    if (last) return last as NonNullable<T>;
+    await sleep(100);
+  } while (Date.now() < end);
+  const seen = observed ? ` (observed: ${await observed()})` : "";
+  throw new Error(`timed out after ${ms} ms waiting for ${what}${seen}`);
+}
+
+/** The page size, and the window's own report, for a timeout message. */
+async function sizes(): Promise<string> {
+  const st = await getWindowState().catch(() => null);
+  const box = (b: { width: number; height: number } | null | undefined) =>
+    b ? `${b.width}x${b.height}` : "null";
+  return `inner ${innerWidth}x${innerHeight}, content ${box(st?.contentBounds)}, ` +
+    `frame ${box(st?.bounds)}, min ${st?.minimumSize}, max ${st?.maximumSize}`;
+}
+
+/** The error code a rejected bridge call carries. */
+async function rejection(p: Promise<unknown>): Promise<string> {
+  try {
+    await p;
+  } catch (err) {
+    return String((err as { code?: unknown }).code ?? (err as Error).message);
+  }
+  throw new Error("expected the call to be refused, but it succeeded");
+}
+
+const near = (a: number, b: number) => Math.abs(a - b) <= 2;
+
+// --- runtime -------------------------------------------------------------------------------
+
+const runtimeChecks: Check[] = [
+  ["runtime: runtimePlatform() is desktop", () => {
+    eq(runtimePlatform(), "desktop", "runtimePlatform()");
+    return "desktop";
+  }],
+  ["runtime: denext's pinned Deno Desktop runtime", ({ setup }) => {
+    assert(
+      setup.pinnedRuntime,
+      "Deno.desktop is missing: the stock runtime is running",
+    );
+    return setup.target;
+  }],
+  ["app origin: desktop.app.origin is the page's origin", () => {
+    eq(location.origin, "kitchensink://app", "location.origin");
+    return location.origin;
+  }],
+  ["bridge events: the runtime pushes an event to the page", async () => {
+    const marker = crypto.randomUUID();
+    let got: unknown;
+    const stop = onDesktopEvent("echo", "pong", (data) => {
+      if ((data as { marker?: unknown })?.marker === marker) got = data;
+    });
+    try {
+      await sleep(200); // the stream connects on the first subscription
+      await raw("echo").emitPong({ marker });
+      await waitFor(() => got, "the echo capability's pong event", 5000);
+    } finally {
+      stop();
+    }
+    return "pong received";
+  }],
+  ["preload: ran first, after the __denext global", () => {
+    const p = (globalThis as {
+      __kitchenPreload?: { ran: boolean; denextGlobal: boolean; pageScriptsBefore: number };
+    }).__kitchenPreload;
+    assert(p?.ran, "the preload did not run");
+    assert(p.denextGlobal, "the preload ran before the __denext global");
+    eq(p.pageScriptsBefore, 0, "page scripts loaded before the preload");
+    return "ok";
+  }],
+];
+
+// --- storage -------------------------------------------------------------------------------
+
+const storageChecks: Check[] = [
+  ["secureStore: set / get / delete in the OS keychain", async () => {
+    const key = "kitchen-sink-probe";
+    const value = `secret-${crypto.randomUUID()}`;
+    await secureStore.set(key, value);
+    eq(await secureStore.get(key), value, "secureStore.get");
+    eq(
+      await raw("secureStore").get({ key }),
+      value,
+      "the native keychain entry",
+    );
+    await secureStore.delete(key);
+    eq(await raw("secureStore").get({ key }), null, "the entry after delete");
+    return "round trip through the keychain";
+  }],
+  ["fs: write / read / list / delete in the app's data folder", async () => {
+    const text = `kitchen sink ${Date.now()}`;
+    await writeFile("kitchen/fs.txt", text, {
+      directory: "data",
+      recursive: true,
+    });
+    eq(
+      await readFile("kitchen/fs.txt", { directory: "data" }),
+      text,
+      "readFile",
+    );
+    const names = (await listDir("kitchen", { directory: "data" })).map((e) => e.name);
+    assert(names.includes("fs.txt"), `listDir: ${names.join(", ")}`);
+    eq(
+      (await kitchen.diskRead({ path: "kitchen/fs.txt" })).text,
+      text,
+      "the file on disk",
+    );
+    await deleteFile("kitchen/fs.txt", { directory: "data" });
+    eq(
+      (await kitchen.diskRead({ path: "kitchen/fs.txt" })).text,
+      null,
+      "the file after delete",
+    );
+    return "on disk in the data folder";
+  }],
+  ["sqlite: a node:sqlite database in the data folder", async () => {
+    const db = await openSqlite("kitchen-sink");
+    try {
+      eq(db.backend, "native", "backend");
+      await db.exec(
+        "CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, name TEXT)",
+      );
+      await db.exec("DELETE FROM t");
+      await db.run("INSERT INTO t (name) VALUES (?)", ["kitchen"]);
+      const rows = await db.query<{ name: string }>("SELECT name FROM t");
+      eq(rows.length, 1, "row count");
+      eq(rows[0].name, "kitchen", "row");
+    } finally {
+      await db.close();
+    }
+    return "native";
+  }],
+];
+
+/** The clipboard text before the clipboard checks (restored after them). */
+let savedClipboard: string | null = null;
+
+// --- system --------------------------------------------------------------------------------
+
+const systemChecks: Check[] = [
+  ["device: the runtime's device facts", async ({ setup }) => {
+    const facts = await raw("device").info({});
+    eq(facts?.os, setup.os, "device.info().os");
+    const info = await deviceInfo();
+    assert(info.model, "deviceInfo().model is empty");
+    return `${info.model} ${info.osVersion ?? ""}`.trim();
+  }],
+  ["keepAwake: acquire / release the OS assertion", async () => {
+    const held = await raw("keepAwake").acquire({});
+    assert(typeof held?.id === "string", "acquire returned no id");
+    eq((await raw("keepAwake").release({ id: held.id }))?.ok, true, "release");
+    return "held and released";
+  }],
+  ["clipboard: text", async () => {
+    // The checks overwrite the clipboard: keep the user's text to put back afterwards.
+    savedClipboard = await raw("clipboard").readText({}).catch(() => null);
+    const text = `kitchen ${crypto.randomUUID()}`;
+    await writeClipboard(text);
+    eq(await readClipboard(), text, "readClipboard()");
+    eq(await raw("clipboard").readText({}), text, "the OS clipboard");
+    return "ok";
+  }],
+  ["clipboard: HTML", async () => {
+    const marker = crypto.randomUUID();
+    await writeClipboard({ html: `<b>${marker}</b>`, text: marker });
+    const html = await readClipboard({ format: "html" });
+    assert(
+      html.includes(marker),
+      `readClipboard({ format: "html" }) = ${JSON.stringify(html)}`,
+    );
+    eq(await readClipboard(), marker, "the plain-text alternative");
+    return "ok";
+  }],
+  ["clipboard: PNG image + formats", async () => {
+    await writeClipboard({ image: PNG_1X1 });
+    const png = await readClipboard({ format: "image" });
+    assert(
+      png.startsWith("iVBOR"),
+      `readClipboard({ format: "image" }) is not a PNG: ${png.slice(0, 16)}`,
+    );
+    const formats = await clipboardFormats();
+    assert(
+      formats.includes("image/png"),
+      `clipboardFormats() = ${formats.join(", ")}`,
+    );
+    if (typeof savedClipboard === "string" && savedClipboard !== "") {
+      await writeClipboard(savedClipboard); // the user's text, back
+    }
+    return formats.join(", ");
+  }],
+  ["shell: refuses what the config does not allow", async () => {
+    const scheme = await rejection(
+      raw("shell").openExternal({ url: "file:///etc/hosts" }),
+    );
+    const open = await rejection(raw("shell").openPath({ path: "/" }));
+    return `openExternal(file:) → ${scheme}, openPath (off) → ${open}`;
+  }],
+  ["shell: moveToTrash an app file", async ({ setup }) => {
+    if (setup.os === "darwin") {
+      // The macOS trash asks Finder over Apple Events: the first time, the OS shows an Automation
+      // consent prompt only a person can answer.
+      throw new Skip(
+        "macOS asks for Automation consent (Finder) the first time",
+      );
+    }
+    await writeFile("kitchen/trash-me.txt", "bye", {
+      directory: "data",
+      recursive: true,
+    });
+    const sep = setup.os === "windows" ? "\\" : "/";
+    await moveToTrash([setup.dataDir, "kitchen", "trash-me.txt"].join(sep));
+    eq(
+      (await kitchen.diskRead({ path: "kitchen/trash-me.txt" })).text,
+      null,
+      "the file after trash",
+    );
+    return "moved to the trash";
+  }],
+  [
+    "dialogs: native dialogs available; arguments validated before any panel opens",
+    async () => {
+      const caps = await windowCapabilities();
+      eq(caps.fileDialogs, true, "windowCapabilities().fileDialogs");
+      // A save without data is refused before the panel would open (no person needed).
+      const code = await rejection(raw("dialogs").saveFile({ data: 42 }));
+      eq(code, "validation", "saveFile without data");
+      return "fileDialogs + validation";
+    },
+  ],
+];
+
+// --- window --------------------------------------------------------------------------------
+
+const windowChecks: Check[] = [
+  ["window: capabilities and state", async () => {
+    const caps = await windowCapabilities();
+    for (
+      const k of [
+        "state",
+        "sizeConstraints",
+        "screens",
+        "closeGuard",
+        "fileDrop",
+      ] as const
+    ) {
+      eq(caps[k], true, `windowCapabilities().${k}`);
+    }
+    const state = await getWindowState();
+    eq(state.visible, true, "visible");
+    assert(state.bounds && state.bounds.width > 0, "no window bounds");
+    await setWindowTitle("denext kitchen sink — running checks");
+    return `${state.bounds.width}x${state.bounds.height}`;
+  }],
+  ["window: screens", async () => {
+    const screens = await getScreens();
+    assert(screens.length > 0, "no screens");
+    assert(screens.some((s) => s.isPrimary), "no primary screen");
+    assert(
+      screens.every((s) => s.scaleFactor > 0),
+      "a screen has no scale factor",
+    );
+    return screens.map((s) => `${s.bounds.width}x${s.bounds.height}@${s.scaleFactor}`).join(", ");
+  }],
+  ["window: size round trip", async () => {
+    await setWindowSize(900, 700);
+    await waitFor(() => near(innerWidth, 900) && near(innerHeight, 700), "900x700", 5000, sizes);
+    const state = await getWindowState();
+    assert(state.contentBounds, "no contentBounds");
+    assert(
+      near(state.contentBounds.width, 900),
+      `contentBounds.width ${state.contentBounds.width}`,
+    );
+    return `${innerWidth}x${innerHeight}`;
+  }],
+  ["window: minimum / maximum size clamp", async () => {
+    try {
+      await setMinimumWindowSize(640, 480);
+      eq(
+        String((await getWindowState()).minimumSize),
+        "640,480",
+        "minimumSize",
+      );
+      await setWindowSize(300, 200);
+      await waitFor(
+        () => near(innerWidth, 640) && near(innerHeight, 480),
+        "640x480 (the minimum)",
+        5000,
+        sizes,
+      );
+      const small = `${innerWidth}x${innerHeight}`;
+      await setMaximumWindowSize(820, 620);
+      await setWindowSize(1400, 1100);
+      // Clamped to the maximum: 820x620, not the 1400x1100 asked for (nor left at the minimum).
+      await waitFor(
+        () => near(innerWidth, 820) && near(innerHeight, 620),
+        "820x620 (the maximum)",
+        5000,
+        sizes,
+      );
+      return `asked 300x200 → ${small}, asked 1400x1100 → ${innerWidth}x${innerHeight}`;
+    } finally {
+      await setMaximumWindowSize(0, 0);
+      await setMinimumWindowSize(420, 320);
+      await setWindowSize(900, 700);
+    }
+  }],
+  ["window: maximize / unmaximize", async () => {
+    await maximizeWindow();
+    await waitFor(async () => (await getWindowState()).maximized, "maximized");
+    await unmaximizeWindow();
+    await waitFor(
+      async () => !(await getWindowState()).maximized,
+      "unmaximized",
+    );
+    return "ok";
+  }],
+  ["window: backdrop", async ({ setup }) => {
+    const caps = await windowCapabilities();
+    const backdrop = setup.os === "darwin" ? "vibrancy" : setup.os === "windows" ? "mica" : "none";
+    const applied = await setWindowBackdrop(backdrop);
+    const supported = backdrop === "none" || caps[backdrop] === true;
+    if (backdrop !== "none") {
+      eq(applied, supported, `setWindowBackdrop("${backdrop}") applied`);
+    }
+    await setWindowBackdrop("none");
+    return `${backdrop}: ${applied ? "applied" : "not supported here"}`;
+  }],
+  ["window: a guarded close keeps the app running", async () => {
+    let asked = 0;
+    const stop = onCloseRequested(() => {
+      asked++;
+      return false; // keep the window open
+    });
+    try {
+      await sleep(300); // the guard is installed by an RPC of its own
+      const quitting = await quitApp();
+      eq(quitting, false, "quitApp() while guarded");
+      await waitFor(() => asked > 0, "the close handler to be asked");
+      await sleep(800);
+      eq(
+        (await getWindowState()).visible,
+        true,
+        "the window after the refused close",
+      );
+    } finally {
+      stop();
+    }
+    return `asked ${asked}x, still open`;
+  }],
+  ["window: drag and drop plumbing (no pointer)", async () => {
+    const stop = onFileDrop(() => {});
+    stop();
+    await writeFile("kitchen/drag.txt", "drag me", {
+      directory: "data",
+      recursive: true,
+    });
+    // No mouse button is held, so the OS drag cannot start: "failed", never a hang.
+    const result = await startFileDrag([{
+      directory: "data",
+      path: "kitchen/drag.txt",
+    }]);
+    eq(result, "failed", "startFileDrag without a held button");
+    // Only picked handles and the app's own folders can be dragged out.
+    const refused = await rejection(
+      startFileDrag([{ directory: "data", path: "../../../../etc/hosts" }]),
+    );
+    return `drag → ${result}, escaping path → ${refused}`;
+  }],
+];
+
+// --- launch: deep links and opened files ---------------------------------------------------
+
+const launchChecks: Check[] = [
+  ["deep link: cold start (argv)", async ({ setup, links }) => {
+    if (!setup.autorun) {
+      throw new Skip("launch the app with a kitchensink-link:// URL");
+    }
+    const link = await waitFor(
+      () => links.find((l) => l.url.startsWith("kitchensink-link://open/cold")),
+      "the cold-start link",
+    );
+    eq(link.launch, true, "launch");
+    eq(new URL(link.url).searchParams.get("x"), "1", "the link's query");
+    return link.url;
+  }],
+  [
+    "open file: cold start (argv) → a read-only handle",
+    async ({ setup, files }) => {
+      if (!setup.autorun) throw new Skip("launch the app with a file argument");
+      const file = await waitFor(
+        () => files.find((f) => f.name === OPEN_FILE_NAME),
+        "the file",
+      );
+      eq(file.launch, true, "launch");
+      eq(
+        await readFile("", { directory: { picked: file.handle } }),
+        OPEN_FILE_TEXT,
+        "content",
+      );
+      const write = await rejection(
+        writeFile("", "x", { directory: { picked: file.handle } }),
+      );
+      return `read ok, write → ${write}`;
+    },
+  ],
+  [
+    "deep link: a second launch forwards to the running app",
+    async ({ setup, links }) => {
+      if (!setup.autorun) throw new Skip("start a second instance with a link");
+      await kitchen.mark({ name: "ready-for-warm" });
+      const link = await waitFor(
+        () => links.find((l) => l.url.startsWith("kitchensink-link://open/warm")),
+        "the forwarded link",
+        30_000,
+        // Did the link reach the app (queued, but its "available" event never reached the page)?
+        async () => `queued in the app: ${JSON.stringify(await raw("deepLinks").take({}))}`,
+      );
+      eq(link.launch, false, "launch");
+      return link.url;
+    },
+  ],
+];
+
+// --- native code and updates ---------------------------------------------------------------
+
+const nativeChecks: Check[] = [
+  ["Node-API: a prebuilt addon loads in the app's Deno process", async () => {
+    const out = await kitchen.crc32({ text: "hello" });
+    assert(out.error === undefined, `the addon did not load: ${out.error}`);
+    eq(out.value, CRC32_HELLO, "crc32('hello')");
+    return "@node-rs/crc32";
+  }],
+  [
+    "updater: full-app updates configured, no pending trial",
+    async ({ setup }) => {
+      if (!setup.updateUrls) {
+        throw new Skip(
+          "package with KITCHEN_SINK_UPDATE_PUBLIC_KEY",
+        );
+      }
+      const status = await kitchen.updateStatus({});
+      assert(status, "appUpdateStatus() is null");
+      eq(status.configured, true, `configured (${status.reason})`);
+      eq(status.trial, false, "trial");
+      return `${status.appId} ${status.version} on ${status.platform}`;
+    },
+  ],
+  ["updater: a signed newer manifest is offered", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("no local update server");
+    const r = await kitchen.updateCheck({ url: setup.updateUrls.good });
+    assert(r.ok, `check failed: ${r.code}: ${r.message}`);
+    eq(r.result.available, true, "available");
+    eq(r.result.version, "99.0.0", "version");
+    return `${r.result.currentVersion} → ${r.result.version}`;
+  }],
+  ["updater: another key's signature is refused", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("no local update server");
+    const r = await kitchen.updateCheck({ url: setup.updateUrls.badSignature });
+    eq(r.ok ? "accepted" : r.code, "signature", "the check");
+    return "signature";
+  }],
+  ["updater: an older version is refused", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("no local update server");
+    const r = await kitchen.updateCheck({ url: setup.updateUrls.downgrade });
+    eq(
+      r.ok ? `available: ${r.result.available}` : r.code,
+      "downgrade",
+      "the check",
+    );
+    return "downgrade";
+  }],
+];
+
+/** Every check, in the order they run. */
+export const CHECKS: readonly Check[] = [
+  ...runtimeChecks,
+  ...storageChecks,
+  ...systemChecks,
+  ...windowChecks,
+  ...launchChecks,
+  ...nativeChecks,
+];
+
+/** Run every check in order, reporting each as it finishes. */
+export async function runChecks(
+  ctx: CheckContext,
+  onResult: (result: CheckResult) => void,
+): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+  for (const [name, run] of CHECKS) {
+    const started = performance.now();
+    let result: CheckResult;
+    try {
+      const detail = await run(ctx);
+      result = {
+        name,
+        status: "pass",
+        detail,
+        ms: Math.round(performance.now() - started),
+      };
+    } catch (err) {
+      const status = err instanceof Skip ? "skip" : "fail";
+      const detail = err instanceof Error ? err.message : String(err);
+      result = {
+        name,
+        status,
+        detail,
+        ms: Math.round(performance.now() - started),
+      };
+    }
+    results.push(result);
+    onResult(result);
+  }
+  return results;
+}
