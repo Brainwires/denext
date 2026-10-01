@@ -23,6 +23,11 @@ and this project adheres to
   confirmed by its next launch is rolled back. `denext desktop publish-update` packs and signs an
   update (archive + `app-update.json`, one manifest for every platform of a release), and
   `desktop.update.manifestUrl` / `hosts` join the packaged app's `--allow-net`.
+- **Deno Desktop: full-app updates confirm themselves.** `runDesktop` confirms a swapped-in
+  version's trial launch once its window has loaded (the token-gated boot beacon the page sends on
+  `load`), so an app that never calls `confirmAppUpdate()` no longer rolls every update back; a
+  version that crashes before its window renders still rolls back. `desktop.update.autoConfirm:
+  false` turns it off for apps that confirm after their own health check.
 - **Deno Desktop: denext's pinned runtime.** `denext desktop run` / `dev` / `package` and the
   scaffolded `scripts/package-*.ts` now build on a prebuilt Deno Desktop runtime (`libdenort` +
   laufey backend hosts) from the Brainwires/deno fork's releases, driven by the STOCK

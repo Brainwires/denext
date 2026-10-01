@@ -163,6 +163,7 @@ Deno.test("config: deepLinks, singleInstance, inspectable, preload and the windo
     [{ app: [] }, "desktop.app"],
     [{ inspectable: 1 }, "desktop.inspectable"],
     [{ preload: "" }, "desktop.preload"],
+    [{ update: { autoConfirm: "yes" } }, "desktop.update.autoConfirm"],
     [{ window: { width: 0 } }, "desktop.window.width"],
     [{ window: { title: 1 } }, "desktop.window.title"],
     [{ window: { resizable: "no" } }, "desktop.window.resizable"],

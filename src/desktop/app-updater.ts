@@ -23,8 +23,9 @@
 //     An unsigned / ad-hoc running app (a dev build) needs the dev-only `allowUnsignedDev`.
 //  5. ATOMIC SWAP, CONFIRM OR ROLL BACK. A helper swaps the install once the app has exited (an
 //     atomic exchange on macOS / Linux), keeps the previous app as `<name>.old`, and relaunches. The
-//     new version must call {@linkcode confirmAppUpdate}; one not confirmed by its next launch is
-//     rolled back and refused from then on. No privilege escalation: an install the user cannot
+//     new version must be confirmed ({@linkcode confirmAppUpdate}; `runDesktop` does it once the
+//     window has loaded unless `desktop.update.autoConfirm` is `false`); one not confirmed by its
+//     next launch is rolled back and refused from then on. No privilege escalation: an install the user cannot
 //     write (`/Applications` owned by root, Program Files) is `install_not_writable`.
 
 /** Why a full-app update step refused (the runtime's codes, plus `unsupported`). */
@@ -294,7 +295,8 @@ export async function downloadAppUpdate(
 /**
  * Install the staged update: start the swap helper and quit the app (Electron's
  * `quitAndInstall`). The helper waits for this process to exit, swaps the install, and relaunches
- * the new version, which must then call {@linkcode confirmAppUpdate}.
+ * the new version, which `runDesktop` confirms once its window has loaded (or, with
+ * `desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).
  *
  * @param options `force: true` exits even when a `beforequit` / `close` listener refuses.
  * @returns `quitting: false` when the app refused to quit (the helper then waits up to five
@@ -316,7 +318,8 @@ export function installAppUpdateAndRelaunch(
  * Confirm the running version after an update, once the app has shown it is healthy (its window
  * loaded, its backend answered): the previous app is deleted and the update is final. An update
  * not confirmed by its next launch is rolled back and that version is refused from then on. A no-op
- * (`false`) when no update is pending, so it is safe to call on every launch.
+ * (`false`) when no update is pending, so it is safe to call on every launch. `runDesktop` calls it
+ * once the window has loaded unless `desktop.update.autoConfirm` is `false`.
  *
  * @returns Whether a pending update was confirmed.
  * @throws {@linkcode AppUpdateError} on a file-system failure.

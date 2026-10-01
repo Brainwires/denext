@@ -857,6 +857,15 @@ export interface DesktopUpdateConfig {
    * to the packaged app's `--allow-net`.
    */
   hosts?: string[];
+  /**
+   * Confirm a newly installed version automatically once its window has loaded (the page's `load`
+   * event reached the desktop runtime), so an app that never calls `confirmAppUpdate()` does not
+   * roll back every update on its next launch. Default `true`. Set `false` to confirm yourself
+   * with `confirmAppUpdate()` from `denext/desktop/updater` after your own health check (the
+   * backend answered, the user signed in): until then the update stays on trial, and a launch that
+   * never confirms is rolled back.
+   */
+  autoConfirm?: boolean;
 }
 
 /** A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}). */

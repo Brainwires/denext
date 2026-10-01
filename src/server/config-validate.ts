@@ -302,6 +302,14 @@ function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void 
   }
 }
 
+/** `desktop.update.autoConfirm`: a boolean (the other `desktop.update` keys are checked at package). */
+function validateDesktopUpdate(update: unknown, fail: Fail): void {
+  const autoConfirm = (update as { autoConfirm?: unknown } | undefined)?.autoConfirm;
+  if (autoConfirm !== undefined && typeof autoConfirm !== "boolean") {
+    fail("desktop.update.autoConfirm", "must be a boolean");
+  }
+}
+
 function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   if (desktop === undefined) return;
   if (typeof desktop !== "object" || Array.isArray(desktop)) {
@@ -310,6 +318,7 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   validateExtraPermissions((desktop as { extraPermissions?: unknown }).extraPermissions, fail);
   validateDesktopApp((desktop as { app?: unknown }).app, fail);
   validateDesktopWindowing(desktop as Record<string, unknown>, fail);
+  validateDesktopUpdate((desktop as { update?: unknown }).update, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {

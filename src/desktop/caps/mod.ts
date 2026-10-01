@@ -86,6 +86,11 @@ export interface ResolvedDesktop {
   readonly window: DesktopWindowSettings;
   /** The app's own folders (data, cache, documents): files there may be dragged out of the window. */
   readonly appDirs: DesktopAppDirs;
+  /**
+   * `desktop.update.autoConfirm`: whether `runDesktop` confirms a full-app update on its trial
+   * launch once the window has loaded (`false` only when the config turns it off).
+   */
+  readonly autoConfirmAppUpdate: boolean;
 }
 
 /** The default URL schemes `shell.openExternal` allows when enabled with `shell: true`. */
@@ -196,6 +201,9 @@ export async function resolveDesktopCapabilities(
     pickedPaths,
     window: resolveDesktopWindowSettings(desktop),
     appDirs: dirs,
+    autoConfirmAppUpdate:
+      (desktop as { update?: { autoConfirm?: unknown } } | undefined)?.update?.autoConfirm !==
+        false,
     ...origin,
   };
 

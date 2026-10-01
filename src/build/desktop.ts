@@ -32,6 +32,7 @@ import {
 } from "../desktop/transport.ts";
 import { sha256Base64 } from "../server/csp.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
+import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-confirm.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
 import {
   DESKTOP_PRELOAD_ENV,
@@ -363,6 +364,12 @@ export interface RunDesktopOptions {
    * only files the page may drag out of the window (`startFileDrag` in `denext/desktop/window`).
    */
   appDirs?: DesktopAppDirs;
+  /**
+   * Confirm a full-app update (`denext/desktop/updater`) on its trial launch once the window has
+   * loaded (`desktop.update.autoConfirm`, from {@link resolveDesktopCapabilities}). Default `true`;
+   * `false` leaves it to the app's own `confirmAppUpdate()` call.
+   */
+  autoConfirmAppUpdate?: boolean;
 }
 
 /**
@@ -871,9 +878,12 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // The updater's boot watchdog is confirmed by the injected beacon hitting BOOTED_PATH once the
   // page has actually LOADED (proof the UI rendered) — not a timer. A crash before render never
   // beacons, so the trial version stays PENDING and the next launch rolls it back.
-  const onBooted = updaterMod && options.updater
-    ? () => updaterMod.desktopBooted(options.updater!)
-    : undefined;
+  // A full-app update's trial launch is confirmed at the same signal (`desktop.update.autoConfirm`,
+  // default on), so an app that never calls `confirmAppUpdate()` does not roll every update back.
+  const onBooted = combineBootHooks(
+    appUpdateAutoConfirm(options.autoConfirmAppUpdate),
+    updaterMod && options.updater ? () => updaterMod.desktopBooted(options.updater!) : undefined,
+  );
   // In live-reload mode, forward everything (that is not a local endpoint) to the dev server.
   // `allowNonLoopback` is set because the loopback rule is the CLI's job (and `--lan` may opt in);
   // `proxyToBackend` forwards to the target regardless of prefixes.

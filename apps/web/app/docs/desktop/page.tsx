@@ -645,6 +645,7 @@ desktop: {
   update: {
     publicKey: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…", // ota.key.pub: baked into the app
     manifestUrl: "https://updates.example.com/myapp/app-update.json", // added to --allow-net
+    // autoConfirm: false, // confirm yourself (default: confirmed once the window has loaded)
   },
 },`}
       </Code>
@@ -652,12 +653,9 @@ desktop: {
         {`// desktop.ts (the Deno process)
 import {
   checkForAppUpdate,
-  confirmAppUpdate,
   downloadAppUpdate,
   installAppUpdateAndRelaunch,
 } from "denext/desktop/updater";
-
-confirmAppUpdate(); // after an update: the app started fine (a no-op otherwise)
 
 const updates = { manifestUrl: "https://updates.example.com/myapp/app-update.json" };
 const found = await checkForAppUpdate(updates);
@@ -713,10 +711,18 @@ if (found.available) {
         A helper (the app&apos;s own executable in a hidden mode) waits for the app to exit, swaps
         the install (one atomic exchange on macOS and Linux, two renames on Windows), keeps the
         previous app as <code>&lt;name&gt;.old</code>{" "}
-        next to it and relaunches the new version. Call <code>confirmAppUpdate()</code>{" "}
-        once the new version is healthy: <code>.old</code>{" "}
-        is deleted. A version that is still unconfirmed when the app is next launched (it crashed or
-        never confirmed) is rolled back and refused from then on.
+        next to it and relaunches the new version. That first launch is a trial: once it is
+        confirmed, <code>.old</code>{" "}
+        is deleted, and a version that is still unconfirmed when the app is next launched (it
+        crashed or never confirmed) is rolled back and refused from then on. <code>runDesktop</code>
+        {" "}
+        confirms the trial for you as soon as the window has loaded (the page&apos;s{" "}
+        <code>load</code>{" "}
+        event reached the Deno process), so a version that crashes before its window renders still
+        rolls back. When your app has a better health check (its backend answered, the user is still
+        signed in), set <code>desktop.update.autoConfirm: false</code> and call{" "}
+        <code>confirmAppUpdate()</code> from <code>denext/desktop/updater</code>{" "}
+        yourself; it is a no-op when no update is pending, so it is safe on every launch.
       </p>
       <p>
         <strong>Where it cannot update.</strong>{" "}
