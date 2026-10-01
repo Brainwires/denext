@@ -212,3 +212,28 @@ Deno.test("bundleDesktopPreload: a missing module is a clear error", async () =>
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("writeDesktopPreload: the export step bundles desktop.preload into the out dir", async () => {
+  const { writeDesktopPreload } = await import("../src/build/desktop-preload.ts");
+  const { DESKTOP_PRELOAD_FILE } = await import("../src/desktop/preload.ts");
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      join(dir, "pre.ts"),
+      "(globalThis as Record<string, unknown>).p = 1;\n",
+    );
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    const out = join(dir, "out");
+    const paths = { projectDir: dir, configPath: join(dir, "deno.json") };
+    // No desktop.preload → nothing written.
+    await writeDesktopPreload({ ...paths, config: {} } as never, out);
+    assertEquals(await readDesktopPreload(join(out, DESKTOP_PRELOAD_FILE)), undefined);
+    await writeDesktopPreload(
+      { ...paths, config: { desktop: { preload: "pre.ts" } } } as never,
+      out,
+    );
+    assertStringIncludes((await readDesktopPreload(join(out, DESKTOP_PRELOAD_FILE)))!, "p");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

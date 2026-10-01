@@ -11,8 +11,10 @@
 
 import { dirname, fromFileUrl, join } from "@std/path";
 import { bundleFailureMessage, denoExecutable, minDepAgeArgs } from "./bundle.ts";
+import type { ProjectPaths } from "./paths.ts";
+import { DESKTOP_PRELOAD_FILE } from "../desktop/preload.ts";
 
-export { DESKTOP_PRELOAD_ENV, DESKTOP_PRELOAD_FILE } from "../desktop/preload.ts";
+export { DESKTOP_PRELOAD_ENV } from "../desktop/preload.ts";
 
 /** Inputs of {@linkcode bundleDesktopPreload}. */
 export interface DesktopPreloadBundle {
@@ -84,4 +86,24 @@ export async function bundleDesktopPreload(input: DesktopPreloadBundle): Promise
       `desktop.preload: ${bundleFailureMessage(code, new TextDecoder().decode(stderr))}`,
     );
   }
+}
+
+/**
+ * The export step: when `desktop.preload` is configured, bundle it (minified) into the export
+ * directory at {@link DESKTOP_PRELOAD_FILE}. Shared by the SPA and App Router exports.
+ *
+ * @param paths The project.
+ * @param outDir The export (staging) directory.
+ */
+export async function writeDesktopPreload(paths: ProjectPaths, outDir: string): Promise<void> {
+  const preload = paths.config?.desktop?.preload;
+  if (!preload) return;
+  console.log(`  desktop preload: bundling ${preload} -> ${DESKTOP_PRELOAD_FILE}`);
+  await bundleDesktopPreload({
+    projectDir: paths.projectDir,
+    preload,
+    configPath: paths.configPath,
+    outFile: join(outDir, DESKTOP_PRELOAD_FILE),
+    minify: true,
+  });
 }
