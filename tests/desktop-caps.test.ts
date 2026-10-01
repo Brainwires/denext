@@ -897,6 +897,34 @@ Deno.test("keepAwake: a new page load releases the previous page's holds", async
   assertEquals(stops, 2);
 });
 
+Deno.test("keepAwake: the Windows driver passes SetThreadExecutionState a valid u32", async () => {
+  const calls: number[] = [];
+  // deno-lint-ignore no-explicit-any
+  const d = Deno as any;
+  const original = d.dlopen;
+  d.dlopen = () => ({
+    symbols: {
+      SetThreadExecutionState: (flags: number) => {
+        // Deno FFI rejects anything outside [0, 2^32) for a u32 parameter.
+        if (!Number.isInteger(flags) || flags < 0 || flags > 0xffffffff) {
+          throw new TypeError("Invalid FFI u32 type, expected unsigned integer");
+        }
+        calls.push(flags);
+        return 0;
+      },
+    },
+    close: () => {},
+  });
+  try {
+    const cap = keepAwakeCapability({ os: "windows" });
+    const hold = await call(cap, "acquire", {}) as { id: string };
+    await call(cap, "release", { id: hold.id });
+  } finally {
+    d.dlopen = original;
+  }
+  assertEquals(calls, [0x80000003, 0x80000000]);
+});
+
 // --- secureStore -------------------------------------------------------------
 
 Deno.test("secureStoreCommand: per-OS argv; the secret is stdin on every OS, never argv", () => {

@@ -167,6 +167,9 @@ and this project adheres to
 
 ### Fixed
 
+- **Deno Desktop: `useKeepAwake` works on Windows.** The `keep-awake` capability passed
+  `SetThreadExecutionState` a negative number (a JS bitwise OR with bit 31 set), which Deno's FFI
+  rejects for a `u32`, so holding the screen awake always failed on Windows.
 - **React Native mode: `LayoutAnimation.configureNext` animates again.** Since 3.0.0 a second
   build hook for react-native-web's `UIManager` (the view-manager commands) shadowed the one that
   routes `configureNextLayoutAnimation` to denext's LayoutAnimation, so layout changes jumped
