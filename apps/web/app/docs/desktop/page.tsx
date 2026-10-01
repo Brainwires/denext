@@ -1254,6 +1254,45 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         the app, a deep link) are kept by the runtime and delivered to the first subscriber.
       </p>
 
+      <h3 id="desktop-node-api">Node-API addons</h3>
+      <p>
+        An extension can also load a Node-API addon: an npm package that ships a prebuilt{" "}
+        <code>.node</code>{" "}
+        per platform (the napi-rs and node-gyp-build packages: database drivers, hashing, image
+        codecs). It loads in the packaged app on macOS, Windows and Linux under denext&apos;s pinned
+        runtime, which on Windows gives the app&apos;s executable the <code>napi_*</code>{" "}
+        exports an addon looks for there. Import it in the extension (never in the page), and grant
+        {" "}
+        <code>ffi: ["*"]</code> in{" "}
+        <code>desktop.extraPermissions</code>: the packaged app loads the addon from its embedded
+        file system, whose path cannot be named at package time, so a path-scoped{" "}
+        <code>--allow-ffi</code> never matches it.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  capabilities: { extensions: ["./desktop/hash.ts"] },
+  extraPermissions: { ffi: ["*"] }, // the package scripts bake --allow-ffi
+},
+
+// desktop/hash.ts: runs in the Deno process only
+import { defineDesktopExtension } from "denext/desktop";
+import { crc32 } from "@node-rs/crc32"; // deno.json: "npm:@node-rs/crc32@1.10.8"
+export default defineDesktopExtension({
+  name: "hash",
+  methods: { crc32: { handler: (args) => crc32(String((args as { text?: unknown }).text)) } },
+});`}
+      </Code>
+      <p>
+        Package on each target OS: Deno resolves the host&apos;s prebuilt binary from the
+        package&apos;s per-platform dependencies, and the package script embeds it.{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/desktop-kitchen-sink">
+          examples/desktop-kitchen-sink
+        </a>{" "}
+        loads <code>@node-rs/crc32</code>{" "}
+        this way, and its window test checks it on all three OSes along with every other capability.
+      </p>
+
       <h2 id="desktop-runtime">The denext Deno Desktop runtime</h2>
       <p>
         <code>denext desktop run</code>, <code>dev</code>, <code>package</code> and the scaffolded
