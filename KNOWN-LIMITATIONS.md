@@ -608,11 +608,22 @@ four documented bounds of the opt-in:
 
 ### Deno Desktop capabilities (`denext desktop add`, `denext/desktop/client`)
 
-- **Browser storage does not survive a relaunch of a Deno Desktop app.** The runtime binds a new
-  loopback port each launch (denoland/deno#35444), so the page's origin changes and
-  `localStorage`, IndexedDB, OPFS and the Cache API start empty. `secureStore`, the file
-  functions and `openSqlite` persist only with their desktop capability enabled (`secure-store`,
-  `fs`, `sqlite`); without it they fall back to browser storage and warn once.
+- **Browser storage survives a relaunch only with a stable app origin.** With
+  `desktop.app.origin` and `desktop.app.identifier` set, denext's pinned Deno Desktop runtime
+  serves the page at that origin and keys web storage by the identifier, so `localStorage`
+  persists across launches (checked in packaged webview-backend apps on macOS, Linux and
+  Windows; IndexedDB, OPFS and the Cache API share the same store but were not checked one by
+  one). Without an origin, or under `DENEXT_DESKTOP_RUNTIME=stock`, the runtime binds a new
+  loopback port each launch (denoland/deno#35444), so the page's origin changes and browser
+  storage starts empty. `secureStore`, the file functions and `openSqlite` persist only with
+  their desktop capability enabled (`secure-store`, `fs`, `sqlite`); without it they fall back to
+  browser storage and warn once.
+- **The pinned Deno Desktop runtime needs Deno 2.9.7 exactly, and packages Windows only on
+  Windows.** `deno desktop` embeds the runtime, so another Deno version stops the build
+  (`deno upgrade --version 2.9.7`). Deno 2.9.7's CLI looks a prebuilt backend up with the
+  host's executable suffix, so a Windows bundle can't be built from macOS or Linux (nor a Linux
+  one from Windows) on the pinned runtime; `DENEXT_DESKTOP_RUNTIME=stock` cross-builds with the
+  stock runtime. There is no pinned Windows arm64 build.
 - **`context-menu`, `clipboard` and `notifications` are WebView-backed on desktop.** The desktop
   runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store` and
   your extensions; these three have no runtime capability, so `showContextMenu` is the in-page

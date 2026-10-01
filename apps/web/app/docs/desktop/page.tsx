@@ -852,6 +852,78 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         the app, a deep link) are kept by the runtime and delivered to the first subscriber.
       </p>
 
+      <h2 id="desktop-runtime">The denext Deno Desktop runtime</h2>
+      <p>
+        <code>denext desktop run</code>, <code>dev</code>, <code>package</code> and the scaffolded
+        {" "}
+        <code>scripts/package-*.ts</code>{" "}
+        build on denext&apos;s pinned Deno Desktop runtime: a prebuilt <code>libdenort</code>{" "}
+        and laufey backend hosts from{" "}
+        <a href="https://github.com/Brainwires/deno/releases">Brainwires/deno</a>{" "}
+        (Deno 2.9.7 plus the patches behind the stable app origin, per-app web storage, deep links
+        and single instance). Your stock <code>deno</code>{" "}
+        CLI does the build; denext points it at the runtime through <code>DENORT_DESKTOP_BIN</code>
+        {" "}
+        and <code>LAUFEY_DEV_DIR</code>.
+      </p>
+      <ul>
+        <li>
+          <strong>Deno 2.9.7 exactly.</strong> The runtime is built from Deno 2.9.7, and{" "}
+          <code>deno desktop</code>{" "}
+          embeds it, so any other version fails before the build with the fix:{" "}
+          <code>deno upgrade --version 2.9.7</code>.
+        </li>
+        <li>
+          <strong>Downloaded once, verified before use.</strong>{" "}
+          The archive for your target and backend (<code>desktop.backend</code> in{" "}
+          <code>deno.json</code>, <code>webview</code> by default, or{" "}
+          <code>cef</code>) is pinned in denext by URL, size and SHA-256. It streams to a temp file,
+          is refused the moment it outgrows its pinned size, and is extracted only after its size
+          and SHA-256 match. Extraction refuses absolute paths, <code>..</code>{" "}
+          entries, links that leave the directory and special files. The result moves into{" "}
+          <code>denext-desktop-runtime/&lt;version&gt;/&lt;target&gt;-&lt;backend&gt;/</code>{" "}
+          in Deno&apos;s cache (<code>DENO_DIR</code>, else its default) in one rename, with a
+          marker holding every file&apos;s size and SHA-256. Two builds at once are safe.
+        </li>
+        <li>
+          <strong>Offline after the first download.</strong>{" "}
+          A cached runtime is reused without the network (a size check against the marker;{" "}
+          <code>--verify-runtime</code>{" "}
+          re-hashes every file). With no cache and no network the build stops and says so.
+        </li>
+        <li>
+          <strong>Provenance, optionally.</strong> <code>--attest-runtime</code> also runs{" "}
+          <code>gh attestation verify</code>{" "}
+          on a fresh download (it needs the GitHub CLI; the SHA-256 pin is enforced either way).
+        </li>
+        <li>
+          <strong>Targets.</strong>{" "}
+          macOS (arm64, x86_64), Linux (x86_64, arm64) and Windows (x86_64), each with the{" "}
+          <code>webview</code> and <code>cef</code>{" "}
+          backends. The stock CLI finds a prebuilt backend with the host&apos;s executable suffix,
+          so a Windows app is packaged on Windows, and a Linux app on macOS or Linux.
+        </li>
+        <li>
+          <code>denext doctor</code>{" "}
+          reports the pinned runtime version, whether it is cached and verified for this machine,
+          and whether <code>deno</code> is the version it needs.
+        </li>
+      </ul>
+      <Code lang="sh">
+        {`DENEXT_DESKTOP_RUNTIME=stock denext desktop package   # the stock runtime (no app origin,
+                                                      # deep links or single instance)
+DENEXT_DESKTOP_RUNTIME_DIR=~/src/deno-runtime denext desktop run   # a local runtime build,
+                                                      # unverified (runtime development)`}
+      </Code>
+      <p>
+        An existing project adopts the runtime with{" "}
+        <code>denext desktop package --regenerate-scripts</code> (its scripts gain the{" "}
+        <code>desktopRuntimeEnv</code> call from <code>denext/desktop</code>). The baked{" "}
+        <code>--allow-*</code>{" "}
+        of the packaged app do not change: the download happens in the packaging script, not in the
+        app.
+      </p>
+
       <h2 id="desktop-app-origin">A stable app origin</h2>
       <p>
         The stock Deno Desktop runtime serves the window from{" "}
@@ -904,11 +976,18 @@ export default {
           <code>Origin</code> is the app origin.
         </li>
       </ul>
-      <Callout kind="warn">
-        The custom origin needs the denext-pinned Deno Desktop runtime. denext does not download it
-        yet, so today a packaged app runs on the stock runtime, which ignores the origin and serves
-        the window on a loopback port as before (the desktop entry logs that the origin is not in
-        effect). Nothing breaks either way: the security gates detect which runtime they are under.
+      <Callout kind="note">
+        The custom origin needs{" "}
+        <a href="#desktop-runtime">
+          denext&apos;s pinned Deno Desktop runtime
+        </a>, which <code>denext desktop</code>{" "}
+        and the package scripts use by default. A packaged app with an origin and an identifier
+        keeps its <code>localStorage</code>{" "}
+        across launches (checked on macOS, Linux and Windows with the webview backend). Under{" "}
+        <code>DENEXT_DESKTOP_RUNTIME=stock</code>{" "}
+        the stock runtime ignores the origin and serves the window on a loopback port (the desktop
+        entry logs that the origin is not in effect). Nothing breaks either way: the security gates
+        detect which runtime they are under.
       </Callout>
 
       <h2 id="desktop-security">Security model</h2>
