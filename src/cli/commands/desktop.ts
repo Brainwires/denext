@@ -8,6 +8,7 @@
 //   package  build a distributable app bundle — macOS (.app, signed/notarized), Linux
 //            (bundle → .tar.gz / AppImage) or Windows (.exe, Authenticode-signed when a
 //            cert is supplied); `--target-os` cross-builds everything but macOS.
+//   publish-update  pack a packaged app into a signed full-app update (archive + app-update.json)
 //
 // `run`/`build`/`package` serve a static export over loopback. `dev` is the desktop half of
 // dev-server attach (the Metro model): the window proxies to `denext dev` so the CSP and the dev
@@ -26,6 +27,7 @@ import { DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
+import { desktopPublishUpdate, PUBLISH_UPDATE_FLAGS } from "./desktop-publish-update.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import {
@@ -64,9 +66,11 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
     "  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n" +
     "  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS\n" +
-    "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template",
+    "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
+    "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
+    "                                         Sign a full-app update (archive + app-update.json)",
   positionals: [
-    { name: "action", help: "run | build | dev | package (default: run)" },
+    { name: "action", help: "run | build | dev | package | publish-update (default: run)" },
     { name: "dir", help: "Project directory (default: .)" },
   ],
   flags: [
@@ -120,6 +124,7 @@ export const desktopCommand: CommandSpec = {
         "`gh attestation verify` (DENEXT_DESKTOP_RUNTIME_ATTEST=1; needs gh)",
     },
     ...DESKTOP_ADD_FLAGS,
+    ...PUBLISH_UPDATE_FLAGS,
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0] ?? "run";
@@ -133,8 +138,10 @@ export const desktopCommand: CommandSpec = {
     if (action === "dev") return await runDesktopDevSession(ctx, dir, entry);
     if (action === "package") return await packageDesktop(ctx, dir);
     if (action === "add") return await desktopAdd(ctx);
+    if (action === "publish-update") return await desktopPublishUpdate(ctx, dir);
     console.error(
-      `denext desktop: unknown action "${action}" (expected run | build | dev | package).`,
+      `denext desktop: unknown action "${action}" (expected run | build | dev | package | ` +
+        `publish-update).`,
     );
     Deno.exit(1);
   },

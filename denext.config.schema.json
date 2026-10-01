@@ -1434,6 +1434,27 @@
               }
             }
           }
+        },
+        "update": {
+          "description": "Full-app self-update (`checkForAppUpdate` … from `denext/desktop/updater`): the whole signed app is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime.",
+          "type": "object",
+          "properties": {
+            "publicKey": {
+              "description": "The public half of the release signing key, baked into the packaged app (it goes into `.deno-desktop/app.json`): every update manifest must be signed by the matching private key, and there is no unsigned path. The `denext ota keygen` format: base64 SPKI (the `.pub` file) or a `PUBLIC KEY` PEM of an ECDSA P-256 key.",
+              "type": "string"
+            },
+            "manifestUrl": {
+              "description": "The signed manifest's https URL (what `denext desktop publish-update` writes). Its host is added to the packaged app's `--allow-net`, so the app can reach it.",
+              "type": "string"
+            },
+            "hosts": {
+              "description": "Other hosts the update downloads come from (the archive host, a CDN a redirect goes to), added to the packaged app's `--allow-net`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },

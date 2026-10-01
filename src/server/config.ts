@@ -822,6 +822,32 @@ export interface DesktopConfig {
    * `denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script).
    */
   extraPermissions?: DesktopExtraPermissions;
+  /**
+   * Full-app self-update (`checkForAppUpdate` … from `denext/desktop/updater`): the whole signed
+   * app is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime.
+   */
+  update?: DesktopUpdateConfig;
+}
+
+/** {@link DesktopConfig.update}: full-app self-update. */
+export interface DesktopUpdateConfig {
+  /**
+   * The public half of the release signing key, baked into the packaged app (it goes into
+   * `.deno-desktop/app.json`): every update manifest must be signed by the matching private key,
+   * and there is no unsigned path. The `denext ota keygen` format: base64 SPKI (the `.pub` file) or
+   * a `PUBLIC KEY` PEM of an ECDSA P-256 key.
+   */
+  publicKey?: string;
+  /**
+   * The signed manifest's https URL (what `denext desktop publish-update` writes). Its host is added
+   * to the packaged app's `--allow-net`, so the app can reach it.
+   */
+  manifestUrl?: string;
+  /**
+   * Other hosts the update downloads come from (the archive host, a CDN a redirect goes to), added
+   * to the packaged app's `--allow-net`.
+   */
+  hosts?: string[];
 }
 
 /** A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}). */

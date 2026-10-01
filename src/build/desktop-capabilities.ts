@@ -328,6 +328,8 @@ interface DesktopFlagConfig {
      * extension's own permissions, or any need the catalog can't see); `--regenerate-scripts`
      * preserves it because it lives in the config. */
     readonly extraPermissions?: DesktopPermissionSet;
+    /** Full-app self-update: its manifest host and extra hosts need `--allow-net`. */
+    readonly update?: { readonly manifestUrl?: unknown; readonly hosts?: unknown };
   };
   readonly spa?: {
     readonly proxy?: { readonly target?: unknown; readonly allowNonLoopback?: unknown };
@@ -347,6 +349,23 @@ function proxyNetHost(
   } catch {
     return undefined;
   }
+}
+
+/** The hosts full-app self-update fetches from: the manifest URL's host plus `update.hosts`. */
+function updateNetHosts(
+  update: { manifestUrl?: unknown; hosts?: unknown } | undefined,
+): string[] {
+  const hosts: string[] = [];
+  if (typeof update?.manifestUrl === "string") {
+    try {
+      const host = new URL(update.manifestUrl).hostname;
+      if (host) hosts.push(host);
+    } catch { /* an invalid URL is the config validator's to report */ }
+  }
+  if (Array.isArray(update?.hosts)) {
+    for (const h of update.hosts) if (typeof h === "string" && h) hosts.push(h);
+  }
+  return hosts;
 }
 
 const kindOfFlag = (flag: string): string => flag.split("=", 1)[0];
@@ -385,7 +404,8 @@ function bakeableSets(
  *   single broad `--allow-write` when any capability writes (a per-user path can't be baked; the
  *   runtime cap layer confines it);
  * - a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only
- *   the last `--allow-net`, so every host is one flag);
+ *   the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts
+ *   (`desktop.update.manifestUrl`'s and `desktop.update.hosts`);
  * - `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's
  *   feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED
  *   in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.
@@ -406,6 +426,7 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
   const net = new Set<string>(["127.0.0.1", "localhost", ...(extra.net ?? [])]);
   const proxyHost = proxyNetHost(cfg.spa?.proxy);
   if (proxyHost) net.add(proxyHost);
+  for (const host of updateNetHosts(cfg.desktop?.update)) net.add(host);
 
   const { run, ffi, sys } = bakeableSets(capFlags, extra);
   // write: broad when a capability writes or extraPermissions asks (per-user paths can't be baked).

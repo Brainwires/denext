@@ -2,7 +2,8 @@
 // the app at its configured origin with per-app storage:
 //
 //   .deno-desktop/app.json   `{ "origin", "identifier", "deepLinks", "singleInstance" }` from
-//                            `desktop.app` in denext.config.ts,
+//                            `desktop.app` in denext.config.ts, and `"update": { "publicKey" }`
+//                            (full-app self-update's baked key) from `desktop.update`,
 //                            embedded into the binary through deno.json `compile.include` (the path
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
 //   laufey-launch.json       the webview backend's launch settings (`appId`, `customSchemes`,
@@ -22,6 +23,7 @@ import {
   parseDesktopAppOrigin,
 } from "../desktop/app-origin.ts";
 import type { DesktopOs } from "./desktop-capabilities.ts";
+import { parseOtaPublicKey } from "./ota-signing.ts";
 
 /** Where the runtime looks for the embedded origin + identifier, relative to the project root. */
 export const DESKTOP_APP_CONFIG_FILE = ".deno-desktop/app.json";
@@ -252,12 +254,15 @@ async function writeJsonEdit(
  * itself is `laufey-launch.json`'s). The identifier rides along whenever it is valid, since the
  * runtime needs it to register schemes on Linux and next to `singleInstance`.
  */
-function appJsonBody(config: unknown): Record<string, unknown> | null {
+function appJsonBody(
+  config: unknown,
+  updatePublicKey?: string,
+): Record<string, unknown> | null {
   const identity = desktopAppIdentity(config);
   const app = appBlock(config);
   const deepLinks = normalizeDesktopDeepLinks(app?.deepLinks);
   const single = typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined;
-  if (!identity && deepLinks.length === 0 && single === undefined) return null;
+  if (!identity && deepLinks.length === 0 && single === undefined && !updatePublicKey) return null;
   const id = identity?.identifier ?? app?.identifier;
   const identifier = typeof id === "string" && desktopAppIdentifierError(id) === null
     ? id
@@ -267,7 +272,37 @@ function appJsonBody(config: unknown): Record<string, unknown> | null {
     ...(identifier ? { identifier } : {}),
     ...(deepLinks.length > 0 ? { deepLinks } : {}),
     ...(single !== undefined && identifier ? { singleInstance: single } : {}),
+    ...(updatePublicKey ? { update: { publicKey: updatePublicKey } } : {}),
   };
+}
+
+/**
+ * `desktop.update.publicKey`, normalized to one-line base64 SPKI, or `undefined` when unset.
+ * Throws when it is not an ECDSA P-256 public key, or when the app has no valid identifier (every
+ * update manifest names the app it is for).
+ */
+async function desktopUpdatePublicKey(config: unknown): Promise<string | undefined> {
+  const update = (config as { desktop?: { update?: { publicKey?: unknown } } } | undefined)
+    ?.desktop?.update;
+  const raw = update?.publicKey;
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error("desktop.update.publicKey must be a non-empty string");
+  }
+  const id = appBlock(config)?.identifier;
+  if (typeof id !== "string" || desktopAppIdentifierError(id) !== null) {
+    throw new Error(
+      "desktop.update.publicKey needs desktop.app.identifier (a reverse-DNS id): every update " +
+        "manifest names the app it is for",
+    );
+  }
+  try {
+    return await parseOtaPublicKey(raw);
+  } catch (err) {
+    throw new Error(
+      `invalid desktop.update.publicKey: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 /** Write (or remove) `.deno-desktop/app.json`, never through a symlink. */
@@ -334,7 +369,7 @@ export async function syncDesktopAppConfigAt(
   root: string,
   config: unknown,
 ): Promise<DesktopAppSyncReport> {
-  const body = appJsonBody(config);
+  const body = appJsonBody(config, await desktopUpdatePublicKey(config));
   const appJson = await syncAppJson(root, body);
   const include = await syncInclude(root, body !== null);
   if (body && include === "no-deno-json") {
