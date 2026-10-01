@@ -50,7 +50,7 @@ import {
 } from "../desktop/window-config.ts";
 
 /** The per-launch picked-path set (re-exported so {@linkcode RunDesktopOptions} is documentable). */
-export type { PickedPaths } from "../desktop/picked-paths.ts";
+export type { PickedPaths, PickedTarget, PickMode } from "../desktop/picked-paths.ts";
 /** The app's own folders (re-exported so {@linkcode RunDesktopOptions} is documentable). */
 export type { DesktopAppDirs } from "../desktop/app-dirs.ts";
 /** The initial-window settings `runDesktop` applies (`desktop.window`, `desktop.titleBar`, …). */

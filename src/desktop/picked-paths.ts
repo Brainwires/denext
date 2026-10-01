@@ -53,6 +53,7 @@ export class PickedPaths {
   readonly #entries = new Map<string, { realPath: string; mode: PickMode }>();
   readonly #max: number;
 
+  /** A handle table that keeps at most `max` handles, dropping the oldest past it. */
   constructor(max: number = DEFAULT_MAX) {
     this.#max = max;
   }
