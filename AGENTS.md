@@ -389,7 +389,11 @@ The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `m
 `startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
 `desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position and title
 need the pinned runtime (`unsupported` elsewhere; ask `windowCapabilities()`). React Native desktop
-`View`'s `mouseDownCanMoveWindow`, `allowsVibrancy` and `draggedTypes` + `onDrop` work in the window. Packaging is least-privilege: `scripts/package-*.ts` derive
+`View`'s `mouseDownCanMoveWindow`, `allowsVibrancy` and `draggedTypes` + `onDrop` work in the window. Node-API addons (an npm package's prebuilt `.node`) load in a
+packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtension` module and set
+`desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
+confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
+leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A`, and
 `denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
 a diff for each changed file).
