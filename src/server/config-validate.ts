@@ -218,6 +218,15 @@ function validateDesktopOrigin(app: Record<string, unknown>, fail: Fail): void {
   if (idError) fail("desktop.app.identifier", `is invalid: ${idError}`);
 }
 
+/** `desktop.capabilities.passkeys.rpIds`: relying-party ID strings. */
+function validatePasskeys(passkeys: unknown, fail: Fail): void {
+  const rpIds = isPlainObject(passkeys) ? passkeys.rpIds : undefined;
+  if (rpIds === undefined) return;
+  if (!Array.isArray(rpIds) || !rpIds.every((id) => typeof id === "string" && id !== "")) {
+    fail("desktop.capabilities.passkeys.rpIds", "must be an array of RP ID strings");
+  }
+}
+
 /** `desktop.app.deepLinks`: bare custom URL schemes. */
 function validateDeepLinks(deepLinks: unknown, fail: Fail): void {
   if (deepLinks === undefined) return;
@@ -312,7 +321,8 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
       c.extensions.every((p) => typeof p === "string" && p !== "");
     if (!ok) fail("desktop.capabilities.extensions", "must be an array of module paths");
   }
-  for (const key of ["fs", "shell"]) {
+  validatePasskeys(c.passkeys, fail);
+  for (const key of ["fs", "shell", "passkeys"]) {
     const v = c[key];
     const ok = v === undefined || typeof v === "boolean" ||
       (typeof v === "object" && v !== null && !Array.isArray(v));

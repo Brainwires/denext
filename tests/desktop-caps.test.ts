@@ -34,6 +34,7 @@ import {
   secureStoreCapability,
   secureStoreCommand,
 } from "../src/desktop/caps/secure-store.ts";
+import { passkeysCapability } from "../src/desktop/caps/passkeys.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
 import {
   DIALOG_NAME_ENV,
@@ -1534,6 +1535,7 @@ const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
 /** Build each catalog cap's runtime twin for `os` (injected no-op backends; nothing spawns). */
 const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
   device: () => deviceCapability,
+  passkeys: (os) => passkeysCapability({ os }),
   fs: () => {
     const all = DESKTOP_CAPABILITIES.fs.all!;
     return fsCapability({ dirs: DRIFT_DIRS, read: new Set(all.read), write: new Set(all.write) });

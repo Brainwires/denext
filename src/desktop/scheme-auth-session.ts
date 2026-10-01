@@ -1,0 +1,364 @@
+/**
+ * Deno Desktop OAuth sign-in with a CUSTOM-SCHEME callback (`myapp://auth/callback`), runtime side:
+ * open the system browser at the authorization URL, then wait for the callback to come back as a
+ * deep link ({@link ./launch-events.ts}). The loopback-redirect flow
+ * ({@link ./auth-session-runtime.ts}) stays the default; this one exists for providers whose
+ * redirect allowlist holds the app's scheme (Clerk's native flow, most mobile-style OAuth apps).
+ *
+ * AUTH-CRITICAL. A custom scheme is not owned by anyone: any program of the same user can register
+ * itself for it and receive the callback (RFC 8252 §8.6). The defences, in order, all failing
+ * closed:
+ *
+ * 1. The scheme must be declared in `desktop.app.deepLinks` (`scheme_not_declared`).
+ * 2. PKCE S256 is mandatory: the URL carries `code_challenge` and `code_challenge_method=S256`
+ *    (`pkce_required`), so an intercepted `code` is useless without the verifier the app kept.
+ *    The only exception is an explicit `pkce: "not-applicable"` with a `reason`, for a provider
+ *    that binds the callback to the initiating client some other way (see `denext/desktop/clerk`).
+ * 3. The callback must match the expected target EXACTLY: scheme, host and path of the URL's own
+ *    `redirect_uri` when that is a `<scheme>:` URL, else of the `callbackPrefix` the caller gives.
+ * 4. `state` round-trips: when the target is the URL's `redirect_uri`, the URL's `state` (if any)
+ *    must come back byte for byte; with a `callbackPrefix` (the URL's redirect goes to another hop)
+ *    the caller's `state` option (if any). A callback for the target with a missing or different
+ *    `state` is swallowed — it neither resolves the session nor reaches the page's routes — and the
+ *    session keeps waiting.
+ * 5. Who handles the scheme is checked before the browser opens (`Deno.desktop.getSchemeOwner`):
+ *    `none` → register (never forced) and re-check; `other` → refuse with
+ *    `scheme_owned_by_other_app` (+ the handler, for display) so the caller falls back to the
+ *    loopback flow or asks the user, who may then call `claimDeepLinkScheme`. This is advisory —
+ *    any same-user program may re-register at any time — which is why 2–4 are the real defence.
+ * 6. One session at a time (`session_in_progress`), a timeout (10 minutes by default), and
+ *    `cancel` (the page's `AbortSignal`; the system browser on Windows and Linux reports no
+ *    cancellation, so the page's cancel and the timeout are the only ends there). A page reload
+ *    cancels the session of the page that started it.
+ *
+ * The callback URL is consumed here BEFORE the deep-link routing, so it never reaches `onDeepLink`
+ * or the page's router. Nothing here logs a URL (they carry codes and states).
+ *
+ * Runtime-only (imported by `runDesktop`, never a client bundle).
+ *
+ * @module
+ */
+
+import { type DesktopCapability, DesktopCapError } from "./extension.ts";
+import type { DesktopAppApi } from "./launch-events.ts";
+
+/** The default session timeout: 10 minutes. */
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
+/** The longest timeout a caller may ask for: 1 hour. */
+const MAX_TIMEOUT_MS = 60 * 60_000;
+/** The longest `reason` kept for a `pkce: "not-applicable"` session. */
+const MAX_REASON_CHARS = 500;
+
+/** Where a callback must land: scheme, host and path (compared exactly). */
+interface Target {
+  readonly protocol: string;
+  readonly host: string;
+  readonly path: string;
+}
+
+/** The validated arguments of a `start` call. */
+interface StartRequest {
+  readonly url: string;
+  readonly scheme: string;
+  readonly target: Target;
+  /** The `state` the callback must carry, or `null` when none is expected. */
+  readonly state: string | null;
+  readonly timeoutMs: number;
+}
+
+/** The open session. */
+interface Pending {
+  readonly target: Target;
+  readonly state: string | null;
+  readonly resolve: (url: string) => void;
+  readonly reject: (err: DesktopCapError) => void;
+}
+
+/** Options for {@linkcode createSchemeAuthSessions}. */
+export interface SchemeAuthOptions {
+  /** The declared deep-link schemes (`desktop.app.deepLinks`), lower-case. */
+  readonly schemes: readonly string[];
+  /** The runtime's app API (`Deno.desktop`), for the scheme owner check. */
+  readonly api?: DesktopAppApi;
+  /** Open the system browser (default: the loopback flow's argv-only opener). */
+  readonly openBrowser: (url: string) => Promise<void> | void;
+}
+
+/** What {@linkcode createSchemeAuthSessions} returns. */
+export interface SchemeAuthSessions {
+  /** The `authSession` bridge capability: `start` and `cancel`. */
+  readonly capability: DesktopCapability;
+  /**
+   * Offer an incoming deep link: `true` when it belongs to the open session (it resolved it, or it
+   * was a callback for the session's target with a bad `state` and was swallowed), so it must not
+   * be routed to the page.
+   */
+  claim(url: string): boolean;
+}
+
+/** An `invalid` (400) error. */
+function invalid(message: string): DesktopCapError {
+  return new DesktopCapError("invalid", message);
+}
+
+/** The scheme / host / path of `url` (an empty path reads `/`), or `undefined` when unparseable. */
+function targetOf(url: string): Target | undefined {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return undefined;
+  }
+  return {
+    protocol: u.protocol.toLowerCase(),
+    host: u.host.toLowerCase(),
+    path: u.pathname === "" ? "/" : u.pathname,
+  };
+}
+
+/** Whether `a` and `b` are the same callback target. */
+function sameTarget(a: Target, b: Target): boolean {
+  return a.protocol === b.protocol && a.host === b.host && a.path === b.path;
+}
+
+/** A string field of the args, or `undefined`; a present non-string is `invalid`. */
+function optString(args: Record<string, unknown>, key: string): string | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "string") throw invalid(`${key} must be a string`);
+  return v;
+}
+
+/** The declared callback scheme, normalized, or `scheme_not_declared`. */
+function checkScheme(schemes: readonly string[], raw: unknown): string {
+  const scheme = typeof raw === "string" ? raw.toLowerCase() : "";
+  if (!/^[a-z][a-z0-9+.-]*$/.test(scheme) || !schemes.includes(scheme)) {
+    throw new DesktopCapError(
+      "scheme_not_declared",
+      `the callback scheme "${String(raw)}" is not declared in desktop.app.deepLinks`,
+    );
+  }
+  return scheme;
+}
+
+/** The authorization URL: absolute `https:`. */
+function checkAuthUrl(raw: unknown): URL {
+  let url: URL | undefined;
+  try {
+    url = typeof raw === "string" ? new URL(raw) : undefined;
+  } catch {
+    url = undefined;
+  }
+  if (url?.protocol !== "https:" || url.hostname === "") {
+    throw invalid("url must be an absolute https: URL");
+  }
+  return url;
+}
+
+/**
+ * The callback target and whether it is the URL's own `redirect_uri` (rule 3 in the module docs).
+ * A `redirect_uri` with the callback scheme wins; a `callbackPrefix` that disagrees with it is
+ * `invalid`; with neither there is no target (`invalid`).
+ */
+function resolveTarget(
+  url: URL,
+  scheme: string,
+  callbackPrefix: string | undefined,
+): { target: Target; fromRedirect: boolean } {
+  const redirect = url.searchParams.get("redirect_uri");
+  const fromRedirect = redirect !== null ? targetOf(redirect) : undefined;
+  const prefix = callbackPrefix !== undefined ? targetOf(callbackPrefix) : undefined;
+  if (callbackPrefix !== undefined && prefix?.protocol !== `${scheme}:`) {
+    throw invalid(`callbackPrefix must be a ${scheme}: URL`);
+  }
+  if (fromRedirect?.protocol === `${scheme}:`) {
+    if (prefix && !sameTarget(prefix, fromRedirect)) {
+      throw invalid("callbackPrefix does not match the URL's redirect_uri");
+    }
+    return { target: fromRedirect, fromRedirect: true };
+  }
+  if (prefix) return { target: prefix, fromRedirect: false };
+  throw invalid(
+    `no callback target: the URL's redirect_uri is not a ${scheme}: URL and no callbackPrefix was given`,
+  );
+}
+
+/** Rule 2: PKCE S256 in the URL, unless explicitly not applicable with a reason. */
+function checkPkce(url: URL, args: Record<string, unknown>): void {
+  const pkce = optString(args, "pkce");
+  if (pkce !== undefined && pkce !== "not-applicable") {
+    throw invalid('pkce must be "not-applicable" when given');
+  }
+  if (pkce === "not-applicable") {
+    const reason = optString(args, "reason")?.trim() ?? "";
+    if (reason === "" || reason.length > MAX_REASON_CHARS) {
+      throw invalid('pkce: "not-applicable" needs a reason (why the provider binds the callback)');
+    }
+    return;
+  }
+  const challenge = url.searchParams.get("code_challenge") ?? "";
+  if (challenge === "" || url.searchParams.get("code_challenge_method") !== "S256") {
+    throw new DesktopCapError(
+      "pkce_required",
+      "a custom-scheme callback needs PKCE: the URL must carry code_challenge and " +
+        "code_challenge_method=S256",
+    );
+  }
+}
+
+/** The timeout: absent → the default; else a positive finite number of ms up to an hour. */
+function checkTimeout(raw: unknown): number {
+  if (raw === undefined || raw === null) return DEFAULT_TIMEOUT_MS;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0 || raw > MAX_TIMEOUT_MS) {
+    throw invalid(`timeoutMs must be a positive number of ms up to ${MAX_TIMEOUT_MS}`);
+  }
+  return raw;
+}
+
+/** Validate a `start` call (rules 1–4 of the module docs), failing closed. */
+export function parseSchemeAuthStart(schemes: readonly string[], raw: unknown): StartRequest {
+  if (typeof raw !== "object" || raw === null) throw invalid("arguments must be an object");
+  const args = raw as Record<string, unknown>;
+  const scheme = checkScheme(schemes, args.callbackScheme);
+  const url = checkAuthUrl(args.url);
+  const { target, fromRedirect } = resolveTarget(url, scheme, optString(args, "callbackPrefix"));
+  checkPkce(url, args);
+  const state = fromRedirect ? url.searchParams.get("state") : optString(args, "state") ?? null;
+  return { url: url.href, scheme, target, state, timeoutMs: checkTimeout(args.timeoutMs) };
+}
+
+/**
+ * Rule 5: make sure this app handles `scheme` before a callback is sent to it. `none` → register
+ * (never forced) and re-check; `other` → `scheme_owned_by_other_app`; still not ours →
+ * `scheme_not_registered`. A runtime without owner detection fails closed (`unsupported`).
+ */
+async function ensureSchemeOwner(api: DesktopAppApi | undefined, scheme: string): Promise<void> {
+  const getOwner = api?.getSchemeOwner;
+  if (typeof getOwner !== "function") {
+    throw new DesktopCapError(
+      "unsupported",
+      "this Deno Desktop runtime cannot tell which app handles the callback scheme " +
+        "(Deno.desktop.getSchemeOwner): use the loopback flow, or denext's pinned runtime",
+      { status: 501 },
+    );
+  }
+  let info = await getOwner.call(api, scheme);
+  if (info.owner === "none" && typeof api?.registerScheme === "function") {
+    await api.registerScheme(scheme);
+    info = await getOwner.call(api, scheme);
+  }
+  if (info.owner === "other") {
+    throw new DesktopCapError(
+      "scheme_owned_by_other_app",
+      `another app handles ${scheme}: links, so the callback would go to it`,
+      { status: 409, data: info.handler ? { handler: info.handler } : {} },
+    );
+  }
+  if (info.owner !== "self") {
+    throw new DesktopCapError(
+      "scheme_not_registered",
+      `this app could not register itself for ${scheme}: links (an unpackaged dev run?)`,
+      { status: 409 },
+    );
+  }
+}
+
+/**
+ * Create the custom-scheme auth sessions: the `authSession` bridge capability and the claim hook
+ * the launch router offers every incoming deep link to first.
+ *
+ * @param options The declared schemes, the runtime's app API and the browser opener.
+ * @returns The sessions.
+ */
+export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuthSessions {
+  const schemes = options.schemes.map((s) => s.toLowerCase());
+  let busy = false;
+  let pending: Pending | undefined;
+  /** A cancel that arrived while the session was still starting (the owner check). */
+  let cancelEarly = false;
+
+  const cancelPending = (code: string, message: string, status: number): boolean => {
+    const open = pending;
+    if (!open) {
+      if (busy) cancelEarly = true;
+      return busy;
+    }
+    pending = undefined;
+    open.reject(new DesktopCapError(code, message, { status }));
+    return true;
+  };
+
+  const run = (req: StartRequest): Promise<string> =>
+    new Promise<string>((resolve, reject) => {
+      if (cancelEarly) {
+        reject(new DesktopCapError("cancelled", "the sign-in was cancelled", { status: 499 }));
+        return;
+      }
+      const timer = setTimeout(
+        () => cancelPending("timeout", "no callback within the timeout", 408),
+        req.timeoutMs,
+      );
+      const settle = () => clearTimeout(timer);
+      pending = {
+        target: req.target,
+        state: req.state,
+        resolve: (url) => (settle(), resolve(url)),
+        reject: (err) => (settle(), reject(err)),
+      };
+      // Fire-and-forget like the loopback flow, but a failed launch ends the session.
+      Promise.resolve().then(() => options.openBrowser(req.url)).catch(() =>
+        cancelPending("unsupported", "the system browser could not be opened", 500)
+      );
+    });
+
+  const start = async (args: unknown): Promise<{ url: string }> => {
+    const req = parseSchemeAuthStart(schemes, args);
+    if (busy) {
+      throw new DesktopCapError(
+        "session_in_progress",
+        "another desktop auth session is still open",
+        { status: 409 },
+      );
+    }
+    busy = true;
+    cancelEarly = false;
+    try {
+      await ensureSchemeOwner(options.api, req.scheme);
+      return { url: await run(req) };
+    } finally {
+      busy = false;
+      cancelEarly = false;
+      pending = undefined;
+    }
+  };
+
+  return {
+    capability: {
+      name: "authSession",
+      methods: {
+        // The session runs as long as its own timeout (≤ 1 h); the bridge deadline is off.
+        start: { timeoutMs: false, handler: start },
+        cancel: {
+          handler: () => ({
+            cancelled: cancelPending("cancelled", "the sign-in was cancelled", 499),
+          }),
+        },
+      },
+      // The page that started the session is gone: end it rather than hand the callback to a
+      // page that is not waiting for it.
+      onPageLoad: () => void cancelPending("cancelled", "the page was reloaded", 499),
+    },
+    claim: (url) => {
+      const open = pending;
+      if (!open) return false;
+      const got = targetOf(url);
+      if (!got || !sameTarget(got, open.target)) return false;
+      if (open.state !== null && new URL(url).searchParams.get("state") !== open.state) {
+        return true; // a forged / stale callback for our target: swallowed, keep waiting
+      }
+      pending = undefined;
+      open.resolve(url);
+      return true;
+    },
+  };
+}

@@ -141,6 +141,23 @@ export function desktopSchemeError(scheme: string): string | null {
 }
 
 /**
+ * `desktop.app.deepLinks` validated (each a {@linkcode desktopSchemeError}-clean scheme) and
+ * lower-cased, or `[]` when unset. Throws on a non-array or an invalid scheme.
+ *
+ * @param raw The configured value.
+ * @returns The schemes.
+ */
+export function normalizeDesktopDeepLinks(raw: unknown): string[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error("desktop.app.deepLinks must be an array");
+  return raw.map((scheme) => {
+    const err = typeof scheme === "string" ? schemeError(scheme) : "must be a string";
+    if (err) throw new Error(`invalid desktop.app.deepLinks scheme: ${err}`);
+    return (scheme as string).toLowerCase();
+  });
+}
+
+/**
  * Validate a reverse-DNS app identifier as the runtime does (Apple's `CFBundleIdentifier` rules:
  * ASCII letters, digits, `-` and `.`, at least one dot, no empty segment, at most 155 characters).
  * An identifier that passes is also a valid laufey app id (`[A-Za-z0-9._-]+`).

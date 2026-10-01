@@ -103,7 +103,6 @@ function isLoopbackRedirect(uri: string): boolean {
   return u.hostname === "127.0.0.1" || u.hostname === "[::1]" || u.hostname === "localhost";
 }
 
-/** Default `openBrowser`: hand the URL to the OS browser as an argv arg — never a shell string. */
 /**
  * The launcher command + argv to open `url` in the default browser, per OS. The URL is ALWAYS a
  * single argv entry, never a shell string. On Windows this must NOT be `cmd /c start <url>`:
@@ -118,7 +117,13 @@ export function browserLaunchArgs(os: typeof Deno.build.os, url: string): [strin
   return ["xdg-open", [url]];
 }
 
-async function defaultOpenBrowser(url: string): Promise<void> {
+/**
+ * Open `url` in the system browser: the per-OS launcher of {@linkcode browserLaunchArgs}, the URL
+ * as one argv entry, never a shell string. The default opener of both desktop auth-session flows.
+ *
+ * @param url The authorization URL.
+ */
+export async function defaultOpenBrowser(url: string): Promise<void> {
   const [cmd, args] = browserLaunchArgs(Deno.build.os, url);
   await new Deno.Command(cmd, { args, stdout: "null", stderr: "null" }).output();
 }

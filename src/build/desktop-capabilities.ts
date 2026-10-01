@@ -241,6 +241,18 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     trust: "scoped",
     notes: "OS name and release",
   },
+  passkeys: {
+    key: "passkeys",
+    value: true,
+    api: ["installClerkDesktopBridge (denext/desktop/clerk)"],
+    // A runtime API (Deno.desktop.passkeys), no --allow-* of its own.
+    trust: "none",
+    notes: "native passkeys: macOS Touch ID / iCloud Keychain, Windows Hello (pinned runtime)",
+    manual: [
+      "passkeys: macOS needs the associated-domains entitlement (webcredentials:<rp-id>) with a provisioning profile, and the RP's apple-app-site-association must list <TeamID>.<bundle id>; otherwise every request is invalid_rp.",
+      "passkeys: pin the relying parties with desktop.capabilities.passkeys = { rpIds: [...] } (on Windows nothing else ties the RP ID to the app). Linux has no native passkeys.",
+    ],
+  },
 };
 
 /** A capability name as typed (`secure-store`, or its config key `secureStore`) → its table name. */

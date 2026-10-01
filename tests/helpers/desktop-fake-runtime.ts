@@ -95,8 +95,12 @@ export function createFakeDesktopRuntime(
     try {
       return json(200, { ok: true, data: (await impl(args)) ?? null });
     } catch (err) {
-      const e = err as { code?: string; message?: string };
-      return fail(400, e.code ?? "internal", e.message ?? "failed");
+      const e = err as { code?: string; message?: string; data?: unknown };
+      if (e.data === undefined) return fail(400, e.code ?? "internal", e.message ?? "failed");
+      return json(400, {
+        ok: false,
+        error: { code: e.code ?? "internal", message: e.message ?? "failed", data: e.data },
+      });
     }
   }
 

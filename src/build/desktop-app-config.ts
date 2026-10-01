@@ -1,7 +1,8 @@
 // The per-app files the desktop packager writes so the denext-pinned Deno Desktop runtime serves
 // the app at its configured origin with per-app storage:
 //
-//   .deno-desktop/app.json   `{ "origin", "identifier" }` from `desktop.app` in denext.config.ts,
+//   .deno-desktop/app.json   `{ "origin", "identifier", "deepLinks", "singleInstance" }` from
+//                            `desktop.app` in denext.config.ts,
 //                            embedded into the binary through deno.json `compile.include` (the path
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
 //   laufey-launch.json       the webview backend's launch settings (`appId`, `customSchemes`,
@@ -16,6 +17,7 @@
 import { dirname, fromFileUrl, join } from "@std/path";
 import {
   desktopAppIdentifierError,
+  normalizeDesktopDeepLinks,
   originWithoutIdentifierMessage,
   parseDesktopAppOrigin,
 } from "../desktop/app-origin.ts";
@@ -174,6 +176,8 @@ export interface DesktopAppSyncReport {
   readonly appJson: "written" | "unchanged" | "removed" | "none";
   /** `compile.include` in deno.json: updated, already right, or no deno.json to edit. */
   readonly include: "updated" | "unchanged" | "no-deno-json";
+  /** deno.json `desktop.app.deepLinks` (present only when deep links are configured). */
+  readonly deepLinks?: "updated" | "unchanged" | "no-deno-json";
 }
 
 /** Whether `path` is a symbolic link (a missing path is not). */
@@ -227,16 +231,49 @@ async function syncInclude(root: string, want: boolean): Promise<DesktopAppSyncR
   const edited = next.length > 0
     ? await setJsonValue(source, ["compile", "include"], next)
     : await deleteJsonValue(source, onlyInclude ? ["compile"] : ["compile", "include"]);
+  await writeJsonEdit(path, edited);
+  return "updated";
+}
+
+/** Write an edited deno.json back, refusing a failed edit or a symlinked file. */
+async function writeJsonEdit(
+  path: string,
+  edited: { ok: true; source: string } | { ok: false; reason: string },
+): Promise<void> {
   if (!edited.ok) throw new Error(`cannot edit ${path}: ${edited.reason}`);
   if (await isSymlink(path)) throw new Error(`refusing to write through the symlink ${path}`);
   await Deno.writeTextFile(path, edited.source);
-  return "updated";
+}
+
+/**
+ * The body of `.deno-desktop/app.json`, or `null` when there is nothing for the runtime to read:
+ * the origin + identifier (when an origin is set), the deep-link schemes (the runtime's list for
+ * launch arguments, `openurl` and scheme registration) and `singleInstance` (the intent; the lock
+ * itself is `laufey-launch.json`'s). The identifier rides along whenever it is valid, since the
+ * runtime needs it to register schemes on Linux and next to `singleInstance`.
+ */
+function appJsonBody(config: unknown): Record<string, unknown> | null {
+  const identity = desktopAppIdentity(config);
+  const app = appBlock(config);
+  const deepLinks = normalizeDesktopDeepLinks(app?.deepLinks);
+  const single = typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined;
+  if (!identity && deepLinks.length === 0 && single === undefined) return null;
+  const id = identity?.identifier ?? app?.identifier;
+  const identifier = typeof id === "string" && desktopAppIdentifierError(id) === null
+    ? id
+    : undefined;
+  return {
+    ...(identity ? { origin: identity.origin } : {}),
+    ...(identifier ? { identifier } : {}),
+    ...(deepLinks.length > 0 ? { deepLinks } : {}),
+    ...(single !== undefined && identifier ? { singleInstance: single } : {}),
+  };
 }
 
 /** Write (or remove) `.deno-desktop/app.json`, never through a symlink. */
 async function syncAppJson(
   root: string,
-  identity: DesktopAppIdentity | null,
+  body: Record<string, unknown> | null,
 ): Promise<DesktopAppSyncReport["appJson"]> {
   const dir = join(root, ".deno-desktop");
   const path = join(root, DESKTOP_APP_CONFIG_FILE);
@@ -244,16 +281,12 @@ async function syncAppJson(
     throw new Error(`refusing to write through a symlink at ${path}`);
   }
   const existing = await Deno.readTextFile(path).catch(() => undefined);
-  if (!identity) {
+  if (!body) {
     if (existing === undefined) return "none";
     await Deno.remove(path);
     return "removed";
   }
-  const content = JSON.stringify(
-    { origin: identity.origin, identifier: identity.identifier },
-    null,
-    2,
-  ) + "\n";
+  const content = JSON.stringify(body, null, 2) + "\n";
   if (existing === content) return "unchanged";
   await Deno.mkdir(dir, { recursive: true });
   await Deno.writeTextFile(path, content);
@@ -261,30 +294,58 @@ async function syncAppJson(
 }
 
 /**
- * Bring the project's `.deno-desktop/app.json` and deno.json `compile.include` in line with
- * `desktop.app` in `config`: with an origin, write `{ origin, identifier }` and make sure
- * `compile.include` lists the file (appending to existing entries, idempotent); without one,
- * remove a previous `app.json` and its include entry so the runtime does not keep a stale origin.
- * Throws on an invalid origin/identifier (the runtime's rules).
+ * Mirror `desktop.app.deepLinks` into deno.json's `desktop.app.deepLinks`: the key the `deno
+ * desktop` CLI (the stock one included) reads to register the schemes with the OS when it packages
+ * (Info.plist `CFBundleURLTypes`, the Windows registry, the Linux `.desktop` entry). Nothing to do
+ * without configured schemes (a hand-written deno.json value is left alone).
+ */
+async function syncDenoJsonDeepLinks(
+  root: string,
+  deepLinks: readonly string[],
+): Promise<NonNullable<DesktopAppSyncReport["deepLinks"]>> {
+  const path = await findDenoJson(root);
+  if (!path) return "no-deno-json";
+  const { readJson, setJsonValue } = await import("./json-edit.ts");
+  const source = await Deno.readTextFile(path);
+  const current = (readJson(source) as { desktop?: { app?: { deepLinks?: unknown } } } | null)
+    ?.desktop?.app?.deepLinks;
+  if (JSON.stringify(current) === JSON.stringify(deepLinks)) return "unchanged";
+  await writeJsonEdit(
+    path,
+    await setJsonValue(source, ["desktop", "app", "deepLinks"], [...deepLinks]),
+  );
+  return "updated";
+}
+
+/**
+ * Bring the project's `.deno-desktop/app.json` and deno.json in line with `desktop.app` in
+ * `config`: with an origin, deep-link schemes or `singleInstance`, write `app.json` (origin +
+ * identifier, `deepLinks`, `singleInstance`) and make sure `compile.include` lists the file
+ * (appending to existing entries, idempotent); with none, remove a previous `app.json` and its
+ * include entry so the runtime does not keep a stale origin. Configured deep-link schemes are also
+ * written to deno.json `desktop.app.deepLinks`, where `deno desktop` registers them with the OS.
+ * Throws on an invalid origin/identifier/scheme (the runtime's rules).
  *
  * @param root The project root.
  * @param config The project config.
- * @returns What changed.
+ * @returns What changed (`deepLinks` only when schemes are configured).
  */
 export async function syncDesktopAppConfigAt(
   root: string,
   config: unknown,
 ): Promise<DesktopAppSyncReport> {
-  const identity = desktopAppIdentity(config);
-  const appJson = await syncAppJson(root, identity);
-  const include = await syncInclude(root, identity !== null);
-  if (identity && include === "no-deno-json") {
+  const body = appJsonBody(config);
+  const appJson = await syncAppJson(root, body);
+  const include = await syncInclude(root, body !== null);
+  if (body && include === "no-deno-json") {
     console.warn(
       `  no deno.json in ${root}: add "compile": { "include": ["${DESKTOP_APP_CONFIG_FILE}"] } ` +
         "so deno desktop embeds the app origin.",
     );
   }
-  return { appJson, include };
+  const schemes = (body?.deepLinks as string[] | undefined) ?? [];
+  if (schemes.length === 0) return { appJson, include };
+  return { appJson, include, deepLinks: await syncDenoJsonDeepLinks(root, schemes) };
 }
 
 /**

@@ -1140,14 +1140,14 @@
               "type": "string"
             },
             "deepLinks": {
-              "description": "URL schemes the app registers with the OS as deep links (bare, e.g. `[\"myapp\"]`). **Validated only for now:** registering and delivering them is not implemented yet.",
+              "description": "URL schemes the app registers with the OS as deep links (bare, e.g. `[\"myapp\"]`). Packaging writes them to deno.json `desktop.app.deepLinks` (the OS registration: Info.plist `CFBundleURLTypes`, the Windows registry, the Linux `.desktop` entry) and to `.deno-desktop/app.json` (the runtime's list). Under denext's pinned runtime a link with one of these schemes reaches `onDeepLink` / `useDeepLink` (`denext/mobile`), cold or warm, and a scheme listed here may be an `openAuthSession` callback scheme. The stock runtime delivers none.",
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "singleInstance": {
-              "description": "Keep one running instance per identifier: a second launch hands its arguments to the first and exits. Written to the packaged app's `laufey-launch.json`; **takes effect once the desktop runtime supports it** (not yet).",
+              "description": "Keep one running instance per identifier: a second launch hands its arguments (deep links, files) to the first — which the webview backend brings to the front — and exits. Written to the packaged app's `laufey-launch.json`; needs denext's pinned runtime. Not applied to `denext desktop run` / `dev` windows (a dev window must not hand itself to an installed copy).",
               "type": "boolean"
             }
           }
@@ -1257,6 +1257,26 @@
             "device": {
               "description": "Device info (`os`, `osVersion`, `model?`).",
               "type": "boolean"
+            },
+            "passkeys": {
+              "description": "Native passkeys (macOS Touch ID / iCloud Keychain, Windows Hello; none on Linux) through denext's pinned runtime, for a page whose custom-scheme origin the webview's own WebAuthn cannot use (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app may request; anything else answers `invalid_rp` without reaching the OS.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "rpIds": {
+                      "description": "The relying-party IDs (`\"clerk.example.com\"`) the app may request; absent: any.",
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ]
             },
             "echo": {
               "description": "The `echo` diagnostic capability (bridge connectivity check).",

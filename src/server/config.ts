@@ -703,10 +703,23 @@ export interface DesktopCapabilitiesConfig {
   clipboard?: boolean;
   /** Device info (`os`, `osVersion`, `model?`). */
   device?: boolean;
+  /**
+   * Native passkeys (macOS Touch ID / iCloud Keychain, Windows Hello; none on Linux) through
+   * denext's pinned runtime, for a page whose custom-scheme origin the webview's own WebAuthn cannot
+   * use (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app
+   * may request; anything else answers `invalid_rp` without reaching the OS.
+   */
+  passkeys?: boolean | DesktopPasskeysConfig;
   /** The `echo` diagnostic capability (bridge connectivity check). */
   echo?: boolean;
   /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
   extensions?: string[];
+}
+
+/** `desktop.capabilities.passkeys` options. */
+export interface DesktopPasskeysConfig {
+  /** The relying-party IDs (`"clerk.example.com"`) the app may request; absent: any. */
+  rpIds?: string[];
 }
 
 /**
@@ -750,14 +763,20 @@ export interface DesktopConfig {
      */
     origin?: string;
     /**
-     * URL schemes the app registers with the OS as deep links (bare, e.g. `["myapp"]`).
-     * **Validated only for now:** registering and delivering them is not implemented yet.
+     * URL schemes the app registers with the OS as deep links (bare, e.g. `["myapp"]`). Packaging
+     * writes them to deno.json `desktop.app.deepLinks` (the OS registration: Info.plist
+     * `CFBundleURLTypes`, the Windows registry, the Linux `.desktop` entry) and to
+     * `.deno-desktop/app.json` (the runtime's list). Under denext's pinned runtime a link with one of
+     * these schemes reaches `onDeepLink` / `useDeepLink` (`denext/mobile`), cold or warm, and a
+     * scheme listed here may be an `openAuthSession` callback scheme. The stock runtime delivers
+     * none.
      */
     deepLinks?: string[];
     /**
-     * Keep one running instance per identifier: a second launch hands its arguments to the first
-     * and exits. Written to the packaged app's `laufey-launch.json`; **takes effect once the desktop
-     * runtime supports it** (not yet).
+     * Keep one running instance per identifier: a second launch hands its arguments (deep links,
+     * files) to the first — which the webview backend brings to the front — and exits. Written to
+     * the packaged app's `laufey-launch.json`; needs denext's pinned runtime. Not applied to
+     * `denext desktop run` / `dev` windows (a dev window must not hand itself to an installed copy).
      */
     singleInstance?: boolean;
   };

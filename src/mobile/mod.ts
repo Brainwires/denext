@@ -61,7 +61,9 @@
  * - {@linkcode setQuickActions} / {@linkcode onQuickAction} / {@linkcode useQuickAction}:
  *   home-screen quick actions (long-press on the app icon), cold-start action included.
  * - {@linkcode onDeepLink} / {@linkcode useDeepLink}: the custom-scheme and universal / app
- *   links that open the app, filtered and routed (`denext mobile add deep-links`).
+ *   links that open the app, filtered and routed (`denext mobile add deep-links`; on Deno Desktop
+ *   the schemes of `desktop.app.deepLinks`). {@linkcode onOpenFile} / {@linkcode useOpenFile}: the
+ *   files the OS opens with a Deno Desktop app, as read-only picked handles.
  * - {@linkcode openAuthSession}: OAuth / OIDC sign-in in a system browser sheet
  *   (ASWebAuthenticationSession on iOS, a Custom Tab on Android, a popup finished by
  *   {@linkcode completeAuthSession} on the web), resolving with the callback URL
@@ -235,6 +237,7 @@ export {
   type SecureStoreSetOptions,
 } from "./secure-store.ts";
 export { type DeepLinkEvent, type DeepLinkOptions, onDeepLink, useDeepLink } from "./deep-link.ts";
+export { onOpenFile, type OpenedFile, useOpenFile } from "./open-file.ts";
 export type { LinkAccept, LinkAllowList, LinkRoute } from "./link-routing.ts";
 export {
   type AuthSessionError,

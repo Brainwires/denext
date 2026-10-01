@@ -619,7 +619,7 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
             </td>
             <td>
               <code>openAuthSession</code>{" "}
-              (system-browser OAuth; the endpoint is default-deny until enabled)
+              (system-browser OAuth, loopback or custom-scheme callback; default-deny until enabled)
             </td>
             <td>
               <code>--allow-run</code>: open · rundll32 · xdg-open
@@ -684,6 +684,19 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>--allow-sys=osRelease</code>
             </td>
             <td>scoped</td>
+          </tr>
+          <tr>
+            <td>
+              <code>passkeys</code>
+            </td>
+            <td>
+              native passkeys for <code>denext/desktop/clerk</code>{" "}
+              (Touch ID / iCloud Keychain · Windows Hello · none on Linux; pinned runtime)
+            </td>
+            <td>
+              none (a runtime API; pin the RP IDs with <code>{"{ rpIds }"}</code>)
+            </td>
+            <td>none</td>
           </tr>
         </tbody>
       </table>

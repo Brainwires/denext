@@ -14,7 +14,8 @@ import { nativePlugin } from "./plugin.ts";
 /**
  * The `code` on an {@linkcode openAuthSession} rejection:
  *
- * - `cancelled`: the user closed the sheet (or the popup) without finishing;
+ * - `cancelled`: the user closed the sheet (or the popup) without finishing, or (Deno Desktop)
+ *   the `signal` aborted;
  * - `busy`: another auth session is still open (one at a time);
  * - `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,
  *   or `timeoutMs` is not a positive number;
@@ -22,13 +23,39 @@ import { nativePlugin } from "./plugin.ts";
  *   presented, the web popup was blocked, or there is no window (SSR);
  * - `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform
  *   allows it).
+ *
+ * Deno Desktop's custom-scheme callbacks add:
+ *
+ * - `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;
+ * - `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256`;
+ * - `scheme_owned_by_other_app`: another app handles the scheme (its identity in
+ *   {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call
+ *   `claimDeepLinkScheme` (`denext/desktop/client`);
+ * - `scheme_not_registered`: the app could not register itself for the scheme (an unpackaged dev
+ *   run);
+ * - `session_in_progress`: another custom-scheme session is still open.
  */
-export type AuthSessionErrorCode = "cancelled" | "busy" | "invalid" | "unsupported" | "timeout";
+export type AuthSessionErrorCode =
+  | "cancelled"
+  | "busy"
+  | "invalid"
+  | "unsupported"
+  | "timeout"
+  | "scheme_not_declared"
+  | "pkce_required"
+  | "scheme_owned_by_other_app"
+  | "scheme_not_registered"
+  | "session_in_progress";
 
 /** The `Error` an {@linkcode openAuthSession} promise rejects with. */
 export interface AuthSessionError extends Error {
   /** Why it failed. */
   readonly code: AuthSessionErrorCode;
+  /**
+   * `scheme_owned_by_other_app` only: what the OS names as the scheme's handler (a bundle id, an
+   * executable path or a `.desktop` id), for display. Any program of the user can write it.
+   */
+  readonly handler?: string;
 }
 
 /** Options for {@linkcode openAuthSession}. */
@@ -46,8 +73,36 @@ export interface AuthSessionOptions {
    * existing provider login is reused and none is kept. Default `false`.
    */
   readonly preferEphemeral?: boolean;
-  /** Give up after this many ms with code `timeout`. Default: no limit. */
+  /**
+   * Give up after this many ms with code `timeout`. Default: no limit (Deno Desktop: 5 minutes for
+   * the loopback flow, 10 for a custom-scheme callback).
+   */
   readonly timeoutMs?: number;
+  /**
+   * Deno Desktop, custom-scheme callback: where the callback lands (`"myapp://auth/callback"`) when
+   * the URL's own `redirect_uri` is not a `callbackScheme` URL (a provider that redirects through
+   * its own server first). It is matched exactly on scheme, host and path.
+   */
+  readonly callbackPrefix?: string;
+  /**
+   * Deno Desktop, custom-scheme callback: PKCE (S256) is mandatory unless this is
+   * `"not-applicable"`, for a provider that binds the callback to the initiating client another
+   * way; then {@linkcode AuthSessionOptions.reason} says how.
+   */
+  readonly pkce?: "not-applicable";
+  /** Why PKCE does not apply (required with `pkce: "not-applicable"`; kept with the session). */
+  readonly reason?: string;
+  /**
+   * Deno Desktop, custom-scheme callback with a {@linkcode AuthSessionOptions.callbackPrefix}: the
+   * `state` the callback must carry. (When the callback is the URL's own `redirect_uri`, the URL's
+   * `state` is checked automatically.)
+   */
+  readonly state?: string;
+  /**
+   * Deno Desktop: aborting it cancels the session (`cancelled`). The system browser on Windows and
+   * Linux reports no cancellation, so offer the user a Cancel button wired to this.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** What {@linkcode openAuthSession} resolves with. */
@@ -320,6 +375,16 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then
  *   reads as `cancelled`: use a full-page redirect for such providers.
  *
+ * - **Deno Desktop**: the system browser. With a loopback `redirect_uri` (`http://127.0.0.1/cb`)
+ *   the runtime catches the redirect on an ephemeral loopback port (RFC 8252). Otherwise the
+ *   callback comes back as a deep link: `callbackScheme` must be declared in
+ *   `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: "not-applicable"` with a
+ *   `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry
+ *   the same `state`, and another app handling the scheme is refused
+ *   (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches
+ *   {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,
+ *   denext's pinned runtime).
+ *
  * Only one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this
  * only opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)
  * before the call, compare `state` after it, and exchange the `code` on your server.
@@ -353,11 +418,14 @@ export async function openAuthSession(
 ): Promise<AuthSessionResult> {
   const target = checkUrl(url);
   const timeoutMs = checkTimeout(options?.timeoutMs);
-  // Deno Desktop: hand off to the loopback system-browser flow (it ignores callbackScheme, so
-  // this runs before checkScheme). Dynamic import keeps the desktop client out of web/mobile bundles.
+  // Deno Desktop: the system browser, with the callback coming back either to a loopback listener
+  // (a loopback `redirect_uri`; the default) or as a deep link with a scheme from
+  // `desktop.app.deepLinks`. Dynamic import keeps the desktop client out of web/mobile bundles.
   if (runtimePlatform() === "desktop") {
-    return await (await import("../desktop/auth-session.ts"))
-      .startDesktopAuthSession(target, { timeoutMs });
+    const desktop = await import("../desktop/auth-session.ts");
+    return desktop.usesSchemeCallback(target, options)
+      ? await desktop.startDesktopSchemeAuthSession(target, { ...options, timeoutMs })
+      : await desktop.startDesktopAuthSession(target, { timeoutMs });
   }
   const scheme = checkScheme(options?.callbackScheme);
   if (active) throw authSessionError("busy", "another auth session is still open");

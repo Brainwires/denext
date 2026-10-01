@@ -235,3 +235,60 @@ Deno.test("doctor: the desktop app-origin check flags missing/stale files and pa
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("sync: deepLinks + singleInstance go to app.json, and deepLinks to deno.json", async () => {
+  const dir = await project('{\n  // keep\n  "desktop": { "app": { "name": "T3" } }\n}\n');
+  const config = {
+    desktop: {
+      app: { ...T3.desktop.app, deepLinks: ["T3Code", "t3code-dev"], singleInstance: true },
+    },
+  };
+  try {
+    assertEquals(await syncDesktopAppConfigAt(dir, config), {
+      appJson: "written",
+      include: "updated",
+      deepLinks: "updated",
+    });
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      origin: "t3code://app",
+      identifier: "com.t3.code",
+      deepLinks: ["t3code", "t3code-dev"],
+      singleInstance: true,
+    });
+    const deno = await Deno.readTextFile(join(dir, "deno.json"));
+    assertStringIncludes(deno, "// keep");
+    assertEquals(JSON.parse(deno.replace("// keep", "")).desktop.app, {
+      name: "T3",
+      deepLinks: ["t3code", "t3code-dev"],
+    });
+    assertEquals((await syncDesktopAppConfigAt(dir, config)).deepLinks, "unchanged");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("sync: deep links without an origin still write app.json (no origin key)", async () => {
+  const dir = await project("{}\n");
+  try {
+    const config = { desktop: { app: { identifier: "com.a.b", deepLinks: ["myapp"] } } };
+    assertEquals((await syncDesktopAppConfigAt(dir, config)).appJson, "written");
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      identifier: "com.a.b",
+      deepLinks: ["myapp"],
+    });
+    // singleInstance without a valid identifier is not recorded (the runtime requires one).
+    const noId = { desktop: { app: { deepLinks: ["myapp"], singleInstance: true } } };
+    await syncDesktopAppConfigAt(dir, noId);
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      deepLinks: ["myapp"],
+    });
+    // An invalid scheme fails like the runtime would.
+    await assertRejects(
+      () => syncDesktopAppConfigAt(dir, { desktop: { app: { deepLinks: ["http"] } } }),
+      Error,
+      "deepLinks",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

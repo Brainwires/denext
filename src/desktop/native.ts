@@ -28,7 +28,7 @@ import type {
   SqliteRunResult,
   SqliteValue,
 } from "../mobile/sqlite-web.ts";
-import { desktopError, desktopRpc } from "./bridge-client.ts";
+import { desktopError, desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
 
 /** Capabilities already warned about falling back (one warning per capability per page). */
 const warned = new Set<string>();
@@ -470,4 +470,63 @@ export async function desktopDeviceFacts(): Promise<DesktopDeviceFacts> {
     ...(model !== undefined ? { model } : {}),
     ...(typeof out?.osVersion === "string" ? { osVersion: out.osVersion } : {}),
   };
+}
+
+// --- deep links / opened files (caps "deepLinks" / "openFiles", denext's pinned runtime) ------
+
+/** One deep link the runtime handed over (a scheme from `desktop.app.deepLinks`). */
+export interface DesktopLink {
+  /** The URL as the OS delivered it. */
+  readonly url: string;
+  /** `true` for the link that cold-started the app. */
+  readonly launch: boolean;
+}
+
+/** One file the OS opened with the app, as a read-only picked handle. */
+export interface DesktopOpenedFile {
+  /** The read-only handle (`{ directory: { picked: handle } }`). */
+  readonly handle: string;
+  /** The file name. */
+  readonly name: string;
+  /** The absolute path, for display only. */
+  readonly path: string;
+  /** `true` for a file the app was launched with. */
+  readonly launch: boolean;
+}
+
+/** Take (and empty) the runtime's queue of deep links. */
+export async function takeDesktopDeepLinks(): Promise<DesktopLink[]> {
+  const raw = await desktopRpc<unknown>("deepLinks", "take", {});
+  return (Array.isArray(raw) ? raw : []).flatMap((item) => {
+    const l = (item ?? {}) as { url?: unknown; launch?: unknown };
+    return typeof l.url === "string" ? [{ url: l.url, launch: l.launch === true }] : [];
+  });
+}
+
+/** Take (and empty) the runtime's queue of opened files. */
+export async function takeDesktopOpenedFiles(): Promise<DesktopOpenedFile[]> {
+  const raw = await desktopRpc<unknown>("openFiles", "take", {});
+  return (Array.isArray(raw) ? raw : []).flatMap((item) => {
+    const f = (item ?? {}) as {
+      handle?: unknown;
+      name?: unknown;
+      path?: unknown;
+      launch?: unknown;
+    };
+    if (typeof f.handle !== "string" || f.handle === "") return [];
+    return [{
+      handle: f.handle,
+      name: String(f.name ?? ""),
+      path: String(f.path ?? ""),
+      launch: f.launch === true,
+    }];
+  });
+}
+
+/**
+ * Call `fn` whenever the runtime signals that its `deepLinks` / `openFiles` queue has something
+ * (the signal carries no data; take the queue). Returns the unsubscribe.
+ */
+export function onDesktopQueue(cap: "deepLinks" | "openFiles", fn: () => void): () => void {
+  return subscribeDesktopEvent(cap, "available", () => fn());
 }

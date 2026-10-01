@@ -30,8 +30,10 @@ import { keepAwakeCapability } from "./keep-awake.ts";
 import { secureStoreCapability } from "./secure-store.ts";
 import { PickedPaths } from "../picked-paths.ts";
 import { dialogsCapability } from "./dialogs.ts";
+import { passkeysCapability } from "./passkeys.ts";
 import {
   desktopAppIdentifierError,
+  normalizeDesktopDeepLinks,
   originWithoutIdentifierMessage,
   parseDesktopAppOrigin,
 } from "../app-origin.ts";
@@ -65,6 +67,16 @@ export interface ResolvedDesktop {
    * the origin the runtime publishes (a mismatch means a stale package); the gates trust the latter.
    */
   readonly appOrigin?: string;
+  /**
+   * The deep-link schemes from `desktop.app.deepLinks`, lower-case. `runDesktop` delivers links
+   * with these schemes to `onDeepLink` and accepts them as `openAuthSession` callback schemes.
+   */
+  readonly deepLinks: string[];
+  /**
+   * The per-launch picked-path set the `dialogs`, `fs` and `shell` capabilities share; `runDesktop`
+   * adds files the OS opens with the app to it (read-only handles for `onOpenFile`).
+   */
+  readonly pickedPaths: PickedPaths;
 }
 
 /** The default URL schemes `shell.openExternal` allows when enabled with `shell: true`. */
@@ -162,11 +174,29 @@ export async function resolveDesktopCapabilities(
     explicitId,
   );
   const origin = appOrigin === undefined ? {} : { appOrigin };
+  const deepLinks = launchDeepLinks(
+    (desktop as { app?: { deepLinks?: unknown } })?.app?.deepLinks,
+  );
+  // One per-launch picked-path set, shared by dialogs (adds picks), fs/shell (consult handles) and
+  // the files the OS opens with the app.
+  const pickedPaths = new PickedPaths();
+  const base = {
+    appSupportDir: dirs.data,
+    authSessionEnabled,
+    deepLinks,
+    pickedPaths,
+    ...origin,
+  };
 
-  if (!caps) return { capabilities: [], appSupportDir: dirs.data, authSessionEnabled, ...origin };
+  if (!caps) return { capabilities: [], ...base };
   assertAppIdentity(Boolean(explicitId), caps);
-  const capabilities = await buildBuiltinCaps(caps, { dirs, appId, base: options.base });
-  return { capabilities, appSupportDir: dirs.data, authSessionEnabled, ...origin };
+  const capabilities = await buildBuiltinCaps(caps, {
+    dirs,
+    appId,
+    base: options.base,
+    picked: pickedPaths,
+  });
+  return { capabilities, ...base };
 }
 
 /**
@@ -184,6 +214,15 @@ function resolveAppOrigin(raw: unknown, identifier: string | undefined): string 
   const idError = desktopAppIdentifierError(identifier);
   if (idError) throw new Error(`desktop: invalid desktop.app.identifier: ${idError}`);
   return parsed.value.origin;
+}
+
+/** `desktop.app.deepLinks` for the runtime: the shared validation, failing fast at launch. */
+function launchDeepLinks(raw: unknown): string[] {
+  try {
+    return normalizeDesktopDeepLinks(raw);
+  } catch (err) {
+    throw new Error(`desktop: ${(err as Error).message}`);
+  }
 }
 
 /**
@@ -204,11 +243,9 @@ function assertAppIdentity(hasExplicitId: boolean, caps: DesktopCapabilitiesConf
 /** Map the enabled `caps` to the bridge capability objects (built-ins + loaded extensions). */
 async function buildBuiltinCaps(
   caps: DesktopCapabilitiesConfig,
-  ctx: { dirs: DesktopAppDirs; appId: string; base: string | undefined },
+  ctx: { dirs: DesktopAppDirs; appId: string; base: string | undefined; picked: PickedPaths },
 ): Promise<DesktopCapability[]> {
-  const { dirs, appId, base } = ctx;
-  // One per-launch picked-path set, shared by dialogs (adds picks) and fs/shell (consult handles).
-  const picked = new PickedPaths();
+  const { dirs, appId, base, picked } = ctx;
   const capabilities: DesktopCapability[] = [];
   if (caps.echo === true) capabilities.push(echoCapability);
   if (caps.device) capabilities.push(deviceCapability);
@@ -223,6 +260,10 @@ async function buildBuiltinCaps(
   if (caps.dialogs) capabilities.push(dialogsCapability({ picked }));
   if (caps.keepAwake) capabilities.push(keepAwakeCapability());
   if (caps.secureStore) capabilities.push(secureStoreCapability({ service: appId }));
+  if (caps.passkeys) {
+    const rpIds = typeof caps.passkeys === "object" ? caps.passkeys.rpIds : undefined;
+    capabilities.push(passkeysCapability(rpIds ? { rpIds } : {}));
+  }
   for (const spec of caps.extensions ?? []) capabilities.push(await loadExtension(spec, base));
   return capabilities;
 }

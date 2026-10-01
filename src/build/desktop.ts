@@ -17,6 +17,7 @@ import { isLoopbackHost } from "./dev-server/lan.ts";
 import { wantsShell } from "./spa/shared.ts";
 import {
   authSessionUnavailable,
+  defaultOpenBrowser,
   type DesktopRequestAccess,
   handleDesktopAuthSession,
   timingSafeEqual,
@@ -38,6 +39,12 @@ import {
   readDesktopPreload,
 } from "../desktop/preload.ts";
 import type { DesktopCapability } from "../desktop/extension.ts";
+import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
+import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
+import type { PickedPaths } from "../desktop/picked-paths.ts";
+
+/** The per-launch picked-path set (re-exported so {@linkcode RunDesktopOptions} is documentable). */
+export type { PickedPaths } from "../desktop/picked-paths.ts";
 
 /** The gated capability bridge {@linkcode createDesktopHandler} dispatches to (re-exported so the
  * handler's signature has no private type). */
@@ -323,6 +330,17 @@ export interface RunDesktopOptions {
    * trust the PUBLISHED origin ({@link resolveDesktopTrust}).
    */
   appOrigin?: string;
+  /**
+   * The deep-link schemes (`desktop.app.deepLinks`, lower-case; from {@link
+   * resolveDesktopCapabilities}). Under denext's pinned runtime, links with these schemes reach the
+   * page's `onDeepLink`, and they are the only schemes `openAuthSession` accepts as a callback.
+   */
+  deepLinks?: readonly string[];
+  /**
+   * The per-launch picked-path set the `dialogs`/`fs`/`shell` capabilities share (from {@link
+   * resolveDesktopCapabilities}); files the OS opens with the app become read-only handles in it.
+   */
+  pickedPaths?: PickedPaths;
 }
 
 /**
@@ -714,6 +732,36 @@ export function createDesktopHandler(
 }
 
 /**
+ * The app-event capabilities of denext's pinned runtime (`Deno.desktop`): the launch router
+ * (`deepLinks` / `openFiles`, fed by `openurl` / `openfile` / `secondinstance` and the cold-start
+ * lists) and — with the `auth-session` capability on — the custom-scheme auth sessions, whose
+ * callbacks the router offers to the pending session before anything reaches the page. Nothing
+ * under the stock runtime (no `Deno.desktop`): the page's deep-link calls answer `unavailable`.
+ */
+function desktopAppEvents(
+  options: RunDesktopOptions,
+  emit: (cap: string, event: string, data: unknown) => void,
+): { capabilities: DesktopCapability[]; install(): void } {
+  const api = desktopAppApi();
+  if (!api) return { capabilities: [], install: () => {} };
+  const schemes = options.deepLinks ?? [];
+  const auth = options.authSessionEnabled === true
+    ? createSchemeAuthSessions({ schemes, api, openBrowser: defaultOpenBrowser })
+    : undefined;
+  const router = createLaunchRouter({
+    schemes,
+    api,
+    emit,
+    ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
+    ...(auth ? { claimAuthCallback: auth.claim } : {}),
+  });
+  return {
+    capabilities: [...router.capabilities, ...(auth ? [auth.capability] : [])],
+    install: router.install,
+  };
+}
+
+/**
  * The bundled `desktop.preload` to inline, or `undefined` without one: the export's copy, or — in
  * live-reload proxy mode only, where the export is not rebuilt — the dev build `denext desktop dev`
  * points {@link DESKTOP_PRELOAD_ENV} at. Read once at startup.
@@ -801,14 +849,17 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       })
     : undefined;
   // The capability bridge over the compiled allowlist (default deny — no capabilities means every
-  // RPC answers `unavailable`). `dev` (live-reload mode) lets an unexpected handler error include
-  // its message; a packaged build stays generic.
-  const bridge = createDesktopBridge(options.capabilities ?? [], {
+  // RPC answers `unavailable`), plus the app-event capabilities of denext's pinned runtime (deep
+  // links, opened files, custom-scheme auth sessions). `dev` (live-reload mode) lets an unexpected
+  // handler error include its message; a packaged build stays generic.
+  const appEvents = desktopAppEvents(options, (cap, event, data) => bridge.emit(cap, event, data));
+  const bridge = createDesktopBridge([...(options.capabilities ?? []), ...appEvents.capabilities], {
     appSupportDir: options.appSupportDir,
     getWindow: () => appWindow,
     dev: devDecision.proxy,
     trust,
   });
+  appEvents.install();
   const handle = createDesktopHandler(
     options,
     outDir,

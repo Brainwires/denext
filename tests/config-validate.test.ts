@@ -384,3 +384,20 @@ Deno.test("csp / spa.csp: opt-in values must be string arrays; unknown keys warn
   assert(warns[0].includes("unknown option `frameSource`"), warns[0]);
   assert(warns[0].includes("did you mean `frameSrc`?"), warns[0]);
 });
+
+Deno.test("desktop.capabilities.passkeys: a boolean or { rpIds: string[] }", () => {
+  validateDenextConfig({ desktop: { capabilities: { passkeys: true } } });
+  validateDenextConfig({
+    desktop: { capabilities: { passkeys: { rpIds: ["clerk.example.com"] } } },
+  });
+  for (const passkeys of [{ rpIds: "x" }, { rpIds: [""] }, { rpIds: [1] }, "yes"]) {
+    assertThrows(
+      () =>
+        validateDenextConfig(
+          { desktop: { capabilities: { passkeys } } } as unknown as Record<never, never>,
+        ),
+      Error,
+      "desktop.capabilities.passkeys",
+    );
+  }
+});

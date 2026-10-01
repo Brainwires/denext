@@ -171,3 +171,49 @@ export function onDesktopEvent<T = unknown>(
 ): () => void {
   return subscribeDesktopEvent(cap, event, handler as (data: unknown) => void);
 }
+
+/** Who handles one of the app's deep-link schemes ({@linkcode deepLinkSchemeOwner}). */
+export interface DeepLinkSchemeOwner {
+  /** `self` (this app), `other` (another app gets links with the scheme), `none` (no app). */
+  readonly owner: "self" | "other" | "none";
+  /**
+   * What the OS names as the handler (a bundle id, an executable path, a `.desktop` id), for
+   * display only: any program of the user can write it.
+   */
+  readonly handler?: string;
+}
+
+/** What {@linkcode claimDeepLinkScheme} reports. */
+export interface ClaimDeepLinkSchemeResult extends DeepLinkSchemeOwner {
+  /** Whether this app handles the scheme now. */
+  readonly registered: boolean;
+  /** Why not, when it doesn't (a Windows "UserChoice", no `xdg-mime`, an unpackaged run, …). */
+  readonly reason?: string;
+}
+
+/**
+ * Which app handles `scheme`, one of the app's `desktop.app.deepLinks` (denext's pinned Deno
+ * Desktop runtime). A snapshot, and advisory: any program of the same user can register itself for
+ * a scheme at any time, so keep PKCE and `state` on every sign-in.
+ *
+ * @param scheme A scheme from `desktop.app.deepLinks` (`"myapp"`).
+ * @returns The owner. Rejects `scheme_not_declared` for another scheme, `unsupported` on a runtime
+ * without scheme registration, and `unavailable` off desktop.
+ */
+export async function deepLinkSchemeOwner(scheme: string): Promise<DeepLinkSchemeOwner> {
+  return await desktopRpc<DeepLinkSchemeOwner>("deepLinks", "owner", { scheme });
+}
+
+/**
+ * Make this app the handler of `scheme` (one of its `desktop.app.deepLinks`), taking it over from
+ * another app. **Only on an explicit user action** — a "Make this app the handler of myapp: links"
+ * button after `openAuthSession` rejected `scheme_owned_by_other_app` — because the other app loses
+ * the scheme. On macOS the OS may confirm it with the user; a Windows "UserChoice" cannot be
+ * overridden (`registered: false`).
+ *
+ * @param scheme A scheme from `desktop.app.deepLinks`.
+ * @returns The registration after the call.
+ */
+export async function claimDeepLinkScheme(scheme: string): Promise<ClaimDeepLinkSchemeResult> {
+  return await desktopRpc<ClaimDeepLinkSchemeResult>("deepLinks", "claim", { scheme });
+}

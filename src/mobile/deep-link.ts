@@ -20,6 +20,8 @@ import {
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 import { isAuthSessionCallback } from "./auth-session.ts";
 import { isShareHandoff } from "./share-handoff.ts";
+import { onDesktop } from "./desktop-branch.ts";
+import { desktopQueueAttach } from "./desktop-queue.ts";
 
 /** One link that opened the app. */
 export interface DeepLinkEvent {
@@ -89,6 +91,17 @@ const LAST_LINK_KEY = "denext:deep-link:last";
 const LAUNCH_COPY_MS = 10_000;
 
 let hub: DeepLinkHub | undefined;
+/** The Deno Desktop source: the runtime's `deepLinks` queue, fanned out to the subscribers. */
+let desktopLinks: Fanout<RawLink> | undefined;
+/** Desktop links taken while the last subscriber was leaving, for the next one. */
+const desktopLeftover: RawLink[] = [];
+
+/** The page's Deno Desktop deep-link fanout, created on first use. */
+function desktopLinkFanout(): Fanout<RawLink> {
+  return desktopLinks ??= createFanout(
+    desktopQueueAttach("deepLinks", (d) => d.takeDesktopDeepLinks(), desktopLeftover),
+  );
+}
 
 /** The native plugin, when the shell has it. */
 function appPlugin(): AppPlugin | undefined {
@@ -220,7 +233,13 @@ function subscribe(
   options: () => DeepLinkOptions,
 ): () => void {
   const plugin = appPlugin();
-  if (!plugin) return () => {};
+  if (!plugin) {
+    // Deno Desktop (denext's pinned runtime): the runtime queues each link once, a pending
+    // openAuthSession has already taken its callback, and a cold-start link waits for the first
+    // subscriber.
+    if (!onDesktop()) return () => {};
+    return desktopLinkFanout().subscribe((link, once) => deliver(link, once, callback, options()));
+  }
   const h = deepLinkHub();
   const stop = h.fanout.subscribe((link, once) => deliver(link, once, callback, options()));
   requestLaunch(h, plugin);
@@ -254,6 +273,14 @@ function subscribe(
  * On the web (and during SSR) there is no native plugin and this does nothing: the browser
  * already loaded the linked URL. Needs `@capacitor/app` in the shell (`denext mobile add
  * deep-links --scheme myapp`).
+ *
+ * **Deno Desktop** (denext's pinned runtime): links with a scheme declared in
+ * `desktop.app.deepLinks` — a cold start, a link opened while the app runs (macOS), or one a
+ * second launch forwards (`desktop.app.singleInstance`, Windows and Linux) — arrive here with the
+ * same filter and once-only routing. The runtime hands each link over once: a link that came
+ * before anyone subscribed goes to the first subscriber, and none is replayed after a reload. A
+ * callback a pending `openAuthSession` is waiting for never arrives here. The stock runtime
+ * delivers no links.
  *
  * @param callback Called with each accepted link.
  * @param options Which links to accept, and how to navigate.
@@ -312,4 +339,6 @@ export function useDeepLink(
 /** Forget the page's deep-link state (tests only). */
 export function resetDeepLinksForTesting(): void {
   hub = undefined;
+  desktopLinks = undefined;
+  desktopLeftover.length = 0;
 }
