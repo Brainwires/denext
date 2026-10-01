@@ -406,7 +406,10 @@ plain `http` is refused beyond loopback. Whether a change can ship over the air:
 `denext ota manifest --native-fingerprint auto` makes a binary with another fingerprint refuse
 the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 `denext/desktop/updater` (`checkForDesktopUpdate` / `prepareDesktopUpdate` /
-`applyDesktopUpdate`).
+`applyDesktopUpdate`), and full-app updates under the pinned runtime (`checkForAppUpdate` /
+`downloadAppUpdate` / `installAppUpdateAndRelaunch` / `confirmAppUpdate`: a signed manifest from
+`denext desktop publish-update`, no downgrades, the same code-signing identity required, an atomic
+bundle swap that rolls back if the new version never confirms).
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
