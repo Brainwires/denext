@@ -380,8 +380,20 @@ The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, 
 `denext/desktop`, listed in `desktop.capabilities.extensions`) — but only when `desktop.ts`
 spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
 `runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
-call answers `unavailable`); `context-menu`, `clipboard` and `notifications` stay WebView-backed (a
-scheduled notification rejects). Packaging is least-privilege: `scripts/package-*.ts` derive
+call answers `unavailable`); `context-menu` and `notifications` stay WebView-backed (a
+scheduled notification rejects). Under the pinned runtime `clipboard` reaches the OS clipboard
+(`readClipboard({ format: "html" | "image" })`, `writeClipboard({ html, text? } | { image })` with
+base64 PNG, `clipboardFormats()`) and `dialogs` uses the OS's own panels (MIME `types` → filters).
+The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `minimizeWindow` /
+`restoreWindow` / `setFullScreen` + `onWindowStateChange`, `getWindowState` (persist `normalBounds`),
+`setWindowBounds` / `setMinimumWindowSize` / `setMaximumWindowSize`, `getScreens` + `onDisplayChanged`,
+`setTitleBarStyle` / `setWindowButtonPosition` / `setWindowBackdrop` (Mica / Acrylic / vibrancy),
+`makeWindowDraggable(el)` for a hidden title bar, `onCloseRequested(() => boolean)` (cancelable close),
+`closeWindow` / `quitApp`, `onFileDrop` (read-only picked handles) and
+`startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
+`desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position and title
+need the pinned runtime (`unsupported` elsewhere; ask `windowCapabilities()`). React Native desktop
+`View`'s `mouseDownCanMoveWindow`, `allowsVibrancy` and `draggedTypes` + `onDrop` work in the window. Packaging is least-privilege: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A`, and
 `denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
 a diff for each changed file).
