@@ -157,7 +157,7 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   assert(paths.includes("denext.config.ts"), "desktop scaffold emits denext.config.ts");
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
   assertStringIncludes(dj.tasks.export, "export .");
-  assertStringIncludes(dj.tasks.desktop, "deno desktop desktop.ts");
+  assertStringIncludes(dj.tasks.desktop, "desktop run .");
   // `desktop:package` runs the packaging script (which exports, builds with `out/`
   // embedded, code-signs, and can do multi-arch + notarization).
   assertStringIncludes(dj.tasks["desktop:package"], "scripts/package-macos.ts");

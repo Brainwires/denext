@@ -17,6 +17,14 @@
  *
  *   DENEXT_APP_NAME  output base name (default: the deno.json `desktop.app.name`).
  *
+ * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
+ * Deno version it was built for (`deno upgrade --version 2.9.7`).
+ *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
+ *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
+ *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
+ *
  * The end user's Linux desktop needs a WebKitGTK runtime (webkit2gtk) for the window;
  * that is a deploy-environment dependency, not baked into the bundle. Outputs into ./dist/.
  */
@@ -24,6 +32,7 @@
 import {
   desktopIncludeArgs,
   desktopPackageFlags,
+  desktopRuntimeEnv,
   syncDesktopAppConfig,
   writeLaufeyLaunchConfig,
 } from "denext/desktop";
@@ -67,9 +76,10 @@ function parseOpts(argv: string[]): Opts {
   return o;
 }
 
-async function run(cmd: string[]): Promise<void> {
+async function run(cmd: string[], env?: Record<string, string>): Promise<void> {
   const p = new Deno.Command(cmd[0], {
     args: cmd.slice(1),
+    env,
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -118,7 +128,8 @@ async function buildBundle(
     } catch { /* no icon at this path */ }
   }
   cmd.push("--output", out, "desktop.ts");
-  await run(cmd);
+  // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
+  await run(cmd, await desktopRuntimeEnv(import.meta.url, TARGETS[arch]));
   // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
   // read from next to the executable at launch.
   await writeLaufeyLaunchConfig(import.meta.url, OS, out);

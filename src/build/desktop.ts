@@ -88,6 +88,10 @@ export {
   desktopPackageFlags,
 } from "./desktop-capabilities.ts";
 
+// denext's pinned Deno Desktop runtime (downloaded + SHA-256-verified into the Deno cache): the
+// `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR` env the scaffolded package scripts set on `deno desktop`.
+export { desktopRuntimeEnv } from "./desktop-runtime.ts";
+
 /** The lazily-imported reverse-proxy module ({@link ./dev-proxy.ts}) {@linkcode createDesktopHandler}
  * forwards to when a backend proxy is configured; exported so the handler's signature is public. */
 export type ProxyModule = typeof import("./dev-proxy.ts");

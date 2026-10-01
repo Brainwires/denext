@@ -1207,6 +1207,7 @@
     "desktopDevProxyDecision:function",
     "desktopIncludeArgs:function",
     "desktopPackageFlags:function",
+    "desktopRuntimeEnv:function",
     "injectDesktopGlobal:function",
     "installWindowCloseHandler:function",
     "isDenoCliExecPath:function",

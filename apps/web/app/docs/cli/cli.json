@@ -271,6 +271,16 @@
           "description": "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), keeping a .bak of any file that differs; adopt the current scripts in an existing project"
         },
         {
+          "name": "verify-runtime",
+          "type": "boolean",
+          "description": "run | dev | package: re-hash the cached Deno Desktop runtime before use (DENEXT_DESKTOP_RUNTIME_VERIFY=1)"
+        },
+        {
+          "name": "attest-runtime",
+          "type": "boolean",
+          "description": "run | dev | package: also check a downloaded runtime's build provenance with `gh attestation verify` (DENEXT_DESKTOP_RUNTIME_ATTEST=1; needs gh)"
+        },
+        {
           "name": "list",
           "type": "boolean",
           "description": "add: list the desktop capabilities and what they need"

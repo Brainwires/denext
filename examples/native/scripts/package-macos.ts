@@ -23,6 +23,14 @@
  *                             Set (with a real identity) → notarize + staple each app.
  *   DENEXT_APP_NAME           output base name (default: the deno.json `desktop.app.name`).
  *
+ * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
+ * Deno version it was built for (`deno upgrade --version 2.9.7`).
+ *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
+ *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
+ *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
+ *
  * Outputs into ./dist/.
  *
  * See the "Distributing a macOS desktop app" doc for the full setup (creating a
@@ -32,6 +40,7 @@
 import {
   desktopIncludeArgs,
   desktopPackageFlags,
+  desktopRuntimeEnv,
   syncDesktopAppConfig,
   writeLaufeyLaunchConfig,
 } from "denext/desktop";
@@ -115,7 +124,8 @@ async function buildApp(out: string, target?: string): Promise<void> {
   // deno desktop appends ".app" to --output on macOS, so pass the base name (strip a trailing
   // ".app") to land exactly at `out` — else it writes `out.app` and sign/lipo/dmg miss it.
   cmd.push("--output", out.replace(/\.app$/, ""), "desktop.ts");
-  await run(cmd);
+  // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
+  await run(cmd, { env: await desktopRuntimeEnv(import.meta.url, target) });
   // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
   // read from Contents/Resources at launch. Writing into the bundle breaks deno desktop's ad-hoc
   // seal, so a bundle that got one is always re-signed.

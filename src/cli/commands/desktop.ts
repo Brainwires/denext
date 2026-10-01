@@ -32,6 +32,12 @@ import {
   laufeyLaunchEnv,
   syncDesktopAppConfigAt,
 } from "../../build/desktop-app-config.ts";
+import {
+  DESKTOP_RUNTIME_ATTEST_ENV,
+  DESKTOP_RUNTIME_VERIFY_ENV,
+  resolveDesktopRuntimeEnv,
+} from "../../build/desktop-runtime.ts";
+import { denoExecutable } from "../../build/bundle.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -100,10 +106,25 @@ export const desktopCommand: CommandSpec = {
         "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), " +
         "keeping a .bak of any file that differs; adopt the current scripts in an existing project",
     },
+    {
+      name: "verify-runtime",
+      type: "boolean",
+      help: "run | dev | package: re-hash the cached Deno Desktop runtime before use " +
+        "(DENEXT_DESKTOP_RUNTIME_VERIFY=1)",
+    },
+    {
+      name: "attest-runtime",
+      type: "boolean",
+      help: "run | dev | package: also check a downloaded runtime's build provenance with " +
+        "`gh attestation verify` (DENEXT_DESKTOP_RUNTIME_ATTEST=1; needs gh)",
+    },
     ...DESKTOP_ADD_FLAGS,
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0] ?? "run";
+    // Read by resolveDesktopRuntimeEnv here AND by a packaging script's own call (inherited env).
+    if (ctx.flags["verify-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_VERIFY_ENV, "1");
+    if (ctx.flags["attest-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_ATTEST_ENV, "1");
     const dir = desktopDir(ctx);
     const entry = (ctx.flags.entry as string | undefined) ?? "desktop.ts";
     if (action === "build") return await exportSpa(dir);
@@ -127,15 +148,20 @@ function fail(message: string): never {
 /**
  * Prepare an UNPACKAGED `deno desktop` window: sync `.deno-desktop/app.json` (the configured origin
  * + identifier, embedded through deno.json `compile.include`) and return the webview backend's
- * launch settings as `LAUFEY_*` env (there is no bundle to hold `laufey-launch.json`). Single
- * instance is left out on purpose: a dev window must never hand itself to an installed copy of the
- * same app and exit.
+ * launch settings as `LAUFEY_*` env (there is no bundle to hold `laufey-launch.json`), plus
+ * `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR` for denext's pinned Deno Desktop runtime (downloaded and
+ * verified on first use; nothing under `DENEXT_DESKTOP_RUNTIME=stock`). Single instance is left
+ * out on purpose: a dev window must never hand itself to an installed copy of the same app and exit.
  */
 async function prepareDesktopWindow(dir: string): Promise<Record<string, string>> {
   const { config } = await resolveProject(dir);
   await syncDesktopAppConfigAt(dir, config);
   const launch = desktopLaunchConfig(config);
-  return laufeyLaunchEnv(launch && { appId: launch.appId, customSchemes: launch.customSchemes });
+  const runtime = await resolveDesktopRuntimeEnv({ projectDir: dir, deno: denoExecutable() });
+  return {
+    ...laufeyLaunchEnv(launch && { appId: launch.appId, customSchemes: launch.customSchemes }),
+    ...runtime.env,
+  };
 }
 
 /**

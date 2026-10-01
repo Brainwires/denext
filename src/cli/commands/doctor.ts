@@ -24,6 +24,8 @@ import { capacitorConfigFile } from "../../build/capacitor-config.ts";
 import { leakedCssShimKeys } from "../../build/css-config-guard.ts";
 import { DESKTOP_APP_CONFIG_FILE, desktopAppIdentity } from "../../build/desktop-app-config.ts";
 import { readJson } from "../../build/json-edit.ts";
+import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
+import { denoExecutable } from "../../build/bundle.ts";
 
 export const infoCommand: CommandSpec = {
   name: "info",
@@ -265,6 +267,26 @@ export async function desktopOriginCheck(dir: string, config: unknown): Promise<
 }
 
 /**
+ * The pinned Deno Desktop runtime check, for a desktop project (a `desktop.ts` entry or a deno.json
+ * `desktop` block; null otherwise): the pinned runtime version, whether it is cached and verified
+ * for this host, and whether the `deno` that runs `deno desktop` is its exact Deno version.
+ * Advisory: a missing cache is fine (it downloads on first use). Never downloads.
+ */
+export async function desktopRuntimeCheck(
+  dir: string,
+  options: Partial<Parameters<typeof desktopRuntimeStatus>[0]> = {},
+): Promise<Check | null> {
+  const hasEntry = (await Deno.stat(join(dir, "desktop.ts")).catch(() => null))?.isFile === true;
+  if (!hasEntry && (await readDenoJson(dir))?.desktop === undefined) return null;
+  const status = await desktopRuntimeStatus({
+    projectDir: dir,
+    deno: denoExecutable(),
+    ...options,
+  });
+  return { name: "desktop runtime", ok: status.ok, detail: status.detail, critical: false };
+}
+
+/**
  * The last build's client chunks, or `null` when `outDir` holds no client build output.
  * Reads what `denext build` emitted; never builds.
  */
@@ -331,6 +353,8 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   if (privacy) checks.push(privacy);
   const desktopOrigin = await desktopOriginCheck(dir, paths.config);
   if (desktopOrigin) checks.push(desktopOrigin);
+  const desktopRuntime = await desktopRuntimeCheck(dir);
+  if (desktopRuntime) checks.push(desktopRuntime);
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
 }

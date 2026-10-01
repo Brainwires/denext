@@ -141,7 +141,7 @@ function selectFeatures(ctx: CommandContext): Set<string> {
 function featureNotes(on: (key: string) => boolean): string[] {
   return [
     on("tailwind") ? "  Tailwind is compiled automatically by denext dev/build." : "",
-    on("desktop") ? "  Desktop: `deno task desktop` (needs Deno 2.9+ `deno desktop`)." : "",
+    on("desktop") ? "  Desktop: `deno task desktop` (needs Deno 2.9.7 for `deno desktop`)." : "",
     on("capacitor")
       ? "  Mobile: `deno install`, then `deno task mobile:sync` (needs Xcode/Android Studio).\n" +
         "  Over-the-air UI updates: after `cap add ios|android`, `deno task mobile:add-ota`."
