@@ -628,6 +628,106 @@ try {
         gets one trial launch.
       </p>
 
+      <h2 id="desktop-app-updates">Full-app self-updates</h2>
+      <p>
+        When the binary itself changes (<code>desktop.ts</code>, its Deno-side code, the runtime),
+        the whole signed app is replaced: the macOS{" "}
+        <code>.app</code>, the Windows or Linux app directory, or a Linux AppImage. Nothing is
+        patched in place, because changing a file inside a signed bundle breaks its code signature
+        and notarization. It needs denext&apos;s pinned Deno Desktop runtime (<code>
+          Deno.desktop.updater
+        </code>), and every update is signed: there is no unsigned path.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  app: { identifier: "com.example.app" }, // every manifest names the app it is for
+  update: {
+    publicKey: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…", // ota.key.pub: baked into the app
+    manifestUrl: "https://updates.example.com/myapp/app-update.json", // added to --allow-net
+  },
+},`}
+      </Code>
+      <Code lang="ts">
+        {`// desktop.ts (the Deno process)
+import {
+  checkForAppUpdate,
+  confirmAppUpdate,
+  downloadAppUpdate,
+  installAppUpdateAndRelaunch,
+} from "denext/desktop/updater";
+
+confirmAppUpdate(); // after an update: the app started fine (a no-op otherwise)
+
+const updates = { manifestUrl: "https://updates.example.com/myapp/app-update.json" };
+const found = await checkForAppUpdate(updates);
+if (found.available) {
+  await downloadAppUpdate(updates, { onProgress: (p) => console.log(p.transferred, p.total) });
+  installAppUpdateAndRelaunch(); // quits; the new version starts
+}`}
+      </Code>
+      <p>
+        <strong>Publishing.</strong> Make the key pair once with <code>denext ota keygen</code>{" "}
+        (the over-the-air UI updates&apos; key: one signing key per app). After packaging each
+        platform, run{" "}
+        <code>
+          denext desktop publish-update --artifact dist/MyApp.app --url-base
+          https://updates.example.com/myapp/
+        </code>{" "}
+        with <code>--key ota.key</code> or{" "}
+        <code>DENEXT_OTA_SIGNING_KEY</code>: it writes the archive and a signed{" "}
+        <code>app-update.json</code>, adding each platform of the same version to it. Upload both.
+        The version comes from deno.json, the identifier from{" "}
+        <code>desktop.app.identifier</code>, the platform key (<code>
+          &lt;rust target&gt;-&lt;webview|cef&gt;
+        </code>, <code>-appimage</code> for an AppImage) from the artifact;{" "}
+        <code>--min-version</code> marks older versions as <code>required</code>,{" "}
+        <code>--notes</code> sets the release notes.
+      </p>
+      <p>
+        <strong>What the runtime checks before it writes anything at the install.</strong>{" "}
+        The manifest&apos;s ECDSA P-256 signature against the baked key (<code>signature</code>),
+        the app identifier (<code>wrong_app</code>), a version strictly newer than the running one
+        (<code>downgrade</code>; the same version is simply not available), not a version that was
+        rolled back (<code>rejected</code>), this platform&apos;s entry (<code>no_platform</code>),
+        an https URL (<code>insecure_url</code>), a download that stops at the declared size (
+        <code>size_exceeded</code>) and matches its SHA-256 (<code>integrity</code>), an archive
+        without traversal, escaping links or special files (<code>unsafe_archive</code>) that holds
+        this app (<code>bundle_mismatch</code>), and the operating system&apos;s code signature
+        (<code>os_signature</code>): on macOS{" "}
+        <code>codesign --verify --deep --strict</code>, Gatekeeper and the same Team ID as the
+        running app; on Windows a trusted Authenticode signature with the same signer as the running
+        executable. Linux has no OS signature; the manifest signature and the hash are the whole
+        check there.
+      </p>
+      <p>
+        <strong>Dev builds.</strong>{" "}
+        An ad-hoc signed or unsigned app (a local build) cannot tell who may replace it, so it
+        refuses updates unless you pass <code>allowUnsignedDev: true</code>, and{" "}
+        <code>allowInsecureLoopback: true</code> accepts <code>http://</code>{" "}
+        to a loopback test server. Both are for development only; a signed app ignores{" "}
+        <code>allowUnsignedDev</code>.
+      </p>
+      <p>
+        <strong>Swap, confirm, roll back.</strong>{" "}
+        A helper (the app&apos;s own executable in a hidden mode) waits for the app to exit, swaps
+        the install (one atomic exchange on macOS and Linux, two renames on Windows), keeps the
+        previous app as <code>&lt;name&gt;.old</code>{" "}
+        next to it and relaunches the new version. Call <code>confirmAppUpdate()</code>{" "}
+        once the new version is healthy: <code>.old</code>{" "}
+        is deleted. A version that is still unconfirmed when the app is next launched (it crashed or
+        never confirmed) is rolled back and refused from then on.
+      </p>
+      <p>
+        <strong>Where it cannot update.</strong>{" "}
+        No privilege escalation: an install this user cannot write (a <code>.pkg</code>{" "}
+        in a root-owned <code>/Applications</code> folder, an MSI in Program Files, a{" "}
+        <code>.deb</code>) fails with <code>install_not_writable</code>{" "}
+        and is updated by its installer. A macOS app running translocated (launched from Downloads
+        without being moved) and a <code>deno desktop --compress</code> self-extracting app are{" "}
+        <code>unsupported_layout</code>.
+      </p>
+
       <h2 id="desktop-capabilities">Native capabilities</h2>
       <p>
         A desktop app's native side is the Deno process <code>denext/desktop</code>{" "}

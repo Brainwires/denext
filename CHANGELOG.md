@@ -10,6 +10,19 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop: full-app self-updates.** `denext/desktop/updater` gains `checkForAppUpdate`,
+  `downloadAppUpdate`, `installAppUpdateAndRelaunch`, `confirmAppUpdate` and `appUpdateStatus`
+  (with `AppUpdateError`), next to the UI-overlay updater: the whole signed app (`.app`, app
+  directory or AppImage) is replaced by a newer signed build through the pinned runtime's
+  `Deno.desktop.updater`. Signing is mandatory: `desktop.update.publicKey` (the `denext ota
+  keygen` key) is baked into `.deno-desktop/app.json`, and the runtime refuses a manifest that does
+  not verify, is for another app, offers a version that is not newer (no downgrade) or was rolled
+  back, an http URL, a download larger than declared or with another SHA-256, an unsafe archive,
+  and a staged app whose OS code signature differs from the running app's (macOS Team ID +
+  Gatekeeper, Windows Authenticode signer). The swap is atomic on macOS and Linux; an update not
+  confirmed by its next launch is rolled back. `denext desktop publish-update` packs and signs an
+  update (archive + `app-update.json`, one manifest for every platform of a release), and
+  `desktop.update.manifestUrl` / `hosts` join the packaged app's `--allow-net`.
 - **Deno Desktop: denext's pinned runtime.** `denext desktop run` / `dev` / `package` and the
   scaffolded `scripts/package-*.ts` now build on a prebuilt Deno Desktop runtime (`libdenort` +
   laufey backend hosts) from the Brainwires/deno fork's releases, driven by the STOCK
