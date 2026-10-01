@@ -383,9 +383,10 @@ scheduled notification rejects). Packaging is least-privilege: `scripts/package-
 a diff for each changed file).
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
-packaged `laufey-launch.json`. It takes effect only under the denext-pinned Deno Desktop runtime
-(not downloaded by denext yet); the stock runtime keeps the loopback origin, and the gates detect
-which one they run under. `runDesktop` resolves to `{ window, emit }` for pushing OS events to the page.
+packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly;
+`DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
+detect which one they run under. `runDesktop` resolves to `{ window, emit }` for pushing OS events to the page.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps

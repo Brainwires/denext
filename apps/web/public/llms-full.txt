@@ -376,7 +376,7 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS / Linux; fails closed on Windows) and your `defineDesktopExtension` modules (from
+(macOS Keychain, Linux libsecret, Windows PasswordVault) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`) — but only when `desktop.ts`
 spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
 `runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
@@ -385,6 +385,12 @@ scheduled notification rejects). Packaging is least-privilege: `scripts/package-
 `--allow-*` from `desktop.capabilities` instead of `-A`, and
 `denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
 a diff for each changed file).
+A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
+`desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
+packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly;
+`DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
+detect which one they run under. `runDesktop` resolves to `{ window, emit }` for pushing OS events to the page.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
