@@ -444,6 +444,32 @@ export async function clipboardWrite(text: string): Promise<void> {
   await desktopRpc("clipboard", "writeText", { text });
 }
 
+/**
+ * `readClipboard({ format })` on desktop: `"html"` as a string, `"image"` as base64 PNG (`""` when
+ * the clipboard holds none). A backend without that format rejects `unsupported`.
+ */
+export async function clipboardReadFormat(format: "text" | "html" | "image"): Promise<string> {
+  const out = await desktopRpc<unknown>("clipboard", "read", { format });
+  return typeof out === "string" ? out : "";
+}
+
+/** `writeClipboard({ text?, html?, image? })` on desktop (an image is exclusive). */
+export async function clipboardWriteContent(
+  content: { readonly text?: string; readonly html?: string; readonly image?: string },
+): Promise<void> {
+  await desktopRpc("clipboard", "write", {
+    ...(content.text !== undefined ? { text: content.text } : {}),
+    ...(content.html !== undefined ? { html: content.html } : {}),
+    ...(content.image !== undefined ? { image: content.image } : {}),
+  });
+}
+
+/** `clipboardFormats()` on desktop: the OS clipboard's formats as MIME types. */
+export async function clipboardFormats(): Promise<string[]> {
+  const out = await desktopRpc<unknown>("clipboard", "formats", {});
+  return Array.isArray(out) ? out.filter((f): f is string => typeof f === "string") : [];
+}
+
 // --- device (cap "device") --------------------------------------------------
 
 /** What the runtime reports about the machine. */

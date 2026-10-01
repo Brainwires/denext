@@ -35,6 +35,7 @@ import {
   secureStoreCommand,
 } from "../src/desktop/caps/secure-store.ts";
 import { passkeysCapability } from "../src/desktop/caps/passkeys.ts";
+import { clipboardCapability } from "../src/desktop/caps/clipboard.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
 import {
   DIALOG_NAME_ENV,
@@ -1433,11 +1434,21 @@ Deno.test("resolver: maps enabled built-ins; echo off unless explicitly true", a
         keepAwake: true,
         secureStore: true,
         dialogs: true,
+        clipboard: true,
       },
     },
   });
   const names = r.capabilities.map((c) => c.name).sort();
-  assertEquals(names, ["device", "dialogs", "fs", "keepAwake", "secureStore", "shell", "sqlite"]);
+  assertEquals(names, [
+    "clipboard",
+    "device",
+    "dialogs",
+    "fs",
+    "keepAwake",
+    "secureStore",
+    "shell",
+    "sqlite",
+  ]);
   // echo is a diagnostic — only when capabilities.echo === true.
   const withEcho = await resolveDesktopCapabilities({ desktop: { capabilities: { echo: true } } });
   assertEquals(withEcho.capabilities.map((c) => c.name), ["echo"]);
@@ -1524,10 +1535,10 @@ Deno.test("resolver: a bad extension path fails fast", async () => {
 // and asserts the union of its method permissions equals what `desktopPermissionFlags` derives.
 
 /** Catalog caps with NO bridge-cap object, so there are no runtime method permissions to compare
- * against: the WebView-backed ones (clipboard/context-menu/notifications) and `auth-session` (a
+ * against: the WebView-backed ones (context-menu/notifications) and `auth-session` (a
  * runtime loopback ENDPOINT, not a bridge cap — its opener `--allow-run` is exercised by
  * `handleDesktopAuthSession`, gated by the capability, and covered by the auth-session tests). */
-const WEBVIEW_ONLY = new Set(["clipboard", "context-menu", "notifications", "auth-session"]);
+const WEBVIEW_ONLY = new Set(["context-menu", "notifications", "auth-session"]);
 
 /** A dummy DesktopAppDirs — only the permission DECLARATIONS matter here, no I/O runs. */
 const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
@@ -1536,6 +1547,7 @@ const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
 const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
   device: () => deviceCapability,
   passkeys: (os) => passkeysCapability({ os }),
+  clipboard: () => clipboardCapability({ api: {} }),
   fs: () => {
     const all = DESKTOP_CAPABILITIES.fs.all!;
     return fsCapability({ dirs: DRIFT_DIRS, read: new Set(all.read), write: new Set(all.write) });

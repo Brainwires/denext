@@ -29,8 +29,10 @@ import { shellCapability, type ShellCapabilityConfig } from "./shell.ts";
 import { keepAwakeCapability } from "./keep-awake.ts";
 import { secureStoreCapability } from "./secure-store.ts";
 import { PickedPaths } from "../picked-paths.ts";
+import { type DesktopWindowSettings, resolveDesktopWindowSettings } from "../window-config.ts";
 import { dialogsCapability } from "./dialogs.ts";
 import { passkeysCapability } from "./passkeys.ts";
+import { clipboardCapability } from "./clipboard.ts";
 import {
   desktopAppIdentifierError,
   normalizeDesktopDeepLinks,
@@ -77,6 +79,13 @@ export interface ResolvedDesktop {
    * adds files the OS opens with the app to it (read-only handles for `onOpenFile`).
    */
   readonly pickedPaths: PickedPaths;
+  /**
+   * The initial-window settings (`desktop.window`, `desktop.titleBar`, `desktop.backdrop`,
+   * `desktop.minSize`, `desktop.maxSize`) `runDesktop` applies to the window it adopts.
+   */
+  readonly window: DesktopWindowSettings;
+  /** The app's own folders (data, cache, documents): files there may be dragged out of the window. */
+  readonly appDirs: DesktopAppDirs;
 }
 
 /** The default URL schemes `shell.openExternal` allows when enabled with `shell: true`. */
@@ -140,10 +149,10 @@ async function loadExtension(spec: string, base: string | undefined): Promise<De
  * app-support directory the runtime hands to handlers.
  *
  * The built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,
- * `secureStore`, `dialogs`, and the `echo` diagnostic), plus any `extensions` module paths;
- * `auth-session` is a runtime endpoint (not a bridge cap) so it only sets `authSessionEnabled`. A
- * configured key with no built-in yet (`clipboard`/`contextMenu`/`notifications` — WebView-backed)
- * is left unavailable (the page uses its web path), never an error. A bad extension path IS an
+ * `secureStore`, `dialogs`, `clipboard`, `passkeys`, and the `echo` diagnostic), plus any
+ * `extensions` module paths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets
+ * `authSessionEnabled`. A configured key with no built-in yet (`contextMenu`/`notifications` —
+ * WebView-backed) is left unavailable (the page uses its web path), never an error. A bad extension path IS an
  * error, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a
  * `desktop.app.identifier` — both fail fast at launch.
  *
@@ -185,6 +194,8 @@ export async function resolveDesktopCapabilities(
     authSessionEnabled,
     deepLinks,
     pickedPaths,
+    window: resolveDesktopWindowSettings(desktop),
+    appDirs: dirs,
     ...origin,
   };
 
@@ -240,30 +251,55 @@ function assertAppIdentity(hasExplicitId: boolean, caps: DesktopCapabilitiesConf
   }
 }
 
+/** What the built-in factories need. */
+interface BuiltinCtx {
+  readonly dirs: DesktopAppDirs;
+  readonly appId: string;
+  readonly base: string | undefined;
+  readonly picked: PickedPaths;
+}
+
+/** The enabled built-ins that keep data on disk or in the keychain (`fs`, `sqlite`, `secureStore`). */
+function dataCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCapability[] {
+  const out: DesktopCapability[] = [];
+  if (caps.fs) {
+    const { read, write } = fsTokens(caps.fs);
+    out.push(fsCapability({ dirs: ctx.dirs, read, write, picked: ctx.picked }));
+  }
+  if (caps.sqlite) out.push(sqliteCapability(ctx.dirs.data));
+  if (caps.secureStore) out.push(secureStoreCapability({ service: ctx.appId }));
+  return out;
+}
+
+/** The enabled built-ins that reach the OS (shell, dialogs, keep-awake, clipboard, passkeys). */
+function systemCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCapability[] {
+  const out: DesktopCapability[] = [];
+  if (caps.shell) {
+    out.push(
+      shellCapability({ dirs: ctx.dirs, config: resolveShell(caps.shell), picked: ctx.picked }),
+    );
+  }
+  if (caps.dialogs) out.push(dialogsCapability({ picked: ctx.picked }));
+  if (caps.keepAwake) out.push(keepAwakeCapability());
+  if (caps.clipboard) out.push(clipboardCapability());
+  if (caps.passkeys) {
+    const rpIds = typeof caps.passkeys === "object" ? caps.passkeys.rpIds : undefined;
+    out.push(passkeysCapability(rpIds ? { rpIds } : {}));
+  }
+  return out;
+}
+
 /** Map the enabled `caps` to the bridge capability objects (built-ins + loaded extensions). */
 async function buildBuiltinCaps(
   caps: DesktopCapabilitiesConfig,
-  ctx: { dirs: DesktopAppDirs; appId: string; base: string | undefined; picked: PickedPaths },
+  ctx: BuiltinCtx,
 ): Promise<DesktopCapability[]> {
-  const { dirs, appId, base, picked } = ctx;
-  const capabilities: DesktopCapability[] = [];
-  if (caps.echo === true) capabilities.push(echoCapability);
-  if (caps.device) capabilities.push(deviceCapability);
-  if (caps.fs) {
-    const { read, write } = fsTokens(caps.fs);
-    capabilities.push(fsCapability({ dirs, read, write, picked }));
-  }
-  if (caps.sqlite) capabilities.push(sqliteCapability(dirs.data));
-  if (caps.shell) {
-    capabilities.push(shellCapability({ dirs, config: resolveShell(caps.shell), picked }));
-  }
-  if (caps.dialogs) capabilities.push(dialogsCapability({ picked }));
-  if (caps.keepAwake) capabilities.push(keepAwakeCapability());
-  if (caps.secureStore) capabilities.push(secureStoreCapability({ service: appId }));
-  if (caps.passkeys) {
-    const rpIds = typeof caps.passkeys === "object" ? caps.passkeys.rpIds : undefined;
-    capabilities.push(passkeysCapability(rpIds ? { rpIds } : {}));
-  }
-  for (const spec of caps.extensions ?? []) capabilities.push(await loadExtension(spec, base));
+  const capabilities: DesktopCapability[] = [
+    ...(caps.echo === true ? [echoCapability] : []),
+    ...(caps.device ? [deviceCapability] : []),
+    ...dataCaps(caps, ctx),
+    ...systemCaps(caps, ctx),
+  ];
+  for (const spec of caps.extensions ?? []) capabilities.push(await loadExtension(spec, ctx.base));
   return capabilities;
 }

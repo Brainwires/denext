@@ -227,11 +227,13 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
   clipboard: {
     key: "clipboard",
     value: true,
-    api: ["readClipboard", "writeClipboard"],
+    api: ["readClipboard", "writeClipboard", "clipboardFormats"],
+    // A runtime API (Deno.desktop.clipboard in denext's pinned runtime), no --allow-* of its own.
+    // Under the stock runtime the cap answers `unavailable` and the page keeps the WebView's
+    // navigator.clipboard.
     trust: "none",
-    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission — the page uses the
-    // WebView's own clipboard.
-    notes: "WebView clipboard via navigator.clipboard (no runtime cap)",
+    notes:
+      "native clipboard: text, HTML and PNG images (pinned runtime; WebView navigator.clipboard otherwise)",
   },
   device: {
     key: "device",

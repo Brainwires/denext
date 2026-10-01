@@ -13,10 +13,10 @@
  * - {@linkcode openExternal}: the in-app browser via the native `Browser` plugin, else
  *   `window.open` with `noopener`; only http(s), mailto: and tel: are allowed.
  * - In a Deno Desktop window ({@linkcode runtimePlatform} `"desktop"`), `secureStore`, the
- *   file functions, `openSqlite`, `openExternal`, `pickDocument`, `useKeepAwake` and
- *   `deviceInfo` go through the desktop runtime's capabilities (`denext desktop add
- *   <capability>`); `showContextMenu`, the notifications and the clipboard have no runtime
- *   capability and take their WebView (web) path there; {@linkcode openPath},
+ *   file functions, `openSqlite`, `openExternal`, `pickDocument`, `useKeepAwake`,
+ *   `deviceInfo` and the clipboard (text, HTML and images) go through the desktop runtime's
+ *   capabilities (`denext desktop add <capability>`); `showContextMenu` and the notifications
+ *   have no runtime capability and take their WebView (web) path there; {@linkcode openPath},
  *   {@linkcode revealInFileManager}, {@linkcode moveToTrash}, {@linkcode saveFile} and
  *   {@linkcode pickFolder} are the desktop file-manager and dialog extras. A picked file or
  *   folder comes back with an opaque `handle` ({@linkcode PickedHandle}): the file functions
@@ -49,7 +49,8 @@
  *   {@linkcode otaSignaturePayload} builds the exact bytes a manifest signature covers.
  * - Native capabilities, each through its official Capacitor plugin in the shell
  *   (`denext mobile add <capability>` installs it) and a web fallback elsewhere:
- *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard},
+ *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard} /
+ *   {@linkcode clipboardFormats},
  *   {@linkcode share}, {@linkcode deviceInfo}, {@linkcode networkStatus} /
  *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
@@ -219,7 +220,14 @@ export {
 } from "./ota.ts";
 export { type OtaManifest, type OtaManifestFile, otaSignaturePayload } from "./ota-manifest.ts";
 export { haptic, type HapticKind } from "./haptics.ts";
-export { readClipboard, writeClipboard } from "./clipboard.ts";
+export {
+  type ClipboardContent,
+  type ClipboardFormat,
+  clipboardFormats,
+  readClipboard,
+  type ReadClipboardOptions,
+  writeClipboard,
+} from "./clipboard.ts";
 export { share, type ShareOptions, type ShareResult } from "./share.ts";
 export { type DeviceInfo, deviceInfo } from "./device.ts";
 export {

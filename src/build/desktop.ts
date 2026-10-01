@@ -42,9 +42,19 @@ import type { DesktopCapability } from "../desktop/extension.ts";
 import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
 import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
 import type { PickedPaths } from "../desktop/picked-paths.ts";
+import type { DesktopAppDirs } from "../desktop/app-dirs.ts";
+import { createWindowController, type WindowController } from "../desktop/caps/window.ts";
+import {
+  applyDesktopWindowSettings,
+  type DesktopWindowSettings,
+} from "../desktop/window-config.ts";
 
 /** The per-launch picked-path set (re-exported so {@linkcode RunDesktopOptions} is documentable). */
 export type { PickedPaths } from "../desktop/picked-paths.ts";
+/** The app's own folders (re-exported so {@linkcode RunDesktopOptions} is documentable). */
+export type { DesktopAppDirs } from "../desktop/app-dirs.ts";
+/** The initial-window settings `runDesktop` applies (`desktop.window`, `desktop.titleBar`, …). */
+export type { DesktopWindowSettings, DesktopWindowSize } from "../desktop/window-config.ts";
 
 /** The gated capability bridge {@linkcode createDesktopHandler} dispatches to (re-exported so the
  * handler's signature has no private type). */
@@ -341,6 +351,18 @@ export interface RunDesktopOptions {
    * resolveDesktopCapabilities}); files the OS opens with the app become read-only handles in it.
    */
   pickedPaths?: PickedPaths;
+  /**
+   * The initial-window settings from `desktop.window` / `desktop.titleBar` / `desktop.backdrop` /
+   * `desktop.minSize` / `desktop.maxSize` (from {@link resolveDesktopCapabilities}), applied to the
+   * adopted window at launch. The size limits, title bar style and backdrop need denext's pinned
+   * runtime; the stock runtime skips them with a warning.
+   */
+  window?: DesktopWindowSettings;
+  /**
+   * The app's own folders (from {@link resolveDesktopCapabilities}): besides picked handles, the
+   * only files the page may drag out of the window (`startFileDrag` in `denext/desktop/window`).
+   */
+  appDirs?: DesktopAppDirs;
 }
 
 /**
@@ -485,16 +507,23 @@ export function resolveOutDir(options: RunDesktopOptions): string {
  *
  * @param BrowserWindow The runtime's window constructor (`Deno.BrowserWindow`); a parameter so a
  *   test can stand one in.
+ * @param exit How the process ends (default `Deno.exit`).
+ * @param intercept Consulted first on every close: `true` when it took the close over (the page
+ *   guards it, see `onCloseRequested` in `denext/desktop/window`), so the app keeps running.
  */
 export function installWindowCloseHandler(
   // deno-lint-ignore no-explicit-any
   BrowserWindow: unknown = (Deno as any).BrowserWindow,
   exit: (code: number) => void = Deno.exit,
+  intercept?: (event: Event) => boolean,
 ): unknown {
   try {
     if (typeof BrowserWindow === "function") {
       const appWindow = new (BrowserWindow as new () => EventTarget)();
-      appWindow.addEventListener("close", () => exit(0));
+      appWindow.addEventListener("close", (event) => {
+        if (intercept?.(event) === true) return;
+        exit(0);
+      });
       return appWindow;
     }
   } catch (err) {
@@ -812,7 +841,15 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   const devInjectToken = devDecision.proxy && !devDecision.allowNonLoopback;
   // Imported lazily so proxy-less apps never pull in the proxy module (and its `npm:ws`).
   const proxy = (options.proxy || devUrl) ? await import("./dev-proxy.ts") : undefined;
-  const appWindow = installWindowCloseHandler();
+  // The window controller (the `window` capability) is created once the bridge exists; the close
+  // listener consults it so a page-guarded close keeps the app running.
+  const windowRef: { ctl?: WindowController } = {};
+  const appWindow = installWindowCloseHandler(
+    undefined,
+    undefined,
+    (event) => windowRef.ctl?.interceptClose(event) ?? false,
+  );
+  applyDesktopWindowSettings(appWindow, options.window);
   // Which desktop world this is, decided ONCE from what the runtime published: the pinned runtime's
   // in-process memory transport at a stable origin, or the stock runtime's loopback port.
   const { trust, warning: trustWarning } = resolveDesktopTrust(
@@ -852,14 +889,33 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // RPC answers `unavailable`), plus the app-event capabilities of denext's pinned runtime (deep
   // links, opened files, custom-scheme auth sessions). `dev` (live-reload mode) lets an unexpected
   // handler error include its message; a packaged build stays generic.
-  const appEvents = desktopAppEvents(options, (cap, event, data) => bridge.emit(cap, event, data));
-  const bridge = createDesktopBridge([...(options.capabilities ?? []), ...appEvents.capabilities], {
-    appSupportDir: options.appSupportDir,
-    getWindow: () => appWindow,
-    dev: devDecision.proxy,
-    trust,
+  const emitToPage = (cap: string, event: string, data: unknown) => bridge.emit(cap, event, data);
+  const appEvents = desktopAppEvents(options, emitToPage);
+  // The page's control over its own window (state, size, displays, chrome, a guarded close, quit,
+  // files dragged in and out): registered whenever a window was adopted.
+  const windowCtl = appWindow === undefined ? undefined : createWindowController({
+    window: appWindow,
+    api: desktopAppApi(),
+    emit: emitToPage,
+    ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
+    ...(options.appDirs ? { dirs: options.appDirs } : {}),
   });
+  const bridge = createDesktopBridge(
+    [
+      ...(options.capabilities ?? []),
+      ...appEvents.capabilities,
+      ...(windowCtl ? [windowCtl.capability] : []),
+    ],
+    {
+      appSupportDir: options.appSupportDir,
+      getWindow: () => appWindow,
+      dev: devDecision.proxy,
+      trust,
+    },
+  );
+  windowRef.ctl = windowCtl;
   appEvents.install();
+  windowCtl?.install();
   const handle = createDesktopHandler(
     options,
     outDir,

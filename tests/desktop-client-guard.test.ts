@@ -11,7 +11,9 @@ const CLIENT_FILES = [
   "src/desktop/client.ts",
   "src/desktop/bridge-client.ts",
   "src/desktop/native.ts",
+  "src/desktop/window.ts",
   "src/mobile/desktop-branch.ts",
+  "src/mobile/clipboard.ts",
   "src/mobile/shell.ts",
   "src/mobile/file-dialogs.ts",
 ];

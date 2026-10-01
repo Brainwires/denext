@@ -7,9 +7,10 @@
  * string (a dialog's `path` is display-only). `fs` and `shell` reach a picked location only by
  * presenting a handle the user created. Handles are in-memory and per launch (they die on quit),
  * capped so repeated dialogs cannot grow the set without bound, and each carries a mode:
- * - `read`     — one file, read only (openFile).
+ * - `read`     — one file, read only (openFile, a file dropped on the window, an opened file).
  * - `readwrite` — one file, read + write (saveFile).
  * - `folder`   — a directory, read + write, recursive (pickFolder).
+ * - `readFolder` — a directory, read only, recursive (a folder dropped on the window).
  *
  * Access is confined with the same {@link confineRelative} machinery `fs` uses, so a relative path
  * under a picked folder still cannot `..`-escape it or follow a symlink out of it.
@@ -24,7 +25,7 @@ import { DesktopCapError } from "./extension.ts";
 import { confineRelative } from "./path-scope.ts";
 
 /** How much access a picked handle grants. */
-export type PickMode = "read" | "readwrite" | "folder";
+export type PickMode = "read" | "readwrite" | "folder" | "readFolder";
 
 /** The default maximum number of live handles (oldest dropped past it). */
 const DEFAULT_MAX = 1000;
@@ -87,8 +88,10 @@ export class PickedPaths {
   async resolve(handle: unknown, rel: string, write: boolean): Promise<PickedTarget> {
     const entry = typeof handle === "string" ? this.#entries.get(handle) : undefined;
     if (!entry) throw forbidden("unknown or expired picked handle");
-    if (write && entry.mode === "read") throw forbidden("this handle is read-only");
-    if (entry.mode === "folder") {
+    if (write && (entry.mode === "read" || entry.mode === "readFolder")) {
+      throw forbidden("this handle is read-only");
+    }
+    if (entry.mode === "folder" || entry.mode === "readFolder") {
       const target = await confineRelative(entry.realPath, rel && rel.length > 0 ? rel : ".");
       return { target, root: entry.realPath };
     }

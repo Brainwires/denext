@@ -1251,7 +1251,7 @@
               "type": "boolean"
             },
             "clipboard": {
-              "description": "Clipboard text (no runtime capability yet: the WebView's `navigator.clipboard`).",
+              "description": "The OS clipboard — text, HTML and PNG images (`readClipboard` / `writeClipboard` / `clipboardFormats`) — through denext's pinned runtime; under the stock runtime the page keeps the WebView's `navigator.clipboard` (text).",
               "type": "boolean"
             },
             "device": {
@@ -1300,7 +1300,7 @@
           "type": "string"
         },
         "window": {
-          "description": "The initial window. **Validated only for now:** not applied by the desktop runtime yet.",
+          "description": "The initial window: size, title and resizability, applied by the desktop runtime when it adopts the window (on every runtime). The page changes it later with `denext/desktop/window`.",
           "type": "object",
           "properties": {
             "width": {
@@ -1324,7 +1324,7 @@
           }
         },
         "titleBar": {
-          "description": "The title bar style: `\"hiddenInset\"` keeps the macOS traffic lights over the content. **Validated only for now:** not applied yet.",
+          "description": "The title bar style (macOS): `\"hidden\"` draws the page under a transparent title bar, `\"hiddenInset\"` also insets the traffic lights. Give the page a drag region (`makeWindowDraggable` from `denext/desktop/window`). Needs denext's pinned runtime.",
           "enum": [
             "default",
             "hidden",
@@ -1332,7 +1332,7 @@
           ]
         },
         "backdrop": {
-          "description": "The window backdrop material (`\"mica\"` / `\"acrylic\"` on Windows, `\"vibrancy\"` on macOS). **Validated only for now:** not applied yet.",
+          "description": "The window backdrop, showing where the page's background is transparent: `\"mica\"` / `\"acrylic\"` on Windows 11, `\"vibrancy\"` (the `under-window` material) on macOS. Ignored on other OSes and on the CEF backend. Needs denext's pinned runtime.",
           "enum": [
             "none",
             "mica",
@@ -1341,7 +1341,7 @@
           ]
         },
         "minSize": {
-          "description": "The smallest window size. **Validated only for now:** not applied yet.",
+          "description": "The smallest window size the user can resize to. Needs denext's pinned runtime.",
           "type": "object",
           "properties": {
             "width": {
@@ -1361,7 +1361,7 @@
           ]
         },
         "maxSize": {
-          "description": "The largest window size. **Validated only for now:** not applied yet.",
+          "description": "The largest window size the user can resize to. Needs denext's pinned runtime.",
           "type": "object",
           "properties": {
             "width": {

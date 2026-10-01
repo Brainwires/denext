@@ -48,6 +48,58 @@ export interface RegisterSchemeResult extends SchemeOwnerInfo {
   readonly reason?: string;
 }
 
+/** A rectangle in the runtime's screen coordinates (`Deno.Rectangle`). */
+export interface DesktopRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** A display, as `Deno.desktop.screens()` reports it. */
+export interface DesktopScreen {
+  /** Identifies the display while it stays connected. */
+  readonly id: number;
+  /** The whole display. */
+  readonly bounds: DesktopRect;
+  /** The display minus the menu bar, Dock, taskbar and panels. */
+  readonly workArea: DesktopRect;
+  /** Physical pixels per CSS pixel. */
+  readonly scaleFactor: number;
+  /** The primary display. */
+  readonly isPrimary: boolean;
+}
+
+/** A file-type filter of a native file dialog (extensions without the dot). */
+export interface DesktopFileFilter {
+  readonly name: string;
+  readonly extensions: string[];
+}
+
+/** The options denext passes to `Deno.desktop.dialog.showOpenDialog` / `showSaveDialog`. */
+export interface DesktopDialogOptions {
+  /** The window the dialog is modal to (the adopted `BrowserWindow`). */
+  readonly window?: unknown;
+  /** A start directory or, for a save dialog, a proposed file name. */
+  readonly defaultPath?: string;
+  /** File-type filters. */
+  readonly filters?: DesktopFileFilter[];
+  /** `openFile` / `openDirectory` / `multiSelections` / `showHiddenFiles`. */
+  readonly properties?: string[];
+}
+
+/** `Deno.desktop.clipboard`: the native clipboard (text, HTML, PNG images). */
+export interface DesktopNativeClipboard {
+  capabilities(): { text?: boolean; html?: boolean; image?: boolean; formats?: boolean };
+  readText(): Promise<string>;
+  writeText(text: string): Promise<void>;
+  readHTML(): Promise<string>;
+  writeHTML(html: string, text?: string): Promise<void>;
+  readImage(): Promise<Uint8Array | null>;
+  writeImage(png: Uint8Array): Promise<void>;
+  availableFormats(): Promise<string[]>;
+}
+
 /**
  * The slice of `Deno.desktop` (denext's pinned Deno Desktop runtime) the app events use. Every
  * member is optional: the stock runtime has no `Deno.desktop`, and an older pinned runtime lacks
@@ -70,6 +122,19 @@ export interface DesktopAppApi {
     create(optionsJson: string, options?: { window?: unknown }): Promise<string>;
     get(optionsJson: string, options?: { window?: unknown }): Promise<string>;
   };
+  /** The connected displays, primary first. */
+  screens?(): DesktopScreen[];
+  /** What window features this backend supports (`fileDialogs`, `state`, `fileDragOut`, …). */
+  windowCapabilities?(): Record<string, boolean>;
+  /** Electron's `app.quit()`: cancelable `beforequit`, then every window's cancelable `close`. */
+  quit?(): boolean;
+  /** The OS's own file dialogs. */
+  readonly dialog?: {
+    showOpenDialog(options?: DesktopDialogOptions): Promise<string[] | null>;
+    showSaveDialog(options?: DesktopDialogOptions): Promise<string | null>;
+  };
+  /** The native clipboard. */
+  readonly clipboard?: DesktopNativeClipboard;
 }
 
 /** `Deno.desktop` when the runtime has it (denext's pinned runtime), else `undefined`. */

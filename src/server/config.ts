@@ -699,7 +699,11 @@ export interface DesktopCapabilitiesConfig {
   notifications?: boolean;
   /** Prevent the machine from sleeping while held. */
   keepAwake?: boolean;
-  /** Clipboard text (no runtime capability yet: the WebView's `navigator.clipboard`). */
+  /**
+   * The OS clipboard — text, HTML and PNG images (`readClipboard` / `writeClipboard` /
+   * `clipboardFormats`) — through denext's pinned runtime; under the stock runtime the page keeps
+   * the WebView's `navigator.clipboard` (text).
+   */
   clipboard?: boolean;
   /** Device info (`os`, `osVersion`, `model?`). */
   device?: boolean;
@@ -798,21 +802,26 @@ export interface DesktopConfig {
    * or Clerk's (`installClerkDesktopBridge` from `denext/desktop/clerk`) before the app reads them.
    */
   preload?: string;
-  /** The initial window. **Validated only for now:** not applied by the desktop runtime yet. */
+  /**
+   * The initial window: size, title and resizability, applied by the desktop runtime when it
+   * adopts the window (on every runtime). The page changes it later with `denext/desktop/window`.
+   */
   window?: DesktopWindowConfig;
   /**
-   * The title bar style: `"hiddenInset"` keeps the macOS traffic lights over the content.
-   * **Validated only for now:** not applied yet.
+   * The title bar style (macOS): `"hidden"` draws the page under a transparent title bar,
+   * `"hiddenInset"` also insets the traffic lights. Give the page a drag region
+   * (`makeWindowDraggable` from `denext/desktop/window`). Needs denext's pinned runtime.
    */
   titleBar?: "default" | "hidden" | "hiddenInset";
   /**
-   * The window backdrop material (`"mica"` / `"acrylic"` on Windows, `"vibrancy"` on macOS).
-   * **Validated only for now:** not applied yet.
+   * The window backdrop, showing where the page's background is transparent: `"mica"` /
+   * `"acrylic"` on Windows 11, `"vibrancy"` (the `under-window` material) on macOS. Ignored on
+   * other OSes and on the CEF backend. Needs denext's pinned runtime.
    */
   backdrop?: "none" | "mica" | "acrylic" | "vibrancy";
-  /** The smallest window size. **Validated only for now:** not applied yet. */
+  /** The smallest window size the user can resize to. Needs denext's pinned runtime. */
   minSize?: DesktopSize;
-  /** The largest window size. **Validated only for now:** not applied yet. */
+  /** The largest window size the user can resize to. Needs denext's pinned runtime. */
   maxSize?: DesktopSize;
   /**
    * Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what
@@ -866,7 +875,7 @@ export interface DesktopSize {
   height: number;
 }
 
-/** The initial window ({@link DesktopConfig.window}). Not applied by the runtime yet. */
+/** The initial window ({@link DesktopConfig.window}), applied when the runtime adopts it. */
 export interface DesktopWindowConfig {
   /**
    * Initial width in CSS pixels.
