@@ -243,7 +243,7 @@ async function exists(path: string): Promise<boolean> {
 Deno.test("llmsIndex: is a valid llms.txt (H1 + blockquote + docs links)", () => {
   const txt = llmsIndex();
   assertStringIncludes(txt, "# denext");
-  assertStringIncludes(txt, "> denext is Next.js's App Router");
+  assertStringIncludes(txt, "> denext is a complete, lightweight framework for Deno");
   assertStringIncludes(txt, "https://denext.dev/llms-full.txt");
   assertStringIncludes(txt, "MCP server");
 });

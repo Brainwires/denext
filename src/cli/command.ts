@@ -336,7 +336,7 @@ export class CommandRegistry {
     const table = (list: { label: string; summary: string }[]) =>
       list.map((row) => `${row.label.padEnd(width)}${row.summary}`).join("\n");
     const projectSection = own.length === 0 ? "" : `\n\nProject commands:\n${table(own)}`;
-    return `denext ${version} — one power tool for all of React\n\n` +
+    return `denext ${version} — write it once, ship it everywhere: web, iOS, Android and desktop\n\n` +
       `Usage: denext <command> [options]\n\n` +
       `Commands:\n${table(builtIns)}${projectSection}\n\n` +
       `Global options:\n${globalFlagsHelp()}\n\n` +

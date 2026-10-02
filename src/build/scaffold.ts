@@ -64,7 +64,7 @@ function readme(opts: ScaffoldOptions, appBase: string): string {
   const name = basename(opts.dir) || "my-app";
   return `# ${name}
 
-A [denext](https://denext.dev) app — Next.js's App Router, running on Deno.
+A [denext](https://denext.dev) app — write it once, ship it to the web, iOS, Android and the desktop.
 
 ## Tasks
 

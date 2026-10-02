@@ -1,8 +1,10 @@
 # denext
 
-> denext is Next.js's App Router, reimplemented for Deno with its own small React. If you
-> know Next.js you already know denext — the same file conventions, hooks, and `app/`
-> router. This file helps AI tools emit correct denext instead of Next.js.
+> denext is a complete, lightweight framework for Deno: write an app once and ship it to the
+> web, iOS, Android and the desktop, on its own small React core. Its API is surface compatible
+> with React and the Next.js App Router, so if you know Next.js you already know denext — the
+> same file conventions, hooks, and `app/` router — and existing npm packages work. This file
+> helps AI tools emit correct denext instead of Next.js.
 
 ## What differs from Next.js (read first)
 

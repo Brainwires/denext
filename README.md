@@ -21,6 +21,17 @@ product team needs one stack, one language and one build, and the framework's ru
 **nothing from npm**. The same `denext/mobile` call reaches Capacitor on a phone, the native
 runtime in a desktop window and a web fallback in a browser.
 
+**Every accepted web-framework feature, unified and surface compatible.** Server Components and
+Actions, streaming, Partial Prerendering, islands, resumability, live data, a typed API, auth, data
+and cron live in one framework, behind the React, Next.js, Remix, React Native and Expo APIs
+developers already know. That compatibility means your existing `npm:` and `jsr:` packages work as
+they are (Radix, Base UI, shadcn/ui, TanStack Router, recharts, react-hook-form, …): there is no new
+ecosystem to wait for. [Bring your existing app](#bring-your-existing-app).
+
+**Lightweight.** A **19.6 KB** shared client runtime against 136.9 KB for the same routes on
+Next.js, **0 KB** of JavaScript on a page with no interactivity, and SSR on par or faster.
+[Small and fast](#small-and-fast).
+
 **Docs:** [denext.dev](https://denext.dev/) · **Package:**
 [jsr.io/@denext/denext](https://jsr.io/@denext/denext) · **Source:**
 [github.com/Brainwires/denext](https://github.com/Brainwires/denext) · **License:**

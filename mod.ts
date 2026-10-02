@@ -1,11 +1,14 @@
 /**
  * # denext
  *
- * A **Next.js-style web framework for [Deno](https://deno.com)** — file-based App
- * Router, server-side rendering, streaming, client hydration, Suspense, middleware,
- * and Server Actions — built on the Deno standard library with **zero runtime npm
- * dependencies**. denext ships its own tiny React-equivalent (JSX runtime, hooks,
- * context, reconciler), so there is no React to install and nothing to pull from npm.
+ * **Write your app once, ship it everywhere.** denext is a complete, lightweight
+ * application framework for [Deno](https://deno.com): one codebase becomes a web app, an
+ * iOS and Android app and a desktop app for macOS, Windows and Linux. Every accepted
+ * web-framework feature (the file-based App Router, Server Components and Actions,
+ * streaming, Suspense, middleware, islands, resumability, live data, a typed API, auth)
+ * lives in one framework, surface compatible with the React and Next.js APIs you already
+ * know, so existing packages work as they are. denext ships its own tiny React-compatible
+ * core (JSX runtime, hooks, context, reconciler) with **zero runtime npm dependencies**.
  *
  * This is the framework's main entrypoint: it re-exports the JSX runtime, hooks,
  * context, Suspense, error boundaries, the `<Image>` / `<Script>` / font helpers,

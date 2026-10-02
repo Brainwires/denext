@@ -13,11 +13,11 @@ export const DOCS_VERSION = VERSION;
 export const SITE_ORIGIN = "https://denext.dev";
 
 const DESCRIPTION =
-  "denext runs React and the Next.js App Router on Deno with its own small React core — a zero-npm runtime, Server Components, Server Actions, and pages that ship 0 KB of JavaScript. Plus what stock React can't: Qwik-style resumability on React's own API, and Astro-style islands with per-component lazy hydration.";
+  "Write your app once and ship it to the web, iOS, Android, macOS, Windows and Linux. denext is a complete, lightweight framework for Deno: every accepted web-framework feature in one place, surface compatible with the React and App Router APIs you know so your existing packages work, on its own small React core and a zero-npm runtime.";
 
 export const metadata = {
   metadataBase: new URL(SITE_ORIGIN),
-  title: "denext — a React framework for Deno",
+  title: "denext — write it once, ship it everywhere",
   description: DESCRIPTION,
   // Static OG/Twitter bits every page shares (denext absolutizes the image against
   // metadataBase). The PER-PAGE og:title/description/url + twitter:title/description

@@ -85,6 +85,7 @@ export const NAV: {
       { slug: "production-checklist", label: "Production checklist" },
       { slug: "multi-instance", label: "Multi-instance" },
       { slug: "desktop", label: "Desktop apps" },
+      { slug: "desktop-runtime", label: "Deno Desktop runtime" },
       { slug: "mobile", label: "Mobile (Capacitor)" },
       { slug: "mobile-build", label: "Mobile builds & submit" },
       { slug: "troubleshooting", label: "Troubleshooting" },

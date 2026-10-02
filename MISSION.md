@@ -1,60 +1,65 @@
 # denext — Mission
 
-> **Replace React and Next.js with a superior framework, written in Deno.**
+> **Write it once, ship it everywhere: one complete, lightweight framework for every platform,
+> every accepted web-framework feature and the packages you already use.**
 
-Not a clone and not a port. denext gives developers the React and Next.js App
-Router API they already know — that familiarity is the on-ramp, the thing that
-makes _trying_ it free — and then beats the originals on the axes that actually
-hurt. "Superior" is concrete, and it's the whole job:
+denext is a complete software development framework for [Deno](https://deno.com). Its job is to
+let one team build one app, in one language, from one codebase, and ship it to every platform
+people use, without assembling a stack from parts or waiting for an ecosystem to grow around it.
+Four pillars, in order:
 
-1. **A smaller, auditable, zero-npm runtime.** Two wins in one architecture. It
-   ships **less JavaScript** — its own small React-compatible core instead of the
-   full framework, ~7× smaller output, **0 KB JS on a static route**, and
-   single-binary-capable builds — _and_ what it ships carries **no npm tree** (deps
-   from JSR + WASM, web standards all the way down), so the whole thing is auditable
-   end to end. Smaller bundles are the felt-pain plug; the zero-npm supply-chain story is
-   the claim neither real-Next-on-Deno nor Fresh can make — and 2025's npm attacks
-   made it urgent, not just tidy. **First-party Rust→WASM is on-brand, not an
-   exception.** denext's own codecs — `@denext/photon`, `@denext/avif`, `@denext/og` —
-   ship as JSR packages built from source _we_ own and audit; they are **not** npm
-   dependencies, and owning the Rust source and the `.wasm` we vendor makes the stack
-   _more_ auditable, not less. (Where the runtime already gives us a real engine — e.g.
-   Deno's built-in `node:sqlite` — we use it directly.) Zero-npm is about the **runtime**:
-   no opaque npm tree in what ships — it never meant "no compiled code," nor that the
-   build-time toolchain (still `esbuild` + a few opt-in npm tools) is npm-free.
-2. **Secure by default — off Next's framework-CVE treadmill.** Next ships a steady
-   stream of framework-level CVEs — middleware auth-bypass (CVE-2025-29927), SSRF
-   via image optimization, cache poisoning, DoS. denext closes those classes **by
-   construction**: a **strict hash-based CSP by default** (even on streamed
-   responses), **SSRF-safe image optimization**, **same-origin, CSRF-defended
-   Server Actions**, **signed `httpOnly`/`secure`/`sameSite` cookies**, and a
-   **least-privilege Deno permission sandbox** around the whole runtime — on top of
-   the zero-npm tree (Pillar 1) that erases the supply-chain CVE surface entirely.
-   Fewer moving parts, fewer footguns, far fewer 2 a.m. patch scrambles. For a
-   security-conscious or enterprise team, this alone is the reason to switch.
-3. **Capabilities React's architecture structurally can't ship.** Owning the
-   reconciler, the Flight boundary, and the cache lets denext do what Next can't
-   without a rewrite: **Live Server Components** (server-push over WebSocket),
-   **resumability** (interactive with no up-front hydration), and **true islands**
-   (per-component lazy hydration). Superior isn't only "smaller" — it's "does more."
-4. **One cargo-class tool for all of React.** SPA, App Router, unmodified-Next
-   migrations, and desktop — a single binary from `create` to a packaged app, with
-   DX good enough to choose on its own. Shipped as **2.0** (see
-   [FEATURES.md](./FEATURES.md)); [ROADMAP.md](./ROADMAP.md) tracks what remains.
-5. **Honest compatibility as the on-ramp — never the headline.** We reproduce the
-   React/Next _surface_ so migration is nearly free, and we **never claim 100%
-   parity**. Compat gets people in the door; superiority is why they stay.
+1. **Write it once, ship it everywhere.** One codebase, one component model, one router and one
+   typed API layer become a web app (server-rendered with streaming, a static export, or a
+   client-only SPA), an iOS and Android app (a Capacitor shell driven by `denext/mobile`) and a
+   desktop app for macOS, Windows and Linux (Deno Desktop at Electron parity: menus, tray,
+   notifications, dialogs, deep links, single-instance, signed full-app self-updates and
+   least-privilege packaging). The same `denext/mobile` call reaches Capacitor on a phone, the
+   native runtime in a desktop window and a web fallback in a browser, so a component does not
+   need to know where it runs. One CLI takes the app from `create` to a signed store build or a
+   signed, distributable desktop app.
+
+2. **Every accepted web-framework feature, in one unified framework.** The features a product
+   otherwise assembles from several frameworks and libraries are built in and designed together:
+   the App Router with Server Components, Server Actions and streaming Suspense; every rendering
+   strategy (SSR, static export, Partial Prerendering with Cache Components, Astro-style islands,
+   Qwik-style resumability); Live Server Components and typed server push; an end-to-end typed API
+   that also serves OpenAPI and GraphQL; first-party auth; Deno's built-in SQLite, KV, Postgres,
+   Drizzle and Prisma; `use cache`; cron tasks; typed content collections; a plugin seam for the
+   rest. They sit behind the conventions developers already know, and they are **secure by
+   default**: a strict hash-based CSP, CSRF-defended Server Actions, signed `httpOnly` cookies,
+   SSRF-safe fetch and image optimization, and Deno's permission sandbox around the runtime.
+   [FEATURES.md](./FEATURES.md) lists every one, with the mechanism.
+
+3. **Surface compatible, so the existing ecosystem works.** denext reproduces the React, Next.js,
+   Remix / React Router, React Native and Expo _surfaces_, so existing `npm:` and `jsr:` packages
+   and component libraries run as they are: Radix, Base UI, shadcn/ui, TanStack Router, recharts,
+   react-hook-form, lucide, next-intl and the rest. Real codebases prove it: the shadcn/ui site,
+   the Next.js App Router playground and the Epic Stack (the last two re-migrated nightly in CI),
+   and T3 Code's web and desktop app. `denext migrate` brings an existing app across in one pass
+   with its source intact. **No new ecosystem has to be built for denext to succeed**; the one
+   developers already have is the ecosystem. Compatibility is honest: we never claim 100% parity,
+   and the gaps are listed in [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) and
+   [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md).
+
+4. **Lightweight.** denext brings its own small React 19-compatible core instead of React +
+   ReactDOM + a framework runtime. On `examples/hello` the shared client runtime is **19.6 KB**
+   gzipped against 136.9 KB for the same routes on Next.js 16.3 + React 19.2 (about 7× less); a
+   page with no interactivity ships **0 KB** of JavaScript; a library-heavy app ships 1.8–4.9×
+   less; SSR throughput and time to interactive are on par or faster
+   ([bench/REPORT.md](./bench/REPORT.md)). The framework's runtime carries **no npm
+   dependencies**, CI-enforced, so what ships is auditable end to end. First-party Rust→WASM
+   (`@denext/swc`, `@denext/lightningcss`, `@denext/photon`, `@denext/avif`, `@denext/og`) is
+   on-brand, not an exception: JSR packages built from source we own and audit. Zero-npm is about
+   the **runtime**; the build-time toolchain still uses `esbuild` and a few opt-in npm tools.
 
 ---
 
-The familiar API is the on-ramp; being genuinely **smaller, more secure, more
-capable, and nicer to use** is the mission. Lead with the felt pain (bundle size,
-the CVE treadmill) to get in the door; close with the capabilities and the one-tool
-DX to make it memorable.
+Lead with the first pillar: one app, every platform. The second makes it complete, the third makes
+it adoptable today, and the fourth keeps it small and fast while doing all of it.
 
 **See also:**
-[ROADMAP.md](./ROADMAP.md) — the pending engineering gap to this mission ·
-[FEATURES.md](./FEATURES.md) — what's already shipped ·
+[FEATURES.md](./FEATURES.md) — what's shipped ·
+[ROADMAP.md](./ROADMAP.md) — what remains ·
 [Architecture](https://denext.dev/docs/architecture) — the deliberate under-the-surface choices ·
 [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) — the honest surface gaps ·
 [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md) — deliberate behavioral differences ·

@@ -57,7 +57,7 @@ const card = (
           letterSpacing: "-0.02em",
         }}
       >
-        A React framework
+        Write it once.
       </div>
       <div
         style={{
@@ -68,15 +68,15 @@ const card = (
           letterSpacing: "-0.02em",
         }}
       >
-        <span>for&nbsp;</span>
-        <span style={{ color: "#7aa2ff" }}>Deno</span>
+        <span>Ship it&nbsp;</span>
+        <span style={{ color: "#7aa2ff" }}>everywhere</span>
         <span>.</span>
       </div>
       <div
         style={{ fontSize: 30, color: "#9aa4b4", marginTop: 26, maxWidth: 900 }}
       >
-        The Next.js App Router, reimplemented — zero-npm runtime, Server Components, and pages that
-        ship 0 KB of JavaScript.
+        One codebase for the web, iOS, Android and the desktop — every web-framework feature, your
+        existing packages, a tiny zero-npm runtime.
       </div>
     </div>
     <div
