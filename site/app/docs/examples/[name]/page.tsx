@@ -77,7 +77,9 @@ export default async function ExamplePage(props: PageProps) {
     <DocsShell
       active="examples"
       title={e.title}
-      lead={e.blurb || undefined}
+      // The summary IS the README's first paragraph, which the body renders right below —
+      // so a lead only stands in when there is no README.
+      lead={e.hasReadme ? undefined : e.blurb || undefined}
       toc={toc}
       navChildren={examplesNav(e.name)}
     >

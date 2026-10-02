@@ -84,6 +84,8 @@ Deno.test("example pages: a page carries the run block, the source link and its 
   );
   assertStringIncludes(html, 'href="/docs/examples#cat-start"');
   assertStringIncludes(html, 'id="related-examples"');
+  // No lead paragraph: the summary is the README's first paragraph, rendered once in the body.
+  assert(!html.includes('class="lead"'), "the README's first paragraph is not repeated as a lead");
   // The README's own sections are on the page.
   assertStringIncludes(html, 'id="run-it"');
   // The sidebar nests this example under Examples, marked as the page being shown.

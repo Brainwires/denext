@@ -196,7 +196,8 @@ async function examplePages(): Promise<{ page: CorpusPage; md: string }[]> {
       body = rewriteMdLinks(md, path);
     }
     const page: CorpusPage = { slug: `examples/${e.name}`, title: e.title };
-    if (e.blurb) page.lead = e.blurb;
+    // No lead when the README is the body: the summary is its first paragraph (as on the site).
+    if (e.blurb && !e.hasReadme) page.lead = e.blurb;
     out.push({ page, md: body ? `${run}\n\n${body}` : run });
   }
   return out;

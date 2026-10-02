@@ -5,7 +5,7 @@
 // can import it.
 
 import { publicGuide } from "../../src/mcp/guide.ts";
-import { DOC_URLS } from "../../site/lib/docs-map.ts";
+import { DOC_URLS, exampleRoute } from "../../site/lib/docs-map.ts";
 import { parseFrontmatter, splitLeadingH1, stripLeadingRawHtml } from "../../site/lib/markdown.ts";
 
 /** One docs-site page (or root guide) in the corpus. */
@@ -128,11 +128,14 @@ export function pageChunks(slug: string, sections: MdSection[]): GuideChunk[] {
 
 const GITHUB_BLOB = "https://github.com/Brainwires/denext/blob/main";
 
-/** Rewrite `](./KNOWN-LIMITATIONS.md#x)` links in a ROOT Markdown file to docs routes/GitHub. */
+/**
+ * Rewrite `](./KNOWN-LIMITATIONS.md#x)` links in a ROOT Markdown file to docs routes/GitHub (an
+ * example's `examples/<name>/README.md` to its `/docs/examples/<name>` page, as on the site).
+ */
 export function rewriteRootLinks(md: string): string {
   return md.replace(/\]\((?:\.\/)?([A-Za-z0-9_./-]+?\.md)(#[^)\s]*)?\)/g, (m, path, hash) => {
     if (/^[a-z]+:/i.test(path) || path.startsWith("/") || path.startsWith("..")) return m;
-    const mapped = DOC_URLS[path];
+    const mapped = DOC_URLS[path] ?? exampleRoute(path);
     return `](${mapped ?? `${GITHUB_BLOB}/${path}`}${hash ?? ""})`;
   });
 }

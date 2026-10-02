@@ -81,6 +81,11 @@ Deno.test("contentMdPage: frontmatter title/lead; rewriteRootLinks maps root gui
     rewriteRootLinks("see [limits](./KNOWN-LIMITATIONS.md#ssr) and [x](src/a.md)"),
     "see [limits](/docs/limitations#ssr) and [x](https://github.com/Brainwires/denext/blob/main/src/a.md)",
   );
+  // An example's README is its docs page, as on the site; a helper directory's is not.
+  assertEquals(
+    rewriteRootLinks("[n](./examples/notes/README.md#run-it) [s](examples/_shared/README.md)"),
+    "[n](/docs/examples/notes#run-it) [s](https://github.com/Brainwires/denext/blob/main/examples/_shared/README.md)",
+  );
 });
 
 Deno.test("changelogSlice: drops [Unreleased], keeps released versions newest first", () => {
@@ -169,6 +174,8 @@ Deno.test("readDocs: an example's page by slug or URL, its README links resolved
     const res = await readDocs(ref);
     assert(!res.isError, ref);
     assert(res.text.startsWith("# Drizzle ORM on denext"), ref);
+    // No lead: the summary is the README's first paragraph, which the body already opens with.
+    assert(res.text.startsWith("# Drizzle ORM on denext\n\nSource: "), "no duplicated lead");
     assertStringIncludes(res.text, "Source: https://denext.dev/docs/examples/drizzle");
     assertStringIncludes(res.text, "cd denext/examples/drizzle");
     // `./lib/schema.ts` in the README is a GitHub link here, as on the site.
