@@ -24,6 +24,7 @@
 // origin, deep links or single instance); `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` uses a local runtime
 // build unverified (runtime development).
 
+import { acquireCacheLock } from "./project-locks.ts";
 import { dirname, fromFileUrl, join } from "@std/path";
 import { createHash } from "node:crypto";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
@@ -455,6 +456,9 @@ async function sweepLeftovers(versionDir: string): Promise<void> {
   }
 }
 
+/** What the cache lock's Blocking line names. */
+const RUNTIME_CACHE_DESCR = "desktop runtime cache";
+
 /** Options for {@linkcode ensureDesktopRuntime}. */
 export interface EnsureDesktopRuntimeOptions {
   readonly target: string;
@@ -560,12 +564,8 @@ export async function ensureDesktopRuntime(
 ): Promise<ResolvedDesktopRuntime> {
   const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
   const artifact = pinnedArtifact(pin, options.target, options.backend);
-  const dir = desktopRuntimeDir(
-    options.cacheRoot ?? cacheRootFor(),
-    pin,
-    options.target,
-    options.backend,
-  );
+  const cacheRoot = options.cacheRoot ?? cacheRootFor();
+  const dir = desktopRuntimeDir(cacheRoot, pin, options.target, options.backend);
   const plan: InstallPlan = {
     opts: options,
     pin,
@@ -579,17 +579,35 @@ export async function ensureDesktopRuntime(
       return m !== null && (!options.attest || m.attested);
     },
   };
-  const cached = await plan.acceptable();
-  if (!cached) {
-    if (await readMarker(dir)) {
-      plan.log(
-        `  denext: the cached Deno Desktop runtime at ${dir} failed verification` +
-          `${options.attest ? " (or has no provenance check)" : ""}; re-downloading.`,
-      );
-    }
-    await installRuntime(plan);
+  const resolved = (cached: boolean) => ({
+    dir,
+    runtimeLib: join(dir, plan.runtimeLib),
+    laufeyDir: join(dir, "laufey"),
+    cached,
+  });
+  // Cargo's cache locks: reading a cached tree is Shared; adding a missing one is
+  // DownloadExclusive (readers of other versions carry on); replacing an existing (bad) tree is
+  // MutateExclusive. Each re-checks after it is granted — the process it waited on may have
+  // installed exactly this runtime.
+  {
+    using _shared = await acquireCacheLock(cacheRoot, "shared", RUNTIME_CACHE_DESCR);
+    if (await plan.acceptable()) return resolved(true);
   }
-  return { dir, runtimeLib: join(dir, plan.runtimeLib), laufeyDir: join(dir, "laufey"), cached };
+  const replacing = (await Deno.lstat(dir).catch(() => null)) !== null;
+  using _write = await acquireCacheLock(
+    cacheRoot,
+    replacing ? "mutate" : "download",
+    RUNTIME_CACHE_DESCR,
+  );
+  if (await plan.acceptable()) return resolved(true);
+  if (await readMarker(dir)) {
+    plan.log(
+      `  denext: the cached Deno Desktop runtime at ${dir} failed verification` +
+        `${options.attest ? " (or has no provenance check)" : ""}; re-downloading.`,
+    );
+  }
+  await installRuntime(plan);
+  return resolved(false);
 }
 
 /**

@@ -384,3 +384,33 @@ Deno.test("mobile build locks its output dir as a package output", () => {
     packageDirs: [resolve("/app", "dist/mobile")],
   });
 });
+
+Deno.test(
+  "the desktop runtime downloader waits while another process mutates the cache",
+  SUBPROCESS,
+  async () => {
+    const { ensureDesktopRuntime } = await import("../src/build/desktop-runtime.ts");
+    const dir = await Deno.makeTempDir();
+    try {
+      const script = await holderScript(dir);
+      const mutator = spawnHolder(script, { cache: dir, mode: "mutate" });
+      await mutator.waitFor("locked");
+      let settled = false;
+      const run = ensureDesktopRuntime({
+        target: "aarch64-apple-darwin",
+        backend: "webview",
+        cacheRoot: dir,
+        log: () => {},
+        harmonize: false,
+        fetch: () => Promise.reject(new Error("offline")),
+      }).then(() => null, (err: unknown) => err).finally(() => settled = true);
+      await new Promise((r) => setTimeout(r, 400));
+      assert(!settled, "Shared must wait for MutateExclusive");
+      await mutator.release();
+      await mutator.status;
+      assert(await run instanceof Error, "then it proceeds (and fails offline)");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
