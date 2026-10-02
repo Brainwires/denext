@@ -22,6 +22,14 @@ and this project adheres to
   small modal with a Cancel button (Escape too) that ends the session with `cancelled`; the timeout
   stays the backstop. `cancelOverlay: false` hides it, `{ message, cancelLabel }` translates it,
   and `signal` now cancels the loopback flow too (a token-gated `{ cancel: true }` to its endpoint).
+- **The web `Notification` API on Deno Desktop.** With the `notifications` capability on, denext's
+  pinned runtime injects a `Notification` into every top-level page, before the page's scripts,
+  backed by the OS notifications, so code written for a browser or Electron works:
+  `new Notification(title, { body, tag })`, `Notification.permission` /
+  `requestPermission()`, `show` / `error` / `close` events, `close()`, `tag` replacement, and a
+  click in the OS firing `onclick` / `click` on the object (never `onLocalNotificationTapped`).
+  Icons, buttons and `silent` are not shown; a dismissal fires nothing. The capability gains the
+  `webShow` / `webClose` / `webTake` methods and the `webtap` event behind it.
 - **A fixed loopback port for desktop sign-in.** `openAuthSession(url, { loopbackPort: 1455 })`
   runs Deno Desktop's loopback flow on that port instead of an ephemeral one, for providers that
   only accept their registered loopback redirect (`http://localhost:1455/auth/callback`). The

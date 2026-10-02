@@ -43,7 +43,7 @@ const OS = Deno.build.os;
 const ARCH_LABEL = Deno.build.arch === "aarch64" ? "arm64" : "x64";
 const TIMEOUT_MS = Number(Deno.env.get("KITCHEN_SINK_TIMEOUT_MS") ?? 240_000);
 /** The page's main-phase check count (app/checks.ts); fewer means it shipped without some. */
-const MIN_CHECKS = 54;
+const MIN_CHECKS = 55;
 /** The checks each full-app update phase reports (app/checks.ts `PHASE_CHECKS`). */
 const UPDATE_PHASES = { "update-install": 2, "update-trial": 1, "update-rollback": 2 } as const;
 /** The version the update build is packaged as (app/checks.ts `UPDATE_VERSION`). */

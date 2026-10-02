@@ -40,8 +40,10 @@ import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
 import {
   DESKTOP_PRELOAD_ENV,
   DESKTOP_PRELOAD_FILE,
+  inlineSafeScript,
   readDesktopPreload,
 } from "../desktop/preload.ts";
+import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
 import type { DesktopCapability } from "../desktop/extension.ts";
 import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
 import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
@@ -506,6 +508,12 @@ export interface DesktopPageGlobals {
    * Injected with or without the token: it is an address, not a credential.
    */
   readonly wsOrigin?: string;
+  /**
+   * Install the web `Notification` shim (`src/desktop/notification-shim.ts`), backed by the
+   * `notifications` capability. Only with the token (it posts through the bridge); the handler sets
+   * it in the memory world when the capability is enabled.
+   */
+  readonly notifications?: boolean;
 }
 
 /**
@@ -525,7 +533,8 @@ export interface DesktopPageGlobals {
  * proof `denext/desktop/clerk` presents for its Clerk-only session binding.
  *
  * `page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the
- * WebSocket relay origin.
+ * WebSocket relay origin, and — with the token — the web `Notification` shim, appended to the
+ * same script (one CSP hash) so it is in place before any page script runs.
  */
 export async function injectDesktopGlobal(
   html: string,
@@ -546,6 +555,7 @@ export async function injectDesktopGlobal(
   };
   const body = `globalThis.__denext=${JSON.stringify(globals)}` +
     (token !== null ? QUIT_OVERRIDE_JS : "") +
+    (token !== null && page.notifications === true ? NOTIFICATION_SHIM_INLINE : "") +
     (token !== null && beacon ? BOOT_BEACON_JS : "");
   const withPreload = token !== null && preload !== undefined;
   const scripts = !withPreload ? [body] : preloadKey === undefined ? [body, preload] : [
@@ -572,6 +582,9 @@ export async function injectDesktopGlobal(
   );
   return addScriptHashToCspMeta(out, hashes);
 }
+
+/** The web `Notification` shim as it sits inside the injected inline script. */
+const NOTIFICATION_SHIM_INLINE = inlineSafeScript(DESKTOP_NOTIFICATION_SHIM_JS);
 
 /** The one-shot global the preload key is handed to `desktop.preload` in. */
 const PRELOAD_KEY_GLOBAL = "__denextPreloadKey";
@@ -761,8 +774,15 @@ export function createDesktopHandler(
   // iframe, and never into a loopback-world page.
   const memoryPreload = trust.kind === "memory" ? preload : undefined;
   // What the page reads from `__denext` besides the token: the relay its WebSockets dial (only in
-  // the memory world, the one place the page runs at a custom origin).
-  const page: DesktopPageGlobals = trust.kind === "memory" && wsOrigin ? { wsOrigin } : {};
+  // the memory world, the one place the page runs at a custom origin), and the web `Notification`
+  // shim when the `notifications` capability is on (the pinned runtime's OS notifications).
+  const memory = trust.kind === "memory";
+  const page: DesktopPageGlobals = {
+    ...(memory && wsOrigin ? { wsOrigin } : {}),
+    ...(memory && options.capabilities?.some((c) => c.name === "notifications")
+      ? { notifications: true }
+      : {}),
+  };
 
   /** Serve the export's `index.html` shell with the desktop global (and, with the updater on, the
    * boot-confirm beacon) injected. `injectToken` gates the per-launch TOKEN: a subframe or a

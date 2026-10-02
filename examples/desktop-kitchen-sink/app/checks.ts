@@ -1329,6 +1329,39 @@ const appChecks: Check[] = [
     }
     return "routed";
   }],
+  [
+    "notifications: the web Notification API (denext's shim), a click reaches onclick",
+    async ({ setup }) => {
+      if (!setup.pinnedRuntime) throw new Skip("the shim needs the pinned runtime");
+      // deno-lint-ignore no-explicit-any
+      const Web = (globalThis as any).Notification;
+      assert(
+        typeof Web === "function" && Web.maxActions === 0,
+        "Notification is not denext's shim",
+      );
+      const state = await Web.requestPermission();
+      eq(Web.permission, state, "Notification.permission after requestPermission()");
+      const clicks: string[] = [];
+      const note = new Web("Kitchen sink", { body: "a web Notification", tag: "kitchen-web" });
+      note.onclick = (e: Event) => clicks.push(`onclick:${e.type}`);
+      note.addEventListener("click", () => clicks.push("click"));
+      try {
+        await sleep(300); // the shim's event stream connects on the first notification
+        // The OS reporting a click on it (synthetic: the event the runtime dispatches).
+        const key = (note as { __key: string }).__key;
+        await kitchen.synthetic({
+          kind: "desktop",
+          type: "notificationresponse",
+          detail: { tag: `denext-web-${key}`, action: null, data: { denext: { w: key } } },
+        });
+        await waitFor(() => clicks.length === 2, "the click on the web Notification");
+        eq(clicks.join(","), "onclick:click,click", "the click events");
+      } finally {
+        note.close();
+      }
+      return `permission ${state}; click routed`;
+    },
+  ],
   ["context menu: the native menu; arguments checked before it opens", async () => {
     const caps = await raw("contextMenu").capabilities({});
     eq(caps.native, true, "a native context menu with dismissal");

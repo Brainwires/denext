@@ -1440,6 +1440,54 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
           of <code>data</code> (JSON).
         </li>
       </ul>
+      <h3 id="desktop-web-notification">The web Notification API</h3>
+      <p>
+        A webview has no working <code>Notification</code>{" "}
+        (WKWebView has none at all), so code written for a browser or Electron would show nothing.
+        With the <code>notifications</code> capability on, denext&apos;s pinned runtime injects a
+        {" "}
+        <code>Notification</code>{" "}
+        into every top-level page, before the page&apos;s own scripts, backed by the same OS
+        notifications:
+      </p>
+      <Code lang="ts">
+        {`if ((await Notification.requestPermission()) === "granted") {
+  const n = new Notification("Build finished", { body: "main is green", tag: "build" });
+  n.onclick = () => window.focus();
+}`}
+      </Code>
+      <ul>
+        <li>
+          <code>new Notification(title, {"{ body, tag, data }"})</code> posts it now;{" "}
+          <code>show</code> fires when it is posted and <code>error</code>{" "}
+          when the permission is not <code>granted</code>. A second notification with the same{" "}
+          <code>tag</code> replaces the first, in the OS too, and the replaced one gets no{" "}
+          <code>close</code>. <code>close()</code> removes it and fires <code>close</code>.
+        </li>
+        <li>
+          A click on it in the OS fires <code>onclick</code> and <code>click</code>{" "}
+          on the object that posted it. It never reaches{" "}
+          <code>onLocalNotificationTapped</code>, and a click after the page reloaded reaches
+          nothing.
+        </li>
+        <li>
+          <code>Notification.permission</code> starts as <code>"default"</code>{" "}
+          and holds the OS&apos;s answer a moment after the page loads (a notification created
+          before then waits for it); <code>Notification.requestPermission()</code>{" "}
+          asks the OS, which prompts only while undecided.
+        </li>
+        <li>
+          Differences from a browser: <code>icon</code>, <code>image</code>, <code>badge</code>,
+          {" "}
+          <code>silent</code>, <code>requireInteraction</code>, <code>actions</code> and{" "}
+          <code>vibrate</code>{" "}
+          are kept on the object but not shown (the OS notification has the app&apos;s icon, the
+          default sound and no buttons; <code>maxActions</code> is{" "}
+          <code>0</code>); a dismissal in the OS fires nothing; there is no service-worker{" "}
+          <code>showNotification</code>. For buttons, schedules and launch clicks use{" "}
+          <code>scheduleNotification</code>. Under the stock runtime nothing is injected.
+        </li>
+      </ul>
       <p>
         With <code>denext desktop add context-menu</code>, <code>showContextMenu</code> and{" "}
         <code>useContextMenu</code>{" "}

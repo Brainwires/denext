@@ -20,6 +20,12 @@
  * down the event stream; the page takes the queue (`take`), so a click is seen once, never again
  * after a reload.
  *
+ * The page's web `Notification` (the shim the desktop runtime injects when this capability is on,
+ * see `notification-shim.ts`) posts through `webShow` / `webClose`: its notifications are tagged
+ * `denext-web-<key>`, never listed by `pending` nor touched by `cancel`, and their clicks go to a
+ * queue of their own (`webTake`, signalled by `webtap`), so `onLocalNotificationTapped` never sees
+ * a click on a web notification.
+ *
  * Under the stock runtime (no `Deno.desktop.notifications`) every method answers `unavailable` and
  * the page keeps the WebView's Notification API (immediate only).
  *
@@ -75,6 +81,18 @@ interface StoredMeta {
   readonly b?: string;
   /** The series, for an occurrence of a repeating notification. */
   readonly r?: SeriesSpec;
+}
+
+/** The tag prefix of the page's web `Notification`s (`webShow`). */
+const WEB_TAG_PREFIX = "denext-web-";
+/** A web notification's key: what the page's shim derives from its `tag` (or picks at random). */
+const WEB_KEY = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** One click on a web notification, as the page's shim takes it. */
+interface WebTapWire {
+  readonly key: string;
+  /** The action button's id, or `""` for the notification itself. */
+  readonly action: string;
 }
 
 /** One click, as the page takes it. */
@@ -267,8 +285,25 @@ function categoryActions(raw: unknown): DesktopNotificationAction[] {
   });
 }
 
+/** The web key of a notification posted by `webShow` (from its data, else its tag), if it is one. */
+function webKeyOf(data: unknown, tag: unknown): string | undefined {
+  const w = (data as { denext?: { w?: unknown } } | null | undefined)?.denext?.w;
+  if (typeof w === "string" && WEB_KEY.test(w)) return w;
+  if (typeof tag !== "string" || !tag.startsWith(WEB_TAG_PREFIX)) return undefined;
+  const key = tag.slice(WEB_TAG_PREFIX.length);
+  return WEB_KEY.test(key) ? key : undefined;
+}
+
+/** A click on a web notification as the shim takes it, or `undefined` for any other click. */
+function webTapOf(r: DesktopNotificationResponse): WebTapWire | undefined {
+  const key = webKeyOf(r.data, r.tag);
+  if (key === undefined) return undefined;
+  return { key, action: typeof r.action === "string" ? r.action : "" };
+}
+
 /** A click as the page takes it, or `undefined` for a notification this capability did not post. */
 function tapOf(r: DesktopNotificationResponse, launch: boolean): NotificationTapWire | undefined {
+  if (webKeyOf(r.data, r.tag) !== undefined) return undefined;
   const found = metaOf(r.data, r.tag);
   if (!found) return undefined;
   const { meta, data } = found;
@@ -337,6 +372,7 @@ export function notificationsCapability(
   const now = options.now ?? Date.now;
   const categories = new Map<string, DesktopNotificationAction[]>();
   let queue: PullQueue<NotificationTapWire> | undefined;
+  let webQueue: PullQueue<WebTapWire> | undefined;
   let cancelTopUp: (() => void) | undefined;
   let chain: Promise<unknown> = Promise.resolve();
 
@@ -359,8 +395,20 @@ export function notificationsCapability(
     n.cancel(tagOf(id));
   };
 
+  /** Queue a click on one of our notifications for the page (the app's, or a web one). */
+  const route = (r: DesktopNotificationResponse, launch: boolean) => {
+    const web = webTapOf(r);
+    if (web) return void webQueue?.push(web);
+    const tap = tapOf(r, launch);
+    if (tap) queue?.push(tap);
+  };
+
   /** Show now where the runtime cannot schedule: the Deno `Notification`, its clicks queued. */
-  const showNow = (req: ScheduleRequest, actions: DesktopNotificationAction[], data: unknown) => {
+  const showNow = (
+    shown: { title: string; body: string; tag: string },
+    actions: DesktopNotificationAction[],
+    data: unknown,
+  ) => {
     const Ctor = options.showNow ??
       (globalThis as { Notification?: NotificationCtor }).Notification;
     if (typeof Ctor !== "function") {
@@ -368,13 +416,10 @@ export function notificationsCapability(
         status: 501,
       });
     }
-    const shown = new Ctor(req.title, { body: req.body, tag: tagOf(req.id), data, actions });
-    const onResponse = (action: string | null) => {
-      const tap = tapOf({ tag: tagOf(req.id), action, data }, false);
-      if (tap) queue?.push(tap);
-    };
-    shown.addEventListener("click", () => onResponse(null));
-    shown.addEventListener(
+    const n = new Ctor(shown.title, { body: shown.body, tag: shown.tag, data, actions });
+    const onResponse = (action: string | null) => route({ tag: shown.tag, action, data }, false);
+    n.addEventListener("click", () => onResponse(null));
+    n.addEventListener(
       "action",
       (e) => onResponse((e as Event & { action?: string }).action ?? null),
     );
@@ -390,7 +435,7 @@ export function notificationsCapability(
     const meta = { id: req.id, t: req.title, b: req.body };
     const can = n.capabilities?.() ?? {};
     if (!req.trigger && can.schedule === false) {
-      return showNow(req, actions, storedData(meta, req.data));
+      return showNow({ ...req, tag: tagOf(req.id) }, actions, storedData(meta, req.data));
     }
     if (can.schedule === false) {
       throw new DesktopCapError("unsupported", "notifications cannot be scheduled here", {
@@ -479,22 +524,34 @@ export function notificationsCapability(
     if (soonest) armTopUp(soonest);
   };
 
-  /** Start queueing clicks (once): the cold-start ones first, then the live event. */
-  const install = (ctx: DesktopCapCtx): PullQueue<NotificationTapWire> => {
-    if (queue) return queue;
-    const q = createPullQueue<NotificationTapWire>(() => ctx.emit("tap", null));
-    queue = q;
+  /**
+   * Start queueing clicks (once): the cold-start ones first, then the live event. The app's go to
+   * `take` (signalled by `tap`), the page's web notifications' to `webTake` (`webtap`).
+   */
+  const install = (ctx: DesktopCapCtx) => {
+    if (queue && webQueue) return { queue, webQueue };
+    queue = createPullQueue<NotificationTapWire>(() => ctx.emit("tap", null));
+    webQueue = createPullQueue<WebTapWire>(() => ctx.emit("webtap", null));
     const a = api();
     const launched = a?.launchNotificationResponses;
-    for (const r of Array.isArray(launched) ? launched : []) {
-      const tap = tapOf(r, true);
-      if (tap) q.push(tap);
+    for (const r of Array.isArray(launched) ? launched : []) route(r, true);
+    a?.addEventListener?.(
+      "notificationresponse",
+      (e) => route((e as CustomEvent).detail ?? {}, false),
+    );
+    return { queue, webQueue };
+  };
+
+  /** Post a web notification now (`webShow`), replacing one with the same key. */
+  const webShow = async (req: { key: string; title: string; body: string }) => {
+    const n = nativeApi(api());
+    const tag = `${WEB_TAG_PREFIX}${req.key}`;
+    const data = { denext: { w: req.key } };
+    n.cancel(tag);
+    if ((n.capabilities?.() ?? {}).schedule === false) {
+      return showNow({ title: req.title, body: req.body, tag }, [], data);
     }
-    a?.addEventListener?.("notificationresponse", (e) => {
-      const tap = tapOf((e as CustomEvent).detail ?? {}, false);
-      if (tap) q.push(tap);
-    });
-    return q;
+    await n.schedule({ title: req.title, body: req.body, at: now(), tag, actions: [], data });
   };
 
   if (options.autoTopUp !== false && api()?.notifications) {
@@ -533,7 +590,7 @@ export function notificationsCapability(
           const out: Array<{ id: number; title: string; body: string; extra: unknown }> = [];
           const list = (await scheduled(nativeApi(api()))).sort((a, b) => atOf(a) - atOf(b));
           for (const e of list) {
-            const found = metaOf(e.data, e.tag);
+            const found = webKeyOf(e.data, e.tag) === undefined ? metaOf(e.data, e.tag) : undefined;
             if (!found || seen.has(found.meta.id)) continue;
             seen.add(found.meta.id);
             out.push({
@@ -575,10 +632,41 @@ export function notificationsCapability(
       take: {
         handler: (_args, ctx) => {
           nativeApi(api());
-          return install(ctx).take();
+          return install(ctx).queue.take();
+        },
+      },
+      // The page's web `Notification` (the injected shim): show now, close, and its clicks.
+      webShow: {
+        handler: async (args, ctx) => {
+          const a = record(args, "arguments");
+          if (typeof a.key !== "string" || !WEB_KEY.test(a.key)) {
+            throw invalid("key must be 1-64 letters, digits, '-' or '_'");
+          }
+          const req = {
+            key: a.key,
+            title: text(a.title, "title"),
+            body: text(a.body ?? "", "body"),
+          };
+          install(ctx);
+          await serial(() => webShow(req));
+          return null;
+        },
+      },
+      webClose: {
+        handler: (args) => {
+          const key = record(args, "arguments").key;
+          if (typeof key !== "string" || !WEB_KEY.test(key)) throw invalid("key is malformed");
+          nativeApi(api()).cancel(`${WEB_TAG_PREFIX}${key}`);
+          return null;
+        },
+      },
+      webTake: {
+        handler: (_args, ctx) => {
+          nativeApi(api());
+          return install(ctx).webQueue.take();
         },
       },
     },
-    events: ["tap"],
+    events: ["tap", "webtap"],
   };
 }
