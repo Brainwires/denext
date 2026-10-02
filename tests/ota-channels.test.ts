@@ -196,6 +196,33 @@ Deno.test("createOtaHandler channels: stable vs candidate by install id, same re
   });
 });
 
+Deno.test("createOtaHandler: a manifest rewritten without an mtime change is re-read until it settles", async () => {
+  await inTemp(async (root) => {
+    const dir = await release(root, "rel", { sequence: 1 });
+    const manifestFile = join(dir, "_denext", "ota.json");
+    const ota = createOtaHandler({ dir, basePath: "/" });
+    const sequence = async () =>
+      (await (await ota(new Request("http://host/_denext/ota.json")))!.json()).sequence;
+    // Pin the mtime, as a coarse filesystem clock (or a rewrite within the same millisecond) would.
+    const pin = async (at: Date) => await Deno.utime(manifestFile, at, at);
+    const now = new Date();
+    await pin(now);
+    assertEquals(await sequence(), 1);
+    await writeOtaManifest(dir, { sequence: 2 });
+    await pin(now); // same mtime as the cached copy: the new manifest must still be served
+    assertEquals(await sequence(), 2);
+    // A manifest read well after its mtime is settled: cached while the mtime holds.
+    const old = new Date(Date.now() - 60_000);
+    await pin(old);
+    assertEquals(await sequence(), 2);
+    await writeOtaManifest(dir, { sequence: 3 });
+    await pin(old);
+    assertEquals(await sequence(), 2, "a settled manifest is not re-read");
+    await pin(new Date());
+    assertEquals(await sequence(), 3, "a changed mtime always re-reads");
+  });
+});
+
 Deno.test("createOtaHandler channels: an object, a missing candidate, a missing file", async () => {
   await inTemp(async (root) => {
     const stable = await release(root, "stable");
