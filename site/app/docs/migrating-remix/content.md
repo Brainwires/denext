@@ -427,7 +427,7 @@ The CLI prints up to twelve notes and a count of the rest.
 ## 8. Known limitations
 
 > This is the migration-focused summary. The full statement lives in
-> [Known limitations → "Migration: Remix runs on the `denext/remix` runtime"](/docs/limitations#migration-remix-runs-on-the-denextremix-runtime).
+> [Known limitations → "Remix and React Router"](/docs/limitations#remix-and-react-router).
 
 - **`shouldRevalidate` is honored, and always-revalidate is the default.** On a
   client revalidation (a soft navigation or `useRevalidator`), the client echoes

@@ -288,6 +288,7 @@ and this project adheres to
 
 ### Changed
 
+- **Docs: KNOWN-LIMITATIONS lists only what denext can't or won't do, and per-OS differences; ROADMAP was rewritten to the open work; REACT-NATIVE-EXPO.md is removed** (its open items are in ROADMAP and KNOWN-LIMITATIONS, its measurements in the [denext vs React Native](https://denext.dev/docs/vs-react-native) guide).
 - **The docs site moved from `apps/web/` to `site/`.** `apps/` held nothing else, so it is gone;
   `deno task docs:build` exports to `site/out/`, and guides live in
   `site/app/docs/<slug>/content.md`. Older entries below keep the paths of their day.

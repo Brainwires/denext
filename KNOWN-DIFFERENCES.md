@@ -59,6 +59,13 @@ internal design choice with no observable difference lives in
   `Component` is the function-component _type_. Everything else React exposes
   (`cache`, `Children`, `cloneElement`, `forwardRef`, `Activity`, the hook and
   event types, …) is on both.
+- **SSR attribute serialization follows ReactDOMServer's tables, with a few differences.**
+  `true` on an attribute React doesn't know renders `name=""` (React drops it), matching what the
+  client reconciler sets; `autoCapitalize={true}` renders `"true"`; `'` is escaped as `&#39;`
+  (React: `&#x27;`, the same character to every parser); an element with both
+  `dangerouslySetInnerHTML` and children renders the HTML (React throws); `key` is visible on an
+  authored element's `props`; and `defaultProps` on a function component is honored (React 19
+  removed it) because popular npm libraries still rely on it.
 - **A `redirect()` thrown during a CLIENT render is a full document load**
   (`location.assign`), not a soft navigation — the render is abandoned, the browser
   loads the target. On the server it is the usual 307.
@@ -137,6 +144,12 @@ internal design choice with no observable difference lives in
   expression verbatim: the day-of-week field is translated into names (`MON`, `MON-FRI`, an
   exact list for a stepped range) and `?` becomes `*`. Write POSIX; the translation is denext's.
   (Next has no scheduler; this differs from `Deno.cron`'s own convention.)
+- **`next/head` dedupes conservatively.** Same-`key` `<meta>`/`<link>` collapse last-wins,
+  `<meta charSet>` / `<meta name="viewport">` collapse to one and `<title>` is last-wins, but
+  keyless `<meta>` sharing a `name`/`httpEquiv`/`itemProp` and duplicate `<base>` are kept: the
+  collector also receives React-19-style in-tree `<meta>`, which React never dedupes.
+  `<base>`/`<script>`/`<style>`/`<noscript>` inside `<Head>` reach the head on the server render
+  only; a client-side navigation does not update them.
 - **`client-only` is inert at build time.** Next fails a build that imports `client-only`
   from the `react-server` layer. denext's compat SSR bundle server-renders the `"use client"`
   tree as well, so it has no such layer and treats `client-only` as an empty marker on both

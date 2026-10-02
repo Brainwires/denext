@@ -2,7 +2,7 @@
 // source for the web through react-native-web, with no hand patches.
 //
 // What Metro + babel-preset-expo do for a web build, restated for the SPA's esbuild bundle
-// (measured in the 2026-09-24 spike, REACT-NATIVE-EXPO.md):
+// (measured in the 2026-09-24 spike):
 //
 //   - `react-native` and every `react-native/…` subpath resolve to the installed
 //     react-native-web — for EVERY importer, ahead of the node_modules resolver, so a real

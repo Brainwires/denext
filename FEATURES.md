@@ -353,7 +353,7 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 
 Nothing Android below has run on a device or emulator yet (compiled and
 unit-tested); the iOS halves were run on an iPhone — per-item status in
-[REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md).
+[denext vs React Native](https://denext.dev/docs/vs-react-native).
 
 - **`denext/mobile`** — a client runtime for a Capacitor iOS/Android shell that
   talks to Capacitor only through the `window.Capacitor` global (no

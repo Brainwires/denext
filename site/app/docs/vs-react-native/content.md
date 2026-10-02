@@ -31,9 +31,7 @@ work in the background. The [list below](#choose-react-native-if) says why for e
 
 T3 Code's Capacitor build against its React Native / Expo build, opening the same 200-message
 thread: release APKs, an API 35 x86_64 emulator (Pixel 6 profile, host GPU, WebView 124), two
-runs of 5 interleaved cold starts and 10 flings per app, on 2026-09-25. Source:
-[REACT-NATIVE-EXPO.md](https://github.com/Brainwires/denext/blob/main/REACT-NATIVE-EXPO.md),
-gap 5.
+runs of 5 interleaved cold starts and 10 flings per app, on 2026-09-25.
 
 |                                                 | Capacitor (denext) | React Native / Expo |
 | ----------------------------------------------- | -----------------: | ------------------: |
@@ -55,9 +53,7 @@ ends at the first frame, which is the splash screen in both apps, not content.
 
 On a physical iPhone 16e (iOS 26.x, a 60 Hz display), in
 [`examples/mobile`](https://github.com/Brainwires/denext/tree/main/examples/mobile) unless
-another app is named. Source:
-[REACT-NATIVE-EXPO.md](https://github.com/Brainwires/denext/blob/main/REACT-NATIVE-EXPO.md)
-(gaps 1–4 and "Shipped in 2.11").
+another app is named.
 
 - **App extensions:** a share extension, a configurable home-screen widget, a Live Activity,
   and a Live Activity started by a real APNs push-to-start push (on the Lock Screen,
@@ -188,9 +184,7 @@ in the [Expo APIs](/docs/react-native#expo-apis) and
 **What a real migration needed:** T3 Code's React Native app builds in React Native mode with
 all 41 of its routes rendering; it kept app-written stubs for its non-Expo native modules
 (Nitro, its native terminal, markdown and diff views, `@expo/ui`) and for two modules its
-Metro config generates. Source:
-[REACT-NATIVE-EXPO.md](https://github.com/Brainwires/denext/blob/main/REACT-NATIVE-EXPO.md),
-"Integration".
+Metro config generates.
 
 **What you gain besides the numbers above:** the same export runs in a browser, in the
 Capacitor shell and in a [Deno Desktop](/docs/desktop) window; the web target is first-class,
@@ -203,8 +197,7 @@ push sending, OTA channels with staged rollouts) is in the same framework
 ## New in 2.11
 
 Signed over-the-air updates, app extensions and push shipped in 2.10 and are listed
-[above](#verified-on-an-iphone). Each 2.11 item says how far it was verified, on the levels of
-[REACT-NATIVE-EXPO.md](https://github.com/Brainwires/denext/blob/main/REACT-NATIVE-EXPO.md):
+[above](#verified-on-an-iphone). Each 2.11 item says how far it was verified:
 **iPhone** (run on a physical iPhone 16e), **built** (unit- or DOM-tested and compiled, not run
 on a device). Android is built only, and has run on an emulator only.
 

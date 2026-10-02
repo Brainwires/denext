@@ -443,7 +443,7 @@ npx cap copy
 ```
 
 The next `denext mobile dev` restores the backup first as well. See
-[Known limitations](/docs/limitations) (Desktop & mobile).
+[Known limitations](/docs/limitations) (Mobile).
 
 ### Sign-in fails with `origin_invalid` (or another origin error) inside the app
 

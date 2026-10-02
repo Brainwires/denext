@@ -89,8 +89,8 @@ On Android only an emulator has been measured so far: the Capacitor build of T3 
 in less than half the time of its React Native build and used less memory, but scrolled a long
 list clearly worse. The emulator composites on a weak host GPU, which costs a WebView more than native views, so this is not settled until a
 real-device run. The numbers are in
-[REACT-NATIVE-EXPO.md](https://github.com/Brainwires/denext/blob/main/REACT-NATIVE-EXPO.md)
-(gap 5) and the current platform status is on [the mobile page](/docs/mobile).
+[denext vs React Native](/docs/vs-react-native#startup-memory-and-size-one-app-an-android-emulator)
+and the current platform status is on [the mobile page](/docs/mobile).
 
 **One codebase for the web too.** The same export runs in a browser, in the Capacitor shell and
 in a [Deno Desktop](/docs/desktop) window. Most `denext/mobile` functions fall back to a

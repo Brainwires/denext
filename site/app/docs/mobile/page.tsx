@@ -61,10 +61,8 @@ export default function Mobile() {
         {" "}
         and of the generators have not run on Android at all, and a whole-app comparison ran on an
         emulator only. The details, and every open limit, are in{" "}
-        <a href="/docs/limitations">Known limitations</a> (Desktop &amp; mobile) and{" "}
-        <a href="https://github.com/Brainwires/denext/blob/main/REACT-NATIVE-EXPO.md">
-          REACT-NATIVE-EXPO.md
-        </a>.
+        <a href="/docs/limitations">Known limitations</a> (Mobile) and the open work in the{" "}
+        <a href="https://github.com/Brainwires/denext/blob/main/ROADMAP.md">roadmap</a>.
       </Callout>
 
       <h2 id="quickstart">Quickstart: from an empty directory to a phone</h2>
@@ -3370,10 +3368,9 @@ npx @sentry/cli sourcemaps upload \\
           clearly worse (it missed vsync on more than twice as many frames). The emulator composites
           on a weak host GPU, which costs a WebView more than native views, so this is not settled
           until a real-device run. The numbers and method are in{" "}
-          <a href="https://github.com/Brainwires/denext/blob/main/REACT-NATIVE-EXPO.md">
-            REACT-NATIVE-EXPO.md
-          </a>{" "}
-          (gap 5).
+          <a href="/docs/vs-react-native#startup-memory-and-size-one-app-an-android-emulator">
+            denext vs React Native
+          </a>.
         </li>
       </ul>
       <p>
