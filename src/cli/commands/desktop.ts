@@ -38,6 +38,8 @@ import {
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
+import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
+import { desktopPnpmWorkspaceHint } from "../../build/desktop-deno-flags.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -172,6 +174,26 @@ function fail(message: string): never {
   Deno.exit(1);
 }
 
+/** What an unpackaged window is launched with: its env, and `desktop.denoFlags`. */
+interface DesktopWindowLaunch {
+  readonly env: Record<string, string>;
+  readonly denoFlags: string[];
+}
+
+/**
+ * `desktop.denoFlags` of the project (refused flags throw), after printing the pnpm-workspace hint
+ * when it applies.
+ */
+async function projectDenoFlags(dir: string, config: unknown): Promise<string[]> {
+  const flags = desktopDenoFlags(config);
+  const hint = await desktopPnpmWorkspaceHint(dir, flags);
+  if (hint) {
+    console.warn(`  ⚠ ${hint}
+`);
+  }
+  return flags;
+}
+
 /**
  * Prepare an UNPACKAGED `deno desktop` window: sync `.deno-desktop/app.json` (the configured origin
  * + identifier, embedded through deno.json `compile.include`) and return the webview backend's
@@ -180,17 +202,20 @@ function fail(message: string): never {
  * `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR` for denext's pinned Deno Desktop runtime (downloaded and
  * verified on first use; nothing under `DENEXT_DESKTOP_RUNTIME=stock`). Single instance is left
  * out on purpose: a dev window must never hand itself to an installed copy of the same app and exit.
+ * Also returns `desktop.denoFlags`, which go before the entry.
  */
-async function prepareDesktopWindow(dir: string, dev = false): Promise<Record<string, string>> {
+async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWindowLaunch> {
   const paths = await resolveProject(dir);
   const { config } = paths;
+  const denoFlags = await projectDenoFlags(dir, config);
   await syncDesktopAppConfigAt(dir, config);
   const runtime = await resolveDesktopRuntimeEnv({ projectDir: dir, deno: denoExecutable() });
-  return {
+  const env = {
     ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),
     ...runtime.env,
     ...(dev ? await devPreloadEnv(paths) : {}),
   };
+  return { env, denoFlags };
 }
 
 /**
@@ -222,12 +247,12 @@ function spawnDesktopWindow(
   project: string,
   entry: string,
   devUrl: string,
-  launchEnv: Record<string, string>,
+  launch: DesktopWindowLaunch,
 ): DesktopWindow {
-  const { finished, stop } = spawnDenoChild(["desktop", entry], {
+  const { finished, stop } = spawnDenoChild(["desktop", ...launch.denoFlags, entry], {
     cwd: project,
     stdin: "inherit",
-    env: { ...launchEnv, [DESKTOP_DEV_URL_ENV]: devUrl },
+    env: { ...launch.env, [DESKTOP_DEV_URL_ENV]: devUrl },
   });
   return { finished, stop };
 }
@@ -261,16 +286,16 @@ async function runDesktopDevSession(
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   }
-  let launchEnv: Record<string, string>;
+  let launch: DesktopWindowLaunch;
   try {
-    launchEnv = await prepareDesktopWindow(dir, true);
+    launch = await prepareDesktopWindow(dir, true);
   } catch (err) {
     fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
   }
   try {
     await runDesktopDev({
       startServer: () => startOrAttachDevServer(dir, target.host, target.url),
-      spawnWindow: (devUrl) => Promise.resolve(spawnDesktopWindow(dir, entry, devUrl, launchEnv)),
+      spawnWindow: (devUrl) => Promise.resolve(spawnDesktopWindow(dir, entry, devUrl, launch)),
       waitForStop: waitForShutdownSignal,
       log: (line) => console.log(line),
     });
@@ -291,19 +316,19 @@ async function runDesktop(dir: string, entry: string): Promise<void> {
     );
     Deno.exit(1);
   }
-  let launchEnv: Record<string, string>;
+  let launch: DesktopWindowLaunch;
   try {
-    launchEnv = await prepareDesktopWindow(dir);
+    launch = await prepareDesktopWindow(dir);
   } catch (err) {
     fail(`denext desktop run: ${err instanceof Error ? err.message : String(err)}`);
   }
   await exportSpa(dir);
   // spawnDenoAndExit inherits this process's env.
-  for (const [k, v] of Object.entries(launchEnv)) Deno.env.set(k, v);
+  for (const [k, v] of Object.entries(launch.env)) Deno.env.set(k, v);
   console.log("  Opening desktop window (deno desktop)…\n");
-  // `deno desktop <entry>` wraps the entry's Deno.serve() in a native window;
+  // `deno desktop [denoFlags] <entry>` wraps the entry's Deno.serve() in a native window;
   // needs Deno 2.9+. Replaces this process with the child.
-  await spawnDenoAndExit(["desktop", entry], dir);
+  await spawnDenoAndExit(["desktop", ...launch.denoFlags, entry], dir);
 }
 
 /** `denext desktop package`: run the scaffolded packaging script for the target OS (or, with
@@ -323,6 +348,12 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
     Deno.exit(1);
   }
   console.log(`\n  denext desktop — packaging (${targetOs})  ▸  ${dir}\n`);
+  // The script reads `desktop.denoFlags` itself; check them (and hint at a pnpm workspace) first.
+  try {
+    await projectDenoFlags(dir, (await resolveProject(dir)).config);
+  } catch (err) {
+    fail(`denext desktop package: ${err instanceof Error ? err.message : String(err)}`);
+  }
   // The `denext` CLI re-execs itself once to load lightningcss / the project config, setting
   // DENEXT_CSS_ACTIVE / DENEXT_MODULE_ACTIVE as a loop guard (cli.ts). Those must NOT leak into the
   // packaging script's own `deno task export` child: it would see the guard, skip its own CSS

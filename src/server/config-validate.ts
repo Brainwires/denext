@@ -20,6 +20,7 @@ import {
   originWithoutIdentifierMessage,
   parseDesktopAppOrigin,
 } from "../desktop/app-origin.ts";
+import { desktopDenoFlagError } from "../desktop/deno-flags.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys — the generated
@@ -261,6 +262,18 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   }
 }
 
+/** `desktop.denoFlags`: an allow-list of `deno desktop` flags, never a permission flag. */
+function validateDenoFlags(flags: unknown, fail: Fail): void {
+  if (flags === undefined) return;
+  if (!Array.isArray(flags)) {
+    fail("desktop.denoFlags", 'must be an array of flags, e.g. ["--node-modules-dir=none"]');
+  }
+  (flags as unknown[]).forEach((flag, i) => {
+    const err = desktopDenoFlagError(flag);
+    if (err) fail(`desktop.denoFlags[${i}]`, err);
+  });
+}
+
 /** A `{ width, height }` size (each ≥ 1). */
 function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
   if (v === undefined) return;
@@ -359,6 +372,7 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   validateDesktopWindowing(desktop as Record<string, unknown>, fail);
   validateDesktopUpdate((desktop as { update?: unknown }).update, fail);
   validateDesktopInstallers((desktop as { installers?: unknown }).installers, fail);
+  validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {

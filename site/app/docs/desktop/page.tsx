@@ -97,6 +97,59 @@ await runDesktop({
         so the runtime's own npm dep resolves from Deno's global cache.{" "}
         <code>denext migrate --desktop</code> writes that task for you.
       </Callout>
+      <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>
+      <p>
+        A project that needs extra <code>deno desktop</code> flags to build at all lists them in
+        {" "}
+        <code>desktop.denoFlags</code>. <code>denext desktop run</code>,{" "}
+        <code>denext desktop dev</code>{" "}
+        and the package scripts pass them before the entry (the macOS script once{" "}
+        <code>denext desktop package --regenerate-scripts</code>{" "}
+        has rewritten it; the Linux and Windows builds read them through{" "}
+        <code>denext/desktop</code>). The usual case is a pnpm workspace (deno.json{" "}
+        <code>nodeModulesDir: "manual"</code>), where <code>deno desktop</code>{" "}
+        would otherwise type-check against the workspace&apos;s <code>node_modules</code>{" "}
+        and rewrite the root <code>package.json</code>:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    denoFlags: ["--node-modules-dir=none", "--exclude-unused-npm"],
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          One flag per entry, <code>--flag</code> or <code>--flag=value</code>, from an allow-list:
+          {" "}
+          <code>--node-modules-dir</code>, <code>--node-modules-linker</code>,{" "}
+          <code>--exclude-unused-npm</code>, <code>--no-check</code>, <code>--check</code>,{" "}
+          <code>--no-lock</code>, <code>--lock</code>, <code>--frozen-lockfile</code>,{" "}
+          <code>--cached-only</code>, <code>--no-remote</code>, <code>--no-npm</code>,{" "}
+          <code>--no-code-cache</code>, <code>--conditions</code> and <code>--unstable-*</code>.
+        </li>
+        <li>
+          Permission flags (<code>-A</code>, <code>--allow-*</code>,{" "}
+          <code>--deny-*</code>, …) are refused: the packaged app&apos;s permissions come from{" "}
+          <code>desktop.capabilities</code> and{" "}
+          <code>desktop.extraPermissions</code>. So are the flags denext sets itself (
+          <code>--output</code>, <code>--target</code>, <code>--include</code>, <code>--icon</code>,
+          {" "}
+          <code>--config</code>, …). Config validation, the commands and the scripts all refuse
+          them.
+        </li>
+        <li>
+          denext does not add <code>--node-modules-dir=none</code>{" "}
+          on its own: it moves npm resolution from the workspace&apos;s <code>node_modules</code>
+          {" "}
+          to Deno&apos;s cache, so pnpm patches, overrides and linked packages stop applying. In a
+          pnpm workspace with <code>nodeModulesDir: "manual"</code> and no{" "}
+          <code>--node-modules-dir</code> in <code>desktop.denoFlags</code>,{" "}
+          <code>denext desktop run</code>, <code>dev</code> and <code>package</code>{" "}
+          print the line to add instead.
+        </li>
+      </ul>
 
       <h2 id="desktop-dev">Live reload (the Metro model)</h2>
       <p>

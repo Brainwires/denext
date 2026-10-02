@@ -15350,8 +15350,8 @@
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: linux | windows, o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), the export and the extension modules embedded, the first existing icon, then\nthe webview backend's `laufey-launch.json` beside the executable.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable.",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable.",
           "params": [
             {
               "name": "entryUrl",
@@ -15698,6 +15698,23 @@
           "docFull": "Throw this from a capability handler to answer the page with a specific error code and a SAFE\nmessage. The bridge puts `code`, the message and any `data` into the `{ ok: false, error }`\nenvelope at `status` (default 400). Never encode an absolute path, environment value or stack\ninto the message — it crosses to the page. The code `\"unavailable\"` is RESERVED (it means the\ncapability/method is not enabled, which makes the page fall back to its web path); use another\ncode for a real failure.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopDenoFlagArgs",
+          "slug": "desktopDenoFlagArgs",
+          "kind": "function",
+          "signature": "desktopDenoFlagArgs(entryUrl: string): Promise<string[]>",
+          "doc": "The project's desktop.denoFlags, checked, for a scaffolded packaging script: reads denext.config.ts next to entryUrl's folder (a script in scripts/ → ../), like desktopPackageFlags. A project without a config gets []; a refused flag throws.",
+          "docFull": "The project's `desktop.denoFlags`, checked, for a scaffolded packaging script: reads\n`denext.config.ts` next to `entryUrl`'s folder (a script in `scripts/` → `../`), like\n`desktopPackageFlags`. A project without a config gets `[]`; a refused flag throws.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "The packaging script's import.meta.url."
+            }
+          ],
+          "returns": "The flags, ready to splice into the deno desktop argv before the entry.",
           "examples": [],
           "denextOnly": true
         },

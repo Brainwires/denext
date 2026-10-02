@@ -5,6 +5,7 @@
 
 import { desktopIncludeArgs, type DesktopOs, desktopPackageFlags } from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
+import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
 import { desktopRuntimeEnv } from "./desktop-runtime.ts";
 import {
   type DesktopInstallerPlan,
@@ -294,6 +295,8 @@ export async function desktopBundleCommand(
     "desktop",
     "--no-prompt",
     ...await desktopPackageFlags(entryUrl, os),
+    // `desktop.denoFlags`: the project's own allow-listed flags (`--node-modules-dir=none`, …).
+    ...await desktopDenoFlagArgs(entryUrl),
     "--include",
     "out",
     ...await desktopIncludeArgs(entryUrl),
@@ -313,7 +316,8 @@ export async function desktopBundleCommand(
 /**
  * Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the
  * least-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to
- * answer a prompt), the export and the extension modules embedded, the first existing icon, then
+ * answer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first
+ * existing icon, then
  * the webview backend's `laufey-launch.json` beside the executable.
  *
  * @param entryUrl `import.meta.url` of the script.

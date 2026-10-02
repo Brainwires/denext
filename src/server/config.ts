@@ -867,6 +867,18 @@ export interface DesktopConfig {
    * `.msi` on Windows. `--format` overrides the list for one run.
    */
   installers?: DesktopInstallersConfig;
+  /**
+   * Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the
+   * package scripts: for a project that needs them to build at all. A pnpm workspace (deno.json
+   * `nodeModulesDir: "manual"`) needs `["--node-modules-dir=none", "--exclude-unused-npm"]`, or
+   * `deno desktop` type-checks against its `node_modules` and rewrites the root `package.json`.
+   * One flag per entry, `--flag` or `--flag=value`, from an allow-list: `--node-modules-dir`,
+   * `--node-modules-linker`, `--exclude-unused-npm`, `--no-check`, `--check`, `--no-lock`,
+   * `--lock`, `--frozen-lockfile`, `--cached-only`, `--no-remote`, `--no-npm`, `--no-code-cache`,
+   * `--conditions` and `--unstable-*`. Permission flags are refused: they come from
+   * {@link capabilities} and {@link extraPermissions}.
+   */
+  denoFlags?: string[];
 }
 
 /** {@link DesktopConfig.installers}: the installer formats per OS, and what they say about the app. */

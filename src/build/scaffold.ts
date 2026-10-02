@@ -824,6 +824,7 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 
 import {
   desktopAppName as appName,
+  desktopDenoFlagArgs,
   desktopIncludeArgs,
   desktopInstallerPlan,
   type DesktopPackageArgs,
@@ -853,6 +854,8 @@ async function buildApp(out: string, target?: string): Promise<void> {
     // prompt the packaged GUI has no TTY to answer.
     "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
+    // desktop.denoFlags in denext.config.ts (e.g. --node-modules-dir=none for a pnpm workspace).
+    ...await desktopDenoFlagArgs(import.meta.url),
     "--include",
     "out",
     ...await desktopIncludeArgs(import.meta.url),

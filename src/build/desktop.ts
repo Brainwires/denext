@@ -118,6 +118,9 @@ export {
   desktopPackageFlags,
 } from "./desktop-capabilities.ts";
 
+// `desktop.denoFlags` (an allow-list of resolution / type-check flags) for the package scripts.
+export { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
+
 // denext's pinned Deno Desktop runtime (downloaded + SHA-256-verified into the Deno cache): the
 // `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR` env the scaffolded package scripts set on `deno desktop`.
 export { desktopRuntimeEnv } from "./desktop-runtime.ts";

@@ -1233,6 +1233,7 @@
     "defineDesktopExtension:function",
     "desktopAppName:function",
     "desktopBuildFlags:function",
+    "desktopDenoFlagArgs:function",
     "desktopDevProxyDecision:function",
     "desktopHasTool:function",
     "desktopIncludeArgs:function",

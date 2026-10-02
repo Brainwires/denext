@@ -22,6 +22,16 @@ and this project adheres to
   small modal with a Cancel button (Escape too) that ends the session with `cancelled`; the timeout
   stays the backstop. `cancelOverlay: false` hides it, `{ message, cancelLabel }` translates it,
   and `signal` now cancels the loopback flow too (a token-gated `{ cancel: true }` to its endpoint).
+- **`desktop.denoFlags`: extra `deno desktop` flags.** A project that needs them to build at all
+  (a pnpm workspace: `["--node-modules-dir=none", "--exclude-unused-npm"]`) lists them in
+  `denext.config.ts`; `denext desktop run` / `dev` and the package scripts pass them before the
+  entry (`denext/desktop` exports `desktopDenoFlagArgs` for the scripts; the macOS script picks it
+  up with `denext desktop package --regenerate-scripts`). Only an allow-list of resolution and
+  type-check flags is accepted, one `--flag` / `--flag=value` per entry; permission flags and the
+  flags denext sets itself are refused by config validation, the commands and the scripts. In a
+  pnpm workspace with `nodeModulesDir: "manual"` and no `--node-modules-dir`, the commands print
+  the line to add (denext does not add it: it moves npm resolution off the workspace's
+  `node_modules`).
 - **The web `Notification` API on Deno Desktop.** With the `notifications` capability on, denext's
   pinned runtime injects a `Notification` into every top-level page, before the page's scripts,
   backed by the OS notifications, so code written for a browser or Electron works:
