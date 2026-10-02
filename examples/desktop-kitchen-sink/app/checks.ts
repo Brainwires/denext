@@ -169,6 +169,38 @@ async function rejection(p: Promise<unknown>): Promise<string> {
 
 const near = (a: number, b: number) => Math.abs(a - b) <= 2;
 
+/**
+ * The page size closest to `width` x `height` whose window fits the work area of the window's
+ * screen (the primary one when the runtime does not say), with room for the frame and a margin.
+ */
+async function fittingSize(
+  width: number,
+  height: number,
+): Promise<{ width: number; height: number; why: string }> {
+  const state = await getWindowState();
+  const screen = state.screen ?? (await getScreens()).find((s) => s.isPrimary);
+  assert(screen, "no screen to fit the window on");
+  const chromeW = Math.max(0, (state.bounds?.width ?? 0) - (state.contentBounds?.width ?? 0));
+  const chromeH = Math.max(0, (state.bounds?.height ?? 0) - (state.contentBounds?.height ?? 0));
+  const margin = 40;
+  const fit = {
+    width: Math.min(width, screen.workArea.width - chromeW - margin),
+    height: Math.min(height, screen.workArea.height - chromeH - margin),
+  };
+  // Never below the configured minimum (420x320): a screen that small cannot run this check.
+  assert(
+    fit.width >= 420 && fit.height >= 320,
+    `the work area is too small: ${JSON.stringify(screen.workArea)}`,
+  );
+  const clamped = fit.width !== width || fit.height !== height;
+  return {
+    ...fit,
+    why: clamped
+      ? ` (asked less than ${width}x${height}: work area ${screen.workArea.width}x${screen.workArea.height})`
+      : "",
+  };
+}
+
 // --- runtime -------------------------------------------------------------------------------
 
 const runtimeChecks: Check[] = [
@@ -405,15 +437,23 @@ const windowChecks: Check[] = [
     return screens.map((s) => `${s.bounds.width}x${s.bounds.height}@${s.scaleFactor}`).join(", ");
   }],
   ["window: size round trip", async () => {
-    await setWindowSize(900, 700);
-    await waitFor(() => near(innerWidth, 900) && near(innerHeight, 700), "900x700", 5000, sizes);
+    // 900x700, or less where the window's screen cannot fit that (a small CI display): the OS
+    // clamps a window to the work area, so ask for a size that fits it and assert exactly that.
+    const { width, height, why } = await fittingSize(900, 700);
+    await setWindowSize(width, height);
+    await waitFor(
+      () => near(innerWidth, width) && near(innerHeight, height),
+      `${width}x${height}`,
+      5000,
+      sizes,
+    );
     const state = await getWindowState();
     assert(state.contentBounds, "no contentBounds");
     assert(
-      near(state.contentBounds.width, 900),
+      near(state.contentBounds.width, width),
       `contentBounds.width ${state.contentBounds.width}`,
     );
-    return `${innerWidth}x${innerHeight}`;
+    return `${innerWidth}x${innerHeight}${why}`;
   }],
   ["window: minimum / maximum size clamp", async () => {
     try {
@@ -977,6 +1017,23 @@ async function macNotificationsRefused(setup: KitchenSetup, err: unknown): Promi
   return state !== "granted" && /notif|authoriz|permission|denied/i.test(String(err));
 }
 
+/**
+ * After nothing reached the OS's scheduled list: a `skip` when the OS has not authorized
+ * notifications for this app (macOS refuses an ad-hoc signed app on some hosted runners without
+ * saying so), with that state as the reason; otherwise the original failure stands.
+ */
+async function notScheduled(err: unknown): Promise<never> {
+  const os = await raw("notifications").permission({ request: false }).catch(() => null);
+  const state = String(os?.state ?? "unknown");
+  if (state !== "granted") {
+    throw new Skip(
+      `the OS has not authorized notifications for this app (authorization: ${state}), and ` +
+        `nothing reached its scheduled list: ${(err as Error).message}`,
+    );
+  }
+  throw err;
+}
+
 /** Skip where the OS has no notification service (a headless Linux session without a server). */
 async function needScheduling(): Promise<void> {
   const caps = await raw("notifications").capabilities({});
@@ -1104,7 +1161,7 @@ const appChecks: Check[] = [
         "the notification in pendingNotifications()",
         5000,
         () => JSON.stringify(pending),
-      );
+      ).catch(notScheduled);
       eq(mine.data.path, "/", "its data");
       const tags = await kitchen.scheduledTags({}) as string[];
       assert(tags.includes(`denext-${NOTE_ID}`), `the OS's scheduled tags: ${tags.join(", ")}`);
@@ -1143,7 +1200,7 @@ const appChecks: Check[] = [
         "16 occurrences in the OS",
         5000,
         () => String(tags.length),
-      );
+      ).catch((err) => tags.length === 0 ? notScheduled(err) : Promise.reject(err));
       eq(
         (await pendingNotifications()).filter((n) => n.id === NOTE_ID + 1).length,
         1,
