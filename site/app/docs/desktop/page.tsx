@@ -95,7 +95,10 @@ await runDesktop({
         <code>--exclude-unused-npm</code>, and (for a pnpm/yarn app pinning{" "}
         <code>nodeModulesDir: "manual"</code>) <code>--node-modules-dir=none</code>{" "}
         so the runtime's own npm dep resolves from Deno's global cache.{" "}
-        <code>denext migrate --desktop</code> writes that task for you.
+        <code>denext migrate --desktop</code>{" "}
+        writes that task for you, and writes the two resolution flags to{" "}
+        <code>desktop.denoFlags</code> in the generated <code>denext.config.ts</code> so{" "}
+        <code>denext desktop run</code>, <code>dev</code> and <code>package</code> pass them too.
       </Callout>
       <h3 id="desktop-app-identity">The app's name, identifier and icon</h3>
       <p>

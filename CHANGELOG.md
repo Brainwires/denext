@@ -17,6 +17,10 @@ and this project adheres to
   Actions reach a `denext start` or `denext dev` backend. Another scheme or host is refused, and
   nothing changes while the option is unset. A browser page cannot produce a custom-scheme origin,
   so this does not widen browser-borne CSRF.
+- **`denext migrate --desktop` writes `desktop.denoFlags`.** The generated `denext.config.ts`
+  carries `desktop: { denoFlags: ["--node-modules-dir=none", "--exclude-unused-npm"] }`, the
+  resolution flags the generated `desktop` task bakes, so `denext desktop run | dev | package`
+  pass them too (the raw `deno desktop` task reads no config and keeps them inline).
 - **`allowedDevOrigins` takes custom-scheme origins** (`"myapp://app"`, validated as
   `desktop.app.origin` is), so a separate backend project can admit a desktop app's origin; so does
   `createApp`'s `allowedOrigins`.
