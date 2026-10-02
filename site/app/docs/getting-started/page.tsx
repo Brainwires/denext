@@ -46,8 +46,14 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
         release: release candidates are GitHub prereleases and are never "latest", so pick one with
         {" "}
         <code>DENEXT_VERSION=v2.5.0-rc.6</code>{" "}
-        if you want it. Gatekeeper is not part of this path by design: a file fetched by{" "}
-        <code>curl | sh</code>{" "}
+        if you want it. The latest-version lookup uses GitHub's API, which allows 60 anonymous
+        requests an hour per IP: with <code>GITHUB_TOKEN</code> (or{" "}
+        <code>GH_TOKEN</code>) set, both installers send it on that one <code>api.github.com</code>
+        {" "}
+        call (never on a download, and never print it), and when the API refuses they read the
+        version from the <code>github.com/…/releases/latest</code>{" "}
+        redirect instead, so a shared CI runner or office network still installs. Gatekeeper is not
+        part of this path by design: a file fetched by <code>curl | sh</code>{" "}
         never carries the quarantine attribute (the script strips it anyway, for a binary that
         arrived by browser), so the macOS CLI binary is not stapled — a bare executable cannot be —
         and runs whether or not the release was signed. It <em>is</em>{" "}

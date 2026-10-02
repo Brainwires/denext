@@ -283,6 +283,9 @@ jobs:
         shell: powershell
         env:
           DENEXT_NO_PATH: "1"
+          # The latest-version lookup's API call is authenticated (hosted runners share an IP and
+          # the anonymous 60/hour limit); install.ps1 sends it to api.github.com only.
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'

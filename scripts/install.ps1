@@ -11,6 +11,10 @@
 #   DENEXT_INSTALL   where to install (the binary lands in its `bin\`); default: ~\.denext
 #   DENEXT_INSECURE  `1` installs even when no checksum can be fetched (never on a mismatch)
 #   DENEXT_NO_PATH   `1` leaves your user PATH alone (the script prints the line to add)
+#   GITHUB_TOKEN / GH_TOKEN  sent (as a Bearer header, to api.github.com only) for the latest-
+#                    version lookup, whose unauthenticated limit is 60 requests an hour per IP.
+#                    Without one, or when the API refuses, the version comes from the
+#                    github.com/.../releases/latest redirect instead.
 #
 # Per-user, no administrator rights: the binary goes to %USERPROFILE%\.denext\bin and that
 # directory is added to your USER Path. To uninstall, run the script with -Uninstall:
@@ -41,7 +45,8 @@ function Install-Denext {
     "https://github.com/$repo/releases/download"
   }
   $apiBase = if ($env:DENEXT_API_BASE) { $env:DENEXT_API_BASE } else { "https://api.github.com" }
-  foreach ($base in @($downloadBase, $apiBase)) {
+  $webBase = if ($env:DENEXT_WEB_BASE) { $env:DENEXT_WEB_BASE } else { "https://github.com" }
+  foreach ($base in @($downloadBase, $apiBase, $webBase)) {
     $uri = [Uri]$base
     if ($uri.Scheme -ne 'https' -and -not ($uri.Scheme -eq 'http' -and $uri.IsLoopback)) {
       throw "denext: refusing a non-https download URL ($base)"
@@ -71,7 +76,7 @@ function Install-Denext {
   $version = $env:DENEXT_VERSION
   if (-not $version) {
     # `releases/latest` is the newest NON-prerelease: an rc tag never becomes "latest".
-    $version = (Invoke-RestMethod -UseBasicParsing "$apiBase/repos/$repo/releases/latest").tag_name
+    $version = Get-LatestTag $apiBase $webBase $repo
   }
   if (-not $version) { throw 'denext: could not determine the latest release; set DENEXT_VERSION.' }
 
@@ -122,6 +127,38 @@ function Install-Denext {
     Write-Warning ('denext: `deno` is not on your Path. The binary needs it for every verb that ' +
       'loads a project (dev, build, start, ...): irm https://deno.land/install.ps1 | iex')
   }
+}
+
+# The latest stable release's tag (`v2.5.0`), or $null. The API first, with GITHUB_TOKEN / GH_TOKEN
+# as a Bearer header when one is set (on this api.github.com call only, never on a download, which
+# redirects off GitHub; the token is never printed). Then, for a rate-limited API (shared CI
+# runners and office NATs exhaust 60/hour), the tag the web page's releases/latest redirect lands on.
+function Get-LatestTag([string]$apiBase, [string]$webBase, [string]$repo) {
+  $token = if ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } elseif ($env:GH_TOKEN) { $env:GH_TOKEN } else { $null }
+  $headers = @{}
+  if ($token) { $headers['Authorization'] = "Bearer $token" }
+  $tag = $null
+  try {
+    $tag = (Invoke-RestMethod -UseBasicParsing -Headers $headers "$apiBase/repos/$repo/releases/latest").tag_name
+  } catch {
+    $tag = $null
+  }
+  if (-not $tag) {
+    try {
+      $page = Invoke-WebRequest -UseBasicParsing "$webBase/$repo/releases/latest"
+      # Where the redirect landed: ResponseUri on Windows PowerShell, RequestMessage on pwsh.
+      $response = $page.BaseResponse
+      $final = if ($response.PSObject.Properties['ResponseUri']) { $response.ResponseUri } else {
+        $response.RequestMessage.RequestUri
+      }
+      if ("$final" -match '/releases/tag/([^/?#]+)$') { $tag = $Matches[1] }
+    } catch {
+      $tag = $null
+    }
+  }
+  # Only ever a version tag: anything else is no answer.
+  if ("$tag" -match '^v[0-9][A-Za-z0-9.+-]*$') { return "$tag" }
+  return $null
 }
 
 # The published checksum for $asset: the release's combined SHA256SUMS first (one file covers

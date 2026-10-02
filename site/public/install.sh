@@ -11,6 +11,10 @@
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
 #   DENEXT_INSTALL   where to install (the binary lands in its `bin/`); default: ~/.denext
 #   DENEXT_INSECURE  `1` installs even when no checksum can be fetched (never on a mismatch)
+#   GITHUB_TOKEN / GH_TOKEN  sent (as a Bearer header, to api.github.com only) for the latest-
+#                    version lookup, whose unauthenticated limit is 60 requests an hour per IP.
+#                    Without one, or when the API refuses, the version comes from the
+#                    github.com/…/releases/latest redirect instead.
 #
 # Everything lives in main(), called on the last line, so a download that is cut short runs
 # nothing: `sh` executes a truncated script only up to where it stopped, and that is never
@@ -67,6 +71,31 @@ published_digest() {
   fi
 }
 
+# The latest stable release's tag (`v2.5.0`), or nothing. The API first — with a token when one
+# is set, its header fed through stdin so the token never shows in a process listing, and only
+# on this api.github.com call (never on a download, which redirects off GitHub). Then, for a
+# rate-limited API (shared CI runners and office NATs exhaust 60/hour), the tag the web page's
+# `releases/latest` redirect lands on.
+latest_tag() {
+  api="https://api.github.com/repos/$REPO/releases/latest"
+  token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  if [ -n "$token" ]; then
+    json="$(printf 'Authorization: Bearer %s\n' "$token" | fetch -H @- "$api" 2>/dev/null || true)"
+  else
+    json="$(fetch "$api" 2>/dev/null || true)"
+  fi
+  tag="$(printf '%s\n' "$json" | grep '"tag_name"' | head -1 | cut -d'"' -f4)"
+  if [ -z "$tag" ]; then
+    final="$(fetch -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" \
+      2>/dev/null || true)"
+    case "$final" in */releases/tag/*) tag="${final##*/releases/tag/}" ;; esac
+  fi
+  # Only ever a version tag: anything else (an error page's URL, a stray quote) is no answer.
+  case "$tag" in v[0-9]*) ;; *) tag="" ;; esac
+  case "$tag" in *[!A-Za-z0-9.+-]*) tag="" ;; esac
+  printf '%s\n' "$tag"
+}
+
 main() {
   INSTALL_DIR="${DENEXT_INSTALL:-$HOME/.denext}"
   BIN_DIR="$INSTALL_DIR/bin"
@@ -76,8 +105,7 @@ main() {
   if [ -z "$VERSION" ]; then
     # `releases/latest` is the newest NON-prerelease: an rc tag is published as a prerelease and
     # never becomes "latest", so this resolves a stable version unless one is asked for.
-    VERSION="$(fetch "https://api.github.com/repos/$REPO/releases/latest" |
-      grep '"tag_name"' | head -1 | cut -d'"' -f4)"
+    VERSION="$(latest_tag)"
   fi
   [ -n "$VERSION" ] || {
     echo "denext: could not determine the latest release; set DENEXT_VERSION." >&2

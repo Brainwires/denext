@@ -19,23 +19,43 @@ const ASSET = "denext-x86_64-pc-windows-msvc.zip";
 interface Release {
   readonly base: string;
   readonly hits: string[];
+  /** `<path> <Authorization header>` for every request that carried one. */
+  readonly auth: string[];
   readonly files: Map<string, Uint8Array>;
   close(): Promise<void>;
 }
 
-function serveRelease(tag: string): Release {
+function serveRelease(tag: string, opts: { rateLimited?: boolean } = {}): Release {
   const files = new Map<string, Uint8Array>();
   const hits: string[] = [];
+  const auth: string[] = [];
   const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, (req) => {
     const path = new URL(req.url).pathname;
     hits.push(path);
-    if (path.endsWith("/releases/latest")) return Response.json({ tag_name: tag });
+    const authorization = req.headers.get("authorization");
+    if (authorization) auth.push(`${path} ${authorization}`);
+    if (path.startsWith("/api/") && path.endsWith("/releases/latest")) {
+      return opts.rateLimited
+        ? Response.json({ message: "API rate limit exceeded" }, { status: 403 })
+        : Response.json({ tag_name: tag });
+    }
+    // The web page's redirect to the latest release's tag page.
+    if (path === "/web/Brainwires/denext/releases/latest") {
+      return new Response(null, {
+        status: 302,
+        headers: { location: `/web/Brainwires/denext/releases/tag/${tag}` },
+      });
+    }
+    if (path.startsWith("/web/Brainwires/denext/releases/tag/")) {
+      return new Response("<html>release</html>", { headers: { "content-type": "text/html" } });
+    }
     const body = files.get(path.replace(`/dl/${tag}/`, ""));
     return body ? new Response(body as BodyInit) : new Response("nope", { status: 404 });
   });
   return {
     base: `http://127.0.0.1:${server.addr.port}`,
     hits,
+    auth,
     files,
     close: () => server.shutdown(),
   };
@@ -83,6 +103,7 @@ async function install(
     env: {
       DENEXT_DOWNLOAD_BASE: `${release.base}/dl`,
       DENEXT_API_BASE: `${release.base}/api`,
+      DENEXT_WEB_BASE: `${release.base}/web`,
       DENEXT_INSTALL: root,
       DENEXT_NO_PATH: "1",
       ...env,
@@ -180,6 +201,49 @@ Deno.test("install.ps1: a non-https download base is refused (loopback http only
     assert(code !== 0, out);
     assertStringIncludes(out, "refusing a non-https download URL");
     assertEquals(release.hits, []);
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: a GITHUB_TOKEN goes to the API lookup only, never shown", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  try {
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const { code, out } = await install(release, join(dir, "home"), {
+      GITHUB_TOKEN: "ghs_secret123",
+    });
+    assertEquals(code, 0, out);
+    assertEquals(release.auth, [
+      "/api/repos/Brainwires/denext/releases/latest Bearer ghs_secret123",
+    ]);
+    assert(!out.includes("ghs_secret123"), out);
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: a rate-limited API falls back to the releases/latest redirect", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9", { rateLimited: true });
+  try {
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const { code, out } = await install(release, join(dir, "home"));
+    assertEquals(code, 0, out);
+    assert(release.hits.includes("/web/Brainwires/denext/releases/latest"), release.hits.join());
+    assert(release.hits.includes(`/dl/v9.9.9/${ASSET}`), release.hits.join());
+    assert(await exists(join(dir, "home", "bin", "denext.exe")));
   } finally {
     await release.close();
     await Deno.remove(dir, { recursive: true });
