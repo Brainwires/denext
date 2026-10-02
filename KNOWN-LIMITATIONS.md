@@ -460,9 +460,10 @@ four documented bounds of the opt-in:
   system `UIContextMenuInteraction`, armed per press); `showContextMenu(items, { x, y })` from
   code has no element to lift, so iOS presents its `UIMenu` through the edit-menu presentation
   (iOS 16+; an action sheet on iOS 15). Android's `PopupMenu` lists submenus as labelled groups
-  and draws no icons or menu title. A Deno Desktop window shows the in-page popover: the
-  desktop runtime has no context-menu capability (a native menu needs a dismiss event Deno
-  Desktop does not emit yet).
+  and draws no icons or menu title. A Deno Desktop window's native menu (the `context-menu`
+  capability, denext's pinned runtime) nests submenus but draws no destructive style, glyph or SF
+  Symbol icon, and shows a `title` as a disabled first item; under the stock runtime it is the
+  in-page popover.
 - **Over-the-air UI downgrade protection starts with the first sequenced release.** A signed
   manifest carries a `sequence` (v2), and a device refuses one older than the highest it has
   accepted (code `downgrade`), and the `minNative` gate refuses a UI that needs a newer app build
@@ -624,14 +625,13 @@ four documented bounds of the opt-in:
   host's executable suffix, so a Windows bundle can't be built from macOS or Linux (nor a Linux
   one from Windows) on the pinned runtime; `DENEXT_DESKTOP_RUNTIME=stock` cross-builds with the
   stock runtime. There is no pinned Windows arm64 build.
-- **`context-menu` and `notifications` are WebView-backed on desktop.** The desktop runtime
-  answers `fs`, `sqlite`, `device`, `dialogs`, `clipboard`, `shell`, `keep-awake`,
-  `secure-store`, `passkeys` and your extensions; these two have no runtime capability, so
-  `showContextMenu` is the in-page popover and notifications are the WebView's Notification API
-  (below). Under the stock runtime (`DENEXT_DESKTOP_RUNTIME=stock`) `clipboard` falls back to the
-  WebView's `navigator.clipboard` (text only), and `dialogs` drives the OS dialog programs
-  (osascript / PowerShell / zenity or kdialog) instead of the runtime's native panels. denext ships no app menu, tray, single-instance lock,
-  global shortcut or launch-at-login API (an extension can reach Deno's `BrowserWindow`).
+- **The stock runtime keeps the web paths.** Under `DENEXT_DESKTOP_RUNTIME=stock`,
+  `context-menu`, `notifications`, `clipboard`, `global-shortcuts` and `launch-at-login` answer
+  `unavailable`: `showContextMenu` is the in-page popover, notifications are the WebView's
+  Notification API (immediate only, no click routing), the clipboard is the WebView's
+  `navigator.clipboard` (text only), and the shortcut and login calls reject. `dialogs` drives
+  the OS dialog programs (osascript / PowerShell / zenity or kdialog) instead of the runtime's
+  native panels, and application-menu accelerators fire only where the stock runtime binds them.
 - **The desktop capabilities are unit-tested, not window-tested.** Each runtime capability is
   tested against the bridge contract, with its OS commands through an injected runner. A real
   `deno desktop` build with the derived flags launched and served its bundle on macOS; the
@@ -641,8 +641,8 @@ four documented bounds of the opt-in:
   `desktop.capabilities` instead of `-A`, but the baseline keeps `--allow-read` and
   `--allow-env` unscoped (the served bundle and the per-user app-support folder are only known
   at run time), and any capability that writes adds an unscoped `--allow-write`; the runtime
-  capabilities confine file access. An extension's own permissions are not derived: add its
-  `--allow-*` to the script by hand.
+  capabilities confine file access. An extension's own permissions are not derived: grant them in
+  `desktop.extraPermissions`, which the package scripts bake in.
 - **The bridge token is readable by any script in the page.** The per-launch token lives in the
   top-level document (never in frames), so script injected into the page (an XSS) can use every
   capability the app enabled. Keep the strict CSP, enable only the capabilities you use, and
@@ -657,13 +657,24 @@ four documented bounds of the opt-in:
   anything the user can. Node-API (`.node`) addons do not load in
   desktop builds on Linux and Windows (denoland/deno#36596); use FFI or a sidecar. FFI cannot
   touch windows or AppKit / Win32 UI, because the runtime is not on the main thread.
-- **Desktop notifications are the WebView's.** Only a notification without a trigger shows
-  (through the Notification API, once the page has permission); a scheduled one rejects, as on
-  the web. A click is not routed to `onLocalNotificationTapped`, and there are no action
-  buttons, inline reply, channels or categories.
+- **Desktop notifications per OS.** Linux has no notification scheduler: the app delivers a
+  scheduled notification while it runs and shows one whose time passed while it was closed at the
+  next launch, and a click on a notification after the app quit does not start it. A repeating
+  notification is scheduled for its next 16 occurrences and topped up whenever the app runs, so an
+  app not opened for longer stops showing it until it runs again. macOS grants the permission
+  only to a signed app. Action buttons carry a title only (no text input, destructive or
+  authentication option), there are no channels, and a notification stores at most 4 KiB of
+  `data`.
+- **Global shortcuts on Wayland need the XDG GlobalShortcuts portal.** The desktop asks the user
+  to approve each shortcut and may bind another trigger (`userBinds` in `shortcutCapabilities()`);
+  without the portal `registerShortcut` rejects `unsupported`. On macOS 13+ `setLaunchAtLogin`
+  may answer `requires-approval` until the user allows the app in System Settings › Login Items.
+- **Menu limits per backend.** The CEF backend draws no menu icons or tooltips in its application
+  menu (Windows, Linux) or Linux context menus, and binds no `Super` accelerator on Windows; menu
+  tooltips show on macOS and Linux only. The Dock menu (`setQuickActions`) is macOS only, and a
+  Linux badge is a prefix of the window title.
 - **Not on desktop:** the share sheet, Handoff, Spotlight, the Touch Bar, passkeys in the webview
-  (its loopback IP origin is not a valid relying party; use `openAuthSession`), DevTools in the
-  default WebView backend (use `--backend cef`), and deep links or open-file events reaching an
+  (its loopback IP origin is not a valid relying party; use `openAuthSession`), and deep links or open-file events reaching an
   already-running macOS app. The window API (`denext/desktop/window`), file drag and drop, the
   `hiddenInset` title bar, Mica / Acrylic and vibrancy need denext's pinned runtime; the stock
   runtime keeps only size, position, title and visibility.
@@ -678,8 +689,9 @@ four documented bounds of the opt-in:
 - **Deno Desktop's own limits.** The UI is a web page in WKWebView, WebView2 or WebKitGTK, so it
   renders per OS (unless built with `--backend cef`, about 150 MB larger); there is no Mac App
   Store, Microsoft Store (MSIX), Flatpak or Snap build; the self-updater replaces the UI only.
-  Deno Desktop itself is experimental in Deno 2.9, and its bugs (menus on Linux / Windows CEF,
-  window placement, a tray-only app still opening its window) reach denext apps.
+  Deno Desktop itself is experimental in Deno 2.9, and a bug in it reaches denext apps until
+  denext's pinned runtime fixes it. DevTools are off in a packaged app unless
+  `desktop.inspectable: true`; under the stock runtime `desktop.inspectable` has no effect.
 - **`react-native-windows` / `react-native-macos` are not native here.** A `reactNative` app runs
   as react-native-web in the window; their C++ / C# / Objective-C native modules do not run
   (write a desktop extension instead), and `Platform.OS` stays `"web"`

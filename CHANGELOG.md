@@ -10,6 +10,33 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop: native notifications.** With `denext desktop add notifications` and denext's
+  pinned runtime, `denext/mobile`'s local notifications are the OS's own (macOS
+  `UNUserNotificationCenter`, Windows toasts, Linux `org.freedesktop.Notifications`):
+  `scheduleNotification` with every trigger kind (a repeating one is scheduled for its next 16
+  occurrences and topped up while the app runs and at each launch), `cancelNotification`,
+  `pendingNotifications`, `setNotificationCategories` (action buttons), and clicks — on the
+  notification or a button, including the one that launched the app — routed to
+  `onLocalNotificationTapped` (pulled once, never replayed after a reload).
+  `checkPermission` / `requestPermission("notifications")` and `requestPushPermission()` report
+  the OS setting there. Under the stock runtime the WebView's Notification API stays the fallback.
+- **Deno Desktop: native context menus.** With `denext desktop add context-menu` and the pinned
+  runtime, `showContextMenu` / `useContextMenu` open the OS menu at the pointer with nested
+  submenus and resolve `null` when the user dismisses it; the in-page menu stays the fallback.
+- **Deno Desktop: `denext/desktop/app`.** The application menu (`setAppMenu` with keyboard
+  accelerators and standard roles, `onAppMenuItem`), tray icons (`createTray` → `update`,
+  `getBounds`, `onClick`, `onMenuItem`, `destroy`), the Dock / taskbar badge (`setBadge`) and
+  attention request (`bounce`), and `appCapabilities()`, through an `app` capability `runDesktop`
+  registers for every app. `setQuickActions` / `onQuickAction` set and report the macOS Dock
+  menu. Clicks are pulled once per signal; a page load removes the previous page's trays.
+- **Deno Desktop: global shortcuts and launch at login.** Two new capabilities,
+  `denext desktop add global-shortcuts` (`registerShortcut`, `unregisterShortcut`,
+  `unregisterAllShortcuts`, `listShortcuts`, `shortcutCapabilities`; errors keep the runtime's
+  `conflict` / `denied` / `unsupported` codes; a page load releases the previous page's shortcuts)
+  and `denext desktop add launch-at-login` (`getLaunchAtLogin` / `setLaunchAtLogin`: a macOS login
+  item, a Windows `Run` value, a Linux XDG autostart entry), both in `denext/desktop/app` and
+  both on the pinned runtime, with their trust notes in `denext desktop add --list`.
+
 - **Deno Desktop: full-app self-updates.** `denext/desktop/updater` gains `checkForAppUpdate`,
   `downloadAppUpdate`, `installAppUpdateAndRelaunch`, `confirmAppUpdate` and `appUpdateStatus`
   (with `AppUpdateError`), next to the UI-overlay updater: the whole signed app (`.app`, app
@@ -75,7 +102,7 @@ and this project adheres to
   `desktop.minSize` / `maxSize` are applied by `runDesktop` to the window it adopts
   (`resolveDesktopCapabilities` now returns them as `window`, failing fast on a bad value). The
   size, title and resizability work on every runtime; the rest needs denext's pinned runtime and
-  is skipped with a warning under the stock one. `desktop.inspectable` is still validated only.
+  is skipped with a warning under the stock one.
 - **Deno Desktop: `denext/desktop/window`.** The page's control over its own window, through a
   `window` capability `runDesktop` registers for every app: `maximizeWindow` /
   `unmaximizeWindow` / `minimizeWindow` / `restoreWindow` / `setFullScreen` with
@@ -157,6 +184,14 @@ and this project adheres to
 
 ### Changed
 
+- **Deno Desktop: DevTools are off in a packaged app.** `desktop.inspectable` is applied: the
+  package scripts always write `"inspectable"` to the app's `laufey-launch.json` (`false` unless
+  `desktop.inspectable: true`), `denext desktop dev` turns DevTools on and `denext desktop run`
+  turns them on unless `desktop.inspectable: false` (`LAUFEY_INSPECTABLE`). Needs the pinned
+  runtime; `writeLaufeyLaunchConfig` now always writes the file.
+- **Deno Desktop docs: an extension's permissions go in `desktop.extraPermissions`**, not in a
+  hand-edited `scripts/package-*.ts` (the scripts union it in, and `--regenerate-scripts` keeps
+  it).
 - **The desktop gates detect which runtime serves them.** Under the denext-pinned runtime
   (detected from `DENO_DESKTOP_APP_ORIGIN`) a bridge call, the auth-session endpoint, the boot
   beacon and the quit endpoint are trusted only when `Deno.serve` reports the in-process memory

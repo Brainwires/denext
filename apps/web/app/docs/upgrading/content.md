@@ -147,8 +147,8 @@ desktop packaging among them. Coming from 2.10 or earlier, work through
   has no `resolveDesktopCapabilities(config, { base: import.meta.url })` spread into
   `runDesktop`, so every capability answers `unavailable` and the page keeps its web path. Add
   the spread and enable capabilities with `denext desktop add` (the generated `desktop.ts` does
-  both). After regenerating the package scripts, add the `--allow-*` your own desktop
-  extensions need by hand: their permissions are not derived.
+  both). Grant the `--allow-*` your own desktop extensions need in `desktop.extraPermissions`
+  (their method permissions are not derived); the package scripts bake it in.
   ([Desktop apps](/docs/desktop#desktop-capabilities))
 - **React Native mode replaces more of react-native-web by default.** Each is on for an
   existing `reactNative` app and has a way back:
