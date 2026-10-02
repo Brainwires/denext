@@ -737,6 +737,11 @@ runtime lacks, is in [our Deno Desktop runtime](https://denext.dev/docs/desktop-
   `allowsVibrancy` (the window's vibrancy) and `draggedTypes` (file drops) work in a Deno Desktop
   window; `acceptsFirstMouse` is accepted and does nothing (the web view decides first-mouse
   clicks, and laufey has no per-view hook for it).
+- **Some desktop paths are verified only by hand.** Touch ID / Windows Hello passkey success,
+  signed macOS notifications, the update signer match with real Developer ID / Authenticode
+  identities, Mica and real HiDPI displays need hardware or identities no CI runner has; they are
+  checked manually before each final release
+  ([checklist](https://denext.dev/docs/contributing#manual-desktop-checks-before-a-final-release)).
 
 ### React Native mode & Expo shims (`reactNative`, `denext/expo/*`)
 
