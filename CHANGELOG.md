@@ -212,12 +212,9 @@ and this project adheres to
   `downloadAppUpdate`, `installAppUpdateAndRelaunch`, `confirmAppUpdate` and `appUpdateStatus`
   (with `AppUpdateError`), next to the UI-overlay updater: the whole signed app (`.app`, app
   directory or AppImage) is replaced by a newer signed build through the pinned runtime's
-  `Deno.desktop.updater`. Signing is mandatory: `desktop.update.publicKey` (the `denext ota
-  keygen` key) is baked into `.deno-desktop/app.json`, and the runtime refuses a manifest that does
-  not verify, is for another app, offers a version that is not newer (no downgrade) or was rolled
-  back, an http URL, a download larger than declared or with another SHA-256, an unsafe archive,
-  and a staged app whose OS code signature differs from the running app's (macOS Team ID +
-  Gatekeeper, Windows Authenticode signer). The swap is atomic on macOS and Linux; an update not
+  `Deno.desktop.updater`, signed-only (what it refuses is under Security below), with
+  `desktop.update.publicKey` (the `denext ota keygen` key) baked into `.deno-desktop/app.json`.
+  The swap is atomic on macOS and Linux; an update not
   confirmed by its next launch is rolled back. `denext desktop publish-update` packs and signs an
   update (archive + `app-update.json`, one manifest for every platform of a release), and
   `desktop.update.manifestUrl` / `hosts` join the packaged app's `--allow-net`.
@@ -349,9 +346,9 @@ and this project adheres to
   `invalid_rp` (a build not signed by the RP's team) it hides native passkeys and continues the
   sign-in in the browser through Clerk's hosted pages (`startClerkBrowserSignIn`, state + PKCE
   bound).
-- **`runDesktop` resolves to `{ window, trust, emit }`**: the adopted window, and a hook that
-  pushes an event to the page's bridge stream (`subscribeDesktopEvent` in
-  `denext/desktop/client`).
+- **`runDesktop` resolves to `{ window, trust, emit }`**: the adopted window, the desktop world
+  the gates enforce, and a hook that pushes an event to the page's bridge stream (`onDesktopEvent`
+  in `denext/desktop/client`).
 - **`denext create --fallow`: the fallow code-health gate in a new app.** An opt-in entry in the
   feature picker (and on `denext ui`'s Setup page) adds the dead-code, duplication and complexity
   gate denext itself is built under: a `fallow.toml` declaring denext's path-loaded files (routes,
@@ -377,13 +374,6 @@ and this project adheres to
 - **Deno Desktop docs: an extension's permissions go in `desktop.extraPermissions`**, not in a
   hand-edited `scripts/package-*.ts` (the scripts union it in, and `--regenerate-scripts` keeps
   it).
-- **The desktop gates detect which runtime serves them.** Under the denext-pinned runtime
-  (detected from `DENO_DESKTOP_APP_ORIGIN`) a bridge call, the auth-session endpoint, the boot
-  beacon and the quit endpoint are trusted only when `Deno.serve` reports the in-process memory
-  transport (never from the request URL, which an absolute-form request target over TCP can
-  forge) and carry the token; an `Origin`, when present, must equal the app origin exactly. The
-  token is injected only into a top-level document served over that transport, and a WebSocket
-  upgrade must carry the app origin. Under the stock runtime the loopback rules are unchanged.
 - **Docs: [Our Deno Desktop runtime: what we ship and why](https://denext.dev/docs/desktop-runtime).**
   The runtime page now explains why denext ships its own Deno Desktop runtime (Clerk's
   `origin_invalid` for the loopback origin, storage lost every launch, and the rest of what stock
@@ -474,9 +464,34 @@ and this project adheres to
 - **`examples/rn-desktop` and `examples/native`** spread `resolveDesktopCapabilities` into
   `runDesktop`, and rn-desktop sets the `desktop.app.identifier` its `secureStore` capability
   requires.
+- **The installers survive GitHub's API rate limit.** `install.sh` and `install.ps1` send
+  `GITHUB_TOKEN` (else `GH_TOKEN`) on their one `api.github.com` call (never on a download, never
+  printed), and when the API gives no tag (rate-limited, offline) read the latest version from
+  where `https://github.com/<repo>/releases/latest` redirects. Hosted CI runners and users behind
+  a shared NAT hit the unauthenticated limit.
+- **`createOtaHandler` serves a manifest rewritten within its mtime's granularity.** It cached
+  `ota.json` (and `ota-channels.json`) keyed on the mtime alone, so a file rewritten in the same
+  millisecond (a second or two on FAT and some network file systems) kept serving the old
+  manifest. Contents are now reused only once the read happened well after the mtime.
+- **Archives with symlinks extract on Windows.** The safe extractor (the pinned Deno Desktop
+  runtime's download) now creates a symlink as a file or directory link from its target, resolved
+  from the link's own directory with the native separator; a standard user without Developer Mode
+  (os error 1314) gets a clear error instead of the raw one.
 
 ### Security
 
+- **The desktop gates detect which runtime serves them.** Under the denext-pinned runtime
+  (detected from `DENO_DESKTOP_APP_ORIGIN`) a bridge call, the auth-session endpoint, the boot
+  beacon and the quit endpoint are trusted only when `Deno.serve` reports the in-process memory
+  transport (never from the request URL, which an absolute-form request target over TCP can
+  forge) and carry the token; an `Origin`, when present, must equal the app origin exactly. The
+  token is injected only into a top-level document served over that transport, and a WebSocket
+  upgrade must carry the app origin. Under the stock runtime the loopback rules are unchanged.
+- **Full-app desktop updates are signed-only and never downgrade.** The pinned runtime refuses a
+  manifest that does not verify against `desktop.update.publicKey`, is for another app, offers a
+  version that is not newer or was rolled back, an http URL, a download larger than declared or
+  with another SHA-256, an unsafe archive, and a staged app whose OS code signature differs from
+  the running app's (macOS Team ID + Gatekeeper, Windows Authenticode signer).
 - **The same-origin checks match `http(s)` origins only by host.** The Server Action / API-batch
   gate, the Live handshake, `denextAuth`'s POST gate and the dev origin gate no longer treat an
   `Origin` such as `other://<your host>` as same-origin, and a custom-scheme `allowedOrigins` entry

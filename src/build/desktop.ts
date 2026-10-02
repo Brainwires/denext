@@ -434,10 +434,10 @@ export interface RunDesktopOptions {
 }
 
 /**
- * What {@linkcode runDesktop} hands back once the server is up: the app window and a hook that
- * pushes an event down the page's bridge stream (what `subscribeDesktopEvent(cap, event, …)` in
- * `denext/desktop/client` receives) — the seam OS events (deep links, open-file, …) are emitted
- * through.
+ * What {@linkcode runDesktop} hands back once the server is up: the app window, the desktop world
+ * the gates enforce, and a hook that pushes an event down the page's bridge stream (what
+ * `onDesktopEvent(cap, event, …)` in `denext/desktop/client` receives) — the seam OS events (deep
+ * links, open-file, …) are emitted through.
  */
 export interface DesktopRuntime {
   /** The adopted initial `Deno.BrowserWindow`, or `undefined` outside the desktop runtime. */
