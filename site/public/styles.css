@@ -1219,3 +1219,56 @@ button:focus-visible,
   border-radius: 5px;
   padding: 0 5px;
 }
+
+/* ---------- examples: nested sidebar links + an example page's header block ---------- */
+.sidebar .navsub {
+  margin: 2px 0 6px 10px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+}
+.sidebar .navsub a {
+  font-size: 13.5px;
+  padding: 3px 10px;
+}
+.example-meta {
+  margin-bottom: 28px;
+}
+.example-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+.example-run-label {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+.example-related ul {
+  padding-left: 20px;
+}
+.example-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 40px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.example-pager a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.example-pager a[rel="next"] {
+  text-align: right;
+  margin-left: auto;
+}
+.example-pager-dir {
+  font-size: 12.5px;
+  color: var(--muted);
+}

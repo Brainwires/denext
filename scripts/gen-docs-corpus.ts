@@ -3,7 +3,8 @@
 // Sources: the API reference (site/app/docs/api/reference.json, one chunk per symbol), EVERY
 // docs-site page under site/app/docs/<slug>/ (chunked by h2/h3, so a hit deep-links to
 // `/docs/<slug>#<anchor>`), the root guides the site renders (FEATURES.md, KNOWN-*.md, …, and a
-// recent slice of CHANGELOG.md), the authoring guide (AGENTS.md) and README.md. The output,
+// recent slice of CHANGELOG.md), every example's page (`examples/<name>`: its README.md, as
+// /docs/examples/<name> renders it), the authoring guide (AGENTS.md) and README.md. The output,
 // `src/mcp/docs-corpus.json`, ships in the package (src/** publishes; site/** does not), so an
 // agent can search and read the whole manual offline.
 //
@@ -24,6 +25,8 @@
 
 import { fromFileUrl } from "@std/path";
 import { Callout, Code, DocsShell } from "../site/components/ui.tsx";
+import { EXAMPLES, readmePath, runBlock } from "../site/lib/examples.ts";
+import { rewriteMdLinks, splitLeadingH1, stripLeadingRawHtml } from "../site/lib/markdown.ts";
 import {
   agentsSource,
   changelogSlice,
@@ -162,7 +165,41 @@ export async function corpusInputs(): Promise<CorpusInput[]> {
     inputs.push(...files);
     if (rootMd) inputs.push({ path: rootMd, text: await rootMdText(rootMd) });
   }
+  // The example pages: the run block's shape and every README.
+  inputs.push({
+    path: "site/lib/examples.ts",
+    text: await Deno.readTextFile(`${ROOT}site/lib/examples.ts`),
+  });
+  for (const e of EXAMPLES) {
+    if (e.hasReadme) {
+      const path = readmePath(e.name);
+      inputs.push({ path, text: await Deno.readTextFile(`${ROOT}${path}`) });
+    }
+  }
   return inputs;
+}
+
+/**
+ * One example's page (`examples/<name>`, served at /docs/examples/<name>): the "Run it" block,
+ * then its README with the leading H1 split off and its relative links resolved as the site
+ * resolves them.
+ */
+async function examplePages(): Promise<{ page: CorpusPage; md: string }[]> {
+  const out: { page: CorpusPage; md: string }[] = [];
+  for (const e of EXAMPLES) {
+    const run = `Run it:\n\n\`\`\`bash\n${runBlock(e)}\n\`\`\`\n\nSource: ${e.url}`;
+    let body = "";
+    if (e.hasReadme) {
+      const path = readmePath(e.name);
+      const src = await Deno.readTextFile(`${ROOT}${path}`);
+      const { body: md } = splitLeadingH1(stripLeadingRawHtml(src.replace(/\r\n/g, "\n")));
+      body = rewriteMdLinks(md, path);
+    }
+    const page: CorpusPage = { slug: `examples/${e.name}`, title: e.title };
+    if (e.blurb) page.lead = e.blurb;
+    out.push({ page, md: body ? `${run}\n\n${body}` : run });
+  }
+  return out;
 }
 
 const SHELL = { shell: DocsShell, code: Code, callout: Callout };
@@ -194,6 +231,7 @@ export async function buildCorpus(): Promise<{
 }> {
   const sources: { page: CorpusPage; md: string }[] = [];
   for (const slug of await docSlugs()) sources.push(await sitePage(slug));
+  sources.push(...await examplePages());
   sources.push(
     rootMdPage("agents", agentsSource(await Deno.readTextFile(`${ROOT}AGENTS.md`)), {
       title: "Writing denext apps (AI authoring guide)",

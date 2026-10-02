@@ -140,21 +140,58 @@ export function Callout(
   return <aside class={`callout ${kind}`}>{children}</aside>;
 }
 
+/** A link nested under the active sidebar item (a section's own pages), one level deep. */
+export interface NavChild {
+  href: string;
+  label: string;
+  /** The page being shown. */
+  current?: boolean;
+  children?: NavChild[];
+}
+
+/** The nested links under the active sidebar item. */
+function NavChildren({ items }: { items: NavChild[] }) {
+  return (
+    <ul class="navsub">
+      {items.map((c) => (
+        <li key={c.href}>
+          <a
+            href={c.href}
+            class={c.current ? "active" : undefined}
+            aria-current={c.current ? "page" : undefined}
+          >
+            {c.label}
+          </a>
+          {c.children && c.children.length ? <NavChildren items={c.children} /> : null}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Whether one of the nested links is the page being shown. */
+function anyCurrent(items: NavChild[]): boolean {
+  return items.some((c) => c.current || anyCurrent(c.children ?? []));
+}
+
 /**
  * The docs shell: sidebar + article + an optional right-rail "On this page" TOC.
  * `active` is the current page's slug. The TOC is auto-extracted from the JSX children's
  * h2/h3 headings; pass `toc` explicitly for Markdown/generated content (see MarkdownDoc).
+ * `navChildren` nests a section's own pages under the active sidebar item (the examples).
  */
 export function DocsShell(
-  { active, title, lead, children, toc }: {
+  { active, title, lead, children, toc, navChildren }: {
     active: string;
     title: string;
     lead?: string;
     children: VNodeChildren;
     toc?: TocItem[];
+    navChildren?: NavChild[];
   },
 ) {
   const headings = toc ?? tocFromVNodes(children);
+  const childIsCurrent = anyCurrent(navChildren ?? []);
   const showToc = headings.length >= 2;
   return (
     <div class={showToc ? "docs has-toc" : "docs"}>
@@ -175,10 +212,13 @@ export function DocsShell(
                     <a
                       href={`/docs/${item.slug}`}
                       class={item.slug === active ? "active" : undefined}
-                      aria-current={item.slug === active ? "page" : undefined}
+                      aria-current={item.slug === active && !childIsCurrent ? "page" : undefined}
                     >
                       {item.label}
                     </a>
+                    {item.slug === active && navChildren && navChildren.length
+                      ? <NavChildren items={navChildren} />
+                      : null}
                   </li>
                 ))}
               </ul>

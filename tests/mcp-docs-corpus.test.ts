@@ -157,6 +157,26 @@ Deno.test("docs corpus: every docs-site page is in the corpus", async () => {
   for (const s of ["agents", "readme", "features", "limitations", "changelog"]) {
     assert(slugs.has(s));
   }
+  // …and every example's page (/docs/examples/<name>), read from its README.
+  const { examples } = JSON.parse(
+    await Deno.readTextFile(new URL("examples/examples.json", docs)),
+  ) as { examples: { name: string }[] };
+  for (const e of examples) assert(slugs.has(`examples/${e.name}`), `missing example ${e.name}`);
+});
+
+Deno.test("readDocs: an example's page by slug or URL, its README links resolved", async () => {
+  for (const ref of ["examples/drizzle", "https://denext.dev/docs/examples/drizzle"]) {
+    const res = await readDocs(ref);
+    assert(!res.isError, ref);
+    assert(res.text.startsWith("# Drizzle ORM on denext"), ref);
+    assertStringIncludes(res.text, "Source: https://denext.dev/docs/examples/drizzle");
+    assertStringIncludes(res.text, "cd denext/examples/drizzle");
+    // `./lib/schema.ts` in the README is a GitHub link here, as on the site.
+    assertStringIncludes(
+      res.text,
+      "https://github.com/Brainwires/denext/blob/main/examples/drizzle/lib/schema.ts",
+    );
+  }
 });
 
 // ── read_docs ──

@@ -1,4 +1,34 @@
 {
+  "categories": [
+    {
+      "id": "start",
+      "label": "Start here"
+    },
+    {
+      "id": "rendering",
+      "label": "Rendering & data"
+    },
+    {
+      "id": "apis",
+      "label": "APIs, auth & services"
+    },
+    {
+      "id": "databases",
+      "label": "Databases"
+    },
+    {
+      "id": "routers",
+      "label": "Routers & plugins"
+    },
+    {
+      "id": "compat",
+      "label": "npm React libraries & migration"
+    },
+    {
+      "id": "native",
+      "label": "Mobile & desktop"
+    }
+  ],
   "examples": [
     {
       "name": "actions",
@@ -8,7 +38,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "animation",
@@ -19,7 +52,10 @@
         "compat",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno task example:animation          # build once, serve\ndeno task example:animation --dev    # rebuild on each request",
+      "runFrom": "root"
     },
     {
       "name": "auth",
@@ -30,7 +66,10 @@
         "plugin:denextAuth",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev      # http://localhost:3000\n# or, production:\nAUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com \\\n  deno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "cache-components",
@@ -40,7 +79,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task dev      # http://localhost:3000\n# or\ndeno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "caching",
@@ -50,7 +92,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000  (dev always renders fresh)\ndeno task build && deno task start   # ISR + data cache active",
+      "runFrom": "example"
     },
     {
       "name": "capacitor-ci",
@@ -58,7 +103,10 @@
       "blurb": "A GitHub Actions recipe for a denext app wrapped in Capacitor: every push is fingerprinted with denext mobile fingerprint, and ships over the air when the native layer is unchanged, or as signed…",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/capacitor-ci",
       "tags": [],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "native",
+      "run": "denext mobile fingerprint                       # the fingerprint alone\ndenext mobile fingerprint --json > before.json  # every input, hashed\n# …edit a native file, add a plugin…\ndenext mobile fingerprint --diff before.json    # what changed, and the verdict\ndenext mobile fingerprint --write               # embed it (idempotent)\ndenext ota manifest out --native-fingerprint auto --dir . --sign ota.key",
+      "runFrom": "example"
     },
     {
       "name": "clerk",
@@ -70,7 +118,10 @@
         "desktop",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "apis",
+      "run": "cd examples/clerk && deno install\ndeno task dev\ndeno task build && deno task start",
+      "runFrom": "root"
     },
     {
       "name": "concurrency",
@@ -81,7 +132,10 @@
         "compat",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task example:concurrency          # build once, serve\ndeno task example:concurrency --dev    # rebuild on each request",
+      "runFrom": "root"
     },
     {
       "name": "content-collections",
@@ -92,7 +146,10 @@
         "plugin:contentCollections",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry",
+      "runFrom": "example"
     },
     {
       "name": "desktop-kitchen-sink",
@@ -103,7 +160,10 @@
         "desktop",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "native",
+      "run": "deno task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndeno task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndeno task test:window        # package, launch and assert every check (exits 1 on a failure)\ndeno task test:window --no-package   # reuse the last builds in dist/ (and their update key)\ndeno task test:window --no-update    # skip the full-app update install / rollback launches",
+      "runFrom": "example"
     },
     {
       "name": "drizzle",
@@ -113,7 +173,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "databases",
+      "run": "deno task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim\ndeno task dev        # http://localhost:3000   (or: deno task build && deno task start)",
+      "runFrom": "example"
     },
     {
       "name": "effect",
@@ -125,7 +188,10 @@
         "plugin:effect",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno run -A cli.ts migrate examples/effect",
+      "runFrom": "root"
     },
     {
       "name": "effect-runtime",
@@ -136,7 +202,10 @@
         "plugin:effect",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev     # http://localhost:3000",
+      "runFrom": "example"
     },
     {
       "name": "expo-app",
@@ -148,7 +217,10 @@
         "compat",
         "mobile"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "native",
+      "run": "npm install --legacy-peer-deps   # the app's packages and the Capacitor shell's\ndeno task dev                    # the app in a browser: http://localhost:3000\ndeno task export                 # static export → out/ (Capacitor's webDir)\ndeno task cap:sync               # export + `cap sync ios`\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Debug build (xcodebuild)\ndeno task ios:check              # an unsigned compile check\ndeno task mobile:dev             # live reload on a phone: the shell loads `denext dev`",
+      "runFrom": "example"
     },
     {
       "name": "fonts",
@@ -158,7 +230,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "start",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000  (runtime <link> fallback)\ndeno task build && deno task start   # fonts self-hosted from /_denext/fonts",
+      "runFrom": "example"
     },
     {
       "name": "game",
@@ -169,7 +244,10 @@
         "compat",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno task example:game          # build once, serve → http://localhost:3005\ndeno task example:game --dev    # rebuild on each request",
+      "runFrom": "root"
     },
     {
       "name": "graphql",
@@ -180,7 +258,10 @@
         "plugin:graphql",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev          # http://localhost:3000 — GraphiQL at /graphql",
+      "runFrom": "example"
     },
     {
       "name": "hello",
@@ -190,7 +271,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "start",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "htmx",
@@ -201,7 +285,10 @@
         "plugin:htmx",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev      # http://localhost:3000\ndeno task build    # static/prod build (emits the runtime into the output)\ndeno task start    # serve the build",
+      "runFrom": "example"
     },
     {
       "name": "image",
@@ -211,7 +298,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "start",
+      "run": "# from this directory\ndeno task dev      # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "instrumentation",
@@ -221,7 +311,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "start",
+      "run": "deno task dev        # http://localhost:3000   (or: deno task build && deno task start)",
+      "runFrom": "example"
     },
     {
       "name": "islands",
@@ -231,7 +324,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "cd examples/islands\ndeno task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndeno task build && deno task start",
+      "runFrom": "root"
     },
     {
       "name": "live",
@@ -241,7 +337,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task dev     # or: deno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "mobile",
@@ -252,7 +351,10 @@
         "spa",
         "mobile"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "native",
+      "run": "npm install            # the Capacitor packages and plugins (package.json)\ndeno task dev          # the UI in a browser: http://localhost:3000\ndeno task build        # production build → .denext/\ndeno task export       # static export → out/ (Capacitor's webDir), stamped for OTA\ndeno task cap:sync     # export + `cap sync` into ios/ and android/\ndeno task mobile:dev   # live reload on a phone on the same Wi-Fi (denext mobile dev --lan)\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Release build (xcodebuild)",
+      "runFrom": "example"
     },
     {
       "name": "native",
@@ -264,7 +366,10 @@
         "mobile",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "native",
+      "run": "deno task dev      # → http://localhost:3000\ndeno task start    # serve the production build",
+      "runFrom": "example"
     },
     {
       "name": "native-views",
@@ -275,7 +380,10 @@
         "spa",
         "mobile"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "native",
+      "run": "npm install            # the Capacitor packages (package.json)\ndeno task dev          # the UI in a browser: http://localhost:3000\ndeno task cap:sync     # export + `cap sync` into ios/ and android/\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Debug build (xcodebuild)\ndeno task ios:check    # an unsigned compile check\ndeno task android      # android/app/build/outputs/apk/debug/app-debug.apk",
+      "runFrom": "example"
     },
     {
       "name": "next-compat",
@@ -286,7 +394,10 @@
         "compat",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno task example:next-compat          # build once, serve (production-like)\ndeno task example:next-compat --dev    # rebuild on each request",
+      "runFrom": "root"
     },
     {
       "name": "next-compat-feasibility",
@@ -294,7 +405,10 @@
       "blurb": "Two probes that answer one question for a real Next.js app: would its dependency tree run on denext? They validate dependencies only — they do not convert the app.",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat-feasibility",
       "tags": [],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "compat",
+      "run": "# server deps (edit PACKAGES in the file to match the app)\ndeno run -A --node-modules-dir=auto examples/next-compat-feasibility/probe-server.ts\n\n# client deps (run from the denext repo root; pass the app's root dir)\ndeno run -A --config deno.json examples/next-compat-feasibility/probe-client.ts /path/to/app",
+      "runFrom": "root"
     },
     {
       "name": "next-compat-recharts",
@@ -305,7 +419,10 @@
         "compat",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno task example:next-compat-recharts          # build once, serve (prod-like)\ndeno task example:next-compat-recharts --dev    # rebuild on each request",
+      "runFrom": "root"
     },
     {
       "name": "notes",
@@ -315,7 +432,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "start",
+      "run": "deno task dev      # http://localhost:3000\n# or, production:\ndeno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "openapi",
@@ -327,7 +447,10 @@
         "plugin:openapi",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev          # http://localhost:3000 — Swagger UI at /docs, spec at /openapi.json",
+      "runFrom": "example"
     },
     {
       "name": "pages-router",
@@ -339,7 +462,10 @@
         "pages-router",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "routers",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "plugin-aliases",
@@ -350,7 +476,10 @@
         "plugin:aliasesPlugin",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "routers",
+      "run": "cd examples/plugin-aliases\ndeno task dev            # http://localhost:3006",
+      "runFrom": "root"
     },
     {
       "name": "postgres-load",
@@ -360,7 +489,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "databases",
+      "run": "cd examples/postgres-load\ncp .env.example .env         # DATABASE_URL + POOL_SIZE\n\ndeno task db:up              # start Postgres in Docker (or point .env anywhere)\n                             # it publishes 127.0.0.1:5432 — this machine only\ndeno task build              # build the app\ndeno task start              # serve on http://localhost:3005",
+      "runFrom": "root"
     },
     {
       "name": "prisma",
@@ -370,7 +502,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "databases",
+      "run": "deno task setup   # one-time: bundle the shim, install, prisma generate + db push\ndeno task dev      # http://localhost:3000   (or: deno task build && deno task start)",
+      "runFrom": "example"
     },
     {
       "name": "react-router",
@@ -381,7 +516,10 @@
         "plugin:reactRouter",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "routers",
+      "run": "deno task dev          # http://localhost:3000",
+      "runFrom": "example"
     },
     {
       "name": "resumability",
@@ -391,7 +529,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "cd examples/resumability\ndeno task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndeno task build && deno task start",
+      "runFrom": "root"
     },
     {
       "name": "rn-desktop",
@@ -403,7 +544,10 @@
         "compat",
         "desktop"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "native",
+      "run": "npm install          # react-native-web (the app's own dependency; denext ships none)\ndeno task dev        # in the browser\ndeno task desktop    # export + open in a native window (Deno 2.9+)\ndeno task desktop:dev    # live reload inside the window",
+      "runFrom": "example"
     },
     {
       "name": "scroll-bench",
@@ -411,7 +555,10 @@
       "blurb": "A scroll benchmark with two apps that draw the same data with the same row designs: a denext app in a Capacitor WebView (web/) and a bare React Native app (native/).",
       "url": "https://github.com/Brainwires/denext/tree/main/examples/scroll-bench",
       "tags": [],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "native",
+      "run": "(cd web && deno task dev)",
+      "runFrom": "example"
     },
     {
       "name": "spa",
@@ -421,7 +568,10 @@
       "tags": [
         "spa"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "start",
+      "run": "deno task dev      # dev server + live reload\ndeno task build    # production build → .denext/\ndeno task start    # serve the production build\ndeno task export   # static export → out/  (what deno desktop packages)",
+      "runFrom": "example"
     },
     {
       "name": "streaming",
@@ -431,7 +581,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "tailwind",
@@ -441,7 +594,10 @@
       "tags": [
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "start",
+      "run": "deno task dev      # → http://localhost:3000  (Tailwind recompiles on change)\ndeno task build    # compile Tailwind + bundle\ndeno task start    # serve the production build",
+      "runFrom": "example"
     },
     {
       "name": "tanstack-router",
@@ -452,7 +608,10 @@
         "spa",
         "compat"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "routers",
+      "run": "deno task install   # installs @tanstack/react-router into node_modules (once)\ndeno task dev       # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
     },
     {
       "name": "transitions",
@@ -463,7 +622,10 @@
         "compat",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task example:transitions          # build once, serve\ndeno task example:transitions --dev    # rebuild on each request",
+      "runFrom": "root"
     },
     {
       "name": "typed-api",
@@ -474,7 +636,10 @@
         "plugin:openapi",
         "app-router"
       ],
-      "hasReadme": true
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev     # or: deno task build && deno task start",
+      "runFrom": "example"
     }
   ]
 }

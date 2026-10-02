@@ -1,13 +1,17 @@
 import { Code, DocsShell } from "../../../components/ui.tsx";
-import examplesIndex from "./examples.json" with { type: "json" };
+import {
+  byCategory,
+  categoryAnchor,
+  exampleHref,
+  EXAMPLES,
+  examplesNav,
+} from "../../../lib/examples.ts";
 
 export const metadata = {
   title: "Examples",
   description:
     "Every runnable example in the denext repository — Server Actions, islands, Live, streaming, SPA mode, the ORM and plugin examples — with what each one demonstrates and how it is wired.",
 };
-
-const { examples } = examplesIndex;
 
 const RUN = `git clone https://github.com/Brainwires/denext
 cd denext/examples/hello
@@ -30,9 +34,15 @@ function whatItShows(e: { blurb: string; title: string; hasReadme: boolean }): s
 }
 
 export default function Examples() {
+  const groups = byCategory();
   const toc = [
     { id: "run", text: "Run one", level: 2 as const },
     { id: "all", text: "All examples", level: 2 as const },
+    ...groups.map((g) => ({
+      id: categoryAnchor(g.category.id),
+      text: g.category.label,
+      level: 3 as const,
+    })),
     { id: "tags", text: "What the tags mean", level: 2 as const },
   ];
   return (
@@ -41,11 +51,13 @@ export default function Examples() {
       title="Examples"
       lead="Every runnable example in the repository — what it demonstrates and how it is wired — generated from the examples' own READMEs."
       toc={toc}
+      navChildren={examplesNav()}
     >
       <p>
-        The repository carries {examples.length}{" "}
+        The repository carries {EXAMPLES.length}{" "}
         examples, each a complete app you can run. They are the executable half of these docs: when
-        a page describes a feature, an example here exercises it end to end.
+        a page describes a feature, an example here exercises it end to end. Each has a page here
+        rendered from its README, with the commands that run it.
       </p>
 
       <h2 id="run">Run one</h2>
@@ -58,38 +70,45 @@ export default function Examples() {
       </p>
 
       <h2 id="all">All examples</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Example</th>
-              <th>What it shows</th>
-              <th>Wired as</th>
-            </tr>
-          </thead>
-          <tbody>
-            {examples.map((e) => (
-              <tr key={e.name}>
-                <td>
-                  <a href={e.url}>
-                    <code>{e.name}</code>
-                  </a>
-                </td>
-                <td>{whatItShows(e)}</td>
-                <td>
-                  {e.tags.length
-                    ? e.tags.map((t, i) => (
-                      <span key={t}>
-                        {i > 0 ? " " : ""}
-                        <code>{t}</code>
-                      </span>
-                    ))
-                    : "—"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div class="examples-groups">
+        {groups.map(({ category, examples }) => (
+          <section key={category.id}>
+            <h3 id={categoryAnchor(category.id)}>{category.label}</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Example</th>
+                    <th>What it shows</th>
+                    <th>Wired as</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {examples.map((e) => (
+                    <tr key={e.name}>
+                      <td>
+                        <a href={exampleHref(e.name)}>
+                          <code>{e.name}</code>
+                        </a>
+                      </td>
+                      <td>{whatItShows(e)}</td>
+                      <td>
+                        {e.tags.length
+                          ? e.tags.map((t, i) => (
+                            <span key={t}>
+                              {i > 0 ? " " : ""}
+                              <code>{t}</code>
+                            </span>
+                          ))
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ))}
       </div>
 
       <h2 id="tags">What the tags mean</h2>

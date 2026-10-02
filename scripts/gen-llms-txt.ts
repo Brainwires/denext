@@ -59,6 +59,8 @@ export function llmsIndex(): string {
 - [Full guide for AI tools](${SITE}/llms-full.txt): the complete rules, import map, common
   tasks, and an API-surface summary — load this to write denext.
 - [API reference](${SITE}/docs/api): every public symbol with signatures.
+- [Examples](${SITE}/docs/examples): every runnable example app, one page each
+  (\`/docs/examples/<name>\`) with its README and the commands that run it.
 - [Guide (source)](${REPO}/blob/main/AGENTS.md): AGENTS.md in the repo.
 - [GitHub](${REPO}): source, examples, and issues.
 

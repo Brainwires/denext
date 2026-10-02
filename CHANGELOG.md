@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **A docs page for every example.** `/docs/examples/<name>` renders the example's own README
+  (the single source; relative links become GitHub URLs, a link to another example becomes its
+  page) under a "Run it" block, its category, tags and a GitHub source link, with related examples
+  and previous / next. `/docs/examples` groups all 45 by category, and the sidebar nests them under
+  Examples. `denext_read_docs` reads them as `examples/<name>`, and `llms.txt` links the index.
 - **A denext backend accepts its own Deno Desktop app origin.** With `desktop.app.origin` set
   (e.g. `myapp://app`), an `Origin` exactly equal to it (normalized as the runtime does) passes
   every same-origin check: Server Actions, the typed-API batch, the Live socket handshake,

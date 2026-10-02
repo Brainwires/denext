@@ -104,8 +104,9 @@ function docHref(href: string, dir: string): string | null {
   const anchor = hash === -1 ? "" : href.slice(hash);
   const rel = hash === -1 ? href : href.slice(0, hash);
   const path = normalizePath(dir === "" ? rel : `${dir}/${rel}`);
-  if (path === "" || path.startsWith("..")) return null;
-  const mapped: string | undefined = DOC_URLS[path];
+  if (path.startsWith("..")) return null;
+  if (path === "") return GITHUB_REPO;
+  const mapped: string | undefined = DOC_URLS[path] ?? exampleRoute(path) ?? undefined;
   if (mapped !== undefined) return mapped + anchor;
   return looksLikeFile(path) ? `${GITHUB_BLOB}/${path}${anchor}` : `${GITHUB_TREE}/${path}`;
 }
@@ -123,10 +124,30 @@ export function rewriteDocLinks(html: string, sourcePath: string): string {
   });
 }
 
+/**
+ * {@link rewriteDocLinks} for Markdown SOURCE (the MCP docs corpus serves Markdown, not HTML):
+ * every inline `](target)` outside a fenced code block is resolved the same way.
+ */
+export function rewriteMdLinks(md: string, sourcePath: string): string {
+  const dir = dirOf(sourcePath);
+  let fenced = false;
+  return md.split("\n").map((line) => {
+    if (/^\s*```/.test(line)) {
+      fenced = !fenced;
+      return line;
+    }
+    if (fenced) return line;
+    return line.replace(/\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g, (m, href: string, title: string) => {
+      const next = docHref(href, dir);
+      return next === null ? m : `](${next}${title})`;
+    });
+  }).join("\n");
+}
+
 // The renderer itself is the first-party one @denext/content-collections ships (moved there
 // so content collections and the docs render Markdown identically); re-exported for callers.
 import { renderMarkdown } from "../../packages/content-collections/markdown.ts";
-import { DOC_URLS, GITHUB_BLOB, GITHUB_TREE } from "./docs-map.ts";
+import { DOC_URLS, exampleRoute, GITHUB_BLOB, GITHUB_REPO, GITHUB_TREE } from "./docs-map.ts";
 export { renderMarkdown };
 
 /**
