@@ -396,11 +396,20 @@ src/runtime   hooks, context, Suspense, error boundaries
 src/router    segment parsing/matching + the filesystem manifest scanner
 src/server    request handler, page pipeline, API dispatch, static, middleware
 src/client    virtual-DOM reconciler, hydration, soft navigation
-src/build     deno-bundle integration, dev server, prod server, CLI wiring
-src/compat    the React / Next / next-intl compat surface
+src/build     deno-bundle integration, dev server, prod server, desktop + mobile packaging
+src/cli       the command framework and every `denext` verb (src/cli/commands)
+src/compat    the React / Next / next-intl / Remix compat surface
+src/desktop   the Deno Desktop runtime: bridge, capabilities, window, app, updaters, Clerk
+src/mobile    denext/mobile: the Capacitor shell runtime and its desktop branches
+src/react-native, src/expo, src/navigation   React Native mode, the expo-* shims, native-feel nav
+src/mcp       the `denext mcp` server and its docs corpus
+src/ui        the `denext ui` project GUI
+src/plugin, src/lint, src/testing            plugin kit, lint plugin, denext/testing
 packages/*    first-party JSR packages
-site/         the docs site
+site/         the docs site (guides in site/app/docs/<slug>/)
 examples/*    runnable example apps
+scripts/      generators, release + install scripts, CI helpers
+tests/        the unit and integration suites (e2e under tests/e2e)
 cli.ts        the `denext` CLI entry
 mod.ts        the package entry
 ```

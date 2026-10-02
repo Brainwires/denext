@@ -8,19 +8,28 @@
 
 import examplesIndex from "../app/docs/examples/examples.json" with { type: "json" };
 
-/** Repo-relative Markdown path → the docs-site route that renders it. */
+/**
+ * Repo-relative Markdown path → the docs-site route that publishes it. Two kinds of entry:
+ * root files a docs route renders verbatim (`FEATURES.md` → `/docs/features`; `SECURITY.md`, a
+ * pointer into `POLICIES.md`, goes to the page that holds the policy), and former root guides
+ * that now live in `site/app/docs/<slug>/content.md`, kept so an older relative link
+ * (`./DEPLOYMENT.md` in a changelog entry) still lands on its page.
+ */
 export const DOC_URLS: Readonly<Record<string, string>> = {
+  // Root files rendered by a docs route.
   "CONTRIBUTING.md": "/docs/contributing",
   "CHANGELOG.md": "/docs/changelog",
+  "KNOWN-LIMITATIONS.md": "/docs/limitations",
+  "KNOWN-DIFFERENCES.md": "/docs/differences",
+  "FEATURES.md": "/docs/features",
+  "POLICIES.md": "/docs/policies",
+  "SECURITY.md": "/docs/policies",
+  // Former root guides, now site/app/docs/<slug>/content.md.
   "DEPLOYMENT.md": "/docs/deploy",
   "DATABASE.md": "/docs/database",
   "PLUGINS.md": "/docs/plugins",
   "ARCHITECTURE.md": "/docs/architecture",
   "CVE-DEFENSE-GUIDE.md": "/docs/security",
-  "KNOWN-LIMITATIONS.md": "/docs/limitations",
-  "KNOWN-DIFFERENCES.md": "/docs/differences",
-  "FEATURES.md": "/docs/features",
-  "POLICIES.md": "/docs/policies",
   "README-NEXT-MIGRATION.md": "/docs/migrating",
   "README-REMIX-MIGRATION.md": "/docs/migrating-remix",
 };

@@ -307,7 +307,7 @@ Verified against this runner: a second run is a no-op, a file with a syntax
 error is rolled back as a unit (the tables it created before the bad statement
 are gone) and the run exits `1`, and the task's returned line lands in the run
 history when `tasks: { history: true }` is on. Use it from a deploy step
-(`deno run -A jsr:@denext/denext@^2/cli task migrate` before `start`), a
+(`deno run -A jsr:@denext/denext@^3/cli task migrate` before `start`), a
 Kubernetes init container or a `preStart` hook — and keep the schema step out of
 the app's boot so a bad migration fails the deploy, not the first request. The
 runner needs `--allow-read` on `migrations/` and `--allow-write` on the

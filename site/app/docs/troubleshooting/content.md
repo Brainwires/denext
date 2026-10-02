@@ -100,8 +100,8 @@ deno upgrade
 DENO_BIN=/path/to/deno deno task build
 ```
 
-See [Requirements](https://github.com/Brainwires/denext#requirements) in the
-README.
+See the [Quick start](https://github.com/Brainwires/denext#quick-start) in the README
+for the Deno version denext needs.
 
 ## "no dispatcher installed" / hooks throwing inside an npm React library
 

@@ -17,7 +17,7 @@
  * live in [`@denext/denext/server`](https://jsr.io/@denext/denext/doc/server/~).
  *
  * - **Full guide & source:** [github.com/Brainwires/denext](https://github.com/Brainwires/denext)
- * - **Security model:** [Security guide](https://github.com/Brainwires/denext#security)
+ * - **Security model:** [Security guide](https://denext.dev/docs/security)
  *
  * ## Why denext
  *
