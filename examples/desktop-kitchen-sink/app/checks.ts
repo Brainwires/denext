@@ -43,7 +43,12 @@ import {
   setLaunchAtLogin,
   shortcutCapabilities,
 } from "denext/desktop/app";
-import { desktopExtension, onDesktopEvent } from "denext/desktop/client";
+import {
+  desktopExtension,
+  desktopWebSocketUrl,
+  desktopWsOrigin,
+  onDesktopEvent,
+} from "denext/desktop/client";
 import {
   getScreens,
   getWindowState,
@@ -233,6 +238,31 @@ const runtimeChecks: Check[] = [
       stop();
     }
     return "pong received";
+  }],
+  ["websocket: the page dials the runtime's relay with the app origin", async ({ setup }) => {
+    if (!setup.pinnedRuntime) throw new Skip("the stock runtime serves the page on loopback");
+    const relay = desktopWsOrigin();
+    assert(relay, "__denext.wsOrigin is missing");
+    const url = desktopWebSocketUrl("/_kitchen/ws");
+    assert(url.startsWith(`${relay}/`), `dialed ${url}, not the relay`);
+    const ws = new WebSocket(url);
+    try {
+      const data = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("no message from the socket")), 5000);
+        ws.onmessage = (e) => {
+          clearTimeout(timer);
+          resolve(String(e.data));
+        };
+        ws.onerror = () => {
+          clearTimeout(timer);
+          reject(new Error(`the relay refused ${url}`));
+        };
+      });
+      eq(JSON.parse(data).origin, location.origin, "the Origin the server saw");
+    } finally {
+      ws.close();
+    }
+    return `${relay} · Origin ${location.origin}`;
   }],
   ["preload: ran first, after the __denext global", () => {
     const p = (globalThis as {

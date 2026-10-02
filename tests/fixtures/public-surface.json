@@ -1207,6 +1207,7 @@
     "DesktopPackageArgSpec:interface",
     "DesktopPackageArgs:interface",
     "DesktopPackageMeta:interface",
+    "DesktopPageGlobals:interface",
     "DesktopPermissions:interface",
     "DesktopProxyFn:typeAlias",
     "DesktopRunOptions:interface",
@@ -1303,6 +1304,8 @@
     "claimDeepLinkScheme:function",
     "deepLinkSchemeOwner:function",
     "desktopExtension:function",
+    "desktopWebSocketUrl:function",
+    "desktopWsOrigin:function",
     "isDesktopBridgeError:function",
     "onDesktopEvent:function"
   ],

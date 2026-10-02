@@ -4,7 +4,20 @@
 import config from "./denext.config.ts";
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 
+/** The WebSocket the "websocket relay" check dials: answers with the `Origin` it was opened with. */
+const ECHO_SOCKET_PATH = "/_kitchen/ws";
+
 await runDesktop({
   importMetaUrl: import.meta.url,
   ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+  // Reached only through the runtime's loopback relay (the page's custom origin carries no
+  // WebSockets), and only after the desktop runtime checked the exact app `Origin`.
+  onRequest: (request, url) => {
+    if (url.pathname !== ECHO_SOCKET_PATH) return null;
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return null;
+    const origin = request.headers.get("origin");
+    const { socket, response } = Deno.upgradeWebSocket(request);
+    socket.onopen = () => socket.send(JSON.stringify({ origin }));
+    return response;
+  },
 });

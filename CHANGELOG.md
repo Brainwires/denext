@@ -323,6 +323,13 @@ and this project adheres to
 
 ### Fixed
 
+- **Deno Desktop: WebSockets at a custom app origin.** Under the pinned runtime the page runs at
+  `desktop.app.origin` (`myapp://app`), which carries no WebSockets, and denext's Live client
+  dialed `ws://myapp-host/…`. The desktop runtime now injects the runtime's loopback relay
+  (`DENO_DESKTOP_WS_ORIGIN`) as `__denext.wsOrigin`, and the Live client (Live boundaries,
+  `useLive`, `usePresence`, channels and subscriptions) dials it. `denext/desktop/client` exports
+  `desktopWebSocketUrl(path)` for the app's own sockets (the relay in such a window,
+  `ws(s)://<host>` elsewhere) and `desktopWsOrigin()`.
 - **Deno Desktop: `useKeepAwake` works on Windows.** The `keep-awake` capability passed
   `SetThreadExecutionState` a negative number (a JS bitwise OR with bit 31 set), which Deno's FFI
   rejects for a `u32`, so holding the screen awake always failed on Windows.

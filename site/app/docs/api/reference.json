@@ -15449,7 +15449,7 @@
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
-          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
+          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsOrigin?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
           "doc": "The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
           "docFull": "The desktop request handler: the `onRequest` escape hatch, the token-gated local endpoints,\nthen — when `devProxy` is set (`denext desktop dev` only) — the reverse proxy to `denext dev`\nfor EVERYTHING else; otherwise the backend proxy, the export's static assets (`no-store`), the\n`index.html` shell for navigations, else 404. Exported for tests; {@linkcode runDesktop} wires\nit to `Deno.serve`.\n\nRequest order is load-bearing: the token-gated `/_denext/desktop/*` endpoints ({@link\nhandleLocalEndpoint}) run BEFORE the dev proxy, so they are always served LOCALLY and never\nforwarded to the dev server, even in live-reload mode.",
           "params": [],
@@ -15742,8 +15742,8 @@
           "slug": "desktopHasTool",
           "kind": "function",
           "signature": "desktopHasTool(cmd: string): Promise<boolean>",
-          "doc": "Whether a command is on PATH (where on Windows, command -v elsewhere).",
-          "docFull": "Whether a command is on PATH (`where` on Windows, `command -v` elsewhere).",
+          "doc": "Whether a command is on PATH. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.",
+          "docFull": "Whether a command is on PATH. No shell is involved: on Windows `where.exe` is run with the name\nas one argument; elsewhere each `PATH` directory is checked for an executable file of that name.\nA name that is not a plain command (a path separator, whitespace, a shell or wildcard character)\nis never found.",
           "params": [
             {
               "name": "cmd",
@@ -15944,6 +15944,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopPageGlobals",
+          "slug": "DesktopPageGlobals",
+          "kind": "interface",
+          "signature": "interface DesktopPageGlobals",
+          "doc": "What the injected globalThis.__denext carries besides the desktop marker and the token (see injectDesktopGlobal).",
+          "docFull": "What the injected `globalThis.__denext` carries besides the desktop marker and the token (see\n{@linkcode injectDesktopGlobal}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopPermissions",
           "slug": "DesktopPermissions",
           "kind": "interface",
@@ -15996,9 +16008,9 @@
           "name": "desktopRun",
           "slug": "desktopRun",
           "kind": "function",
-          "signature": "desktopRun(cmd: string[], env?: Record<string, string>): Promise<void>",
-          "doc": "Run a command with inherited stdio; throws on a non-zero exit.",
-          "docFull": "Run a command with inherited stdio; throws on a non-zero exit.",
+          "signature": "desktopRun(cmd: string[], env?: Record<string, string>, options?: DesktopRunOptions): Promise<void>",
+          "doc": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command line with every DesktopRunOptions.secrets value redacted.",
+          "docFull": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command\nline with every {@linkcode DesktopRunOptions.secrets} value redacted.",
           "params": [
             {
               "name": "cmd",
@@ -16007,8 +16019,24 @@
             {
               "name": "env",
               "doc": "Extra environment variables."
+            },
+            {
+              "name": "options",
+              "doc": "Redaction."
             }
           ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopRunOptions",
+          "slug": "DesktopRunOptions",
+          "kind": "interface",
+          "signature": "interface DesktopRunOptions",
+          "doc": "Options for desktopRun.",
+          "docFull": "Options for {@linkcode desktopRun}.",
+          "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -16140,9 +16168,9 @@
           "name": "injectDesktopGlobal",
           "slug": "injectDesktopGlobal",
           "kind": "function",
-          "signature": "injectDesktopGlobal(html: string, token: string | null, beacon?: boolean, preload?: string): Promise<string>",
+          "signature": "injectDesktopGlobal(html: string, token: string | null, beacon?: boolean, preload?: string, preloadKey?: string, page?: DesktopPageGlobals): Promise<string>",
           "doc": "Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.",
-          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.\n\n`preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline\nscript right after the global — so it runs after `__denext` exists and before any page script —\nwith its own hash. It is injected only together with the token (a top-level document); the\ncaller additionally limits it to the memory world.",
+          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.\n\n`preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline\nscript right after the global — so it runs after `__denext` exists and before any page script —\nwith its own hash. It is injected only together with the token (a top-level document); the\ncaller additionally limits it to the memory world. With a `preloadKey`, the preload is framed by\ntwo more scripts that set `globalThis.__denextPreloadKey` before it and delete it after (even\nwhen the preload throws), so only code the preload runs synchronously can read the key — the\nproof `denext/desktop/clerk` presents for its Clerk-only session binding.\n\n`page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the\nWebSocket relay origin.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16418,8 +16446,8 @@
           "slug": "shouldInjectDesktopToken",
           "kind": "function",
           "signature": "shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean",
-          "doc": "Whether the per-launch token may be injected into the document this request fetches: a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe gets the desktop global without the token. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.",
-          "docFull": "Whether the per-launch token may be injected into the document this request fetches: a\nTOP-LEVEL document only (`Sec-Fetch-Dest`, `document` when absent), so a subframe gets the\ndesktop global without the token. Then, per world: loopback — a LOOPBACK `Host`, so a\nDNS-rebinding Host gets no token; memory — the in-process memory transport and an `Origin` that\nis absent or exactly the app origin; refuse — never.",
+          "doc": "Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe gets the desktop global without the token. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.",
+          "docFull": "Whether the per-launch token may be injected into the document this request fetches: never on\na request the runtime relayed from its loopback WebSocket relay (any local process can dial it,\nso its missing `Origin` / `Sec-Fetch-Dest` prove nothing); otherwise a TOP-LEVEL document only\n(`Sec-Fetch-Dest`, `document` when absent), so a subframe gets the desktop global without the\ntoken. Then, per world: loopback — a LOOPBACK `Host`, so a DNS-rebinding Host gets no token;\nmemory — the in-process memory transport and an `Origin` that is absent or exactly the app\norigin; refuse — never.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16837,8 +16865,8 @@
           "slug": "claimDeepLinkScheme",
           "kind": "function",
           "signature": "claimDeepLinkScheme(scheme: string): Promise<ClaimDeepLinkSchemeResult>",
-          "doc": "Make this app the handler of scheme (one of its desktop.app.deepLinks), taking it over from another app. **Only on an explicit user action** — a \"Make this app the handler of myapp: links\" button after openAuthSession rejected scheme_owned_by_other_app — because the other app loses the scheme. On macOS the OS may confirm it with the user; a Windows \"UserChoice\" cannot be overridden (registered: false).",
-          "docFull": "Make this app the handler of `scheme` (one of its `desktop.app.deepLinks`), taking it over from\nanother app. **Only on an explicit user action** — a \"Make this app the handler of myapp: links\"\nbutton after `openAuthSession` rejected `scheme_owned_by_other_app` — because the other app loses\nthe scheme. On macOS the OS may confirm it with the user; a Windows \"UserChoice\" cannot be\noverridden (`registered: false`).",
+          "doc": "Make this app the handler of scheme (one of its desktop.app.deepLinks), taking it over from another app. **Only on an explicit user action** — a \"Make this app the handler of myapp: links\" button after openAuthSession rejected scheme_owned_by_other_app — because the other app loses the scheme. On macOS the OS may confirm it with the user; a Windows \"UserChoice\" cannot be overridden (registered: false). It must run inside that click: where the webview reports user activation (navigator.userActivation) and there is none, it rejects user_activation_required without calling the runtime. The runtime also takes a scheme over only from ANOTHER app (this app's own or an unclaimed scheme is registered without force), and only once per scheme per launch.",
+          "docFull": "Make this app the handler of `scheme` (one of its `desktop.app.deepLinks`), taking it over from\nanother app. **Only on an explicit user action** — a \"Make this app the handler of myapp: links\"\nbutton after `openAuthSession` rejected `scheme_owned_by_other_app` — because the other app loses\nthe scheme. On macOS the OS may confirm it with the user; a Windows \"UserChoice\" cannot be\noverridden (`registered: false`). It must run inside that click: where the webview reports user\nactivation (`navigator.userActivation`) and there is none, it rejects `user_activation_required`\nwithout calling the runtime. The runtime also takes a scheme over only from ANOTHER app (this\napp's own or an unclaimed scheme is registered without force), and only once per scheme per\nlaunch.",
           "params": [
             {
               "name": "scheme",
@@ -17027,6 +17055,39 @@
           "params": [],
           "returns": "",
           "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopWebSocketUrl",
+          "slug": "desktopWebSocketUrl",
+          "kind": "function",
+          "signature": "desktopWebSocketUrl(path: string): string",
+          "doc": "The URL for a WebSocket from this page to its own server at path (\"/api/socket\"): the runtime's relay under denext's pinned Deno Desktop runtime (desktopWsOrigin), else wss:// / ws:// on the page's own host. Off a page (no location) it returns path as is.",
+          "docFull": "The URL for a WebSocket from this page to its own server at `path` (`\"/api/socket\"`): the\nruntime's relay under denext's pinned Deno Desktop runtime ({@linkcode desktopWsOrigin}), else\n`wss://` / `ws://` on the page's own host. Off a page (no `location`) it returns `path` as is.",
+          "params": [
+            {
+              "name": "path",
+              "doc": "An absolute path, with an optional query (\"/ws?room=1\")."
+            }
+          ],
+          "returns": "The WebSocket URL.",
+          "examples": [
+            "```ts\nimport { desktopWebSocketUrl } from \"denext/desktop/client\";\n\nconst socket = new WebSocket(desktopWebSocketUrl(\"/api/events\"));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopWsOrigin",
+          "slug": "desktopWsOrigin",
+          "kind": "function",
+          "signature": "desktopWsOrigin(): string | undefined",
+          "doc": "The pinned runtime's WebSocket relay origin (ws://127.0.0.1:<port>) when this page runs in a Deno Desktop window at a custom app origin, else undefined (the web, mobile, the stock desktop runtime, SSR). Only a ws: / wss: origin with no path, query or credentials counts.",
+          "docFull": "The pinned runtime's WebSocket relay origin (`ws://127.0.0.1:<port>`) when this page runs in a\nDeno Desktop window at a custom app origin, else `undefined` (the web, mobile, the stock\ndesktop runtime, SSR). Only a `ws:` / `wss:` origin with no path, query or credentials counts.",
+          "params": [],
+          "returns": "The relay origin, or undefined.",
+          "examples": [
+            "```ts\nimport { desktopWsOrigin } from \"denext/desktop/client\";\n\nconst relay = desktopWsOrigin(); // \"ws://127.0.0.1:51234\" in a pinned-runtime window\n```"
+          ],
           "denextOnly": true
         },
         {

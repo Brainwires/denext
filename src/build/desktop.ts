@@ -24,12 +24,14 @@ import {
 } from "../desktop/auth-session-runtime.ts";
 import {
   DESKTOP_APP_ORIGIN_ENV,
+  DESKTOP_WS_ORIGIN_ENV,
   type DesktopServeInfo,
   type DesktopTrust,
   isRelayConnection,
   LOOPBACK_TRUST,
   memoryGate,
   resolveDesktopTrust,
+  resolveDesktopWsOrigin,
 } from "../desktop/transport.ts";
 import { sha256Base64 } from "../server/csp.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
@@ -291,6 +293,7 @@ async function devProxyResponse(
   injectToken: boolean,
   preload?: string,
   preloadKey?: string,
+  page?: DesktopPageGlobals,
 ): Promise<Response> {
   const res = await devProxy(stripDesktopCredentials(request), url);
   const type = (res.headers.get("content-type") ?? "").toLowerCase();
@@ -305,6 +308,7 @@ async function devProxyResponse(
     injectToken,
     injectToken ? preload : undefined,
     preloadKey,
+    page,
   );
   const headers = new Headers(res.headers);
   headers.delete("content-length");
@@ -492,6 +496,19 @@ const QUIT_OVERRIDE_JS = ";(function(){var c=window.close;window.close=function(
   "try{return c.call(window)}catch(e){}}})()";
 
 /**
+ * What the injected `globalThis.__denext` carries besides the desktop marker and the token (see
+ * {@linkcode injectDesktopGlobal}).
+ */
+export interface DesktopPageGlobals {
+  /**
+   * The runtime's WebSocket relay origin (`ws://127.0.0.1:<port>`): where the page dials a
+   * WebSocket to its own server when it runs at a custom app origin (denext's pinned runtime).
+   * Injected with or without the token: it is an address, not a credential.
+   */
+  readonly wsOrigin?: string;
+}
+
+/**
  * Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately
  * after the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is
  * `JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode
@@ -506,6 +523,9 @@ const QUIT_OVERRIDE_JS = ";(function(){var c=window.close;window.close=function(
  * two more scripts that set `globalThis.__denextPreloadKey` before it and delete it after (even
  * when the preload throws), so only code the preload runs synchronously can read the key — the
  * proof `denext/desktop/clerk` presents for its Clerk-only session binding.
+ *
+ * `page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the
+ * WebSocket relay origin.
  */
 export async function injectDesktopGlobal(
   html: string,
@@ -513,13 +533,17 @@ export async function injectDesktopGlobal(
   beacon = false,
   preload?: string,
   preloadKey?: string,
+  page: DesktopPageGlobals = {},
 ): Promise<string> {
   // A null token marks the window desktop WITHOUT handing it the per-launch token (the --lan
   // live-reload case): runtimePlatform() reads "desktop", but the token-gated endpoints stay
   // unreachable, and the boot beacon (which needs the token) is not injected.
-  const globals = token !== null
-    ? { desktop: true, token, os: Deno.build.os }
-    : { desktop: true, os: Deno.build.os };
+  const globals = {
+    desktop: true,
+    ...(token !== null ? { token } : {}),
+    os: Deno.build.os,
+    ...(page.wsOrigin ? { wsOrigin: page.wsOrigin } : {}),
+  };
   const body = `globalThis.__denext=${JSON.stringify(globals)}` +
     (token !== null ? QUIT_OVERRIDE_JS : "") +
     (token !== null && beacon ? BOOT_BEACON_JS : "");
@@ -728,6 +752,7 @@ export function createDesktopHandler(
   trust: DesktopTrust = LOOPBACK_TRUST,
   preload?: string,
   preloadKey?: string,
+  wsOrigin?: string,
 ): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response> {
   const proxyCfg = options.proxy;
   const indexHtmlPath = join(outDir, "index.html");
@@ -735,6 +760,9 @@ export function createDesktopHandler(
   // only where the token goes (a top-level document over the memory transport): never into an
   // iframe, and never into a loopback-world page.
   const memoryPreload = trust.kind === "memory" ? preload : undefined;
+  // What the page reads from `__denext` besides the token: the relay its WebSockets dial (only in
+  // the memory world, the one place the page runs at a custom origin).
+  const page: DesktopPageGlobals = trust.kind === "memory" && wsOrigin ? { wsOrigin } : {};
 
   /** Serve the export's `index.html` shell with the desktop global (and, with the updater on, the
    * boot-confirm beacon) injected. `injectToken` gates the per-launch TOKEN: a subframe or a
@@ -749,6 +777,7 @@ export function createDesktopHandler(
       onBooted !== undefined,
       injectToken ? memoryPreload : undefined,
       preloadKey,
+      page,
     );
     return noStore(
       new Response(isHead ? null : injected, {
@@ -833,6 +862,7 @@ export function createDesktopHandler(
         devInjectToken && injectToken,
         memoryPreload,
         preloadKey,
+        page,
       );
     }
     return await serveBackendOrExport(request, url, injectToken);
@@ -1022,6 +1052,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     trust,
     await loadDesktopPreload(outDir, devDecision.proxy),
     preloadKey,
+    // The relay the page's WebSockets dial (Live, `desktopWebSocketUrl`): published by the pinned
+    // runtime next to the app origin.
+    resolveDesktopWsOrigin(Deno.env.get(DESKTOP_WS_ORIGIN_ENV)),
   );
   // Under the pinned runtime `DENO_SERVE_ADDRESS=memory:…` overrides this port/hostname, so the
   // server listens on the in-process memory transport; under the stock runtime it is loopback.

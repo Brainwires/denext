@@ -1,7 +1,8 @@
 /**
  * The page side of Deno Desktop extensions (`denext/desktop/client`): a typed proxy for a
- * user extension's methods ({@linkcode desktopExtension}) and a subscription to the runtime's
- * event stream ({@linkcode onDesktopEvent}).
+ * user extension's methods ({@linkcode desktopExtension}), a subscription to the runtime's
+ * event stream ({@linkcode onDesktopEvent}), and the URL for a WebSocket to the app's own server
+ * ({@linkcode desktopWebSocketUrl}).
  *
  * An extension is TypeScript that runs in the desktop app's Deno process
  * (`defineDesktopExtension` from `denext/desktop`) and is enabled in
@@ -43,6 +44,8 @@ export {
   type DesktopRpcOptions,
   isDesktopBridgeError,
 } from "./bridge-client.ts";
+// Where the page's own WebSockets go: the runtime's loopback relay under denext's pinned runtime.
+export { desktopWebSocketUrl, desktopWsOrigin } from "./ws-origin.ts";
 
 /**
  * The slice of a Standard Schema (https://standardschema.dev) the extension typing reads: its

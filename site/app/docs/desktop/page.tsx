@@ -1807,6 +1807,26 @@ export default {
           (<code>ws://127.0.0.1:&lt;port&gt;</code>), which admits only requests whose{" "}
           <code>Origin</code> is the app origin.
         </li>
+        <li>
+          The desktop runtime hands the relay to the page as{" "}
+          <code>__denext.wsOrigin</code>. denext&apos;s Live client (<code>&lt;Live&gt;</code>,{" "}
+          <code>useLive</code>,{" "}
+          <code>usePresence</code>, channels and subscriptions) dials it on its own; for your own
+          sockets, <code>desktopWebSocketUrl(path)</code> from <code>denext/desktop/client</code>
+          {" "}
+          returns the relay URL in such a window and <code>ws(s)://&lt;host&gt;</code>{" "}
+          everywhere else (<code>desktopWsOrigin()</code> returns just the relay origin):
+          <Code lang="ts">
+            {`import { desktopWebSocketUrl } from "denext/desktop/client";
+
+const socket = new WebSocket(desktopWebSocketUrl("/api/events"));`}
+          </Code>
+          The socket carries the page&apos;s own <code>Origin</code> (the app origin, e.g.{" "}
+          <code>myapp://app</code>), and the desktop runtime checks it again before your{" "}
+          <code>onRequest</code> or a proxied backend sees the upgrade. A backend behind{" "}
+          <code>spa.proxy</code> that checks the WebSocket <code>Origin</code>{" "}
+          must accept the app origin.
+        </li>
       </ul>
       <Callout kind="note">
         The custom origin needs{" "}
