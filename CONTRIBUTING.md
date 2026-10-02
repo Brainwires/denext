@@ -407,6 +407,17 @@ mod.ts        the package entry
 `src/jsx` + `src/runtime` + `src/client` are the React-equivalent (there is no
 React in the tree) and `deno bundle` is the only bundler on the native path.
 
+## Trying a local checkout in an app
+
+Link the checkout with Deno's `links` rather than `file:` URLs: put
+`"links": ["../denext"]` in the app's `deno.json` and keep its imports on
+`jsr:@denext/denext@<this checkout's version>/…`, so denext's own bare imports
+(`@std/*`, `ws`) resolve through the checkout's `deno.json`. A `file:` URL
+import map works under `deno run`, but a compiled binary (`deno compile`, and so
+`deno desktop`) resolves only the app's import map and fails at launch with
+`Import "@std/path" not a dependency`; with `file:` URLs, add every denext bare
+import to the app's `imports` too.
+
 ## The build must run from a remote framework (JSR), not just a local checkout
 
 denext's own build tooling (`src/build/*`) runs in **two** modes:
