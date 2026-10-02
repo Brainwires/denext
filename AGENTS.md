@@ -442,6 +442,9 @@ custom-scheme callback (a declared scheme, PKCE S256 mandatory, exact redirect +
 your own wired to `signal`); `installClerkDesktopBridge()` from `denext/desktop/clerk`
 makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 (`denext desktop add secure-store auth-session passkeys`).
+Native passkeys are macOS (needs the associated-domains entitlement) and Windows only; Linux has no OS
+passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
+only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
