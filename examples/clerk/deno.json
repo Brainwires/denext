@@ -79,7 +79,7 @@
   },
   "desktop": {
     "app": {
-      "name": "denext Clerk example",
+      "name": "denext Clerk",
       "identifier": "dev.denext.clerk-example",
       "deepLinks": [
         "denextclerk"
