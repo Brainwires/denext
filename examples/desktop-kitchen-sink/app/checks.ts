@@ -1342,10 +1342,32 @@ const appChecks: Check[] = [
       const state = await Web.requestPermission();
       eq(Web.permission, state, "Notification.permission after requestPermission()");
       const clicks: string[] = [];
+      const shown: string[] = [];
       const note = new Web("Kitchen sink", { body: "a web Notification", tag: "kitchen-web" });
       note.onclick = (e: Event) => clicks.push(`onclick:${e.type}`);
       note.addEventListener("click", () => clicks.push("click"));
+      note.onshow = () => shown.push("show");
+      note.onerror = () => shown.push("error");
       try {
+        if (state !== "granted") {
+          // As in a browser without permission: the notification fires `error` and is never
+          // posted, so there is nothing to click. macOS refuses an ad-hoc signed app on some
+          // hosted runners without a prompt; skip only when the OS itself says it is not granted.
+          await waitFor(() => shown.length > 0, "the error event of an unpermitted notification");
+          eq(shown.join(","), "error", "the events of a notification without permission");
+          const os = await raw("notifications").permission({ request: false }).catch(() => null);
+          const osState = String(os?.state ?? "unknown");
+          assert(
+            osState !== "granted",
+            `the OS state is granted but requestPermission() = ${state}`,
+          );
+          throw new Skip(
+            `the OS has not authorized notifications for this app (authorization: ${osState}); ` +
+              `requestPermission() = ${state} and the notification fired error, so no click`,
+          );
+        }
+        await waitFor(() => shown.length > 0, "the web Notification to be posted");
+        eq(shown.join(","), "show", "the events of a posted notification");
         await sleep(300); // the shim's event stream connects on the first notification
         // The OS reporting a click on it (synthetic: the event the runtime dispatches).
         const key = (note as { __key: string }).__key;
