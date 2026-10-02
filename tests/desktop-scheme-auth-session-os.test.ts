@@ -3,7 +3,8 @@
 // `authSession`: the sheet replaces the system browser where the OS has one, `ephemeral` reaches
 // it, its callback is still held to the exact redirect + state, its `cancelled` / `busy` / `invalid`
 // / `failed` map to the bridge's codes, `not_supported` (Windows, Linux) falls back to the system
-// browser + deep-link callback, the owner check still runs first, and a page cancel or the timeout
+// browser + deep-link callback, the owner check guards only that browser path (the sheet catches
+// its own scheme whoever handles its links), and a page cancel or the timeout
 // while the sheet is up settles the session and drops the sheet's late answer.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
@@ -199,11 +200,34 @@ Deno.test("OS auth session: capabilities reports the sheet and its ephemeral sup
   });
 });
 
-Deno.test("OS auth session: the owner check still runs first", async () => {
+Deno.test("OS auth session: the sheet runs even when another app handles the scheme", async () => {
+  // The sheet catches its own callback scheme, so who handles the scheme's links does not matter.
   const os = osSession();
-  const { start } = sessions(os.api, "other");
+  const { start, s, opened } = sessions(os.api, "other");
+  const run = start({ osSessionOnly: true });
+  await started(os.starts);
+  // A deep link (which would go to the other app anyway) never completes it.
+  assertEquals(s.claim("myapp://auth/cb?code=evil&state=st-1"), true);
+  os.resolve("myapp://auth/cb?code=good&state=st-1");
+  assertEquals((await run).url, "myapp://auth/cb?code=good&state=st-1");
+  assertEquals(opened, []);
+});
+
+Deno.test("OS auth session: not_supported with another app on the scheme → refused, no browser", async () => {
+  const os = osSession();
+  const { start, opened } = sessions(os.api, "other");
+  const run = start();
+  await started(os.starts);
+  os.reject("not_supported");
+  const err = await rejectsCode(run, "scheme_owned_by_other_app");
+  assertEquals(err.data, { handler: "com.other" });
+  assertEquals(opened, []); // the callback would have gone to the other app
+});
+
+Deno.test("OS auth session: no sheet and another app on the scheme → refused before anything opens", async () => {
+  const { start, opened } = sessions(undefined, "other");
   await rejectsCode(start(), "scheme_owned_by_other_app");
-  assertEquals(os.starts, []);
+  assertEquals(opened, []);
 });
 
 Deno.test("OS auth session: a page cancel while the sheet is up ends it; its late answer is dropped", async () => {

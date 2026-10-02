@@ -26,7 +26,8 @@
  * own client JWT (from the token cache, an `Authorization` header) on this client's sign-in
  * resource. Whether Clerk's servers refuse that nonce from a DIFFERENT client cannot be checked
  * from the client code, so the custom scheme is used only when this app handles it
- * (`scheme_owned_by_other_app` otherwise). See the desktop docs ("Clerk on Deno Desktop").
+ * (`scheme_owned_by_other_app` otherwise, on Windows and Linux; on macOS the OS sheet catches its
+ * own callback). See the desktop docs ("Clerk on Deno Desktop").
  *
  * Passkeys and `invalid_rp`: a macOS build not signed by the relying party's Apple team gets
  * `invalid_rp` for every native request. The bridge then stops offering native passkeys for the
@@ -164,6 +165,26 @@ function schemeOf(url: string): string {
   return new URL(url).protocol.slice(0, -1);
 }
 
+/**
+ * `scheme_owned_by_other_app` from a Clerk sign-in, with what to do about it. It reaches the page
+ * only where the callback must travel as a deep link (Windows and Linux; macOS runs the sign-in in
+ * the OS's sheet, which catches its own callback whoever handles the scheme). Clerk has no
+ * fallback without the custom scheme: its native redirect allowlist takes an `https://` or a
+ * custom-scheme URL, not a loopback one, so the user has to make this app the scheme's handler.
+ * Keeps `code` and `handler`; other errors pass through unchanged.
+ */
+function explainSchemeOwner(err: unknown, scheme: string): unknown {
+  const e = err as { code?: unknown; handler?: unknown; message?: unknown } | null;
+  if (e?.code !== "scheme_owned_by_other_app" || !(err instanceof Error)) return err;
+  const other = typeof e.handler === "string" ? ` (${e.handler})` : "";
+  err.message = `Clerk: another app${other} handles ${scheme}: links, so the sign-in would ` +
+    `return to it. Clerk's native sign-in needs this app to handle ${scheme}: (its redirect ` +
+    `allowlist takes no loopback URL): make this app the handler with ` +
+    `claimDeepLinkScheme("${scheme}") from denext/desktop/client, called from the user's click, ` +
+    `then sign in again.`;
+  return err;
+}
+
 /** The token cache over the keychain (`secure-store`), in memory when that is not enabled. */
 function tokenCache(prefix: string): ClerkTokenCache {
   const memory = new Map<string, string>();
@@ -236,6 +257,8 @@ function oauthTransport(
           timeoutMs: OAUTH_TIMEOUT_MS,
         }, await clerkBinding(preloadKey));
         return { callbackUrl };
+      } catch (err) {
+        throw explainSchemeOwner(err, schemeOf(redirect));
       } finally {
         pending = false;
       }
@@ -454,6 +477,8 @@ export async function startClerkBrowserSignIn(
     state,
     timeoutMs: options.timeoutMs ?? BROWSER_SIGN_IN_TIMEOUT_MS,
     ...(options.signal ? { signal: options.signal } : {}),
+  }).catch((err) => {
+    throw explainSchemeOwner(err, schemeOf(options.redirectUrl));
   });
   const params = new URL(url).searchParams;
   if (params.get("state") !== state) throw new Error("Clerk: hosted auth state did not match");

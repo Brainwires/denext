@@ -30,11 +30,14 @@
  *    the caller's `state` option (if any). A callback for the target with a missing or different
  *    `state` is swallowed — it neither resolves the session nor reaches the page's routes — and the
  *    session keeps waiting.
- * 5. Who handles the scheme is checked before the browser opens (`Deno.desktop.getSchemeOwner`):
- *    `none` → register (never forced) and re-check; `other` → refuse with
- *    `scheme_owned_by_other_app` (+ the handler, for display) so the caller falls back to the
- *    loopback flow or asks the user, who may then call `claimDeepLinkScheme`. This is advisory —
- *    any same-user program may re-register at any time — which is why 2–4 are the real defence.
+ * 5. Who handles the scheme is checked before the system browser opens
+ *    (`Deno.desktop.getSchemeOwner`): `none` → register (never forced) and re-check; `other` →
+ *    refuse with `scheme_owned_by_other_app` (+ the handler, for display) so the caller falls back
+ *    to the loopback flow or asks the user, who may then call `claimDeepLinkScheme`. This is
+ *    advisory — any same-user program may re-register at any time — which is why 2–4 are the real
+ *    defence. It guards a callback that travels as a deep link, so the OS's auth session skips it:
+ *    the sheet catches its own callback scheme whoever handles that scheme's links (a sheet that
+ *    answers `not_supported` runs the check before falling back to the browser).
  * 6. One session at a time (`session_in_progress`), a timeout (10 minutes by default), and
  *    `cancel` (the page's `AbortSignal`; the system browser on Windows and Linux reports no
  *    cancellation, so the page's cancel and the timeout are the only ends there). A session is
@@ -43,7 +46,7 @@
  *    request goes away (a reload or navigation of THAT page) — a navigation in another window does
  *    not touch it.
  *
- * The OS session runs after the same checks (1–5), and its callback URL is held to rule 3 and 4
+ * The OS session runs after the same checks (1–4), and its callback URL is held to rule 3 and 4
  * too: a sheet that ends anywhere else, or with another `state`, rejects `invalid` (it cannot keep
  * waiting: the OS session is over). While the sheet is up, only the sheet can complete the
  * session: a matching link the OS delivers as a deep link meanwhile is swallowed, never resolving. The runtime cannot close an open sheet, so a page cancel or the
@@ -480,6 +483,24 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
     open.reject(new DesktopCapError(code, message, { status }));
   };
 
+  /** Rule 5 for a session already open (the browser fallback): `false` when it ended `open`. */
+  const ownerOk = async (open: Pending, scheme: string): Promise<boolean> => {
+    try {
+      await ensureSchemeOwner(options.api, scheme);
+      return true;
+    } catch (err) {
+      if (pending === open) {
+        pending = undefined;
+        open.reject(
+          err instanceof DesktopCapError
+            ? err
+            : new DesktopCapError("unsupported", "the scheme owner check failed", { status: 500 }),
+        );
+      }
+      return false;
+    }
+  };
+
   const cancelPending = (code: string, message: string, status: number): boolean => {
     const open = pending;
     if (!open) {
@@ -511,7 +532,8 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
           endIf(open, "unsupported", "this sign-in needs the OS's auth session", 501);
           return;
         }
-        await options.openBrowser(req.url); // no OS session after all: the system browser
+        // No OS session after all: the system browser, whose callback is a deep link (rule 5).
+        if (await ownerOk(open, req.scheme) && pending === open) await options.openBrowser(req.url);
         return;
       }
       endIf(open, ...osSessionError(err));
@@ -584,7 +606,8 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
     ctx.signal?.addEventListener("abort", gone, { once: true });
     try {
       if (ctx.signal?.aborted) cancelEarly = true;
-      await ensureSchemeOwner(options.api, req.scheme);
+      // Rule 5 guards a callback that travels as a deep link; the OS's sheet catches its own.
+      if (!(await osAuthSession(options.api))) await ensureSchemeOwner(options.api, req.scheme);
       return { url: await run(req) };
     } finally {
       ctx.signal?.removeEventListener("abort", gone);

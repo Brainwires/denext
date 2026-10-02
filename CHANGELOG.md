@@ -377,6 +377,15 @@ and this project adheres to
   `useLive`, `usePresence`, channels and subscriptions) dials it. `denext/desktop/client` exports
   `desktopWebSocketUrl(path)` for the app's own sockets (the relay in such a window,
   `ws(s)://<host>` elsewhere) and `desktopWsOrigin()`.
+- **Deno Desktop: Clerk sign-in on macOS works when another app handles the scheme.** The
+  custom-scheme flow refused with `scheme_owned_by_other_app` before the OS's auth session even
+  ran (an Electron build of the same app owning `myapp:` was enough to break Google/GitHub
+  sign-in), although `ASWebAuthenticationSession` catches its own callback whoever handles the
+  scheme's links. The owner check now guards only the system-browser path, where the callback
+  travels as a deep link (Windows, Linux, and a sheet answering `not_supported`). There,
+  `denext/desktop/clerk` rejects with a message naming the fix (`claimDeepLinkScheme` from the
+  user's click): Clerk has no fallback without the scheme, since its native redirect allowlist
+  takes no loopback URL.
 - **Deno Desktop: `useKeepAwake` works on Windows.** The `keep-awake` capability passed
   `SetThreadExecutionState` a negative number (a JS bitwise OR with bit 31 set), which Deno's FFI
   rejects for a `u32`, so holding the screen awake always failed on Windows.

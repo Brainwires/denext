@@ -647,8 +647,9 @@ export async function signIn() {
           finish the session: the same callback arriving as a deep link is dropped.
         </li>
         <li>
-          Before the browser opens, the runtime asks the OS who handles the scheme. Nobody → it
-          registers the app (never forcing) and checks again. Another app →{" "}
+          Before the system browser opens, the runtime asks the OS who handles the scheme (the macOS
+          sheet skips this: it catches its own callback, whoever handles the scheme's links). Nobody
+          → it registers the app (never forcing) and checks again. Another app →{" "}
           <code>scheme_owned_by_other_app</code>, with that app in <code>err.handler</code>{" "}
           (for display; any program can write it). Fall back to the loopback flow, or ask the user
           and call <code>claimDeepLinkScheme(scheme)</code> from <code>denext/desktop/client</code>
@@ -724,6 +725,17 @@ export default {
           plus <code>/</code>{" "}
           (<code>myapp://app/</code>), one flow at a time, 3 minutes, resolved by a callback with
           that scheme, host and path — through the custom-scheme flow above, owner check included.
+        </li>
+        <li>
+          When another app handles the scheme (an Electron build of the same app, say), macOS still
+          signs in through its sheet. On Windows and Linux the callback would reach the other app,
+          so the transport rejects <code>scheme_owned_by_other_app</code>{" "}
+          with a message naming the fix: a "Make this app the handler" button that calls{" "}
+          <code>claimDeepLinkScheme(scheme)</code>. Clerk has no fallback without the scheme: its
+          native redirect allowlist takes <code>https://</code>{" "}
+          or custom-scheme URLs, not a loopback one. <a href="/docs/examples">examples/clerk</a>
+          {" "}
+          shows the button.
         </li>
         <li>
           Add <code>myapp://app/</code>{" "}

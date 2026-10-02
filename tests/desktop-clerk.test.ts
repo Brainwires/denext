@@ -180,6 +180,52 @@ Deno.test("clerk bridge: the OAuth session is bound — OS sheet when there is o
   assertEquals([late.binding, late.osSessionOnly], [undefined, undefined]);
 });
 
+Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear error naming the fix", async () => {
+  const owned = () => {
+    throw {
+      code: "scheme_owned_by_other_app",
+      message: "another app handles t3code: links, so the callback would go to it",
+      data: { handler: "com.t3tools.t3code" },
+    };
+  };
+  await inDesktop({
+    authSession: { capabilities: () => ({ osSession: false, ephemeral: false }), start: owned },
+  }, async () => {
+    const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+    const err = await assertRejects(() => t.open("https://accounts.google.com/o/oauth2/auth"));
+    const e = err as Error & { code?: string; handler?: string };
+    assertEquals(e.code, "scheme_owned_by_other_app");
+    assertEquals(e.handler, "com.t3tools.t3code");
+    assertStringIncludes(e.message, "(com.t3tools.t3code) handles t3code: links");
+    assertStringIncludes(e.message, 'claimDeepLinkScheme("t3code")');
+    // The transport is free again for the retry after the user claims the scheme.
+    await assertRejects(
+      () => t.open("https://accounts.google.com/o/oauth2/auth"),
+      Error,
+      "t3code:",
+    );
+    // The hosted (browser) sign-in explains the same way.
+    const { clerk } = fakeClerk();
+    const hosted = await assertRejects(() =>
+      startClerkBrowserSignIn(clerk, { redirectUrl: "t3code://app/" })
+    );
+    assertStringIncludes((hosted as Error).message, "claimDeepLinkScheme");
+  });
+  // Any other failure passes through unchanged.
+  await inDesktop({
+    authSession: {
+      start: () => {
+        throw { code: "timeout", message: "no callback within the timeout" };
+      },
+    },
+  }, async () => {
+    const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+    const err = await assertRejects(() => t.open("https://accounts.google.com/o/oauth2/auth"));
+    assertEquals((err as { code?: string }).code, "timeout");
+    assertStringIncludes((err as Error).message, "no callback within the timeout");
+  });
+});
+
 /** A fake Clerk instance answering hosted_auth and the redemption. */
 function fakeClerk(onRedeem?: (body: Record<string, unknown>) => void) {
   const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];
