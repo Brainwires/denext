@@ -35,15 +35,37 @@ function Assert([bool]$ok, [string]$what) {
   Write-Host "ok  $what"
 }
 
-# The Add/Remove Programs entries of this app in the install's hive.
-function Get-Products([string]$hive) {
-  $keys = @("${hive}:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*")
-  if ($hive -eq 'HKLM') { $keys += 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' }
-  @(Get-ItemProperty $keys -ErrorAction SilentlyContinue |
-    Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -eq $AppName })
+# The installed products of this package family (its UpgradeCode), from Windows Installer itself:
+# a per-user MSI keeps its Add/Remove Programs data under the installer's per-SID UserData, not
+# the HKCU Uninstall key, so asking the installer covers both scopes.
+function Get-UpgradeCode([string]$path) {
+  $installer = New-Object -ComObject WindowsInstaller.Installer
+  $db = $installer.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $installer, @($path, 0))
+  $view = $db.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $db,
+    @("SELECT Value FROM Property WHERE Property='UpgradeCode'"))
+  $view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null) | Out-Null
+  $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+  $code = $record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, 1)
+  $view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null) | Out-Null
+  [Runtime.InteropServices.Marshal]::ReleaseComObject($view) | Out-Null
+  [Runtime.InteropServices.Marshal]::ReleaseComObject($db) | Out-Null
+  return $code
+}
+
+function Get-Products([string]$upgradeCode) {
+  $installer = New-Object -ComObject WindowsInstaller.Installer
+  $related = $installer.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null, $installer, @($upgradeCode))
+  @($related | ForEach-Object {
+      [pscustomobject]@{
+        ProductCode = $_
+        Version = $installer.GetType().InvokeMember('ProductInfo', 'GetProperty', $null, $installer, @($_, 'VersionString'))
+      }
+    })
 }
 
 $msiPath = (Resolve-Path $Msi).Path
+$upgradeCode = Get-UpgradeCode $msiPath
+Write-Host "UpgradeCode $upgradeCode"
 $scope = if ($PerMachine) { @('ALLUSERS=1') } else { @() }
 $hive = if ($PerMachine) { 'HKLM' } else { 'HKCU' }
 $installDir = if ($PerMachine) { Join-Path $env:ProgramFiles $AppName } else {
@@ -68,16 +90,17 @@ if ($Scheme) {
   Assert ($cmd -like "*$Exe*%1*") "the scheme opens the launcher ($cmd)"
   Assert ((Get-ItemProperty "${hive}:\Software\Classes\$Scheme").'URL Protocol' -eq '') 'URL Protocol is set'
 }
-Assert ((Get-Products $hive).Count -eq 1) 'one Add/Remove Programs entry'
+Assert ((Get-Products $upgradeCode).Count -eq 1) 'one installed product'
 
 $product = $msiPath
 if ($Upgrade) {
   $upgradePath = (Resolve-Path $Upgrade).Path
   Write-Host "== upgrade ($hive) $upgradePath"
   Invoke-Msiexec (@('/i', "`"$upgradePath`"") + $scope)
-  $entries = Get-Products $hive
-  Assert ($entries.Count -eq 1) "still one Add/Remove Programs entry after the upgrade (found $($entries.Count))"
-  Assert ($entries[0].DisplayVersion -eq $UpgradeVersion) "the entry is version $UpgradeVersion"
+  Assert ((Get-UpgradeCode $upgradePath) -eq $upgradeCode) 'the new build keeps the UpgradeCode'
+  $entries = Get-Products $upgradeCode
+  Assert ($entries.Count -eq 1) "still one installed product after the upgrade (found $($entries.Count))"
+  Assert ($entries[0].Version -eq $UpgradeVersion) "the product is version $UpgradeVersion ($($entries[0].Version))"
   $product = $upgradePath
 }
 
@@ -86,5 +109,5 @@ Invoke-Msiexec (@('/x', "`"$product`"") + $scope)
 Assert (-not (Test-Path (Join-Path $installDir $Exe))) 'the launcher is removed'
 Assert (-not (Test-Path $shortcut)) 'the shortcut is removed'
 if ($Scheme) { Assert (-not (Test-Path "${hive}:\Software\Classes\$Scheme")) 'the scheme key is removed' }
-Assert ((Get-Products $hive).Count -eq 0) 'no Add/Remove Programs entry remains'
+Assert ((Get-Products $upgradeCode).Count -eq 0) 'no installed product remains'
 Write-Host "msi round-trip OK ($hive)"

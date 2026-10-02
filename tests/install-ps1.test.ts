@@ -48,7 +48,9 @@ async function releaseZip(dir: string): Promise<Uint8Array> {
   const sys = Deno.env.get("SystemRoot") ?? "C:\\Windows";
   await Deno.copyFile(join(sys, "System32", "whoami.exe"), join(stage, "denext.exe"));
   const zip = join(dir, ASSET);
-  const tar = await new Deno.Command("tar", {
+  // System32's bsdtar writes a zip from `-a`; a CI step run under Git Bash puts GNU tar (which
+  // cannot) first on PATH, so name it by path.
+  const tar = await new Deno.Command(join(sys, "System32", "tar.exe"), {
     args: ["-a", "-c", "-f", zip, "-C", stage, "denext.exe"],
   }).output();
   assert(tar.success, "tar -a writes the zip");
