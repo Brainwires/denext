@@ -649,3 +649,25 @@ Deno.test("config.matcher has/missing gates the middleware end to end", async ()
   assertEquals(bypass.status, 200, "missing-condition present → skipped");
   assertEquals(ran, 1);
 });
+
+Deno.test("setRequestAdapter: one registration serves every copy of the middleware module", async () => {
+  // A next-compat bundle carries its own copy of `next/server` (and of this module, in the
+  // prebuilt runtime): the adapter it registers must reach the server's runner. It lives on
+  // globalThis under a global Symbol, which is what a second module instance writes.
+  const key = Symbol.for("denext.middleware.requestAdapter");
+  const g = globalThis as Record<symbol, unknown>;
+  try {
+    g[key] = (r: Request) => new Request(r, { headers: { "x-from-copy": "1" } });
+    let seen: string | null = null;
+    const run = composeMiddleware([{
+      handler: (req) => {
+        seen = req.headers.get("x-from-copy");
+        return next();
+      },
+    }])!;
+    await run(new Request("http://localhost/"));
+    assertEquals(seen, "1");
+  } finally {
+    setRequestAdapter((r) => r);
+  }
+});

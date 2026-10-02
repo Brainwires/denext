@@ -154,7 +154,7 @@ async function runMiddleware(state: RequestState): Promise<Response | null> {
     state.request = outcome.request;
     // `headers()` / `NextRequest` adapters read `ctx.request`: keep it on the request as
     // middleware left it (header overrides included).
-    state.ctx.request = state.request;
+    routeContextTo(state, state.request);
   } else applyOutcomeToRequest(state, outcome);
   if (outcome.type === "rewrite") {
     if (outcome.external) return proxyExternalRewrite(state, outcome.url, outcome.headers);
@@ -179,8 +179,19 @@ function applyOutcomeToRequest(state: RequestState, outcome: MiddlewareOutcome):
     const rebuilt = new Request(state.request, { headers: outcome.requestHeaders });
     copyRemoteAddr(state.request, rebuilt);
     state.request = rebuilt;
-    state.ctx.request = rebuilt;
+    routeContextTo(state, rebuilt);
   }
+}
+
+/**
+ * Point the request context at the request middleware left: `headers()` reads `ctx.request`,
+ * and a view it memoized while middleware ran (a library's middleware calling `headers()`) would
+ * otherwise hide the overridden request headers from the route (`@clerk/nextjs`'s `auth()` reads
+ * the `x-clerk-auth-*` headers its middleware sets).
+ */
+function routeContextTo(state: RequestState, request: Request): void {
+  state.ctx.request = request;
+  state.ctx.readonlyHeaders = undefined;
 }
 
 /** Request headers never forwarded to an external rewrite target. */

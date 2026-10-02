@@ -120,6 +120,8 @@ const NOT_FOUND: symbol = /* @__PURE__ */ Symbol.for("denext.notFound");
 export class NotFoundError extends Error {
   /** Brand flag identifying this as a not-found signal. */
   declare readonly [NOT_FOUND]: true;
+  /** Next.js's `digest` for the signal, which libraries test for (see {@link nextDigestOf}). */
+  readonly digest: string = `${HTTP_FALLBACK_DIGEST};404`;
   /** Create a not-found error with the standard `NEXT_NOT_FOUND` message. */
   constructor() {
     super("NEXT_NOT_FOUND");
@@ -134,12 +136,46 @@ export function notFound(): never {
   throw new NotFoundError();
 }
 
-/** True if `value` is a {@link NotFoundError} raised by `notFound()`. */
+/**
+ * The `digest` prefix of Next.js's HTTP access errors (`notFound()` / `forbidden()` /
+ * `unauthorized()` throw `NEXT_HTTP_ERROR_FALLBACK;<status>`).
+ */
+const HTTP_FALLBACK_DIGEST = "NEXT_HTTP_ERROR_FALLBACK";
+
+/**
+ * The `digest` string of `value` (an Error thrown in Next.js's control-flow format), or
+ * `undefined`. A library written for Next (`@clerk/nextjs`'s `auth.protect()`, for one) throws
+ * Next's errors itself and recognizes Next's by this digest, so denext's signals carry the same
+ * digest and denext recognizes theirs.
+ */
+function nextDigestOf(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const digest = (value as { digest?: unknown }).digest;
+  return typeof digest === "string" ? digest : undefined;
+}
+
+/** Brand `value` (a foreign error with a Next digest) as `brand`, so later checks are cheap. */
+function adopt(value: object, brand: symbol): true {
+  (value as Record<symbol, unknown>)[brand] = true;
+  return true;
+}
+
+/** Whether `value` is a Next HTTP access error for `status` (or the legacy not-found one). */
+function isNextAccessError(value: unknown, status: number): boolean {
+  const digest = nextDigestOf(value);
+  if (digest === undefined) return false;
+  if (status === 404 && digest === "NEXT_NOT_FOUND") return true;
+  return digest === `${HTTP_FALLBACK_DIGEST};${status}`;
+}
+
+/**
+ * True if `value` is a {@link NotFoundError} raised by `notFound()`, or Next.js's own not-found
+ * error (`digest` `NEXT_HTTP_ERROR_FALLBACK;404`) thrown by a library built for Next.
+ */
 export function isNotFound(value: unknown): value is NotFoundError {
-  return (
-    typeof value === "object" && value !== null &&
-    (value as Record<symbol, unknown>)[NOT_FOUND] === true
-  );
+  if (typeof value !== "object" || value === null) return false;
+  if ((value as Record<symbol, unknown>)[NOT_FOUND] === true) return true;
+  return isNextAccessError(value, 404) && adopt(value, NOT_FOUND);
 }
 
 // ---- forbidden() / unauthorized() ------------------------------------------
@@ -153,6 +189,8 @@ const UNAUTHORIZED: symbol = /* @__PURE__ */ Symbol.for("denext.unauthorized");
 export class ForbiddenError extends Error {
   /** Brand flag identifying this as a forbidden signal. */
   declare readonly [FORBIDDEN]: true;
+  /** Next.js's `digest` for the signal. */
+  readonly digest: string = `${HTTP_FALLBACK_DIGEST};403`;
   /** Create a forbidden error. */
   constructor() {
     super("NEXT_FORBIDDEN");
@@ -166,6 +204,8 @@ export class ForbiddenError extends Error {
 export class UnauthorizedError extends Error {
   /** Brand flag identifying this as an unauthorized signal. */
   declare readonly [UNAUTHORIZED]: true;
+  /** Next.js's `digest` for the signal. */
+  readonly digest: string = `${HTTP_FALLBACK_DIGEST};401`;
   /** Create an unauthorized error. */
   constructor() {
     super("NEXT_UNAUTHORIZED");
@@ -185,20 +225,18 @@ export function unauthorized(): never {
   throw new UnauthorizedError();
 }
 
-/** True if `value` is a {@link ForbiddenError} raised by `forbidden()`. */
+/** True if `value` is a {@link ForbiddenError} raised by `forbidden()` (or Next's own). */
 export function isForbidden(value: unknown): value is ForbiddenError {
-  return (
-    typeof value === "object" && value !== null &&
-    (value as Record<symbol, unknown>)[FORBIDDEN] === true
-  );
+  if (typeof value !== "object" || value === null) return false;
+  if ((value as Record<symbol, unknown>)[FORBIDDEN] === true) return true;
+  return isNextAccessError(value, 403) && adopt(value, FORBIDDEN);
 }
 
-/** True if `value` is an {@link UnauthorizedError} raised by `unauthorized()`. */
+/** True if `value` is an {@link UnauthorizedError} raised by `unauthorized()` (or Next's own). */
 export function isUnauthorized(value: unknown): value is UnauthorizedError {
-  return (
-    typeof value === "object" && value !== null &&
-    (value as Record<symbol, unknown>)[UNAUTHORIZED] === true
-  );
+  if (typeof value !== "object" || value === null) return false;
+  if ((value as Record<symbol, unknown>)[UNAUTHORIZED] === true) return true;
+  return isNextAccessError(value, 401) && adopt(value, UNAUTHORIZED);
 }
 
 // ---- redirect() / permanentRedirect() --------------------------------------
@@ -226,6 +264,11 @@ export class RedirectError extends Error {
   readonly status: number;
   /** Client soft-nav history behavior (`push`/`replace`), when specified. */
   readonly redirectType?: RedirectType;
+  /**
+   * Next.js's `digest` for the signal (`NEXT_REDIRECT;<type>;<url>;<status>;`), which libraries
+   * built for Next test for.
+   */
+  readonly digest: string;
   /** Create a redirect signal to `url` with the given `status` and optional soft-nav type. */
   constructor(url: string, status: number, redirectType?: RedirectType) {
     super(`NEXT_REDIRECT:${status}:${url}`);
@@ -235,7 +278,26 @@ export class RedirectError extends Error {
     this.url = url;
     this.status = status;
     this.redirectType = redirectType;
+    this.digest = `${REDIRECT_DIGEST};${redirectType ?? "replace"};${url};${status};`;
   }
+}
+
+/** The `digest` prefix of Next.js's redirect error. */
+const REDIRECT_DIGEST = "NEXT_REDIRECT";
+
+/**
+ * Next.js's redirect error (`digest` `NEXT_REDIRECT;<type>;<url>;<status>;`, the URL may itself
+ * contain `;`) as `{ url, status, type }`, or `undefined`.
+ */
+function parseNextRedirect(
+  value: unknown,
+): { url: string; status: number; type: string } | undefined {
+  const parts = nextDigestOf(value)?.split(";");
+  if (!parts || parts[0] !== REDIRECT_DIGEST || parts.length < 5) return undefined;
+  const status = Number(parts.at(-2));
+  const url = parts.slice(2, -2).join(";");
+  if (!Number.isInteger(status) || status < 300 || status > 399 || url === "") return undefined;
+  return { url, status, type: parts[1] };
 }
 
 /**
@@ -269,12 +331,22 @@ export function permanentRedirect(
   throw new RedirectError(url, 308, type);
 }
 
-/** True if `value` is a {@link RedirectError} raised by `redirect()`. */
+/**
+ * True if `value` is a {@link RedirectError} raised by `redirect()`, or Next.js's own redirect
+ * error (a `NEXT_REDIRECT;…` digest) thrown by a library built for Next — which is then given
+ * the `url` / `status` / `redirectType` a `RedirectError` has.
+ */
 export function isRedirect(value: unknown): value is RedirectError {
-  return (
-    typeof value === "object" && value !== null &&
-    (value as Record<symbol, unknown>)[REDIRECT] === true
-  );
+  if (typeof value !== "object" || value === null) return false;
+  if ((value as Record<symbol, unknown>)[REDIRECT] === true) return true;
+  const next = parseNextRedirect(value);
+  if (!next) return false;
+  Object.assign(value, {
+    url: next.url,
+    status: next.status,
+    ...(next.type === "push" || next.type === "replace" ? { redirectType: next.type } : {}),
+  });
+  return adopt(value, REDIRECT);
 }
 
 /**

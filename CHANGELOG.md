@@ -377,6 +377,16 @@ and this project adheres to
   `useLive`, `usePresence`, channels and subscriptions) dials it. `denext/desktop/client` exports
   `desktopWebSocketUrl(path)` for the app's own sockets (the relay in such a window,
   `ws(s)://<host>` elsewhere) and `desktopWsOrigin()`.
+- **next-compat: a library's Next.js control flow and middleware request headers.** denext's
+  `notFound()` / `forbidden()` / `unauthorized()` / `redirect()` errors now carry Next's `digest`
+  (`NEXT_HTTP_ERROR_FALLBACK;404`, `NEXT_REDIRECT;replace;<url>;307;`), which libraries built for
+  Next test for, and an error a library throws in Next's own format is recognized as the same
+  signal (`@clerk/nextjs`'s `auth.protect()` redirects and 404s). A `next/server` copy inside a
+  compat bundle now registers the `NextRequest` adapter the server's middleware runner applies
+  (it lived in a module-level variable of the other copy, so middleware got a plain `Request`
+  with no `nextUrl`). And `headers()` in a route now sees the request headers middleware
+  overrode even when middleware read `headers()` itself first (the memoized view hid them, so
+  `@clerk/nextjs`'s `auth()` in a route handler reported no middleware).
 - **Deno Desktop: Clerk sign-in on macOS works when another app handles the scheme.** The
   custom-scheme flow refused with `scheme_owned_by_other_app` before the OS's auth session even
   ran (an Electron build of the same app owning `myapp:` was enough to break Google/GitHub
