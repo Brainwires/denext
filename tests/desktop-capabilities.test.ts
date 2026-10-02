@@ -3,13 +3,15 @@
 // permission flags each capability implies.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import {
   addDesktopCapabilities,
   DESKTOP_BASELINE_FLAGS,
   DESKTOP_CAPABILITIES,
   desktopBuildFlags,
   desktopIncludeArgs,
+  desktopNpmArgs,
+  desktopNpmArgsFor,
   desktopPackageFlags,
   desktopPermissionFlags,
   formatDesktopAddReport,
@@ -364,5 +366,22 @@ Deno.test("desktopIncludeArgs: one --include per desktop.capabilities.extensions
     await Deno.remove(bare, { recursive: true });
     await Deno.remove(noExt, { recursive: true });
     await Deno.remove(withExt, { recursive: true });
+  }
+});
+
+Deno.test("desktopNpmArgs: a project with node_modules embeds only the npm packages it reaches", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-desktop-npm-" });
+  try {
+    const script = toFileUrl(join(dir, "scripts", "package-macos.ts")).href;
+    // No node_modules (a native denext app): nothing to add.
+    assertEquals(await desktopNpmArgsFor(dir), []);
+    assertEquals(await desktopNpmArgs(script), []);
+    // A next-compat app: `deno desktop` would otherwise embed the whole directory.
+    await Deno.mkdir(join(dir, "node_modules"));
+    const flags = ["--node-modules-dir=none", "--exclude-unused-npm"];
+    assertEquals(await desktopNpmArgsFor(dir), flags);
+    assertEquals(await desktopNpmArgs(script), flags);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

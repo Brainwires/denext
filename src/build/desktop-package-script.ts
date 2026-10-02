@@ -3,7 +3,12 @@
 // metadata). Kept here — reached through `denext/desktop` — so the three scripts stay short and a
 // fix reaches every project that regenerates them.
 
-import { desktopIncludeArgs, type DesktopOs, desktopPackageFlags } from "./desktop-capabilities.ts";
+import {
+  desktopIncludeArgs,
+  desktopNpmArgs,
+  type DesktopOs,
+  desktopPackageFlags,
+} from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
 import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
 import { desktopRuntimeEnv } from "./desktop-runtime.ts";
@@ -385,6 +390,7 @@ export async function desktopBundleCommand(
     "--include",
     "out",
     ...await desktopIncludeArgs(entryUrl),
+    ...await desktopNpmArgs(entryUrl),
     "--target",
     o.target,
     ...await desktopIconArgs(entryUrl, os, o.icons),

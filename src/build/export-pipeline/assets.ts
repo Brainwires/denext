@@ -12,7 +12,7 @@ import { bundleFlightEntry, bundleRoute, routeSourceFiles, writeBundleOutput } f
 import { buildAppCss, extractRouteCss, primeCssGraph } from "../css.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { type BoundaryManifest, computeBoundaryRoutes, routeEntryFiles } from "../module-graph.ts";
-import { buildNextCompatModules } from "../next-compat-build.ts";
+import { buildNextCompatFlightEntry, buildNextCompatModules } from "../next-compat-build.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import { boundaryRefLoader, createNextCompatServerLoader } from "../next-compat-loader.ts";
 import { routeId } from "../paths.ts";
@@ -123,20 +123,33 @@ export async function bundleExportRoutes(ctx: ExportContext): Promise<void> {
  * (serialize as action refs) once, before rendering. In compat mode the boundary's refs
  * are redirected to their compat bundles before tagging — tagging imports each module for
  * SSR, and the compat bundle resolves npm packages the way the Flight bundle does (the
- * source module can throw under Deno's native loader). The Flight bundle itself
- * intentionally uses the un-redirected (source) boundary.
+ * source module can throw under Deno's native loader). The Flight bundle itself uses the
+ * un-redirected (source) boundary; in compat mode it is the compat (esbuild) Flight bundle.
  */
 export async function bundleExportFlight(ctx: ExportContext): Promise<void> {
   if (ctx.flightRoutes.size === 0) return;
   const boundary = await boundaryManifest(ctx);
-  const flightBundle = await bundleFlightEntry(boundary, {
-    configPath: ctx.paths.configPath,
-    momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
-    minify: prodMinify(),
-    importMap: ctx.css?.importMap,
-    instrumentationClient: ctx.paths.instrumentationClientPath,
-  });
-  await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
+  if (ctx.compat) {
+    // next-compat: the react→denext-rewritten Flight bundle, as `denext build` makes it — the
+    // native one (`deno bundle` of the source islands) would bundle an npm library's own React
+    // (and, for an npm island, Next's real `next/*` modules).
+    await buildNextCompatFlightEntry({
+      ...compatBuildOptions(ctx.projectDir, ctx.paths, ctx.css?.importMap, ctx.clientOut),
+      clientDir: ctx.clientOut,
+      boundary,
+      flightFile: FLIGHT_BUNDLE_FILE,
+      instrumentationClient: ctx.paths.instrumentationClientPath,
+    });
+  } else {
+    const flightBundle = await bundleFlightEntry(boundary, {
+      configPath: ctx.paths.configPath,
+      momentumSafeScroll: momentumSafeScrollEnabled(ctx.paths.config),
+      minify: prodMinify(),
+      importMap: ctx.css?.importMap,
+      instrumentationClient: ctx.paths.instrumentationClientPath,
+    });
+    await writeBundleOutput(ctx.clientOut, flightBundle, FLIGHT_BUNDLE_FILE);
+  }
   // Tag through the (compat-aware) loader so the tagged instances are the ones the page
   // bundles reference.
   const load = boundaryRefLoader(ctx.load);

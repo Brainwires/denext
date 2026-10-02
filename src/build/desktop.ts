@@ -114,6 +114,7 @@ export {
   DESKTOP_BASELINE_FLAGS,
   desktopBuildFlags,
   desktopIncludeArgs,
+  desktopNpmArgs,
   type DesktopOs,
   desktopPackageFlags,
 } from "./desktop-capabilities.ts";

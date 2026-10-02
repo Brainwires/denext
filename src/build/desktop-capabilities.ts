@@ -11,7 +11,7 @@
 // `desktop.capabilities.<key>` value is written; everything else keeps its bytes. A key already
 // present is left as the user wrote it.
 
-import { basename, join } from "@std/path";
+import { basename, fromFileUrl, join } from "@std/path";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
@@ -541,6 +541,35 @@ export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
     // no denext.config.ts (or it exports no config) → no extensions to embed
   }
   return configExtensionPaths(config).flatMap((p) => ["--include", p]);
+}
+
+/**
+ * `deno desktop` args for a project with a `node_modules` directory (a next-compat app, whose npm
+ * packages live there): resolve npm packages from Deno's cache and embed only those the desktop
+ * entry's module graph reaches. Without them `deno desktop` — a compile — embeds the WHOLE
+ * `node_modules` (hundreds of MB for `next` and its peers) that the window, serving a static
+ * export, never loads. A project without one gets `[]`.
+ *
+ * @param projectDir The project directory.
+ * @returns `["--node-modules-dir=none", "--exclude-unused-npm"]`, or `[]`.
+ */
+export async function desktopNpmArgsFor(projectDir: string): Promise<string[]> {
+  const local = await Deno.stat(join(projectDir, "node_modules")).then(
+    (s) => s.isDirectory,
+    () => false,
+  );
+  return local ? ["--node-modules-dir=none", "--exclude-unused-npm"] : [];
+}
+
+/**
+ * {@linkcode desktopNpmArgsFor} for a packaging script: the project is the script's parent
+ * directory (`scripts/package-*.ts` → `../`), as {@linkcode desktopIncludeArgs} reads it.
+ *
+ * @param entryUrl The packaging script's `import.meta.url`.
+ * @returns The args to splice into the `deno desktop` argv.
+ */
+export function desktopNpmArgs(entryUrl: string): Promise<string[]> {
+  return desktopNpmArgsFor(fromFileUrl(new URL("../", entryUrl)));
 }
 
 /**

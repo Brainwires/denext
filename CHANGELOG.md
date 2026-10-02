@@ -400,6 +400,16 @@ and this project adheres to
   `useLive`, `usePresence`, channels and subscriptions) dials it. `denext/desktop/client` exports
   `desktopWebSocketUrl(path)` for the app's own sockets (the relay in such a window,
   `ws(s)://<host>` elsewhere) and `desktopWsOrigin()`.
+- **next-compat: `denext export` and Deno Desktop builds of an app with `node_modules`.** The
+  export bundled its Flight islands with `deno bundle` even in compat mode, so an island's bare
+  `react` (or an npm island's real `next/*` imports) failed the export; it now uses the compat
+  Flight bundle `denext build` uses. And `deno desktop` — a compile — embedded the project's whole
+  `node_modules` (650 MB for an app depending on `@clerk/nextjs` and its `next` peer) into the
+  window: the packaging scripts and `denext desktop run` / `dev` now pass
+  `--node-modules-dir=none --exclude-unused-npm` for such a project (`desktopNpmArgs` from
+  `denext/desktop`; regenerate older scripts with `denext desktop package
+  --regenerate-scripts`), and `run` / `dev` embed `desktop.capabilities.extensions` like the
+  packaging scripts do.
 - **CSP: `styleSrc: ["'unsafe-inline'"]` works.** A browser ignores `'unsafe-inline'` in a
   directive that also lists a hash, so with any inline `<style>` on the page the opt-in silently
   kept blocking the `<style>` elements a CSS-in-JS library inserts at run time (Clerk's

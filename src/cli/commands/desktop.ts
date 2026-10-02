@@ -17,7 +17,7 @@
 // A single command whose first positional selects the action, since the framework
 // models flat verbs; the second positional is the project dir.
 
-import { dirname, join, resolve } from "@std/path";
+import { dirname, join, resolve, toFileUrl } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { runBuildStep, spawnDenoAndExit } from "../shared.ts";
 import { spawnDenoChild, startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
@@ -25,6 +25,7 @@ import { staticExport } from "../../build/export.ts";
 import { withProjectLocks } from "../../build/project-locks.ts";
 import { desktopDevTarget, type DesktopWindow, runDesktopDev } from "../../build/desktop-dev.ts";
 import { DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
+import { desktopIncludeArgs, desktopNpmArgs } from "../../build/desktop-capabilities.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
@@ -248,13 +249,29 @@ function spawnDesktopWindow(
   entry: string,
   devUrl: string,
   launch: DesktopWindowLaunch,
+  windowArgs: readonly string[] = [],
 ): DesktopWindow {
-  const { finished, stop } = spawnDenoChild(["desktop", ...launch.denoFlags, entry], {
-    cwd: project,
-    stdin: "inherit",
-    env: { ...launch.env, [DESKTOP_DEV_URL_ENV]: devUrl },
-  });
+  const { finished, stop } = spawnDenoChild(
+    ["desktop", ...launch.denoFlags, ...windowArgs, entry],
+    {
+      cwd: project,
+      stdin: "inherit",
+      env: { ...launch.env, [DESKTOP_DEV_URL_ENV]: devUrl },
+    },
+  );
   return { finished, stop };
+}
+
+/**
+ * The `deno desktop` args an unpackaged window needs beyond the entry, as the packaging scripts
+ * pass them: the `desktop.capabilities.extensions` modules (else the window's runtime cannot load
+ * them), and for a project with `node_modules` (next-compat) the npm packages from Deno's cache,
+ * only those the entry reaches (else the whole `node_modules` is embedded).
+ */
+async function desktopWindowArgs(project: string): Promise<string[]> {
+  // The helpers read the project as a packaging script's parent directory.
+  const scriptUrl = toFileUrl(join(project, "scripts", "run.ts")).href;
+  return [...await desktopIncludeArgs(scriptUrl), ...await desktopNpmArgs(scriptUrl)];
 }
 
 /**
@@ -292,10 +309,12 @@ async function runDesktopDevSession(
   } catch (err) {
     fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
   }
+  const windowArgs = await desktopWindowArgs(dir);
   try {
     await runDesktopDev({
       startServer: () => startOrAttachDevServer(dir, target.host, target.url),
-      spawnWindow: (devUrl) => Promise.resolve(spawnDesktopWindow(dir, entry, devUrl, launch)),
+      spawnWindow: (devUrl) =>
+        Promise.resolve(spawnDesktopWindow(dir, entry, devUrl, launch, windowArgs)),
       waitForStop: waitForShutdownSignal,
       log: (line) => console.log(line),
     });
@@ -328,7 +347,10 @@ async function runDesktop(dir: string, entry: string): Promise<void> {
   console.log("  Opening desktop window (deno desktop)…\n");
   // `deno desktop [denoFlags] <entry>` wraps the entry's Deno.serve() in a native window;
   // needs Deno 2.9+. Replaces this process with the child.
-  await spawnDenoAndExit(["desktop", ...launch.denoFlags, entry], dir);
+  await spawnDenoAndExit(
+    ["desktop", ...launch.denoFlags, ...await desktopWindowArgs(dir), entry],
+    dir,
+  );
 }
 
 /** `denext desktop package`: run the scaffolded packaging script for the target OS (or, with
