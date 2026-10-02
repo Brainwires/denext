@@ -6,21 +6,34 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   closeWindow,
+  focusWindow,
   getScreens,
   getWindowState,
+  hideWindow,
   makeWindowDraggable,
   maximizeWindow,
+  minimizeWindow,
   onCloseRequested,
   onDisplayChanged,
   onFileDrop,
   onWindowStateChange,
   quitApp,
+  restoreWindow,
+  setAlwaysOnTop,
   setFullScreen,
+  setMaximumWindowSize,
   setMinimumWindowSize,
   setTitleBarStyle,
   setWindowBackdrop,
   setWindowBounds,
+  setWindowButtonPosition,
+  setWindowPosition,
+  setWindowResizable,
+  setWindowSize,
+  setWindowTitle,
+  showWindow,
   startFileDrag,
+  unmaximizeWindow,
   windowCapabilities,
 } from "../src/desktop/window.ts";
 import { clipboardFormats, readClipboard, writeClipboard } from "../src/mobile/clipboard.ts";
@@ -332,6 +345,300 @@ Deno.test("makeWindowDraggable: CSS app-region always; the WebKit path moves the
       const el = fakeElement();
       makeWindowDraggable(el);
       assertEquals(el.listeners.size, 0);
+    });
+  });
+});
+
+Deno.test("window client: each window action is one call carrying exactly its arguments", async () => {
+  const ok: FakeMethod = () => null;
+  const window: Record<string, FakeMethod> = {
+    setWindowButtonPosition: (a) => ({ applied: (a as { position: unknown }).position !== null }),
+  };
+  for (
+    const m of [
+      "unmaximize",
+      "minimize",
+      "restore",
+      "show",
+      "hide",
+      "focus",
+      "setSize",
+      "setPosition",
+      "setMaximumSize",
+      "setTitle",
+      "setResizable",
+      "setAlwaysOnTop",
+    ]
+  ) window[m] = ok;
+  await inDesktop({ window }, async (rt) => {
+    await unmaximizeWindow();
+    await minimizeWindow();
+    await restoreWindow();
+    await showWindow();
+    await hideWindow();
+    await focusWindow();
+    await setWindowSize(1024, 768);
+    await setWindowPosition(10, -20);
+    await setMaximumWindowSize(1920, 1080);
+    await setWindowTitle("Untitled — Edited");
+    await setWindowResizable(false);
+    await setAlwaysOnTop(true);
+    assertEquals(await setWindowButtonPosition({ x: 12, y: 18 }), true);
+    assertEquals(await setWindowButtonPosition(null), false);
+    assertEquals(rt.calls.map((c) => [c.method, c.args]), [
+      ["unmaximize", {}],
+      ["minimize", {}],
+      ["restore", {}],
+      ["show", {}],
+      ["hide", {}],
+      ["focus", {}],
+      ["setSize", { width: 1024, height: 768 }],
+      ["setPosition", { x: 10, y: -20 }],
+      ["setMaximumSize", { width: 1920, height: 1080 }],
+      ["setTitle", { title: "Untitled — Edited" }],
+      ["setResizable", { resizable: false }],
+      ["setAlwaysOnTop", { alwaysOnTop: true }],
+      ["setWindowButtonPosition", { position: { x: 12, y: 18 } }],
+      ["setWindowButtonPosition", { position: null }],
+    ]);
+  });
+});
+
+Deno.test("window client: a runtime refusal surfaces as the bridge error; odd results are shaped", async () => {
+  await inDesktop({
+    window: {
+      minimize: () => {
+        throw { code: "unsupported", message: "no minimize here" };
+      },
+      screens: () => ({ not: "a list" }),
+      setTitleBarStyle: () => null,
+      quit: () => ({ quitting: "yes" }),
+      startDrag: () => ({ result: "exploded" }),
+    },
+  }, async () => {
+    const err = await assertRejects(() => minimizeWindow());
+    assert(isDesktopBridgeError(err) && err.code === "unsupported");
+    assertEquals(await getScreens(), []);
+    assertEquals(await setTitleBarStyle("hiddenInset"), false); // no `applied: true` → false
+    assertEquals(await quitApp(), false); // only a literal `true` means quitting
+    assertEquals(await startFileDrag([{ directory: "data", path: "" }]), "failed");
+  });
+});
+
+Deno.test("window client: a close request without a string id is ignored; a stale one is not answered", async () => {
+  let current = false;
+  await inDesktop({
+    window: {
+      setCloseGuard: () => null,
+      closeAck: () => ({ current }),
+      closeRespond: () => null,
+    },
+  }, async (rt) => {
+    let asked = 0;
+    const stop = onCloseRequested(() => {
+      asked++;
+      return false;
+    });
+    await until(() => rt.openStreams() === 1);
+    rt.emit("window", "closeRequested", { id: 7 }); // not a string: no ack, nothing asked
+    rt.emit("window", "closeRequested", null);
+    rt.emit("window", "closeRequested", { id: "old" }); // acked, but not current
+    await until(() => calls(rt).includes("window.closeAck"));
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(asked, 0);
+    assertEquals(calls(rt).filter((c) => c === "window.closeAck").length, 1);
+    assert(!calls(rt).includes("window.closeRespond"));
+    current = true;
+    rt.emit("window", "closeRequested", { id: "now" });
+    await until(() => calls(rt).includes("window.closeRespond"));
+    assertEquals(asked, 1);
+    assertEquals(rt.calls.at(-1)!.args, { id: "now", close: false });
+    stop();
+    stop(); // idempotent: the guard is released once
+    await until(() => rt.calls.filter((c) => c.method === "setCloseGuard").length === 2);
+    await new Promise((r) => setTimeout(r, 10));
+    assertEquals(
+      rt.calls.filter((c) => c.method === "setCloseGuard").map((c) => c.args),
+      [{ enabled: true }, { enabled: false }],
+    );
+  });
+});
+
+Deno.test("window client: two close handlers — any `false` keeps the window; the guard stays while one remains", async () => {
+  await inDesktop({
+    window: {
+      setCloseGuard: () => null,
+      closeAck: () => ({ current: true }),
+      closeRespond: () => null,
+    },
+  }, async (rt) => {
+    const stopA = onCloseRequested(() => true);
+    const stopB = onCloseRequested(async () => await Promise.resolve(false));
+    await until(() => rt.openStreams() === 1);
+    rt.emit("window", "closeRequested", { id: "1" });
+    await until(() => calls(rt).includes("window.closeRespond"));
+    assertEquals(rt.calls.at(-1)!.args, { id: "1", close: false });
+    stopB();
+    rt.emit("window", "closeRequested", { id: "2" });
+    await until(() => rt.calls.filter((c) => c.method === "closeRespond").length === 2);
+    assertEquals(rt.calls.at(-1)!.args, { id: "2", close: true });
+    // Only the first registration enabled the guard; removing B did not release it.
+    assertEquals(rt.calls.filter((c) => c.method === "setCloseGuard").length, 1);
+    stopA();
+  });
+});
+
+Deno.test("window client: onFileDrop drops malformed drops and files; defaults missing fields", async () => {
+  let queue: unknown = [
+    null,
+    { files: "nope" },
+    { x: 1, y: 2, files: [{ handle: 3 }, null] }, // no usable file → the drop is dropped
+    { x: "far", files: [{ handle: "d1", kind: "directory" }, { handle: "f1", size: "big" }] },
+  ];
+  await inDesktop({
+    window: {
+      takeDrops: () => {
+        const out = queue;
+        queue = { not: "an array" };
+        return out;
+      },
+    },
+  }, async (rt) => {
+    const drops: unknown[] = [];
+    const stop = onFileDrop((d) => drops.push(d));
+    rt.emit("window", "drop", null);
+    await until(() => drops.length === 1);
+    assertEquals(drops[0], {
+      x: 0,
+      y: 0,
+      files: [
+        { handle: "d1", name: "", path: "", kind: "directory", size: 0 },
+        { handle: "f1", name: "", path: "", kind: "file", size: 0 },
+      ],
+    });
+    rt.emit("window", "drop", null); // a non-array answer is no drops
+    await until(() => rt.calls.length === 2);
+    await new Promise((r) => setTimeout(r, 10));
+    assertEquals(drops.length, 1);
+    stop();
+  });
+});
+
+Deno.test("window client: onFileDrop delivers nothing after unsubscribe, even mid-take", async () => {
+  let release!: () => void;
+  await inDesktop({
+    window: {
+      takeDrops: async () => {
+        await new Promise<void>((r) => (release = r));
+        return [{ x: 1, y: 1, files: [{ handle: "h" }] }];
+      },
+    },
+  }, async (rt) => {
+    const drops: unknown[] = [];
+    const stop = onFileDrop((d) => drops.push(d));
+    rt.emit("window", "drop", null);
+    await until(() => release !== undefined);
+    stop(); // the take is in flight
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(drops, []);
+  });
+});
+
+Deno.test("makeWindowDraggable: a legacy WebView2 host scales by devicePixelRatio unless it reports dipGeometry", async () => {
+  for (const dip of [false, true]) {
+    await inDesktop({
+      window: {
+        capabilities: () => ({ dipGeometry: dip }),
+        state: () => STATE,
+        setPosition: () => null,
+      },
+    }, async (rt) => {
+      await withGlobals(
+        { navigator: { userAgent: "Mozilla/5.0 Chrome/140.0 Edg/140.0" }, devicePixelRatio: 2 },
+        async () => {
+          const el = fakeElement();
+          const undo = makeWindowDraggable(el);
+          await until(() => calls(rt).includes("window.capabilities"));
+          el.fire("pointerdown", { button: 0, pointerId: 5, screenX: 10, screenY: 10 });
+          await until(() => calls(rt).includes("window.state"));
+          await new Promise((r) => setTimeout(r, 10));
+          el.fire("pointermove", { pointerId: 5, screenX: 20, screenY: 15 });
+          await until(() => calls(rt).includes("window.setPosition"));
+          // origin (1, 2) + delta (10, 5) × scale
+          assertEquals(rt.calls.at(-1)!.args, dip ? { x: 11, y: 7 } : { x: 21, y: 12 });
+          undo();
+        },
+      );
+    });
+  }
+});
+
+Deno.test("makeWindowDraggable: ignores other buttons and pointers; a failed state read cancels the drag", async () => {
+  let failState = true;
+  await inDesktop({
+    window: {
+      state: () => {
+        if (failState) throw { code: "internal", message: "no state" };
+        return STATE;
+      },
+      setPosition: () => null,
+    },
+  }, async (rt) => {
+    await withGlobals({ navigator: { userAgent: "AppleWebKit/605.1.15" } }, async () => {
+      const el = fakeElement();
+      const undo = makeWindowDraggable(el);
+      el.fire("pointerdown", { button: 2, pointerId: 1, screenX: 0, screenY: 0 }); // right button
+      assertEquals(el.captured, []);
+      el.fire("pointerdown", { button: 0, pointerId: 1, screenX: 0, screenY: 0 });
+      await until(() => calls(rt).includes("window.state"));
+      await new Promise((r) => setTimeout(r, 10));
+      el.fire("pointermove", { pointerId: 1, screenX: 50, screenY: 50 }); // the drag was cancelled
+      el.fire("pointerup", { pointerId: 1 });
+      failState = false;
+      el.fire("pointerdown", { button: 0, pointerId: 2, screenX: 0, screenY: 0 });
+      await until(() => rt.calls.filter((c) => c.method === "state").length === 2);
+      await new Promise((r) => setTimeout(r, 10));
+      el.fire("pointermove", { pointerId: 9, screenX: 50, screenY: 50 }); // another pointer
+      el.fire("pointerup", { pointerId: 9 }); // does not end pointer 2's drag
+      el.fire("pointermove", { pointerId: 2, screenX: 4, screenY: 6 });
+      await until(() => calls(rt).includes("window.setPosition"));
+      assertEquals(rt.calls.filter((c) => c.method === "setPosition").map((c) => c.args), [
+        { x: 5, y: 8 },
+      ]);
+      el.fire("pointercancel", { pointerId: 2 });
+      undo();
+    });
+  });
+});
+
+Deno.test("makeWindowDraggable: moves during an in-flight setPosition coalesce to the latest", async () => {
+  const releases: Array<() => void> = [];
+  await inDesktop({
+    window: {
+      state: () => STATE,
+      setPosition: () => new Promise<null>((r) => releases.push(() => r(null))),
+    },
+  }, async (rt) => {
+    await withGlobals({ navigator: { userAgent: "AppleWebKit/605.1.15" } }, async () => {
+      const el = fakeElement();
+      const undo = makeWindowDraggable(el);
+      el.fire("pointerdown", { button: 0, pointerId: 1, screenX: 0, screenY: 0 });
+      await until(() => calls(rt).includes("window.state"));
+      await new Promise((r) => setTimeout(r, 10));
+      el.fire("pointermove", { pointerId: 1, screenX: 1, screenY: 1 });
+      await until(() => releases.length === 1);
+      el.fire("pointermove", { pointerId: 1, screenX: 2, screenY: 2 });
+      el.fire("pointermove", { pointerId: 1, screenX: 3, screenY: 3 });
+      releases[0]();
+      await until(() => releases.length === 2);
+      releases[1]();
+      await new Promise((r) => setTimeout(r, 10));
+      assertEquals(rt.calls.filter((c) => c.method === "setPosition").map((c) => c.args), [
+        { x: 2, y: 3 },
+        { x: 4, y: 5 }, // the intermediate move (2, 2) was skipped
+      ]);
+      undo();
     });
   });
 });

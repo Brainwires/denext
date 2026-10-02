@@ -516,6 +516,165 @@ Deno.test("window.startDrag: picked handles and app-folder files only, never a r
   }
 });
 
+Deno.test("window: size limits, resizability and always-on-top reach the window, validated", async () => {
+  const { win, call } = setup();
+  await call("setMaximumSize", { width: 1920, height: 0 }); // 0 = no limit on that axis
+  await call("setResizable", { resizable: false });
+  await call("setAlwaysOnTop", { alwaysOnTop: true });
+  await call("unmaximize");
+  await call("minimize");
+  await call("restore");
+  await call("show");
+  await call("hide");
+  await call("focus");
+  await call("setPosition", { x: -40.6, y: 12 });
+  assertEquals(win.calls, [
+    ["setMaximumSize", [1920, 0]],
+    ["setResizable", [false]],
+    ["setAlwaysOnTop", [true]],
+    ["unmaximize", []],
+    ["minimize", []],
+    ["restore", []],
+    ["show", []],
+    ["hide", []],
+    ["focus", []],
+    ["setPosition", [-41, 12]],
+  ]);
+  for (
+    const [method, args] of [
+      ["setMaximumSize", { width: -1, height: 0 }],
+      ["setResizable", { resizable: 1 }],
+      ["setAlwaysOnTop", {}],
+      ["setTitle", { title: "x".repeat(1025) }],
+      ["setBounds", { height: 0 }],
+      ["setCloseGuard", { enabled: "on" }],
+    ] as const
+  ) {
+    const err = await assertRejects(() => call(method, args), DesktopCapError);
+    assertEquals(err.code, "validation", method);
+  }
+  assertEquals(win.calls.length, 10, "nothing more reached the window");
+});
+
+Deno.test("window: a window without bounds APIs reports null bounds; a throwing report is ignored", async () => {
+  const bare = new EventTarget();
+  const ctl = createWindowController({
+    window: bare,
+    api: fakeApi({
+      windowCapabilities: () => {
+        throw new Error("older runtime");
+      },
+    }),
+    emit: () => {},
+  });
+  const call = (m: string) =>
+    Promise.resolve().then(() => ctl.capability.methods[m].handler({}, ctx()));
+  const state = await call("state") as Record<string, unknown>;
+  assertEquals(state.bounds, null);
+  assertEquals(state.contentBounds, null);
+  assertEquals(state.visible, true);
+  const caps = await call("capabilities") as Record<string, boolean>;
+  assertEquals(caps.fileDrop, false, "the stock defaults stand when the report throws");
+  assertEquals(caps.closeGuard, true);
+  assertEquals(caps.screens, true);
+});
+
+Deno.test("window: backdrop none clears whichever API the runtime has; other errors pass through", async () => {
+  // Vibrancy only (macOS): `none` clears it.
+  const mac = new FakeWindow();
+  Object.defineProperty(mac, "setBackgroundMaterial", { value: undefined });
+  const a = setup({ window: mac });
+  assertEquals(await a.call("setBackdrop", { backdrop: "none" }), { applied: false });
+  assertEquals(mac.calls.at(-1), ["setVibrancy", [null]]);
+  // Neither API: nothing applied, nothing thrown.
+  const bare = setup({ window: new EventTarget() });
+  assertEquals(await bare.call("setBackdrop", { backdrop: "none" }), { applied: false });
+  // A runtime failure that is not an unknown material is not turned into a validation error.
+  const broken = new FakeWindow();
+  Object.defineProperty(broken, "setVibrancy", {
+    value: () => {
+      throw new Error("compositor gone");
+    },
+  });
+  const err = await assertRejects(
+    () => setup({ window: broken }).call("setBackdrop", { backdrop: "vibrancy" }),
+    Error,
+    "compositor gone",
+  );
+  assert(!(err instanceof DesktopCapError));
+  // Windows materials on a runtime without them: unsupported.
+  const none = await assertRejects(
+    () => bare.call("setBackdrop", { backdrop: "acrylic" }),
+    DesktopCapError,
+  );
+  assertEquals(none.code, "unsupported");
+});
+
+Deno.test("window close guard: turning it off drops the pending request; close() skips the page", async () => {
+  const { ctl, call, emitted, win, exits } = setup();
+  await call("setCloseGuard", { enabled: true });
+  assert(ctl.interceptClose(new Event("close", { cancelable: true })));
+  const id = (emitted.at(-1)![2] as { id: string }).id;
+  await call("setCloseGuard", { enabled: false });
+  // The page's late answer no longer refers to anything; the window closes freely now.
+  assertEquals(await call("closeAck", { id }), { current: false });
+  assertEquals(await call("closeRespond", { id, close: true }), { closing: false });
+  assertEquals(ctl.interceptClose(new Event("close", { cancelable: true })), false);
+  // `close` closes without asking, even while guarded.
+  await call("setCloseGuard", { enabled: true });
+  assertEquals(await call("close"), null);
+  assert(win.closed);
+  await new Promise((r) => setTimeout(r, 5));
+  assertEquals(exits, [0]);
+  // ...and the guard is gone with it.
+  assertEquals(ctl.interceptClose(new Event("close", { cancelable: true })), false);
+});
+
+Deno.test("window drops: malformed details are ignored; only the newest 16 untaken drops are kept", async () => {
+  const { ctl, call, emitted } = setup({
+    resolveDropped: (path) =>
+      Promise.resolve({ real: `/real${path}`, kind: "file" as const, size: 1 }),
+  });
+  await ctl.acceptDrop(null);
+  await ctl.acceptDrop({ paths: "not-a-list" });
+  await ctl.acceptDrop({ paths: ["", 7] });
+  assertEquals(emitted, []);
+  for (let i = 0; i < 20; i++) await ctl.acceptDrop({ paths: [`/f${i}`], x: "left", y: NaN });
+  assertEquals(emitted.length, 20, "each drop signals the page");
+  const drops = await call("takeDrops") as Array<
+    { x: number; y: number; files: Array<{ path: string }> }
+  >;
+  assertEquals(drops.length, 16);
+  assertEquals(drops[0].files[0].path, "/real/f4");
+  assertEquals(drops[15].files[0].path, "/real/f19");
+  assertEquals([drops[0].x, drops[0].y], [0, 0], "non-finite coordinates become 0");
+});
+
+Deno.test("window.startDrag: app-folder items need the folders; a bad icon is refused", async () => {
+  const { call, win } = setup(); // no `dirs`
+  const err = await assertRejects(
+    () => call("startDrag", { items: [{ directory: "cache", path: "a.txt" }] }),
+    DesktopCapError,
+  );
+  assertEquals(err.code, "validation");
+  const dir = await Deno.makeTempDir({ prefix: "denext-dragicon-" });
+  try {
+    await Deno.writeTextFile(join(dir, "a.txt"), "a");
+    const withDirs = setup({ dirs: { data: dir, cache: dir, documents: dir } });
+    for (const icon of [42, "A".repeat(2 * 1024 * 1024 + 1)]) {
+      const bad = await assertRejects(
+        () => withDirs.call("startDrag", { items: [{ directory: "data", path: "a.txt" }], icon }),
+        DesktopCapError,
+      );
+      assertEquals(bad.code, "validation");
+    }
+    assertEquals(withDirs.win.calls, []);
+    assertEquals(win.calls, []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("installWindowCloseHandler: the intercept hook can keep the app running", () => {
   const exits: number[] = [];
   let hold = true;

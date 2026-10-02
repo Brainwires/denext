@@ -1,4 +1,9 @@
-# Desktop capabilities on Windows and Linux — the platforms the maintainer's Mac can't verify.
+# Desktop on Windows, macOS and Linux: the desktop unit suites on every OS, plus what the maintainer's
+# Mac can't verify.
+#
+#   0. The desktop test suites (`tests/desktop-*`, `tests/safe-extract*`, the desktop CLI verbs, the
+#      notification trigger math and the per-file coverage floor script) on all three OSes, with
+#      Deno 2.9.7 exactly — the version denext's pinned Deno Desktop runtime is built against.
 #
 # Two things only a real Windows / Linux runner can prove (the caps runtime is unit-tested on macOS):
 #   1. `secureStore` round-trips against the ACTUAL OS credential store (WinRT PasswordVault on
@@ -12,7 +17,7 @@
 # (paths-filtered to the desktop surface) runs it whenever the workflow or the desktop code changes,
 # so it self-verifies on landing. A keeper — the "Windows/Linux in CI" item.
 
-name: Desktop CI (Windows / Linux)
+name: Desktop CI (Windows / macOS / Linux)
 
 on:
   workflow_dispatch: {}
@@ -21,13 +26,52 @@ on:
     paths:
       - "src/desktop/**"
       - "src/build/desktop*.ts"
+      - "src/build/app-update.ts"
+      - "src/build/safe-extract.ts"
+      - "src/cli/commands/desktop*.ts"
+      - "src/mobile/notification-trigger.ts"
+      - "scripts/desktop-pin-runtime.ts"
+      - "scripts/coverage-floor.ts"
       - "scripts/ci/desktop-secure-store-roundtrip.ts"
+      - "tests/desktop-*.test.ts"
+      - "tests/safe-extract*.test.ts"
+      - "tests/cli-desktop-*.test.ts"
+      - "tests/notification-trigger.test.ts"
+      - "tests/coverage-floor.test.ts"
+      - "tests/helpers/**"
       - ".github/workflows/desktop-ci.yml"
 
 permissions:
   contents: read
 
 jobs:
+  desktop-tests:
+    name: desktop tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.7" # exactly: the pinned Deno Desktop runtime's Deno
+      - name: Deno is 2.9.7
+        shell: bash
+        run: deno --version | head -1 | grep -q '^deno 2\.9\.7 ' || { deno --version; exit 1; }
+      # bash on every OS (Git Bash on Windows) so the globs expand the same way everywhere.
+      - name: Desktop test suites
+        shell: bash
+        run: >-
+          deno test -A --unstable-kv
+          tests/desktop-*.test.ts
+          tests/safe-extract*.test.ts
+          tests/cli-desktop-*.test.ts
+          tests/notification-trigger.test.ts
+          tests/coverage-floor.test.ts
+
   secure-store-roundtrip:
     name: secureStore round-trip (${{ matrix.os }})
     strategy:
