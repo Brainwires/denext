@@ -416,7 +416,7 @@ function stepFeatures(s: Survey): StepView {
     h(
       "label",
       { key: f.key },
-      h("input", { type: "checkbox", name: `feature.${f.key}` }),
+      h("input", { type: "checkbox", name: `feature.${f.key}`, checked: f.defaultOn === true }),
       ` ${f.label}`,
     )
   );
@@ -646,6 +646,7 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
       capacitor: on("capacitor"),
       compatibilityMode: on("compatibility"),
       fallow: on("fallow"),
+      mcp: on("mcp"),
     });
     return {
       step: "features",

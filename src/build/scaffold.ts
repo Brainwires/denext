@@ -9,6 +9,12 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
+import {
+  MCP_AGENTS_SECTION,
+  MCP_README_ROWS,
+  mcpTaskCommand,
+  writeMcpClientConfigs,
+} from "./mcp-template.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
 /** Named starter templates `denext create --template <name>` can choose. */
@@ -62,6 +68,13 @@ export interface ScaffoldOptions {
    */
   fallow?: boolean;
   /**
+   * Install denext's MCP server at the project level: a `mcp` task running the pinned denext
+   * CLI's `denext mcp`, registered as the `denext` server in `.mcp.json` (Claude Code),
+   * `.vscode/mcp.json` and `.cursor/mcp.json` (merged into files that already exist). With
+   * {@linkcode fallow}, the generated `AGENTS.md` also lists the MCP tools.
+   */
+  mcp?: boolean;
+  /**
    * Allow scaffolding into an existing, non-empty directory (`denext init` into
    * `.`). Existing files are never overwritten — a conflict is an error.
    */
@@ -86,7 +99,7 @@ ${
     opts.desktop || opts.capacitor
       ? "| `deno task export` | Static export into `out/` (the native shells ship this) |\n"
       : ""
-  }${opts.fallow ? FALLOW_README_ROWS : ""}
+  }${opts.fallow ? FALLOW_README_ROWS : ""}${opts.mcp ? MCP_README_ROWS : ""}
 The first \`dev\`/\`build\` downloads the framework from JSR (a few seconds); later runs
 are cached.
 
@@ -204,6 +217,7 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     tasks["mobile:android"] = `${cap} open android`;
   }
   if (opts.fallow) Object.assign(tasks, fallowTasks());
+  if (opts.mcp) tasks.mcp = mcpTaskCommand(cli);
   return tasks;
 }
 
@@ -596,7 +610,13 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     files.push({ path: "capacitor.config.ts", content: capacitorConfig() });
     files.push({ path: "package.json", content: packageJson() });
   }
-  if (opts.fallow) files.push(...fallowFiles());
+  if (opts.fallow) {
+    files.push(
+      ...fallowFiles().map((f) =>
+        opts.mcp && f.path === "AGENTS.md" ? { ...f, content: f.content + MCP_AGENTS_SECTION } : f
+      ),
+    );
+  }
   return files;
 }
 
@@ -626,6 +646,15 @@ export async function scaffoldProject(
     await ensureVscodeDeno(opts.dir, vscode);
     // `/`-separated like every other scaffolded path, on Windows too.
     written.push(...vscode.map((p) => relative(opts.dir, p).split(SEPARATOR).join("/")));
+  }
+  if (opts.mcp) {
+    // Merged like the .vscode files: `init` may meet a client config that already lists servers.
+    const mcp = { written: [] as string[], skipped: [] as string[], errors: [] as string[] };
+    await writeMcpClientConfigs(opts.dir, {}, mcp);
+    written.push(...mcp.written);
+    if (mcp.errors.length > 0) {
+      throw new Error(`could not register the denext MCP server: ${mcp.errors.join("; ")}`);
+    }
   }
   return written;
 }

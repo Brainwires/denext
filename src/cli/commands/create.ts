@@ -19,6 +19,11 @@ export interface ScaffoldFeature {
   readonly flag: string;
   /** The human-readable label shown in the picker (and on `denext ui`'s Setup page). */
   readonly label: string;
+  /**
+   * Checked when the interactive picker (or the Setup page) opens. A non-interactive run
+   * (`--yes`, no TTY) still selects only what its flags name.
+   */
+  readonly defaultOn?: boolean;
 }
 
 /**
@@ -48,6 +53,12 @@ export const FEATURES: readonly ScaffoldFeature[] = [
     key: "fallow",
     flag: "fallow",
     label: "fallow code-health gate (dead code, duplication, complexity)",
+  },
+  {
+    key: "mcp",
+    flag: "mcp",
+    label: "denext MCP server for coding agents (Claude Code, VS Code, Cursor)",
+    defaultOn: true,
   },
 ];
 
@@ -102,6 +113,7 @@ async function runCreate(
     capacitor: on("capacitor"),
     compatibilityMode: on("compatibility"),
     fallow: on("fallow"),
+    mcp: on("mcp"),
     vscode: ctx.flags["no-vscode"] !== true,
     allowExisting: mode === "init",
   });
@@ -121,10 +133,29 @@ function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
   if (target) return target;
   console.error(
     "denext create: missing target directory.\n" +
-      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility] [--fallow] [--no-vscode]\n" +
+      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility] [--fallow] [--mcp] [--no-vscode]\n" +
       "  denext init            (scaffold into the current directory)",
   );
   Deno.exit(1);
+}
+
+/**
+ * The features selected before any prompt: those whose flag is set, plus — only when the
+ * picker will be shown — the {@linkcode ScaffoldFeature.defaultOn} ones, so `--yes` (or a
+ * non-TTY run) writes exactly what its flags name.
+ *
+ * @param flags The parsed `denext create` flags.
+ * @param interactive Whether the multi-select picker will be shown.
+ * @returns The pre-selected feature keys.
+ */
+export function preselectedFeatures(
+  flags: Readonly<Record<string, unknown>>,
+  interactive: boolean,
+): Set<string> {
+  return new Set(
+    FEATURES.filter((f) => flags[f.flag] === true || (interactive && f.defaultOn === true))
+      .map((f) => f.key),
+  );
 }
 
 /**
@@ -132,10 +163,9 @@ function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
  * choice is made in a single multi-select.
  */
 function selectFeatures(ctx: CommandContext): Set<string> {
-  const selected = new Set(
-    FEATURES.filter((f) => ctx.flags[f.flag] === true).map((f) => f.key),
-  );
-  if (ctx.flags.yes === true || !Deno.stdin.isTerminal()) return selected;
+  const interactive = ctx.flags.yes !== true && Deno.stdin.isTerminal();
+  const selected = preselectedFeatures(ctx.flags, interactive);
+  if (!interactive) return selected;
   return multiSelect(
     "  Select features  (↑/↓ move · space toggle · enter confirm)",
     [...FEATURES],
@@ -158,6 +188,10 @@ function featureNotes(on: (key: string) => boolean): string[] {
     on("fallow")
       ? "  fallow: `deno task fallow:audit` runs the gate; `git init`, then `deno task hooks:install`\n" +
         "  runs it before every commit (AGENTS.md tells coding agents the same)."
+      : "",
+    on("mcp")
+      ? "  MCP: .mcp.json, .vscode/mcp.json and .cursor/mcp.json run `deno task mcp` (the pinned\n" +
+        "  denext); approve the `denext` server when your agent asks."
       : "",
   ].filter(Boolean);
 }

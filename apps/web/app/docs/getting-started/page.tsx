@@ -269,6 +269,21 @@ deno task coverage:fallow   # deno test --coverage → coverage/coverage-final.j
         <code>cargo install fallow-cli</code> works with the same <code>fallow.toml</code>.
       </p>
 
+      <h2 id="mcp">Coding agents (MCP)</h2>
+      <p>
+        <code>denext create my-app --mcp</code>{" "}
+        (pre-checked in the interactive picker) registers denext's{" "}
+        <a href="/docs/mcp">MCP server</a> for the project: a <code>deno task mcp</code>{" "}
+        that runs the denext version <code>deno.json</code> pins, wired into <code>.mcp.json</code>
+        {" "}
+        (Claude Code), <code>.vscode/mcp.json</code> and{" "}
+        <code>.cursor/mcp.json</code>. Agents opened in the project can then lint snippets for
+        Next-isms, search the docs offline, scaffold and render routes. For an existing project, run
+        {" "}
+        <code>denext mcp init</code> (<code>--clients all</code>{" "}
+        adds Gemini CLI and Codex); it merges into config files that already list other servers.
+      </p>
+
       <h2>Coming from Next.js?</h2>
       <p>
         The file conventions, hooks, and <code>app/</code>{" "}
