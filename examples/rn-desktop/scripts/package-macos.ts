@@ -29,7 +29,12 @@
  *                             each signed .pkg).
  *   DENEXT_INSTALLER_IDENTITY "Developer ID Installer: Name (TEAMID)" — signs the .pkg.
  *                             Omit → an unsigned .pkg (MDM tools and Gatekeeper reject it).
- *   DENEXT_APP_NAME           output base name (default: the deno.json `desktop.app.name`).
+ *   DENEXT_APP_NAME           output base name (default: `desktop.app.name` in denext.config.ts,
+ *                             else deno.json's).
+ *
+ * The bundle's name and identifier are `desktop.app.name` / `identifier` in denext.config.ts
+ * (written into deno.json's `desktop.app`, which `deno desktop` reads), and its icon
+ * `desktop.app.icons.macos` (.icns or .png), else deno.json's, else icons/app.icns.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
@@ -48,6 +53,7 @@
 import {
   desktopAppName as appName,
   desktopDenoFlagArgs,
+  desktopIconArgs,
   desktopIncludeArgs,
   desktopInstallerPlan,
   type DesktopPackageArgs,
@@ -84,6 +90,9 @@ async function buildApp(out: string, target?: string): Promise<void> {
     ...await desktopIncludeArgs(import.meta.url),
   ];
   if (target) cmd.push("--target", target);
+  // The app icon: desktop.app.icons.macos in denext.config.ts, else deno.json's, else
+  // icons/app.icns, icons/app.png or desktop-icon.png.
+  cmd.push(...await desktopIconArgs(import.meta.url, "darwin"));
   // deno desktop appends ".app" to --output on macOS, so pass the base name (strip a trailing
   // ".app") to land exactly at `out` — else it writes `out.app` and sign/lipo/dmg miss it.
   cmd.push("--output", out.replace(/\.app$/, ""), "desktop.ts");
@@ -396,7 +405,8 @@ async function main(): Promise<void> {
     legacy: { "--dmg": "dmg" },
   });
   const signing = signingFromEnv();
-  const name = await appName();
+  // DENEXT_APP_NAME, else desktop.app.name in denext.config.ts, else deno.json's.
+  const name = await appName(import.meta.url);
   // --format, else desktop.installers.macos in denext.config.ts, else a .dmg.
   const plan = await desktopInstallerPlan(
     import.meta.url,

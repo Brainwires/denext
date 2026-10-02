@@ -148,6 +148,7 @@ export {
   desktopAppName,
   type DesktopBundleOptions,
   desktopHasTool,
+  desktopIconArgs,
   desktopPackageArches,
   type DesktopPackageArgs,
   type DesktopPackageArgSpec,

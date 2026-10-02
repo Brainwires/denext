@@ -127,7 +127,11 @@ Deno.test("sync: writes app.json and appends to compile.include, keeping comment
     '{\n  // keep me\n  "compile": { "include": ["out", "assets/"] },\n  "tasks": {}\n}\n',
   );
   try {
-    assertEquals(await syncDesktopAppConfigAt(dir, T3), { appJson: "written", include: "updated" });
+    assertEquals(await syncDesktopAppConfigAt(dir, T3), {
+      appJson: "written",
+      include: "updated",
+      identity: "updated",
+    });
     assertEquals(
       JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))),
       { origin: "t3code://app", identifier: "com.t3.code" },
@@ -135,10 +139,15 @@ Deno.test("sync: writes app.json and appends to compile.include, keeping comment
     const deno = await Deno.readTextFile(join(dir, "deno.json"));
     assertStringIncludes(deno, "// keep me");
     assertStringIncludes(deno, '"out", "assets/", ".deno-desktop/app.json"');
+    // The identifier is mirrored into deno.json's desktop.app (what `deno desktop` reads).
+    assertEquals(JSON.parse(deno.replace("// keep me", "")).desktop, {
+      app: { identifier: "com.t3.code" },
+    });
     // Idempotent: a second run changes nothing.
     assertEquals(await syncDesktopAppConfigAt(dir, T3), {
       appJson: "unchanged",
       include: "unchanged",
+      identity: "unchanged",
     });
     assertEquals(await Deno.readTextFile(join(dir, "deno.json")), deno);
   } finally {
@@ -169,6 +178,7 @@ Deno.test("sync: removing the origin removes app.json and only its include entry
     assertEquals(await syncDesktopAppConfigAt(dir, none), {
       appJson: "removed",
       include: "updated",
+      identity: "unchanged",
     });
     await assertRejects(() => Deno.stat(join(dir, DESKTOP_APP_CONFIG_FILE)), Deno.errors.NotFound);
     assertEquals(JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))).compile.include, [
@@ -177,11 +187,14 @@ Deno.test("sync: removing the origin removes app.json and only its include entry
     // A compile block that held only our entry goes away entirely.
     await syncDesktopAppConfigAt(lone, T3);
     await syncDesktopAppConfigAt(lone, none);
-    assertEquals(JSON.parse(await Deno.readTextFile(join(lone, "deno.json"))), {});
+    assertEquals(JSON.parse(await Deno.readTextFile(join(lone, "deno.json"))), {
+      desktop: { app: { identifier: "com.t3.code" } },
+    });
     // No origin and nothing written before: a no-op.
     assertEquals(await syncDesktopAppConfigAt(lone, none), {
       appJson: "none",
       include: "unchanged",
+      identity: "unchanged",
     });
   } finally {
     await Deno.remove(dir, { recursive: true });
@@ -298,6 +311,7 @@ Deno.test("sync: deepLinks + singleInstance go to app.json, and deepLinks to den
       appJson: "written",
       include: "updated",
       deepLinks: "updated",
+      identity: "updated",
     });
     assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
       origin: "t3code://app",
@@ -310,6 +324,7 @@ Deno.test("sync: deepLinks + singleInstance go to app.json, and deepLinks to den
     assertEquals(JSON.parse(deno.replace("// keep", "")).desktop.app, {
       name: "T3",
       deepLinks: ["t3code", "t3code-dev"],
+      identifier: "com.t3.code",
     });
     assertEquals((await syncDesktopAppConfigAt(dir, config)).deepLinks, "unchanged");
   } finally {

@@ -252,6 +252,7 @@ export {
   type CorsConfig,
   type DenextCommand,
   type DenextConfig,
+  type DesktopAppIcons,
   type DesktopCapabilitiesConfig,
   type DesktopConfig,
   type DesktopExtraPermissions,

@@ -6178,6 +6178,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopAppIcons",
+          "slug": "DesktopAppIcons",
+          "kind": "interface",
+          "signature": "interface DesktopAppIcons",
+          "doc": "DesktopConfig.app's icons: the app icon file per OS, relative to the project.",
+          "docFull": "{@link DesktopConfig.app}'s `icons`: the app icon file per OS, relative to the project.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopCapabilitiesConfig",
           "slug": "DesktopCapabilitiesConfig",
           "kind": "interface",
@@ -15588,10 +15600,15 @@
           "name": "desktopAppName",
           "slug": "desktopAppName",
           "kind": "function",
-          "signature": "desktopAppName(): Promise<string>",
-          "doc": "The app's name for artifact paths: DENEXT_APP_NAME, else deno.json desktop.app.name in the working directory, else \"app\".",
-          "docFull": "The app's name for artifact paths: `DENEXT_APP_NAME`, else deno.json `desktop.app.name` in the\nworking directory, else `\"app\"`.",
-          "params": [],
+          "signature": "desktopAppName(entryUrl?: string): Promise<string>",
+          "doc": "The app's name for artifact paths: DENEXT_APP_NAME, else desktop.app.name in the project's denext.config.ts, else deno.json desktop.app.name, else \"app\".",
+          "docFull": "The app's name for artifact paths: `DENEXT_APP_NAME`, else `desktop.app.name` in the project's\n`denext.config.ts`, else deno.json `desktop.app.name`, else `\"app\"`.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder (default: the working directory is the project)."
+            }
+          ],
           "returns": "The name.",
           "examples": [],
           "denextOnly": true
@@ -15768,6 +15785,31 @@
             }
           ],
           "returns": "Whether it resolves.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopIconArgs",
+          "slug": "desktopIconArgs",
+          "kind": "function",
+          "signature": "desktopIconArgs(entryUrl: string, os: DesktopOs, candidates?: typeOperator): Promise<string[]>",
+          "doc": "The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists (none: no icon, and deno desktop uses its default). Paths are relative to the project.",
+          "docFull": "The `--icon <file>` args for `deno desktop` on `os`: `desktop.app.icons.<macos|linux|windows>` in\n`denext.config.ts`, else the same key in deno.json, else the first of `candidates` that exists\n(none: no icon, and `deno desktop` uses its default). Paths are relative to the project.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            },
+            {
+              "name": "candidates",
+              "doc": "The files tried when nothing is configured (default: icons/app.icns / icons/app.png / icons/app.ico for the OS, then desktop-icon.png / .ico)."
+            }
+          ],
+          "returns": "[\"--icon\", path] or [].",
           "examples": [],
           "denextOnly": true
         },

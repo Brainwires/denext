@@ -127,8 +127,11 @@ export function planDesktopInstallers(
   return { formats, explicit };
 }
 
-/** `denext.config.ts` beside the scripts dir of `entryUrl` (a missing config is `undefined`). */
-async function loadConfigBeside(entryUrl: string): Promise<unknown> {
+/**
+ * `denext.config.ts` beside the scripts dir of `entryUrl` (a missing config is `undefined`). Shared
+ * by the package-script helpers.
+ */
+export async function loadConfigBeside(entryUrl: string): Promise<unknown> {
   try {
     const mod = await import(new URL("../denext.config.ts", entryUrl).href);
     return (mod as { default?: unknown }).default;
@@ -196,7 +199,7 @@ function str(v: unknown): string | undefined {
 }
 
 /** The project's deno.json (or deno.jsonc), parsed; `{}` when there is none. */
-async function readDenoJson(root: string): Promise<Obj> {
+export async function readDenoJson(root: string): Promise<Obj> {
   for (const name of ["deno.json", "deno.jsonc"]) {
     try {
       return (parseJsonc(await Deno.readTextFile(join(root, name))) ?? {}) as Obj;
@@ -216,11 +219,12 @@ function schemes(list: unknown): string[] {
 
 /**
  * Resolve {@linkcode DesktopPackageMeta} from deno.json (`version`, `license`, `desktop.app`,
- * `desktop.backend`) and `denext.config.ts` (`desktop.installers`, `desktop.app` as the fallback).
+ * `desktop.backend`) and `denext.config.ts` (`desktop.installers`; `desktop.app.name` and
+ * `identifier` ahead of deno.json's, its other `desktop.app` keys as the fallback).
  *
  * @param deno The parsed deno.json.
  * @param config The loaded `denext.config.ts` default export.
- * @param fallbackName The name to use when deno.json names no app.
+ * @param fallbackName The name to use when neither file names the app.
  * @returns The metadata.
  */
 export function packageMetaFrom(
@@ -232,8 +236,9 @@ export function packageMetaFrom(
   const cfgDesktop = field(config, "desktop");
   const cfgApp = field(cfgDesktop, "app");
   const installers = field(cfgDesktop, "installers");
-  const name = str(denoApp.name) ?? str(cfgApp.name) ?? fallbackName;
-  const identifier = str(denoApp.identifier) ?? str(cfgApp.identifier) ??
+  // denext.config.ts first (the package scripts mirror it into deno.json), then deno.json.
+  const name = str(cfgApp.name) ?? str(denoApp.name) ?? fallbackName;
+  const identifier = str(cfgApp.identifier) ?? str(denoApp.identifier) ??
     `com.deno.desktop.${debianPackageName(name)}`;
   return {
     name,

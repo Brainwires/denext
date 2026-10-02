@@ -773,8 +773,20 @@ export interface DesktopConfig {
      * to `deno.json`'s `desktop.app.identifier`.
      */
     identifier?: string;
-    /** The app's display name for tooling; the packaged bundle name comes from `deno.json`. */
+    /**
+     * The app's display name: the packaged bundle's name (`MyApp.app`, the executable, the Linux
+     * `.desktop` entry, the installers) and the package scripts' artifact names. The scripts write
+     * it into `deno.json`'s `desktop.app.name`, which `deno desktop` reads; unset, `deno.json`'s is
+     * used. `DENEXT_APP_NAME` overrides the artifact names for one run.
+     */
     name?: string;
+    /**
+     * The app icon per OS, relative to the project: `macos` an `.icns` (or a 1024² `.png`),
+     * `windows` an `.ico`, `linux` a `.png` (512² or larger). The package scripts pass it to
+     * `deno desktop --icon`; unset, `deno.json`'s `desktop.app.icons` is used, then
+     * `icons/app.icns` / `icons/app.ico` / `icons/app.png`, then `desktop-icon.png`.
+     */
+    icons?: DesktopAppIcons;
     /**
      * The stable page origin, `<scheme>://<host>` (e.g. `"myapp://app"`): the window's
      * `location.origin` and the `Origin` header its requests carry, the same on every launch and
@@ -879,6 +891,16 @@ export interface DesktopConfig {
    * {@link capabilities} and {@link extraPermissions}.
    */
   denoFlags?: string[];
+}
+
+/** {@link DesktopConfig.app}'s `icons`: the app icon file per OS, relative to the project. */
+export interface DesktopAppIcons {
+  /** macOS: an `.icns`, or a 1024² `.png`. */
+  macos?: string;
+  /** Windows: an `.ico`. */
+  windows?: string;
+  /** Linux: a `.png` (512² or larger). */
+  linux?: string;
 }
 
 /** {@link DesktopConfig.installers}: the installer formats per OS, and what they say about the app. */

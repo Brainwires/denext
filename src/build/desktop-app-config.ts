@@ -228,6 +228,11 @@ export interface DesktopAppSyncReport {
   readonly include: "updated" | "unchanged" | "no-deno-json";
   /** deno.json `desktop.app.deepLinks` (present only when deep links are configured). */
   readonly deepLinks?: "updated" | "unchanged" | "no-deno-json";
+  /**
+   * deno.json `desktop.app.name` / `identifier` (present only when `denext.config.ts` sets either):
+   * what `deno desktop` names and identifies the packaged app by.
+   */
+  readonly identity?: "updated" | "unchanged" | "no-deno-json";
 }
 
 /** Whether `path` is a symbolic link (a missing path is not). */
@@ -377,27 +382,45 @@ async function syncAppJson(
 }
 
 /**
- * Mirror `desktop.app.deepLinks` into deno.json's `desktop.app.deepLinks`: the key the `deno
- * desktop` CLI (the stock one included) reads to register the schemes with the OS when it packages
- * (Info.plist `CFBundleURLTypes`, the Windows registry, the Linux `.desktop` entry). Nothing to do
- * without configured schemes (a hand-written deno.json value is left alone).
+ * Mirror `values` into deno.json's `desktop.app` (each key set only when it differs, comments and
+ * the rest kept): the block the `deno desktop` CLI (the stock one included) reads when it packages.
  */
-async function syncDenoJsonDeepLinks(
+async function syncDenoJsonApp(
   root: string,
-  deepLinks: readonly string[],
-): Promise<NonNullable<DesktopAppSyncReport["deepLinks"]>> {
+  values: Readonly<Record<string, unknown>>,
+): Promise<"updated" | "unchanged" | "no-deno-json"> {
   const path = await findDenoJson(root);
   if (!path) return "no-deno-json";
   const { readJson, setJsonValue } = await import("./json-edit.ts");
-  const source = await Deno.readTextFile(path);
-  const current = (readJson(source) as { desktop?: { app?: { deepLinks?: unknown } } } | null)
-    ?.desktop?.app?.deepLinks;
-  if (JSON.stringify(current) === JSON.stringify(deepLinks)) return "unchanged";
-  await writeJsonEdit(
-    path,
-    await setJsonValue(source, ["desktop", "app", "deepLinks"], [...deepLinks]),
-  );
+  let source = await Deno.readTextFile(path);
+  let changed = false;
+  for (const [key, value] of Object.entries(values)) {
+    const current = (readJson(source) as { desktop?: { app?: Record<string, unknown> } } | null)
+      ?.desktop?.app?.[key];
+    if (JSON.stringify(current) === JSON.stringify(value)) continue;
+    const edited = await setJsonValue(source, ["desktop", "app", key], value);
+    if (!edited.ok) throw new Error(`cannot edit ${path}: ${edited.reason}`);
+    source = edited.source;
+    changed = true;
+  }
+  if (!changed) return "unchanged";
+  await writeJsonEdit(path, { ok: true, source });
   return "updated";
+}
+
+/**
+ * The app's name and identifier as `denext.config.ts` sets them (`desktop.app.name`,
+ * `desktop.app.identifier`), for deno.json: `deno desktop` names the bundle (`CFBundleName`, the
+ * executable, the `.desktop` entry) and identifies it (`CFBundleIdentifier`, the Windows AppUserModel
+ * id) from there. An unset or invalid value is left out (config validation reports it).
+ */
+function configIdentity(config: unknown): Record<string, string> {
+  const app = appBlock(config);
+  const out: Record<string, string> = {};
+  if (typeof app?.name === "string" && app.name.trim() !== "") out.name = app.name.trim();
+  const id = app?.identifier;
+  if (typeof id === "string" && desktopAppIdentifierError(id) === null) out.identifier = id;
+  return out;
 }
 
 /**
@@ -406,8 +429,10 @@ async function syncDenoJsonDeepLinks(
  * identifier, `deepLinks`, `singleInstance`) and make sure `compile.include` lists the file
  * (appending to existing entries, idempotent); with none, remove a previous `app.json` and its
  * include entry so the runtime does not keep a stale origin. Configured deep-link schemes are also
- * written to deno.json `desktop.app.deepLinks`, where `deno desktop` registers them with the OS.
- * Throws on an invalid origin/identifier/scheme (the runtime's rules).
+ * written to deno.json `desktop.app.deepLinks`, where `deno desktop` registers them with the OS
+ * (Info.plist `CFBundleURLTypes`, the Windows registry, the Linux `.desktop` entry), and a
+ * configured `desktop.app.name` / `identifier` to deno.json's, which `deno desktop` names and
+ * identifies the bundle by. Throws on an invalid origin/identifier/scheme (the runtime's rules).
  *
  * @param root The project root.
  * @param config The project config.
@@ -427,8 +452,17 @@ export async function syncDesktopAppConfigAt(
     );
   }
   const schemes = (body?.deepLinks as string[] | undefined) ?? [];
-  if (schemes.length === 0) return { appJson, include };
-  return { appJson, include, deepLinks: await syncDenoJsonDeepLinks(root, schemes) };
+  const identity = configIdentity(config);
+  return {
+    appJson,
+    include,
+    ...(schemes.length > 0
+      ? { deepLinks: await syncDenoJsonApp(root, { deepLinks: [...schemes] }) }
+      : {}),
+    ...(Object.keys(identity).length > 0
+      ? { identity: await syncDenoJsonApp(root, identity) }
+      : {}),
+  };
 }
 
 /**

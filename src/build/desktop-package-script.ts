@@ -12,7 +12,10 @@ import {
   desktopInstallerPlan,
   type DesktopPackageMeta,
   desktopPackageMeta,
+  loadConfigBeside,
+  readDenoJson,
 } from "./desktop-installers.ts";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 
 /** A package script's parsed command line. */
 export interface DesktopPackageArgs {
@@ -197,7 +200,7 @@ export async function prepareDesktopPackage(
   os: DesktopOs,
   args: Pick<DesktopPackageArgs, "formats" | "add" | "export">,
 ): Promise<PreparedDesktopPackage> {
-  const appName = await desktopAppName();
+  const appName = await desktopAppName(entryUrl);
   const plan = await desktopInstallerPlan(entryUrl, os, args.formats, args.add);
   await syncDesktopAppConfig(entryUrl);
   const meta = await desktopPackageMeta(entryUrl, appName);
@@ -241,20 +244,99 @@ export async function desktopRun(
   throw new Error(`command failed (${code}): ${shown.join(" ")}`);
 }
 
+/** A script URL in the working directory's `scripts/` (what an older script's call implies). */
+function cwdScriptUrl(): string {
+  return toFileUrl(join(Deno.cwd(), "scripts", "package.ts")).href;
+}
+
+/** The project root of the script at `entryUrl` (its parent's parent). */
+function projectRootOf(entryUrl: string): string {
+  return fromFileUrl(new URL("../", entryUrl));
+}
+
+/** `desktop.app` of a parsed config / deno.json, or `{}`. */
+function appOf(value: unknown): Record<string, unknown> {
+  const app = (value as { desktop?: { app?: unknown } } | null | undefined)?.desktop?.app;
+  return typeof app === "object" && app !== null ? app as Record<string, unknown> : {};
+}
+
 /**
- * The app's name for artifact paths: `DENEXT_APP_NAME`, else deno.json `desktop.app.name` in the
- * working directory, else `"app"`.
+ * The app's name for artifact paths: `DENEXT_APP_NAME`, else `desktop.app.name` in the project's
+ * `denext.config.ts`, else deno.json `desktop.app.name`, else `"app"`.
  *
+ * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder (default: the
+ *   working directory is the project).
  * @returns The name.
  */
-export async function desktopAppName(): Promise<string> {
+export async function desktopAppName(entryUrl: string = cwdScriptUrl()): Promise<string> {
   const env = Deno.env.get("DENEXT_APP_NAME");
   if (env) return env;
-  try {
-    const n = JSON.parse(await Deno.readTextFile("deno.json"))?.desktop?.app?.name;
+  for (const source of [await loadConfigBeside(entryUrl), await denoJsonBeside(entryUrl)]) {
+    const n = appOf(source).name;
     if (typeof n === "string" && n.trim()) return n.trim();
-  } catch { /* no/invalid deno.json */ }
+  }
   return "app";
+}
+
+/** The project's deno.json, parsed (`{}` when there is none or it is not a file URL). */
+async function denoJsonBeside(entryUrl: string): Promise<unknown> {
+  return new URL(entryUrl).protocol === "file:" ? await readDenoJson(projectRootOf(entryUrl)) : {};
+}
+
+/** The `desktop.app.icons` key of each OS. */
+const ICON_KEY: Readonly<Record<DesktopOs, "macos" | "linux" | "windows">> = {
+  darwin: "macos",
+  linux: "linux",
+  windows: "windows",
+};
+
+/** The icon files tried, in order, when neither file configures one. */
+const DEFAULT_ICONS: Readonly<Record<DesktopOs, readonly string[]>> = {
+  darwin: ["icons/app.icns", "icons/app.png", "desktop-icon.png"],
+  linux: ["icons/app.png", "desktop-icon.png"],
+  windows: ["icons/app.ico", "desktop-icon.ico"],
+};
+
+/** Whether `path` (relative to `root`) is a file. */
+async function isFileAt(root: string, path: string): Promise<boolean> {
+  return await Deno.stat(join(root, path)).then((st) => st.isFile, () => false);
+}
+
+/**
+ * The `--icon <file>` args for `deno desktop` on `os`: `desktop.app.icons.<macos|linux|windows>` in
+ * `denext.config.ts`, else the same key in deno.json, else the first of `candidates` that exists
+ * (none: no icon, and `deno desktop` uses its default). Paths are relative to the project.
+ *
+ * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
+ * @param os The target OS.
+ * @param candidates The files tried when nothing is configured (default: `icons/app.icns` /
+ *   `icons/app.png` / `icons/app.ico` for the OS, then `desktop-icon.png` / `.ico`).
+ * @returns `["--icon", path]` or `[]`.
+ * @throws {Error} When a configured icon does not exist.
+ */
+export async function desktopIconArgs(
+  entryUrl: string,
+  os: DesktopOs,
+  candidates: readonly string[] = DEFAULT_ICONS[os],
+): Promise<string[]> {
+  const root = projectRootOf(entryUrl);
+  const key = ICON_KEY[os];
+  const sources: Array<[string, unknown]> = [
+    ["denext.config.ts", await loadConfigBeside(entryUrl)],
+    ["deno.json", await denoJsonBeside(entryUrl)],
+  ];
+  for (const [file, source] of sources) {
+    const icon = (appOf(source).icons as Record<string, unknown> | undefined)?.[key];
+    if (typeof icon !== "string" || icon.trim() === "") continue;
+    if (!(await isFileAt(root, icon))) {
+      throw new Error(`${file} desktop.app.icons.${key}: no file at ${icon}`);
+    }
+    return ["--icon", icon];
+  }
+  for (const icon of candidates) {
+    if (await isFileAt(root, icon)) return ["--icon", icon];
+  }
+  return [];
 }
 
 /**
@@ -273,7 +355,10 @@ export interface DesktopBundleOptions {
   readonly target: string;
   /** The bundle directory to write (`dist/<name>-<label>`). */
   readonly out: string;
-  /** Candidate icon paths; the first that exists is passed as `--icon`. */
+  /**
+   * Candidate icon paths; the first that exists is passed as `--icon` when neither
+   * `denext.config.ts` nor deno.json sets `desktop.app.icons.<os>` (see {@linkcode desktopIconArgs}).
+   */
   readonly icons: readonly string[];
 }
 
@@ -302,13 +387,8 @@ export async function desktopBundleCommand(
     ...await desktopIncludeArgs(entryUrl),
     "--target",
     o.target,
+    ...await desktopIconArgs(entryUrl, os, o.icons),
   ];
-  for (const icon of o.icons) {
-    if (await Deno.stat(icon).then(() => true, () => false)) {
-      cmd.push("--icon", icon);
-      break;
-    }
-  }
   cmd.push("--output", o.out, "desktop.ts");
   return cmd;
 }

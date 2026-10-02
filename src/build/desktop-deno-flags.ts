@@ -6,6 +6,7 @@
 import { dirname, join } from "@std/path";
 import { desktopDenoFlags } from "../desktop/deno-flags.ts";
 import { readJson } from "./json-edit.ts";
+import { loadConfigBeside } from "./desktop-installers.ts";
 
 /**
  * The project's `desktop.denoFlags`, checked, for a scaffolded packaging script: reads
@@ -16,14 +17,8 @@ import { readJson } from "./json-edit.ts";
  * @returns The flags, ready to splice into the `deno desktop` argv before the entry.
  */
 export async function desktopDenoFlagArgs(entryUrl: string): Promise<string[]> {
-  let config: unknown;
-  try {
-    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
-    config = (mod as { default?: unknown }).default;
-  } catch {
-    return []; // no denext.config.ts (or it exports no config): no extra flags
-  }
-  return desktopDenoFlags(config);
+  // No denext.config.ts (or it exports no config): no extra flags.
+  return desktopDenoFlags(await loadConfigBeside(entryUrl));
 }
 
 /** Whether `name` exists in `dir` or any folder above it. */

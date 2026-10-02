@@ -1132,8 +1132,26 @@
               "type": "string"
             },
             "name": {
-              "description": "The app's display name for tooling; the packaged bundle name comes from `deno.json`.",
+              "description": "The app's display name: the packaged bundle's name (`MyApp.app`, the executable, the Linux `.desktop` entry, the installers) and the package scripts' artifact names. The scripts write it into `deno.json`'s `desktop.app.name`, which `deno desktop` reads; unset, `deno.json`'s is used. `DENEXT_APP_NAME` overrides the artifact names for one run.",
               "type": "string"
+            },
+            "icons": {
+              "description": "The app icon per OS, relative to the project: `macos` an `.icns` (or a 1024² `.png`), `windows` an `.ico`, `linux` a `.png` (512² or larger). The package scripts pass it to `deno desktop --icon`; unset, `deno.json`'s `desktop.app.icons` is used, then `icons/app.icns` / `icons/app.ico` / `icons/app.png`, then `desktop-icon.png`.",
+              "type": "object",
+              "properties": {
+                "macos": {
+                  "description": "macOS: an `.icns`, or a 1024² `.png`.",
+                  "type": "string"
+                },
+                "windows": {
+                  "description": "Windows: an `.ico`.",
+                  "type": "string"
+                },
+                "linux": {
+                  "description": "Linux: a `.png` (512² or larger).",
+                  "type": "string"
+                }
+              }
             },
             "origin": {
               "description": "The stable page origin, `<scheme>://<host>` (e.g. `\"myapp://app\"`): the window's `location.origin` and the `Origin` header its requests carry, the same on every launch and machine — so a server that validates `Origin` can allow-list it, and origin-keyed browser storage survives a relaunch. The scheme is a custom one (not `http`, `https`, `file`, `ws`, `wss`, `ftp`, `blob`, `data`, `about`, …); the host carries no port or path. Requires identifier. The packaging scripts write it into `.deno-desktop/app.json`.",

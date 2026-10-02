@@ -26,7 +26,10 @@
  *                     Signed like the .exe. Without WiX a default .msi falls back to the .zip.
  *                zip  the bundle directory
  *
- *   DENEXT_APP_NAME                output base name (default: the deno.json `desktop.app.name`).
+ *   DENEXT_APP_NAME                output base name (default: `desktop.app.name` in
+ *                                  denext.config.ts, else deno.json's). The bundle's name,
+ *                                  identifier and icon come from denext.config.ts `desktop.app`
+ *                                  (`icons.windows`, an .ico), else deno.json.
  *   DENEXT_WINDOWS_CERT            path to a code-signing certificate (.pfx) — signing is
  *                                  skipped when unset (no secrets are ever baked in).
  *   DENEXT_WINDOWS_CERT_PASSWORD   the .pfx password, if any.

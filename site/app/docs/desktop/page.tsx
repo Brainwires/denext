@@ -97,6 +97,48 @@ await runDesktop({
         so the runtime's own npm dep resolves from Deno's global cache.{" "}
         <code>denext migrate --desktop</code> writes that task for you.
       </Callout>
+      <h3 id="desktop-app-identity">The app's name, identifier and icon</h3>
+      <p>
+        The package scripts name, identify and decorate the bundle from <code>desktop.app</code> in
+        {" "}
+        <code>denext.config.ts</code>, falling back to <code>deno.json</code>&apos;s{" "}
+        <code>desktop.app</code> for anything it leaves out:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    app: {
+      name: "My App", // MyApp.app, the executable, the .desktop entry, the installers
+      identifier: "com.example.myapp", // CFBundleIdentifier, the app's storage and keychain
+      icons: {
+        macos: "./icons/app.icns", // or a 1024² .png
+        windows: "./icons/app.ico",
+        linux: "./icons/app.png", // 512² or larger
+      },
+    },
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          <code>deno desktop</code> reads the name and identifier from <code>deno.json</code>
+          , so the scripts (and <code>denext desktop run</code> /{" "}
+          <code>dev</code>) write the configured ones into <code>deno.json</code>&apos;s{" "}
+          <code>desktop.app</code>{" "}
+          before they build, keeping its comments and other keys, the same way they write{" "}
+          <code>desktop.app.deepLinks</code>.
+        </li>
+        <li>
+          The icon is passed as <code>deno desktop --icon</code> on all three OSes:{" "}
+          <code>desktop.app.icons.&lt;macos|windows|linux&gt;</code>, else the same key in{" "}
+          <code>deno.json</code>, else <code>icons/app.icns</code> / <code>icons/app.ico</code> /
+          {" "}
+          <code>icons/app.png</code>, else the <code>desktop-icon.png</code>{" "}
+          an export composes. A configured icon that does not exist fails the build. The macOS
+          script picks this up with <code>denext desktop package --regenerate-scripts</code>.
+        </li>
+      </ul>
       <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>
       <p>
         A project that needs extra <code>deno desktop</code> flags to build at all lists them in
@@ -2294,7 +2336,7 @@ export default { desktop: { preload: "./desktop/preload.ts" } };`}
         <li>
           <code>DENEXT_APP_NAME</code> — output base name (defaults to <code>desktop.app.name</code>
           {" "}
-          from <code>deno.json</code>).
+          from <code>denext.config.ts</code>, else from <code>deno.json</code>).
         </li>
       </ul>
 

@@ -346,6 +346,15 @@ and this project adheres to
 
 ### Fixed
 
+- **Deno Desktop packaging takes the app's name, identifier and icon from `denext.config.ts`.** The
+  package scripts read only deno.json's `desktop.app`, and the macOS script passed no `--icon`.
+  Now `desktop.app.name` / `identifier` in `denext.config.ts` come first (written into deno.json's
+  `desktop.app`, which `deno desktop` reads, like the deep links), and the new
+  `desktop.app.icons.{macos,windows,linux}` is passed as `--icon` on every OS, falling back to
+  deno.json's `icons`, then `icons/app.icns|.ico|.png`, then `desktop-icon.png`; a configured icon
+  that is missing fails the build. `denext/desktop` exports `desktopIconArgs`, and
+  `desktopAppName(entryUrl)` reads the config. Run `denext desktop package --regenerate-scripts`
+  to update the macOS script.
 - **Deno Desktop: WebSockets at a custom app origin.** Under the pinned runtime the page runs at
   `desktop.app.origin` (`myapp://app`), which carries no WebSockets, and denext's Live client
   dialed `ws://myapp-host/…`. The desktop runtime now injects the runtime's loopback relay

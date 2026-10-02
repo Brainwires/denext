@@ -23,7 +23,9 @@
  *              format whose tool is missing is skipped with a warning; one you asked for fails.
  * --appimage   add an AppImage to whatever --format / the config asks for
  *
- *   DENEXT_APP_NAME  output base name (default: the deno.json `desktop.app.name`).
+ *   DENEXT_APP_NAME  output base name (default: `desktop.app.name` in denext.config.ts, else
+ *                    deno.json's). The bundle's name, identifier and icon come from
+ *                    denext.config.ts `desktop.app` (`icons.linux`, a PNG), else deno.json.
  *   deno.json `version` is the package version; denext.config.ts `desktop.installers`
  *   `publisher` / `description` fill the package metadata.
  *
