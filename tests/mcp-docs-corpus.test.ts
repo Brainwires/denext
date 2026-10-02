@@ -171,7 +171,8 @@ Deno.test("readDocs: a whole page by slug or URL", async () => {
   ) {
     const res = await readDocs(ref);
     assert(!res.isError, ref);
-    assert(res.text.startsWith("# The Deno Desktop runtime"), ref);
+    // The title is the page's own (frontmatter), so only its stable part is asserted.
+    assert(/^# .*Deno Desktop runtime/.test(res.text), ref);
     assertStringIncludes(res.text, "Source: https://denext.dev/docs/desktop-runtime");
   }
 });
