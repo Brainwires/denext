@@ -180,7 +180,7 @@
     "parity:native": "deno run -A scripts/parity/native/check.ts",
     "parity:native:refresh": "deno run -A scripts/parity/native/refresh.ts",
     "parity:native:gaps": "deno run -A scripts/parity/native/gaps.ts",
-    "docs:build": "deno task docs:api && deno task docs:corpus && deno task docs:mcp && deno task docs:cli && deno task docs:examples && deno task gen:plugin-catalog && deno task docs:llms && cd apps/web && deno task export && deno task search-index && deno task seo",
+    "docs:build": "deno task docs:api && deno task docs:mcp && deno task docs:cli && deno task docs:examples && deno task gen:plugin-catalog && deno task docs:corpus && deno task docs:llms && cd apps/web && deno task export && deno task search-index && deno task seo",
     "compile": "deno compile -A --output denext cli.ts",
     "bench": "deno run -A --config deno.json bench/run.ts",
     "bench:load": "deno run -A --unstable-kv --config deno.json bench/load/run.ts",
@@ -191,8 +191,11 @@
     "test:e2e": "deno test -A --unstable-kv tests/e2e/",
     "test:migration-bed": "deno test -A --unstable-kv tests/migration-bed/",
     "test:next-compat": "deno test -A --unstable-kv tests/e2e/next-compat-*.test.ts",
-    "test:coverage": "rm -rf coverage/profile && deno test -A --unstable-kv --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --threshold=85",
-    "coverage:fallow": "rm -rf coverage && deno test -A --unstable-kv --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --lcov --output=coverage/lcov.info && deno run --allow-read --allow-write scripts/coverage-to-istanbul.ts coverage/lcov.info coverage/coverage-final.json",
+    "test:coverage": "deno run --allow-read --allow-write=.denext --allow-run --allow-env scripts/locked.ts coverage -- deno task test:coverage:run",
+    "test:coverage:run": "rm -rf coverage/profile && deno test -A --unstable-kv --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --threshold=85 && deno coverage coverage/profile --include=/src/ --lcov --output=coverage/lcov.info && deno task coverage:floor",
+    "coverage:floor": "deno run --allow-read scripts/coverage-floor.ts coverage/lcov.info",
+    "coverage:fallow": "deno run --allow-read --allow-write=.denext --allow-run --allow-env scripts/locked.ts coverage -- deno task coverage:fallow:run",
+    "coverage:fallow:run": "rm -rf coverage && deno test -A --unstable-kv --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --lcov --output=coverage/lcov.info && deno run --allow-read --allow-write scripts/coverage-to-istanbul.ts coverage/lcov.info coverage/coverage-final.json",
     "badge:tests": "deno run --allow-read --allow-write scripts/badge-tests.ts",
     "badge:fallow": "deno run --allow-read --allow-write --allow-run=fallow scripts/badge-fallow.ts",
     "lint": "deno lint",
@@ -274,7 +277,8 @@
       "bench/node_modules/",
       "bench/fixtures/",
       "bench/results/",
-      "bench/REPORT.md"
+      "bench/REPORT.md",
+      "src/mcp/docs-corpus.json"
     ]
   },
   "lint": {
