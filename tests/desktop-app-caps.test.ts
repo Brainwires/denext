@@ -635,7 +635,7 @@ Deno.test("app: badge, bounce and the Dock menu (macOS only)", async () => {
   await call(mac.cap, "setBadge", { text: "3" });
   assertEquals(mac.dock.badge, "3");
   await call(mac.cap, "setBadge", { text: null });
-  assertEquals(mac.dock.badge, null);
+  assertEquals(mac.dock.badge, "", "cleared with an empty string (the runtime shows null as text)");
   await call(mac.cap, "bounce", { critical: true });
   assertEquals(mac.dock.bounces, [true]);
   assertEquals(

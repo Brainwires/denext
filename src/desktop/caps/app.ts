@@ -256,7 +256,8 @@ export function createAppController(options: AppControllerOptions): AppControlle
       setBadge: {
         handler: (args) => {
           if (typeof dock?.setBadge !== "function") throw unsupported("a badge");
-          dock.setBadge(shortText(argsOf(args).text, "text"));
+          // The runtime takes a string: `null` would show as the text "null"; "" clears the badge.
+          dock.setBadge(shortText(argsOf(args).text, "text") ?? "");
           return null;
         },
       },
