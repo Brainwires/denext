@@ -1517,6 +1517,10 @@ export default defineDesktopExtension({
         {" "}
         and <code>LAUFEY_DEV_DIR</code>.
       </p>
+      <p>
+        What the runtime adds over stock Deno Desktop, how it is built and verified, and how it
+        retires upstream: <a href="/docs/desktop-runtime">The Deno Desktop runtime</a>.
+      </p>
       <ul>
         <li>
           <strong>Deno 2.9.7 exactly.</strong> The runtime is built from Deno 2.9.7, and{" "}
