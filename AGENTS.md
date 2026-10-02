@@ -388,7 +388,9 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, Linux libsecret, Windows PasswordVault) and your `defineDesktopExtension` modules (from
-`denext/desktop`, listed in `desktop.capabilities.extensions`) — but only when `desktop.ts`
+`denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
+`ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
+in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`
 spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
 `runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
 call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
@@ -434,7 +436,10 @@ Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inl
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
 custom-scheme callback (a declared scheme, PKCE S256 mandatory, exact redirect + `state`, owner-checked;
-`claimDeepLinkScheme` only on a user action); `installClerkDesktopBridge()` from `denext/desktop/clerk`
+`claimDeepLinkScheme` only on a user action) — on macOS it runs in `ASWebAuthenticationSession` (a real
+`cancelled`; `preferEphemeral` for a private session), and where the system browser has the sign-in
+(Windows, Linux, the loopback flow) denext shows a Cancel overlay (`cancelOverlay: false` to render
+your own wired to `signal`); `installClerkDesktopBridge()` from `denext/desktop/clerk`
 makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 (`denext desktop add secure-store auth-session passkeys`).
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
