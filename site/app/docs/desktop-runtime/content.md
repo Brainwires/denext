@@ -549,6 +549,10 @@ machine, and whether `deno` is the version it needs.
 | `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).         |
 | `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | `gh attestation verify` a fresh download (`--attest-runtime`).     |
 
+The provenance check accepts only an attestation from the runtime repository's release workflow
+(`.github/workflows/denext_runtime.yml`) built from the pinned tag, on a GitHub-hosted runner; the
+`desktop:pin-runtime` task applies the same check to every archive before it writes a new pin.
+
 The packaged app's `--allow-*` flags don't change: the download happens in the packaging step, not
 in the app.
 

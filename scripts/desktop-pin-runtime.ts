@@ -4,14 +4,20 @@
 // stock `deno desktop` CLI (see `src/build/desktop-runtime.ts`).
 //
 //   deno task desktop:pin-runtime <tag>        # e.g. denext-runtime-v2.9.7-denext.1
-//   deno task desktop:pin-runtime <tag> --manifest <manifest.json> --sums <SHA256SUMS>  # local files
+//   deno task desktop:pin-runtime <tag> --manifest <manifest.json> --sums <SHA256SUMS> \
+//     [--archives <dir>]                         # local files (the archives too, by file name)
 //
 // Reads the release's `manifest.json` and `SHA256SUMS` and checks EVERY archive against both: the
 // manifest's sha256 must equal the SHA256SUMS line for the same file, every SHA256SUMS archive must
-// be in the manifest, and each URL must be this tag's release download URL for that file. The
-// output is deterministic; commit it.
+// be in the manifest, and each URL must be this tag's release download URL for that file. Then
+// every archive is fetched (or read from `--archives <dir>`), hashed against the pin, and its
+// build provenance checked with `gh attestation verify` under the same constraints a packager's
+// DENEXT_DESKTOP_RUNTIME_ATTEST=1 applies (the release workflow, this tag) — nothing is written
+// unless all of them pass. The output is deterministic; commit it.
 
-import { fromFileUrl } from "@std/path";
+import { encodeHex } from "@std/encoding/hex";
+import { fromFileUrl, join } from "@std/path";
+import { runtimeAttestationArgs } from "../src/build/desktop-runtime.ts";
 
 const REPO = "Brainwires/deno";
 const OUT = fromFileUrl(new URL("../src/build/desktop-runtime-pin.json", import.meta.url));
@@ -152,6 +158,77 @@ export function pinFromRelease(tag: string, manifest: unknown, sumsText: string)
   };
 }
 
+/** How {@linkcode attestPin} reaches the archives and `gh` (tests pass fakes). */
+export interface AttestPinOptions {
+  /** A directory holding the archives already (by file name); else each is downloaded. */
+  readonly archives?: string;
+  /** Download (default `fetch`). */
+  readonly fetch?: typeof fetch;
+  /** Run `gh` with these args, resolving its exit code (default: a real `gh`, output inherited). */
+  readonly run?: GhRun;
+}
+
+/** Run `gh` with `args`, resolving its exit code. */
+type GhRun = (args: string[]) => Promise<number>;
+
+const runGh: GhRun = async (args) =>
+  (await new Deno.Command("gh", { args, stdout: "inherit", stderr: "inherit" }).output()).code;
+
+/** SHA-256 of a file, hex. */
+async function sha256File(path: string): Promise<string> {
+  return encodeHex(await crypto.subtle.digest("SHA-256", await Deno.readFile(path)));
+}
+
+/** The pin's archives, in target then backend order. */
+function pinArchives(pin: PinFile): PinArtifact[] {
+  return Object.values(pin.targets).flatMap((t) => BACKENDS.flatMap((b) => t[b] ? [t[b]!] : []));
+}
+
+/** The archive's local path: from `--archives`, else downloaded into `tmp`. */
+async function archiveFile(
+  a: PinArtifact,
+  tmp: string,
+  options: AttestPinOptions,
+): Promise<string> {
+  if (options.archives) return join(options.archives, a.file);
+  const res = await (options.fetch ?? fetch)(a.url);
+  if (!res.ok || !res.body) fail(`GET ${a.url}: ${res.status}`);
+  const path = join(tmp, a.file);
+  await Deno.writeFile(path, res.body);
+  return path;
+}
+
+/** Hash one archive against the pin and `gh attestation verify` it; throws on a failure. */
+async function attestArchive(pin: PinFile, a: PinArtifact, path: string, run: GhRun) {
+  const got = await sha256File(path);
+  if (got !== a.sha256) fail(`${a.file}: sha256 ${got} != pinned ${a.sha256}`);
+  const code = await run(runtimeAttestationArgs(path, pin.repository, pin.tag)).catch(() =>
+    fail("the attestation check needs the GitHub CLI (gh)")
+  );
+  if (code !== 0) fail(`${a.file}: gh attestation verify failed (wrong workflow or tag?)`);
+}
+
+/**
+ * Cross-check every archive of `pin` before it is written: its bytes hash to the pinned SHA-256,
+ * and `gh attestation verify` accepts it as built by the runtime repository's release workflow
+ * from the pinned tag ({@linkcode runtimeAttestationArgs}). Throws on the first failure.
+ *
+ * @param pin The pin built from the release.
+ * @param options Where the archives are, and the fetch / gh runners.
+ */
+export async function attestPin(pin: PinFile, options: AttestPinOptions = {}): Promise<void> {
+  const tmp = await Deno.makeTempDir({ prefix: "denext-pin-attest-" });
+  try {
+    for (const a of pinArchives(pin)) {
+      const path = await archiveFile(a, tmp, options);
+      await attestArchive(pin, a, path, options.run ?? runGh);
+      if (!options.archives) await Deno.remove(path);
+    }
+  } finally {
+    await Deno.remove(tmp, { recursive: true }).catch(() => {});
+  }
+}
+
 async function fetchText(url: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) fail(`GET ${url}: ${res.status} ${res.statusText}`);
@@ -162,13 +239,21 @@ async function fetchText(url: string): Promise<string> {
  * The CLI: fetch (or read, with `--manifest` / `--sums`) the release's files, build the pin and
  * write it to `out`.
  *
- * @param args The command line (`<tag> [--manifest <file> --sums <file>]`).
+ * @param args The command line (`<tag> [--manifest <file> --sums <file>] [--archives <dir>]`).
  * @param out Where the pin is written (default: `src/build/desktop-runtime-pin.json`).
+ * @param attest The archive cross-check run before writing (default {@linkcode attestPin}).
  */
-export async function main(args: string[], out: string = OUT): Promise<void> {
+export async function main(
+  args: string[],
+  out: string = OUT,
+  attest: (pin: PinFile, options: AttestPinOptions) => Promise<void> = attestPin,
+): Promise<void> {
   const tag = args[0];
   if (!tag || tag.startsWith("-")) {
-    fail("usage: deno task desktop:pin-runtime <tag> [--manifest <file> --sums <file>]");
+    fail(
+      "usage: deno task desktop:pin-runtime <tag> [--manifest <file> --sums <file>] " +
+        "[--archives <dir>]",
+    );
   }
   const flag = (name: string) => {
     const i = args.indexOf(name);
@@ -182,6 +267,7 @@ export async function main(args: string[], out: string = OUT): Promise<void> {
     ? await Deno.readTextFile(flag("--sums")!)
     : await fetchText(`${base}/SHA256SUMS`);
   const pin = pinFromRelease(tag, JSON.parse(manifestText), sumsText);
+  await attest(pin, { archives: flag("--archives") });
   await Deno.writeTextFile(out, JSON.stringify(pin, null, 2) + "\n");
   const count = Object.values(pin.targets).reduce(
     (n, t) => n + BACKENDS.filter((b) => t[b]).length,

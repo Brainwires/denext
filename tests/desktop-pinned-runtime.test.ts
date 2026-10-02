@@ -19,10 +19,17 @@ import {
   verifiedRuntime,
 } from "../src/build/desktop-runtime.ts";
 import {
-  main as pinRuntimeMain,
+  attestPin,
+  main as pinMainWithAttest,
   parseSha256Sums,
+  type PinFile,
   pinFromRelease,
 } from "../scripts/desktop-pin-runtime.ts";
+
+/** The pin CLI with the archive attestation stubbed (its own test below covers it). */
+const attested: PinFile[] = [];
+const pinRuntimeMain = (args: string[], out: string) =>
+  pinMainWithAttest(args, out, (pin) => (attested.push(pin), Promise.resolve()));
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { sha256Hex, tarGz } from "./_archive-fixtures.ts";
 
@@ -297,7 +304,17 @@ Deno.test("ensureDesktopRuntime attest: runs gh on the archive; a cached unattes
     assertEquals(rt.cached, false);
     assertEquals(calls.length, 1);
     assertEquals(calls[0].slice(0, 3), ["gh", "attestation", "verify"]);
-    assertEquals(calls[0].slice(-2), ["-R", "Brainwires/deno"]);
+    // Pinned to the repository, the release workflow and the pin's own tag (not just any
+    // artifact some workflow of the repository attested).
+    assertEquals(calls[0].slice(4), [
+      "-R",
+      "Brainwires/deno",
+      "--signer-workflow",
+      "Brainwires/deno/.github/workflows/denext_runtime.yml",
+      "--source-ref",
+      `refs/tags/${f.pin.tag}`,
+      "--deny-self-hosted-runners",
+    ]);
     assertEquals((await ensure(f, { attest: true, fetch: offline })).cached, true);
     // Cached AND attested: no download and no gh run (a failing gh would throw).
     const cached = await ensure(f, {
@@ -831,6 +848,8 @@ Deno.test("desktop:pin-runtime CLI: local --manifest/--sums never fetch; a bad r
   try {
     await pinRuntimeMain([TAG, "--manifest", mf, "--sums", sf], out);
     assertEquals(JSON.parse(await Deno.readTextFile(out)).tag, TAG);
+    // The archives were cross-checked before the pin was written.
+    assertEquals(attested.at(-1)?.tag, TAG);
     // Usage errors: no tag, or a flag where the tag goes.
     for (const args of [[], ["--manifest", mf]]) {
       const err = await assertRejects(() => pinRuntimeMain(args, out));
@@ -844,6 +863,71 @@ Deno.test("desktop:pin-runtime CLI: local --manifest/--sums never fetch; a bad r
   } finally {
     globalThis.fetch = prevFetch;
     console.log = prevLog;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop:pin-runtime: every archive is hashed and attested to the release workflow + tag", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bytes = new TextEncoder().encode("runtime archive");
+    const file = `deno-desktop-runtime-2.9.7-denext.1-${TARGET}-webview.tar.gz`;
+    await Deno.writeFile(join(dir, file), bytes);
+    const pin: PinFile = {
+      schema: 1,
+      version: "2.9.7-denext.1",
+      tag: TAG,
+      repository: "https://github.com/Brainwires/deno",
+      deno: "2.9.7",
+      denoSha: "",
+      laufeySha: "",
+      laufeyApiVersion: null,
+      targets: {
+        [TARGET]: {
+          runtimeLib: LIB,
+          webview: {
+            file,
+            url: `https://example.invalid/${file}`,
+            sha256: await sha256Hex(bytes),
+            size: bytes.length,
+            format: "tar.gz",
+          },
+        },
+      },
+    };
+    const runs: string[][] = [];
+    const ok = (args: string[]) => (runs.push(args), Promise.resolve(0));
+    await attestPin(pin, { archives: dir, run: ok });
+    assertEquals(runs.length, 1);
+    assertEquals(runs[0].slice(0, 2), ["attestation", "verify"]);
+    assertEquals(runs[0].slice(3), [
+      "-R",
+      "Brainwires/deno",
+      "--signer-workflow",
+      "Brainwires/deno/.github/workflows/denext_runtime.yml",
+      "--source-ref",
+      `refs/tags/${TAG}`,
+      "--deny-self-hosted-runners",
+    ]);
+    // Downloaded: the same checks on the fetched bytes.
+    await attestPin(pin, { fetch: () => Promise.resolve(new Response(bytes)), run: ok });
+    assertEquals(runs.length, 2);
+    // A failed attestation, a hash mismatch, a failed download and a missing gh all refuse.
+    const refused = async (o: Parameters<typeof attestPin>[1], text: string) => {
+      const err = await assertRejects(() => attestPin(pin, o));
+      assertStringIncludes((err as Error).message, text);
+    };
+    await refused({ archives: dir, run: () => Promise.resolve(1) }, "attestation verify failed");
+    await refused({ archives: dir, run: () => Promise.reject(new Error("no gh")) }, "GitHub CLI");
+    await refused(
+      { fetch: () => Promise.resolve(new Response("tampered")), run: ok },
+      "!= pinned",
+    );
+    await refused(
+      { fetch: () => Promise.resolve(new Response("x", { status: 404 })), run: ok },
+      "GET https://example.invalid/",
+    );
+  } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });

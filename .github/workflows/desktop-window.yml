@@ -57,20 +57,24 @@ jobs:
           - { os: windows-latest, label: windows-x64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
     defaults:
       run:
         working-directory: examples/desktop-kitchen-sink
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # A scheduled run tests `development` (the active line); push / dispatch test their ref.
           ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.7" # exactly: denext's pinned Deno Desktop runtime is built for it
-      # The pinned runtime (verified by SHA-256 on every use) and the npm addon the app loads.
+      # The pinned runtime. A fresh download is checked against the pin's SHA-256; a cache hit is
+      # only size-checked by default, so the job sets DENEXT_DESKTOP_RUNTIME_VERIFY=1 (the job env) to
+      # re-hash every cached file against the pin before use — a poisoned cache entry fails.
       - name: Cache the Deno Desktop runtime
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cache/deno/denext-desktop-runtime
@@ -99,7 +103,7 @@ jobs:
         run: deno task test:window
       - name: Upload results and logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-window-${{ matrix.label }}
           if-no-files-found: warn
@@ -115,13 +119,13 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.7"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: desktop-window-*
           path: window-results

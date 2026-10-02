@@ -361,6 +361,13 @@ and this project adheres to
   every `fs` call (reads and `listDir` too — the data root's listing leaves them out), for
   `shell` `openPath` / `reveal` / `trash`, and for `startDrag`, matched case-insensitively and
   through any spelling of the data directory. Reading `ui-updates` was allowed before.
+- **Runtime provenance is pinned to the release build.** `DENEXT_DESKTOP_RUNTIME_ATTEST=1` now runs
+  `gh attestation verify` with `--signer-workflow <repo>/.github/workflows/denext_runtime.yml`,
+  `--source-ref refs/tags/<pinned tag>` and `--deny-self-hosted-runners`, so an artifact attested
+  by any other workflow or ref of the repository fails. `deno task desktop:pin-runtime` downloads
+  (or reads `--archives <dir>`), hashes and attests every archive before writing a pin. Every
+  GitHub Actions step in denext's own workflows is pinned to a commit SHA, and the desktop window
+  job re-hashes its cached runtime.
 
 ## [3.0.2] - 2026-09-30
 

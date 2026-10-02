@@ -329,16 +329,48 @@ export type RuntimeCommandRunner = (cmd: string, args: string[]) => Promise<numb
 const defaultRunner: RuntimeCommandRunner = async (cmd, args) =>
   (await new Deno.Command(cmd, { args, stdout: "inherit", stderr: "inherit" }).output()).code;
 
-/** `gh attestation verify` the archive (opt-in provenance check). */
+/**
+ * The workflow (in the runtime's repository) that builds and attests every pinned runtime
+ * release. An attestation from any other workflow — another workflow of the same repository, a
+ * fork's — is not this runtime's provenance.
+ */
+const DESKTOP_RUNTIME_SIGNER_WORKFLOW = ".github/workflows/denext_runtime.yml";
+
+/**
+ * The `gh attestation verify` arguments for a runtime archive: the repository, AND the exact
+ * workflow that must have signed it, AND the release tag it must have been built from — so only
+ * the pinned release's own build passes, not any artifact some workflow of the repository attested.
+ *
+ * @param archive The archive path.
+ * @param repository The pin's repository (`https://github.com/<owner>/<repo>` or `<owner>/<repo>`).
+ * @param tag The pinned release tag.
+ * @returns The argv after `gh`.
+ */
+export function runtimeAttestationArgs(archive: string, repository: string, tag: string): string[] {
+  const repo = repository.replace(/^https:\/\/github\.com\//, "");
+  return [
+    "attestation",
+    "verify",
+    archive,
+    "-R",
+    repo,
+    "--signer-workflow",
+    `${repo}/${DESKTOP_RUNTIME_SIGNER_WORKFLOW}`,
+    "--source-ref",
+    `refs/tags/${tag}`,
+    "--deny-self-hosted-runners",
+  ];
+}
+
+/** `gh attestation verify` the archive (opt-in provenance check), pinned to the release's build. */
 async function attest(
   archive: string,
-  repository: string,
+  pin: { readonly repository: string; readonly tag: string },
   run: RuntimeCommandRunner,
 ): Promise<void> {
-  const repo = repository.replace(/^https:\/\/github\.com\//, "");
   let code: number;
   try {
-    code = await run("gh", ["attestation", "verify", archive, "-R", repo]);
+    code = await run("gh", runtimeAttestationArgs(archive, pin.repository, pin.tag));
   } catch {
     throw new Error(
       `denext: ${DESKTOP_RUNTIME_ATTEST_ENV}=1 needs the GitHub CLI (gh) to verify the runtime's ` +
@@ -544,7 +576,7 @@ async function installRuntime(plan: InstallPlan): Promise<void> {
         `${opts.backend}, ${(artifact.size / 1024 / 1024).toFixed(1)} MB)…`,
     );
     await downloadVerified(artifact, archive, opts.fetch ?? fetch);
-    if (opts.attest) await attest(archive, pin.repository, opts.run ?? defaultRunner);
+    if (opts.attest) await attest(archive, pin, opts.run ?? defaultRunner);
     const staged = join(tmp, "runtime");
     await stageRuntime(plan, archive, staged);
     await installAtomically(staged, dir, versionDir, plan.acceptable);
