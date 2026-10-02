@@ -59,9 +59,10 @@ function Install-Denext {
   $bin = Join-Path $root 'bin'
 
   if ($Uninstall) {
+    Assert-SafeInstallRoot $root
     Remove-DenextPath $bin
-    if (Test-Path $root) { Remove-Item -Recurse -Force $root }
-    Write-Host "denext: removed $root and its bin from your user Path"
+    Uninstall-DenextFiles $root
+    Write-Host "denext: removed denext from $root and its bin from your user Path"
     return
   }
 
@@ -109,6 +110,8 @@ function Install-Denext {
     Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp 'x') -Force
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
     Move-Item -Force (Join-Path $tmp 'x\denext.exe') (Join-Path $bin 'denext.exe')
+    # What -Uninstall may remove: only the files this script put here.
+    Set-Content -Encoding ascii -Path (Join-Path $root $ManifestName) -Value $InstalledFiles
   } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
   }
@@ -181,6 +184,47 @@ function Get-PublishedDigest([string]$base, [string]$asset, [string]$tmp) {
     }
   }
   return $null
+}
+
+# The files the installer writes under DENEXT_INSTALL, recorded in its manifest beside them.
+$ManifestName = '.denext-install-manifest'
+$InstalledFiles = @('bin\denext.exe')
+
+# Refuse to uninstall from a root that is not a directory of its own: a drive root, the home or
+# profile directory (or one of its ancestors), Windows, Program Files, AppData or Temp. Uninstall
+# removes only listed files anyway; this stops a mistyped DENEXT_INSTALL before anything happens.
+function Assert-SafeInstallRoot([string]$root) {
+  $full = [IO.Path]::GetFullPath($root).TrimEnd('\')
+  $drive = [IO.Path]::GetPathRoot($full).TrimEnd('\')
+  $guarded = @($drive, $HOME, $env:USERPROFILE, $env:SystemRoot, $env:ProgramFiles,
+    ${env:ProgramFiles(x86)}, $env:APPDATA, $env:LOCALAPPDATA, $env:TEMP) |
+    Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') }
+  foreach ($g in $guarded) {
+    if ($full -ieq $g -or $g.StartsWith("$full\", [StringComparison]::OrdinalIgnoreCase)) {
+      throw "denext: refusing to uninstall from $full (DENEXT_INSTALL points at a shared directory)"
+    }
+  }
+}
+
+# Remove what the installer wrote (its manifest's files, else just bin\denext.exe from an
+# install that predates the manifest), then bin and the root only if nothing else is left.
+function Uninstall-DenextFiles([string]$root) {
+  $manifest = Join-Path $root $ManifestName
+  $listed = if (Test-Path -LiteralPath $manifest -PathType Leaf) { Get-Content $manifest } else { @() }
+  # Only the names this script ever writes: a manifest edited to name another path is ignored.
+  $files = @(@($listed) + $InstalledFiles) | Where-Object { $InstalledFiles -contains $_ } |
+    Select-Object -Unique
+  foreach ($rel in $files) {
+    $path = Join-Path $root $rel
+    if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+  }
+  if (Test-Path -LiteralPath $manifest -PathType Leaf) { Remove-Item -LiteralPath $manifest -Force }
+  foreach ($dir in @((Join-Path $root 'bin'), $root)) {
+    if ((Test-Path -LiteralPath $dir -PathType Container) -and
+      -not (Get-ChildItem -LiteralPath $dir -Force | Select-Object -First 1)) {
+      Remove-Item -LiteralPath $dir -Force
+    }
+  }
 }
 
 # Whether $dir is one of the entries of a `;`-separated Path value.

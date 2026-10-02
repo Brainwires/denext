@@ -389,6 +389,16 @@ and this project adheres to
   scheme per launch (`claim_limit`).
 - **Capability methods without a deadline end with their page.** For a `timeoutMs: false` method,
   `ctx.signal` now also aborts when the calling page's request goes away.
+- **`denext mcp init` never points a client at a foreign task.** Every client config runs
+  `deno task mcp`. An existing `mcp` task that is not denext's own command is now refused, its
+  text shown, and no client file is written. `--force` replaces it with a warning that shows the
+  old task. A client file under a symlinked directory (`.vscode/`, `.codex/`, …) is refused.
+  `denext init` treats a dangling symlink where it would write as an existing file.
+- **Smaller hardening.** The desktop bridge enforces its 4 MiB RPC body cap while the body
+  streams, not only from `content-length`. `install.ps1 -Uninstall` removes only the files it
+  installed (listed in a manifest) and refuses a drive root, the home directory and other shared
+  roots. `denext mobile add fastlane` escapes Ruby's `#@` / `#$` interpolation, ignores `*.json`
+  (Play service-account keys) in `fastlane/`, and quotes the workflow's `working-directory`.
 
 ## [3.0.2] - 2026-09-30
 

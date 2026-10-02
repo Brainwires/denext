@@ -204,6 +204,31 @@ function gateEvents(
   return null;
 }
 
+/**
+ * The body as text, or `null` once it passes `max` bytes — counted while it streams, so a body
+ * without (or lying about) `content-length` is cut off at the cap instead of buffered whole.
+ */
+async function readCapped(request: Request, max: number): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) (all.set(c, at), at += c.byteLength);
+  return new TextDecoder().decode(all);
+}
+
 /** Read the RPC body: enforce the size cap, parse JSON, check the `{ cap, method, args }` shape. */
 async function readRpcCall(
   request: Request,
@@ -212,8 +237,8 @@ async function readRpcCall(
   if (Number.isFinite(declared) && declared > MAX_RPC_BODY_BYTES) {
     return fail(413, "too_large", `the request is over ${MAX_RPC_BODY_BYTES} bytes`);
   }
-  const raw = await request.text();
-  if (new TextEncoder().encode(raw).byteLength > MAX_RPC_BODY_BYTES) {
+  const raw = await readCapped(request, MAX_RPC_BODY_BYTES);
+  if (raw === null) {
     return fail(413, "too_large", `the request is over ${MAX_RPC_BODY_BYTES} bytes`);
   }
   let body: { cap?: unknown; method?: unknown; args?: unknown };

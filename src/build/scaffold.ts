@@ -761,9 +761,11 @@ async function dropExistingDocs(files: ScaffoldFile[], dir: string): Promise<voi
   }
 }
 
+/** Whether anything is at `path` — `lstat`, so a symlink counts even when it dangles (writing
+ * through a dangling link would create its target, possibly outside the project). */
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.stat(path);
+    await Deno.lstat(path);
     return true;
   } catch {
     return false;

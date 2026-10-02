@@ -137,13 +137,15 @@ export default function Mcp() {
       <p>
         An existing file keeps its other servers and its comments (the entry is spliced in), and a
         re-run changes nothing. An existing <code>denext</code> entry or <code>mcp</code>{" "}
-        task is kept unless you pass{" "}
-        <code>--force</code>; a file that is not valid JSON is reported and left alone. Windsurf and
-        Zed are not written: neither documents a project-level MCP file. Claude Code asks you to
-        approve a project server the first time it starts, and the first start downloads the pinned
-        denext from JSR (later starts are cached). With <code>--fallow</code> as well, the generated
-        {" "}
-        <code>AGENTS.md</code> lists which tool to reach for when.
+        task is kept unless you pass <code>--force</code>. An <code>mcp</code>{" "}
+        task that is not denext's own command is refused, with its text shown, and no client is
+        pointed at it (every client runs <code>deno task mcp</code>); <code>--force</code>{" "}
+        replaces it with a warning. A file that is not valid JSON, or one under a symlinked
+        directory, is reported and left alone. Windsurf and Zed are not written: neither documents a
+        project-level MCP file. Claude Code asks you to approve a project server the first time it
+        starts, and the first start downloads the pinned denext from JSR (later starts are cached).
+        With <code>--fallow</code> as well, the generated <code>AGENTS.md</code>{" "}
+        lists which tool to reach for when.
       </p>
 
       <h2 id="offline-docs">The docs, offline</h2>

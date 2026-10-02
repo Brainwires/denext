@@ -416,6 +416,31 @@ Deno.test("init merges into an existing .vscode/settings.json instead of refusin
   }
 });
 
+Deno.test({
+  name: "init refuses a dangling symlink where it would write (the write would create its target)",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_init_link_" });
+    const outside = await Deno.makeTempDir({ prefix: "denext_init_outside_" });
+    try {
+      await Deno.symlink(join(outside, "planted.json"), join(dir, "deno.json"));
+      let err: unknown;
+      try {
+        await scaffoldProject({ dir, allowExisting: true });
+      } catch (e) {
+        err = e;
+      }
+      assert(err instanceof Error && err.message.includes("deno.json already exists"), String(err));
+      const created: string[] = [];
+      for await (const e of Deno.readDir(outside)) created.push(e.name);
+      assertEquals(created, [], "nothing was written through the link");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+});
+
 Deno.test("init scaffolds into an existing dir but won't overwrite existing files", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_init_" });
   try {

@@ -69,10 +69,14 @@ async function runInit(ctx: CommandContext): Promise<void> {
 }
 
 /** What `denext mcp init` did, one line per file. */
-function printInit({ written, skipped, errors }: AddMcpResult, dryRun: boolean): void {
+function printInit(
+  { written, skipped, errors, warnings = [] }: AddMcpResult,
+  dryRun: boolean,
+): void {
   const verb = dryRun ? "would write" : "+";
   for (const p of written) console.log(`   ${verb} ${p}`);
   for (const p of skipped) console.log(`   • already present: ${p}`);
+  for (const w of warnings) console.error(`   !! WARNING: ${w}`);
   for (const e of errors) console.error(`   ! ${e}`);
   if (dryRun) return;
   if (written.length > 0) {

@@ -132,6 +132,10 @@ Deno.test("install.ps1: a good checksum installs the binary; -Uninstall removes 
     assertStringIncludes(out, "checksum verified");
     assert(await exists(join(root, "bin", "denext.exe")));
     assert(release.hits.some((h) => h.endsWith("/releases/latest")), "resolved latest");
+    assert(
+      await exists(join(root, ".denext-install-manifest")),
+      "the manifest names what it wrote",
+    );
     const removed = await install(release, root, {}, ["-Uninstall"]);
     assertEquals(removed.code, 0, removed.out);
     assert(!(await exists(root)));
@@ -268,6 +272,43 @@ Deno.test("install.ps1 and publish.yml agree on the Windows asset and checksum n
   // HTTPS by default; the test override is loopback-only.
   assertStringIncludes(script, '"https://github.com/$repo/releases/download"');
   assertStringIncludes(script, "$uri.IsLoopback");
+});
+
+Deno.test("install.ps1: -Uninstall removes only what it installed, never a shared root", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  try {
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    // DENEXT_INSTALL pointed at a directory that holds other things.
+    const root = join(dir, "shared");
+    await Deno.mkdir(join(root, "bin"), { recursive: true });
+    await Deno.writeTextFile(join(root, "notes.txt"), "keep me");
+    await Deno.writeTextFile(join(root, "bin", "other.exe"), "keep me");
+    assertEquals((await install(release, root)).code, 0);
+    // A manifest edited to name another file is not obeyed.
+    await Deno.writeTextFile(
+      join(root, ".denext-install-manifest"),
+      "bin\\denext.exe\r\nnotes.txt\r\n",
+    );
+    const removed = await install(release, root, {}, ["-Uninstall"]);
+    assertEquals(removed.code, 0, removed.out);
+    assert(!(await exists(join(root, "bin", "denext.exe"))));
+    assertEquals(await Deno.readTextFile(join(root, "notes.txt")), "keep me");
+    assertEquals(await Deno.readTextFile(join(root, "bin", "other.exe")), "keep me");
+    // A drive root or the home directory is refused before anything is touched.
+    for (const shared of ["C:\\", Deno.env.get("USERPROFILE") ?? "C:\\Users"]) {
+      const r = await install(release, shared, {}, ["-Uninstall"]);
+      assert(r.code !== 0, shared);
+      assertStringIncludes(r.out, "refusing to uninstall");
+    }
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("docs: the served install.ps1 matches the one in scripts/", async () => {

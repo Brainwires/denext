@@ -28,9 +28,12 @@ export const FASTLANE_FILES = {
 /** The workflow `--ci` writes, relative to the repository root. */
 export const FASTLANE_WORKFLOW = ".github/workflows/mobile-release.yml";
 
-/** A Ruby double-quoted string literal for `value` (escapes `\`, `"` and `#{`). */
+/**
+ * A Ruby double-quoted string literal for `value`: escapes `\`, `"` and every `#` that would start
+ * an interpolation (`#{expr}`, and the short forms `#@ivar`, `#@@cvar`, `#$global`).
+ */
 export function rubyString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/#\{/g, "\\#{")}"`;
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/#(?=[{@$])/g, "\\#")}"`;
 }
 
 /**
@@ -119,6 +122,9 @@ screenshots/**/*.png
 *.mobileprovision
 *.jks
 *.keystore
+# Play Console service-account keys (supply's json_key_file) are JSON; nothing fastlane needs
+# committed here is.
+*.json
 .env
 .env.*
 `;
@@ -464,13 +470,25 @@ function installSteps(install: WorkflowInstall, locked: boolean): string {
 }
 
 /**
+ * A path as a YAML double-quoted scalar (a JSON string is one), so `#`, `: `, a leading `*` / `&`
+ * or quotes in a directory name stay text. GitHub evaluates `${{ … }}` inside any string, so a
+ * path containing it is refused rather than quoted.
+ */
+function yamlPath(path: string): string {
+  if (path.includes("${{") || /[\r\n]/.test(path)) {
+    throw new Error(`the project path ${JSON.stringify(path)} cannot be written into a workflow`);
+  }
+  return JSON.stringify(path);
+}
+
+/**
  * The GitHub Actions workflow: a manual dispatch that runs `bundle exec fastlane <platform>
  * <lane>` for Android on Ubuntu and iOS on macOS, with every credential a repository secret.
  *
  * @param opts Where the project is and how its packages install.
  */
 export function workflowTemplate(opts: WorkflowOptions): string {
-  const wd = opts.workingDirectory;
+  const wd = yamlPath(opts.workingDirectory);
   const setup = (java: boolean) =>
     "      - uses: actions/checkout@v5\n" +
     "      - uses: denoland/setup-deno@v2\n" +

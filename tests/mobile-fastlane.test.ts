@@ -93,7 +93,7 @@ Deno.test("add fastlane: the files, marked, with the Appfile and Matchfile from 
     assertStringIncludes(await read(dir, "Gemfile"), `gem "fastlane", "~> ${FASTLANE_VERSION}"`);
     assertStringIncludes(await read(dir, "Gemfile"), "Pluginfile");
     const ignore = await read(dir, "fastlane/.gitignore");
-    for (const line of ["report.xml", "README.md", "*.p8", "*.jks", ".env"]) {
+    for (const line of ["report.xml", "README.md", "*.p8", "*.jks", "*.json", ".env"]) {
       assertStringIncludes(ignore, `\n${line}\n`);
     }
     // No workflow without --ci; Gemfile.lock and match are left to do.
@@ -149,6 +149,8 @@ Deno.test("add fastlane: the Fastfile's lanes build with `denext mobile build` a
 
 Deno.test("add fastlane: Ruby string escaping and a missing appId", async () => {
   assertEquals(rubyString('a"b\\c#{x}'), '"a\\"b\\\\c\\#{x}"');
+  // The short interpolation forms are escaped too; a plain `#` is left alone.
+  assertEquals(rubyString("a#@b#@@c#$d#e"), '"a\\#@b\\#@@c\\#$d#e"');
   assertStringIncludes(
     appfileTemplate('evil"); system("x'),
     'app_identifier("evil\\"); system(\\"x")',
@@ -255,7 +257,7 @@ Deno.test("add fastlane --ci: the workflow at the repository root, secrets by na
     const report = await addFastlaneToProject({ dir, ci: true });
     assert(report.written.includes("../../.github/workflows/mobile-release.yml"));
     const yml = await Deno.readTextFile(join(repo, ".github/workflows/mobile-release.yml"));
-    assertStringIncludes(yml, "working-directory: apps/mobile");
+    assertStringIncludes(yml, 'working-directory: "apps/mobile"');
     assertStringIncludes(yml, "pnpm install --frozen-lockfile");
     assertStringIncludes(yml, "uses: ruby/setup-ruby@v1");
     assertStringIncludes(yml, "bundler-cache: true");
@@ -282,6 +284,20 @@ Deno.test("add fastlane --ci: the workflow at the repository root, secrets by na
     await Deno.remove(repo, { recursive: true });
   }
   // npm with and without a lockfile.
+  // A directory name is YAML text, never markup or an expression.
+  assertStringIncludes(
+    workflowTemplate({ workingDirectory: "a #b: *c", install: "npm", locked: true, cli: "x" }),
+    'working-directory: "a #b: *c"',
+  );
+  for (const bad of ["x${{ github.token }}", "a\nb"]) {
+    let threw = false;
+    try {
+      workflowTemplate({ workingDirectory: bad, install: "npm", locked: true, cli: "x" });
+    } catch {
+      threw = true;
+    }
+    assert(threw, bad);
+  }
   const npm = workflowTemplate({ workingDirectory: ".", install: "npm", locked: true, cli: "x" });
   assertStringIncludes(npm, "npm ci --no-audit --no-fund");
   assertStringIncludes(

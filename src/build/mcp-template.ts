@@ -161,6 +161,8 @@ export interface AddMcpResult {
   readonly skipped: string[];
   /** Paths that could not be edited, with the reason (`path: reason`). */
   readonly errors: string[];
+  /** Things worth shouting about that did not stop the run (a replaced foreign `mcp` task). */
+  readonly warnings?: string[];
 }
 
 /** Other spellings `--clients` accepts. */
@@ -211,33 +213,69 @@ export async function addMcp(
   cli: string,
   options: AddMcpOptions = {},
 ): Promise<AddMcpResult> {
-  const result: AddMcpResult = { written: [], skipped: [], errors: [] };
+  const result: AddMcpResult = { written: [], skipped: [], errors: [], warnings: [] };
   const denoConfig = await denoJsonName(dir);
-  await addMcpTask(dir, denoConfig, mcpTaskCommand(cli, options.disable), options, result);
-  await writeMcpClientConfigs(dir, options, result, denoConfig);
+  const taskOk = await addMcpTask(
+    dir,
+    denoConfig,
+    mcpTaskCommand(cli, options.disable),
+    options,
+    result,
+  );
+  // The clients run `deno task mcp`: never point them at a task denext did not write.
+  if (taskOk) await writeMcpClientConfigs(dir, options, result, denoConfig);
   return result;
 }
 
-/** Splice the `mcp` task into `deno.json(c)` (replaced only with `force`). */
+/**
+ * Whether an existing `mcp` task is denext's own shape (a `denext mcp` / `deno run -A
+ * jsr:@denext/denext[@<ver>]/cli mcp`, with an optional `--disable` list) — kept as is. Anything
+ * else is the repository's own command, which a client would run on the user's machine.
+ */
+function isDenextMcpTask(task: unknown): boolean {
+  return typeof task === "string" &&
+    /^(?:denext|deno run -A jsr:@denext\/denext(?:@[\w.^~<>=*-]+)?\/cli) mcp(?: --disable [\w,-]+)?$/
+      .test(task);
+}
+
+/**
+ * Splice the `mcp` task into `deno.json(c)`. An existing denext-shaped task is kept; a different
+ * one is refused (an error showing its text) unless `force`, which replaces it with a warning that
+ * shows what was there. Returns whether the clients may be pointed at the task.
+ */
 async function addMcpTask(
   dir: string,
   denoConfig: string,
   command: string,
   options: AddMcpOptions,
   result: AddMcpResult,
-): Promise<void> {
+): Promise<boolean> {
   const path = join(dir, denoConfig);
   const source = await Deno.readTextFile(path);
   const doc = readJson(source) as { tasks?: Record<string, unknown> } | null;
   const current = doc?.tasks?.[MCP_TASK];
-  if (current === command || (current !== undefined && options.force !== true)) {
+  const shown = JSON.stringify(current);
+  if (current === command || (isDenextMcpTask(current) && options.force !== true)) {
     result.skipped.push(`${denoConfig} (task "${MCP_TASK}")`);
-    return;
+    return true;
+  }
+  if (current !== undefined && !isDenextMcpTask(current)) {
+    if (options.force !== true) {
+      result.errors.push(
+        `${denoConfig}: the existing "${MCP_TASK}" task is not denext's — an MCP client would ` +
+          `run ${shown}. Review it; --force replaces it.`,
+      );
+      return false;
+    }
+    result.warnings?.push(
+      `${denoConfig}: REPLACED the "${MCP_TASK}" task, which was ${shown} (not denext's).`,
+    );
   }
   const edit = await setJsonValue(source, ["tasks", MCP_TASK], command);
   if (!edit.ok) throw new Error(`denext mcp: could not edit ${denoConfig}: ${edit.reason}`);
   if (options.dryRun !== true) await Deno.writeTextFile(path, edit.source);
   result.written.push(denoConfig);
+  return true;
 }
 
 /**
@@ -260,6 +298,7 @@ export async function writeMcpClientConfigs(
     const rel = MCP_CLIENT_FILES[client];
     const abs = join(dir, rel);
     try {
+      await refuseSymlinkedParents(dir, rel);
       const next = await mergedClientFile(client, abs, denoConfig, options.force === true);
       if (next === null) {
         result.skipped.push(rel);
@@ -359,6 +398,20 @@ async function denoJsonName(dir: string): Promise<string> {
     if (await lstatOrNull(join(dir, name))) return name;
   }
   throw new Error(`denext mcp: no deno.json in ${dir} (run it from a denext project).`);
+}
+
+/**
+ * Refuse a client file below a symlinked directory of the project (`.vscode/`, `.codex/`, …): the
+ * write would land wherever it points. Every directory component of `rel` is checked.
+ */
+async function refuseSymlinkedParents(dir: string, rel: string): Promise<void> {
+  const parts = rel.split("/").slice(0, -1);
+  for (let i = 1; i <= parts.length; i++) {
+    const sub = parts.slice(0, i).join("/");
+    if ((await lstatOrNull(join(dir, sub)))?.isSymlink) {
+      throw new Error(`${sub} is a symlink; edit it by hand`);
+    }
+  }
 }
 
 async function lstatOrNull(path: string): Promise<Deno.FileInfo | null> {

@@ -238,6 +238,35 @@ Deno.test("body: an oversized content-length is rejected as too_large", async ()
   assertEquals(env.error?.code, "too_large");
 });
 
+Deno.test("body: a streamed body with no content-length is cut off at the cap", async () => {
+  const bridge = createDesktopBridge([echoCapability]);
+  const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+  let pulled = 0;
+  let cancelled = false;
+  // An endless body: the bridge must stop reading at 4 MiB, not buffer it whole.
+  const body = new ReadableStream<Uint8Array>({
+    pull: (c) => (pulled++, c.enqueue(chunk)),
+    cancel: () => void (cancelled = true),
+  });
+  const base = rpc(undefined);
+  const req = new Request(base.url, { method: "POST", headers: base.headers, body });
+  assert(!req.headers.has("content-length"));
+  const { status, env } = await call(bridge, req);
+  assertEquals([status, env.error?.code], [413, "too_large"]);
+  assert(pulled <= 6, `read ${pulled} MiB`);
+  assert(cancelled, "the rest of the body was cancelled");
+  // Under the cap a streamed body still works.
+  const ok = new Request(base.url, {
+    method: "POST",
+    headers: base.headers,
+    body: ReadableStream.from([
+      new TextEncoder().encode('{"cap":"echo",'),
+      new TextEncoder().encode('"method":"ping","args":"hi"}'),
+    ]),
+  });
+  assertEquals((await call(bridge, ok)).status, 200);
+});
+
 Deno.test("registry: a duplicate capability name is rejected at construction", () => {
   assertThrows(
     () => createDesktopBridge([echoCapability, { name: "echo", methods: {} }]),
