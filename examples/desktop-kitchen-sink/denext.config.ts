@@ -51,6 +51,13 @@ export default {
       contextMenu: true,
       globalShortcuts: true,
       launchAtLogin: true,
+      // System-browser sign-in with a custom-scheme callback (`openAuthSession`); the window test
+      // puts a stand-in browser first on PATH, so no real browser opens.
+      authSession: true,
+      // Native passkeys, pinned to relying parties the test never reaches the OS with: one the
+      // native parser refuses (`bad_rp.invalid` is not a domain name) proves the runtime path
+      // without a ceremony; any other RP is refused by the capability itself.
+      passkeys: { rpIds: ["bad_rp.invalid"] },
       // Only https links, and the app-folder actions the test can run unattended.
       shell: {
         openExternal: ["https:"],
@@ -64,6 +71,9 @@ export default {
     // The Node-API addon is a native library the Deno process loads: an unscoped `--allow-ffi`,
     // since the packaged app loads it from its embedded file system (no nameable path).
     extraPermissions: { ffi: ["*"] },
-    ...(updatePublicKey ? { update: { publicKey: updatePublicKey } } : {}),
+    // `autoConfirm: false` (read again at launch, unlike the key): the page confirms, or, on the
+    // window test's trial launch of a new version, deliberately does not, so the next launch rolls
+    // the update back.
+    update: { autoConfirm: false, ...(updatePublicKey ? { publicKey: updatePublicKey } : {}) },
   },
 } satisfies DenextConfig;

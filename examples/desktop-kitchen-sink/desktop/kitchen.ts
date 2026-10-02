@@ -2,23 +2,84 @@
 // Deno process, and the page reaches it through the same token-gated bridge as the built-ins
 // (`desktopExtension("kitchen")` in `denext/desktop/client`). It is also the window test's harness:
 //
-// - `setup` tells the page whether it was started by `e2e/window-test.ts` (`KITCHEN_SINK_*` env);
-// - `mark` / `report` hand progress markers and the results back to the runner as files;
+// - `setup` tells the page whether it was started by `e2e/window-test.ts` and in which phase (the
+//   runner writes `kitchen-sink-runner.json` into the app's data folder before each launch, so a
+//   process the updater relaunches finds it too);
+// - `mark` / `report` hand progress markers and the results back to the runner as files, and
+//   `markerExists` reads a marker back (a probe that must NOT have reached the extension);
+// - `secondInstance` asks the runner to start a second instance with some arguments and waits for
+//   its exit code;
 // - `diskRead` reads a file in the app's data folder straight from disk, so the page can prove a
 //   `writeFile` went through the native `fs` capability and not a browser-storage fallback;
 // - `crc32` loads a Node-API addon (`@node-rs/crc32`, prebuilt for every desktop OS) in this process;
-// - `updateCheck` / `updateStatus` drive `denext/desktop/updater`'s full-app updater;
+// - `updateCheck` / `updateStatus` / `updateDownload` / `updateInstall` / `updateConfirm` drive
+//   `denext/desktop/updater`'s full-app updater;
+// - `tcpProbe` sends bridge requests carrying the page's token to the runtime's loopback TCP relay;
+// - `browserLog` reads what the runner's stand-in system browser was asked to open;
 // - `devtools`, `scheduledTags` read the runtime's DevTools switch and scheduled notifications, and
 //   `synthetic` dispatches an OS event (a notification click, a shortcut press, a menu click) on the
 //   runtime object that would fire it, for the plumbing no unattended test can press.
 
 import { defineDesktopExtension } from "denext/desktop";
-import { appUpdateStatus, checkForAppUpdate } from "denext/desktop/updater";
+import {
+  appUpdateStatus,
+  checkForAppUpdate,
+  confirmAppUpdate,
+  downloadAppUpdate,
+  installAppUpdateAndRelaunch,
+} from "denext/desktop/updater";
 import { join, resolve, SEPARATOR } from "@std/path";
 
-/** The runner's scratch folder for markers and the report (unset outside the window test). */
-function outDir(): string | undefined {
-  return Deno.env.get("KITCHEN_SINK_OUT") || undefined;
+/** The file the runner writes into the app's data folder before each launch. */
+const RUNNER_FILE = "kitchen-sink-runner.json";
+
+/** What the runner left for this launch (see `e2e/window-test.ts`). */
+interface RunnerState {
+  /** The runner's scratch folder for markers, requests and reports. */
+  readonly out: string;
+  /**
+   * `main`, or which launch of the full-app update test this is: the runner writes `update` once,
+   * and the phase follows from the updater's own status (see {@link updatePhase}), so a launch the
+   * updater starts never races the runner.
+   */
+  readonly phase: string;
+  /** The loopback base URL the signed update manifests are served from. */
+  readonly updateBase: string | null;
+}
+
+/** The runner's state, read once per launch (`null` when the app was opened by hand). */
+let runnerState: Promise<RunnerState | null> | undefined;
+
+function readRunnerState(dataDir: string): Promise<RunnerState | null> {
+  runnerState ??= Deno.readTextFile(join(dataDir, RUNNER_FILE)).then(
+    (text) => {
+      const s = JSON.parse(text) as Partial<RunnerState>;
+      if (typeof s.out !== "string" || typeof s.phase !== "string") return null;
+      return {
+        out: s.out,
+        phase: s.phase === "update" ? updatePhase() : s.phase,
+        updateBase: typeof s.updateBase === "string" ? s.updateBase : null,
+      };
+    },
+    () => null,
+  );
+  return runnerState;
+}
+
+/**
+ * Which update launch this is: after a rollback (`--denext-rolled-back-from`), the new version's
+ * trial launch, or the original install that downloads and installs the update.
+ */
+function updatePhase(): string {
+  const status = appUpdateStatus();
+  if (status?.rolledBackFrom) return "update-rollback";
+  if (status?.trial) return "update-trial";
+  return "update-install";
+}
+
+/** The runner's scratch folder (`undefined` outside the window test). */
+async function outDir(dataDir: string): Promise<string | undefined> {
+  return (await readRunnerState(dataDir))?.out;
 }
 
 function field(args: unknown, key: string): unknown {
@@ -43,21 +104,63 @@ function message(err: unknown): string {
   return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The error code of a refused updater call, or the result. */
+async function updaterCall<T>(f: () => T | Promise<T>) {
+  try {
+    return { ok: true as const, result: await f() };
+  } catch (err) {
+    const e = err as { code?: unknown; message?: unknown };
+    return { ok: false as const, code: String(e.code ?? "unknown"), message: String(e.message) };
+  }
+}
+
+/** Updater options for the runner's loopback server (dev-only flags: an unsigned local build). */
+function updaterConfig(url: string) {
+  return { manifestUrl: url, allowInsecureLoopback: true, allowUnsignedDev: true };
+}
+
+/** Send `request` over a fresh TCP connection to `port` and return the response's status line. */
+async function rawRequest(port: number, request: string): Promise<string> {
+  const conn = await Deno.connect({ hostname: "127.0.0.1", port });
+  try {
+    await conn.write(new TextEncoder().encode(request));
+    const buf = new Uint8Array(4096);
+    let text = "";
+    const deadline = Date.now() + 5000;
+    while (!text.includes("\r\n") && Date.now() < deadline) {
+      const n = await Promise.race([conn.read(buf), sleep(5000).then(() => null)]);
+      if (n === null) break;
+      text += new TextDecoder().decode(buf.subarray(0, n));
+    }
+    return text.split("\r\n")[0] || "(connection closed without a response)";
+  } finally {
+    try {
+      conn.close();
+    } catch { /* already closed */ }
+  }
+}
+
 export default defineDesktopExtension({
   name: "kitchen",
   methods: {
     setup: {
-      handler: (_args, ctx) => {
-        const updateBase = Deno.env.get("KITCHEN_SINK_UPDATE_BASE") || null;
+      handler: async (_args, ctx) => {
+        const state = await readRunnerState(ctx.appSupportDir);
+        const updateBase = state?.updateBase ?? null;
         return {
-          autorun: Deno.env.get("KITCHEN_SINK_AUTORUN") === "1",
+          autorun: state !== null,
+          phase: state?.phase ?? "main",
           // The runner serves signed manifests here: a valid newer one, one signed by another key,
-          // and one offering an older version.
+          // one offering an older version, one for another app, and a real update to install.
           updateUrls: updateBase
             ? {
               good: `${updateBase}good.json`,
               badSignature: `${updateBase}bad-signature.json`,
               downgrade: `${updateBase}downgrade.json`,
+              wrongApp: `${updateBase}wrong-app.json`,
+              real: `${updateBase}real.json`,
             }
             : null,
           os: Deno.build.os,
@@ -66,31 +169,72 @@ export default defineDesktopExtension({
           pinnedRuntime: typeof (Deno as { desktop?: unknown }).desktop === "object",
           // The fs capability's "data" folder (`moveToTrash` takes an absolute path inside it).
           dataDir: ctx.appSupportDir,
+          pid: Deno.pid,
         };
       },
     },
     mark: {
-      handler: async (args) => {
-        const dir = outDir();
+      handler: async (args, ctx) => {
+        const dir = await outDir(ctx.appSupportDir);
         if (!dir) return { written: false };
-        await Deno.writeTextFile(join(dir, `${safeName(stringField(args, "name"))}.marker`), "");
+        const data = field(args, "data");
+        await Deno.writeTextFile(
+          join(dir, `${safeName(stringField(args, "name"))}.marker`),
+          typeof data === "string" ? data : "",
+        );
         return { written: true };
+      },
+    },
+    markerExists: {
+      handler: async (args, ctx) => {
+        const dir = await outDir(ctx.appSupportDir) ?? ctx.appSupportDir;
+        const file = join(dir, `${safeName(stringField(args, "name"))}.marker`);
+        return { exists: await Deno.stat(file).then(() => true, () => false) };
       },
     },
     report: {
       handler: async (args, ctx) => {
-        const dir = outDir() ?? ctx.appSupportDir;
+        const state = await readRunnerState(ctx.appSupportDir);
+        const dir = state?.out ?? ctx.appSupportDir;
+        const phase = state?.phase ?? "main";
         const report = {
           at: new Date().toISOString(),
+          phase,
+          pid: Deno.pid,
           results: field(args, "results"),
           expected: field(args, "expected"),
         };
-        const file = join(dir, "kitchen-sink-report.json");
+        const file = join(dir, `kitchen-sink-report-${phase}.json`);
         await Deno.mkdir(dir, { recursive: true });
         await Deno.writeTextFile(`${file}.tmp`, JSON.stringify(report, null, 2));
         await Deno.rename(`${file}.tmp`, file); // the runner never sees a half-written report
         console.log(`kitchen-sink: report written to ${file}`);
         return { file };
+      },
+    },
+    secondInstance: {
+      // The runner starts the process, which hands its arguments over and exits: allow it time.
+      timeoutMs: 60_000,
+      handler: async (args, ctx) => {
+        const dir = await outDir(ctx.appSupportDir);
+        if (!dir) throw new TypeError("not started by the window test");
+        const argv = field(args, "args");
+        if (!Array.isArray(argv) || !argv.every((a) => typeof a === "string")) {
+          throw new TypeError("args must be a string array");
+        }
+        const id = safeName(stringField(args, "id"));
+        const done = join(dir, `second-${id}.done.json`);
+        await Deno.writeTextFile(
+          join(dir, `second-${id}.request.json`),
+          JSON.stringify({ args: argv }),
+        );
+        const until = Date.now() + 50_000;
+        while (Date.now() < until) {
+          const text = await Deno.readTextFile(done).catch(() => null);
+          if (text !== null) return JSON.parse(text) as { code: number | null };
+          await sleep(200);
+        }
+        return { code: null, timedOut: true };
       },
     },
     diskRead: {
@@ -108,6 +252,14 @@ export default defineDesktopExtension({
         }
       },
     },
+    browserLog: {
+      handler: async (_args, ctx) => {
+        const dir = await outDir(ctx.appSupportDir);
+        if (!dir) return { lines: null };
+        const text = await Deno.readTextFile(join(dir, "bin", "browser.log")).catch(() => "");
+        return { lines: text.split(/\r?\n/).filter((l) => l !== "") };
+      },
+    },
     crc32: {
       handler: async (args) => {
         // Loads the platform's prebuilt `.node` (darwin-x64/arm64, linux-x64/arm64-gnu, win32-x64)
@@ -123,21 +275,74 @@ export default defineDesktopExtension({
       },
     },
     updateCheck: {
-      handler: async (args) => {
-        try {
-          const result = await checkForAppUpdate({
-            manifestUrl: stringField(args, "url"),
-            allowInsecureLoopback: true, // the runner's local http server
-          });
-          return { ok: true, result };
-        } catch (err) {
-          const e = err as { code?: unknown; message?: unknown };
-          return { ok: false, code: String(e.code ?? "unknown"), message: String(e.message) };
-        }
-      },
+      handler: (args) =>
+        updaterCall(() => checkForAppUpdate(updaterConfig(stringField(args, "url")))),
+    },
+    updateDownload: {
+      timeoutMs: 120_000,
+      handler: (args) =>
+        updaterCall(async () => {
+          const config = updaterConfig(stringField(args, "url"));
+          const check = await checkForAppUpdate(config);
+          if (!check.available) throw new Error(`no update offered (${check.version})`);
+          return await downloadAppUpdate(config);
+        }),
+    },
+    updateInstall: {
+      handler: () => updaterCall(() => installAppUpdateAndRelaunch({ force: true })),
+    },
+    updateConfirm: {
+      handler: () => updaterCall(() => confirmAppUpdate()),
     },
     updateStatus: {
       handler: () => appUpdateStatus(),
+    },
+    tcpProbe: {
+      timeoutMs: 30_000,
+      handler: async (args) => {
+        // The runtime's WebSocket-only loopback relay is the app's one TCP listener in the memory
+        // world. Each probe carries the page's real token and the exact app origin, and asks the
+        // bridge to write a marker; the page then checks the marker was never written.
+        const relay = Deno.env.get("DENO_DESKTOP_WS_ORIGIN");
+        if (!relay) return { relay: null, probes: [] };
+        const port = Number(new URL(relay.replace(/^ws/, "http")).port);
+        const token = stringField(args, "token");
+        const origin = stringField(args, "origin");
+        const body = JSON.stringify({
+          cap: "kitchen",
+          method: "mark",
+          args: { name: "tcp-probe-reached" },
+        });
+        const headers = (extra: string) =>
+          `Host: 127.0.0.1:${port}\r\nOrigin: ${origin}\r\n` +
+          `x-denext-desktop-token: ${token}\r\n${extra}Connection: close\r\n\r\n`;
+        const post = (target: string) =>
+          `POST ${target} HTTP/1.1\r\n` +
+          headers(
+            `Content-Type: application/json\r\nContent-Length: ${
+              new TextEncoder().encode(body).byteLength
+            }\r\n`,
+          ) + body;
+        const upgrade = `GET /_denext/desktop/rpc HTTP/1.1\r\n` +
+          headers(
+            "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n" +
+              "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+          );
+        const probes: Array<{ name: string; status: string }> = [];
+        for (
+          const [name, request] of [
+            ["POST to the relay", post("/_denext/desktop/rpc")],
+            ["absolute-form http+memory: target", post("http+memory://app/_denext/desktop/rpc")],
+            ["WebSocket upgrade to the RPC path", upgrade],
+          ] as const
+        ) {
+          probes.push({
+            name,
+            status: await rawRequest(port, request).catch((err) => `error: ${message(err)}`),
+          });
+        }
+        return { relay, probes };
+      },
     },
     devtools: {
       handler: () => ({ enabled: desktop()?.devtools?.enabled ?? null }),

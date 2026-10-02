@@ -1,7 +1,9 @@
 "use client";
 // Runs the checks (`checks.ts`) in the window and shows each result. Launched by the window test
-// (`KITCHEN_SINK_AUTORUN=1`), it runs them at once, hands the results to the `kitchen` extension
-// (which writes the runner's report) and quits; opened by hand, it waits for the button.
+// (the runner leaves `kitchen-sink-runner.json` in the app's data folder), it runs them at once,
+// hands the results to the `kitchen` extension (which writes the runner's report) and quits; opened
+// by hand, it waits for the button. On the window test's full-app update launches it runs only that
+// phase's checks, and the install phase hands over to the updater instead of quitting.
 
 import { useEffect, useRef, useState } from "denext";
 import { type DeepLinkEvent, onDeepLink, onOpenFile, type OpenedFile } from "denext/mobile";
@@ -9,7 +11,7 @@ import { quitApp } from "denext/desktop/window";
 import {
   type CheckContext,
   type CheckResult,
-  CHECKS,
+  checksFor,
   kitchen,
   type KitchenSetup,
   runChecks,
@@ -32,8 +34,15 @@ export function KitchenSink() {
       (r) => setResults((prev) => [...prev, r]),
     );
     setState("done");
-    if (ctx.current.setup.autorun) {
-      await kitchen.report({ results: all, expected: CHECKS.map(([name]) => name) });
+    const { autorun, phase } = ctx.current.setup;
+    if (autorun) {
+      await kitchen.report({ results: all, expected: checksFor(phase).map(([name]) => name) });
+      // The install phase: swap in the staged update and relaunch it (the updater quits the app).
+      if (phase === "update-install" && all.every((r) => r.status === "pass")) {
+        const r = await kitchen.updateInstall({});
+        await kitchen.mark({ name: "update-install", data: JSON.stringify(r) });
+        if (r.ok && r.result.quitting) return;
+      }
       await quitApp();
     }
   };
@@ -59,13 +68,14 @@ export function KitchenSink() {
   }, []);
 
   const failed = results.filter((r) => r.status === "fail").length;
+  const count = checksFor(ctx.current?.setup.phase ?? "main").length;
   return (
     <div>
       <p class="status" data-state={state}>
         {state === "loading" && "Connecting to the desktop runtime…"}
         {state === "error" && `Not in a denext desktop window (${error}).`}
-        {state === "idle" && `${CHECKS.length} checks ready.`}
-        {state === "running" && `Running… ${results.length}/${CHECKS.length}`}
+        {state === "idle" && `${count} checks ready.`}
+        {state === "running" && `Running… ${results.length}/${count}`}
         {state === "done" &&
           `${results.length - failed}/${results.length} passed or skipped, ${failed} failed.`}
       </p>

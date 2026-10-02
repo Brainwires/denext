@@ -16,6 +16,7 @@ import {
   listDir,
   moveToTrash,
   onLocalNotificationTapped,
+  openAuthSession,
   type OpenedFile,
   openSqlite,
   pendingNotifications,
@@ -63,13 +64,16 @@ import {
 /** What `kitchen.setup` returns (see `desktop/kitchen.ts`). */
 export interface KitchenSetup {
   readonly autorun: boolean;
+  /** `main` (every check), or a full-app update phase of the window test ({@link PHASE_CHECKS}). */
+  readonly phase: string;
   readonly updateUrls:
-    | { good: string; badSignature: string; downgrade: string }
+    | { good: string; badSignature: string; downgrade: string; wrongApp: string; real: string }
     | null;
   readonly os: "darwin" | "windows" | "linux";
   readonly target: string;
   readonly pinnedRuntime: boolean;
   readonly dataDir: string;
+  readonly pid: number;
 }
 
 /** One check's outcome. */
@@ -546,7 +550,11 @@ const launchChecks: Check[] = [
     "deep link: a second launch forwards to the running app",
     async ({ setup, links }) => {
       if (!setup.autorun) throw new Skip("start a second instance with a link");
-      await kitchen.mark({ name: "ready-for-warm" });
+      const second = await kitchen.secondInstance(
+        { id: "warm", args: ["kitchensink-link://open/warm"] },
+        { timeoutMs: 60_000 },
+      );
+      eq(second.code, 0, "the second instance's exit code (it hands over and exits)");
       const link = await waitFor(
         () => links.find((l) => l.url.startsWith("kitchensink-link://open/warm")),
         "the forwarded link",
@@ -608,7 +616,354 @@ const nativeChecks: Check[] = [
     );
     return "downgrade";
   }],
+  ["updater: a manifest for another app is refused (wrong_app)", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("no local update server");
+    // Signed with this app's own key, newer, but naming another app identifier.
+    const r = await kitchen.updateCheck({ url: setup.updateUrls.wrongApp });
+    eq(r.ok ? `available: ${r.result.available}` : r.code, "wrong_app", "the check");
+    return "wrong_app";
+  }],
+  ["updater: confirmAppUpdate() is a no-op outside a trial launch", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("package with KITCHEN_SINK_UPDATE_PUBLIC_KEY");
+    const r = await kitchen.updateConfirm({});
+    assert(r.ok, `confirmAppUpdate() threw ${r.code}: ${r.message}`);
+    eq(r.result, false, "confirmAppUpdate()");
+    return "nothing pending";
+  }],
 ];
+
+// --- security: the bridge gate, auth sessions, passkeys and the Clerk bridge -----------------
+
+/** The RPC endpoint the bridge client posts to (`denext/desktop/client`). */
+const RPC_PATH = "/_denext/desktop/rpc";
+
+/** The per-launch token the runtime injected into this (top-level) document. */
+function pageToken(): string {
+  const token = (globalThis as { __denext?: { token?: unknown } }).__denext?.token;
+  assert(typeof token === "string" && token !== "", "no desktop token in this document");
+  return token;
+}
+
+/** An RPC body asking the harness to write `marker` (proof a request got through the gate). */
+const markRequest = (marker: string) =>
+  JSON.stringify({ cap: "kitchen", method: "mark", args: { name: marker } });
+
+/** Fail when a probe that must have been refused reached the extension. */
+async function assertNotReached(marker: string): Promise<void> {
+  eq((await kitchen.markerExists({ name: marker })).exists, false, `the ${marker} marker`);
+}
+
+/**
+ * Run `fetch` from a sandboxed `srcdoc` frame (an opaque origin: a foreign page) with the page's
+ * real token, and return what it saw (`refused: <error>` or `<status> <body>`).
+ */
+function foreignFrameFetch(url: string, token: string, body: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const frame = document.createElement("iframe");
+    frame.setAttribute("sandbox", "allow-scripts");
+    frame.style.display = "none";
+    frame.srcdoc = `<script>
+      addEventListener("message", async (e) => {
+        let out;
+        try {
+          const res = await fetch(e.data.url, {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-denext-desktop-token": e.data.token },
+            body: e.data.body,
+          });
+          out = res.status + " " + (await res.text()).slice(0, 200);
+        } catch (err) {
+          out = "refused: " + String(err && err.message || err);
+        }
+        parent.postMessage({ kitchenFrame: out, origin: String(origin) }, "*");
+      });
+      parent.postMessage({ kitchenFrameReady: true }, "*");
+    </script>`;
+    const timer = setTimeout(() => done(new Error("the frame never answered")), 10_000);
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== frame.contentWindow) return;
+      if (e.data?.kitchenFrameReady) frame.contentWindow?.postMessage({ url, token, body }, "*");
+      else if (typeof e.data?.kitchenFrame === "string") {
+        done(undefined, `${e.data.kitchenFrame} (frame origin ${e.data.origin})`);
+      }
+    };
+    const done = (err?: Error, value?: string) => {
+      clearTimeout(timer);
+      removeEventListener("message", onMessage);
+      frame.remove();
+      if (err) reject(err);
+      else resolve(value!);
+    };
+    addEventListener("message", onMessage);
+    document.body.append(frame);
+  });
+}
+
+/** base64url, unpadded. */
+function base64Url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(
+    /=+$/,
+    "",
+  );
+}
+
+/** A passkey options JSON for `kind` and `rpId` (never reaches an authenticator). */
+function passkeyOptions(kind: "create" | "get", rpId: string): Record<string, unknown> {
+  const challenge = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+  return kind === "get" ? { rpId, challenge } : {
+    rp: { id: rpId, name: "Kitchen sink" },
+    user: { id: base64Url(new Uint8Array([1, 2, 3])), name: "kitchen", displayName: "Kitchen" },
+    challenge,
+    pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+  };
+}
+
+/** The error code of a passkey envelope (`ok` when it succeeded). */
+function envelopeCode(envelope: unknown): string {
+  const e = envelope as { ok?: boolean; error?: { code?: string } } | null;
+  return e?.ok === true ? "ok" : String(e?.error?.code ?? JSON.stringify(envelope));
+}
+
+/** `@clerk/electron`'s globals, as the preload's `installClerkDesktopBridge` set them. */
+interface ClerkGlobals {
+  __clerk_internal_electron?: {
+    tokenCache: {
+      getToken(key: string): Promise<string | null>;
+      saveToken(key: string, value: string): Promise<void>;
+      clearToken(key: string): Promise<void>;
+    };
+    oauthTransport: { getRedirectUrl(): Promise<string>; open(url: string): Promise<unknown> };
+  };
+  __clerk_internal_electron_passkeys?: {
+    get(options: unknown): Promise<unknown>;
+    create(options: unknown): Promise<unknown>;
+    capabilities(): Promise<{ available: boolean }>;
+    readonly platform: string;
+  };
+}
+
+const securityChecks: Check[] = [
+  ["bridge gate: a wrong token is refused (top-level page)", async () => {
+    const res = await fetch(RPC_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-denext-desktop-token": "not-the-token" },
+      body: markRequest("wrong-token-reached"),
+    });
+    const body = await res.json().catch(() => null) as { error?: { code?: string } } | null;
+    eq(res.status, 403, "status");
+    eq(body?.error?.code, "forbidden", "error code");
+    await assertNotReached("wrong-token-reached");
+    return "403 forbidden";
+  }],
+  ["bridge gate: a foreign-origin frame holding the token is refused", async () => {
+    // The worst case: a foreign page (an opaque-origin frame) that somehow learned the token.
+    const seen = await foreignFrameFetch(
+      `${location.origin}${RPC_PATH}`,
+      pageToken(),
+      markRequest("frame-probe-reached"),
+    );
+    assert(!/^2\d\d /.test(seen), `the frame's request succeeded: ${seen}`);
+    await assertNotReached("frame-probe-reached");
+    return seen;
+  }],
+  ["bridge gate: the token over plain TCP (the runtime's loopback relay) is refused", async () => {
+    const { relay, probes } = await kitchen.tcpProbe({
+      token: pageToken(),
+      origin: location.origin,
+    }) as { relay: string | null; probes: Array<{ name: string; status: string }> };
+    assert(relay, "the runtime published no loopback relay (DENO_DESKTOP_WS_ORIGIN)");
+    eq(probes.length, 3, "probes run");
+    for (const p of probes) {
+      assert(!/ (2\d\d|101) /.test(`${p.status} `), `${p.name} was accepted: ${p.status}`);
+    }
+    await assertNotReached("tcp-probe-reached");
+    return probes.map((p) => `${p.name} → ${p.status.replace(/^HTTP\/1\.1 /, "")}`).join("; ");
+  }],
+  [
+    "auth session: a forged-state callback from a second instance leaves it pending",
+    async ({ setup, links }) => {
+      if (!setup.autorun) throw new Skip("the window test starts the second instances");
+      const state = crypto.randomUUID();
+      const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+      const challenge = base64Url(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))),
+      );
+      const callback = "kitchensink-link://auth/callback";
+      const url = "https://auth.invalid/authorize?response_type=code&client_id=kitchen" +
+        `&redirect_uri=${encodeURIComponent(callback)}&state=${state}` +
+        `&code_challenge=${challenge}&code_challenge_method=S256`;
+      let settled: string | null = null;
+      const session = openAuthSession(url, {
+        callbackScheme: "kitchensink-link",
+        timeoutMs: 120_000,
+      })
+        .then(
+          (r) => (settled = `resolved ${r.url}`, r),
+          (err) => {
+            settled = `rejected ${(err as { code?: string }).code}: ${(err as Error).message}`;
+            throw err;
+          },
+        );
+      session.catch(() => {});
+      // The runner's stand-in browser (first on PATH) was asked to open exactly this URL.
+      await waitFor(
+        async () => ((await kitchen.browserLog({})).lines as string[] | null)?.includes(url),
+        "the stand-in browser to be asked for the URL",
+        10_000,
+        async () => `${JSON.stringify((await kitchen.browserLog({})).lines)}; session ${settled}`,
+      );
+      const forged = await kitchen.secondInstance(
+        { id: "auth-forged", args: [`${callback}?code=forged&state=forged-${state}`] },
+        { timeoutMs: 60_000 },
+      );
+      eq(forged.code, 0, "the forged-state second instance's exit code");
+      await sleep(1500);
+      eq(settled, null, "the session after a forged-state callback");
+      const real = await kitchen.secondInstance(
+        { id: "auth-real", args: [`${callback}?code=real&state=${state}`] },
+        { timeoutMs: 60_000 },
+      );
+      eq(real.code, 0, "the real callback's second instance exit code");
+      const done = await Promise.race([session, sleep(10_000).then(() => null)]);
+      assert(done, `the real callback did not complete the session (${settled})`);
+      const got = new URL(done.url);
+      eq(got.searchParams.get("code"), "real", "the callback's code");
+      eq(got.searchParams.get("state"), state, "the callback's state");
+      assert(
+        !links.some((l) => l.url.startsWith(callback)),
+        "an auth callback reached onDeepLink (it must be consumed by the session)",
+      );
+      return "forged state swallowed; the real callback completed it";
+    },
+  ],
+  [
+    "passkeys: an RP outside desktop.capabilities.passkeys is refused before the OS",
+    async ({ setup }) => {
+      const caps = await raw("passkeys").capabilities({});
+      eq(caps.available, setup.os !== "linux", "capabilities().available");
+      const codes: string[] = [];
+      for (const kind of ["get", "create"] as const) {
+        const envelope = await raw("passkeys")[kind]({
+          optionsJson: JSON.stringify(passkeyOptions(kind, "example.com")),
+        });
+        codes.push(`${kind} → ${envelopeCode(envelope)}`);
+        eq(envelopeCode(envelope), "invalid_rp", `${kind} for an RP that is not pinned`);
+      }
+      return codes.join(", ");
+    },
+  ],
+  ["passkeys: the native path answers without a ceremony", async ({ setup }) => {
+    // Pinned, so it reaches the runtime; not a domain name, so the native parser refuses it before
+    // any OS request. Linux has no platform authenticator API at all.
+    const envelope = await raw("passkeys").get({
+      optionsJson: JSON.stringify(passkeyOptions("get", "bad_rp.invalid")),
+    });
+    const want = setup.os === "linux" ? "not_supported" : "invalid_rp";
+    eq(envelopeCode(envelope), want, "a pinned but malformed RP");
+    return `${want} (${(envelope as { error?: { message?: string } }).error?.message ?? ""})`;
+  }],
+  ["Clerk bridge: token cache in the keychain, redirect URL, OAuth URL check", async () => {
+    const g = globalThis as ClerkGlobals;
+    const bridge = g.__clerk_internal_electron;
+    assert(bridge, "the preload did not install window.__clerk_internal_electron");
+    const value = `jwt-${crypto.randomUUID()}`;
+    await bridge.tokenCache.saveToken("kitchen-probe", value);
+    try {
+      eq(await bridge.tokenCache.getToken("kitchen-probe"), value, "getToken");
+      eq(
+        await raw("secureStore").get({ key: "clerk.kitchen-probe" }),
+        value,
+        "the keychain entry",
+      );
+    } finally {
+      await bridge.tokenCache.clearToken("kitchen-probe");
+    }
+    eq(await bridge.tokenCache.getToken("kitchen-probe"), null, "getToken after clearToken");
+    eq(await bridge.oauthTransport.getRedirectUrl(), "kitchensink://app/", "getRedirectUrl()");
+    const refused = await rejection(bridge.oauthTransport.open("http://example.com/oauth"));
+    assert(/unsupported OAuth URL protocol/.test(refused), `open(http:) → ${refused}`);
+    return "keychain round trip; kitchensink://app/; http: refused";
+  }],
+  [
+    "Clerk passkeys bridge: invalid_rp turns native passkeys off for the launch",
+    async ({ setup }) => {
+      const p = (globalThis as ClerkGlobals).__clerk_internal_electron_passkeys;
+      assert(p, "the preload did not install window.__clerk_internal_electron_passkeys");
+      const platform = setup.os === "windows" ? "win32" : setup.os;
+      eq(p.platform, platform, "platform before");
+      const envelope = await p.get(passkeyOptions("get", "example.com"));
+      eq(envelopeCode(envelope), "invalid_rp", "get() for an RP that is not pinned");
+      eq(p.platform, "none", "platform after invalid_rp");
+      eq((await p.capabilities()).available, false, "capabilities().available after invalid_rp");
+      return `${platform} → invalid_rp → none`;
+    },
+  ],
+];
+
+// --- the full-app update phases (window test only) -------------------------------------------
+
+/** The expected staged-signature mode of an unsigned local build, per OS. */
+const DEV_SIGNATURE: Record<string, string> = {
+  darwin: "dev-unsigned",
+  windows: "dev-unsigned",
+  linux: "none",
+};
+
+/** The version the window test packages as the update (`e2e/window-test.ts`). */
+const UPDATE_VERSION = "99.0.0";
+
+/** Checks for one update phase: run on that launch only, then the app installs or quits. */
+export const PHASE_CHECKS: Readonly<Record<string, readonly Check[]>> = {
+  "update-install": [
+    ["update install: a copied install, not on trial", async () => {
+      const s = await kitchen.updateStatus({});
+      eq(s?.configured, true, `configured (${s?.reason})`);
+      eq(s.trial, false, "trial");
+      eq(s.version, "1.0.0", "version");
+      return `${s.version} at ${s.install}`;
+    }],
+    [
+      `update install: the signed ${UPDATE_VERSION} build downloads, verifies and stages`,
+      async ({ setup }) => {
+        assert(setup.updateUrls, "no local update server");
+        const r = await kitchen.updateDownload({ url: setup.updateUrls.real }, {
+          timeoutMs: 150_000,
+        });
+        assert(r.ok, `download / stage failed: ${r.code}: ${r.message}`);
+        eq(r.result.version, UPDATE_VERSION, "staged version");
+        eq(r.result.signatureMode, DEV_SIGNATURE[setup.os], "signature mode");
+        return `${r.result.version}, signature ${r.result.signatureMode}`;
+      },
+    ],
+  ],
+  "update-trial": [
+    [`update trial: ${UPDATE_VERSION} runs on trial and is left unconfirmed`, async () => {
+      const s = await kitchen.updateStatus({});
+      eq(s?.version, UPDATE_VERSION, "version");
+      eq(s.trial, true, "trial");
+      eq(s.updatedFrom, "1.0.0", "updatedFrom");
+      // Deliberately NOT confirmed (`desktop.update.autoConfirm: false`): the next launch must
+      // roll it back.
+      return `${s.version} from ${s.updatedFrom}, trial`;
+    }],
+  ],
+  "update-rollback": [
+    ["update rollback: the unconfirmed version was rolled back at the next launch", async () => {
+      const s = await kitchen.updateStatus({});
+      eq(s?.version, "1.0.0", "version");
+      eq(s.trial, false, "trial");
+      eq(s.rolledBackFrom, UPDATE_VERSION, "rolledBackFrom");
+      eq(s.rejected, UPDATE_VERSION, "rejected");
+      return `back on ${s.version}, ${s.rolledBackFrom} rejected`;
+    }],
+    ["update rollback: the rolled-back version is refused from then on", async ({ setup }) => {
+      assert(setup.updateUrls, "no local update server");
+      const r = await kitchen.updateCheck({ url: setup.updateUrls.real });
+      eq(r.ok ? `available: ${r.result.available}` : r.code, "rejected", "the check");
+      return "rejected";
+    }],
+  ],
+};
 
 // --- app: notifications, menus, tray, dock, shortcuts, login, DevTools -----------------------
 
@@ -878,15 +1233,21 @@ export const CHECKS: readonly Check[] = [
   ...appChecks,
   ...launchChecks,
   ...nativeChecks,
+  ...securityChecks,
 ];
 
-/** Run every check in order, reporting each as it finishes. */
+/** The checks of `phase`: every check for `main`, else that update phase's. */
+export function checksFor(phase: string): readonly Check[] {
+  return phase === "main" ? CHECKS : PHASE_CHECKS[phase] ?? [];
+}
+
+/** Run the phase's checks in order, reporting each as it finishes. */
 export async function runChecks(
   ctx: CheckContext,
   onResult: (result: CheckResult) => void,
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
-  for (const [name, run] of CHECKS) {
+  for (const [name, run] of checksFor(ctx.setup.phase)) {
     const started = performance.now();
     let result: CheckResult;
     try {
