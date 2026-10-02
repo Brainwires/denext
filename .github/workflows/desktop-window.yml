@@ -6,6 +6,11 @@
 # A check that cannot run on a hosted runner reports `skip` with its reason; every skip is listed in
 # the job summary, and a skip without a reason fails the run. The last job puts every check of every
 # OS in one table.
+#
+# The nightly `schedule` runs from the DEFAULT branch's copy of this file (so it starts firing once
+# the workflow reaches `main` with a release merge) and would check out `main`; like e2e.yml, the
+# window test checks out `development` on a scheduled run so the nightly tests the active line. A
+# push or a manual dispatch tests its own ref.
 
 name: Desktop window test
 
@@ -21,7 +26,13 @@ on:
       - "src/build/desktop-runtime-pin.json"
       - "src/build/app-update.ts"
       - "src/build/ota-signing.ts"
+      - "src/build/safe-extract.ts"
+      - "src/build/file-lock.ts"
+      - "src/build/project-locks.ts"
+      - "src/cli/commands/desktop*.ts"
       - "src/mobile/**"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
       - "examples/desktop-kitchen-sink/**"
       - "scripts/ci/desktop-window-summary.ts"
       - ".github/workflows/desktop-window.yml"
@@ -51,6 +62,9 @@ jobs:
         working-directory: examples/desktop-kitchen-sink
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A scheduled run tests `development` (the active line); push / dispatch test their ref.
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
       - uses: denoland/setup-deno@v2
         with:
           deno-version: "2.9.7" # exactly: denext's pinned Deno Desktop runtime is built for it
@@ -102,6 +116,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
       - uses: denoland/setup-deno@v2
         with:
           deno-version: "2.9.7"
