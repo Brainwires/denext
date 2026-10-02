@@ -438,7 +438,7 @@ four documented bounds of the opt-in:
   OS keychain in a Deno Desktop window with the `secure-store` capability (`denext desktop add
   secure-store`; macOS `security`, Linux libsecret, Windows WinRT PasswordVault — the Windows
   backend is verified by the Windows CI round-trip), and a plain IndexedDB database in a browser
-  (or a desktop window without that capability, where it is also wiped on relaunch).
+  (or a desktop window without that capability).
 - **On macOS, other programs of the same user can read Deno Desktop `secureStore` items.** The
   items are written by `/usr/bin/security`, so their Keychain access list trusts that tool, and
   any process running as the user can read them with `security find-generic-password` without a
@@ -447,15 +447,6 @@ four documented bounds of the opt-in:
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
   `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's
   own `https` page through `openAuthSession`.
-- **On Windows and Linux, the Deno Desktop auth session cannot see the browser tab close.** The
-  OS has no auth session of its own (macOS's `ASWebAuthenticationSession` reports `cancelled`),
-  so `openAuthSession` opens the system browser, and closing its tab sends nothing back. denext
-  shows the page a Cancel overlay meanwhile (`cancelOverlay`), and `timeoutMs` stays the backstop.
-  The same holds for the loopback flow on every OS. On macOS the sheet cannot be closed from code,
-  so a page cancel or a timeout leaves it open until the user closes it.
-- **The Deno Desktop self-updater replaces the UI, not the app.** `denext/desktop/updater`
-  verifies and overlays a signed UI export in the app-support directory; the executable and
-  the runtime are updated only by shipping a new build. Every manifest must be signed.
 - **Native context menus need `denext mobile add context-menu`, and iOS's lifted preview needs
   a bound element.** Without the plugin the menu is an accessible popover in the WebView. With
   it, the long-press menu with the lifted preview is `useContextMenu` / `attachContextMenu` (the
@@ -611,34 +602,90 @@ four documented bounds of the opt-in:
 
 ### Deno Desktop capabilities (`denext desktop add`, `denext/desktop/client`)
 
-- **Browser storage survives a relaunch only with a stable app origin.** With
-  `desktop.app.origin` and `desktop.app.identifier` set, denext's pinned Deno Desktop runtime
-  serves the page at that origin and keys web storage by the identifier, so `localStorage`
-  persists across launches (checked in packaged webview-backend apps on macOS, Linux and
-  Windows; IndexedDB, OPFS and the Cache API share the same store but were not checked one by
-  one). Without an origin, or under `DENEXT_DESKTOP_RUNTIME=stock`, the runtime binds a new
-  loopback port each launch (denoland/deno#35444), so the page's origin changes and browser
-  storage starts empty. `secureStore`, the file functions and `openSqlite` persist only with
-  their desktop capability enabled (`secure-store`, `fs`, `sqlite`); without it they fall back to
-  browser storage and warn once.
-- **The pinned Deno Desktop runtime needs Deno 2.9.7 exactly, and packages Windows only on
-  Windows.** `deno desktop` embeds the runtime, so another Deno version stops the build
-  (`deno upgrade --version 2.9.7`). Deno 2.9.7's CLI looks a prebuilt backend up with the
-  host's executable suffix, so a Windows bundle can't be built from macOS or Linux (nor a Linux
-  one from Windows) on the pinned runtime; `DENEXT_DESKTOP_RUNTIME=stock` cross-builds with the
-  stock runtime. There is no pinned Windows arm64 build.
-- **The stock runtime keeps the web paths.** Under `DENEXT_DESKTOP_RUNTIME=stock`,
-  `context-menu`, `notifications`, `clipboard`, `global-shortcuts` and `launch-at-login` answer
-  `unavailable`: `showContextMenu` is the in-page popover, notifications are the WebView's
-  Notification API (immediate only, no click routing), the clipboard is the WebView's
-  `navigator.clipboard` (text only), and the shortcut and login calls reject. `dialogs` drives
-  the OS dialog programs (osascript / PowerShell / zenity or kdialog) instead of the runtime's
-  native panels, and application-menu accelerators fire only where the stock runtime binds them.
-- **The desktop capabilities are unit-tested, not window-tested.** Each runtime capability is
-  tested against the bridge contract, with its OS commands through an injected runner. A real
-  `deno desktop` build with the derived flags launched and served its bundle on macOS; the
-  capabilities themselves, and the Linux and Windows backends (libsecret, zenity / kdialog,
-  PowerShell dialogs, `SetThreadExecutionState`), have no recorded run in a real window.
+Each entry is a limit that holds under denext's pinned runtime, why it holds (mostly the OS),
+and what to do instead. What that runtime adds over stock Deno Desktop, and what the stock
+runtime lacks, is in [our Deno Desktop runtime](https://denext.dev/docs/desktop-runtime).
+
+- **Deno 2.9.7 exactly, and Windows apps are built on Windows.** denext's Deno Desktop runtime
+  is a fork of Deno 2.9.7, and `deno desktop` embeds the runtime in the app, so the `deno` CLI
+  must be that version: any other stops the build. Deno 2.9.7's CLI also looks the prebuilt
+  backend up with the host's executable suffix, so a Windows app can be packaged only on
+  Windows, and a macOS or Linux one only off Windows. There is no Windows arm64 runtime.
+  Workaround: `deno upgrade --version 2.9.7`, and package each OS on its own machine or CI
+  runner (`DENEXT_DESKTOP_RUNTIME=stock` cross-builds on the stock runtime, without what the
+  fork adds). The pin lifts when stock Deno ships the fork's changes.
+- **On Windows and Linux, sign-in runs in the system browser, which reports no cancel.** Neither
+  OS has an app sign-in session like macOS's `ASWebAuthenticationSession`, so `openAuthSession`
+  opens the system browser (RFC 8252), and closing the browser tab sends nothing back to the
+  app. The loopback flow behaves the same on every OS. Workaround: while the browser has the
+  sign-in, denext shows the page a Cancel overlay (`cancelOverlay`; or your own control wired to
+  `signal`), and `timeoutMs` stays the backstop.
+- **On macOS, the sign-in sheet can't be closed from code yet.** A page cancel or a timeout
+  settles `openAuthSession`, but the `ASWebAuthenticationSession` sheet stays on the window until
+  the user closes it: the runtime has no call that ends a running session. Closing it from code
+  comes with the runtime update that adds `Deno.desktop.authSession.cancel()`.
+- **Native passkeys: macOS and Windows only, and macOS needs an entitled app.** Linux has no OS
+  passkey API (nothing like AuthenticationServices or Windows Hello), so the `passkeys`
+  capability reports none there. The window's own WebAuthn can't serve a web relying party on
+  any OS, because the RP ID must match the page's origin. On macOS, Apple requires the
+  `com.apple.developer.associated-domains` entitlement (`webcredentials:<rp-id>`) with a
+  provisioning profile, and the RP's `apple-app-site-association` must list the app; otherwise
+  every request is `invalid_rp`. Workaround: `denext/desktop/clerk` continues a passkey sign-in
+  in the system browser on the provider's own pages (`passkeyFallback`, on by default), where
+  browser WebAuthn works; with another provider, run the passkey sign-in on its `https` page
+  through `openAuthSession`.
+- **Desktop notifications per OS.** Linux has no notification scheduler (the freedesktop
+  notification protocol only shows a notification now), so the app delivers a scheduled
+  notification while it runs and re-arms the rest at launch, where one whose time passed while it
+  was closed shows late. A click on a Linux notification after the app quit can't start it: the
+  notification server sends the click to the connection that posted it, which is gone. macOS
+  shows notifications only from an app bundle and may silently refuse them to an unsigned or
+  ad-hoc signed one (sign it with your Developer ID); it asks once, and a refusal changes only in
+  System Settings. A repeating notification is scheduled for its next 16 occurrences and topped
+  up whenever the app runs, so an app not opened for longer stops showing it until it runs again.
+  Action buttons carry a title only (no text input, destructive or authentication option), there
+  are no channels, and a notification stores at most 4 KiB of `data`. Workaround on Linux: keep
+  the app running for reminders that must fire on time (a tray icon, launch at login).
+- **Global shortcuts on Wayland depend on the XDG GlobalShortcuts portal.** Wayland gives no app
+  a system-wide key grab; the desktop's portal asks the user to approve each shortcut and may
+  bind another trigger (`userBinds` in `shortcutCapabilities()`). Without the portal
+  `registerShortcut` rejects `unsupported`: offer an in-app shortcut instead. On macOS 13+
+  `setLaunchAtLogin` may answer `requires-approval` until the user allows the app in System
+  Settings › Login Items.
+- **WebView2 streams only what the page fetches.** WebView2 reads a custom-scheme response to its
+  end before the page sees any of it
+  ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)), so on
+  Windows' webview backend the runtime streams through a page shim instead: `fetch`,
+  `EventSource` and asynchronous `XMLHttpRequest` from the app's own top-level document stream.
+  Navigations, subresources (`<img>`, `<script>`, `<video>`), synchronous XHR, cross-origin
+  requests and requests from a cross-origin frame still arrive whole, so a response to them that
+  never ends never shows. Workaround: stream (Server-Sent Events, a streamed body) through
+  `fetch` / `EventSource` from the page, or build with `--backend cef`.
+- **CEF on Wayland: dropped files carry no paths.** CEF reads a drop's paths from the X11
+  drag-and-drop selection, and under Wayland there is no X drag source to ask, so `onFileDrop`
+  gets no files there. Workaround: the webview backend (WebKitGTK gets the paths through GTK on
+  X11 and Wayland), or an open dialog.
+- **macOS can hand your deep-link scheme to another app.** The runtime registers a scheme only
+  when no app handles it or the app already does, and never takes one from another app without
+  `claimDeepLinkScheme` on a user action. LaunchServices, though, may make a newly launched app
+  that declares the same scheme its handler, and nothing stops any program of the same user from
+  registering for it. Workaround: denext requires PKCE S256 and an exact `redirect_uri` +
+  `state` match on every custom-scheme sign-in, and refuses one whose scheme another app owns
+  (`scheme_owned_by_other_app`; fall back to the loopback flow).
+- **Installers need their OS's tools.** The `.dmg` (`hdiutil`) and `.pkg` (`productbuild`) are
+  built on macOS only, since those are macOS tools; an unsigned `.pkg` is rejected by Gatekeeper
+  and MDM, so set `DENEXT_INSTALLER_IDENTITY` to a Developer ID Installer identity. The `.msi`
+  needs WiX 5 on a Windows host (without it the default `.msi` falls back to the `.zip`), the
+  `.rpm` needs `rpmbuild` and the AppImage `appimagetool`; the `.deb` and `.tar.gz` need no tool.
+  A default installer whose tool is missing is skipped with a warning; one you asked for fails the
+  run.
+- **No MSIX, Flatpak, Snap or Mac App Store build.** Each runs the app in a sandbox the runtime's
+  per-app storage and deep-link registration do not yet account for: MSIX also needs a trusted
+  signing certificate even to sideload, and Flatpak a runtime/SDK manifest and a portal-aware
+  WebKitGTK. Ship the `.dmg` / `.pkg`, `.msi`, `.deb` / `.rpm` / AppImage installers instead.
+- **The page renders per OS.** The window is WKWebView, WebView2 or WebKitGTK, so engine
+  features and bugs follow the OS. Workaround: `--backend cef` ships Chromium everywhere (about
+  150 MB larger).
 - **Read and env stay broad in a packaged app.** The package scripts derive `--allow-*` from
   `desktop.capabilities` instead of `-A`, but the baseline keeps `--allow-read` and
   `--allow-env` unscoped (the served bundle and the per-user app-support folder are only known
@@ -653,47 +700,34 @@ four documented bounds of the opt-in:
   build time, and a path chosen in a dialog is known only at run time, so `dialogs` implies
   `--allow-read` and `--allow-write` without a list. The runtime narrows file access to the app's
   folders and the paths picked this session; other code in the Deno process is not narrowed.
-- **FFI and spawned programs are full trust.** `secure-store` runs the OS credential tool
-  (`security` / `secret-tool`), `shell` and `keep-awake` run OS tools (`open` / `xdg-open` /
-  `explorer`, `caffeinate` / `systemd-inhibit`; `keep-awake` is FFI on Windows): each can do
-  anything the user can. Node-API (`.node`) addons do not load in
-  desktop builds on Linux and Windows (denoland/deno#36596); use FFI or a sidecar. FFI cannot
-  touch windows or AppKit / Win32 UI, because the runtime is not on the main thread.
-- **Desktop notifications per OS.** Linux has no notification scheduler: the app delivers a
-  scheduled notification while it runs and shows one whose time passed while it was closed at the
-  next launch, and a click on a notification after the app quit does not start it. A repeating
-  notification is scheduled for its next 16 occurrences and topped up whenever the app runs, so an
-  app not opened for longer stops showing it until it runs again. macOS asks for the permission
-  once, and only an app bundle has notifications. Action buttons carry a title only (no text input, destructive or
-  authentication option), there are no channels, and a notification stores at most 4 KiB of
-  `data`.
-- **Global shortcuts on Wayland need the XDG GlobalShortcuts portal.** The desktop asks the user
-  to approve each shortcut and may bind another trigger (`userBinds` in `shortcutCapabilities()`);
-  without the portal `registerShortcut` rejects `unsupported`. On macOS 13+ `setLaunchAtLogin`
-  may answer `requires-approval` until the user allows the app in System Settings › Login Items.
-- **Menu limits per backend.** The CEF backend draws no menu icons or tooltips in its application
-  menu (Windows, Linux) or Linux context menus, and binds no `Super` accelerator on Windows; menu
-  tooltips show on macOS and Linux only. The Dock menu (`setQuickActions`) is macOS only, and a
-  Linux badge is a prefix of the window title.
-- **Not on desktop:** the share sheet, Handoff, Spotlight, the Touch Bar, passkeys in the webview
-  (its loopback IP origin is not a valid relying party; use `openAuthSession`), and deep links or open-file events reaching an
-  already-running macOS app. The window API (`denext/desktop/window`), file drag and drop, the
-  `hiddenInset` title bar, Mica / Acrylic and vibrancy need denext's pinned runtime; the stock
-  runtime keeps only size, position, title and visibility.
-- **Window API limits per OS.** Title bar styles and the traffic-light position are macOS only;
-  Mica, Acrylic and tabbed are Windows 11 (Acrylic and tabbed 22H2), and the CEF backend has no
-  backdrops; Wayland cannot move a window (`setWindowPosition`, and so the page-driven drag
-  region, do nothing there). `app-region: drag` is native only on the CEF backend; on the system
-  WebView backends `makeWindowDraggable` moves the window from the pointer through the bridge.
-  `onCloseRequested` cannot hold a quit from the macOS app menu (Cmd+Q), and a page that never
-  answers a close request loses its hold after 5 seconds. On Windows' WebView2 a drag reveals
-  the dropped paths only on the drop.
-- **Deno Desktop's own limits.** The UI is a web page in WKWebView, WebView2 or WebKitGTK, so it
-  renders per OS (unless built with `--backend cef`, about 150 MB larger); there is no Mac App
-  Store, Microsoft Store (MSIX), Flatpak or Snap build; the self-updater replaces the UI only.
-  Deno Desktop itself is experimental in Deno 2.9, and a bug in it reaches denext apps until
-  denext's pinned runtime fixes it. DevTools are off in a packaged app unless
-  `desktop.inspectable: true`; under the stock runtime `desktop.inspectable` has no effect.
+- **FFI, Node-API addons and spawned programs are full trust.** `secure-store` runs the OS
+  credential tool (`security` / `secret-tool`), `shell` and `keep-awake` run OS tools (`open` /
+  `xdg-open` / `explorer`, `caffeinate` / `systemd-inhibit`; `keep-awake` is FFI on Windows), and
+  an extension's FFI, Node-API addon or `ctx.runOnMainThread` call runs native code: each can do
+  anything the user can.
+- **Window and menu features differ per OS and backend.** Wayland lets no app move its own window
+  (`setWindowPosition`, and so the page-driven drag region, do nothing there). Title bar styles
+  and the traffic-light position are macOS only; Mica, Acrylic and tabbed are Windows 11 (Acrylic
+  and tabbed 22H2), and the CEF backend has no backdrops. `app-region: drag` is native only on CEF;
+  on the system WebView backends `makeWindowDraggable` moves the window from the pointer through
+  the bridge. `onCloseRequested` cannot hold a quit from the macOS app menu (Cmd+Q), and a page
+  that never answers a close request loses its hold after 5 seconds. On WebView2 a drag reveals
+  the dropped paths only on the drop. CEF draws no icons or tooltips in its Windows and Linux
+  application menu or Linux context menus, and binds no `Super` accelerator on Windows (its
+  accelerators have no Windows-key modifier); menu tooltips show on macOS and Linux only. The Dock menu
+  (`setQuickActions`) is macOS only, and a Linux badge is a prefix of the window title (Linux has
+  no badge API). Ask `windowCapabilities()` and `appCapabilities()` what the current OS and
+  backend support.
+- **`DENEXT_DESKTOP_RUNTIME=stock` gives up what the pinned runtime adds.** The stock Deno
+  Desktop runtime serves the window from a loopback port that changes every launch, so browser
+  storage starts empty each time and `desktop.app.origin` is not in effect; it delivers no deep
+  links or opened files (none reach the app, running or not) and has no single instance; the
+  window API keeps only size, position, title and visibility; `context-menu`, `notifications`,
+  `clipboard`, `global-shortcuts` and `launch-at-login` answer `unavailable`, so the page keeps
+  its web path (the in-page menu, the WebView's `Notification` and `navigator.clipboard`); and
+  `passkeys` answers `not_supported`. Use it only to cross-build or to compare against stock Deno; see
+  [opting out](https://denext.dev/docs/desktop-runtime#opting-out).
+- **Not on desktop:** the share sheet, Handoff, Spotlight and the Touch Bar.
 - **`react-native-windows` / `react-native-macos` are not native here.** A `reactNative` app runs
   as react-native-web in the window; their C++ / C# / Objective-C native modules do not run
   (write a desktop extension instead), and `Platform.OS` stays `"web"`
@@ -985,26 +1019,20 @@ runtime and transform (reported as review notes, never silently changed):
 
 A few capabilities aren't built yet (none affects the zero-npm runtime):
 
-- **The compiled `denext` binary never builds an app in its own process.** Every module-loading
-  verb (`dev`, `build`, `export`, `start`, `task`, `doctor`, `analyze`, `profile`, `desktop`)
-  re-execs the denext the project pins, as a `deno run` child. This is deliberate — it is what
-  makes `denext build` produce exactly what `deno task build` would rather than substituting the
-  binary's own framework — but it is also load-bearing: a binary _cannot_ bundle in-process,
-  because the generated client entry resolves `denext/client-runtime` and friends against
-  `import.meta.url`, which inside a binary is a `deno-compile://` path the child bundler cannot
-  see. **Consequence:** those verbs need a reachable `deno`, and a directory that pins no denext
-  is refused with a message naming the fix, rather than built. `create`, `init`, `commands`,
-  `completions` and `--version` run in the binary itself and need nothing; `ui` starts without
-  Deno but its panels spawn `deno` for every project-touching operation. Signing is not a gap:
-  the release workflow code-signs and notarises the macOS binary when the Apple Developer ID
-  secrets are configured, and a `curl | sh` download never carries the quarantine attribute (a
-  bare executable cannot be stapled either) — that is documented in
-  [The `denext` command](./README.md#the-denext-command). What _is_ still missing: the installers'
-  (`curl | sh`, `irm | iex`) default path needs a published non-prerelease release to resolve,
-  because a release candidate is a GitHub prerelease and never "latest" — pass `DENEXT_VERSION`;
-  and the Homebrew / Scoop / winget manifests each release generates are not yet published to a
-  tap, a bucket or winget-pkgs (a maintainer step per release), and no Windows Arm64 binary is
-  published (`install.ps1` installs the x64 one, which Windows on Arm runs under emulation).
+- **The compiled `denext` binary needs `deno` for every module-loading verb.** `dev`, `build`,
+  `export`, `start`, `task`, `doctor`, `analyze`, `profile` and `desktop` re-exec the denext the
+  project pins, as a `deno run` child, so a directory that pins no denext is refused with the
+  fix rather than built. This is deliberate (`denext build` produces exactly what
+  `deno task build` would) and load-bearing: the generated client entry resolves
+  `denext/client-runtime` against `import.meta.url`, which inside a binary is a
+  `deno-compile://` path a bundler cannot read. `create`, `init`, `commands`, `completions` and
+  `--version` run in the binary itself; `ui` starts without Deno but spawns `deno` for every
+  project operation. Code signing is not a gap (see
+  [The `denext` command](./README.md#the-denext-command)). Still missing: with no
+  `DENEXT_VERSION`, `curl | sh` and `irm | iex` install the newest non-prerelease, so an rc must be
+  named explicitly; the Homebrew / Scoop / winget manifests each release generates are not yet
+  published to a tap, a bucket or winget-pkgs; and there is no Windows Arm64 binary
+  (`install.ps1` installs the x64 one, which Windows on Arm runs under emulation).
 
 - **`next/font/local`: no metric-matched fallback face.** Google fonts get Next's
   `adjustFontFallback` fallback face from a bundled metrics table (the same Capsize set Next

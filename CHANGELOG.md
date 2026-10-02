@@ -312,6 +312,13 @@ and this project adheres to
   Deno Desktop 2.9.7 couldn't do), catalogs every change it carries with the problem it solves,
   its layer (laufey, the Deno runtime, denext) and its upstream status, and describes how each
   layer is tested.
+- **Docs: the Deno Desktop limitations list only what still holds.** KNOWN-LIMITATIONS drops the
+  entries the pinned runtime fixed (UI-only self-updates, storage lost on relaunch, Node-API
+  addons, deep links to a running macOS app, passkeys, WebView-backed menus, clipboard and
+  notifications, capabilities without a window test) and gives each remaining limit its OS
+  reason and workaround, plus what the installers need and what `DENEXT_DESKTOP_RUNTIME=stock`
+  gives up; the desktop, mobile, README, FEATURES, ROADMAP and REACT-NATIVE-EXPO statements that
+  said otherwise are corrected.
 
 ### Fixed
 

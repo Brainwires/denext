@@ -211,17 +211,17 @@ Google (`POST /auth/native/:provider`), account deletion (`POST /auth/account/de
 ### Deno Desktop
 
 `denext/mobile`'s capability functions reach the desktop runtime through a token-gated bridge,
-and the runtime answers `fs`, `sqlite`, `device`, `dialogs` (native open / save / folder
-panels, returning picked-file handles), `shell`, `keep-awake`, `secure-store` (macOS Keychain,
-Linux libsecret; it fails closed on Windows) and the app's own `defineDesktopExtension`
-modules. `context-menu`, `clipboard` and `notifications` stay WebView-backed (no runtime
-capability; a scheduled notification rejects). `denext desktop add` writes
-`desktop.capabilities`, the runtime's allowlist, and the packaging scripts derive
-least-privilege `--allow-*` flags from it instead of `-A`
-(`denext desktop package --regenerate-scripts` updates an older project's scripts). Built and
-unit-tested; a real `deno desktop` build with the derived flags launched and served its bundle
-on macOS. React Native apps run in a Deno Desktop window like any SPA
-(`examples/rn-desktop`).
+and under denext's pinned Deno Desktop runtime they are the OS's own: `fs`, `sqlite`, `device`,
+`dialogs` (native open / save / folder panels, returning picked-file handles), `shell`,
+`keep-awake`, `secure-store` (macOS Keychain, Linux libsecret, Windows PasswordVault),
+`context-menu` (the native menu), `clipboard` (text, HTML and images), `notifications`
+(scheduled, with action buttons and click routing), `passkeys`, `global-shortcuts`,
+`launch-at-login`, and the app's own `defineDesktopExtension` modules. `denext desktop add`
+writes `desktop.capabilities`, the runtime's allowlist, and the packaging scripts derive
+least-privilege `--allow-*` flags from it instead of `-A`. The
+[desktop kitchen sink](./examples/desktop-kitchen-sink) calls every capability from the page in
+a packaged window on Linux, macOS (arm64 and Intel) and Windows in CI. React Native apps run in a
+Deno Desktop window like any SPA (`examples/rn-desktop`).
 
 ## Android
 
@@ -259,9 +259,9 @@ the open work.
 - **Build-time failures** remain for unlisted packages whose `main` is Flow source.
 - **Expo services:** no Expo Go-style client, no hosted push, build or update service.
 - **Android:** no device run; scrolling measured worse than React Native on an emulator.
-- **Desktop:** no runtime capability for context menus, the clipboard or notifications;
-  `secureStore` fails closed on Windows; no app menu, tray or single-instance API; Deno Desktop
-  itself is experimental.
+- **Desktop:** the OS limits (Linux scheduled notifications and passkeys, the system-browser
+  sign-in on Windows and Linux, Wayland global shortcuts) are in
+  [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md) (Deno Desktop capabilities).
 
 ## The T3 Code bar (2.10)
 

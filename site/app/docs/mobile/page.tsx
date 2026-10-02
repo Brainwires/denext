@@ -1074,8 +1074,8 @@ public class ChartViewFactory implements DenextNativeViewFactory {
         <code>subtitle</code>, <code>destructive</code>, <code>disabled</code> and{" "}
         <code>children</code>{" "}
         (a submenu). iOS nests submenus; Android and the popover list a submenu&apos;s items as a
-        labelled group (a Deno Desktop window shows the popover too), so no item is ever out of
-        reach.
+        labelled group (as does a Deno Desktop window without the <code>context-menu</code>{" "}
+        capability; with it, the OS menu nests submenus), so no item is ever out of reach.
       </p>
       <Code lang="tsx">
         {`"use client";
@@ -2721,7 +2721,8 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
       <p>
         A Deno Desktop app takes the same signed manifests through{" "}
         <code>denext/desktop/updater</code>: see{" "}
-        <a href="/docs/desktop#desktop-updates">Desktop UI self-updates</a>.
+        <a href="/docs/desktop#desktop-updates">Desktop UI self-updates</a>; it also replaces the
+        whole signed app with <a href="/docs/desktop#desktop-app-updates">full-app self-updates</a>.
       </p>
 
       <h3 id="ota-channels">Channels and staged rollouts</h3>

@@ -228,10 +228,8 @@ ran on an iPhone, is [REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md).
 
 **Open for 2.11 final:**
 
-- **Deno Desktop, the rest of the plan:** the app menu, the navigation guard, single instance,
-  tray, global shortcuts, launch at login; runtime capabilities for context menus (needs an
-  upstream dismiss event), the clipboard and notifications (scheduling, click routing); a
-  Windows `secureStore` backend; real-window runs of the capabilities on each OS.
+- **Deno Desktop navigation guard:** keep foreign origins out of the window (a navigation away
+  from the app origin opens in the system browser instead).
 - **iPhone items not yet validated:** the bottom safe-area inset and the example's button-row
   layout (fixes in progress), biometrics with Face ID enrolled, native social login, a sandbox
   purchase, Sentry, background tasks and background location, and the round-3 items built but

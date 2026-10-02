@@ -3,7 +3,7 @@ import { Callout, Code, DocsShell } from "../../../components/ui.tsx";
 export const metadata = {
   title: "Desktop apps",
   description:
-    "Ship a denext app as a native desktop app (a signed/notarized macOS .app, a Linux bundle, a Windows zip) with the denext desktop command: live reload in the window, sign-in through the system browser, and signed UI self-updates. iOS/Android is on the Mobile (Capacitor) page.",
+    "Ship a denext app as a native desktop app (a signed/notarized macOS .app with a .dmg or .pkg, Linux .deb/.rpm/AppImage, a Windows .msi) with the denext desktop command: live reload in the window, native capabilities, OS sign-in sessions, and signed full-app and UI self-updates. iOS/Android is on the Mobile (Capacitor) page.",
 };
 
 export default function Desktop() {
@@ -643,7 +643,8 @@ export default {
         <code>$XDG_DATA_HOME</code> or <code>~/.local/share/&lt;appId&gt;/ui-updates</code>, Windows
         {" "}
         <code>%APPDATA%\&lt;appId&gt;\ui-updates</code>, or <code>dataDir</code>). A change to{" "}
-        <code>desktop.ts</code>, its Deno-side code, or the denext runtime still needs a new binary.
+        <code>desktop.ts</code>, its Deno-side code, or the denext runtime needs a new binary, which
+        a <a href="#desktop-app-updates">full-app self-update</a> delivers.
       </p>
       <p>
         Pass the same config to <code>runDesktop({"{ updater }"})</code>{" "}
@@ -874,13 +875,13 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         scripts derive the app's <code>--allow-*</code> flags from.
       </p>
       <Callout kind="note">
-        <strong>The desktop runtime ships with 2.11.</strong> The page side described here (the{" "}
+        <strong>Packaging permissions.</strong> The page side described here (the{" "}
         <code>denext/mobile</code> desktop branches, <code>denext desktop add</code> and{" "}
         <code>denext/desktop/client</code>) and the runtime that answers it — the gated bridge, the
-        built-in capabilities, and the config→capabilities resolver — ship together. A real window
-        serves each enabled capability (falling back to the web path only for one you have not
-        enabled, and for the WebView-backed rows below), so app data survives relaunch. The
-        scaffolded packaging scripts derive the app's <code>--allow-*</code>{" "}
+        built-in capabilities, and the config→capabilities resolver — ship together. A window serves
+        each enabled capability (falling back to the web path only for one you have not enabled, or
+        under the stock runtime), so app data survives relaunch. The scaffolded packaging scripts
+        derive the app's <code>--allow-*</code>{" "}
         from its enabled capabilities (the table below) in place of <code>-A</code>: a loopback{" "}
         <code>--allow-net</code>, broad <code>--allow-read</code> / <code>--allow-env</code>{" "}
         for the app's own bundle and support directory, and only the <code>--allow-run</code> /{" "}
@@ -896,13 +897,14 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
       <Callout kind="note">
         <strong>What is verified.</strong>{" "}
         The bridge is tested end to end against the real runtime (the wire, and a headless Chromium
-        page: token, origin, preflight, frames, event replay, fallback), and a real{" "}
-        <code>deno desktop</code> build of <code>examples/native</code>{" "}
-        with the derived flags launched and served its bundle on macOS. The built-in capabilities
-        are unit-tested: <code>fs</code> and <code>sqlite</code>{" "}
-        against the real file system, and the keychain, dialog, shell and keep-awake programs
-        through their per-OS argument builders with the process spawn stubbed, not yet driven in a
-        packaged window on every OS.
+        page: token, origin, preflight, frames, event replay, fallback), and every capability runs
+        in a packaged window:{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/desktop-kitchen-sink">
+          examples/desktop-kitchen-sink
+        </a>{" "}
+        turns each one on, calls it from the page and asserts the result, on Linux, macOS (arm64 and
+        Intel) and Windows in CI (<code>.github/workflows/desktop-window.yml</code>); a check a
+        hosted runner can't run reports why it skipped.
       </Callout>
       <table class="table">
         <thead>
@@ -1154,10 +1156,14 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
         <code>openPath</code>, <code>revealInFileManager</code> and <code>moveToTrash</code>;{" "}
         <code>saveFile</code> downloads in a browser and <code>pickFolder</code> uses{" "}
-        <code>showDirectoryPicker</code>{" "}
-        where the browser has it. Storage matters most: a Deno Desktop window gets a new origin each
-        launch, so browser storage starts empty every time. Enable <code>secure-store</code>,{" "}
-        <code>fs</code> and <code>sqlite</code>{" "}
+        <code>showDirectoryPicker</code> where the browser has it. Storage matters most: without
+        {" "}
+        <a href="#desktop-app-origin">
+          <code>desktop.app.origin</code>
+        </a>{" "}
+        (or under the stock runtime) a Deno Desktop window gets a new origin each launch, so browser
+        storage starts empty every time. Enable <code>secure-store</code>, <code>fs</code> and{" "}
+        <code>sqlite</code>{" "}
         for anything that must survive a relaunch; without them the functions fall back to browser
         storage and warn once.
       </p>

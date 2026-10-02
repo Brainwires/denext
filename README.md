@@ -150,7 +150,8 @@ notifications with scheduling and action buttons, native file dialogs, the OS cl
 and images), file drag and drop in both directions, global shortcuts, launch at login, and a window
 API (`denext/desktop/window`: fullscreen, maximize, minimum and maximum size, screens, title-bar
 styles, Mica, Acrylic and vibrancy, a cancelable close). Sign-in uses the system browser or
-`ASWebAuthenticationSession`; passkeys work in the window; `denext/desktop/clerk` runs Clerk's
+`ASWebAuthenticationSession`; native passkeys work in the window on macOS and Windows (Linux, which
+has no OS passkey API, signs in through the browser); `denext/desktop/clerk` runs Clerk's
 Electron bridge unchanged. Updates are **signed full-app self-updates** with downgrade protection, an
 atomic swap and automatic rollback. Node-API addons load on all three operating systems, and
 `defineDesktopExtension` exposes your own Deno code to the page. Packaging is least-privilege: the

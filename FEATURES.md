@@ -380,8 +380,10 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   notification's `data.path` is navigated, cold start included; no web push);
   `openAuthSession` / `completeAuthSession` — an `ASWebAuthenticationSession`
   sheet on iOS, a Custom Tab on Android, a popup on the web, and in a Deno
-  Desktop window the system browser with an RFC 8252 one-shot loopback redirect
-  behind a per-launch token. — `src/mobile/auth-session.ts`,
+  Desktop window an `ASWebAuthenticationSession` sheet on macOS or the system
+  browser (with a Cancel overlay) on Windows and Linux, ending at a declared
+  custom scheme or an RFC 8252 one-shot loopback redirect behind a per-launch
+  token. — `src/mobile/auth-session.ts`,
   `src/desktop/auth-session.ts`.
 - **`denext mobile add <capability...>`** — installs and registers the plugins
   behind those functions in a Capacitor 8 project (`haptics`, `clipboard`,
@@ -427,7 +429,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   enabled by `runDesktop({ updater })`): the mobile OTA manifest and signature,
   verified in-process before anything is swapped, into a UI overlay outside the
   signed bundle, with an atomic pointer swap, downgrade refusal and a rollback
-  when the page never confirms its boot. — `src/desktop/updater.ts`.
+  when the page never confirms its boot; and signed full-app updates
+  (`checkForAppUpdate` / `downloadAppUpdate` / `installAppUpdateAndRelaunch` /
+  `confirmAppUpdate`, published by `denext desktop publish-update`): the whole
+  signed app swapped atomically, no downgrades, the same code-signing identity
+  required, rolled back if the new version never confirms. —
+  `src/desktop/updater.ts`, `src/desktop/app-updater.ts`.
 - **React Native / Expo apps on the web** ⚑ — `reactNative: true` (SPA mode)
   builds an Expo / React Native app's own source through react-native-web:
   `react-native` (and deep `Libraries/…` paths) resolves to react-native-web for
