@@ -324,13 +324,17 @@ async function downloadVerified(
 }
 
 /** Run a program to completion with inherited output; resolves its exit code. */
-export type CommandRunner = (cmd: string, args: string[]) => Promise<number>;
+export type RuntimeCommandRunner = (cmd: string, args: string[]) => Promise<number>;
 
-const defaultRunner: CommandRunner = async (cmd, args) =>
+const defaultRunner: RuntimeCommandRunner = async (cmd, args) =>
   (await new Deno.Command(cmd, { args, stdout: "inherit", stderr: "inherit" }).output()).code;
 
 /** `gh attestation verify` the archive (opt-in provenance check). */
-async function attest(archive: string, repository: string, run: CommandRunner): Promise<void> {
+async function attest(
+  archive: string,
+  repository: string,
+  run: RuntimeCommandRunner,
+): Promise<void> {
   const repo = repository.replace(/^https:\/\/github\.com\//, "");
   let code: number;
   try {
@@ -475,7 +479,7 @@ export interface EnsureDesktopRuntimeOptions {
   readonly log?: (line: string) => void;
   /** Test seams. */
   readonly fetch?: typeof fetch;
-  readonly run?: CommandRunner;
+  readonly run?: RuntimeCommandRunner;
   /** Runs `plutil` / `codesign` for the macOS re-sign (test seam). */
   readonly capture?: CaptureRunner;
   /** Whether to apply the macOS laufey re-sign (default: a macOS host and a darwin target). */
@@ -683,7 +687,7 @@ export interface DesktopRuntimeEnvOptions {
   readonly pin?: DesktopRuntimePin;
   readonly cacheRoot?: string;
   readonly fetch?: typeof fetch;
-  readonly run?: CommandRunner;
+  readonly run?: RuntimeCommandRunner;
   readonly denoVersion?: (deno: string) => Promise<string>;
   readonly log?: (line: string) => void;
   readonly hostOs?: string;
