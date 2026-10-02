@@ -334,6 +334,7 @@
   "denext/cli": [],
   "denext/cli/command": [
     "CommandContext:interface",
+    "CommandLocks:interface",
     "CommandRegistry:class",
     "CommandSpec:interface",
     "FlagSpec:interface",
