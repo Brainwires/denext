@@ -6,7 +6,12 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, relative, resolve } from "@std/path";
-import { acquireFileLock, blockingLine } from "../src/build/file-lock.ts";
+import {
+  acquireFileLock,
+  blockingLine,
+  lockingUnsupported,
+  lockTimeoutMs,
+} from "../src/build/file-lock.ts";
 import {
   BUILD_DIR_LOCK,
   buildDirLockPath,
@@ -146,7 +151,11 @@ Deno.test(
       await first.waitFor("locked");
       const second = spawnHolder(script, spec);
       await eventually(() => second.stderr().includes("Blocking"), "the Blocking line");
-      assertEquals(second.stderr(), blockingLine("build directory .denext"));
+      assertEquals(
+        second.stderr(),
+        blockingLine("build directory .denext", resolve(buildDirLockPath(dir))),
+      );
+      assertStringIncludes(second.stderr(), "held by another denext process; Ctrl-C to abort");
       // Still waiting: nothing locked yet.
       await new Promise((r) => setTimeout(r, 300));
       assert(!second.saw("locked"), "the second writer must not get the lock while it is held");
@@ -275,7 +284,7 @@ Deno.test(
         collect(cli.stdout, out, () => {}),
       ]);
       await eventually(
-        () => err.join("\n").includes(blockingLine("output directory cov")),
+        () => err.join("\n").includes("Blocking waiting for file lock on output directory cov ("),
         "the CLI's Blocking line",
         60_000,
       );
@@ -358,6 +367,114 @@ Deno.test("a filesystem that cannot lock proceeds unlocked (Cargo's rule)", asyn
     (await acquireFileLock(join(dir, "nfs.lock"), opts)).release();
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("more errnos mean a filesystem without locking; each lock file warns once", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const warned: string[] = [];
+    const opts = {
+      mode: "exclusive",
+      description: "nfs dir",
+      rank: 1,
+      onWarning: (l: string) => warned.push(l),
+    } as const;
+    const coded = (code: string) => Object.assign(new Error(`${code}: nope`), { code });
+    for (const err of [coded("ENOSYS"), coded("EINVAL"), new Error("Function not implemented")]) {
+      await withFsFile("tryLock", () => Promise.reject(err), async () => {
+        (await acquireFileLock(join(dir, "nfs2.lock"), opts)).release();
+      });
+    }
+    assertEquals(warned.length, 1, "one warning per lock file, however often it is taken");
+    assertStringIncludes(warned[0], "warning: proceeding without a lock on nfs dir (");
+    assertStringIncludes(warned[0], "nfs2.lock): ENOSYS");
+    assert(lockingUnsupported(coded("ENOTSUP")));
+    assert(!lockingUnsupported(coded("EIO")));
+    assert(!lockingUnsupported("EINVAL as a string is not an error object"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a shared lock on an unwritable directory proceeds unlocked; an exclusive one fails", async () => {
+  if (Deno.build.os === "windows") return; // POSIX modes
+  const dir = await Deno.makeTempDir();
+  const ro = join(dir, "ro");
+  await Deno.mkdir(ro);
+  await Deno.chmod(ro, 0o555);
+  try {
+    // root ignores the mode: nothing to test there.
+    const writable = await Deno.writeTextFile(join(ro, "probe"), "").then(() => true, () => false);
+    if (writable) return;
+    const warned: string[] = [];
+    const opts = {
+      description: "read-only build dir",
+      rank: 1,
+      onWarning: (l: string) => warned.push(l),
+    };
+    const lock = await acquireFileLock(join(ro, ".lock"), { ...opts, mode: "shared" });
+    lock.release();
+    assertStringIncludes(warned.join("\n"), "proceeding without a lock on read-only build dir");
+    await assertRejects(
+      () => acquireFileLock(join(ro, ".lock2"), { ...opts, mode: "exclusive" }),
+      Deno.errors.PermissionDenied,
+    );
+  } finally {
+    await Deno.chmod(ro, 0o755);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test(
+  "DENEXT_LOCK_TIMEOUT: a contended lock fails after the limit, naming the lock file",
+  SUBPROCESS,
+  async () => {
+    const dir = await Deno.makeTempDir();
+    try {
+      const script = await holderScript(dir);
+      const holder = spawnHolder(script, { projectDir: dir, buildDir: "exclusive" });
+      await holder.waitFor("locked");
+      try {
+        const path = buildDirLockPath(dir);
+        const lines: string[] = [];
+        const err = await assertRejects(
+          () =>
+            acquireFileLock(path, {
+              mode: "shared",
+              description: "build directory .denext",
+              rank: LOCK_RANK.buildDir,
+              onBlocking: (l) => lines.push(l),
+              timeoutMs: 300,
+            }),
+          Error,
+        );
+        assertStringIncludes(err.message, "gave up after 0.3s waiting for file lock");
+        assertStringIncludes(err.message, path);
+        assertStringIncludes(err.message, "DENEXT_LOCK_TIMEOUT");
+        assertEquals(lines, [blockingLine("build directory .denext", resolve(path))]);
+      } finally {
+        await holder.release();
+        await holder.status;
+      }
+      // Free again: the timed acquire takes it at once.
+      (await acquireFileLock(buildDirLockPath(dir), {
+        mode: "exclusive",
+        description: "x",
+        rank: LOCK_RANK.buildDir,
+        timeoutMs: 300,
+      })).release();
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+);
+
+Deno.test("lockTimeoutMs: positive seconds, anything else waits forever", () => {
+  assertEquals(lockTimeoutMs("30"), 30_000);
+  assertEquals(lockTimeoutMs(" 0.5 "), 500);
+  for (const v of [undefined, "", "0", "-3", "soon", "Infinity"]) {
+    assertEquals(lockTimeoutMs(v), undefined, String(v));
   }
 });
 

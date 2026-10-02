@@ -5,7 +5,9 @@
 // The contract follows Cargo's (`cargo::util::flock` / `cache_lock`):
 //
 // - try the lock first; when another process holds it, print ONE line to stderr —
-//   `    Blocking waiting for file lock on <what>` — and then block until it is free;
+//   `    Blocking waiting for file lock on <what> (<lock file>) — held by another denext
+//   process; Ctrl-C to abort` — and then block until it is free (or, with
+//   `DENEXT_LOCK_TIMEOUT=<seconds>`, fail once that long has passed);
 // - shared locks coexist, an exclusive lock excludes everything;
 // - a lock this process already holds is re-entrant (a nested acquire of the same file is a
 //   reference count, never a self-deadlock — two `open`s of one file in one process are
@@ -14,7 +16,9 @@
 // - locks carry a RANK and must be taken in increasing rank order, the fixed order that keeps
 //   two processes from each holding what the other waits for (Cargo PR #15698 fixed exactly
 //   that deadlock). Taking a lower rank while holding a higher one throws — a bug, not a wait.
-// - a filesystem that cannot lock at all (some network mounts) proceeds unlocked, as Cargo does.
+// - a filesystem that cannot lock at all (some network mounts) proceeds unlocked, as Cargo does,
+//   with one warning; so does a SHARED lock (a reader) whose lock file can't be created on a
+//   read-only or unwritable directory.
 
 import { dirname, resolve } from "@std/path";
 
@@ -31,6 +35,36 @@ export interface FileLockOptions {
   readonly rank: number;
   /** Where the single Blocking line goes (default: stderr). */
   readonly onBlocking?: (line: string) => void;
+  /** Where the proceeding-unlocked warning goes (default: stderr). */
+  readonly onWarning?: (line: string) => void;
+  /**
+   * How long to wait for a contended lock before failing, in ms (default: `DENEXT_LOCK_TIMEOUT`
+   * seconds, else forever).
+   */
+  readonly timeoutMs?: number;
+}
+
+/** `DENEXT_LOCK_TIMEOUT`: seconds to wait for a contended lock before failing (unset: forever). */
+const LOCK_TIMEOUT_ENV = "DENEXT_LOCK_TIMEOUT";
+
+/**
+ * The lock wait limit in ms from a `DENEXT_LOCK_TIMEOUT` value: a positive number of seconds, else
+ * `undefined` (wait forever — an unset, empty, zero, negative or malformed value).
+ *
+ * @param value The variable's value.
+ * @returns The limit in ms, or `undefined`.
+ */
+export function lockTimeoutMs(value: string | undefined): number | undefined {
+  const seconds = Number(value?.trim() || NaN);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
+}
+
+function envLockTimeoutMs(): number | undefined {
+  try {
+    return lockTimeoutMs(Deno.env.get(LOCK_TIMEOUT_ENV));
+  } catch {
+    return undefined; // no env permission: wait forever
+  }
 }
 
 /** A held lock. Release it (or let `using` dispose it); process exit releases it too. */
@@ -56,9 +90,17 @@ interface Held {
 /** Every lock file this process holds (or is acquiring), by absolute path. */
 const held = new Map<string, Held>();
 
-/** The Blocking line, in Cargo's wording (`Blocking` right-aligned in a 12-column status). */
-export function blockingLine(description: string): string {
-  return `    Blocking waiting for file lock on ${description}`;
+/**
+ * The Blocking line, in Cargo's wording (`Blocking` right-aligned in a 12-column status), plus the
+ * lock file and how to get out.
+ *
+ * @param description What the lock guards (`build directory .denext`).
+ * @param path The lock file.
+ * @returns The line.
+ */
+export function blockingLine(description: string, path: string): string {
+  return `    Blocking waiting for file lock on ${description} (${path}) — held by another denext ` +
+    "process; Ctrl-C to abort";
 }
 
 function writeStderr(line: string): void {
@@ -69,25 +111,84 @@ function writeStderr(line: string): void {
   }
 }
 
+/** The errno code of `err` (`err.code`, else one named in its message). */
+function errnoOf(err: unknown): string | undefined {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string") return code;
+  return err instanceof Error ? /\b(E[A-Z]{2,})\b/.exec(err.message)?.[1] : undefined;
+}
+
+/** Errnos that say this filesystem cannot lock (some network mounts, FUSE, WSL1, SMB). */
+const NO_LOCKING = new Set(["ENOLCK", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EINVAL"]);
+
 /** Whether `err` says this filesystem cannot lock (Cargo proceeds unlocked there too). */
-function lockingUnsupported(err: unknown): boolean {
+export function lockingUnsupported(err: unknown): boolean {
   if (err instanceof Deno.errors.NotSupported) return true;
-  return err instanceof Error && /\b(ENOLCK|ENOTSUP|EOPNOTSUPP)\b|not supported/i.test(err.message);
+  if (NO_LOCKING.has(errnoOf(err) ?? "")) return true;
+  return err instanceof Error && /not supported|not implemented/i.test(err.message);
+}
+
+/** Whether `err` says the lock file can't be created here (a read-only or unwritable directory). */
+function cannotCreate(err: unknown): boolean {
+  if (err instanceof Deno.errors.PermissionDenied) return true;
+  return ["EROFS", "EACCES", "EPERM"].includes(errnoOf(err) ?? "");
+}
+
+/** Lock files already warned about (one warning per file per process). */
+const warnedUnlocked = new Set<string>();
+
+function proceedUnlocked(path: string, opts: FileLockOptions, why: unknown): null {
+  if (!warnedUnlocked.has(path)) {
+    warnedUnlocked.add(path);
+    const reason = why instanceof Error ? why.message : String(why);
+    (opts.onWarning ?? writeStderr)(
+      `    warning: proceeding without a lock on ${opts.description} (${path}): ${reason}`,
+    );
+  }
+  return null;
+}
+
+/** Wait for the lock, polling until `timeoutMs` has passed; then fail naming the holder's file. */
+async function lockWithin(
+  file: Deno.FsFile,
+  exclusive: boolean,
+  path: string,
+  opts: FileLockOptions,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, Math.min(200, Math.max(1, deadline - Date.now()))));
+    if (await file.tryLock(exclusive)) return;
+  }
+  throw new Error(
+    `denext: gave up after ${timeoutMs / 1000}s waiting for file lock on ${opts.description} ` +
+      `(${path}); another denext process holds it (${LOCK_TIMEOUT_ENV})`,
+  );
 }
 
 async function lockFile(path: string, opts: FileLockOptions): Promise<Deno.FsFile | null> {
-  await Deno.mkdir(dirname(path), { recursive: true });
-  const file = await Deno.open(path, { read: true, write: true, create: true });
+  let file: Deno.FsFile;
+  try {
+    await Deno.mkdir(dirname(path), { recursive: true });
+    file = await Deno.open(path, { read: true, write: true, create: true });
+  } catch (err) {
+    // A reader on a read-only tree has nothing to protect from itself: proceed (with a warning).
+    if (opts.mode === "shared" && cannotCreate(err)) return proceedUnlocked(path, opts, err);
+    throw err;
+  }
   const exclusive = opts.mode === "exclusive";
   try {
     if (!await file.tryLock(exclusive)) {
-      (opts.onBlocking ?? writeStderr)(blockingLine(opts.description));
-      await file.lock(exclusive);
+      (opts.onBlocking ?? writeStderr)(blockingLine(opts.description, path));
+      const timeoutMs = opts.timeoutMs ?? envLockTimeoutMs();
+      if (timeoutMs === undefined) await file.lock(exclusive);
+      else await lockWithin(file, exclusive, path, opts, timeoutMs);
     }
     return file;
   } catch (err) {
     file.close();
-    if (lockingUnsupported(err)) return null;
+    if (lockingUnsupported(err)) return proceedUnlocked(path, opts, err);
     throw err;
   }
 }

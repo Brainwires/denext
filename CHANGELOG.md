@@ -15,6 +15,8 @@ and this project adheres to
   page) under a "Run it" block, its category, tags and a GitHub source link, with related examples
   and previous / next. `/docs/examples` groups all 45 by category, and the sidebar nests them under
   Examples. `denext_read_docs` reads them as `examples/<name>`, and `llms.txt` links the index.
+- **`DENEXT_LOCK_TIMEOUT=<seconds>`** bounds the wait for a build lock another denext process
+  holds: past it the command fails, naming the lock file (unset: wait until it is free).
 - **A denext backend accepts its own Deno Desktop app origin.** With `desktop.app.origin` set
   (e.g. `myapp://app`), an `Origin` exactly equal to it (normalized as the runtime does) passes
   every same-origin check: Server Actions, the typed-API batch, the Live socket handshake,
@@ -390,6 +392,13 @@ and this project adheres to
 
 ### Fixed
 
+- **The build-lock Blocking line names the lock file and the way out**:
+  `Blocking waiting for file lock on build directory .denext (<path>) — held by another denext
+  process; Ctrl-C to abort`. A filesystem that answers `ENOSYS` or `EINVAL` to a lock now counts
+  as one that cannot lock (proceeding unlocked, as for `ENOLCK` / `ENOTSUP`), a shared lock whose
+  lock file can't be created (`EROFS`, `EACCES`: `denext doctor` on a read-only checkout)
+  proceeds unlocked instead of failing, and proceeding unlocked prints one warning per lock file
+  instead of nothing.
 - **A default `.msi` / `.deb` no longer aborts the package run.** A deno.json `version` the
   format can't express (a CalVer `2026.10.2` overflows an MSI's 255 major; Debian / RPM need a
   leading digit) skips that default installer with a warning that says so, and a failed
