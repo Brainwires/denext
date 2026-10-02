@@ -19,7 +19,10 @@
  *   `webtap` signal and `webTake` queue. A click after the page reloaded reaches nothing.
  * - `Notification.permission` starts `"default"` and is the OS's answer once the first query
  *   returns (within the first tick or two); `requestPermission()` asks the OS (it prompts when
- *   undecided) and resolves `"granted"`, `"denied"` or `"default"`.
+ *   undecided) and resolves `"granted"`, `"denied"` or `"default"`. An OS that has not answered
+ *   within 20 s (a prompt left open, or an app the OS will not ask for) resolves it with the state
+ *   known so far, `"default"` when nothing is, as a dismissed browser prompt does; a later answer
+ *   still updates `Notification.permission`.
  *
  * The rest of the options (`icon`, `image`, `badge`, `silent`, `requireInteraction`, `actions`,
  * `vibrate`, `renotify`) are kept on the object but not shown: the OS notification has the app's
@@ -41,8 +44,14 @@ export type NotificationShimGlobal = any;
  * token in `g.__denext` (a top-level page of the desktop window); without it nothing happens.
  *
  * @param g The page global.
+ * @param permissionTimeoutMs How long `requestPermission()` waits for the OS before it resolves
+ *   with the state known so far (20 s; tests pass less). A literal default: the function is
+ *   serialized, so it may not name an outer constant.
  */
-export function installDesktopNotificationShim(g: NotificationShimGlobal): void {
+export function installDesktopNotificationShim(
+  g: NotificationShimGlobal,
+  permissionTimeoutMs = 20000,
+): void {
   const denext = g.__denext;
   if (!denext || denext.desktop !== true || typeof denext.token !== "string" || !denext.token) {
     return;
@@ -67,12 +76,21 @@ export function installDesktopNotificationShim(g: NotificationShimGlobal): void 
   let asks = 0;
   const ask = (request: boolean): Promise<string> => {
     const turn = ++asks;
-    return rpc("permission", { request }).then((out) => {
+    const answer = rpc("permission", { request }).then((out) => {
       const state = (out as { state?: unknown } | null)?.state;
       const web = state === "granted" ? "granted" : state === "denied" ? "denied" : "default";
       if (turn === asks) permission = web;
       return web;
     }, () => permission);
+    if (!request) return answer;
+    // A prompt the OS never answers must not hold the page (or its notifications) forever.
+    return new Promise<string>((resolve) => {
+      const timer = g.setTimeout(() => resolve(permission), permissionTimeoutMs);
+      void answer.then((web) => {
+        if (typeof g.clearTimeout === "function") g.clearTimeout(timer);
+        resolve(web);
+      });
+    });
   };
   let ready = ask(false);
 

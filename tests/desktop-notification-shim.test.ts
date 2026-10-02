@@ -26,7 +26,8 @@ const BASE = "http://127.0.0.1:8000";
 
 /** How the fake OS answers: its permission answer, and whether posting fails. */
 interface FakeOsOptions {
-  readonly permission?: "granted" | "denied" | "prompt";
+  /** `"never"`: the OS does not answer until the test calls `answer(state)`. */
+  readonly permission?: "granted" | "denied" | "prompt" | "never";
   readonly scheduleFails?: boolean;
 }
 
@@ -35,6 +36,7 @@ function fakeOs(options: FakeOsOptions = {}) {
   const scheduled: DesktopScheduledNotification[] = [];
   const cancelled: string[] = [];
   const listeners = new Map<string, (e: Event) => void>();
+  let answer: (state: string) => void = () => {};
   const notifications: DesktopNotificationsApi = {
     capabilities: () => ({ show: true, schedule: true, actions: true, clicks: true }),
     schedule: (o) => {
@@ -50,7 +52,10 @@ function fakeOs(options: FakeOsOptions = {}) {
       if (at >= 0) scheduled.splice(at, 1);
       cancelled.push(tag);
     },
-    requestPermission: () => Promise.resolve(options.permission ?? "granted"),
+    requestPermission: () =>
+      options.permission === "never"
+        ? new Promise<string>((resolve) => void (answer = resolve))
+        : Promise.resolve(options.permission ?? "granted"),
   };
   const api: DesktopAppApi = {
     notifications,
@@ -61,19 +66,20 @@ function fakeOs(options: FakeOsOptions = {}) {
     listeners.get("notificationresponse")!(
       new CustomEvent("notificationresponse", { detail: { tag, action: null, data } }),
     );
-  return { api, scheduled, cancelled, click };
+  return { api, scheduled, cancelled, click, answer: (state: string) => answer(state) };
 }
 
 // deno-lint-ignore no-explicit-any
 type Page = any;
 
 /** A page global with the shim installed, wired to a bridge over the real capability. */
-function page(options: FakeOsOptions = {}) {
+function page(options: FakeOsOptions & { permissionTimeoutMs?: number } = {}) {
   const os = fakeOs(options);
   const cap = notificationsCapability({ api: os.api, autoTopUp: false });
   const bridge = createDesktopBridge([cap]);
   const streams: AbortController[] = [];
   const timers: Array<() => void> = [];
+  const delays: number[] = [];
   const fetch = async (path: string, init: RequestInit = {}): Promise<Response> => {
     const headers = new Headers(init.headers);
     headers.set("origin", BASE);
@@ -100,14 +106,22 @@ function page(options: FakeOsOptions = {}) {
     TextDecoder,
     crypto,
     // The shim's retry / rethrow timers are recorded, never run (no leaked timers).
-    setTimeout: (fn: () => void) => void timers.push(fn),
+    setTimeout: (fn: () => void, ms: number) => {
+      timers.push(fn);
+      delays.push(ms);
+      return fn;
+    },
+    clearTimeout: (id: unknown) => {
+      const at = timers.indexOf(id as () => void);
+      if (at >= 0) timers.splice(at, 1), delays.splice(at, 1);
+    },
   };
-  installDesktopNotificationShim(g);
+  installDesktopNotificationShim(g, options.permissionTimeoutMs);
   const end = async () => {
     for (const s of streams) s.abort();
     await settle();
   };
-  return { g, os, timers, end };
+  return { g, os, timers, delays, end };
 }
 
 /** Let the shim's promise chains (RPC → bridge → capability) run. */
@@ -317,7 +331,15 @@ function scripted(
     EventTarget,
     TextDecoder,
     crypto,
-    setTimeout: (fn: () => void, ms: number) => void timers.push({ fn, ms }),
+    setTimeout: (fn: () => void, ms: number) => {
+      const entry = { fn, ms };
+      timers.push(entry);
+      return entry;
+    },
+    clearTimeout: (id: unknown) => {
+      const at = timers.indexOf(id as { fn: () => void; ms: number });
+      if (at >= 0) timers.splice(at, 1);
+    },
   };
   installDesktopNotificationShim(g);
   return { g, calls, timers };
@@ -438,6 +460,60 @@ Deno.test("Notification shim: a failed RPC keeps the last permission; a failed f
   timers[0].fn();
   await settle(20);
   assertEquals(timers.map((t) => t.ms), [1000, 2000]);
+});
+
+Deno.test("Notification shim: an OS that never answers requestPermission → default at the bound", async () => {
+  const { g, os, timers, delays, end } = page({ permission: "never" });
+  try {
+    await settle();
+    let viaCallback: string | undefined;
+    let settled: string | undefined;
+    const asked = g.Notification.requestPermission((s: string) => (viaCallback = s));
+    void asked.then((s: string) => (settled = s));
+    await settle();
+    assertEquals(settled, undefined); // still waiting for the OS
+    // The bound: 20 s by default (the only pending timer; the startup query was answered).
+    assertEquals(delays, [20000]);
+    const events: string[] = [];
+    const n = new g.Notification("waiting");
+    n.onerror = () => events.push("error");
+    timers[0]();
+    assertEquals(await asked, "default");
+    await settle(0);
+    assertEquals([settled, viaCallback, g.Notification.permission], [
+      "default",
+      "default",
+      "default",
+    ]);
+    // A notification made meanwhile waited for that answer: not granted → error, nothing posted.
+    await settle();
+    assertEquals(events, ["error"]);
+    assertEquals(os.scheduled.length, 0);
+    // The OS answers late: the permission follows it.
+    os.answer("granted");
+    await settle();
+    assertEquals(g.Notification.permission, "granted");
+  } finally {
+    await end();
+  }
+});
+
+Deno.test("Notification shim: the permission bound is configurable; a prompt answer clears it", async () => {
+  const slow = page({ permission: "never", permissionTimeoutMs: 50 });
+  try {
+    void slow.g.Notification.requestPermission();
+    await settle();
+    assertEquals(slow.delays, [50]);
+  } finally {
+    await slow.end();
+  }
+  const quick = page({ permission: "denied" });
+  try {
+    assertEquals(await quick.g.Notification.requestPermission(), "denied");
+    assertEquals(quick.timers.length, 0); // answered in time: the bound's timer is cleared
+  } finally {
+    await quick.end();
+  }
 });
 
 Deno.test("Notification shim: no token → nothing installed", () => {
