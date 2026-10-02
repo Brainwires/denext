@@ -7,6 +7,7 @@
 
 import { join } from "@std/path";
 import { runPluginTeardown } from "../plugin/mod.ts";
+import { configuredDesktopAppOrigin } from "../server/config.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { captureConsole } from "./dev-events.ts";
@@ -97,12 +98,18 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
 /** Start the development server for the project described by `options.paths`. */
 export function startDevServer(given: DevServerOptions): Deno.HttpServer {
   const { paths } = given;
-  // The config's `allowedDevOrigins`, the programmatic / `--allowed-dev-origin` ones, and the
-  // host an explicit `--host` / `--lan` bind names: one list both dev servers gate on.
+  // The config's `allowedDevOrigins`, the programmatic / `--allowed-dev-origin` ones, the app's
+  // own `desktop.app.origin` (a Deno Desktop window under `denext desktop dev`), and the host an
+  // explicit `--host` / `--lan` bind names: one list both dev servers gate on.
+  const desktopAppOrigin = configuredDesktopAppOrigin(paths.config);
   const options: DevServerOptions = {
     ...given,
     allowedDevOrigins: effectiveDevOrigins(
-      [paths.config?.allowedDevOrigins, given.allowedDevOrigins],
+      [
+        paths.config?.allowedDevOrigins,
+        given.allowedDevOrigins,
+        desktopAppOrigin ? [desktopAppOrigin] : undefined,
+      ],
       given.hostname,
     ),
   };

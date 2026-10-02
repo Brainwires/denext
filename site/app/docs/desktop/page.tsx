@@ -1995,6 +1995,25 @@ const socket = new WebSocket(desktopWebSocketUrl("/api/events"));`}
           <code>spa.proxy</code> that checks the WebSocket <code>Origin</code>{" "}
           must accept the app origin.
         </li>
+        <li>
+          A denext backend accepts the app&apos;s own <code>desktop.app.origin</code>{" "}
+          wherever it accepts same-origin: Server Actions, the typed-API batch, the Live socket,
+          {" "}
+          <code>denextAuth</code>&apos;s POSTs and the <code>denext dev</code>{" "}
+          origin gate. The match is exact (the normalized{" "}
+          <code>myapp://app</code>); another scheme or host is refused, and nothing changes while
+          {" "}
+          <code>desktop.app.origin</code>{" "}
+          is unset. A separate backend project lists the desktop app&apos;s origin in{" "}
+          <a href="/docs/config#dev-server">
+            <code>allowedDevOrigins</code>
+          </a>{" "}
+          (dev) or <code>createApp</code>&apos;s{" "}
+          <code>allowedOrigins</code>. Any local program can send any{" "}
+          <code>Origin</code>, so these checks guard against browsers, and a web page cannot produce
+          a custom-scheme origin: accepting the app&apos;s own origin does not widen browser-borne
+          CSRF.
+        </li>
       </ul>
       <Callout kind="note">
         The custom origin needs{" "}

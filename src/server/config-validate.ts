@@ -750,8 +750,9 @@ function validateI18n(i18n: unknown, fail: Fail): void {
 
 /**
  * Why `entry` is not a usable `allowedDevOrigins` entry, or `null` when it is one: an origin
- * (`http(s)://host[:port]`, nothing after it) or a bare host (`host` or `host:port`, a raw
- * IPv6 address included). The dev origin gate matches entries exactly, so a wildcard is
+ * (`http(s)://host[:port]`, nothing after it), a custom-scheme app origin (`myapp://app`,
+ * validated as `desktop.app.origin` is — a Deno Desktop window's) or a bare host (`host` or
+ * `host:port`, a raw IPv6 address included). The dev origin gate matches entries exactly, so a wildcard is
  * refused rather than silently never matching. Shared by the config validator and
  * `denext dev --allowed-dev-origin`.
  *
@@ -765,8 +766,16 @@ export function devOriginError(entry: unknown): string | null {
   return entry.includes("://") ? originEntryError(entry) : hostEntryError(entry);
 }
 
-/** An `allowedDevOrigins` entry written as an origin: `http(s)://host[:port]`, exactly. */
+/**
+ * An `allowedDevOrigins` entry written as an origin: `http(s)://host[:port]` exactly, or a
+ * custom-scheme app origin (`myapp://app`) by `desktop.app.origin`'s rules.
+ */
 function originEntryError(entry: string): string | null {
+  if (!/^https?:\/\//i.test(entry)) {
+    const parsed = parseDesktopAppOrigin(entry);
+    return parsed.ok ? null : `must be an http(s) origin or a custom-scheme app origin like ` +
+      `myapp://app (${parsed.error})`;
+  }
   if (!URL.canParse(entry)) return "is not a valid origin";
   const url = new URL(entry);
   if (url.protocol !== "http:" && url.protocol !== "https:") return "must be an http(s) origin";

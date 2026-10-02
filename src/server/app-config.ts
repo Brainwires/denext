@@ -223,6 +223,12 @@ export interface AppConfig {
    */
   trustForwardedHeaders?: boolean;
   /**
+   * The app's own Deno Desktop origin (`desktop.app.origin`, normalized: `myapp://app`). The
+   * same-origin checks (Server Actions, the API batch, `denextAuth`'s POSTs) accept an `Origin`
+   * header exactly equal to it. `denext start`/`dev` take it from the config.
+   */
+  desktopAppOrigin?: string;
+  /**
    * Enable the Flight (`"use client"`/`"use server"`) boundary. When on (and
    * {@link appDir} is set), a route that involves a client module is rendered to
    * a Flight payload and hydrates from client islands only. Routes with no

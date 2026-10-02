@@ -235,6 +235,7 @@ async function dispatchAction(state: RequestState): Promise<Response> {
     allowedOrigins: config.allowedOrigins,
     canonicalOrigin: config.canonicalOrigin,
     trustForwardedHeaders: config.trustForwardedHeaders,
+    desktopAppOrigin: config.desktopAppOrigin,
     maxBodyBytes: config.actionMaxBodyBytes,
     onError: (err) => reportRequestError(config, err, request, pathname, { routeType: "action" }),
   });

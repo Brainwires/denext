@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **A denext backend accepts its own Deno Desktop app origin.** With `desktop.app.origin` set
+  (e.g. `myapp://app`), an `Origin` exactly equal to it (normalized as the runtime does) passes
+  every same-origin check: Server Actions, the typed-API batch, the Live socket handshake,
+  `denextAuth`'s POSTs and the `denext dev` origin gate, so a desktop window's Live and Server
+  Actions reach a `denext start` or `denext dev` backend. Another scheme or host is refused, and
+  nothing changes while the option is unset. A browser page cannot produce a custom-scheme origin,
+  so this does not widen browser-borne CSRF.
+- **`allowedDevOrigins` takes custom-scheme origins** (`"myapp://app"`, validated as
+  `desktop.app.origin` is), so a separate backend project can admit a desktop app's origin; so does
+  `createApp`'s `allowedOrigins`.
+
 - **Deno Desktop sign-in on macOS runs in the OS's own auth session.** Under the pinned runtime
   (2.9.7-denext.6), `openAuthSession`'s custom-scheme flow (and so `denext/desktop/clerk`) uses
   `ASWebAuthenticationSession` through `Deno.desktop.authSession`: a sheet on the app's window that
@@ -376,6 +387,12 @@ and this project adheres to
   requires.
 
 ### Security
+
+- **The same-origin checks match `http(s)` origins only by host.** The Server Action / API-batch
+  gate, the Live handshake, `denextAuth`'s POST gate and the dev origin gate no longer treat an
+  `Origin` such as `other://<your host>` as same-origin, and a custom-scheme `allowedOrigins` entry
+  no longer admits every opaque origin (its URL origin serializes as `"null"`); custom-scheme
+  origins pass only by exact match. A `host:port` `allowedOrigins` entry now counts as a bare host.
 
 - **Windows deep links can no longer smuggle command-line switches.** The `.msi`'s scheme
   registration is now `"<app>.exe" -- "%1"`: Windows splices the URL into `%1` verbatim, so a URL

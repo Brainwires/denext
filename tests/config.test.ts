@@ -324,6 +324,7 @@ Deno.test("resolveServerOptions: unset config + unset env leaves every knob unde
       actionMaxBodyBytes: undefined,
       cacheKeyParams: undefined,
       compress: undefined,
+      desktopAppOrigin: undefined,
     });
   });
 });

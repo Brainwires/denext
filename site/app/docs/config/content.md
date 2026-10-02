@@ -268,7 +268,12 @@ Per-request observability is code, not config: export `onRequest(info)` from
   for one run. A listed host is trusted like loopback: a device that can reach
   it can read the app's transformed source. Cross-site pages are still refused
   (`Sec-Fetch-Site` / `Origin`). See
-  [Live reload on a device](/docs/mobile#live-reload-on-a-device).
+  [Live reload on a device](/docs/mobile#live-reload-on-a-device). An entry may
+  also be a Deno Desktop app's custom-scheme origin (`"myapp://app"`, validated
+  as [`desktop.app.origin`](/docs/desktop#desktop-app-origin) is): it admits a
+  request whose `Origin` is exactly that value, for a backend project a separate
+  desktop app talks to. The project's own `desktop.app.origin` is admitted
+  without listing it.
 
 ```ts
 export default {

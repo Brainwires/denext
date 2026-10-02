@@ -6,6 +6,7 @@ import { basename, fromFileUrl, resolve, SEPARATOR } from "@std/path";
 import { browserLogEvent, type DevEventKind } from "../dev-events.ts";
 import { denoExecutable } from "../bundle.ts";
 import { isCompat } from "./compat.ts";
+import { customSchemeOrigin } from "../../server/origin-check.ts";
 import { enrichFrame, pushError } from "./reload.ts";
 import type { DevState } from "./state.ts";
 
@@ -20,22 +21,30 @@ import type { DevState } from "./state.ts";
  * "missing Origin ⇒ allow" path was bypassable by such a load. Only after that (header
  * absent — curl/tests, or a browser too old to send it) do we fall back to the `Origin`
  * allowlist, still allowing a missing Origin for non-browser clients.
+ *
+ * A custom-scheme entry (`myapp://app` — a Deno Desktop window's `desktop.app.origin`, which
+ * `denext dev` adds itself) admits an `Origin` byte-exactly equal to it, ahead of the
+ * `Sec-Fetch-Site` rule: that window is cross-site to the dev server by construction, and no web
+ * page can claim a custom-scheme origin. The host-based rules match `http(s)` origins only.
  */
 export function devOriginAllowed(request: Request, url: URL, allowed: string[]): boolean {
   // DNS rebinding: a hostname an attacker controls can resolve to 127.0.0.1, making their
   // page "same-origin" with this dev server in the browser's eyes. The Host the browser
   // sent must therefore be a loopback name or an explicitly allowed dev origin.
   if (!devHostAllowed(url.hostname, allowed)) return false;
+  const origin = request.headers.get("origin");
+  if (origin !== null && allowed.some((a) => customSchemeOrigin(a) === origin)) return true;
   // A present Sec-Fetch-Site is authoritative: same-origin allowed, anything else
   // (cross-site/same-site/none) refused — this is what closes the Origin-less
   // cross-site subresource GET that could otherwise reach a state-changing endpoint.
   const secFetchSite = request.headers.get("sec-fetch-site");
   if (secFetchSite) return secFetchSite === "same-origin";
-  const origin = request.headers.get("origin");
   if (!origin) return true; // curl / tests / pre-Sec-Fetch browser — no cross-origin risk
   let host: string;
   try {
-    host = new URL(origin).host;
+    const u = new URL(origin);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false; // another scheme
+    host = u.host;
   } catch {
     return false; // malformed Origin
   }
@@ -44,13 +53,23 @@ export function devOriginAllowed(request: Request, url: URL, allowed: string[]):
   return allowed.some((a) => a === origin || a === host || a === hostname);
 }
 
-/** Loopback hosts, or a host/hostname listed in `allowedDevOrigins`. */
+/**
+ * Loopback hosts, or a host/hostname listed in `allowedDevOrigins` (a bare host or an `http(s)`
+ * origin; a custom-scheme entry names no `Host` the server answers).
+ */
 function devHostAllowed(hostname: string, allowed: string[]): boolean {
   const h = hostname.replace(/^\[|\]$/g, "");
   if (h === "localhost" || h.endsWith(".localhost") || h === "127.0.0.1" || h === "::1") {
     return true;
   }
-  return allowed.some((a) => a === h || a.replace(/^https?:\/\//, "").split(":")[0] === h);
+  return allowed.some((a) =>
+    a === h || (!isCustomSchemeEntry(a) && a.replace(/^https?:\/\//, "").split(":")[0] === h)
+  );
+}
+
+/** An `allowedDevOrigins` entry with a scheme other than `http(s)` (`myapp://app`). */
+function isCustomSchemeEntry(entry: string): boolean {
+  return entry.includes("://") && !/^https?:\/\//i.test(entry);
 }
 
 /**

@@ -969,7 +969,7 @@
       "type": "boolean"
     },
     "allowedDevOrigins": {
-      "description": "`denext dev` only: extra hosts allowed to reach the dev server's `/_denext/*` assets (the bundles, the module graph, the reload stream, the Live hub), beyond loopback. Each entry is an origin (`\"http://192.168.1.5:3000\"`) or a bare host (`\"192.168.1.5\"`, `\"mac.local\"`, `\"mac.local:3000\"`); matching is on the hostname. Wildcards are not supported: list each host. Mirrors Next.js's `allowedDevOrigins`.",
+      "description": "`denext dev` only: extra hosts allowed to reach the dev server's `/_denext/*` assets (the bundles, the module graph, the reload stream, the Live hub), beyond loopback. Each entry is an origin (`\"http://192.168.1.5:3000\"`) or a bare host (`\"192.168.1.5\"`, `\"mac.local\"`, `\"mac.local:3000\"`); matching is on the hostname. Wildcards are not supported: list each host. Mirrors Next.js's `allowedDevOrigins`. An entry may also be a Deno Desktop app's custom-scheme origin (`\"myapp://app\"`, validated as `desktop.app.origin` is), which admits a request whose `Origin` is exactly that value — for a backend project that a separate desktop app talks to. The project's own `desktop.app.origin` is admitted without listing it.",
       "type": "array",
       "items": {
         "type": "string"

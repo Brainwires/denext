@@ -7,6 +7,7 @@ import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
 import { envGet } from "../runtime/env-safe.ts";
+import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
 // Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
 // only import is a pure util, so naming it here adds no runtime edge and no cycle.
 import type { CommandContext, FlagSpec, PositionalSpec } from "../cli/command.ts";
@@ -1237,7 +1238,10 @@ export interface DenextConfig {
    * bundles, the module graph, the reload stream, the Live hub), beyond loopback. Each entry is
    * an origin (`"http://192.168.1.5:3000"`) or a bare host (`"192.168.1.5"`, `"mac.local"`,
    * `"mac.local:3000"`); matching is on the hostname. Wildcards are not supported: list each
-   * host. Mirrors Next.js's `allowedDevOrigins`.
+   * host. Mirrors Next.js's `allowedDevOrigins`. An entry may also be a Deno Desktop app's
+   * custom-scheme origin (`"myapp://app"`, validated as `desktop.app.origin` is), which admits a
+   * request whose `Origin` is exactly that value — for a backend project that a separate desktop
+   * app talks to. The project's own `desktop.app.origin` is admitted without listing it.
    *
    * Without it the dev server refuses those assets to any non-loopback `Host` (the DNS-rebinding
    * defense, cf. CVE-2025-48068), so a phone or another machine gets a dead page. You rarely
@@ -1782,7 +1786,8 @@ export function resolveCacheComponents(
  * `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
  * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
  * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
- * env is set by an operator, not type-checked like the config.
+ * env is set by an operator, not type-checked like the config. Plus the normalized
+ * `desktop.app.origin` (config only), which the same-origin checks accept.
  */
 export interface ServerOptions {
   /** The pinned public origin, if any. */
@@ -1801,6 +1806,11 @@ export interface ServerOptions {
   cacheKeyParams?: string[];
   /** Whether dynamic responses are compressed (`false` = off; default on, gzip). */
   compress?: boolean | CompressConfig;
+  /**
+   * The app's own Deno Desktop origin (`desktop.app.origin`, normalized), accepted by the
+   * same-origin checks (Server Actions, the API batch, Live, `denextAuth`'s POSTs).
+   */
+  desktopAppOrigin?: string;
 }
 
 /** One env var, or `undefined` when unset, empty, or not permitted (a narrowed `--allow-env`). */
@@ -1854,7 +1864,25 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
     actionMaxBodyBytes: config?.actionMaxBodyBytes,
     cacheKeyParams: config?.cacheKeyParams,
     compress: config?.compress,
+    desktopAppOrigin: configuredDesktopAppOrigin(config),
   };
+}
+
+/**
+ * The configured `desktop.app.origin`, validated and normalized as the desktop runtime does
+ * (`myapp://app`), or `undefined` when unset or invalid (the config validator reports an
+ * invalid one at load).
+ *
+ * @param config The loaded config.
+ * @returns The normalized origin, or `undefined`.
+ */
+export function configuredDesktopAppOrigin(
+  config: DenextConfig | null | undefined,
+): string | undefined {
+  const raw = config?.desktop?.app?.origin;
+  if (typeof raw !== "string") return undefined;
+  const parsed = parseDesktopAppOrigin(raw);
+  return parsed.ok ? parsed.value.origin : undefined;
 }
 
 /**
