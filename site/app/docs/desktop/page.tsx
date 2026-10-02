@@ -740,7 +740,29 @@ export default {
         <li>
           Add <code>myapp://app/</code>{" "}
           to the Clerk instance's allowed redirect URLs (Clerk dashboard → Native applications), and
-          the origin <code>myapp://app</code> to its allowed origins.
+          the origin <code>myapp://app</code> to its allowed origins (<code>allowed_origins</code>
+          {" "}
+          through the Backend API's{" "}
+          <code>PATCH /v1/instance</code>). The second is required: the window sends the client JWT
+          as <code>Authorization</code> and the WebView adds{" "}
+          <code>Origin</code>, and the Frontend API refuses both together from an origin it does not
+          allow ("Setting both the 'Origin' and 'Authorization' headers is forbidden").
+        </li>
+        <li>
+          An app whose provider is <code>@clerk/nextjs</code>'s or <code>@clerk/react</code>'s{" "}
+          <code>&lt;ClerkProvider&gt;</code> (the same component as on the web) passes{" "}
+          <code>nativeClerk: true</code> (or <code>{"{ passkeys }"}</code>, the adapter from{" "}
+          <code>@clerk/electron/passkeys</code>): the clerk-js instance that provider loads from the
+          Frontend API is switched to native mode as <code>@clerk/electron/react</code>{" "}
+          does with its bundled one — the client JWT from the token cache as{" "}
+          <code>Authorization</code>, no cookies, <code>standardBrowser: false</code>{" "}
+          and this bridge's OAuth transport. Leave it off with{" "}
+          <code>@clerk/electron/react</code>. See{" "}
+          <a href="https://github.com/Brainwires/denext/tree/main/examples/clerk">
+            examples/clerk
+          </a>: one Next.js-style app (<code>clerkMiddleware</code>,{" "}
+          <code>&lt;ClerkProvider&gt;</code>,{" "}
+          <code>auth()</code>) signing in on the web and in a Deno Desktop window.
         </li>
         <li>
           Clerk's OAuth URL carries no PKCE (it is the provider's), so the transport uses{" "}

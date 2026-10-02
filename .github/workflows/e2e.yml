@@ -54,6 +54,12 @@ jobs:
         # astral downloads a pinned Chromium on first run; the suite builds example
         # apps and drives hydration + next-compat pages in a real browser.
         run: deno task test:e2e
+        env:
+          # examples/clerk's keyed e2e (tests/e2e/clerk.e2e.test.ts) runs against a Clerk
+          # development instance only when these repository secrets exist; without them it is
+          # skipped with a message. The test never prints them.
+          CLERK_TEST_PUBLISHABLE_KEY: ${{ secrets.CLERK_TEST_PUBLISHABLE_KEY }}
+          CLERK_TEST_SECRET_KEY: ${{ secrets.CLERK_TEST_SECRET_KEY }}
 
   # Migration beds: clone SHA-pinned real-world apps (tests/migration-bed/*.test.ts), run
   # `denext migrate` against this checkout, build, serve, and render-assert routes. Every

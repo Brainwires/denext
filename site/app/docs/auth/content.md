@@ -1481,6 +1481,20 @@ client migration, or electing a single leader tab for a shared connection.
 The [security posture guide](/docs/security) maps every Next.js, React and next-auth /
 Auth.js CVE class against denext's own implementation, with a live parity test suite.
 
+## Clerk instead of `denextAuth`
+
+A hosted provider works too, unchanged: `@clerk/nextjs` runs on denext's next-compat pipeline
+the way it runs on Next.js — `clerkMiddleware()` with `createRouteMatcher` in `middleware.ts`,
+`<ClerkProvider>` in the root layout, `auth()` and `currentUser()` in Server Components and
+route handlers (a `defineApi` route included). Its client components render as islands straight
+from the package, and in a Deno Desktop window the same provider signs in through
+`installClerkDesktopBridge({ nativeClerk: true })` from `denext/desktop/clerk` (see
+[Clerk on Deno Desktop](/docs/desktop#desktop-clerk)).
+[examples/clerk](https://github.com/Brainwires/denext/tree/main/examples/clerk) is the runnable
+version: email code, password, Google / GitHub and passkeys, a protected page and API, the Clerk
+dashboard steps, Tailscale for your other devices, and tests against a Clerk development instance
+in its test mode (`+clerk_test` addresses verify with `424242`).
+
 ## Limitations
 
 What the first-party auth layer still does not do — the full ledger is

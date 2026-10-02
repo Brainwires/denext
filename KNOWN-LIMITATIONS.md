@@ -12,6 +12,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **A root layout rendered by client code re-creates `<html>`/`<body>` once on hydration.**
   denext owns the document tags; keep the root layout a Server Component (its attributes are
   moved onto the real tags) or render only the in-body chrome.
+- **A library's npm `"use client"` files are found by resolving its packages as the server bundle
+  does** (`node_modules`, `nodeResolve` on, the default). With `nodeResolve: false` the server
+  bundle resolves packages differently, so a package's own client components may render on the
+  server only.
 - **`next/og` renders satori's subset** (flexbox, inline `style`, `tw`): the same engine and
   limits as Next. Arbitrary CSS would need a layout engine or a headless browser.
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no
@@ -132,6 +136,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Android:** the WebView is whatever the device has installed, so features and bugs vary;
   widgets are static (no configure activity); push needs `google-services.json`; `mobile dev`
   relies on `usesCleartextTraffic`, which an app's own `networkSecurityConfig` overrides.
+- **No Clerk helper for the shell.** `denext/desktop/clerk`'s `nativeClerk` installs only in a Deno
+  Desktop window; in the shell `@clerk/nextjs` runs as a web page (email code and password work,
+  Google / GitHub refuse embedded WebViews), so OAuth needs app glue over `openAuthSession` and a
+  keychain token cache (examples/clerk → Capacitor).
 - **JavaScript doesn't run in the page in the background**, and a silent push reaches it only
   while the app runs; `defineBackgroundTask` runs in Capacitor's Background Runner (no DOM).
 - **WebView storage is evictable** (use `denext mobile add storage`); `secureStore` is a plain

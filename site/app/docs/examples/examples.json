@@ -61,6 +61,18 @@
       "hasReadme": true
     },
     {
+      "name": "clerk",
+      "title": "examples/clerk — Clerk on denext: the web and Deno Desktop, written once",
+      "blurb": "One Next.js-style app, written the way Clerk's Next.js quickstart writes it, that signs in with Clerk on the web and in a Deno Desktop window, with tests against a Clerk development instance in test…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/clerk",
+      "tags": [
+        "compat",
+        "desktop",
+        "app-router"
+      ],
+      "hasReadme": true
+    },
+    {
       "name": "concurrency",
       "title": "denext × concurrent rendering",
       "blurb": "A runnable demo of denext's fiber concurrency — the things the earlier cooperative scheduler could not do: time-slicing and mid-flight interruption.",

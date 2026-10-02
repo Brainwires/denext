@@ -25,6 +25,17 @@ and this project adheres to
   `desktop.app.origin` is), so a separate backend project can admit a desktop app's origin; so does
   `createApp`'s `allowedOrigins`.
 
+- **`examples/clerk`: Clerk on the web and in Deno Desktop, written once.** The Clerk Next.js
+  quickstart's shape on denext — `clerkMiddleware()` + `createRouteMatcher`, `<ClerkProvider>`
+  in the root layout, `auth()` / `currentUser()` in a Server Component and a `defineApi` route —
+  plus the Deno Desktop shell (`nativeClerk`, the custom origin, deep links, the keychain token
+  cache, passkey RP pinning), a setup screen without keys, the Clerk dashboard steps and
+  Tailscale for other devices. Tests: key-less unit checks in CI, a key-less e2e of the session
+  check (missing / expired / tampered / foreign tokens refused, networklessly), a keyed e2e on a
+  Clerk development instance in test mode (`+clerk_test`, code 424242: email code, password, the
+  API, the protected page, sign-out, `denext start` and `denext dev`; CI runs it when the
+  `CLERK_TEST_*` secrets exist) and a desktop leg (`deno task test:desktop`: sign-in, relaunch,
+  sign-out in the packaged window).
 - **`denext/desktop/clerk`: `nativeClerk` — the app's own `<ClerkProvider>` signs in on desktop.**
   `installClerkDesktopBridge({ nativeClerk: true })` switches the clerk-js instance any Clerk
   React SDK loads from the Frontend API (`@clerk/nextjs`, `@clerk/react`: it lands on

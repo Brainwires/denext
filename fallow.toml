@@ -169,6 +169,8 @@ entry = [
   # examples/clerk: the Deno Desktop entry and its `desktop.preload` (loaded by path).
   "examples/clerk/desktop.ts",
   "examples/clerk/desktop/preload.ts",
+  "examples/clerk/desktop/e2e.ts",
+  "examples/clerk/e2e/*.ts",
   "examples/rn-desktop/desktop.ts",
   "examples/native/capacitor.config.ts",
   "examples/native/scripts/*.ts",
@@ -237,6 +239,13 @@ ignorePatterns = [
   # itself (`deno task test:window`) is its guard. Its packaging scripts are not vendored (the
   # test writes them from the scaffold template, gitignored).
   "examples/desktop-kitchen-sink/**",
+  # examples/clerk's desktop e2e: the runner packages and drives the real app against a Clerk
+  # instance (e2e/desktop-test.ts), the page driver (app/desktop-e2e.tsx) and its extension
+  # (desktop/e2e.ts) run only inside that window. I/O against a native window and Clerk's API,
+  # untestable without them; `deno task test:desktop` is their guard.
+  "examples/clerk/e2e/**",
+  "examples/clerk/app/desktop-e2e.tsx",
+  "examples/clerk/desktop/e2e.ts",
   # harness/ssr-measure.ts drives the server-rendered list bench in headless Chromium (CDP I/O
   # only; its pure parts live in harness/ssr-report.ts, which stays analyzed and tested).
   "examples/scroll-bench/harness/ssr-measure.ts",
