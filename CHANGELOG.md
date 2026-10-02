@@ -25,6 +25,15 @@ and this project adheres to
   `desktop.app.origin` is), so a separate backend project can admit a desktop app's origin; so does
   `createApp`'s `allowedOrigins`.
 
+- **`denext/desktop/clerk`: `nativeClerk` — the app's own `<ClerkProvider>` signs in on desktop.**
+  `installClerkDesktopBridge({ nativeClerk: true })` switches the clerk-js instance any Clerk
+  React SDK loads from the Frontend API (`@clerk/nextjs`, `@clerk/react`: it lands on
+  `globalThis.Clerk`) into native mode, as `@clerk/electron/react` does with its bundled one: the
+  client JWT from the keychain token cache rides as `Authorization` (no cookies, `_is_native`),
+  the JWT the API returns is saved, and `load()` gets `standardBrowser: false` with the bridge's
+  OAuth transport. `{ passkeys }` attaches a WebAuthn adapter (`passkeys` from
+  `@clerk/electron/passkeys`). Off by default (with `@clerk/electron/react`, which does it
+  itself).
 - **next-compat: `"use client"` and `"use server"` inside npm packages.** A Server Component that
   imports a library's client components straight from the package (`ClerkProvider`, `Show` and
   `SignInButton` from `@clerk/nextjs`) now renders them as islands that hydrate, and their

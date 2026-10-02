@@ -226,6 +226,106 @@ Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear e
   });
 });
 
+/** A stand-in clerk-js instance: records its hooks and the options `load()` receives. */
+function fakeClerkJs() {
+  const before: Array<(r: Record<string, unknown>) => unknown> = [];
+  const after: Array<(req: unknown, res: { headers?: Headers }) => unknown> = [];
+  const loads: Record<string, unknown>[] = [];
+  const clerk: Record<string, unknown> = {
+    __internal_onBeforeRequest: (h: (r: Record<string, unknown>) => unknown) => void before.push(h),
+    __internal_onAfterResponse: (h: (q: unknown, r: { headers?: Headers }) => unknown) =>
+      void after.push(h),
+    load: (o: Record<string, unknown>) => Promise.resolve(void loads.push(o)),
+  };
+  return { clerk, before, after, loads };
+}
+
+Deno.test("clerk bridge: nativeClerk switches the SDK's hotloaded clerk-js to native mode", async () => {
+  const kv = new Map<string, string>();
+  const opened: unknown[] = [];
+  await inDesktop({
+    secureStore: {
+      get: (a) => kv.get((a as { key: string }).key) ?? null,
+      set: (a) => void kv.set((a as { key: string }).key, (a as { value: string }).value),
+      delete: (a) => void kv.delete((a as { key: string }).key),
+    },
+    authSession: {
+      capabilities: () => ({ osSession: true, ephemeral: false }),
+      start: (a) => {
+        opened.push((a as { url: string }).url);
+        return { url: "t3code://app/?rotating_token_nonce=n1" };
+      },
+    },
+  }, async () => {
+    const g = globalThis as { Clerk?: unknown };
+    const passkeys = {
+      create: () => Promise.resolve("c"),
+      get: () => Promise.resolve("g"),
+      isSupported: () => true,
+      isAutoFillSupported: () => Promise.resolve(false),
+      isPlatformAuthenticatorSupported: () => Promise.resolve(true),
+    };
+    try {
+      installClerkDesktopBridge({ passkeys: true, nativeClerk: { passkeys } });
+      // The SDK assigns the instance it loaded from the Frontend API, then calls load().
+      const sdk = fakeClerkJs();
+      g.Clerk = sdk.clerk;
+      assertEquals(g.Clerk, sdk.clerk);
+      await (sdk.clerk.load as (o: unknown) => Promise<unknown>)({ publishableKey: "pk_test_x" });
+      const opts = sdk.loads[0];
+      assertEquals(opts.publishableKey, "pk_test_x");
+      assertEquals(opts.standardBrowser, false);
+      assertEquals(opts.allowedRedirectProtocols, ["t3code:"]);
+      // The OAuth transport is this bridge's: the origin redirect, the custom-scheme session.
+      const transport = opts.__internal_oauthTransport as {
+        getRedirectUrl(): Promise<string>;
+        open(u: URL): Promise<{ callbackUrl: string }>;
+      };
+      assertEquals(await transport.getRedirectUrl(), "t3code://app/");
+      const cb = await transport.open(new URL("https://accounts.google.com/o/oauth2/auth?x=1"));
+      assertEquals(cb.callbackUrl, "t3code://app/?rotating_token_nonce=n1");
+      assertEquals(opened, ["https://accounts.google.com/o/oauth2/auth?x=1"]);
+      // Requests carry no cookies, `_is_native`, and the saved client JWT; responses save it.
+      const req: Record<string, unknown> = {
+        url: new URL("https://x.clerk.accounts.dev/v1/client"),
+      };
+      await sdk.before[0](req);
+      assertEquals(req.credentials, "omit");
+      assertEquals((req.url as URL).searchParams.get("_is_native"), "1");
+      assertEquals(req.headers, undefined); // nothing saved yet
+      await sdk.after[0]({}, { headers: new Headers({ authorization: "Bearer jwt-1" }) });
+      assertEquals(kv.get("clerk.__clerk_client_jwt"), "jwt-1");
+      const req2: Record<string, unknown> = {
+        url: new URL("https://x.clerk.accounts.dev/v1/client"),
+      };
+      await sdk.before[0](req2);
+      assertEquals(new Headers(req2.headers as HeadersInit).get("authorization"), "Bearer jwt-1");
+      // The passkeys adapter is attached as @clerk/electron/react attaches it.
+      assertEquals(sdk.clerk.__internal_createPublicCredentials, passkeys.create);
+      assertEquals(
+        sdk.clerk.__internal_isWebAuthnPlatformAuthenticatorSupported,
+        passkeys.isPlatformAuthenticatorSupported,
+      );
+      // Re-assigning the same instance does not hook it twice; a non-instance is left alone.
+      g.Clerk = sdk.clerk;
+      assertEquals(sdk.before.length, 1);
+      g.Clerk = { loaded: false };
+      assertEquals((g.Clerk as { loaded: boolean }).loaded, false);
+    } finally {
+      delete g.Clerk;
+    }
+  });
+  // Off by default: an assigned instance is untouched (the @clerk/electron/react path).
+  await inDesktop({}, () => {
+    const g = globalThis as { Clerk?: unknown };
+    installClerkDesktopBridge();
+    const sdk = fakeClerkJs();
+    g.Clerk = sdk.clerk;
+    assertEquals(sdk.before.length, 0);
+    delete g.Clerk;
+  });
+});
+
 /** A fake Clerk instance answering hosted_auth and the redemption. */
 function fakeClerk(onRedeem?: (body: Record<string, unknown>) => void) {
   const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];

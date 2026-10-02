@@ -137,6 +137,35 @@ export interface ClerkDesktopBridgeOptions {
   readonly passkeyFallback?: "browser" | "none";
   /** The Clerk instance for the browser fallback (default `globalThis.Clerk`). */
   readonly getClerk?: () => ClerkLike | undefined;
+  /**
+   * Also run the clerk-js instance any other Clerk React SDK creates in native mode — the one
+   * `@clerk/nextjs`'s or `@clerk/react`'s `ClerkProvider` loads from the Frontend API and keeps at
+   * `globalThis.Clerk` — the way `@clerk/electron/react`'s provider runs its bundled one: Frontend
+   * API requests carry the client JWT from the token cache as `Authorization` (no cookies,
+   * `_is_native=1`), the JWT the API returns is saved, and `load()` gets `standardBrowser: false`
+   * plus this bridge's OAuth transport. So the app's own `<ClerkProvider>` signs in on desktop
+   * unchanged. `{ passkeys }` attaches a WebAuthn adapter (`passkeys` from
+   * `@clerk/electron/passkeys`, over `window.__clerk_internal_electron_passkeys`, so with
+   * `passkeys: true`). Leave it off with `@clerk/electron/react`'s provider, which does this itself.
+   */
+  readonly nativeClerk?: boolean | { readonly passkeys?: ClerkPasskeysAdapter };
+}
+
+/**
+ * A WebAuthn adapter clerk-js accepts (`passkeys` from `@clerk/electron/passkeys`): the shape
+ * `@clerk/electron/react` attaches to its instance.
+ */
+export interface ClerkPasskeysAdapter {
+  /** Run a registration ceremony. */
+  create(publicKey: unknown): Promise<unknown>;
+  /** Run an authentication ceremony. */
+  get(options: unknown): Promise<unknown>;
+  /** Whether passkeys are available. */
+  isSupported(): boolean;
+  /** Whether conditional (autofill) UI is available. */
+  isAutoFillSupported(): Promise<boolean>;
+  /** Whether a platform authenticator is available. */
+  isPlatformAuthenticatorSupported(): Promise<boolean>;
 }
 
 /** What {@linkcode installClerkDesktopBridge} installed. */
@@ -381,10 +410,124 @@ export function installClerkDesktopBridge(
     __clerk_internal_electron_passkeys?: unknown;
   };
   g.__clerk_internal_electron = bridge;
+  if (options.nativeClerk) {
+    adoptNativeClerk(
+      bridge,
+      options.nativeClerk === true ? undefined : options.nativeClerk.passkeys,
+    );
+  }
   if (options.passkeys !== true) return { bridge };
   const passkeys = passkeyBridge(options, redirectUrl);
   g.__clerk_internal_electron_passkeys = passkeys;
   return { bridge, passkeys };
+}
+
+/** `@clerk/electron`'s token-cache key for the client JWT. */
+const CLERK_CLIENT_JWT_KEY = "__clerk_client_jwt";
+/** The clerk-js instances already switched to native mode. */
+const nativeInstances = new WeakSet<object>();
+
+/** The slice of a clerk-js instance native mode hooks into. */
+interface ClerkInstanceHooks {
+  __internal_onBeforeRequest(hook: (request: ClerkFapiRequest) => unknown): void;
+  __internal_onAfterResponse(
+    hook: (request: unknown, response: { headers?: Headers } | undefined) => unknown,
+  ): void;
+  load(options?: Record<string, unknown>): Promise<unknown>;
+  [key: string]: unknown;
+}
+
+/** A Frontend API request as clerk-js hands it to a before-request hook. */
+interface ClerkFapiRequest {
+  url?: URL;
+  headers?: HeadersInit;
+  credentials?: RequestCredentials;
+}
+
+/** Whether `value` is a clerk-js instance with the hooks native mode needs. */
+function isClerkInstance(value: unknown): value is ClerkInstanceHooks {
+  const c = value as Partial<ClerkInstanceHooks> | null;
+  return typeof c === "object" && c !== null &&
+    typeof c.__internal_onBeforeRequest === "function" &&
+    typeof c.__internal_onAfterResponse === "function" && typeof c.load === "function";
+}
+
+/**
+ * Switch one clerk-js instance to native mode (what `@clerk/electron/react` does to its own
+ * instance, see {@linkcode ClerkDesktopBridgeOptions.nativeClerk}). Idempotent.
+ */
+function makeClerkNative(
+  clerk: ClerkInstanceHooks,
+  bridge: { tokenCache: ClerkTokenCache; oauthTransport: ClerkOAuthTransport },
+  passkeys: ClerkPasskeysAdapter | undefined,
+): void {
+  if (nativeInstances.has(clerk)) return;
+  nativeInstances.add(clerk);
+  clerk.__internal_onBeforeRequest(async (request) => {
+    request.credentials = "omit";
+    request.url?.searchParams.set("_is_native", "1");
+    const token = await bridge.tokenCache.getToken(CLERK_CLIENT_JWT_KEY);
+    if (token) {
+      const headers = new Headers(request.headers);
+      headers.set("Authorization", `Bearer ${token}`);
+      request.headers = headers;
+    }
+  });
+  clerk.__internal_onAfterResponse(async (_request, response) => {
+    const authorization = response?.headers?.get("Authorization");
+    if (!authorization) return;
+    const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : authorization;
+    await bridge.tokenCache.saveToken(CLERK_CLIENT_JWT_KEY, token);
+  });
+  if (passkeys) {
+    clerk.__internal_createPublicCredentials = passkeys.create;
+    clerk.__internal_getPublicCredentials = passkeys.get;
+    clerk.__internal_isWebAuthnSupported = passkeys.isSupported;
+    clerk.__internal_isWebAuthnAutofillSupported = passkeys.isAutoFillSupported;
+    clerk.__internal_isWebAuthnPlatformAuthenticatorSupported =
+      passkeys.isPlatformAuthenticatorSupported;
+  }
+  const load = clerk.load.bind(clerk);
+  const pageProtocol = (globalThis as { location?: { protocol?: string } }).location?.protocol;
+  clerk.load = (options: Record<string, unknown> = {}) => {
+    const allowed = Array.isArray(options.allowedRedirectProtocols)
+      ? options.allowedRedirectProtocols as string[]
+      : [];
+    return load({
+      ...options,
+      standardBrowser: false,
+      __internal_oauthTransport: {
+        getRedirectUrl: () => bridge.oauthTransport.getRedirectUrl(),
+        open: (url: URL | string) => bridge.oauthTransport.open(String(url)),
+      },
+      allowedRedirectProtocols: [
+        ...new Set([...allowed, ...(pageProtocol ? [pageProtocol] : [])]),
+      ],
+    });
+  };
+}
+
+/**
+ * Switch whatever clerk-js instance lands on `globalThis.Clerk` to native mode — the one already
+ * there and every later one (the Clerk React SDKs assign it after loading clerk-js from the
+ * Frontend API, before calling `load()`).
+ */
+function adoptNativeClerk(
+  bridge: { tokenCache: ClerkTokenCache; oauthTransport: ClerkOAuthTransport },
+  passkeys: ClerkPasskeysAdapter | undefined,
+): void {
+  const g = globalThis as { Clerk?: unknown };
+  let current = g.Clerk;
+  if (isClerkInstance(current)) makeClerkNative(current, bridge, passkeys);
+  Object.defineProperty(globalThis, "Clerk", {
+    configurable: true,
+    enumerable: true,
+    get: () => current,
+    set: (value: unknown) => {
+      current = value;
+      if (isClerkInstance(value)) makeClerkNative(value, bridge, passkeys);
+    },
+  });
 }
 
 /** Options for {@linkcode startClerkBrowserSignIn}. */
