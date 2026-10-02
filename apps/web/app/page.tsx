@@ -86,7 +86,10 @@ const PILLARS: Pillar[] = [
         title: "macOS, Windows and Linux",
         body:
           "denext desktop wraps the app in a native window on Deno Desktop at Electron parity: menus, tray, notifications, dialogs, deep links, global shortcuts and signed self-updates, packaged least-privilege. It runs on denext's own Deno Desktop runtime, built in the open from public forks, verified by SHA-256 and upstream-first.",
-        link: { href: "/docs/desktop-runtime", label: "The Deno Desktop runtime →" },
+        link: {
+          href: "/docs/desktop-runtime",
+          label: "What our Deno Desktop runtime ships, and why →",
+        },
       },
       {
         title: "One API across platforms",

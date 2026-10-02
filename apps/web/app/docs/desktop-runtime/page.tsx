@@ -3,9 +3,9 @@
 import { MarkdownDoc } from "../../../components/markdown.tsx";
 
 export const metadata = {
-  title: "The Deno Desktop runtime",
+  title: "Our Deno Desktop runtime: what we ship and why",
   description:
-    "How denext ships Deno Desktop at Electron parity: a prebuilt runtime from public forks, pinned by SHA-256, attested, and retired as the work lands upstream.",
+    "Every change in denext's Deno Desktop runtime and the problem it solves: a prebuilt runtime from public forks of Deno and laufey, tested on every OS, pinned by SHA-256, attested, and retired as the work lands upstream.",
 };
 
 export default async function DesktopRuntime() {

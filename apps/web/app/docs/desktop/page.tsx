@@ -1518,8 +1518,9 @@ export default defineDesktopExtension({
         and <code>LAUFEY_DEV_DIR</code>.
       </p>
       <p>
-        What the runtime adds over stock Deno Desktop, how it is built and verified, and how it
-        retires upstream: <a href="/docs/desktop-runtime">The Deno Desktop runtime</a>.
+        Every change the runtime makes to stock Deno Desktop and why, how it is tested and verified,
+        and how it retires upstream:{" "}
+        <a href="/docs/desktop-runtime">Our Deno Desktop runtime: what we ship and why</a>.
       </p>
       <ul>
         <li>
