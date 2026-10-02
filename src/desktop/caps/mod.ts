@@ -33,6 +33,10 @@ import { type DesktopWindowSettings, resolveDesktopWindowSettings } from "../win
 import { dialogsCapability } from "./dialogs.ts";
 import { passkeysCapability } from "./passkeys.ts";
 import { clipboardCapability } from "./clipboard.ts";
+import { notificationsCapability } from "./notifications.ts";
+import { contextMenuCapability } from "./context-menu.ts";
+import { shortcutsCapability } from "./shortcuts.ts";
+import { launchAtLoginCapability } from "./launch-at-login.ts";
 import {
   desktopAppIdentifierError,
   normalizeDesktopDeepLinks,
@@ -154,10 +158,11 @@ async function loadExtension(spec: string, base: string | undefined): Promise<De
  * app-support directory the runtime hands to handlers.
  *
  * The built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,
- * `secureStore`, `dialogs`, `clipboard`, `passkeys`, and the `echo` diagnostic), plus any
- * `extensions` module paths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets
- * `authSessionEnabled`. A configured key with no built-in yet (`contextMenu`/`notifications` —
- * WebView-backed) is left unavailable (the page uses its web path), never an error. A bad extension path IS an
+ * `secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,
+ * `globalShortcuts`, `launchAtLogin`, and the `echo` diagnostic), plus any `extensions` module
+ * paths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets
+ * `authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers
+ * `unavailable` per call (the page uses its web path), never an error. A bad extension path IS an
  * error, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a
  * `desktop.app.identifier` — both fail fast at launch.
  *
@@ -279,6 +284,16 @@ function dataCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCapa
   return out;
 }
 
+/** The enabled built-ins over the pinned runtime's app APIs (notifications, menus, shortcuts, login). */
+function appCaps(caps: DesktopCapabilitiesConfig): DesktopCapability[] {
+  return [
+    ...(caps.notifications ? [notificationsCapability()] : []),
+    ...(caps.contextMenu ? [contextMenuCapability()] : []),
+    ...(caps.globalShortcuts ? [shortcutsCapability()] : []),
+    ...(caps.launchAtLogin ? [launchAtLoginCapability()] : []),
+  ];
+}
+
 /** The enabled built-ins that reach the OS (shell, dialogs, keep-awake, clipboard, passkeys). */
 function systemCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCapability[] {
   const out: DesktopCapability[] = [];
@@ -307,6 +322,7 @@ async function buildBuiltinCaps(
     ...(caps.device ? [deviceCapability] : []),
     ...dataCaps(caps, ctx),
     ...systemCaps(caps, ctx),
+    ...appCaps(caps),
   ];
   for (const spec of caps.extensions ?? []) capabilities.push(await loadExtension(spec, ctx.base));
   return capabilities;

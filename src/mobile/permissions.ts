@@ -16,6 +16,7 @@ import { nativePlatform } from "./bridge.ts";
 import { availabilityOf, biometricPlugin } from "./biometrics.ts";
 import { nativePlugin } from "./plugin.ts";
 import { onAppResume } from "./resume.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /** A permission {@linkcode checkPermission} knows. */
 export type PermissionName =
@@ -297,10 +298,32 @@ function checkName(fn: string, name: PermissionName): void {
   }
 }
 
+/**
+ * The OS notification permission in a Deno Desktop window with the `notifications` capability, or
+ * `undefined` (not desktop, or the capability is off: the WebView's API answers then). The OS does
+ * not ask twice, so a refusal reads `blocked`.
+ */
+async function desktopNotifications(
+  fn: string,
+  request: boolean,
+): Promise<PermissionState | undefined> {
+  if (!onDesktop()) return undefined;
+  const got = await viaDesktop("notifications", (d) => d.notifyPermission(request));
+  if (!got) return undefined;
+  if (got.value === "unsupported") {
+    throw unsupported(fn, "notifications", "this desktop has no notification service");
+  }
+  return normalize(got.value as RawState, true);
+}
+
 /** The status of `name` without prompting (see {@linkcode checkPermission}). */
 async function check(fn: string, name: PermissionName): Promise<PermissionState> {
   checkName(fn, name);
   if (name === "biometrics") return await biometricState(fn);
+  if (name === "notifications") {
+    const desktop = await desktopNotifications(fn, false);
+    if (desktop) return desktop;
+  }
   const found = nativeSource(name);
   if (found) return normalize(found.source.read(await found.plugin.checkPermissions()), true);
   const web = WEB_SOURCES[name];
@@ -335,7 +358,8 @@ function notAnswerable(fn: string, name: PermissionName): PermissionError {
  * `photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for
  * `notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the
  * web (and for `microphone`, which the WebView itself asks for) the browser's Permissions /
- * Notifications API. It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing
+ * Notifications API. In a Deno Desktop window with the `notifications` capability,
+ * `notifications` is the OS's own setting. It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing
  * here can answer: a plugin that is not installed and no browser API.
  *
  * @param name The permission.
@@ -376,6 +400,10 @@ export async function requestPermission(name: PermissionName): Promise<Permissio
   const before = await check("requestPermission", name);
   if (before === "granted" || before === "limited" || before === "blocked") return before;
   if (name === "biometrics") return before;
+  if (name === "notifications") {
+    const desktop = await desktopNotifications("requestPermission", true);
+    if (desktop) return desktop;
+  }
   const found = nativeSource(name);
   let raw: RawState;
   if (found) {

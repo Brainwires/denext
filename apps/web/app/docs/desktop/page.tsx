@@ -841,9 +841,11 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>context-menu</code>
             </td>
             <td>
-              <code>showContextMenu</code> (in-page menu on Deno Desktop)
+              <code>showContextMenu</code>, <code>useContextMenu</code>{" "}
+              (the OS&apos;s own menu with submenus and a real dismissal; pinned runtime, the
+              in-page menu otherwise)
             </td>
-            <td>none</td>
+            <td>none (a runtime API)</td>
             <td>none</td>
           </tr>
           <tr>
@@ -893,10 +895,15 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>notifications</code>
             </td>
             <td>
-              <code>scheduleNotification</code>{" "}
-              (immediate only, via the WebView Notification API; a scheduled trigger rejects)
+              <code>scheduleNotification</code>, <code>cancelNotification</code>,{" "}
+              <code>pendingNotifications</code>, <code>setNotificationCategories</code>,{" "}
+              <code>onLocalNotificationTapped</code>,{" "}
+              <code>requestPermission("notifications")</code>, <code>requestPushPermission</code>
+              {" "}
+              (the OS&apos;s own notifications, scheduled and repeating; pinned runtime, the WebView
+              Notification API otherwise)
             </td>
-            <td>none</td>
+            <td>none (a runtime API)</td>
             <td>none</td>
           </tr>
           <tr>
@@ -935,6 +942,29 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>--allow-sys=osRelease</code>
             </td>
             <td>scoped</td>
+          </tr>
+          <tr>
+            <td>
+              <code>global-shortcuts</code>
+            </td>
+            <td>
+              <code>registerShortcut</code>, <code>unregisterShortcut</code>,{" "}
+              <code>listShortcuts</code> (<code>denext/desktop/app</code>; pinned runtime)
+            </td>
+            <td>none (a runtime API)</td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
+              <code>launch-at-login</code>
+            </td>
+            <td>
+              <code>getLaunchAtLogin</code>, <code>setLaunchAtLogin</code>{" "}
+              (<code>denext/desktop/app</code>; login item · <code>Run</code>{" "}
+              value · XDG autostart; pinned runtime)
+            </td>
+            <td>none (a runtime API)</td>
+            <td>none</td>
           </tr>
           <tr>
             <td>
@@ -993,11 +1023,12 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         drives the OS dialog programs instead (osascript · PowerShell · zenity/kdialog) and{" "}
         <code>clipboard</code> answers <code>unavailable</code> so the page keeps the WebView&apos;s
         {" "}
-        <code>navigator.clipboard</code>. A handle from either dialog path has the same scope. Two
-        capabilities lean on the WebView: <code>notifications</code>{" "}
-        shows immediate notifications through the WebView Notification API (there is no desktop
-        scheduler yet), and <code>context-menu</code>{" "}
-        renders the in-page menu (a native menu awaits a menu-dismiss event upstream).{" "}
+        <code>navigator.clipboard</code>. A handle from either dialog path has the same scope. Under
+        the pinned runtime <code>notifications</code> are the OS&apos;s own and{" "}
+        <code>context-menu</code> is the OS&apos;s native menu (see{" "}
+        <a href="#desktop-notifications">Notifications and menus</a>); under the stock runtime they
+        answer <code>unavailable</code>{" "}
+        and the page keeps the WebView Notification API (immediate only) and its in-page menu.{" "}
         <code>dialogs</code> answers <code>unavailable</code>{" "}
         under the stock runtime on a headless Linux with no{" "}
         <code>zenity</code>/<code>kdialog</code>, so the page&apos;s{" "}
@@ -1197,6 +1228,171 @@ exportRow.addEventListener("dragstart", (e) => {
 });`}
       </Code>
 
+      <h2 id="desktop-notifications">Notifications and menus</h2>
+      <p>
+        With <code>denext desktop add notifications</code> and denext&apos;s pinned runtime,{" "}
+        <code>denext/mobile</code>&apos;s local notifications are the OS&apos;s own (macOS{" "}
+        <code>UNUserNotificationCenter</code>, Windows toasts, Linux{" "}
+        <code>org.freedesktop.Notifications</code>): <code>scheduleNotification</code>{" "}
+        shows one now or at its trigger&apos;s time, every trigger kind included;{" "}
+        <code>cancelNotification</code> and <code>pendingNotifications</code> work on them;{" "}
+        <code>setNotificationCategories</code>{" "}
+        gives a notification its action buttons; and a click, on the notification or a button,
+        reaches <code>onLocalNotificationTapped</code> with the same <code>data.path</code> /{" "}
+        <code>data.url</code>{" "}
+        routing as on a phone, including the click that launched the app (macOS, Windows).{" "}
+        <code>requestPermission("notifications")</code> and <code>requestPushPermission()</code>
+        {" "}
+        report the OS setting (a refusal reads <code>blocked</code>: the OS does not ask twice).
+      </p>
+      <Code lang="ts">
+        {`import { onLocalNotificationTapped, requestPermission, scheduleNotification,
+  setNotificationCategories } from "denext/mobile";
+
+await setNotificationCategories([{ id: "review", actions: [{ id: "open", title: "Open" }] }]);
+if ((await requestPermission("notifications")) === "granted") {
+  await scheduleNotification({
+    title: "Stand-up",
+    body: "In 10 minutes",
+    trigger: { type: "weekly", weekday: 2, hour: 9, minute: 50 },
+    categoryId: "review",
+    data: { path: "/standup" }, // a click opens /standup
+  });
+}
+onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or "open"`}
+      </Code>
+      <ul>
+        <li>
+          A repeating notification is scheduled for its next 16 occurrences, and the app tops the
+          series up whenever it runs (at launch, and as occurrences fire). An app that is not opened
+          for longer than those 16 occurrences stops showing it until it runs again.
+        </li>
+        <li>
+          Linux has no notification scheduler: the app delivers a scheduled notification while it
+          runs, and one whose time passed while it was closed shows at the next launch. A click on a
+          Linux notification after the app quit does not start it.
+        </li>
+        <li>
+          macOS shows notifications only from a signed app; an ad-hoc or unsigned build is refused
+          the permission. A notification stores at most 4 KiB of <code>data</code> (JSON).
+        </li>
+      </ul>
+      <p>
+        With <code>denext desktop add context-menu</code>, <code>showContextMenu</code> and{" "}
+        <code>useContextMenu</code>{" "}
+        open the OS&apos;s native menu at the pointer: submenus nest, disabled items show, a
+        subtitle is appended to its label, and the call resolves <code>null</code>{" "}
+        when the user dismisses the menu. Under the stock runtime (or without the capability) the
+        accessible in-page menu runs instead.
+      </p>
+
+      <h2 id="desktop-app-menu">App menu, tray and Dock</h2>
+      <p>
+        <code>denext/desktop/app</code> drives the app&apos;s own chrome. It needs no capability:
+        {" "}
+        <code>runDesktop</code>{" "}
+        registers it for every app, and it works under the stock runtime too (denext&apos;s pinned
+        runtime adds keyboard accelerators on every OS, and menu icons and tooltips; ask{" "}
+        <code>appCapabilities()</code>).
+      </p>
+      <Code lang="ts">
+        {`import { bounce, createTray, onAppMenuItem, setAppMenu, setBadge } from "denext/desktop/app";
+
+await setAppMenu([
+  { label: "File", submenu: [
+    { id: "new", label: "New Window", accelerator: "CommandOrControl+N" },
+    "separator",
+    { role: "quit" },
+  ] },
+  { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, "separator",
+    { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
+]);
+onAppMenuItem((id) => id === "new" && openWindow());
+
+const icon = new Uint8Array(await (await fetch("/tray.png")).arrayBuffer());
+const tray = await createTray({ icon, tooltip: "Acme",
+  menu: [{ id: "show", label: "Show Acme" }, "separator", { role: "quit" }] });
+tray.onMenuItem((id) => id === "show" && showWindow());
+
+await setBadge(3);                // the Dock / taskbar badge; null clears it
+await bounce({ critical: true }); // until the app is focused`}
+      </Code>
+      <ul>
+        <li>
+          <code>setAppMenu</code>{" "}
+          sets the macOS menu bar, or the window&apos;s menu bar on Windows and Linux. Items take an
+          {" "}
+          <code>id</code>, <code>label</code>, <code>accelerator</code>{" "}
+          (<code>"CommandOrControl+Shift+K"</code>), <code>disabled</code>, <code>checked</code>,
+          {" "}
+          <code>tooltip</code> and a PNG <code>icon</code>; <code>{"{ label, submenu }"}</code>{" "}
+          nests; <code>{"{ role }"}</code> is a standard item the OS handles (<code>copy</code>,
+          {" "}
+          <code>paste</code>, <code>selectAll</code>, <code>undo</code>, <code>redo</code>,{" "}
+          <code>quit</code>, <code>about</code>, <code>hide</code>, <code>minimize</code>,{" "}
+          <code>toggleFullScreen</code>, …).
+        </li>
+        <li>
+          <code>createTray</code>{" "}
+          adds a status icon (the macOS menu bar, the Windows notification area, Linux&apos;s
+          AppIndicator area) with a tooltip, a menu and click events; <code>update</code>,{" "}
+          <code>getBounds</code> and <code>destroy</code>{" "}
+          are on the handle. A page load removes the trays the previous page created (their handlers
+          went with it), so create them at startup.
+        </li>
+        <li>
+          <code>setBadge</code>{" "}
+          badges the Dock icon (macOS) or the taskbar button (Windows), and prefixes the window
+          title on Linux. <code>bounce</code>{" "}
+          bounces the Dock icon, flashes the taskbar button or marks the window urgent.
+        </li>
+        <li>
+          The Dock menu is <code>denext/mobile</code>&apos;s <code>setQuickActions</code> /{" "}
+          <code>onQuickAction</code>: the same calls that set an iOS or Android app&apos;s
+          home-screen quick actions set the Dock icon&apos;s menu on macOS (Windows and Linux have
+          none, and the call does nothing there).
+        </li>
+      </ul>
+
+      <h3 id="desktop-shortcuts">Global shortcuts and launch at login</h3>
+      <p>
+        Two opt-in capabilities, each needing denext&apos;s pinned runtime.{" "}
+        <code>denext desktop add global-shortcuts</code> enables <code>registerShortcut</code>{" "}
+        (macOS hot keys with no Accessibility prompt, Windows{" "}
+        <code>RegisterHotKey</code>, X11 key grabs, and the XDG GlobalShortcuts portal on Wayland,
+        where the user approves each shortcut). A registered combination reaches the app whichever
+        app has the focus, and the other app no longer sees it, so register only what the user asked
+        for. <code>denext desktop add launch-at-login</code> enables <code>getLaunchAtLogin</code> /
+        {" "}
+        <code>setLaunchAtLogin</code> (a macOS 13+ login item, a Windows <code>Run</code>{" "}
+        value, a Linux XDG autostart entry, named after{" "}
+        <code>desktop.app.identifier</code>); turn it on from a setting the user controls. Neither
+        adds a Deno permission.
+      </p>
+      <Code lang="ts">
+        {`import { registerShortcut, setLaunchAtLogin } from "denext/desktop/app";
+
+const quick = await registerShortcut("CommandOrControl+Shift+Space", () => toggleQuickEntry());
+// rejects with code "conflict" (another app holds it), "denied" (Wayland), "unsupported", …
+await quick.unregister();
+
+const state = await setLaunchAtLogin(true);
+if (state === "requires-approval") hint("Allow Acme in System Settings › Login Items");`}
+      </Code>
+
+      <h3 id="desktop-devtools">DevTools</h3>
+      <p>
+        The web inspector (F12, the context menu, Safari&apos;s Develop menu, remote debugging) is
+        on in <code>denext desktop dev</code> and{" "}
+        <code>denext desktop run</code>, and OFF in a packaged app.{" "}
+        <code>desktop.inspectable: true</code> ships an inspectable build; <code>false</code>{" "}
+        also turns it off in <code>run</code>. The package scripts write it to the app&apos;s{" "}
+        <code>laufey-launch.json</code> (<code>"inspectable"</code>), and <code>run</code> /{" "}
+        <code>dev</code> pass{" "}
+        <code>LAUFEY_INSPECTABLE</code>. It needs denext&apos;s pinned runtime: the stock runtime
+        ignores it.
+      </p>
+
       <h2 id="desktop-extensions">Your own native extensions</h2>
       <p>
         When a built-in is not enough, write an extension: TypeScript that runs in the Deno process,
@@ -1220,7 +1416,7 @@ export default defineDesktopExtension({
     listDevices: {
       input: z.object({ kind: z.string().optional() }),
       output: z.array(z.string()),
-      permissions: { ffi: ["./native/libscanner.dylib"] }, // per method; add the flag by hand
+      permissions: { ffi: ["./native/libscanner.dylib"] }, // documents it; grant it below
       // args are validated by input but typed unknown here (the page is typed from the schemas)
       handler: (args) => listDevices((args as { kind?: string }).kind), // FFI, a sidecar, or Deno
     },
@@ -1248,11 +1444,24 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         {" "}
         from <code>denext/desktop</code> with a code and a safe message). A method's{" "}
         <code>permissions</code>{" "}
-        are not seen by the package scripts, which derive flags from the built-in catalog only, so
-        add an extension&apos;s <code>--allow-*</code> to <code>scripts/package-*.ts</code>{" "}
-        by hand. Events that fire before a handler subscribes (a notification click that launched
-        the app, a deep link) are kept by the runtime and delivered to the first subscriber.
+        document what it needs, but the package scripts derive flags from the built-in catalog only:
+        grant an extension&apos;s permissions in <code>desktop.extraPermissions</code>{" "}
+        (the same keys: <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>,
+        {" "}
+        <code>sys</code>, <code>run</code>, <code>ffi</code>; <code>"*"</code>{" "}
+        bakes the unscoped flag). The scripts union it into the flags they bake, and{" "}
+        <code>--regenerate-scripts</code>{" "}
+        keeps it because it lives in the config, not in the script. Events that fire before a
+        handler subscribes (a notification click that launched the app, a deep link) are kept by the
+        runtime and delivered to the first subscriber.
       </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  capabilities: { extensions: ["./desktop/extensions/scanner.ts"] },
+  extraPermissions: { ffi: ["./native/libscanner.dylib"] }, // baked into the package
+},`}
+      </Code>
 
       <h3 id="desktop-node-api">Node-API addons</h3>
       <p>

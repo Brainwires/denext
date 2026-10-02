@@ -327,7 +327,7 @@ Deno.test("window: dipGeometry is reported by a runtime with Deno.desktop.shortc
   const legacy = await setup().call("capabilities") as Record<string, boolean>;
   // Only WebView2 hosts before denext.5 placed windows in physical pixels.
   assertEquals(legacy.dipGeometry, Deno.build.os !== "windows");
-  const current = await setup({ api: { ...fakeApi(), shortcuts: {} } }).call(
+  const current = await setup({ api: { ...fakeApi(), shortcuts: {} as never } }).call(
     "capabilities",
   ) as Record<
     string,

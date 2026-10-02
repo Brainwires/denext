@@ -30,11 +30,7 @@ import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
 import { desktopPublishUpdate, PUBLISH_UPDATE_FLAGS } from "./desktop-publish-update.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
-import {
-  desktopLaunchConfig,
-  laufeyLaunchEnv,
-  syncDesktopAppConfigAt,
-} from "../../build/desktop-app-config.ts";
+import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
 import {
   DESKTOP_RUNTIME_ATTEST_ENV,
   DESKTOP_RUNTIME_VERIFY_ENV,
@@ -156,7 +152,8 @@ function fail(message: string): never {
 /**
  * Prepare an UNPACKAGED `deno desktop` window: sync `.deno-desktop/app.json` (the configured origin
  * + identifier, embedded through deno.json `compile.include`) and return the webview backend's
- * launch settings as `LAUFEY_*` env (there is no bundle to hold `laufey-launch.json`), plus
+ * launch settings as `LAUFEY_*` env (there is no bundle to hold `laufey-launch.json`; DevTools on in
+ * `dev`, and in `run` unless `desktop.inspectable: false`), plus
  * `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR` for denext's pinned Deno Desktop runtime (downloaded and
  * verified on first use; nothing under `DENEXT_DESKTOP_RUNTIME=stock`). Single instance is left
  * out on purpose: a dev window must never hand itself to an installed copy of the same app and exit.
@@ -165,10 +162,9 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<Record<st
   const paths = await resolveProject(dir);
   const { config } = paths;
   await syncDesktopAppConfigAt(dir, config);
-  const launch = desktopLaunchConfig(config);
   const runtime = await resolveDesktopRuntimeEnv({ projectDir: dir, deno: denoExecutable() });
   return {
-    ...laufeyLaunchEnv(launch && { appId: launch.appId, customSchemes: launch.customSchemes }),
+    ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),
     ...runtime.env,
     ...(dev ? await devPreloadEnv(paths) : {}),
   };

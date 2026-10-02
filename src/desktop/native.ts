@@ -29,6 +29,8 @@ import type {
   SqliteValue,
 } from "../mobile/sqlite-web.ts";
 import { desktopError, desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
+import { onAppAction } from "./app-actions.ts";
+import { pullQueue, type PullSubscribe } from "./pull.ts";
 
 /** Capabilities already warned about falling back (one warning per capability per page). */
 const warned = new Set<string>();
@@ -215,41 +217,71 @@ export async function deleteDesktopSqlite(name: string): Promise<void> {
 
 // --- context menu (cap "contextMenu") ---------------------------------------
 
-/** One native menu item on the wire. */
-interface WireMenuItem {
-  id: string;
-  label: string;
-  enabled: boolean;
-  destructive?: boolean;
-  icon?: string;
+/** One context-menu entry as the page builds it (`denext/mobile`'s `ContextMenuItem`). */
+export interface DesktopContextMenuEntry {
+  readonly id: string;
+  readonly label: string;
+  readonly disabled?: boolean;
+  readonly subtitle?: string;
+  readonly children?: readonly DesktopContextMenuEntry[];
+}
+
+/** The menu wire form: items, and submenus for entries with children (a disabled one's too). */
+function contextMenuWire(items: readonly DesktopContextMenuEntry[], off = false): unknown[] {
+  return items.map((it) => {
+    const label = it.subtitle ? `${it.label} — ${it.subtitle}` : it.label;
+    const disabled = off || it.disabled === true;
+    return it.children
+      ? { label, children: contextMenuWire(it.children, disabled) }
+      : { id: it.id, label, enabled: !disabled };
+  });
 }
 
 /**
- * `showContextMenu` on desktop: the native menu at client coordinates (`BrowserWindow
- * .showContextMenu`). Resolves the chosen id, or `null` when dismissed.
+ * `showContextMenu` on desktop: the OS's native menu at client coordinates (`BrowserWindow
+ * .showContextMenu` of denext's pinned runtime), submenus included. Resolves the chosen id, or
+ * `null` when the user dismissed it.
  */
 export async function showNativeContextMenu(
-  items: ReadonlyArray<
-    { id: string; label: string; disabled?: boolean; destructive?: boolean; icon?: string }
-  >,
+  items: readonly DesktopContextMenuEntry[],
   x: number,
   y: number,
   title: string | undefined,
 ): Promise<string | null> {
-  const wire: WireMenuItem[] = items.map((it) => ({
-    id: it.id,
-    label: it.label,
-    enabled: it.disabled !== true,
-    ...(it.destructive ? { destructive: true } : {}),
-    ...(it.icon !== undefined ? { icon: it.icon } : {}),
-  }));
   const out = await desktopRpc<{ id?: unknown }>(
     "contextMenu",
     "show",
-    { items: wire, x: Math.round(x), y: Math.round(y), ...(title !== undefined ? { title } : {}) },
+    {
+      items: contextMenuWire(items),
+      x: Math.round(x),
+      y: Math.round(y),
+      ...(title !== undefined ? { title } : {}),
+    },
     { timeoutMs: false },
   );
   return typeof out?.id === "string" ? out.id : null;
+}
+
+// --- dock menu (cap "app"; setQuickActions / onQuickAction) -------------------
+
+/**
+ * `setQuickActions` on desktop: the Dock icon's menu (macOS). Resolves `false` where the OS has no
+ * such menu (Windows, Linux).
+ */
+export async function setDesktopDockMenu(
+  actions: ReadonlyArray<{ id: string; title: string }>,
+): Promise<boolean> {
+  const out = await desktopRpc<{ applied?: unknown }>("app", "setDockMenu", {
+    menu: actions.length === 0 ? null : actions.map((a) => ({ id: a.id, label: a.title })),
+  });
+  return out?.applied === true;
+}
+
+/** Call `fn` with the id of each Dock-menu item the user chooses. Returns the unsubscribe. */
+export function onDesktopDockMenu(fn: (id: string) => void): () => void {
+  return onAppAction((action) => {
+    if (action.source === "dock") fn(action.id);
+  });
 }
 
 // --- shell (cap "shell") ----------------------------------------------------
@@ -373,17 +405,31 @@ export async function dialogPickFolder(): Promise<
 // --- notifications (cap "notifications") ------------------------------------
 
 /**
- * `scheduleNotification` on desktop. `schema` is the `@capacitor/local-notifications` shape
- * `denext/mobile` already builds (`schedule.at` / `schedule.repeats` / `schedule.on`); dates
- * travel as epoch milliseconds. The runtime shows it through the Deno-side `Notification`,
- * scheduling only while the app runs.
+ * One notification for the runtime: `denext/mobile`'s input (already checked there), with a `date`
+ * trigger's time as epoch milliseconds.
  */
-export async function notifySchedule(schema: Record<string, unknown>): Promise<void> {
-  const schedule = schema.schedule as { at?: unknown } | undefined;
-  const wire = schedule?.at instanceof Date
-    ? { ...schema, schedule: { ...schedule, at: schedule.at.getTime() } }
-    : schema;
-  await desktopRpc("notifications", "schedule", wire);
+export interface DesktopNotificationWire {
+  readonly id: number;
+  readonly title: string;
+  readonly body: string;
+  readonly data?: Readonly<Record<string, unknown>>;
+  readonly categoryId?: string;
+  readonly trigger?: unknown;
+}
+
+/**
+ * `scheduleNotification` on desktop: the OS's own notification, now or at the trigger's time (a
+ * repeating trigger's occurrences are scheduled by the runtime).
+ */
+export async function notifySchedule(notification: DesktopNotificationWire): Promise<void> {
+  const t = notification.trigger as { type?: unknown; date?: unknown } | undefined;
+  const trigger = t?.type === "date" && t.date instanceof Date
+    ? { ...t, date: t.date.getTime() }
+    : t;
+  await desktopRpc("notifications", "schedule", {
+    ...notification,
+    ...(trigger ? { trigger } : {}),
+  });
 }
 
 /** `cancelNotification` on desktop. */
@@ -398,6 +444,66 @@ export async function notifyPending(): Promise<
   const out = await desktopRpc<unknown>("notifications", "pending", {});
   return Array.isArray(out) ? out : [];
 }
+
+/** `setNotificationCategories` on desktop: the action buttons per category id. */
+export async function notifySetCategories(
+  categories: ReadonlyArray<{ id: string; actions: ReadonlyArray<{ id: string; title: string }> }>,
+): Promise<void> {
+  await desktopRpc("notifications", "setCategories", {
+    categories: categories.map((c) => ({
+      id: c.id,
+      actions: c.actions.map((a) => ({ id: a.id, title: a.title })),
+    })),
+  });
+}
+
+/**
+ * The notification permission on desktop (`request`: prompt when undecided): `granted`, `denied`,
+ * `prompt`, or `unsupported` where the OS has no notifications.
+ */
+export async function notifyPermission(request: boolean): Promise<string> {
+  const out = await desktopRpc<{ state?: unknown }>(
+    "notifications",
+    "permission",
+    { request },
+    { timeoutMs: false },
+  );
+  return typeof out?.state === "string" ? out.state : "prompt";
+}
+
+/** A click on a notification, as the runtime queues it. */
+export interface DesktopNotificationTap {
+  readonly id: number;
+  readonly actionId: string;
+  readonly title?: string;
+  readonly body?: string;
+  readonly data: Record<string, unknown>;
+  readonly launch: boolean;
+}
+
+/** One queued click, checked. */
+function toTap(raw: unknown): DesktopNotificationTap | undefined {
+  const t = (raw ?? {}) as Record<string, unknown>;
+  if (typeof t.id !== "number") return undefined;
+  return {
+    id: t.id,
+    actionId: typeof t.actionId === "string" ? t.actionId : "tap",
+    ...(typeof t.title === "string" ? { title: t.title } : {}),
+    ...(typeof t.body === "string" ? { body: t.body } : {}),
+    data: typeof t.data === "object" && t.data !== null ? t.data as Record<string, unknown> : {},
+    launch: t.launch === true,
+  };
+}
+
+/**
+ * Call `fn` with each click on one of the app's notifications, the one that launched the app
+ * first. Returns the unsubscribe.
+ */
+export const onDesktopNotificationTap: PullSubscribe<DesktopNotificationTap> = pullQueue(
+  "notifications",
+  "tap",
+  toTap,
+);
 
 // --- keep awake (cap "keepAwake") -------------------------------------------
 

@@ -8,11 +8,13 @@ import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_APP_CONFIG_FILE,
   desktopAppIdentity,
+  desktopInspectable,
   desktopLaunchConfig,
   laufeyLaunchEnv,
   laufeyLaunchPath,
   syncDesktopAppConfig,
   syncDesktopAppConfigAt,
+  unpackagedLaunchEnv,
   writeLaufeyLaunchConfig,
 } from "../src/build/desktop-app-config.ts";
 import { desktopOriginCheck } from "../src/cli/commands/doctor.ts";
@@ -88,6 +90,36 @@ Deno.test("laufeyLaunchEnv: the LAUFEY_* overrides for an unpackaged window", ()
     },
   );
   assertEquals(laufeyLaunchEnv(null), {});
+  assertEquals(laufeyLaunchEnv({ inspectable: false }), { LAUFEY_INSPECTABLE: "0" });
+  assertEquals(laufeyLaunchEnv({ inspectable: true }), { LAUFEY_INSPECTABLE: "1" });
+});
+
+Deno.test("unpackagedLaunchEnv: app id, the origin's scheme and DevTools — never single instance", () => {
+  const config = {
+    desktop: {
+      app: { origin: "t3code://app", identifier: "com.t3.code", singleInstance: true },
+      inspectable: false,
+    },
+  };
+  assertEquals(unpackagedLaunchEnv(config, "dev"), {
+    LAUFEY_APP_ID: "com.t3.code",
+    LAUFEY_CUSTOM_SCHEMES: "t3code",
+    LAUFEY_INSPECTABLE: "1",
+  });
+  assertEquals(unpackagedLaunchEnv(config, "run").LAUFEY_INSPECTABLE, "0");
+  assertEquals(unpackagedLaunchEnv({}, "run"), { LAUFEY_INSPECTABLE: "1" });
+});
+
+Deno.test("desktopInspectable: always in dev, default on in run, default OFF when packaged", () => {
+  const on = { desktop: { inspectable: true } };
+  const off = { desktop: { inspectable: false } };
+  assertEquals(desktopInspectable({}, "dev"), true);
+  assertEquals(desktopInspectable(off, "dev"), true);
+  assertEquals(desktopInspectable({}, "run"), true);
+  assertEquals(desktopInspectable(off, "run"), false);
+  assertEquals(desktopInspectable({}, "package"), false);
+  assertEquals(desktopInspectable(undefined, "package"), false);
+  assertEquals(desktopInspectable(on, "package"), true);
 });
 
 Deno.test("sync: writes app.json and appends to compile.include, keeping comments + entries", async () => {
@@ -188,6 +220,7 @@ Deno.test("sync + launch file: driven from a package script's import.meta.url", 
       appId: "com.t3.code",
       customSchemes: ["t3code"],
       singleInstance: true,
+      inspectable: false,
     });
     const linux = join(dir, "dist", "t3-x64");
     await Deno.mkdir(linux, { recursive: true });
@@ -200,12 +233,14 @@ Deno.test("sync + launch file: driven from a package script's import.meta.url", 
   }
 });
 
-Deno.test("launch file: nothing to write without a config", async () => {
+Deno.test("launch file: without a config it still turns DevTools off", async () => {
   const dir = await project();
   try {
     await Deno.mkdir(join(dir, "scripts"));
     const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
-    assertEquals(await writeLaufeyLaunchConfig(entry, "linux", join(dir, "dist")), null);
+    const written = await writeLaufeyLaunchConfig(entry, "linux", join(dir, "dist"));
+    assertEquals(written, join(dir, "dist", "laufey-launch.json"));
+    assertEquals(JSON.parse(await Deno.readTextFile(written!)), { inspectable: false });
     assertEquals(await syncDesktopAppConfig(entry), { appJson: "none", include: "no-deno-json" });
   } finally {
     await Deno.remove(dir, { recursive: true });

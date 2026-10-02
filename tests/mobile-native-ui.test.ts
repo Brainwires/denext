@@ -12,7 +12,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { type FakeDocument, type FakeElement, makeDom } from "./helpers/dom.ts";
 import { fakePlugin, inShell, mount, settle, withGlobals } from "./helpers/mobile-fakes.ts";
-import { flattenMenuItems, nativeMenuItems, showContextMenu } from "../src/mobile/context-menu.ts";
+import { nativeMenuItems, showContextMenu } from "../src/mobile/context-menu.ts";
 import { attachContextMenu, useContextMenu } from "../src/mobile/context-menu-target.ts";
 import {
   hexColor,
@@ -97,7 +97,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---- showContextMenu -------------------------------------------------------------------------
 
-Deno.test("nativeMenuItems keeps only set fields and nests submenus; flatten labels them", () => {
+Deno.test("nativeMenuItems keeps only set fields and nests submenus", () => {
   assertEquals(nativeMenuItems(MENU), [
     { id: "reply", label: "Reply", systemIcon: "arrowshape.turn.up.left" },
     {
@@ -109,14 +109,6 @@ Deno.test("nativeMenuItems keeps only set fields and nests submenus; flatten lab
       ],
     },
     { id: "delete", label: "Delete", destructive: true, systemIcon: "trash" },
-  ]);
-  const flat = flattenMenuItems([
-    { id: "a", label: "A", disabled: true, children: [{ id: "a1", label: "One" }] },
-    { id: "b", label: "B" },
-  ]);
-  assertEquals(flat.map((i) => [i.id, i.label, i.disabled === true]), [
-    ["a1", "A › One", true],
-    ["b", "B", false],
   ]);
 });
 

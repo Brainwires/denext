@@ -7,7 +7,7 @@
 //                            embedded into the binary through deno.json `compile.include` (the path
 //                            a stock `deno desktop` CLI accepts; the runtime reads it back at launch)
 //   laufey-launch.json       the webview backend's launch settings (`appId`, `customSchemes`,
-//                            `singleInstance`), read at process start from the packaged bundle:
+//                            `singleInstance`, `inspectable`), read at process start from the packaged bundle:
 //                            `<App>.app/Contents/Resources/` on macOS, next to the executable on
 //                            Windows and Linux
 //
@@ -47,6 +47,27 @@ export interface LaufeyLaunchConfig {
   readonly customSchemes?: string[];
   /** One running instance per app id (effective once the runtime supports it). */
   readonly singleInstance?: boolean;
+  /** Whether DevTools can be opened (`desktop.inspectable`; off by default in a packaged app). */
+  readonly inspectable?: boolean;
+}
+
+/** Where a window is launched from, for {@linkcode desktopInspectable}. */
+export type DesktopLaunchMode = "dev" | "run" | "package";
+
+/**
+ * Whether the window's DevTools can be opened: always in `denext desktop dev`, `desktop.inspectable`
+ * (default on) in `denext desktop run`, and `desktop.inspectable === true` (default OFF) in a
+ * packaged app.
+ *
+ * @param config The project config.
+ * @param mode How the window is launched.
+ * @returns Whether DevTools are allowed.
+ */
+export function desktopInspectable(config: unknown, mode: DesktopLaunchMode): boolean {
+  if (mode === "dev") return true;
+  const raw = (config as { desktop?: { inspectable?: unknown } } | undefined)?.desktop
+    ?.inspectable;
+  return mode === "run" ? raw !== false : raw === true;
 }
 
 /** The `desktop.app` block of an untyped config value. */
@@ -119,7 +140,29 @@ export function laufeyLaunchEnv(launch: LaufeyLaunchConfig | null): Record<strin
   if (launch?.singleInstance !== undefined) {
     env.LAUFEY_SINGLE_INSTANCE = launch.singleInstance ? "1" : "0";
   }
+  if (launch?.inspectable !== undefined) env.LAUFEY_INSPECTABLE = launch.inspectable ? "1" : "0";
   return env;
+}
+
+/**
+ * The `LAUFEY_*` env of an unpackaged window (`denext desktop run` / `dev`): the app id, the
+ * origin's custom scheme and whether DevTools open ({@linkcode desktopInspectable}). Single
+ * instance is left out on purpose: a dev window must never hand itself to an installed copy.
+ *
+ * @param config The project config.
+ * @param mode `"dev"` or `"run"`.
+ * @returns The env vars.
+ */
+export function unpackagedLaunchEnv(
+  config: unknown,
+  mode: Exclude<DesktopLaunchMode, "package">,
+): Record<string, string> {
+  const launch = desktopLaunchConfig(config);
+  return laufeyLaunchEnv({
+    ...(launch?.appId ? { appId: launch.appId } : {}),
+    ...(launch?.customSchemes ? { customSchemes: launch.customSchemes } : {}),
+    inspectable: desktopInspectable(config, mode),
+  });
 }
 
 /**
@@ -150,22 +193,27 @@ async function loadConfigBeside(entryUrl: string): Promise<unknown> {
 }
 
 /**
- * Write the packaged app's `laufey-launch.json` from `desktop.app` in the project's
- * `denext.config.ts` (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`). On macOS
- * call it BEFORE code-signing: the file lives inside the sealed bundle.
+ * Write the packaged app's `laufey-launch.json` from `desktop.app` and `desktop.inspectable` in the
+ * project's `denext.config.ts` (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).
+ * On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param os The target OS.
  * @param bundle The `.app` (macOS) or bundle directory (Windows / Linux) `deno desktop` wrote.
- * @returns The path written, or `null` when there was nothing to write.
+ * @returns The path written (always written: it carries `inspectable`).
  */
 export async function writeLaufeyLaunchConfig(
   entryUrl: string,
   os: DesktopOs,
   bundle: string,
 ): Promise<string | null> {
-  const launch = desktopLaunchConfig(await loadConfigBeside(entryUrl));
-  if (!launch) return null;
+  const config = await loadConfigBeside(entryUrl);
+  // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
+  // written: without it the runtime would leave them on.
+  const launch = {
+    ...desktopLaunchConfig(config),
+    inspectable: desktopInspectable(config, "package"),
+  };
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(launch, null, 2) + "\n");

@@ -680,7 +680,11 @@ export interface DesktopCapabilitiesConfig {
   fs?: boolean | DesktopFsConfig;
   /** An app SQLite database under the app-support folder. */
   sqlite?: boolean;
-  /** `showContextMenu` (no runtime capability yet: the WebView's in-page menu). */
+  /**
+   * `showContextMenu` / `useContextMenu` as the OS's native menu (submenus, disabled and checked
+   * items, a real dismissal) through denext's pinned runtime; under the stock runtime the page keeps
+   * its in-page menu.
+   */
   contextMenu?: boolean;
   /** Open external URLs / paths / reveal / trash (scoped). */
   shell?: boolean | DesktopShellConfig;
@@ -693,10 +697,24 @@ export interface DesktopCapabilitiesConfig {
   /** Native open/save/folder dialogs returning paths. */
   dialogs?: boolean;
   /**
-   * Local notifications (no runtime capability yet: the WebView's Notification API, immediate
-   * only; a scheduled trigger rejects and a click is not routed).
+   * Local notifications as the OS's own through denext's pinned runtime: shown now or scheduled
+   * (repeating triggers too), cancelled and listed, with action buttons, the permission status, and
+   * clicks routed to `onLocalNotificationTapped` (including the one that launched the app). Under the
+   * stock runtime the page keeps the WebView's Notification API (immediate only).
    */
   notifications?: boolean;
+  /**
+   * System-wide keyboard shortcuts (`registerShortcut` in `denext/desktop/app`) through denext's
+   * pinned runtime: macOS hot keys, Windows `RegisterHotKey`, X11 key grabs, the Wayland
+   * GlobalShortcuts portal (the user approves each).
+   */
+  globalShortcuts?: boolean;
+  /**
+   * Start the app at login (`getLaunchAtLogin` / `setLaunchAtLogin` in `denext/desktop/app`)
+   * through denext's pinned runtime: a macOS login item, a Windows `Run` value, a Linux XDG
+   * autostart entry, named after `desktop.app.identifier`.
+   */
+  launchAtLogin?: boolean;
   /** Prevent the machine from sleeping while held. */
   keepAwake?: boolean;
   /**
@@ -787,8 +805,11 @@ export interface DesktopConfig {
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
   /**
-   * Whether the packaged app's web inspector (DevTools) can be opened. **Validated only for now:**
-   * not applied by the desktop runtime yet.
+   * Whether the web inspector (DevTools) can be opened in the window: F12, the context menu,
+   * Safari's Develop menu and remote debugging. Default: on in `denext desktop dev` (always) and
+   * `denext desktop run`, OFF in a packaged app — set `true` to ship an inspectable build. The
+   * package scripts write it to the app's `laufey-launch.json` (`"inspectable"`); `run` passes it as
+   * `LAUFEY_INSPECTABLE`. Needs denext's pinned runtime (the stock runtime ignores it).
    */
   inspectable?: boolean;
   /**

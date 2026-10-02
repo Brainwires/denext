@@ -14,9 +14,11 @@
  *   `window.open` with `noopener`; only http(s), mailto: and tel: are allowed.
  * - In a Deno Desktop window ({@linkcode runtimePlatform} `"desktop"`), `secureStore`, the
  *   file functions, `openSqlite`, `openExternal`, `pickDocument`, `useKeepAwake`,
- *   `deviceInfo` and the clipboard (text, HTML and images) go through the desktop runtime's
- *   capabilities (`denext desktop add <capability>`); `showContextMenu` and the notifications
- *   have no runtime capability and take their WebView (web) path there; {@linkcode openPath},
+ *   `deviceInfo`, the clipboard (text, HTML and images), `showContextMenu` (the OS menu), the
+ *   local notifications (scheduled, with click routing) and `setQuickActions` (the macOS Dock
+ *   menu) go through the desktop runtime's capabilities (`denext desktop add <capability>`;
+ *   the menus and notifications need denext's pinned runtime, else they keep their web path);
+ *   {@linkcode openPath},
  *   {@linkcode revealInFileManager}, {@linkcode moveToTrash}, {@linkcode saveFile} and
  *   {@linkcode pickFolder} are the desktop file-manager and dialog extras. A picked file or
  *   folder comes back with an opaque `handle` ({@linkcode PickedHandle}): the file functions

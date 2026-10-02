@@ -45,6 +45,7 @@ import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
 import type { PickedPaths } from "../desktop/picked-paths.ts";
 import type { DesktopAppDirs } from "../desktop/app-dirs.ts";
 import { createWindowController, type WindowController } from "../desktop/caps/window.ts";
+import { createAppController } from "../desktop/caps/app.ts";
 import {
   applyDesktopWindowSettings,
   type DesktopWindowSettings,
@@ -910,11 +911,17 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
   });
+  // The app's own chrome (application menu, tray icons, dock badge / menu): no permission needed,
+  // registered with the window.
+  const appCtl = appWindow === undefined
+    ? undefined
+    : createAppController({ window: appWindow, api: desktopAppApi(), emit: emitToPage });
   const bridge = createDesktopBridge(
     [
       ...(options.capabilities ?? []),
       ...appEvents.capabilities,
       ...(windowCtl ? [windowCtl.capability] : []),
+      ...(appCtl ? [appCtl.capability] : []),
     ],
     {
       appSupportDir: options.appSupportDir,
@@ -926,6 +933,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   windowRef.ctl = windowCtl;
   appEvents.install();
   windowCtl?.install();
+  appCtl?.install();
   const handle = createDesktopHandler(
     options,
     outDir,

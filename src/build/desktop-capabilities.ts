@@ -131,11 +131,12 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
   "context-menu": {
     key: "contextMenu",
     value: true,
-    api: ["showContextMenu"],
+    api: ["showContextMenu", "useContextMenu"],
+    // A runtime API (BrowserWindow.showContextMenu with the dismissed event of denext's pinned
+    // runtime), no --allow-* of its own. Under the stock runtime the page keeps its in-page menu.
     trust: "none",
-    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission. A native OS menu
-    // would need an upstream dismiss event that Deno Desktop does not yet emit.
-    notes: "WebView in-page menu (no runtime cap; native OS menus await an upstream dismiss event)",
+    notes:
+      "native OS context menu with submenus and dismissal (pinned runtime; in-page menu otherwise)",
   },
   shell: {
     key: "shell",
@@ -200,15 +201,20 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "scheduleNotification",
       "cancelNotification",
       "pendingNotifications",
+      "setNotificationCategories",
       "onLocalNotificationTapped",
+      'requestPermission("notifications")',
+      "requestPushPermission",
     ],
+    // A runtime API (Deno.desktop.notifications of denext's pinned runtime), no --allow-* of its
+    // own. Under the stock runtime the page keeps the WebView's Notification API (immediate only).
     trust: "none",
-    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission. The webview's
-    // Notification API shows an IMMEDIATE notification; a scheduled trigger rejects, exactly as on
-    // the web (Deno Desktop has no scheduler).
-    notes: "WebView Notification API, immediate only (no runtime cap; a scheduled trigger rejects)",
+    notes:
+      "OS notifications: scheduled, repeating, actions, click routing (pinned runtime; WebView otherwise)",
     manual: [
-      "notifications: on Deno Desktop these use the WebView Notification API — grant it in the page. Only immediate notifications show; a scheduled trigger rejects (needs a plugin), the same as on the web. No --allow-* is added and no scheduled/tap routing is provided.",
+      'notifications: macOS shows notifications only from a signed app (an ad-hoc signed or unsigned build gets no permission); ask first with requestPermission("notifications").',
+      "notifications: Linux has no OS scheduler — a scheduled notification is delivered by the app while it runs and re-armed at its next launch (one whose time passed meanwhile shows then); a click on a notification of a closed app does not start it there.",
+      "notifications: a repeating notification is scheduled for its next 16 occurrences; each launch tops the series up, so an app not opened for longer than that stops showing it until it runs again.",
     ],
   },
   "keep-awake": {
@@ -242,6 +248,32 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     all: { sys: ["osRelease"] },
     trust: "scoped",
     notes: "OS name and release",
+  },
+  "global-shortcuts": {
+    key: "globalShortcuts",
+    value: true,
+    api: ["registerShortcut (denext/desktop/app)", "unregisterShortcut", "listShortcuts"],
+    // A runtime API (Deno.desktop.shortcuts), no --allow-* of its own. It still adds trust beyond
+    // the window: the app reacts to the registered key combinations while any app has the focus.
+    trust: "none",
+    notes: "system-wide keyboard shortcuts (pinned runtime)",
+    manual: [
+      "global-shortcuts: a registered combination reaches the app while ANY app has the keyboard focus, and the other app no longer sees it — register only the shortcuts the user asked for, and let them change or turn them off.",
+      "global-shortcuts: on Wayland the XDG GlobalShortcuts portal asks the user to approve each shortcut (and may bind another trigger); without the portal registration rejects `unsupported`.",
+    ],
+  },
+  "launch-at-login": {
+    key: "launchAtLogin",
+    value: true,
+    api: ["getLaunchAtLogin (denext/desktop/app)", "setLaunchAtLogin"],
+    // A runtime API (Deno.desktop.launchAtLogin), no --allow-* of its own; it writes an OS login
+    // entry named after desktop.app.identifier.
+    trust: "none",
+    notes:
+      "start the app at login: macOS login item / Windows Run value / Linux autostart (pinned runtime)",
+    manual: [
+      "launch-at-login: turn it on only when the user asks (a settings toggle): it makes the app start with every login. macOS 13+ may answer `requires-approval` until the user allows it in System Settings › Login Items; it needs a signed app bundle.",
+    ],
   },
   passkeys: {
     key: "passkeys",

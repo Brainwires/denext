@@ -216,9 +216,9 @@ Deno.test("desktopBuildFlags: the full capability set on Windows, least-privileg
     keepAwake: true,
     secureStore: true,
     dialogs: true,
-    clipboard: true, // WebView-backed: contributes no flags
-    contextMenu: true, // WebView-backed
-    notifications: true, // WebView-backed
+    clipboard: true, // a runtime API: contributes no flags
+    contextMenu: true, // a runtime API
+    notifications: true, // a runtime API
   });
   assertEquals(desktopBuildFlags(config, "windows"), [
     ...DESKTOP_BASELINE_FLAGS,

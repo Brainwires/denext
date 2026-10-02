@@ -6,6 +6,7 @@
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import {
   cancelNotification,
+  checkPermission,
   deleteFile,
   deviceInfo,
   downloadToFile,
@@ -20,10 +21,13 @@ import {
   pickFolder,
   readClipboard,
   readFile,
+  requestPermission,
+  requestPushPermission,
   revealInFileManager,
   saveFile,
   scheduleNotification,
   secureStore,
+  setNotificationCategories,
   showContextMenu,
   writeClipboard,
   writeFile,
@@ -179,14 +183,22 @@ Deno.test("showContextMenu: desktop → the native menu at the anchor; falls bac
   await inDesktop({ contextMenu: { show: () => ({ id: "open" }) } }, async (rt) => {
     const anchor = { left: 10.4, bottom: 20.6 } as DOMRect;
     const id = await showContextMenu([
-      { id: "open", label: "Open" },
+      { id: "open", label: "Open", subtitle: "in a tab" },
       { id: "del", label: "Delete", destructive: true, disabled: true },
+      {
+        id: "move",
+        label: "Move to",
+        disabled: true,
+        children: [{ id: "inbox", label: "Inbox" }],
+      },
     ], { anchor, title: "Row" });
     assertEquals(id, "open");
+    // Submenus stay nested (the native menu nests); a disabled parent disables its items.
     assertEquals(rt.calls[0].args, {
       items: [
-        { id: "open", label: "Open", enabled: true },
-        { id: "del", label: "Delete", enabled: false, destructive: true },
+        { id: "open", label: "Open — in a tab", enabled: true },
+        { id: "del", label: "Delete", enabled: false },
+        { label: "Move to", children: [{ id: "inbox", label: "Inbox", enabled: false }] },
       ],
       x: 10,
       y: 21,
@@ -269,12 +281,14 @@ Deno.test("dialogs: pickDocument / saveFile / pickFolder on desktop", async () =
   );
 });
 
-Deno.test("notifications: desktop schedule / cancel / pending; a tap listener opens no event stream", async () => {
+Deno.test("notifications: desktop schedule / cancel / pending / categories / permission", async () => {
   await inDesktop({
     notifications: {
-      schedule: () => null,
+      schedule: () => ({ id: 5 }),
       cancel: () => null,
       pending: () => [{ id: 5, title: "T", body: "B", extra: { path: "/x" } }],
+      setCategories: () => null,
+      permission: (a) => ({ state: (a as { request: boolean }).request ? "granted" : "prompt" }),
     },
   }, async (rt) => {
     const at = Date.now() + 60_000;
@@ -282,30 +296,82 @@ Deno.test("notifications: desktop schedule / cancel / pending; a tap listener op
       id: 5,
       title: "T",
       body: "B",
-      trigger: { type: "date", date: at },
+      trigger: { type: "date", date: new Date(at) },
       data: { path: "/x" },
+      categoryId: "msg",
     });
     assertEquals(id, 5);
-    const sent = rt.calls[0].args as { schedule: { at: number }; extra: unknown };
-    assertEquals(sent.schedule.at, at);
-    assertEquals(sent.extra, { path: "/x" });
+    // The input itself (a Date as ms), not the Capacitor schema.
+    assertEquals(rt.calls[0].args, {
+      id: 5,
+      title: "T",
+      body: "B",
+      data: { path: "/x" },
+      categoryId: "msg",
+      trigger: { type: "date", date: at },
+    });
+    await scheduleNotification({
+      id: 6,
+      title: "D",
+      body: "daily",
+      trigger: { type: "daily", hour: 9, minute: 30 },
+    });
+    assertEquals((rt.calls[1].args as { trigger: unknown }).trigger, {
+      type: "daily",
+      hour: 9,
+      minute: 30,
+    });
     await cancelNotification([5]);
-    assertEquals(rt.calls[1].args, { ids: [5] });
+    assertEquals(rt.calls[2].args, { ids: [5] });
     assertEquals(await pendingNotifications(), [
       { id: 5, title: "T", body: "B", data: { path: "/x" } },
     ]);
+    await setNotificationCategories([{
+      id: "msg",
+      actions: [{ id: "reply", title: "Reply", input: { buttonTitle: "Send" } }],
+    }]);
+    assertEquals(rt.calls.at(-1)!.args, {
+      categories: [{ id: "msg", actions: [{ id: "reply", title: "Reply" }] }],
+    });
+    assertEquals(await checkPermission("notifications"), "prompt");
+    assertEquals(await requestPermission("notifications"), "granted");
+    assertEquals(await requestPushPermission(), "granted");
+  });
+});
 
-    // No built-in desktop capability emits notification clicks (the WebView's Notification API
-    // shows them), so a tap listener is inert there: it opens no bridge event stream, and a
-    // stray "notifications" / "click" event is not routed as a tap.
+Deno.test("notifications: desktop clicks reach onLocalNotificationTapped, the launch click first", async () => {
+  const queued: unknown[] = [
+    { id: 7, actionId: "tap", title: "Hi", data: { path: "/inbox" }, launch: true },
+  ];
+  await inDesktop({
+    notifications: { take: () => queued.splice(0, queued.length) },
+  }, async (rt) => {
+    const taps: Array<{ id: number; actionId: string; data: unknown }> = [];
+    const stop = onLocalNotificationTapped(
+      (tap) =>
+        taps.push({ id: tap.notification.id, actionId: tap.actionId, data: tap.notification.data }),
+      { route: false },
+    );
+    await until(() => taps.length === 1);
+    assertEquals(taps[0], { id: 7, actionId: "tap", data: { path: "/inbox" } });
+    // A later click: queued in the runtime, then the payload-free signal.
+    queued.push({ id: 7, actionId: "archive", data: {}, launch: false });
+    rt.emit("notifications", "tap", null);
+    await until(() => taps.length === 2);
+    assertEquals(taps[1].actionId, "archive");
+    // A replayed signal takes an empty queue: no repeat.
+    rt.emit("notifications", "tap", null);
+    await new Promise((r) => setTimeout(r, 30));
+    assertEquals(taps.length, 2);
+    stop();
+  });
+});
+
+Deno.test("notifications: without the desktop capability a tap listener stays quiet", async () => {
+  await inDesktop({}, async () => {
     const taps: unknown[] = [];
     const stop = onLocalNotificationTapped((tap) => taps.push(tap), { route: false });
-    await new Promise((r) => setTimeout(r, 20));
-    assertEquals(rt.openStreams(), 0);
-    rt.emit("notifications", "click", {
-      notification: { id: 5, title: "T", extra: { path: "/x" } },
-    });
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 30));
     assertEquals(taps, []);
     stop();
   });

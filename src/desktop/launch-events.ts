@@ -100,6 +100,85 @@ export interface DesktopNativeClipboard {
   availableFormats(): Promise<string[]>;
 }
 
+/** A native menu entry as the runtime takes it (`Deno.MenuItem`). */
+export type DesktopMenuItem =
+  | {
+    item: {
+      label: string;
+      id?: string;
+      accelerator?: string;
+      enabled: boolean;
+      checked?: boolean;
+      icon?: Uint8Array;
+      tooltip?: string;
+    };
+  }
+  | { submenu: { label: string; items: DesktopMenuItem[] } }
+  | "separator"
+  | { role: { role: string } };
+
+/** What `Deno.desktop.menuCapabilities()` reports. */
+export interface DesktopMenuCapabilities {
+  readonly appMenu?: boolean;
+  readonly accelerators?: boolean;
+  readonly contextMenu?: boolean;
+  readonly contextClosed?: boolean;
+  readonly icons?: boolean;
+  readonly tooltips?: boolean;
+}
+
+/** A click on one of the app's notifications that no live `Notification` owns. */
+export interface DesktopNotificationResponse {
+  readonly tag?: unknown;
+  readonly action?: unknown;
+  readonly data?: unknown;
+  readonly launch?: unknown;
+}
+
+/** An action button of a native notification (`{ action, title }`). */
+export interface DesktopNotificationAction {
+  readonly action: string;
+  readonly title: string;
+}
+
+/** A scheduled notification not delivered yet, as `getScheduled()` lists it. */
+export interface DesktopScheduledNotification {
+  readonly tag: string;
+  readonly title?: string;
+  readonly body?: string;
+  readonly at?: Date | number;
+  readonly data?: unknown;
+  readonly actions?: DesktopNotificationAction[];
+}
+
+/** `Deno.desktop.notifications`: scheduled notifications and their capabilities. */
+export interface DesktopNotificationsApi {
+  capabilities(): Record<string, boolean>;
+  schedule(options: {
+    title: string;
+    body?: string;
+    at: number;
+    tag?: string;
+    actions?: DesktopNotificationAction[];
+    data?: unknown;
+  }): Promise<string>;
+  getScheduled(): Promise<DesktopScheduledNotification[]>;
+  cancel(tag: string): void;
+  requestPermission(options?: { provisional?: boolean }): Promise<string>;
+}
+
+/** `Deno.desktop.shortcuts`: system-wide keyboard shortcuts. */
+export interface DesktopShortcutsApi {
+  capabilities(): { globalShortcuts?: boolean; userBinds?: boolean };
+  register(accelerator: string): Promise<string>;
+  unregister(accelerator: string): boolean;
+  unregisterAll(): void;
+  isRegistered(accelerator: string): boolean;
+  list(): string[];
+  canonicalize(accelerator: string): string | null;
+  addEventListener(type: "shortcut", listener: (event: Event) => void): void;
+}
+
 /**
  * The slice of `Deno.desktop` (denext's pinned Deno Desktop runtime) the app events use. Every
  * member is optional: the stock runtime has no `Deno.desktop`, and an older pinned runtime lacks
@@ -111,7 +190,20 @@ export interface DesktopAppApi {
   /** The files the app was launched with (taken on first read). */
   readonly launchFiles?: readonly string[];
   /** Global shortcuts (runtime 2.9.7-denext.5 and later); its presence marks that runtime. */
-  readonly shortcuts?: object;
+  readonly shortcuts?: DesktopShortcutsApi;
+  /** Start the app at login (runtime 2.9.7-denext.5 and later). */
+  readonly launchAtLogin?: {
+    get(): Promise<string>;
+    set(enabled: boolean): Promise<string>;
+  };
+  /** Scheduled notifications, capabilities and permission (runtime 2.9.7-denext.5 and later). */
+  readonly notifications?: DesktopNotificationsApi;
+  /** Notification clicks that arrived before the first listener (taken on first read). */
+  readonly launchNotificationResponses?: readonly DesktopNotificationResponse[];
+  /** What menus can do on this backend (runtime 2.9.7-denext.5 and later). */
+  menuCapabilities?(): DesktopMenuCapabilities;
+  /** DevTools control: `enabled` is false when the app launched with DevTools off. */
+  readonly devtools?: { readonly enabled?: boolean };
   /** `openurl` / `openfile` / `secondinstance`. */
   addEventListener?(type: string, listener: (event: Event) => void): void;
   /** Who handles one of the app's declared schemes. */

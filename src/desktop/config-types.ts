@@ -29,4 +29,6 @@ export const DESKTOP_ADD_CAPABILITY_KEYS = [
   "clipboard",
   "device",
   "passkeys",
+  "globalShortcuts",
+  "launchAtLogin",
 ] as const;

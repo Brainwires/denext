@@ -95,25 +95,6 @@ export function nativeMenuItems(items: readonly ContextMenuItem[]): NativeMenuIt
   }));
 }
 
-/**
- * `items` with every submenu replaced by its items, labelled `Parent › Child` (a disabled
- * parent disables them), for menus that cannot nest (the Deno Desktop one).
- */
-export function flattenMenuItems(
-  items: readonly ContextMenuItem[],
-  prefix = "",
-  disabled = false,
-): ContextMenuItem[] {
-  const out: ContextMenuItem[] = [];
-  for (const it of items) {
-    const label = prefix + it.label;
-    const off = disabled || it.disabled === true;
-    if (it.children) out.push(...flattenMenuItems(it.children, `${label} › `, off));
-    else out.push({ ...it, label, ...(off ? { disabled: true } : {}) });
-  }
-  return out;
-}
-
 /** The slice of an element the web popover uses (real DOM and the test DOM both satisfy it). */
 interface MenuEl {
   setAttribute(name: string, value: string): void;
@@ -334,9 +315,11 @@ function showWebContextMenu(
  *   (submenus as labelled groups, destructive items in the error color). For the long-press
  *   menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the
  *   element with {@linkcode useContextMenu} instead.
- * - Inside a Deno Desktop window, the in-page popover below: the desktop runtime has no
- *   context-menu capability yet (a native menu awaits an upstream dismiss event), so the
- *   bridge answers `unavailable` and the web path runs.
+ * - Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add
+ *   context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,
+ *   disabled items, subtitles appended to the label, and `null` when the user dismisses it
+ *   (`destructive`, `icon` and `systemIcon` are not drawn there; a `title` is a disabled first
+ *   item). Without the capability, or under the stock runtime, the in-page popover below.
  * - Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role="menu"`
  *   with a `role="menuitem"` per item (a submenu is a `role="group"` labelled by its item),
  *   opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,
@@ -390,14 +373,14 @@ export async function showContextMenu(
   options: ContextMenuOptions = {},
 ): Promise<string | null> {
   const list = [...items];
-  // Deno Desktop: asked through the bridge (lazy, so web/mobile bundles never load it); the
-  // runtime has no context-menu cap yet, so it answers `unavailable` and the popover runs.
+  // Deno Desktop: the OS menu through the bridge (lazy, so web/mobile bundles never load it); an
+  // `unavailable` answer (capability off, or the stock runtime) runs the popover instead.
   const x = options.x ?? options.anchor?.left ?? 0;
   const y = options.y ?? options.anchor?.bottom ?? 0;
   const desktop = list.length > 0 && onDesktop()
     ? await viaDesktop(
       "contextMenu",
-      (d) => d.showNativeContextMenu(flattenMenuItems(list), x, y, options.title),
+      (d) => d.showNativeContextMenu(list, x, y, options.title),
     )
     : undefined;
   if (desktop) return desktop.value;
