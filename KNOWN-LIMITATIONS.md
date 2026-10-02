@@ -185,6 +185,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
+- **A pending Clerk sign-in on Windows and Linux accepts a forged callback.** Clerk's callback
+  carries only its own nonce (no `state` the app can check), so while a sign-in is pending another
+  program can send one; at most it signs the app in to the sender's account. Out-of-session and
+  repeat callbacks are dropped; macOS uses the OS sheet, which no other program can reach.
 - **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement;
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
 - **Notifications:** Linux has no scheduler (delivered while the app runs, late after a quit) and
