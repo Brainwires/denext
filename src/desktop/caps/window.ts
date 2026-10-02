@@ -37,7 +37,7 @@ import { base64ToBytes } from "../../mobile/base64.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import type { DesktopAppApi, DesktopRect, DesktopScreen } from "../launch-events.ts";
-import { confineRelative } from "../path-scope.ts";
+import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
 import { PickedPaths } from "../picked-paths.ts";
 import { DEFAULT_VIBRANCY } from "../window-config.ts";
 
@@ -388,6 +388,8 @@ export function createWindowController(options: WindowControllerOptions): Window
     if (!options.dirs) throw invalid("the app folders are not available");
     if (rel === "") throw invalid("path must name a file in the app folder");
     const target = await confineRelative(options.dirs[directory], rel);
+    // Never drag the runtime's own state (the engine profile, the updater overlay) out.
+    await refuseReservedDataPath(options.dirs.data, target);
     try {
       await Deno.stat(target);
     } catch {

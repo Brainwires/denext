@@ -517,6 +517,36 @@ Deno.test("window.startDrag: picked handles and app-folder files only, never a r
   }
 });
 
+Deno.test("window.startDrag: the engine profile and updater dirs never leave by drag", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-dragout-reserved-" });
+  try {
+    const data = join(dir, "data");
+    for (const sub of ["CEF", "WebKitGTK", "WebView2", "ui-updates"]) {
+      await Deno.mkdir(join(data, sub), { recursive: true });
+      await Deno.writeTextFile(join(data, sub, "Cookies"), "secret");
+    }
+    const { call, win } = setup({
+      picked: new PickedPaths(),
+      dirs: { data, cache: join(dir, "cache"), documents: join(dir, "docs") },
+    });
+    const before = win.calls.length;
+    for (const path of ["CEF/Cookies", "cef/Cookies", "WEBKITGTK/Cookies", "webview2/Cookies"]) {
+      const err = await assertRejects(
+        () => call("startDrag", { items: [{ directory: "data", path }] }),
+        DesktopCapError,
+      );
+      assertEquals(err.code, "forbidden", path);
+    }
+    await assertRejects(
+      () => call("startDrag", { items: [{ directory: "data", path: "ui-updates/Cookies" }] }),
+      DesktopCapError,
+    );
+    assertEquals(win.calls.length, before, "nothing reached the window");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("window: size limits, resizability and always-on-top reach the window, validated", async () => {
   const { win, call } = setup();
   await call("setMaximumSize", { width: 1920, height: 0 }); // 0 = no limit on that axis

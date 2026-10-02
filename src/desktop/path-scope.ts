@@ -46,24 +46,31 @@ async function isSymlink(path: string): Promise<boolean> {
  */
 async function realWithin(base: string, candidate: string): Promise<boolean> {
   const realBase = await Deno.realPath(base).catch(() => resolve(base));
+  const realTarget = await realPathOf(candidate);
+  return realTarget !== undefined && isWithin(realBase, realTarget);
+}
+
+/**
+ * The real path of `candidate`: symlinks resolved in its deepest EXISTING ancestor, with the
+ * not-yet-existing tail re-attached. `undefined` when no ancestor resolves, or when the walk meets
+ * a DANGLING symlink: `realPath` fails on one, but the link exists and a write through it creates
+ * the file at its target — so it is never judged by its (in-scope) parent.
+ */
+async function realPathOf(candidate: string): Promise<string | undefined> {
   let existing = candidate;
   for (;;) {
     let real: string;
     try {
       real = await Deno.realPath(existing);
     } catch {
-      // `realPath` also fails on a DANGLING symlink: its target is missing, but the link exists and
-      // a write through it creates the file at the target — possibly outside `base`. Walking up past
-      // it would judge only the link's (in-scope) parent, so refuse any unresolvable link outright.
-      if (await isSymlink(existing)) return false;
+      if (await isSymlink(existing)) return undefined;
       const parent = dirname(existing);
-      if (parent === existing) return false; // filesystem root reached without an existing ancestor
+      if (parent === existing) return undefined; // filesystem root reached without an existing ancestor
       existing = parent;
       continue;
     }
     const tail = relative(existing, candidate);
-    const realTarget = tail && tail !== "." ? join(real, tail) : real;
-    return isWithin(realBase, realTarget);
+    return tail && tail !== "." ? join(real, tail) : real;
   }
 }
 
@@ -109,25 +116,61 @@ export async function confineWithinRoots(abs: string, roots: readonly string[]):
 
 /**
  * Sub-directories of the app-support (`data`) directory the RUNTIME owns, which a page must never
- * write, delete or trash: `ui-updates` holds the desktop updater's verified overlay and its
- * pointer (`current.json`). The overlay is served at launch without re-verifying it, so a page that
- * could write there would plant a UI that persists across relaunches and outlives any signed
- * update; trashing it would roll the app back to the older bundled UI.
+ * read, list, write, delete, trash, open or drag out:
+ *
+ * - `ui-updates` holds the desktop updater's verified overlay and its pointer (`current.json`). The
+ *   overlay is served at launch without re-verifying it, so a page that could write there would
+ *   plant a UI that persists across relaunches and outlives any signed update; trashing it would
+ *   roll the app back to the older bundled UI.
+ * - `CEF`, `WebKitGTK` and `WebView2` are the web engine's profile (cookies, local storage, the
+ *   HTTP cache, saved credentials): reading it hands the page every session the app holds, and
+ *   writing it plants state the engine trusts.
+ *
+ * Lower-case: names are compared case-insensitively.
  */
-const RESERVED_DATA_SUBDIRS: readonly string[] = ["ui-updates"];
+const RESERVED_DATA_SUBDIRS: readonly string[] = ["ui-updates", "cef", "webkitgtk", "webview2"];
+
+/**
+ * Whether a directory-entry name in the data root is a runtime-owned one (see
+ * {@link RESERVED_DATA_SUBDIRS}): compared case-insensitively (macOS and Windows filesystems are),
+ * ignoring what Windows ignores or reads as a stream — trailing dots and spaces, and a `:stream`
+ * suffix (`CEF::$INDEX_ALLOCATION` is the `CEF` directory).
+ *
+ * @param name One path segment.
+ * @returns Whether it names a reserved sub-directory.
+ */
+export function isReservedDataName(name: string): boolean {
+  const bare = name.split(":")[0].replace(/[. ]+$/, "").toLowerCase();
+  return RESERVED_DATA_SUBDIRS.includes(bare);
+}
+
+/** The reserved first segment of `target` under `dataDir`, if it has one. */
+function reservedSegment(dataDir: string, target: string): string | undefined {
+  const rel = relative(dataDir, target);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return undefined;
+  const first = rel.split(/[\\/]/)[0];
+  return isReservedDataName(first) ? first : undefined;
+}
 
 /**
  * Refuse a path inside a runtime-owned sub-directory of `dataDir` (see
- * {@link RESERVED_DATA_SUBDIRS}). Compared case-insensitively (macOS and Windows filesystems are).
+ * {@link RESERVED_DATA_SUBDIRS}), for EVERY operation. Checked on the path as given AND on its real
+ * path against the real data directory, so neither another spelling of the data directory (a
+ * symlinked ancestor, `/var` vs `/private/var`) nor a short (8.3) name on Windows reaches it.
  *
  * @param dataDir The app-support directory.
  * @param target The already-confined absolute path.
  */
-export function refuseReservedDataPath(dataDir: string, target: string): void {
-  const rel = relative(resolve(dataDir), resolve(target));
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return;
-  const first = rel.split(/[\\/]/)[0].replace(/[. ]+$/, "").toLowerCase();
-  if (RESERVED_DATA_SUBDIRS.includes(first)) {
-    throw forbidden(`"${first}" is reserved for the desktop runtime`);
+export async function refuseReservedDataPath(dataDir: string, target: string): Promise<void> {
+  let hit = reservedSegment(resolve(dataDir), resolve(target));
+  if (hit === undefined) {
+    const realData = await Deno.realPath(dataDir).catch(() => undefined);
+    const realTarget = await realPathOf(resolve(target));
+    if (realData !== undefined && realTarget !== undefined) {
+      hit = reservedSegment(realData, realTarget);
+    }
+  }
+  if (hit !== undefined) {
+    throw forbidden(`"${hit}" is reserved for the desktop runtime`);
   }
 }

@@ -23,12 +23,12 @@
  * @module
  */
 
-import { dirname, join } from "@std/path";
+import { dirname, join, resolve } from "@std/path";
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import type { FileEntry } from "../../mobile/filesystem.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
-import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
+import { confineRelative, isReservedDataName, refuseReservedDataPath } from "../path-scope.ts";
 import type { PickedPaths } from "../picked-paths.ts";
 
 /** An app-directory name (the string forms of a `FileDirectory`; kept local so this cap doesn't
@@ -282,9 +282,16 @@ async function resolveTarget(
   }
   const base = baseFor(cfg, directory, write);
   const target = await scopedPath(base, path, allowRoot);
-  // The runtime's own state under the data dir (the updater overlay) is never page-writable.
-  if (write) refuseReservedDataPath(cfg.dirs.data, target);
+  // The runtime's own state under the data dir (the updater overlay, the engine profile) is never
+  // reachable from the page: not read, listed, written or deleted.
+  await refuseReservedDataPath(cfg.dirs.data, target);
   return { target, root: base };
+}
+
+/** Whether `a` and `b` are the same directory (by real path when both exist, else as spelled). */
+async function sameDir(a: string, b: string): Promise<boolean> {
+  const real = (p: string) => Deno.realPath(p).catch(() => resolve(p));
+  return (await real(a)) === (await real(b));
 }
 
 /** `mkdir -p path`, treating an existing directory as success (used for the base and write parents). */
@@ -371,9 +378,12 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         handler: async (args) => {
           const a = (args ?? {}) as { path?: unknown; directory?: unknown };
           const { target } = await resolveTarget(cfg, a.directory, a.path, false, true);
+          // The data root's listing leaves the runtime-owned sub-directories out.
+          const hide = await sameDir(target, cfg.dirs.data);
           const entries: FileEntry[] = [];
           try {
             for await (const e of Deno.readDir(target)) {
+              if (hide && isReservedDataName(e.name)) continue;
               entries.push(await toFileEntry(target, e.name, e.isDirectory));
             }
           } catch (err) {

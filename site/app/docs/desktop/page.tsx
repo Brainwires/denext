@@ -1112,9 +1112,13 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         <code>openPath</code> refuses programs, scripts and launchers (<code>.exe</code>,{" "}
         <code>.bat</code>, <code>.command</code>, <code>.terminal</code>,{" "}
         <code>.desktop</code>, an executable file, …), because the default app would run them.{" "}
-        <code>fs</code> never writes the updater's <code>ui-updates</code>{" "}
-        folder. SQLite connections cannot <code>ATTACH</code> another file, and a <code>query</code>
-        {" "}
+        <code>fs</code>, <code>shell</code>{" "}
+        and drag-out never reach the runtime's own folders in the data directory (the updater's{" "}
+        <code>ui-updates</code>, and the web engine's profile: <code>CEF</code>,{" "}
+        <code>WebKitGTK</code>,{" "}
+        <code>WebView2</code>, in any letter case): no read, list, write, delete, open, reveal,
+        trash or drag. SQLite connections cannot <code>ATTACH</code> another file, and a{" "}
+        <code>query</code>{" "}
         stops after 20 seconds of producing rows (a single long statement still blocks the app,
         since <code>node:sqlite</code>{" "}
         cannot be interrupted). A reload releases the previous page's keep-awake holds.

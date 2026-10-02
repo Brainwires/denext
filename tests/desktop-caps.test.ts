@@ -42,6 +42,7 @@ import { contextMenuCapability } from "../src/desktop/caps/context-menu.ts";
 import { shortcutsCapability } from "../src/desktop/caps/shortcuts.ts";
 import { launchAtLoginCapability } from "../src/desktop/caps/launch-at-login.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
+import { isReservedDataName, refuseReservedDataPath } from "../src/desktop/path-scope.ts";
 import {
   DIALOG_NAME_ENV,
   dialogsCapability,
@@ -388,10 +389,10 @@ Deno.test("fs/shell SECURITY: the updater overlay dir (data/ui-updates) is never
       () => call(cap, "deleteFile", { path: "ui-updates/current.json", directory: "data" }),
       DesktopCapError,
     );
-    // Reading is fine, and so is a sibling whose name merely starts the same way.
-    assertEquals(
-      await call(cap, "readFile", { path: "ui-updates/current.json", directory: "data" }),
-      "{}",
+    // Reading is refused too; a sibling whose name merely starts the same way is fine.
+    await assertRejects(
+      () => call(cap, "readFile", { path: "ui-updates/current.json", directory: "data" }),
+      DesktopCapError,
     );
     await call(cap, "writeFile", { path: "ui-updates-notes.txt", data: "ok", directory: "data" });
     const trashed: string[][] = [];
@@ -411,6 +412,97 @@ Deno.test("fs/shell SECURITY: the updater overlay dir (data/ui-updates) is never
     assertEquals(await Deno.readTextFile(join(root, "ui-updates", "current.json")), "{}");
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("fs/shell/drag SECURITY: the engine profile dirs are unreachable for every operation", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-fs-profile-" });
+  try {
+    for (const dir of ["CEF", "WebKitGTK", "WebView2", "ui-updates"]) {
+      await Deno.mkdir(join(root, dir, "Default"), { recursive: true });
+      await Deno.writeTextFile(join(root, dir, "Default", "Cookies"), "secret");
+    }
+    await Deno.writeTextFile(join(root, "notes.txt"), "mine");
+    const dirs = { data: root, cache: join(root, "c"), documents: join(root, "d") };
+    const cap = fsCapability({
+      dirs,
+      read: new Set(["$APPDATA"]),
+      write: new Set(["$APPDATA"]),
+    });
+    // Every spelling: the case-folded names (macOS / Windows filesystems ignore case), Windows'
+    // trailing dots and spaces, an NTFS stream suffix, and a `..` detour.
+    const paths = [
+      "CEF/Default/Cookies",
+      "cef/Default/Cookies",
+      "WEBKITGTK/Default/Cookies",
+      "webview2/Default/Cookies",
+      "WebView2./Default/Cookies",
+      "CEF ./Default/Cookies",
+      "CEF::$INDEX_ALLOCATION/Default/Cookies",
+      "notes/../CEF/Default/Cookies",
+      "UI-UPDATES/Default/Cookies",
+    ];
+    const refused = async (method: string, args: Record<string, unknown>) => {
+      const err = await assertRejects(() => call(cap, method, args), DesktopCapError);
+      assertEquals(err.code, "forbidden", `${method} ${JSON.stringify(args)}`);
+    };
+    for (const path of paths) {
+      await refused("readFile", { path, directory: "data" });
+      await refused("readFile", { path, directory: "data", encoding: "base64" });
+      await refused("writeFile", { path, data: "x", directory: "data", recursive: true });
+      await refused("deleteFile", { path, directory: "data" });
+    }
+    for (const path of ["CEF", "cef/Default", "WebKitGTK", "WEBVIEW2"]) {
+      await refused("listDir", { path, directory: "data" });
+    }
+    // The data root's listing leaves them out; the app's own files stay visible.
+    const listed = (await call(cap, "listDir", { path: "", directory: "data" })) as {
+      name: string;
+    }[];
+    assertEquals(listed.map((e) => e.name).sort(), ["notes.txt"]);
+    assertEquals(await call(cap, "readFile", { path: "notes.txt", directory: "data" }), "mine");
+    assertEquals(await Deno.readTextFile(join(root, "CEF", "Default", "Cookies")), "secret");
+
+    // shell: open / reveal / trash of an absolute path in the profile.
+    const spawned: string[][] = [];
+    const shell = shellCapability({
+      dirs,
+      config: { openExternal: [], openPath: true, reveal: true, trash: true },
+      spawn: (_c, args) => {
+        spawned.push(args);
+        return Promise.resolve();
+      },
+    });
+    for (const method of ["openPath", "reveal", "trash"]) {
+      for (const p of [join(root, "CEF"), join(root, "webview2", "Default", "Cookies")]) {
+        await assertRejects(() => call(shell, method, { path: p }), DesktopCapError);
+      }
+    }
+    assertEquals(spawned.length, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("path-scope: a reserved dir reached through another spelling of the data dir is refused", async () => {
+  if (Deno.build.os === "windows") return;
+  const real = await Deno.makeTempDir({ prefix: "denext-reserved-real-" });
+  const alias = `${real}-alias`;
+  try {
+    await Deno.mkdir(join(real, "CEF"));
+    await Deno.symlink(real, alias);
+    // The data dir as configured is the alias; the page names the real spelling.
+    await assertRejects(
+      () => refuseReservedDataPath(alias, join(real, "CEF", "Cookies")),
+      DesktopCapError,
+    );
+    await assertRejects(() => refuseReservedDataPath(real, join(alias, "cef")), DesktopCapError);
+    await refuseReservedDataPath(alias, join(real, "notes.txt"));
+    assert(isReservedDataName("WebView2"));
+    assert(!isReservedDataName("cef-notes"));
+  } finally {
+    await Deno.remove(alias);
+    await Deno.remove(real, { recursive: true });
   }
 });
 

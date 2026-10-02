@@ -355,6 +355,12 @@ and this project adheres to
   with the exact app `Origin`: no `index.html` with the per-launch token (a missing `Origin` /
   `Sec-Fetch-Dest` is no longer taken as the page's own document there), and no
   `/_denext/desktop/*` endpoint, even with the token.
+- **The web engine's profile is out of the page's reach.** The `$APPDATA` folder the `fs`
+  capability defaults to also holds the engine profile (`CEF`, `WebKitGTK`, `WebView2`: cookies,
+  storage, saved credentials). Those folders and the updater's `ui-updates` are now refused for
+  every `fs` call (reads and `listDir` too — the data root's listing leaves them out), for
+  `shell` `openPath` / `reveal` / `trash`, and for `startDrag`, matched case-insensitively and
+  through any spelling of the data directory. Reading `ui-updates` was allowed before.
 
 ## [3.0.2] - 2026-09-30
 
