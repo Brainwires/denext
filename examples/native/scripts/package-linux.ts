@@ -49,6 +49,8 @@ import {
   type DesktopPackageMeta,
   desktopRequireTool,
   desktopRun as run,
+  desktopToolGate,
+  desktopVersionProblem,
   parseDesktopPackageArgs,
   prepareDesktopPackage,
 } from "denext/desktop";
@@ -115,10 +117,18 @@ async function installers(
   const out: string[] = [];
   const base = `dist/${name}-${LABELS[arch]}`;
   const pkg = { meta, bundleDir: dir, exe: `${name}-${LABELS[arch]}`, arch };
+  // A version Debian / RPM can't express skips a default .deb with a warning (an asked-for one fails).
+  const versionOk = (format: "deb" | "rpm") =>
+    desktopToolGate(desktopVersionProblem(format, meta.version), `.${format}`, plan.explicit);
   for (const format of plan.formats) {
     if (format === "tar.gz") out.push(await tarball(name, arch, dir));
-    if (format === "deb") out.push(await buildDesktopDeb({ ...pkg, out: `${base}.deb` }));
-    if (format === "rpm" && await desktopRequireTool("rpmbuild", ".rpm", plan.explicit)) {
+    if (format === "deb" && versionOk("deb")) {
+      out.push(await buildDesktopDeb({ ...pkg, out: `${base}.deb` }));
+    }
+    if (
+      format === "rpm" && versionOk("rpm") &&
+      await desktopRequireTool("rpmbuild", ".rpm", plan.explicit)
+    ) {
       out.push(await buildDesktopRpm({ ...pkg, out: `${base}.rpm` }));
     }
     if (

@@ -56,6 +56,7 @@ import {
   desktopIconArgs,
   desktopIncludeArgs,
   desktopInstallerPlan,
+  desktopNpmArgs,
   type DesktopPackageArgs,
   desktopPackageFlags,
   desktopRun as run,
@@ -88,6 +89,8 @@ async function buildApp(out: string, target?: string): Promise<void> {
     "--include",
     "out",
     ...await desktopIncludeArgs(import.meta.url),
+    // A project with node_modules: embed only the npm packages the entry reaches.
+    ...await desktopNpmArgs(import.meta.url),
   ];
   if (target) cmd.push("--target", target);
   // The app icon: desktop.app.icons.macos in denext.config.ts, else deno.json's, else

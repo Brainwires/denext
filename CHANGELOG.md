@@ -390,6 +390,21 @@ and this project adheres to
 
 ### Fixed
 
+- **A default `.msi` / `.deb` no longer aborts the package run.** A deno.json `version` the
+  format can't express (a CalVer `2026.10.2` overflows an MSI's 255 major; Debian / RPM need a
+  leading digit) skips that default installer with a warning that says so, and a failed
+  `wix build` of a default `.msi` falls back to the `.zip` with a warning; an installer asked for
+  (`--format`, `desktop.installers`) still fails the run, clearly. The WiX check now runs
+  `wix --version` and needs WiX 5, so an installed WiX 6 (Open Source Maintenance Fee EULA) is
+  named instead of failing mid-build. New in `denext/desktop`: `desktopVersionProblem`,
+  `desktopMsiProblem` and `desktopOptionalInstaller`, which the regenerated Linux and Windows
+  scripts call.
+- **Made-up installer metadata is warned about.** With no deno.json `version` the installers say
+  `1.0.0`, and with no `desktop.app.identifier` the app is `com.deno.desktop.<name>`, which also
+  derives the MSI UpgradeCode; each package run now says so, and that setting the identifier
+  after a release makes the next version install beside the old one.
+- **A missing packaging tool's warning says how to install it**: `rpmbuild` (dnf / apt / brew),
+  `appimagetool` (its releases page), WiX 5 (`dotnet tool install`).
 - **`denext desktop package` cross-builds again on denext's pinned runtime.** 3.1's runtime
   refused a Windows target from macOS / Linux and a Linux target from Windows (3.0.2 cross-built
   them), because Deno 2.9.7's `deno desktop` looks a `LAUFEY_DEV_DIR` backend up under the

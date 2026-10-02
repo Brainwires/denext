@@ -54,6 +54,8 @@ import {
   buildDesktopBundle,
   buildDesktopMsi,
   desktopHasTool as has,
+  desktopMsiProblem,
+  desktopOptionalInstaller,
   desktopPackageArches,
   type DesktopPackageMeta,
   desktopRun as run,
@@ -119,8 +121,9 @@ async function sign(file: string): Promise<void> {
   await run(["signtool", ...args], undefined, { secrets: pass ? [pass] : [] });
 }
 
-/** Build the .msi for a finished bundle with WiX; null when WiX can't run here and the .msi was
- * only a default (an asked-for .msi without WiX fails the run). */
+/** Build the .msi for a finished bundle with WiX 5; null when it can't be built here (off
+ * Windows, no WiX 5, a version MSI can't express, a failed `wix build`) and the .msi was only a
+ * default — an asked-for .msi fails the run instead. */
 async function msi(
   name: string,
   arch: "x86_64" | "arm64",
@@ -128,15 +131,14 @@ async function msi(
   meta: DesktopPackageMeta,
   explicit: boolean,
 ): Promise<string | null> {
-  const why = Deno.build.os !== "windows"
-    ? "WiX builds an .msi on Windows only"
-    : !(await has("wix"))
-    ? "wix not found (WiX 5: dotnet tool install --global wix --version 5.0.2)"
-    : undefined;
-  if (!desktopToolGate(why, `.msi for ${arch} (the .zip is built instead)`, explicit)) return null;
+  const what = `.msi for ${arch} (the .zip is built instead)`;
+  if (!desktopToolGate(await desktopMsiProblem(meta.version), what, explicit)) return null;
   const out = `dist/${name}-${LABELS[arch]}.msi`;
-  await buildDesktopMsi({ meta, bundleDir: dir, exe: `${name}-${LABELS[arch]}.exe`, arch, out });
-  return out;
+  const exe = `${name}-${LABELS[arch]}.exe`;
+  return await desktopOptionalInstaller(what, explicit, async () => {
+    await buildDesktopMsi({ meta, bundleDir: dir, exe, arch, out });
+    return out;
+  });
 }
 
 /** Zip a bundle directory for distribution (prefers `zip`, falls back to bsdtar). */

@@ -23,6 +23,7 @@ import {
   msiProductVersion,
   msiUpgradeCode,
   packageMetaFrom,
+  packageMetaWarnings,
   planDesktopInstallers,
   rpmSpec,
   splitFormatList,
@@ -35,11 +36,14 @@ import {
   desktopAppName,
   desktopBundleCommand,
   desktopHasTool,
+  desktopMsiProblem,
+  desktopOptionalInstaller,
   desktopPackageArches,
   desktopRequireTool,
   desktopRun,
   desktopSlug,
   desktopToolGate,
+  desktopVersionProblem,
   parseDesktopPackageArgs,
   prepareDesktopPackage,
 } from "../src/build/desktop-package-script.ts";
@@ -522,6 +526,107 @@ Deno.test("tool gate: a default format is skipped, an asked-for one fails", asyn
   }
 });
 
+/** Run `fn` with console.warn captured. */
+async function warnings<T>(fn: () => T | Promise<T>): Promise<{ value: T; lines: string[] }> {
+  const lines: string[] = [];
+  const warn = console.warn;
+  console.warn = (...a: unknown[]) => void lines.push(a.map(String).join(" "));
+  try {
+    return { value: await fn(), lines };
+  } finally {
+    console.warn = warn;
+  }
+}
+
+Deno.test("tool gate: a missing tool's warning says how to install it", async () => {
+  const { value, lines } = await warnings(() => desktopRequireTool("rpmbuild", ".rpm", false));
+  if (await desktopHasTool("rpmbuild")) return; // installed here: nothing to warn about
+  assertEquals(value, false);
+  assertStringIncludes(lines.join("\n"), "rpmbuild not found on PATH (install rpm-build");
+  const err = await assertRejects(() => desktopRequireTool("rpmbuild", ".rpm", true), Error);
+  assertStringIncludes(err.message, "dnf install rpm-build");
+  if (await desktopHasTool("appimagetool")) return;
+  const appimage = await assertRejects(
+    () => desktopRequireTool("appimagetool", "AppImage", true),
+    Error,
+  );
+  assertStringIncludes(appimage.message, "github.com/AppImage/appimagetool/releases");
+});
+
+Deno.test("version gate: a version MSI / Debian can't express is a reason, not a crash", () => {
+  assertEquals(desktopVersionProblem("msi", "1.2.3"), undefined);
+  assertEquals(desktopVersionProblem("deb", "1.2.3-rc.1"), undefined);
+  assertEquals(desktopVersionProblem("msi", undefined), undefined);
+  assertStringIncludes(desktopVersionProblem("msi", "2026.10.2")!, "exceeds 255");
+  assertStringIncludes(desktopVersionProblem("msi", "2026.10.2")!, "the MSI can express");
+  assertStringIncludes(desktopVersionProblem("deb", "v1.0")!, "start with a digit");
+  assertStringIncludes(desktopVersionProblem("rpm", "1.0_beta")!, "the package can express");
+});
+
+Deno.test("msi gate: Windows only, an expressible version, and WiX 5 — not just any wix", async () => {
+  const wix = (v: string | null) => () => Promise.resolve(v);
+  assertEquals(
+    await desktopMsiProblem("1.0.0", { os: "linux", wixVersion: wix("5.0.2") }),
+    "WiX builds an .msi on Windows only",
+  );
+  assertStringIncludes(
+    (await desktopMsiProblem("2026.10.2", { os: "windows", wixVersion: wix("5.0.2") }))!,
+    "exceeds 255",
+  );
+  assertStringIncludes(
+    (await desktopMsiProblem("1.0.0", { os: "windows", wixVersion: wix(null) }))!,
+    "dotnet tool install --global wix --version 5.0.2",
+  );
+  for (const v of ["6.0.1+abc", "4.0.5", "garbage"]) {
+    const why = await desktopMsiProblem("1.0.0", { os: "windows", wixVersion: wix(v) });
+    assertStringIncludes(why!, `wix ${v} is not WiX 5`);
+  }
+  for (const v of ["5.0.2+aa65968c", "v5.0.0"]) {
+    assertEquals(
+      await desktopMsiProblem("1.0.0", { os: "windows", wixVersion: wix(v) }),
+      undefined,
+    );
+  }
+  // The real probe: off Windows it never runs wix; on Windows it answers either way.
+  const real = await desktopMsiProblem("1.0.0");
+  if (Deno.build.os !== "windows") assertEquals(real, "WiX builds an .msi on Windows only");
+  assertEquals(
+    await desktopMsiProblem("1.0.0", { os: "windows" }).then((w) => w === undefined || !!w),
+    true,
+  );
+});
+
+Deno.test("optional installer: a default one's failure warns and yields null; an asked-for one throws", async () => {
+  const boom = () => Promise.reject(new Error("wix build exited 1"));
+  const { value, lines } = await warnings(() =>
+    desktopOptionalInstaller(".msi for x86_64", false, boom)
+  );
+  assertEquals(value, null);
+  assertStringIncludes(
+    lines.join("\n"),
+    "building the .msi for x86_64 failed (wix build exited 1)",
+  );
+  await assertRejects(() => desktopOptionalInstaller(".msi", true, boom), Error, "exited 1");
+  assertEquals(await desktopOptionalInstaller(".msi", false, () => Promise.resolve("ok")), "ok");
+  const odd = await warnings(() =>
+    desktopOptionalInstaller(".msi", false, () => Promise.reject("str"))
+  );
+  assertStringIncludes(odd.lines.join("\n"), "failed (str)");
+});
+
+Deno.test("meta warnings: a made-up version or identifier is warned about, a set one is not", () => {
+  const bare = packageMetaFrom({}, {}, "Thing");
+  const lines = packageMetaWarnings({}, {}, bare);
+  assertEquals(lines.length, 2);
+  assertStringIncludes(lines[0], 'deno.json has no "version": the installers say 1.0.0');
+  assertStringIncludes(lines[1], "using com.deno.desktop.thing");
+  assertStringIncludes(lines[1], "UpgradeCode");
+  const deno = { version: "2.0.0", desktop: { app: { identifier: "com.acme.thing" } } };
+  assertEquals(packageMetaWarnings(deno, {}, packageMetaFrom(deno, {}, "Thing")), []);
+  const cfg = { desktop: { app: { identifier: "com.acme.cfg" } } };
+  assertEquals(packageMetaWarnings({ version: "1.0.0" }, cfg, bare), []);
+});
+
 Deno.test("tool probe: an executable on PATH is found without a shell, a plain file is not", async () => {
   if (Deno.build.os === "windows") return;
   const dir = await Deno.makeTempDir();
@@ -555,11 +660,17 @@ Deno.test("prepare: the plan, the app.json sync and the metadata of a project", 
     Deno.chdir(dir);
     let prepared;
     try {
-      prepared = await prepareDesktopPackage(entry, "linux", {
-        formats: ["rpm"],
-        add: ["appimage"],
-        export: false,
-      });
+      const run = await warnings(() =>
+        prepareDesktopPackage(entry, "linux", {
+          formats: ["rpm"],
+          add: ["appimage"],
+          export: false,
+        })
+      );
+      prepared = run.value;
+      // deno.json has a version but no identifier: only the identifier is warned about.
+      assertEquals(run.lines.length, 1);
+      assertStringIncludes(run.lines[0], "no desktop.app.identifier");
     } finally {
       Deno.chdir(cwd);
       if (prev === undefined) Deno.env.delete("DENEXT_APP_NAME");

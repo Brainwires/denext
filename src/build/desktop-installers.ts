@@ -271,6 +271,58 @@ export async function desktopPackageMeta(
   return packageMetaFrom(deno, await loadConfigBeside(entryUrl), fallbackName);
 }
 
+/**
+ * The warnings for metadata {@linkcode packageMetaFrom} had to make up: version `1.0.0` when
+ * deno.json has no `version` (every build then claims the same version, so no installer can
+ * upgrade the last), and the identifier `com.deno.desktop.<name>` when no `desktop.app.identifier`
+ * is set (it derives the MSI UpgradeCode and names the app to the OS, so setting one LATER makes
+ * the next version install beside the old one instead of upgrading it).
+ *
+ * @param deno The parsed deno.json.
+ * @param config The loaded `denext.config.ts` default export.
+ * @param meta What {@linkcode packageMetaFrom} resolved from them.
+ * @returns One line per fallback (none when both are set).
+ */
+export function packageMetaWarnings(
+  deno: unknown,
+  config: unknown,
+  meta: DesktopPackageMeta,
+): string[] {
+  const out: string[] = [];
+  if (!str((deno as Obj | undefined)?.version)) {
+    out.push(
+      `  ⚠ deno.json has no "version": the installers say ${meta.version}. Set one (and raise it ` +
+        "for each release) so a newer installer upgrades the installed app.",
+    );
+  }
+  const identifier = str(field(field(config, "desktop"), "app").identifier) ??
+    str(field(field(deno, "desktop"), "app").identifier);
+  if (!identifier) {
+    out.push(
+      `  ⚠ no desktop.app.identifier: using ${meta.identifier}. Set your own reverse-DNS id now — ` +
+        "it derives the .msi UpgradeCode and names the app to the OS, so changing it after a " +
+        "release makes the next version install beside the old one instead of upgrading it.",
+    );
+  }
+  return out;
+}
+
+/**
+ * {@linkcode packageMetaWarnings} for the project whose `scripts/` holds `entryUrl`.
+ *
+ * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
+ * @param meta The resolved metadata.
+ * @returns The warning lines.
+ */
+export async function desktopPackageMetaWarnings(
+  entryUrl: string,
+  meta: DesktopPackageMeta,
+): Promise<string[]> {
+  const root = new URL("../", entryUrl);
+  const deno = await readDenoJson(root.protocol === "file:" ? fromFileUrl(root) : ".");
+  return packageMetaWarnings(deno, await loadConfigBeside(entryUrl), meta);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Versions and names
 // ---------------------------------------------------------------------------------------------

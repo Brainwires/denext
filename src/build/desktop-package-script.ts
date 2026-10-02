@@ -17,7 +17,10 @@ import {
   desktopInstallerPlan,
   type DesktopPackageMeta,
   desktopPackageMeta,
+  desktopPackageMetaWarnings,
+  linuxPackageVersion,
   loadConfigBeside,
+  msiProductVersion,
   readDenoJson,
 } from "./desktop-installers.ts";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
@@ -162,8 +165,26 @@ export function desktopToolGate(
   return false;
 }
 
+/** How to install each tool a package script shells out to. */
+const TOOL_HINTS: Readonly<Record<string, string>> = {
+  rpmbuild: "install rpm-build — Fedora/RHEL: sudo dnf install rpm-build; Debian/Ubuntu: " +
+    "sudo apt install rpm; macOS: brew install rpm",
+  appimagetool: "download it from https://github.com/AppImage/appimagetool/releases, " +
+    "chmod +x it and put it on PATH",
+  wix: "WiX 5: dotnet tool install --global wix --version 5.0.2 (needs the .NET SDK)",
+  signtool:
+    "it ships with the Windows SDK: https://developer.microsoft.com/windows/downloads/windows-sdk/",
+  zip: "install zip, or use bsdtar (tar -a), which Windows 10+ and macOS include",
+  tar: "install tar (GNU tar or bsdtar)",
+};
+
+/** How to install `tool` (one line), or `undefined` for a tool denext has no hint for. */
+function desktopToolHint(tool: string): string | undefined {
+  return TOOL_HINTS[tool];
+}
+
 /**
- * {@linkcode desktopToolGate} for a tool that must be on PATH.
+ * {@linkcode desktopToolGate} for a tool that must be on PATH (the reason carries the install hint).
  *
  * @param tool The command.
  * @param format The installer it builds.
@@ -175,8 +196,109 @@ export async function desktopRequireTool(
   format: string,
   explicit: boolean,
 ): Promise<boolean> {
-  const why = (await desktopHasTool(tool)) ? undefined : `${tool} not found on PATH`;
+  const hint = desktopToolHint(tool);
+  const why = (await desktopHasTool(tool))
+    ? undefined
+    : `${tool} not found on PATH${hint ? ` (${hint})` : ""}`;
   return desktopToolGate(why, format, explicit);
+}
+
+/**
+ * Why `version` (deno.json `version`) cannot be the package version of `format` — MSI packs
+ * `major.minor.build` into 8/8/16 bits, Debian and RPM need a leading digit and a small character
+ * set — or `undefined` when it can (see `msiProductVersion` / `linuxPackageVersion`).
+ *
+ * @param format The installer.
+ * @param version The app version.
+ * @returns The reason, or `undefined`.
+ */
+export function desktopVersionProblem(
+  format: "msi" | "deb" | "rpm",
+  version: string | undefined,
+): string | undefined {
+  try {
+    if (format === "msi") msiProductVersion(version);
+    else linuxPackageVersion(version);
+    return undefined;
+  } catch (err) {
+    return `${err instanceof Error ? err.message : String(err)}; set a deno.json "version" ` +
+      `the ${format === "msi" ? "MSI" : "package"} can express`;
+  }
+}
+
+/** The WiX major version the `.msi` builder is pinned to (WiX 6+ carries the OSMF EULA). */
+const WIX_MAJOR = 5;
+
+/** `wix --version` (e.g. `5.0.2+aa65968c`), or `null` when `wix` does not run. */
+async function wixVersion(): Promise<string | null> {
+  try {
+    const out = await new Deno.Command("wix", {
+      args: ["--version"],
+      stdout: "piped",
+      stderr: "null",
+    })
+      .output();
+    return out.code === 0 ? new TextDecoder().decode(out.stdout).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Seams for {@linkcode desktopMsiProblem}. */
+export interface DesktopMsiProbe {
+  /** The host OS (default `Deno.build.os`). */
+  readonly os?: string;
+  /** Reads `wix --version` (`null`: not installed). */
+  readonly wixVersion?: () => Promise<string | null>;
+}
+
+/**
+ * Why the `.msi` cannot be built here, or `undefined` when it can: WiX runs on Windows only, the
+ * app version must fit an MSI ProductVersion, and `wix` must be WiX 5 (not just present).
+ *
+ * @param version deno.json `version`.
+ * @param probe Seams.
+ * @returns The reason, or `undefined`.
+ */
+export async function desktopMsiProblem(
+  version: string | undefined,
+  probe: DesktopMsiProbe = {},
+): Promise<string | undefined> {
+  if ((probe.os ?? Deno.build.os) !== "windows") return "WiX builds an .msi on Windows only";
+  const bad = desktopVersionProblem("msi", version);
+  if (bad) return bad;
+  const found = await (probe.wixVersion ?? wixVersion)();
+  if (found === null) return `wix not found (${TOOL_HINTS.wix})`;
+  const major = Number(/^v?(\d+)\./.exec(found)?.[1]);
+  if (major === WIX_MAJOR) return undefined;
+  return `wix ${found} is not WiX ${WIX_MAJOR} (WiX 6+ carries the Open Source Maintenance Fee ` +
+    `EULA): dotnet tool update --global wix --version 5.0.2`;
+}
+
+/**
+ * Build an installer whose failure must not sink the run when it is only a default: an asked-for
+ * one (`explicit`) rethrows, a default one warns and resolves `null` (the caller falls back).
+ *
+ * @param format The installer, for the warning (`.msi for x86_64`).
+ * @param explicit Whether it was asked for.
+ * @param build Builds it.
+ * @returns What `build` resolved, or `null`.
+ */
+export async function desktopOptionalInstaller<T>(
+  format: string,
+  explicit: boolean,
+  build: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await build();
+  } catch (err) {
+    if (explicit) throw err;
+    console.warn(
+      `  building the ${format} failed (${err instanceof Error ? err.message : String(err)}) — ` +
+        "skipping it; ask for it with --format to make this an error.",
+    );
+    return null;
+  }
 }
 
 /** What {@linkcode prepareDesktopPackage} resolved. */
@@ -192,7 +314,8 @@ export interface PreparedDesktopPackage {
 /**
  * A package run's setup: the app name, the installer plan (`--format`, else
  * `desktop.installers.<os>`, else the defaults), the `.deno-desktop/app.json` + `compile.include`
- * sync, the package metadata (read after that sync wrote the deep links into deno.json), `dist/`,
+ * sync, the package metadata (read after that sync wrote the deep links into deno.json; a made-up
+ * version or identifier is warned about), `dist/`,
  * and — unless `--no-export` — the static export (`deno task export`).
  *
  * @param entryUrl `import.meta.url` of the script.
@@ -209,6 +332,7 @@ export async function prepareDesktopPackage(
   const plan = await desktopInstallerPlan(entryUrl, os, args.formats, args.add);
   await syncDesktopAppConfig(entryUrl);
   const meta = await desktopPackageMeta(entryUrl, appName);
+  for (const line of await desktopPackageMetaWarnings(entryUrl, meta)) console.warn(line);
   await Deno.mkdir("dist", { recursive: true });
   if (args.export) await desktopRun(["deno", "task", "export"]);
   return { name: desktopSlug(appName), plan, meta };
