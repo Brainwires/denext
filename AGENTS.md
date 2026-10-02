@@ -1,7 +1,8 @@
 # Writing denext apps (for AI coding agents)
 
-**denext is Next.js's App Router, reimplemented for Deno with its own small
-React.** If you know Next.js, you already know denext — the file conventions,
+**denext is a complete, lightweight framework for Deno: write an app once and ship it to the web,
+iOS, Android and the desktop. Its API is surface compatible with React and Next.js's App Router,
+with its own small React core.** If you know Next.js, you already know denext — the file conventions,
 hooks, and `app/` router are the same. This file lists ONLY what differs, so you
 emit correct denext instead of Next.js.
 
@@ -368,7 +369,8 @@ pops. Docs: https://denext.dev/docs/navigation-native
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
-`keep-awake`, `clipboard`, `device`; written to `desktop.capabilities`), plus desktop-only
+`keep-awake`, `clipboard`, `device`, `passkeys`, `global-shortcuts`, `launch-at-login`; written to
+`desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
@@ -376,8 +378,17 @@ The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, 
 `denext/desktop`, listed in `desktop.capabilities.extensions`) — but only when `desktop.ts`
 spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
 `runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
-call answers `unavailable`); `context-menu` and `notifications` stay WebView-backed (a
-scheduled notification rejects). Under the pinned runtime `clipboard` reaches the OS clipboard
+call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
+(repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
+buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
+`requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
+is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
+`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. `registerShortcut(accel, fn)`
+needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
+`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. An extension's
+`--allow-*` goes in `desktop.extraPermissions`, never in `scripts/package-*.ts`. Under the stock
+runtime these answer `unavailable` and the page keeps its web path. Under the pinned runtime `clipboard` reaches the OS clipboard
 (`readClipboard({ format: "html" | "image" })`, `writeClipboard({ html, text? } | { image })` with
 base64 PNG, `clipboardFormats()`) and `dialogs` uses the OS's own panels (MIME `types` → filters).
 The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `minimizeWindow` /
