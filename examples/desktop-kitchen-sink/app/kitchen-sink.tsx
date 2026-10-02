@@ -29,9 +29,12 @@ export function KitchenSink() {
     if (!ctx.current) return;
     setState("running");
     setResults([]);
+    const { autorun: auto } = ctx.current.setup;
     const all = await runChecks(
       ctx.current,
       (r) => setResults((prev) => [...prev, r]),
+      // Under the runner: the check now running, so a page that never reports still says where.
+      auto ? (name, i) => kitchen.mark({ name: "progress", data: `${i + 1} ${name}` }) : undefined,
     );
     setState("done");
     const { autorun, phase } = ctx.current.setup;

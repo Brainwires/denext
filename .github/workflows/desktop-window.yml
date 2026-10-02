@@ -107,6 +107,8 @@ jobs:
         with:
           name: desktop-window-${{ matrix.label }}
           if-no-files-found: warn
+          # e2e/.run is a dot folder: upload-artifact skips hidden paths unless told otherwise.
+          include-hidden-files: true
           path: |
             examples/desktop-kitchen-sink/e2e/.run/*.json
             examples/desktop-kitchen-sink/e2e/.run/*.log

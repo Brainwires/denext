@@ -1339,6 +1339,13 @@ const appChecks: Check[] = [
         typeof Web === "function" && Web.maxActions === 0,
         "Notification is not denext's shim",
       );
+      // The OS's own state, asked without a prompt before the request, as the checks above do
+      // (a query after an unanswered macOS prompt is unproven), and bounded either way.
+      const os = await Promise.race([
+        raw("notifications").permission({ request: false }).catch(() => null),
+        sleep(3000).then(() => null),
+      ]);
+      const osState = String(os?.state ?? "unknown");
       const state = await Web.requestPermission();
       eq(Web.permission, state, "Notification.permission after requestPermission()");
       const clicks: string[] = [];
@@ -1355,8 +1362,6 @@ const appChecks: Check[] = [
           // hosted runners without a prompt; skip only when the OS itself says it is not granted.
           await waitFor(() => shown.length > 0, "the error event of an unpermitted notification");
           eq(shown.join(","), "error", "the events of a notification without permission");
-          const os = await raw("notifications").permission({ request: false }).catch(() => null);
-          const osState = String(os?.state ?? "unknown");
           assert(
             osState !== "granted",
             `the OS state is granted but requestPermission() = ${state}`,
@@ -1441,17 +1446,37 @@ export function checksFor(phase: string): readonly Check[] {
   return phase === "main" ? CHECKS : PHASE_CHECKS[phase] ?? [];
 }
 
-/** Run the phase's checks in order, reporting each as it finishes. */
+/**
+ * The longest a single check may take. A check whose promise never settles (an OS call that never
+ * answers) fails with this as the reason instead of holding back the whole report.
+ */
+export const CHECK_DEADLINE_MS = 60_000;
+
+/** `run`'s outcome, or a rejection once `ms` pass without one. */
+function withDeadline<T>(run: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`did not finish within ${ms} ms`)), ms);
+  });
+  return Promise.race([run, late]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Run the phase's checks in order, reporting each as it finishes (`onStart` as it begins, so a
+ * runner can name the check a stuck page is in).
+ */
 export async function runChecks(
   ctx: CheckContext,
   onResult: (result: CheckResult) => void,
+  onStart?: (name: string, index: number) => void | Promise<void>,
 ): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
   for (const [name, run] of checksFor(ctx.setup.phase)) {
+    await Promise.resolve(onStart?.(name, results.length)).catch(() => {});
     const started = performance.now();
     let result: CheckResult;
     try {
-      const detail = await run(ctx);
+      const detail = await withDeadline(Promise.resolve().then(() => run(ctx)), CHECK_DEADLINE_MS);
       result = {
         name,
         status: "pass",

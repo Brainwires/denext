@@ -461,6 +461,7 @@ async function mainPhase(exe: string, bin: string, updateBase: string) {
   const fixture = join(SCRATCH, OPEN_FILE_NAME);
   await Deno.writeTextFile(fixture, OPEN_FILE_TEXT);
   await writeRunnerState("main", updateBase);
+  await Deno.remove(join(SCRATCH, "progress.marker")).catch(() => {});
   const env = appEnv(bin);
   const app = launch(
     exe,
@@ -472,7 +473,16 @@ async function mainPhase(exe: string, bin: string, updateBase: string) {
   const report = await waitForReport("main", exe, env, Date.now() + TIMEOUT_MS);
   if (!report) {
     kill(app);
-    throw new Error(`no report within ${TIMEOUT_MS} ms (app log: ${join(SCRATCH, "app.log")})`);
+    // Where the page got to (the check it was running), and the end of the app's own log.
+    const at = await Deno.readTextFile(join(SCRATCH, "progress.marker")).catch(() => "");
+    const tail = (await Deno.readTextFile(join(SCRATCH, "app.log")).catch(() => ""))
+      .split("\n").slice(-40).join("\n");
+    if (tail.trim()) log(`app.log (last 40 lines):\n${tail}`);
+    throw new Error(
+      `no report within ${TIMEOUT_MS} ms; ` +
+        (at ? `the page was running check ${at}` : "the page started no check") +
+        ` (app log: ${join(SCRATCH, "app.log")})`,
+    );
   }
   const problems: string[] = [];
   // The page quits the app after reporting.
