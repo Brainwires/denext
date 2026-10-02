@@ -16,6 +16,8 @@ import {
   RedirectType,
   unauthorized,
 } from "../src/runtime/error-boundary.ts";
+// The server's recognizer for a library's Next-format errors (the request pipeline imports it).
+import { parseNextRedirectDigest } from "../src/server/next-signals.ts";
 
 function thrown(fn: () => never): unknown {
   try {
@@ -60,6 +62,16 @@ Deno.test("a library's Next-format errors are denext's signals", () => {
   assertEquals((r as unknown as { url: string }).url, "https://x.accounts.dev/sign-in?a=1;b=2");
   assertEquals((r as unknown as { status: number }).status, 307);
   assertEquals((r as unknown as { redirectType: string }).redirectType, "replace");
+});
+
+Deno.test("parseNextRedirectDigest: the URL may contain `;`, the status must be 3xx", () => {
+  assertEquals(parseNextRedirectDigest("NEXT_REDIRECT;push;/a;b=1;308;"), {
+    url: "/a;b=1",
+    status: 308,
+    type: "push",
+  });
+  assertEquals(parseNextRedirectDigest("NEXT_REDIRECT;replace;/x;200;"), undefined);
+  assertEquals(parseNextRedirectDigest("NEXT_HTTP_ERROR_FALLBACK;404"), undefined);
 });
 
 Deno.test("other errors and malformed digests are not signals", () => {

@@ -5,6 +5,8 @@
 // hardening headers and logging.
 
 import { copyRemoteAddr } from "./remote-addr.ts";
+// Recognize a library's own Next.js-format errors (redirect / notFound / …) as denext's signals.
+import "./next-signals.ts";
 import { isThenable } from "../runtime/suspense.ts";
 import type { RouteManifest } from "../router/manifest.ts";
 import { matchApi, matchPage } from "../router/match.ts";
