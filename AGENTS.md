@@ -445,6 +445,15 @@ makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 Native passkeys are macOS (needs the associated-domains entitlement) and Windows only; Linux has no OS
 passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
 only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
+Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay: denext's Live
+client does this itself; for your own sockets use `desktopWebSocketUrl(path)` from
+`denext/desktop/client`. With `notifications` enabled, the web `new Notification(...)` /
+`Notification.requestPermission()` / `onclick` work, backed by the OS (no icons or buttons).
+`openAuthSession(url, { loopbackPort: 1455 })` uses a fixed loopback port for a provider with a
+registered `http://localhost:<port>/…` redirect (`port_in_use` when taken). `desktop.denoFlags`
+passes allow-listed `deno desktop` flags (a pnpm workspace: `["--node-modules-dir=none",
+"--exclude-unused-npm"]`; never permission flags). The bundle's name, identifier and icon come from
+`desktop.app.name` / `identifier` / `icons.{macos,windows,linux}`, falling back to deno.json.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
