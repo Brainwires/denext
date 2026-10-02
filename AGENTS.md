@@ -267,6 +267,14 @@ export default {
 // config; before the first run, or once one of those files changes, it points at `denext commands`.
 ```
 
+**Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
+app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
+points, `deno task fallow:audit` / `coverage:fallow` / `hooks:install` (a pinned `npm:fallow`
+through Deno, nothing global). Commands that write `.denext/`, `out/`, `dist/` or a coverage dir
+take Cargo-style OS locks: `Blocking waiting for file lock on …` means another denext command
+holds that directory — wait; never delete `.denext/.denext-lock*` (the OS releases a lock when its
+holder exits).
+
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
 value span it replaces, the file keeps its bytes), a Cron page (every schedule, when it
@@ -349,7 +357,12 @@ manifest), `denext mobile doctor --store | --release`, `denext mobile inspect`.
 Ship without a hosted service: `denext mobile assets` (every icon + splash from one image),
 `denext mobile build ios|android [--release] [--flavor <name>]` (export → `cap sync` → a signed
 `.ipa` / `.aab` in `dist/mobile/`; flavors in `mobile.flavors`), `denext mobile submit
-ios|android [--dry-run]` (App Store Connect / Google Play). App backend:
+ios|android [--dry-run]` (App Store Connect / Google Play). Teams already on fastlane keep it:
+`denext mobile add fastlane [--ci]` writes `fastlane/` (Appfile from capacitor.config, Matchfile,
+`ios|android build|beta|release` lanes that run `denext mobile build --release` and hand the
+artifact to match / TestFlight / Play tracks; `flavor:` / `build_number:` pass through), a pinned
+Gemfile and, with `--ci`, a GitHub Actions workflow; `denext mobile doctor --release` checks it.
+Credentials are env-only. App backend:
 `cors` in config, `denextAuth({ native })` sessions, `createApiClient({ base, auth:
 nativeSession(…) })`, `sendPush` from `denext/server`. Docs: https://denext.dev/docs/mobile,
 https://denext.dev/docs/app-backend
@@ -407,7 +420,10 @@ confirmed automatically once the new version's window loads; `desktop.update.aut
 leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A`, and
 `denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
-a diff for each changed file).
+a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
+`denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
+(+ `.rpm`, AppImage), Windows a per-user-or-machine `.msi` (+ `.zip`); an empty list builds just
+the bundle.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
@@ -652,10 +668,16 @@ denext ships tooling so agents get it right the first time:
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25
-  over the denext docs), and the codebase tools `denext_index_codebase` /
+  over ALL of the denext docs, offline — every docs-site page by section plus the API reference;
+  `kind: "guide" | "api"` narrows it) and `denext_read_docs` (a whole page, one `slug#anchor`
+  section, or `api:<module>/<name>` as Markdown — use it instead of fetching denext.dev), and the codebase tools `denext_index_codebase` /
   `denext_query_codebase` / `denext_find_definition` / `denext_find_references`.
   `denext mcp --disable rag,docs` hides tool groups or individual tools to trim an
-  agent's context. Resources: `denext://guide`, `denext://import-map`.
+  agent's context. Resources: `denext://guide`, `denext://import-map`, `denext://docs`
+  (`denext://docs/<slug>`). Install it in a project with `denext create --mcp` (pre-checked in the
+  picker) or `denext mcp init`: a `deno task mcp` that runs the denext the project pins, registered
+  in `.mcp.json` (Claude Code), `.vscode/mcp.json` and `.cursor/mcp.json` (`--clients all` adds
+  `.gemini/settings.json` and `.codex/config.toml`).
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
 - **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), [Upgrading](https://denext.dev/docs/upgrading) (breaking changes per version), the [Project UI](https://denext.dev/docs/ui) and the [examples index](https://denext.dev/docs/examples).
