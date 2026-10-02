@@ -309,7 +309,8 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
       <p>
         Each package script wraps the bundle it finished in the installers for its OS. Pick them per
         OS in <code>denext.config.ts</code>, or for one run with <code>--format</code>{" "}
-        (comma-separated; it replaces the list):
+        (comma-separated; it replaces the list). An empty list (<code>macos: []</code>) builds just
+        the bundle — the <code>.app</code> or the app directory — with no installer:
       </p>
       <Code lang="ts">
         {`// denext.config.ts

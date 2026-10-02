@@ -22,6 +22,9 @@ const updatePublicKey = packagingUpdateKey();
 // Deno Desktop runtime, which `denext desktop run` and the package scripts download and verify.
 export default {
   desktop: {
+    // The window test launches the bundle itself, so build no installers (an empty list = just the
+    // .app / app directory): a .dmg doubled the macOS CI runner's disk use and ran it out of space.
+    installers: { macos: [], linux: [], windows: [] },
     app: {
       // Keys the OS storage dirs, the keychain service and the window origin's storage.
       identifier: "dev.denext.kitchen-sink",

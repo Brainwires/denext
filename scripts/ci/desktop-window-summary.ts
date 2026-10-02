@@ -35,7 +35,10 @@ function cell(s: string): string {
 
 async function readRuns(dir: string): Promise<OsRun[]> {
   const runs: OsRun[] = [];
-  for await (const e of Deno.readDir(dir)) {
+  // No artifacts at all (every OS job failed before uploading) is a run with nothing to report,
+  // not a crash: the table then lists every OS as missing.
+  const entries = await Array.fromAsync(Deno.readDir(dir)).catch(() => [] as Deno.DirEntry[]);
+  for (const e of entries) {
     if (!e.isDirectory) continue;
     const label = e.name.replace(/^desktop-window-/, "");
     const text = await Deno.readTextFile(join(dir, e.name, "results.json")).catch(() => null);
