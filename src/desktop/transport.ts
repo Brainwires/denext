@@ -16,7 +16,9 @@
  *   {@linkcode isMemoryTransport}). Trust = the memory transport AND the per-launch token; an `Origin`, when present, must equal the app origin
  *   byte for byte, and a request without one is accepted only because it came over the memory
  *   transport. WebSocket upgrades arrive through the runtime's loopback relay, which admits only an
- *   `Origin` equal to the app origin; the app checks the same again.
+ *   `Origin` equal to the app origin; the app checks the same again. The runtime marks what it
+ *   relays ({@linkcode isRelayConnection}); on such a request nothing but an upgrade with the exact
+ *   `Origin` is accepted, and no per-launch token is ever injected.
  * - **`loopback`** — the stock Deno Desktop runtime (no memory transport, no published origin). The
  *   page runs at `http://127.0.0.1:<port>` and the gates keep their loopback rules: a loopback
  *   `Host` (the DNS-rebinding defence) and an `Origin` equal to `http://<Host>`.
@@ -132,24 +134,64 @@ export function isMemoryTransport(request: Request, info?: DesktopServeInfo): bo
 }
 
 /**
+ * The request header the denext-pinned runtime sets on every request it forwards from its loopback
+ * WebSocket relay into the memory transport, and strips from anything a client sends (through the
+ * relay or the webview's scheme handler). A request that carries it came from SOME local process
+ * that dialed the relay — not necessarily the app's page — so it is never treated like a page
+ * request: only a WebSocket upgrade with the exact app `Origin` is accepted on it.
+ */
+export const DESKTOP_RELAY_HEADER = "x-deno-desktop-relay";
+
+/**
+ * Whether `request` came through the runtime's loopback WebSocket relay rather than the webview's
+ * scheme handler — the ONE place the relay marking is read, so the contract with the runtime is
+ * adjusted here alone. The header's presence is the mark, whatever its value (a client cannot
+ * forge its ABSENCE: the runtime strips client copies and adds its own). Headers that cannot be
+ * read count as relayed (fail closed).
+ *
+ * @param request The request.
+ * @returns Whether it is relay-marked.
+ */
+export function isRelayConnection(request: Request): boolean {
+  try {
+    return request.headers.has(DESKTOP_RELAY_HEADER);
+  } catch {
+    return true;
+  }
+}
+
+/** Whether `request` is a WebSocket upgrade (unreadable headers: not one). */
+function isUpgradeRequest(request: Request): boolean {
+  try {
+    return request.headers.get("upgrade")?.toLowerCase() === "websocket";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The memory-world origin check shared by the gates: the request came over the memory transport,
  * and its `Origin`, if any, is exactly the app origin. `requireOrigin` additionally demands the
- * header (a WebSocket upgrade through the relay always carries one).
+ * header (a WebSocket upgrade through the relay always carries one). A relay-marked request
+ * ({@linkcode isRelayConnection}) is held to more: it must be a WebSocket upgrade (`"relay"`
+ * otherwise) and must carry the exact `Origin` — a missing one is never taken as same-origin there.
  *
  * @param trust The `memory` trust.
  * @param request The request.
  * @param info The serve handler info, when known.
  * @param requireOrigin Whether an `Origin` header is mandatory.
- * @returns `null` to proceed, else why it is refused (`"transport"` or `"origin"`).
+ * @returns `null` to proceed, else why it is refused (`"transport"`, `"relay"` or `"origin"`).
  */
 export function memoryGate(
   trust: { readonly origin: string },
   request: Request,
   info: DesktopServeInfo | undefined,
   requireOrigin = false,
-): "transport" | "origin" | null {
+): "transport" | "relay" | "origin" | null {
   if (!isMemoryTransport(request, info)) return "transport";
+  const relayed = isRelayConnection(request);
+  if (relayed && !isUpgradeRequest(request)) return "relay";
   const origin = request.headers.get("origin");
-  if (origin === null) return requireOrigin ? "origin" : null;
+  if (origin === null) return requireOrigin || relayed ? "origin" : null;
   return origin === trust.origin ? null : "origin";
 }

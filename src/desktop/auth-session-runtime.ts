@@ -150,7 +150,7 @@ function authPlace(request: Request, access: DesktopRequestAccess): Response | n
   if (trust.kind === "memory") {
     const why = memoryGate(trust, request, access.info);
     if (why === null) return null;
-    return fail(403, "unsupported", why === "transport" ? "bad transport" : "bad origin");
+    return fail(403, "unsupported", `bad ${why}`);
   }
   const origin = request.headers.get("origin");
   const selfOrigin = new URL(request.url).origin;

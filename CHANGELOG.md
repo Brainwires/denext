@@ -349,6 +349,12 @@ and this project adheres to
 - **The `.pfx` password is redacted** from a failed `signtool` run's error (signtool only takes it
   as `/p`); `desktopRun` takes `{ secrets }`. `desktopHasTool` no longer runs a shell. Refresh the
   scripts with `denext desktop package --regenerate-scripts`.
+- **The desktop WebSocket relay can no longer fetch the bridge token.** Any local process can dial
+  the pinned runtime's loopback relay, which forwards into the memory transport. On a request the
+  runtime marks as relayed (`x-deno-desktop-relay`), denext now serves only a WebSocket upgrade
+  with the exact app `Origin`: no `index.html` with the per-launch token (a missing `Origin` /
+  `Sec-Fetch-Dest` is no longer taken as the page's own document there), and no
+  `/_denext/desktop/*` endpoint, even with the token.
 
 ## [3.0.2] - 2026-09-30
 

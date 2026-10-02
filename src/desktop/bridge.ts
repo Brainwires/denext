@@ -145,7 +145,7 @@ function rpcPlace(request: Request, trust: DesktopTrust, info?: DesktopServeInfo
   if (trust.kind === "memory") {
     const why = memoryGate(trust, request, info);
     if (why === null) return null;
-    return fail(403, "forbidden", why === "transport" ? "bad transport" : "bad origin");
+    return fail(403, "forbidden", `bad ${why}`);
   }
   // `request.url`'s host IS the Host header under Deno.serve, so a rebinding domain carries a
   // non-loopback host here; refuse it, and compare Origin to this (loopback) origin, not raw Host.

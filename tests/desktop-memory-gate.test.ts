@@ -19,7 +19,13 @@ import {
   installWindowCloseHandler,
   shouldInjectDesktopToken,
 } from "../src/build/desktop.ts";
-import type { DesktopServeInfo, DesktopTrust } from "../src/desktop/transport.ts";
+import {
+  DESKTOP_RELAY_HEADER,
+  type DesktopServeInfo,
+  type DesktopTrust,
+  isRelayConnection,
+  memoryGate,
+} from "../src/desktop/transport.ts";
 import type { DesktopCapability } from "../src/desktop/extension.ts";
 
 const APP = "t3code://app";
@@ -422,4 +428,110 @@ Deno.test("bridge.emit: an OS event reaches the page's event stream", async () =
   await reader.cancel();
   assertStringIncludes(text, "deepLink");
   assertStringIncludes(text, "t3code://app/thread/1");
+});
+
+// ---------------------------------------------------------------------------------------------
+// Relay-marked requests: the runtime's loopback WebSocket relay forwards into the memory
+// transport and marks what it forwards (`x-deno-desktop-relay`). Any local process can dial the
+// relay, so a relayed request's missing Origin / Sec-Fetch-Dest prove nothing.
+// ---------------------------------------------------------------------------------------------
+
+const RELAY = { "x-deno-desktop-relay": "1" };
+
+Deno.test("relay: isRelayConnection reads the runtime's mark, and only it", () => {
+  assert(isRelayConnection(new Request(`${MEM}/`, { headers: RELAY })));
+  assert(isRelayConnection(new Request(`${MEM}/`, { headers: { [DESKTOP_RELAY_HEADER]: "" } })));
+  assert(!isRelayConnection(new Request(`${MEM}/`)));
+});
+
+Deno.test("relay: memoryGate admits only an upgrade with the exact Origin", () => {
+  const gate = (headers: Record<string, string>, requireOrigin = false) =>
+    memoryGate(MEMORY, new Request(`${MEM}/x`, { headers }), MEM_INFO, requireOrigin);
+  const ws = { upgrade: "websocket", connection: "Upgrade" };
+  // Not an upgrade: refused whatever it carries.
+  assertEquals(gate({ ...RELAY }), "relay");
+  assertEquals(gate({ ...RELAY, origin: APP }), "relay");
+  // An upgrade: the Origin is mandatory even when the caller would not demand it.
+  assertEquals(gate({ ...RELAY, ...ws }), "origin");
+  assertEquals(gate({ ...RELAY, ...ws, origin: "https://evil.example" }), "origin");
+  assertEquals(gate({ ...RELAY, ...ws, origin: APP }), null);
+  // Unmarked page requests keep their rules (absent Origin = same-origin).
+  assertEquals(gate({}), null);
+});
+
+Deno.test("relay: no token is injected and no desktop endpoint is served", async () => {
+  const dir = await exportDir();
+  try {
+    let quit = 0;
+    const handle = memoryHandler(dir, () => quit++);
+    const send = async (path: string, o: Req) => {
+      const request = req(path, o);
+      const res = await handle(request, new URL(request.url), MEM_INFO);
+      return { status: res.status, text: await res.text() };
+    };
+    // A relayed GET of the shell (no Origin, no Sec-Fetch-Dest, i.e. "looks like a document").
+    const doc = await send("/", { method: "GET", token: null, headers: RELAY });
+    assertEquals(doc.status, 403);
+    assert(!doc.text.includes(TOKEN));
+    const withDest = await send("/", {
+      method: "GET",
+      token: null,
+      origin: APP,
+      headers: { ...RELAY, "sec-fetch-dest": "document" },
+    });
+    assert(!withDest.text.includes(TOKEN));
+    assert(
+      !shouldInjectDesktopToken(
+        new Request(`${MEM}/`, { headers: RELAY }),
+        new URL(`${MEM}/`),
+        MEMORY,
+        MEM_INFO,
+      ),
+    );
+    // The token-gated endpoints, even WITH the token and the exact Origin.
+    for (const path of ["/_denext/desktop/quit", "/_denext/desktop/rpc"]) {
+      const r = await send(path, { origin: APP, headers: RELAY, body: rpcBody });
+      assertEquals(r.status, 403, path);
+    }
+    const events = await send("/_denext/desktop/events", {
+      method: "GET",
+      origin: APP,
+      headers: { ...RELAY, upgrade: "websocket", connection: "Upgrade" },
+    });
+    assertEquals(events.status, 403);
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(quit, 0);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("relay: the page's own WebSocket upgrade still reaches the app", async () => {
+  const dir = await exportDir();
+  try {
+    let reached = 0;
+    const handle = createDesktopHandler(
+      { onRequest: () => (reached++, new Response("ws")) },
+      dir,
+      undefined,
+      TOKEN,
+      undefined,
+      undefined,
+      false,
+      createDesktopBridge([], { trust: MEMORY }),
+      undefined,
+      MEMORY,
+    );
+    const upgrade = async (origin: string | null) => {
+      const headers: Record<string, string> = { ...RELAY, upgrade: "websocket" };
+      if (origin) headers.origin = origin;
+      const request = new Request("http+memory://127.0.0.1:5555/ws", { headers });
+      return (await handle(request, new URL(request.url), MEM_INFO)).status;
+    };
+    assertEquals(await upgrade(null), 403);
+    assertEquals(await upgrade(APP), 200);
+    assertEquals(reached, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

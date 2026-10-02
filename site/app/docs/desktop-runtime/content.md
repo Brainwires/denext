@@ -141,7 +141,9 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   `t3code://app`. Two hardening fixes ride along: an absolute-form request target over TCP can't
   claim an `http+memory:` URL (400), and the relay times out a request head that never arrives.
   denext's bridge trusts a request only when `Deno.serve` reports the memory transport, never from
-  the URL.
+  the URL. The runtime marks what its relay forwards (`x-deno-desktop-relay`, stripped from client
+  input); on such a request denext accepts only a WebSocket upgrade with the exact `Origin`, never
+  serves `/_denext/desktop/*` and never injects the per-launch token.
 - **Layer:** Deno runtime; denext writes the origin into the package (an embedded
   `.deno-desktop/app.json`, so the stock CLI can carry it) and gates its bridge on the transport.
 - **Upstream:** the memory transport is ported from

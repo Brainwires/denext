@@ -26,6 +26,7 @@ import {
   DESKTOP_APP_ORIGIN_ENV,
   type DesktopServeInfo,
   type DesktopTrust,
+  isRelayConnection,
   LOOPBACK_TRUST,
   memoryGate,
   resolveDesktopTrust,
@@ -638,11 +639,13 @@ function requireTokenedPost(
 }
 
 /**
- * Whether the per-launch token may be injected into the document this request fetches: a
- * TOP-LEVEL document only (`Sec-Fetch-Dest`, `document` when absent), so a subframe gets the
- * desktop global without the token. Then, per world: loopback — a LOOPBACK `Host`, so a
- * DNS-rebinding Host gets no token; memory — the in-process memory transport and an `Origin` that
- * is absent or exactly the app origin; refuse — never.
+ * Whether the per-launch token may be injected into the document this request fetches: never on
+ * a request the runtime relayed from its loopback WebSocket relay (any local process can dial it,
+ * so its missing `Origin` / `Sec-Fetch-Dest` prove nothing); otherwise a TOP-LEVEL document only
+ * (`Sec-Fetch-Dest`, `document` when absent), so a subframe gets the desktop global without the
+ * token. Then, per world: loopback — a LOOPBACK `Host`, so a DNS-rebinding Host gets no token;
+ * memory — the in-process memory transport and an `Origin` that is absent or exactly the app
+ * origin; refuse — never.
  */
 export function shouldInjectDesktopToken(
   request: Request,
@@ -650,24 +653,37 @@ export function shouldInjectDesktopToken(
   trust: DesktopTrust,
   info?: DesktopServeInfo,
 ): boolean {
+  if (isRelayConnection(request)) return false;
   if ((request.headers.get("sec-fetch-dest") ?? "document") !== "document") return false;
   if (trust.kind === "refuse") return false;
   if (trust.kind === "memory") return memoryGate(trust, request, info) === null;
   return isLoopbackHost(url.hostname);
 }
 
+/** The prefix of every token-gated local endpoint (bridge, auth session, boot beacon, quit). */
+const DESKTOP_ENDPOINT_PREFIX = "/_denext/desktop/";
+
 /**
  * The app side of the WebSocket check in the memory world: an upgrade reaches `Deno.serve` only
  * through the runtime's loopback relay, which admits nothing but an `Origin` equal to the app
  * origin — checked again here (memory transport + that exact `Origin`, which an upgrade must carry)
- * so the app does not rely on the relay alone. `null` to proceed, else a 403. Other worlds and
- * non-upgrade requests pass through unchanged.
+ * so the app does not rely on the relay alone. A relay-marked request ({@linkcode
+ * isRelayConnection}) that is NOT an upgrade, or that targets a `/_denext/desktop/*` endpoint, is
+ * refused outright: the relay exists for the page's WebSockets only. `null` to proceed, else a
+ * 403. Other worlds and unmarked non-upgrade requests pass through unchanged.
  */
 function refuseForeignWebSocket(
   request: Request,
+  url: URL,
   trust: DesktopTrust,
   info?: DesktopServeInfo,
 ): Response | null {
+  if (
+    trust.kind !== "loopback" && isRelayConnection(request) &&
+    (!isWebSocketUpgrade(request) || url.pathname.startsWith(DESKTOP_ENDPOINT_PREFIX))
+  ) {
+    return new Response("forbidden", { status: 403 });
+  }
   if (trust.kind === "loopback" || !isWebSocketUpgrade(request)) return null;
   if (trust.kind === "memory" && memoryGate(trust, request, info, true) === null) return null;
   return new Response("forbidden", { status: 403 });
@@ -753,7 +769,7 @@ export function createDesktopHandler(
   return async (request, url, info) => {
     // Memory world: a WebSocket upgrade must carry the exact app origin (the relay checked it
     // too) — before even the onRequest escape hatch, so no app code sees a foreign upgrade.
-    const foreignWs = refuseForeignWebSocket(request, trust, info);
+    const foreignWs = refuseForeignWebSocket(request, url, trust, info);
     if (foreignWs) return foreignWs;
     if (options.onRequest) {
       const r = await options.onRequest(request, url);
