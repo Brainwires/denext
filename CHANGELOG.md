@@ -25,6 +25,20 @@ and this project adheres to
   `desktop.app.origin` is), so a separate backend project can admit a desktop app's origin; so does
   `createApp`'s `allowedOrigins`.
 
+- **next-compat: `"use client"` and `"use server"` inside npm packages.** A Server Component that
+  imports a library's client components straight from the package (`ClerkProvider`, `Show` and
+  `SignInButton` from `@clerk/nextjs`) now renders them as islands that hydrate, and their
+  package's `"use server"` action is a callable server reference — as Next does. The build finds
+  these files with one esbuild walk over `node_modules`, resolving packages as the server bundle
+  does (often their CommonJS build), so the islands are the very modules SSR renders; their
+  export names are read statically. `middleware.ts` is bundled through the compat pipeline too (a
+  middleware importing `@clerk/nextjs/server` needs it), a CommonJS island registers its exports
+  on the client, and a library's `next/router` / `next/compat/router` import resolves to denext
+  stand-ins (`null` under the App Router) instead of Next's Pages Router client. In `denext dev`,
+  the npm islands ride the npm dependency bundle (a CommonJS `require()` of the runtime gets an
+  ES wrapper, Next's server surface a stub that throws only when called, the islands' action
+  modules client stubs, `process.env` the browser shim), the page reloads when that bundle is
+  rebuilt under it, and `denext/desktop/{client,window,app}` are part of the compat runtime.
 - **Deno Desktop sign-in on macOS runs in the OS's own auth session.** Under the pinned runtime
   (2.9.7-denext.6), `openAuthSession`'s custom-scheme flow (and so `denext/desktop/clerk`) uses
   `ASWebAuthenticationSession` through `Deno.desktop.authSession`: a sheet on the app's window that

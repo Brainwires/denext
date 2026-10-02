@@ -20,6 +20,9 @@ import { getCss, getTransformMaps } from "./assets.ts";
 import { ensureCompatBuilt, isCompat } from "./compat.ts";
 import { baseLoaderFor } from "./loaders.ts";
 import type { DevState } from "./state.ts";
+import { npmBoundaryByImporter } from "../npm-boundary.ts";
+import type { NpmBoundaryFinder } from "../module-graph.ts";
+import { broadcast } from "./reload.ts";
 
 /** The unbundled dev loop, created on first use (after compat detection settled). */
 export function getUnbundled(st: DevState): UnbundledDev {
@@ -33,6 +36,8 @@ export function getUnbundled(st: DevState): UnbundledDev {
     features: featureFlags(st.paths.config),
     momentumSafeScroll: momentumSafeScrollEnabled(st.paths.config),
     instrumentationClient: st.paths.instrumentationClientPath,
+    // compat: the npm dependency bundle was rebuilt under a live page (its chunks renamed).
+    onDepsRebuilt: () => broadcast(st, "reload"),
   });
 }
 
@@ -105,13 +110,20 @@ export async function getManifest(st: DevState): Promise<RouteManifest> {
 async function scanBoundary(st: DevState, m: RouteManifest): Promise<BoundaryManifest> {
   return await buildBoundaryManifest(st.paths.appDir, [
     ...new Set(m.pages.flatMap(routeEntryFiles)),
-  ], { exportsOf: importFunctionExports });
+  ], { exportsOf: importFunctionExports, npm: await compatNpmFinder(st) });
+}
+
+/** In compat mode, the finder for `"use client"` / `"use server"` files inside npm packages. */
+async function compatNpmFinder(st: DevState): Promise<NpmBoundaryFinder | undefined> {
+  return await isCompat(st) ? npmBoundaryByImporter : undefined;
 }
 
 /** Recompute the Flight boundary for this generation (routes, client refs, server refs). */
 async function refreshBoundary(st: DevState, m: RouteManifest): Promise<void> {
   if (st.boundaryGen === st.generation) return;
-  const routes = await computeBoundaryRoutes(st.paths.appDir, m.pages);
+  const routes = await computeBoundaryRoutes(st.paths.appDir, m.pages, {
+    npm: await compatNpmFinder(st),
+  });
   st.flightRoutes.clear();
   for (const r of routes) st.flightRoutes.add(r);
   st.flightClients.clear();

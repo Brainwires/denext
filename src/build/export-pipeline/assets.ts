@@ -24,6 +24,7 @@ import {
 } from "../pipeline-shared.ts";
 import { FONTS_PUBLIC_PREFIX, selfHostFonts } from "../self-host-fonts.ts";
 import type { ExportContext } from "./context.ts";
+import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
 /**
  * Classify the routes: boundary routes (their graph reaches a `"use client"` module)
@@ -33,7 +34,11 @@ import type { ExportContext } from "./context.ts";
  * bundle.
  */
 export async function classifyRoutes(ctx: ExportContext): Promise<void> {
-  const flight = await computeBoundaryRoutes(ctx.paths.appDir, ctx.manifest.pages);
+  // In compat mode the boundary includes `"use client"` files inside npm packages too.
+  ctx.compat = await detectNextCompat(ctx.paths);
+  const flight = await computeBoundaryRoutes(ctx.paths.appDir, ctx.manifest.pages, {
+    npm: ctx.compat ? npmBoundaryByImporter : undefined,
+  });
   for (const r of flight) ctx.flightRoutes.add(r);
   for (const route of ctx.manifest.pages) {
     if (flight.has(route.routePath)) continue;
@@ -69,7 +74,9 @@ export async function emitExportCss(ctx: ExportContext): Promise<void> {
 
 /** The app-wide boundary manifest (crawled from every route's full server tree). */
 function boundaryManifest(ctx: ExportContext): Promise<BoundaryManifest> {
-  return appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages);
+  return appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages, {
+    npm: ctx.compat ? npmBoundaryByImporter : undefined,
+  });
 }
 
 /**

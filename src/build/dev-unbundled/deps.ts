@@ -6,13 +6,16 @@ import * as esbuild from "esbuild";
 import { ensureDir } from "@std/fs";
 import {
   BROWSER_CONDITIONS,
+  browserProcessShimPath,
   catalogResolverPlugin,
   DEFAULT_ASSET_LOADERS,
   frameworkPatchPlugins,
   nodeBuiltinStubPlugin,
   prebuildDenextRuntime,
+  serverStubPlugin,
   viteAssetPlugin,
 } from "../next-compat.ts";
+import { generateServerStub } from "../bundle.ts";
 import {
   buildReactNativeDeps,
   crawlReactNativeGraph,
@@ -92,12 +95,78 @@ function runtimeExternalPlugin(st: UnbundledState): esbuild.Plugin {
             /^react$|^react\/|^react-dom$|^react-dom\/|^react-is$|^next$|^next\/|^denext(\/|$)/,
         },
         (args) => {
+          // A CommonJS package's `require()` of Next's server surface (an npm island's whole
+          // CJS graph is bundled, server files included): the browser gets a module whose
+          // functions throw when called — loading the server runtime would import `node:*`.
+          if (args.kind === "require-call" && SERVER_NEXT.test(args.path)) {
+            return { path: args.path, namespace: SERVER_NEXT_NS };
+          }
           const u = libraryDepUrl(args.path, args.importer) ?? compatDepUrl(st, args.path);
-          return u ? { path: u, external: true } : null;
+          if (!u) return null;
+          // A CommonJS `require("react")` cannot reach an external ES module (esbuild's output
+          // throws "Dynamic require … is not supported"): require a wrapper module instead,
+          // which imports the external statically and re-exports it.
+          return args.kind === "require-call"
+            ? { path: u, namespace: CJS_EXTERNAL_NS }
+            : { path: u, external: true };
         },
       );
+      // The wrapper's own import: the runtime module's dev URL, external.
+      build.onResolve({ filter: /^\/_denext\//, namespace: CJS_EXTERNAL_NS }, (args) => ({
+        path: args.path,
+        external: true,
+      }));
+      build.onLoad({ filter: /.*/, namespace: SERVER_NEXT_NS }, (args) => ({
+        contents: serverOnlyStub(args.path),
+        loader: "js",
+      }));
+      build.onLoad({ filter: /.*/, namespace: CJS_EXTERNAL_NS }, (args) => ({
+        contents: cjsExternalWrapper(args.path),
+        loader: "js",
+      }));
     },
   };
+}
+
+/** Next's server-only surfaces (`next/headers`, `next/server`, `next/cache`, `next/og`). */
+const SERVER_NEXT = /^next\/(?:headers|server|cache|og)(?:\.js)?$/;
+/** The esbuild namespace of {@link serverOnlyStub} modules. */
+const SERVER_NEXT_NS = "denext-server-next-stub";
+
+/**
+ * A CommonJS stand-in for a server-only `next/*` module in the browser: any export is a function
+ * that throws when called (`headers()` in a client component), never at import.
+ */
+export function serverOnlyStub(spec: string): string {
+  return `const fail = (name) => () => {
+` +
+    `  throw new Error(${JSON.stringify(spec)} + "." + String(name) + "() is server-only");
+` +
+    `};
+` +
+    `module.exports = new Proxy({ __esModule: true }, {
+` +
+    `  get: (t, k) => (k in t || typeof k === "symbol" ? t[k] : fail(k)),
+` +
+    `});
+`;
+}
+
+/** The esbuild namespace of {@link cjsExternalWrapper} modules. */
+const CJS_EXTERNAL_NS = "denext-cjs-external";
+
+/**
+ * An ES module re-exporting the external runtime module at `url` — what a CommonJS package's
+ * `require()` of a react-family / `next/*` / `denext` specifier gets in the dev npm bundle (an
+ * npm package's CJS build: `@clerk/nextjs`'s islands). esbuild converts a required ES module
+ * to its exports object, and keeps the static import of `url` external.
+ */
+export function cjsExternalWrapper(url: string): string {
+  const u = JSON.stringify(url);
+  return `import * as m from ${u};
+export * from ${u};
+export default (m.default ?? m);
+`;
 }
 
 /** One npm optimizeDeps pass over every discovered specifier (see ensureNpmBundle). */
@@ -106,8 +175,13 @@ async function buildNpmBundle(st: UnbundledState): Promise<void> {
   const entryPoints: Record<string, string> = {};
   for (const s of specs) entryPoints[depSlug(s)] = s;
   await ensureDir(st.npmDir);
+  // A rebuild renames the shared chunks: a page that already loaded the previous bundle (a
+  // module discovered a new package after the first build) would fetch chunks that are gone.
+  const underLivePage = st.npmBuiltOnce;
   await npmBuild(st, entryPoints);
   st.npmBuilt = new Set(specs);
+  st.npmBuiltOnce = true;
+  if (underLivePage) st.opts.onDepsRebuilt?.();
 }
 
 /**
@@ -134,8 +208,13 @@ async function npmBuild(st: UnbundledState, entryPoints: Record<string, string>)
     absWorkingDir: st.opts.projectDir,
     loader: DEFAULT_ASSET_LOADERS,
     publicPath: NPM_PREFIX,
+    // `process.env.NODE_ENV` / `NEXT_PUBLIC_*` in npm code, as in a build's browser bundle (the
+    // public env comes from the page's public-env island).
+    inject: [await browserProcessShimPath(st.npmDir, "development")],
     logLevel: "silent",
     plugins: [
+      // An npm island's `"use server"` import (its package's action module) → a client stub.
+      serverStubPlugin(st.npmServerRefs, generateServerStub),
       viteAssetPlugin({ publicPath: NPM_PREFIX }, workerBuild),
       runtimeExternalPlugin(st),
       catalogResolverPlugin(st.opts.projectDir, "all", BROWSER_CONDITIONS),

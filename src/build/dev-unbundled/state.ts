@@ -175,9 +175,10 @@ export interface UnbundledDevOptions {
    */
   reactNative?: ReactNativeDevOptions;
   /**
-   * React Native mode: called when the dependency bundle is rebuilt under a live page (a new
-   * package or name was imported). A page holding the previous bundle's modules must reload
-   * rather than load a second copy of a package next to them.
+   * Called when the dependency bundle is rebuilt under a live page (React Native mode: a new
+   * package or name was imported; compat: a module discovered a package the first build lacked,
+   * which renames the bundle's shared chunks). The page must reload rather than load a second
+   * copy of a package next to them, or fetch chunks that are gone.
    */
   onDepsRebuilt?: () => void;
 }
@@ -219,6 +220,13 @@ export interface UnbundledState {
   readonly accepting: Set<string>;
   /** compat: npm bare specifiers the client graph imports (bundled together). */
   readonly npmSpecs: Set<string>;
+  /**
+   * compat: the `"use server"` modules inside npm packages (from the Flight boundary) — an npm
+   * island's action import, which the npm bundle replaces with a client action stub.
+   */
+  npmServerRefs: Map<string, { url: string; exports: string[] }>;
+  /** compat: whether the npm bundle has been built (a later build happens under a live page). */
+  npmBuiltOnce: boolean;
   npmBuilt: Set<string>;
   npmBuilding: Promise<void> | null;
   depsBuilt: Promise<void> | null;
@@ -255,6 +263,8 @@ export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState 
     known: new Set(),
     accepting: new Set(),
     npmSpecs: new Set(),
+    npmServerRefs: new Map(),
+    npmBuiltOnce: false,
     npmBuilt: new Set(),
     npmBuilding: null,
     depsBuilt: null,

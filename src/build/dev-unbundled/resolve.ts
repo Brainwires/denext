@@ -24,6 +24,7 @@ import {
   type UnbundledState,
   versionOf,
 } from "./state.ts";
+import { inNodeModules } from "../path-segments.ts";
 
 /**
  * A merged deno config (framework deps + the app's import map, absolutized) so the
@@ -141,6 +142,9 @@ export function compatDepUrl(
   const runtime = runtimeDepUrl(spec);
   if (runtime !== undefined) return runtime;
   if (/^(node:|data:|https?:)/.test(spec)) return null;
+  // A `denext/*` module the prebuilt runtime lacks is not an npm package: as an npm-bundle entry
+  // (which marks `denext/*` external) it failed the WHOLE bundle, every npm import of the page.
+  if (spec === "denext" || spec.startsWith("denext/")) return null;
   return `${NPM_PREFIX}${noteNpm(st, spec, names)}.js`;
 }
 
@@ -220,6 +224,12 @@ export function rewriteSpecifier(
   if (/\.(css|scss|sass)(?:[?#].*)?$/i.test(spec)) return EMPTY_MODULE;
   const asset = firstParty ? appAssetUrl(st, spec, firstParty, names) : undefined;
   if (asset !== undefined) return asset;
+  // compat: a file INSIDE an npm package named by path — the Flight entry's npm islands (an
+  // npm package's `"use client"` file, often its CommonJS build) — goes through the npm bundle
+  // like the package itself: served raw it would be CommonJS (or bundler-only ESM) in the browser.
+  if (firstParty && st.compat && inNodeModules(firstParty)) {
+    return `${NPM_PREFIX}${noteNpm(st, firstParty, names)}.js`;
+  }
   if (firstParty) {
     const v = versionOf(st, firstParty);
     entry.deps.push({ abs: firstParty, v });

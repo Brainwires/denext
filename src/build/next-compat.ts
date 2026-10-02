@@ -67,6 +67,8 @@ import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
 import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { inNodeModules } from "./path-segments.ts";
+import { readDirective } from "./directives.ts";
+import { staticExportNames } from "./module-graph.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -130,6 +132,10 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/script": "next-script.js",
   "next/dynamic": "next-dynamic.js",
   "next/navigation": "next-navigation.js",
+  // A library supporting both routers (`@clerk/nextjs`) imports the Pages Router API too; the
+  // real modules pull in Next's whole Pages Router client.
+  "next/compat/router": "next-compat-router.js",
+  "next/router": "next-router.js",
   "next/form": "next-form.js",
   "next/font/google": "next-font-google.js",
   "next/font/local": "next-font-local.js",
@@ -143,6 +149,9 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/cache": "next-cache.js",
   "next/server": "next-server.js",
 };
+
+/** {@link NEXT_ALIASES} entries applied to imports from `node_modules` only. */
+const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set(["next/router", "next/compat/router"]);
 
 /**
  * The `next/*` alias key for an import specifier as libraries actually write it. Packages
@@ -207,6 +216,11 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "navigation": u("src/navigation/mod.ts"),
     // `denext/virtual-masonry` — VirtualMasonry; shares the one hooks instance.
     "virtual-masonry": u("src/virtual-masonry.ts"),
+    // `denext/desktop/{client,window,app}` — the Deno Desktop page APIs (no hooks; prebuilt so
+    // the unbundled dev loop can serve them like the other `denext/*` client modules).
+    "desktop-client": u("src/desktop/client.ts"),
+    "desktop-window": u("src/desktop/window.ts"),
+    "desktop-app": u("src/desktop/app.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
     "next-index": u("src/compat/next/index.ts"),
@@ -214,6 +228,8 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "next-script": u("src/compat/next/script.ts"),
     "next-dynamic": u("src/compat/next/dynamic.ts"),
     "next-navigation": u("src/compat/next/navigation.ts"),
+    "next-compat-router": u("src/compat/next/compat/router.ts"),
+    "next-router": u("src/compat/next/router.ts"),
     "next-form": u("src/compat/next/form.ts"),
     "next-font-google": u("src/compat/next/font/google.ts"),
     "next-font-local": u("src/compat/next/font/local.ts"),
@@ -626,6 +642,10 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/mobile": "mobile.js",
   "denext/navigation": "navigation.js",
   "denext/virtual-masonry": "virtual-masonry.js",
+  // The Deno Desktop page APIs (deep-link scheme ownership, the window, the app menu / tray).
+  "denext/desktop/client": "desktop-client.js",
+  "denext/desktop/window": "desktop-window.js",
+  "denext/desktop/app": "desktop-app.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
@@ -699,7 +719,11 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // next/* → denext compat modules (font/link/navigation/… — see NEXT_ALIASES),
       // so app code resolves them to denext instead of the real `next` npm package.
       build.onResolve({ filter: /^next$|^next\// }, (args) => {
-        const file = NEXT_ALIASES[normalizeNextSpecifier(args.path)];
+        const spec = normalizeNextSpecifier(args.path);
+        // The Pages Router API stand-ins are for LIBRARIES only: a Pages Router app's own
+        // `next/router` is the @denext/pages-router plugin's (its import map, resolved below).
+        if (LIBRARY_ONLY_NEXT.has(spec) && !inNodeModules(args.importer)) return null;
+        const file = NEXT_ALIASES[spec];
         return file ? runtimeFile(file) : null;
       });
       build.onResolve(
@@ -2149,10 +2173,27 @@ export function serverStubPlugin(
   return {
     name: "denext-server-stub",
     setup(build) {
-      build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, (args) => {
+      build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, async (args) => {
         const s = byPath.get(args.path);
-        if (!s) return null;
-        return { contents: stubOf(s.id, s.exports), loader: "ts", resolveDir: dirname(args.path) };
+        if (s) {
+          return {
+            contents: stubOf(s.id, s.exports),
+            loader: "ts",
+            resolveDir: dirname(args.path),
+          };
+        }
+        // A `"use server"` file inside an npm package that is not in the boundary — the other
+        // build (ESM vs CJS) of a package whose action module the boundary holds: an app's
+        // client code imports the package's ESM build while its islands are the server
+        // bundle's CJS files. Its code must not ship either; nothing registers it on the
+        // server, so calling it fails there (no island renders it).
+        if (!inNodeModules(args.path) || (await readDirective(args.path)) !== "server") return null;
+        const exports = await staticExportNames(args.path);
+        return {
+          contents: stubOf(`unregistered:${args.path.split(/[\\/]/).slice(-3).join("/")}`, exports),
+          loader: "ts",
+          resolveDir: dirname(args.path),
+        };
       });
     },
   };

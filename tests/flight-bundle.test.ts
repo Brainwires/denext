@@ -140,3 +140,31 @@ Deno.test("generateFlightEntry imports instrumentation-client first when the pro
   assertEquals(src.split("\n")[1], 'import "file:///proj/instrumentation-client.tsx";');
   assert(!generateFlightEntry(boundary, false, false, false).includes("instrumentation-client"));
 });
+
+Deno.test("generateFlightEntry: an island from an npm CommonJS build registers its exports", () => {
+  // The SSR bundle resolves npm packages to their CJS build, so an npm island chunk arrives as
+  // `{ default: module.exports }`; its components are module.exports' properties.
+  const src = generateFlightEntry(emptyBoundary(), false, false, false);
+  const reg = /function reg\(mod, clientId\) \{[\s\S]*?\n\}\n/.exec(src)?.[0];
+  assert(reg, "the entry defines reg()");
+  const registry = new Map<string, unknown>();
+  const run = new Function("registry", `${reg}; return reg;`)(registry) as (
+    mod: unknown,
+    id: string,
+  ) => void;
+  function ClerkProvider() {}
+  const memo = { $$typeof: Symbol.for("react.memo") };
+  const exportsObj = Object.defineProperty({ ClerkProvider, Memo: memo, n: 1 }, "__esModule", {
+    value: true,
+  });
+  run({ default: exportsObj }, "c_cjs");
+  assertEquals(registry.get("c_cjs#ClerkProvider"), ClerkProvider);
+  assertEquals(registry.get("c_cjs#Memo"), memo);
+  assertEquals(registry.has("c_cjs#n"), false);
+  // An ES module keeps registering its own exports (a default component included).
+  function Esm() {}
+  function Def() {}
+  run({ Esm, default: Def }, "c_esm");
+  assertEquals(registry.get("c_esm#Esm"), Esm);
+  assertEquals(registry.get("c_esm#default"), Def);
+});

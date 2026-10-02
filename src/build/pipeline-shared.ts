@@ -16,6 +16,7 @@ import {
   type BoundaryManifest,
   buildBoundaryManifest,
   importFunctionExports,
+  type NpmBoundaryFinder,
   routeEntryFiles,
 } from "./module-graph.ts";
 import type { ProjectPaths } from "./paths.ts";
@@ -49,11 +50,15 @@ export function setupPlugins(paths: ProjectPaths, mode: "build" | "export"): Pro
  * every route's full server tree (page + layouts + templates + slots), not just page
  * files, so a client island imported only by a layout is found (H1).
  */
-export function appBoundaryManifest(appDir: string, pages: PageRoute[]): Promise<BoundaryManifest> {
+export function appBoundaryManifest(
+  appDir: string,
+  pages: PageRoute[],
+  opts: { npm?: NpmBoundaryFinder } = {},
+): Promise<BoundaryManifest> {
   return buildBoundaryManifest(
     appDir,
     [...new Set(pages.flatMap(routeEntryFiles))],
-    { exportsOf: importFunctionExports },
+    { exportsOf: importFunctionExports, npm: opts.npm },
   );
 }
 
@@ -61,11 +66,15 @@ export function appBoundaryManifest(appDir: string, pages: PageRoute[]): Promise
  * next-compat: the route server modules (page/layout/…) AND every boundary island +
  * server-action module, deduped — bundled as separate entries in ONE code-split pass so a
  * page's reference to an island resolves to the SAME module instance the SSR loader tags.
+ * `middlewarePath` (the app's `middleware.ts`) is bundled too: Next bundles middleware, and an
+ * npm package it imports (`@clerk/nextjs/server`) may be built for bundlers (extensionless
+ * relative imports, `next/*` peers) and so cannot load under Deno's own npm resolution.
  */
 export function compatModuleList(
   pages: PageRoute[],
   boundary: BoundaryManifest | null,
   api: ApiRoute[] = [],
+  middlewarePath: string | null = null,
 ): string[] {
   const refs = boundary ? [...boundary.client.values(), ...boundary.server.values()] : [];
   // Route handlers (`route.ts`) go through the same bundle: a migrated Remix action route
@@ -75,6 +84,7 @@ export function compatModuleList(
       ...pages.flatMap(routeServerModules),
       ...api.map((r) => r.filePath),
       ...refs.map((r) => fromFileUrl(r.url)),
+      ...(middlewarePath ? [middlewarePath] : []),
     ]),
   ];
 }

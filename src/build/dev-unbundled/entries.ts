@@ -1,6 +1,7 @@
 // Unbundled dev: the generated client entries — per-route, app-wide Flight, and SPA.
 
-import { toFileUrl } from "@std/path";
+import { fromFileUrl, toFileUrl } from "@std/path";
+import { inNodeModules } from "../path-segments.ts";
 import type { PageRoute } from "../../router/manifest.ts";
 import { generateFlightEntry, generateRouteEntry, routeSourceFiles } from "../bundle.ts";
 import { scanDirective } from "../directives.ts";
@@ -113,6 +114,7 @@ export async function serveFlightEntry(
   boundary: BoundaryManifest,
 ): Promise<string> {
   await ensureClientDeps(st);
+  noteNpmServerRefs(st, boundary);
   return transformGeneratedEntry(
     st,
     generateFlightEntry(
@@ -127,6 +129,23 @@ export async function serveFlightEntry(
     ),
     "entry:flight",
   );
+}
+
+/**
+ * Record the boundary's `"use server"` modules inside npm packages for the npm bundle's action
+ * stubs (an npm island imports its package's action module: served for real, it would ship the
+ * server code — `next/headers`, the request context — to the browser). A changed set rebuilds
+ * the bundle on its next request.
+ */
+function noteNpmServerRefs(st: UnbundledState, boundary: BoundaryManifest): void {
+  const refs = new Map(
+    [...boundary.server].filter(([, ref]) => inNodeModules(fromFileUrl(ref.url))),
+  );
+  const key = (m: Map<string, { url: string; exports: string[] }>) =>
+    JSON.stringify([...m].sort(([a], [b]) => a.localeCompare(b)));
+  if (key(refs) === key(st.npmServerRefs)) return;
+  st.npmServerRefs = refs;
+  st.npmBuilt = new Set(); // rebuild with the new stubs
 }
 
 /**
