@@ -6,7 +6,11 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { desktopCommand } from "../src/cli/commands/desktop.ts";
+import {
+  desktopCommand,
+  packageScriptAge,
+  packageScriptWarnings,
+} from "../src/cli/commands/desktop.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 
@@ -403,6 +407,44 @@ Deno.exit(3);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("desktop package: a pre-3.1 script is warned about, and --format is not passed to it", async () => {
+  const dir = await tempDir("denext_desktop_pkg_legacy_");
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    const record = `await Deno.writeTextFile(${JSON.stringify(join(dir, "seen.json"))}, ` +
+      "JSON.stringify(Deno.args));\n";
+    const script = join(dir, "scripts", "package-linux.ts");
+    await Deno.writeTextFile(script, record);
+    const legacy = await runVerb(["package"], dir, { "target-os": "linux", format: "deb" });
+    assertEquals(legacy.code, 0, legacy.err);
+    assertStringIncludes(legacy.err, "scripts/package-linux.ts predates denext 3.1");
+    assertStringIncludes(legacy.err, "--regenerate-scripts");
+    assertStringIncludes(legacy.err, "--format deb is ignored");
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, "seen.json"))), []);
+    // A current script (it builds on the pinned runtime and parses --format): no warning, forwarded.
+    await Deno.writeTextFile(
+      script,
+      `// buildDesktopBundle(…) / parseDesktopPackageArgs(…) live in the real template\n${record}`,
+    );
+    const current = await runVerb(["package"], dir, { "target-os": "linux", format: "deb" });
+    assertEquals(current.code, 0, current.err);
+    assertEquals(current.err.includes("predates"), false);
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, "seen.json"))), ["--format", "deb"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("packageScriptAge reads the current templates as current", () => {
+  for (const name of ["package-macos.ts", "package-linux.ts", "package-windows.ts"]) {
+    assertEquals(packageScriptAge(templateFor(name)), { runtime: true, formats: true }, name);
+  }
+  assertEquals(
+    packageScriptWarnings("package-linux.ts", { runtime: true, formats: true }, "deb"),
+    [],
+  );
 });
 
 Deno.test("desktop package --target-os macos is refused off macOS", async () => {

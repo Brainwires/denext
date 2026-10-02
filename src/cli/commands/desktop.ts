@@ -84,8 +84,8 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop build                   Export the SPA to out/\n" +
     "  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n" +
     "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
-    "  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n" +
-    "  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS\n" +
+    "  denext desktop package                 Build a distributable bundle for the host OS\n" +
+    "  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n" +
     "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
     "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
     "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
@@ -105,7 +105,8 @@ export const desktopCommand: CommandSpec = {
       name: "target-os",
       type: "string",
       valueName: "<os>",
-      help: "package for: macos | linux (default: the host OS; cross-builds where supported)",
+      help: "package for: macos | linux | windows (default: the host OS; Linux and Windows " +
+        "cross-build from any OS, macOS packages on a Mac)",
     },
     {
       name: "port",
@@ -224,7 +225,13 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
   const { config } = paths;
   const denoFlags = await projectDenoFlags(dir, config);
   await syncDesktopAppConfigAt(dir, config);
-  const runtime = await resolveDesktopRuntimeEnv({ projectDir: dir, deno: denoExecutable() });
+  // An unpackaged window falls back to the stock runtime (with a warning) for a `deno` that is not
+  // the runtime's exact version; packaging stays strict.
+  const runtime = await resolveDesktopRuntimeEnv({
+    projectDir: dir,
+    deno: denoExecutable(),
+    onDenoMismatch: "stock",
+  });
   const env = {
     ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),
     ...(dev ? await devPreloadEnv(paths) : {}),
@@ -445,8 +452,9 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   if (ctx.flags["regenerate-scripts"] === true) return await regeneratePackageScripts(dir);
   const targetOs = packageTargetOs(ctx);
   const script = join(dir, "scripts", PACKAGE_SCRIPTS[targetOs]);
+  let scriptText: string;
   try {
-    await Deno.stat(script);
+    scriptText = await Deno.readTextFile(script);
   } catch {
     console.error(
       `denext: no packaging script at ${script}\n` +
@@ -471,8 +479,65 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   Deno.env.delete("DENEXT_CSS_ACTIVE");
   Deno.env.delete("DENEXT_MODULE_ACTIVE");
   const format = ctx.flags.format as string | undefined;
-  const formatArgs = format ? ["--format", format] : [];
+  const age = packageScriptAge(scriptText);
+  for (const line of packageScriptWarnings(PACKAGE_SCRIPTS[targetOs], age, format)) {
+    console.error(line);
+  }
+  const formatArgs = format && age.formats ? ["--format", format] : [];
   await spawnDenoAndExit(["run", "-A", script, ...formatArgs, ...ctx.rest], dir);
+}
+
+/** What a packaging script predating denext 3.1 lacks. */
+export interface PackageScriptAge {
+  /** It builds on denext's pinned runtime (calls `desktopRuntimeEnv` / `buildDesktopBundle`). */
+  readonly runtime: boolean;
+  /** It takes `--format` (parses its arguments with `parseDesktopPackageArgs`). */
+  readonly formats: boolean;
+}
+
+/**
+ * How current a `scripts/package-<os>.ts` is, read from its text (it is never imported here).
+ *
+ * @param text The script's source.
+ * @returns What it supports.
+ */
+export function packageScriptAge(text: string): PackageScriptAge {
+  return {
+    runtime: /\b(desktopRuntimeEnv|buildDesktopBundle)\b/.test(text),
+    formats: /\bparseDesktopPackageArgs\b/.test(text),
+  };
+}
+
+/**
+ * The warnings for a packaging script that predates denext 3.1: it builds on the stock runtime,
+ * and a `--format` is not passed to a script that cannot read it.
+ *
+ * @param name The script's file name (`package-linux.ts`).
+ * @param age What it supports.
+ * @param format The `--format` value, when given.
+ * @returns The lines to print (none for a current script).
+ */
+export function packageScriptWarnings(
+  name: string,
+  age: PackageScriptAge,
+  format: string | undefined,
+): string[] {
+  const out: string[] = [];
+  if (!age.runtime) {
+    out.push(
+      `  ⚠ scripts/${name} predates denext 3.1: it builds with the stock Deno Desktop runtime ` +
+        "and none of the default installers.\n" +
+        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
+  }
+  if (format && !age.formats) {
+    out.push(
+      `  ⚠ --format ${format} is ignored: scripts/${name} does not take --format. Regenerate it ` +
+        "with `denext desktop package --regenerate-scripts`.",
+    );
+  }
+  return out;
 }
 
 /** Whether `path` is itself a symbolic link (a missing path is not). */

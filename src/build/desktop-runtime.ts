@@ -25,7 +25,7 @@
 // build unverified (runtime development).
 
 import { acquireCacheLock } from "./project-locks.ts";
-import { dirname, fromFileUrl, join } from "@std/path";
+import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { createHash } from "node:crypto";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
 import { readJson } from "./json-edit.ts";
@@ -80,7 +80,14 @@ export const DESKTOP_RUNTIME_ATTEST_ENV = "DENEXT_DESKTOP_RUNTIME_ATTEST";
 export const RUNTIME_MARKER = ".denext-runtime.json";
 
 /** What the stock runtime lacks (named in every opt-out message). */
-const STOCK_LACKS = "no custom origin, persistent per-app storage, deep links or single instance";
+const STOCK_LACKS = "no stable app origin or persistent browser storage, deep links, " +
+  "single instance, preload, full-app updates, native clipboard / notifications / context " +
+  "menu, or window controls beyond size, position and title";
+
+/** The way out of a runtime download that failed (every download error ends with it). */
+const DOWNLOAD_HINT =
+  `\n  Once it is cached, packaging needs no network. Or set ${RUNTIME_DIR_ENV}=<an unpacked ` +
+  `runtime>, or ${RUNTIME_ENV}=stock to use the stock runtime (${STOCK_LACKS}).`;
 
 /** The marker's contents. */
 interface RuntimeMarker {
@@ -247,16 +254,14 @@ async function openDownload(
   } catch (err) {
     throw new DesktopRuntimeDownloadError(
       `denext: could not download the Deno Desktop runtime (${artifact.file}) from ` +
-        `${artifact.url}: ${errText(err)}.\n  Are you offline? Once it is cached, packaging ` +
-        `needs no network. Or set ${RUNTIME_DIR_ENV}=<an unpacked runtime> or ` +
-        `${RUNTIME_ENV}=stock.`,
+        `${artifact.url}: ${errText(err)}.\n  Are you offline?${DOWNLOAD_HINT}`,
     );
   }
   if (res.ok && res.body) return res.body;
   await res.body?.cancel();
   throw new DesktopRuntimeDownloadError(
     `denext: downloading the Deno Desktop runtime failed: GET ${artifact.url} → ` +
-      `${res.status} ${res.statusText}`,
+      `${res.status} ${res.statusText}${DOWNLOAD_HINT}`,
   );
 }
 
@@ -282,7 +287,7 @@ async function streamToFile(
       if (size > maxSize) {
         throw new RefusedDownload(
           `denext: refusing the Deno Desktop runtime ${what}: the download is larger than its ` +
-            `pinned ${maxSize} bytes`,
+            `pinned ${maxSize} bytes${DOWNLOAD_HINT}`,
         );
       }
       hash.update(chunk);
@@ -292,7 +297,7 @@ async function streamToFile(
     if (err instanceof RefusedDownload) throw err;
     throw new DesktopRuntimeDownloadError(
       `denext: the Deno Desktop runtime download was interrupted (${what}, ${size} of ` +
-        `${maxSize} bytes): ${errText(err)}`,
+        `${maxSize} bytes): ${errText(err)}${DOWNLOAD_HINT}`,
     );
   } finally {
     file.close();
@@ -309,16 +314,17 @@ async function downloadVerified(
   const body = await openDownload(artifact, fetchImpl);
   const got = await streamToFile(body, dest, artifact.size, artifact.file);
   if (got.size !== artifact.size) {
-    throw new Error(
+    throw new DesktopRuntimeDownloadError(
       `denext: refusing the Deno Desktop runtime ${artifact.file}: got ${got.size} bytes, pinned ` +
-        `${artifact.size} (truncated download)`,
+        `${artifact.size} (truncated download)${DOWNLOAD_HINT}`,
     );
   }
   if (got.sha256 !== artifact.sha256) {
     throw new Error(
       `denext: refusing the Deno Desktop runtime ${artifact.file}: SHA-256 mismatch.\n` +
         `  pinned ${artifact.sha256}\n  got    ${got.sha256}\n` +
-        "  Nothing was extracted. Retry; if it persists, the download is being tampered with.",
+        "  Nothing was extracted. Retry; if it persists, the download is being tampered with." +
+        DOWNLOAD_HINT,
     );
   }
 }
@@ -646,6 +652,49 @@ export async function ensureDesktopRuntime(
   return resolved(false);
 }
 
+/** Options for {@linkcode renameRetrying} (test seams). */
+export interface RenameRetryOptions {
+  /** The host OS (default `Deno.build.os`); only Windows retries. */
+  readonly os?: string;
+  /** The waits between attempts, in ms (default 50 → 1600, doubling: ~3 s in all). */
+  readonly delays?: readonly number[];
+  readonly rename?: (from: string, to: string) => Promise<void>;
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+const RENAME_DELAYS = [50, 100, 200, 400, 800, 1600];
+
+/**
+ * `Deno.rename(from, to)`, retried with backoff on Windows while it fails with `PermissionDenied`
+ * (os error 5) and `to` does not exist: an antivirus scanner (Defender) holds a freshly written
+ * file open for a moment after it is closed, which makes moving its directory fail. Anything
+ * else — another OS, another error, or a `to` that now exists (a racing install) — is thrown at
+ * once.
+ *
+ * @param from The path to move.
+ * @param to Its new path.
+ * @param options Test seams.
+ */
+export async function renameRetrying(
+  from: string,
+  to: string,
+  options: RenameRetryOptions = {},
+): Promise<void> {
+  const rename = options.rename ?? Deno.rename;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const delays = (options.os ?? Deno.build.os) === "windows" ? options.delays ?? RENAME_DELAYS : [];
+  for (let attempt = 0;; attempt++) {
+    try {
+      return await rename(from, to);
+    } catch (err) {
+      const retry = attempt < delays.length && err instanceof Deno.errors.PermissionDenied &&
+        !(await Deno.lstat(to).catch(() => null));
+      if (!retry) throw err;
+      await sleep(delays[attempt]);
+    }
+  }
+}
+
 /**
  * Rename `staged` to `dir`. Something already at `dir` is either a concurrent packager's finished
  * tree (kept when `isValid` says so) or a bad one (moved aside, then replaced). The caller
@@ -658,16 +707,16 @@ async function installAtomically(
   isValid: () => Promise<boolean>,
 ): Promise<void> {
   try {
-    await Deno.rename(staged, dir);
+    await renameRetrying(staged, dir);
     return;
   } catch (err) {
     if (!(await Deno.lstat(dir).catch(() => null))) throw err;
   }
   if (await isValid()) return; // a racing packager won; use its verified tree
   const aside = join(versionDir, `.stale-${crypto.randomUUID()}`);
-  await Deno.rename(dir, aside);
+  await renameRetrying(dir, aside);
   try {
-    await Deno.rename(staged, dir);
+    await renameRetrying(staged, dir);
   } catch (err) {
     if (!(await Deno.lstat(dir).catch(() => null))) throw err; // else: lost a second race
   } finally {
@@ -700,6 +749,7 @@ export function denoVersionMismatchMessage(
   return `denext: the Deno Desktop runtime ${pin.version} is built for Deno ${pin.deno} exactly, ` +
     `but \`${deno}\` is Deno ${found}.\n` +
     `  Install it with:  deno upgrade --version ${pin.deno}\n` +
+    `  Or point DENO_BIN at a Deno ${pin.deno} binary (desktop run / dev build with it).\n` +
     `  Or set ${RUNTIME_ENV}=stock to use the stock runtime (${STOCK_LACKS}).`;
 }
 
@@ -723,6 +773,12 @@ export interface DesktopRuntimeEnvOptions {
   readonly denoVersion?: (deno: string) => Promise<string>;
   readonly log?: (line: string) => void;
   readonly hostOs?: string;
+  /**
+   * What a `deno` that is not the runtime's exact Deno version does: `fail` (the default, for
+   * packaging) or `stock` — build with the stock runtime and warn (`desktop run` / `dev`, where an
+   * unpackaged window beats a refusal).
+   */
+  readonly onDenoMismatch?: "fail" | "stock";
 }
 
 /** The env for `deno desktop`, plus which runtime it selects. */
@@ -787,19 +843,166 @@ async function localRuntimeEnv(localDir: string, lib: string, target: string) {
   return { DENORT_DESKTOP_BIN: runtimeLib, LAUFEY_DEV_DIR: laufeyDir };
 }
 
+/** Where a backend's binary sits under `laufey/` in a Linux / Windows archive, and its base name. */
+const BACKEND_BINARY: Readonly<Record<DesktopRuntimeBackend, { dir: string; name: string }>> = {
+  webview: { dir: "webview/build", name: "laufey_webview" },
+  cef: { dir: "cef/build/Release", name: "laufey" },
+};
+
+/** The file the cross-host backend directory records what it mirrors in. */
+const CROSS_HOST_STAMP = ".denext-cross-host.json";
+
+/** The backend binary a cross-host build must offer under the host's executable name. */
+export interface CrossHostRename {
+  /** The backend's binary directory, relative to `laufey/`. */
+  readonly dir: string;
+  /** The binary's name in the target's archive. */
+  readonly from: string;
+  /** The name the host's `deno desktop` looks for. */
+  readonly to: string;
+}
+
 /**
- * `deno desktop` looks a `LAUFEY_DEV_DIR` backend up with the HOST's executable suffix, so a
- * Windows bundle (`laufey_webview.exe`) can't be found from macOS / Linux, nor a Linux one from
- * Windows. Refuse that pairing up front.
+ * Deno 2.9.7's `deno desktop` looks a `LAUFEY_DEV_DIR` backend binary up with the HOST's executable
+ * suffix (`laufey_webview.exe` on Windows, `laufey_webview` elsewhere), so a Windows target's
+ * binary is not found from macOS / Linux, nor a Linux one from Windows. It then copies the
+ * binary's whole directory into the app and renames the binary to the app's launcher, so the name
+ * it was found under never reaches the package. Returns the rename that bridges the two, or
+ * `null` when the names already agree (a macOS target is found as a `.app` bundle, whatever the
+ * host).
+ *
+ * @param hostOs The host OS (`Deno.build.os`).
+ * @param target The Rust target triple.
+ * @param backend The backend.
+ * @returns The rename, or `null`.
  */
-function assertHostCanTarget(hostOs: string, target: string, pin: DesktopRuntimePin): void {
-  if ((hostOs === "windows") === isWindowsTarget(target)) return;
-  const where = isWindowsTarget(target) ? "Windows on Windows" : "this target on macOS or Linux";
-  throw new Error(
-    `denext: \`deno desktop\` ${pin.deno} can't use a prebuilt runtime for ${target} from a ` +
-      `${hostOs} host (its LAUFEY_DEV_DIR lookup uses the host's executable suffix).\n` +
-      `  Package ${where}, or set ${RUNTIME_ENV}=stock to cross-build with the stock runtime.`,
+export function crossHostBackendRename(
+  hostOs: string,
+  target: string,
+  backend: DesktopRuntimeBackend,
+): CrossHostRename | null {
+  if (target.includes("-apple-darwin")) return null;
+  const { dir, name } = BACKEND_BINARY[backend];
+  const from = name + (isWindowsTarget(target) ? ".exe" : "");
+  const to = name + (hostOs === "windows" ? ".exe" : "");
+  return from === to ? null : { dir, from, to };
+}
+
+/** The stamp of a cross-host backend directory: the archive it mirrors, and each file's size. */
+interface CrossHostStamp {
+  sha256: string;
+  files: Record<string, number>;
+}
+
+/** Whether `shim` holds a complete mirror of the runtime archive `sha256`. */
+async function crossHostIntact(shim: string, sha256: string): Promise<boolean> {
+  let stamp: CrossHostStamp;
+  try {
+    stamp = JSON.parse(await Deno.readTextFile(join(shim, CROSS_HOST_STAMP)));
+  } catch {
+    return false;
+  }
+  if (stamp.sha256 !== sha256 || Object.keys(stamp.files ?? {}).length === 0) return false;
+  for (const [rel, size] of Object.entries(stamp.files)) {
+    const info = await Deno.lstat(join(shim, ...rel.split("/"))).catch(() => null);
+    if (!info?.isFile || info.size !== size) return false;
+  }
+  return true;
+}
+
+/** Hard-link (else copy) `src` to `dest`. */
+async function linkOrCopy(src: string, dest: string): Promise<void> {
+  try {
+    await Deno.link(src, dest);
+  } catch {
+    await Deno.copyFile(src, dest);
+  }
+}
+
+/**
+ * Mirror the backend directory `laufey/<rename.dir>` of the runtime at `runtimeDir` into `staged`
+ * (hard links where the filesystem allows), with the binary renamed. Returns the stamp's file map.
+ */
+async function mirrorBackendDir(
+  runtimeDir: string,
+  staged: string,
+  rename: CrossHostRename,
+): Promise<Record<string, number>> {
+  const binary = join(runtimeDir, "laufey", ...rename.dir.split("/"), rename.from);
+  if (!(await Deno.lstat(binary).catch(() => null))?.isFile) {
+    throw new Error(`denext: the Deno Desktop runtime at ${runtimeDir} has no ${rename.from}`);
+  }
+  const files: Record<string, number> = {};
+  const walk = async (rel: string, top: boolean): Promise<void> => {
+    const srcDir = join(runtimeDir, ...rel.split("/"));
+    await Deno.mkdir(join(staged, ...rel.split("/")), { recursive: true });
+    for await (const e of Deno.readDir(srcDir)) {
+      const name = top && e.name === rename.from ? rename.to : e.name;
+      const src = join(srcDir, e.name);
+      const destRel = `${rel}/${name}`;
+      const dest = join(staged, ...destRel.split("/"));
+      if (e.isDirectory) await walk(`${rel}/${e.name}`, false);
+      else if (e.isSymlink) await Deno.symlink(await Deno.readLink(src), dest);
+      else if (e.isFile) {
+        await linkOrCopy(src, dest);
+        files[destRel] = (await Deno.lstat(dest)).size;
+      }
+    }
+  };
+  await walk(`laufey/${rename.dir}`, true);
+  return files;
+}
+
+/**
+ * The `LAUFEY_DEV_DIR` for a cross-host build: a sibling of the verified runtime
+ * (`<target>-<backend>.cross-host/laufey`) holding only the backend's directory, hard-linked from
+ * the verified tree, with the binary under the host's executable name (see
+ * {@linkcode crossHostBackendRename}). Built once per runtime archive and reused; installed with
+ * the same atomic rename as the runtime itself.
+ */
+async function crossHostLaufeyDir(
+  rt: ResolvedDesktopRuntime,
+  rename: CrossHostRename,
+  log: (line: string) => void,
+): Promise<string> {
+  const marker = await readMarker(rt.dir);
+  if (!marker) throw new Error(`denext: the Deno Desktop runtime at ${rt.dir} has no marker`);
+  const versionDir = dirname(rt.dir);
+  const shim = join(versionDir, `${basename(rt.dir)}.cross-host`);
+  const valid = () => crossHostIntact(shim, marker.archive.sha256);
+  using _lock = await acquireCacheLock(dirname(versionDir), "download", RUNTIME_CACHE_DESCR);
+  if (await valid()) return join(shim, "laufey");
+  log(
+    `  denext: cross-building — offering the ${rename.from} backend as ${rename.to}, the name ` +
+      "this host's `deno desktop` looks for (hard links into the verified runtime).",
   );
+  const tmp = await Deno.makeTempDir({ dir: versionDir, prefix: ".tmp-" });
+  try {
+    const staged = join(tmp, "cross-host");
+    const files = await mirrorBackendDir(rt.dir, staged, rename);
+    const stamp: CrossHostStamp = { sha256: marker.archive.sha256, files };
+    await Deno.writeTextFile(join(staged, CROSS_HOST_STAMP), JSON.stringify(stamp) + "\n");
+    await installAtomically(staged, shim, versionDir, valid);
+  } finally {
+    await Deno.remove(tmp, { recursive: true }).catch(() => {});
+  }
+  if (!await valid()) throw new Error(`denext: the cross-host backend at ${shim} did not verify`);
+  return join(shim, "laufey");
+}
+
+/** The stock fallback of `desktop run` / `dev` for a `deno` of another version (a warning). */
+function stockForMismatch(
+  found: string,
+  pin: DesktopRuntimePin,
+  deno: string,
+  log: (l: string) => void,
+) {
+  log(
+    `  ⚠ ${denoVersionMismatchMessage(found, pin, deno).replace(/^denext: /, "")}\n` +
+      "  Building this window with the STOCK runtime instead (packaging still requires " +
+      `Deno ${pin.deno}).`,
+  );
+  return { mode: "stock" as const, env: {} };
 }
 
 /**
@@ -807,7 +1010,10 @@ function assertHostCanTarget(hostOs: string, target: string, pin: DesktopRuntime
  * download / verify it on first use). Honors `DENEXT_DESKTOP_RUNTIME=stock` (no env, a warning),
  * `DENEXT_DESKTOP_RUNTIME_DIR` (a local build, unverified, a warning),
  * `DENEXT_DESKTOP_RUNTIME_VERIFY=1` and `DENEXT_DESKTOP_RUNTIME_ATTEST=1`. Fails when `deno` is
- * not the runtime's exact Deno version.
+ * not the runtime's exact Deno version (or, with `onDenoMismatch: "stock"`, warns and selects the
+ * stock runtime). A target whose backend binary the host's `deno desktop` would look up under
+ * another executable suffix (Windows from macOS / Linux, Linux from Windows) gets a cross-host
+ * `LAUFEY_DEV_DIR` (see {@linkcode crossHostBackendRename}).
  *
  * @param options The project and target.
  * @returns The env to add to the `deno desktop` child.
@@ -834,13 +1040,16 @@ export async function resolveDesktopRuntimeEnv(
     );
     return { mode: "local", env: local };
   }
-  assertHostCanTarget(options.hostOs ?? Deno.build.os, target, pin);
   const deno = options.deno ?? "deno";
   const found = await (options.denoVersion ?? denoCliVersion)(deno);
-  if (found !== pin.deno) throw new Error(denoVersionMismatchMessage(found, pin, deno));
+  if (found !== pin.deno) {
+    if (options.onDenoMismatch === "stock") return stockForMismatch(found, pin, deno, log);
+    throw new Error(denoVersionMismatchMessage(found, pin, deno));
+  }
+  const backend = options.backend ?? await projectDesktopBackend(options.projectDir);
   const rt = await ensureDesktopRuntime({
     target,
-    backend: options.backend ?? await projectDesktopBackend(options.projectDir),
+    backend,
     pin,
     cacheRoot: options.cacheRoot,
     verify: env(DESKTOP_RUNTIME_VERIFY_ENV) === "1",
@@ -849,10 +1058,9 @@ export async function resolveDesktopRuntimeEnv(
     run: options.run,
     log,
   });
-  return {
-    mode: "pinned",
-    env: { DENORT_DESKTOP_BIN: rt.runtimeLib, LAUFEY_DEV_DIR: rt.laufeyDir },
-  };
+  const rename = crossHostBackendRename(options.hostOs ?? Deno.build.os, target, backend);
+  const laufeyDir = rename ? await crossHostLaufeyDir(rt, rename, log) : rt.laufeyDir;
+  return { mode: "pinned", env: { DENORT_DESKTOP_BIN: rt.runtimeLib, LAUFEY_DEV_DIR: laufeyDir } };
 }
 
 /**

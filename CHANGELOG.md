@@ -390,6 +390,30 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop package` cross-builds again on denext's pinned runtime.** 3.1's runtime
+  refused a Windows target from macOS / Linux and a Linux target from Windows (3.0.2 cross-built
+  them), because Deno 2.9.7's `deno desktop` looks a `LAUFEY_DEV_DIR` backend up under the
+  host's executable name. denext now offers the backend under that name from a sibling of the
+  verified runtime (`<target>-<backend>.cross-host` in the cache: the backend's directory,
+  hard-linked, built once per runtime archive), so every Linux and Windows target packages from
+  any host. The `--target-os` help names `windows`.
+- **`denext desktop run` and `dev` no longer refuse a `deno` other than 2.9.7.** They warn and
+  build the window on the stock runtime; `package` stays strict. The mismatch message now also
+  names `DENO_BIN` (point it at a 2.9.7 binary to keep the pinned runtime for `run` / `dev`).
+- **Every Deno Desktop runtime download error ends with the same way out**
+  (`DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime>` or `DENEXT_DESKTOP_RUNTIME=stock`, with what
+  the stock runtime lacks): an HTTP error, an interrupted, oversized or truncated download and a
+  SHA-256 mismatch, not only the offline case. A truncated download is a
+  `DesktopRuntimeDownloadError`. The stock runtime's gaps are listed in full (stable origin and
+  storage, deep links, single instance, preload, full-app updates, the native clipboard,
+  notifications and context menu, the wider window API).
+- **Installing the runtime into the cache retries on Windows** while the rename fails with
+  `PermissionDenied` (os error 5: an antivirus scanner such as Defender still holds a fresh file),
+  with backoff for about 3 s; another error, OS or a destination that now exists fails at once.
+- **`denext desktop package` warns about a packaging script from before 3.1** (one without
+  `desktopRuntimeEnv`, so it builds on the stock runtime with none of the default installers) and
+  says to run `--regenerate-scripts`; `--format` is not passed to a script that cannot read it,
+  with a warning that it is ignored.
 - **`denext desktop run` and `dev` open a window again.** Deno 2.9.7's `deno desktop` only
   compiles: the verbs left a `<name>.app` in the project folder, opened no window, and that build
   had no permissions (`NotCapable: PORT`). Both now build into a temporary directory outside the

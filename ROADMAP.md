@@ -19,9 +19,9 @@
 - **Upstream the fork so stock Deno can be used.** Offer every runtime change to denoland/deno
   and littledivy/laufey and maintain the pull requests (status per change in
   [our Deno Desktop runtime](https://denext.dev/docs/desktop-runtime#what-it-adds-over-stock-deno-desktop)).
-  When stock Deno carries them, drop the runtime download and the Deno 2.9.7 pin (which also
-  forces packaging each OS on its own host: 2.9.7's CLI looks the backend up with the host's
-  executable suffix), and archive the forks.
+  When stock Deno carries them, drop the runtime download, the Deno 2.9.7 pin and the cross-host
+  backend directory (2.9.7's CLI looks a prebuilt backend up under the host's executable name),
+  and archive the forks.
 - **A Windows arm64 runtime** (none is built today).
 - **A `deno desktop --inspect-renderer` spike** for `denext desktop dev`: CDP into the window,
   which `src/profile/browser.ts` already knows how to drive.

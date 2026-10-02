@@ -6,6 +6,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import {
+  crossHostBackendRename,
   denoCacheDir,
   denoVersionMismatchMessage,
   desktopRuntimeDir,
@@ -14,6 +15,7 @@ import {
   desktopRuntimeTarget,
   ensureDesktopRuntime,
   projectDesktopBackend,
+  renameRetrying,
   resolveDesktopRuntimeEnv,
   RUNTIME_MARKER,
   verifiedRuntime,
@@ -174,7 +176,7 @@ Deno.test("ensureDesktopRuntime offline with no cache: a clear error, nothing in
       DesktopRuntimeDownloadError,
     );
     assertStringIncludes(err.message, "offline");
-    assertStringIncludes(err.message, "DENEXT_DESKTOP_RUNTIME_DIR");
+    assertDownloadHint(err.message);
     assertEquals(await tree(join(f.cacheRoot, f.pin.version)), []);
   } finally {
     await f.close();
@@ -192,11 +194,18 @@ Deno.test("ensureDesktopRuntime refuses a checksum mismatch and extracts nothing
     const err = await assertRejects(() => ensure(f), Error);
     assertStringIncludes(err.message, "SHA-256 mismatch");
     assertStringIncludes(err.message, "Nothing was extracted");
+    assertDownloadHint(err.message);
     assertEquals(await tree(join(f.cacheRoot, f.pin.version)), []);
   } finally {
     await f.close();
   }
 });
+
+/** Every download failure ends with the same way out: a local runtime dir, or the stock runtime. */
+function assertDownloadHint(message: string): void {
+  assertStringIncludes(message, "DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime>");
+  assertStringIncludes(message, "DENEXT_DESKTOP_RUNTIME=stock to use the stock runtime (");
+}
 
 Deno.test("ensureDesktopRuntime refuses an oversized and a truncated download", async () => {
   const good = await fixtureArchive();
@@ -205,15 +214,13 @@ Deno.test("ensureDesktopRuntime refuses an oversized and a truncated download", 
     const bigger = new Uint8Array(good.byteLength + 100);
     bigger.set(good);
     f.setBody(bigger);
-    assertStringIncludes(
-      (await assertRejects(() => ensure(f), Error)).message,
-      "larger than its pinned",
-    );
+    const big = (await assertRejects(() => ensure(f), Error)).message;
+    assertStringIncludes(big, "larger than its pinned");
+    assertDownloadHint(big);
     f.setBody(good.subarray(0, good.byteLength - 50));
-    assertStringIncludes(
-      (await assertRejects(() => ensure(f), Error)).message,
-      "truncated download",
-    );
+    const short = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
+    assertStringIncludes(short, "truncated download");
+    assertDownloadHint(short);
     // A connection that dies mid-body.
     f.setBody(() =>
       new Response(
@@ -225,9 +232,13 @@ Deno.test("ensureDesktopRuntime refuses an oversized and a truncated download", 
         }),
       )
     );
-    await assertRejects(() => ensure(f));
+    const cut = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
+    assertStringIncludes(cut, "interrupted");
+    assertDownloadHint(cut);
     f.setBody(() => new Response("nope", { status: 404 }));
-    assertStringIncludes((await assertRejects(() => ensure(f), Error)).message, "404");
+    const http = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
+    assertStringIncludes(http, "404");
+    assertDownloadHint(http);
     assertEquals(await tree(join(f.cacheRoot, f.pin.version)), []);
   } finally {
     await f.close();
@@ -470,6 +481,7 @@ Deno.test("resolveDesktopRuntimeEnv: a deno version mismatch fails with the inst
     );
     assertEquals(err.message, denoVersionMismatchMessage("2.9.6", f.pin));
     assertStringIncludes(err.message, "deno upgrade --version 9.9.9");
+    assertStringIncludes(err.message, "DENO_BIN");
     assertStringIncludes(err.message, "DENEXT_DESKTOP_RUNTIME=stock");
     assertEquals(f.hits(), 0);
   } finally {
@@ -530,21 +542,237 @@ Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME_DIR uses a local bui
   }
 });
 
-Deno.test("resolveDesktopRuntimeEnv: refuses a Windows target from a non-Windows host (and back)", async () => {
-  for (const [hostOs, target] of [["darwin", "x86_64-pc-windows-msvc"], ["windows", TARGET]]) {
+Deno.test("crossHostBackendRename: only a host/target executable-suffix mismatch renames", () => {
+  const win = "x86_64-pc-windows-msvc";
+  const mac = "aarch64-apple-darwin";
+  assertEquals(crossHostBackendRename("darwin", win, "webview"), {
+    dir: "webview/build",
+    from: "laufey_webview.exe",
+    to: "laufey_webview",
+  });
+  assertEquals(crossHostBackendRename("linux", win, "cef"), {
+    dir: "cef/build/Release",
+    from: "laufey.exe",
+    to: "laufey",
+  });
+  assertEquals(crossHostBackendRename("windows", TARGET, "webview"), {
+    dir: "webview/build",
+    from: "laufey_webview",
+    to: "laufey_webview.exe",
+  });
+  for (const [host, target] of [["linux", TARGET], ["darwin", TARGET], ["windows", win]]) {
+    assertEquals(crossHostBackendRename(host, target, "webview"), null);
+  }
+  // A macOS target is found as a `.app` bundle, whatever the host.
+  assertEquals(crossHostBackendRename("windows", mac, "webview"), null);
+  assertEquals(crossHostBackendRename("linux", mac, "cef"), null);
+});
+
+/** The runtime archive of a Windows target: `denort.dll`, the `.exe` backend and a support file. */
+async function windowsArchive(): Promise<Uint8Array> {
+  return await tarGz([
+    { name: "./", type: "5", mode: 0o755 },
+    { name: "./denort.dll", data: "runtime", mode: 0o644 },
+    { name: "./laufey/", type: "5", mode: 0o755 },
+    { name: "./laufey/webview/build/laufey_webview.exe", data: "win-host", mode: 0o755 },
+    { name: "./laufey/webview/build/WebView2Loader.dll", data: "loader", mode: 0o644 },
+    { name: "./laufey/webview/build/res/strings.txt", data: "s", mode: 0o644 },
+    { name: "./laufey/webview/build/res/current", type: "2", link: "strings.txt" },
+  ]);
+}
+
+Deno.test("resolveDesktopRuntimeEnv: a Windows target from macOS gets a cross-host LAUFEY_DEV_DIR", async () => {
+  const win = "x86_64-pc-windows-msvc";
+  const f = await fixture(await windowsArchive());
+  const project = await Deno.makeTempDir();
+  try {
+    const pin: DesktopRuntimePin = {
+      ...f.pin,
+      targets: { [win]: { runtimeLib: "denort.dll", webview: f.pin.targets[TARGET].webview } },
+    };
+    const logs: string[] = [];
+    const resolve = () =>
+      resolveDesktopRuntimeEnv({
+        projectDir: project,
+        target: win,
+        hostOs: "darwin",
+        pin,
+        cacheRoot: f.cacheRoot,
+        env: envOf({}),
+        denoVersion: () => Promise.resolve("9.9.9"),
+        log: (l) => logs.push(l),
+      });
+    const r = await resolve();
+    const dir = desktopRuntimeDir(f.cacheRoot, pin, win, "webview");
+    const shim = `${dir}.cross-host`;
+    assertEquals(r, {
+      mode: "pinned",
+      env: { DENORT_DESKTOP_BIN: join(dir, "denort.dll"), LAUFEY_DEV_DIR: join(shim, "laufey") },
+    });
+    // Only the backend's directory, its binary under the host's (suffix-less) name.
+    const build = join(shim, "laufey", "webview", "build");
+    assertEquals(await tree(build), [
+      "WebView2Loader.dll",
+      "laufey_webview",
+      "res",
+      "res/current",
+      "res/strings.txt",
+    ]);
+    assertEquals(await Deno.readLink(join(build, "res", "current")), "strings.txt");
+    assertEquals(await Deno.readTextFile(join(build, "laufey_webview")), "win-host");
+    // The verified runtime itself is untouched.
+    assert(await verifiedRuntime(dir, pin, pin.targets[win].webview!, true));
+    assertStringIncludes(logs.join("\n"), "cross-building");
+    // Reused as-is next time (no rebuild, no download)…
+    logs.length = 0;
+    assertEquals((await resolve()).env.LAUFEY_DEV_DIR, join(shim, "laufey"));
+    assertEquals(logs.join("\n").includes("cross-building"), false);
+    assertEquals(f.hits(), 1);
+    // …and rebuilt when a file went missing.
+    await Deno.remove(join(build, "WebView2Loader.dll"));
+    await resolve();
+    assertEquals(await Deno.readTextFile(join(build, "WebView2Loader.dll")), "loader");
+    assertStringIncludes(logs.join("\n"), "cross-building");
+    // Nothing left behind but the runtime and its cross-host sibling.
+    const top = (await tree(join(f.cacheRoot, f.pin.version))).filter((p) => !p.includes("/"));
+    assertEquals(top, [`${win}-webview`, `${win}-webview.cross-host`]);
+  } finally {
+    await f.close();
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("resolveDesktopRuntimeEnv: a Linux target from Windows offers the backend as .exe", async () => {
+  const f = await fixture(await fixtureArchive());
+  const project = await Deno.makeTempDir();
+  try {
+    const r = await resolveDesktopRuntimeEnv({
+      projectDir: project,
+      target: TARGET,
+      hostOs: "windows",
+      pin: f.pin,
+      cacheRoot: f.cacheRoot,
+      env: envOf({}),
+      denoVersion: () => Promise.resolve("9.9.9"),
+      log: quiet,
+    });
+    const shim = `${desktopRuntimeDir(f.cacheRoot, f.pin, TARGET, "webview")}.cross-host`;
+    assertEquals(r.env.LAUFEY_DEV_DIR, join(shim, "laufey"));
+    assertEquals(await tree(join(shim, "laufey", "webview", "build")), ["laufey_webview.exe"]);
+  } finally {
+    await f.close();
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("resolveDesktopRuntimeEnv: a cross-host runtime without its backend binary fails clearly", async () => {
+  const win = "x86_64-pc-windows-msvc";
+  const f = await fixture(await fixtureArchive()); // a Linux layout: no laufey_webview.exe
+  try {
+    const pin: DesktopRuntimePin = {
+      ...f.pin,
+      targets: { [win]: { runtimeLib: LIB, webview: f.pin.targets[TARGET].webview } },
+    };
     await assertRejects(
       () =>
         resolveDesktopRuntimeEnv({
           projectDir: ".",
-          target,
-          hostOs,
+          target: win,
+          hostOs: "linux",
+          backend: "webview",
+          pin,
+          cacheRoot: f.cacheRoot,
           env: envOf({}),
-          denoVersion: () => Promise.resolve("2.9.7"),
+          denoVersion: () => Promise.resolve("9.9.9"),
           log: quiet,
         }),
       Error,
-      "executable suffix",
+      "has no laufey_webview.exe",
     );
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("resolveDesktopRuntimeEnv: onDenoMismatch stock warns (naming DENO_BIN) and builds stock", async () => {
+  const f = await fixture(await fixtureArchive());
+  try {
+    const logs: string[] = [];
+    const r = await resolveDesktopRuntimeEnv({
+      projectDir: ".",
+      target: TARGET,
+      hostOs: "linux",
+      pin: f.pin,
+      cacheRoot: f.cacheRoot,
+      env: envOf({}),
+      denoVersion: () => Promise.resolve("2.9.6"),
+      onDenoMismatch: "stock",
+      log: (l) => logs.push(l),
+    });
+    assertEquals(r, { mode: "stock", env: {} });
+    const text = logs.join("\n");
+    assertStringIncludes(text, "is Deno 2.9.6");
+    assertStringIncludes(text, "DENO_BIN");
+    assertStringIncludes(text, "STOCK runtime");
+    assertStringIncludes(text, "packaging still requires Deno 9.9.9");
+    assertEquals(f.hits(), 0);
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("renameRetrying: retries a Windows PermissionDenied with backoff, nothing else", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const denied = () => Promise.reject(new Deno.errors.PermissionDenied("os error 5"));
+    let calls = 0;
+    const slept: number[] = [];
+    const flaky = (from: string, to: string) => ++calls < 3 ? denied() : Deno.rename(from, to);
+    await Deno.mkdir(join(dir, "a"));
+    await renameRetrying(join(dir, "a"), join(dir, "b"), {
+      os: "windows",
+      rename: flaky,
+      sleep: (ms) => (slept.push(ms), Promise.resolve()),
+    });
+    assertEquals(calls, 3);
+    assertEquals(slept, [50, 100]);
+    assert((await Deno.stat(join(dir, "b"))).isDirectory);
+    // Out of retries: the error surfaces.
+    calls = 0;
+    await assertRejects(
+      () =>
+        renameRetrying(join(dir, "b"), join(dir, "c"), {
+          os: "windows",
+          delays: [1, 1],
+          rename: () => (calls++, denied()),
+          sleep: () => Promise.resolve(),
+        }),
+      Deno.errors.PermissionDenied,
+    );
+    assertEquals(calls, 3);
+    // Not Windows, an existing destination (a race, not a scanner) or another error: no retry.
+    for (
+      const [os, to, err] of [
+        ["linux", "c", new Deno.errors.PermissionDenied("x")],
+        ["windows", "b", new Deno.errors.PermissionDenied("x")],
+        ["windows", "c", new Deno.errors.NotFound("x")],
+      ] as const
+    ) {
+      calls = 0;
+      await assertRejects(() =>
+        renameRetrying(join(dir, "z"), join(dir, to), {
+          os,
+          rename: () => (calls++, Promise.reject(err)),
+          sleep: () => Promise.reject(new Error("must not sleep")),
+        })
+      );
+      assertEquals(calls, 1);
+    }
+    // The default seams: a real rename on this host.
+    await renameRetrying(join(dir, "b"), join(dir, "d"));
+    assert((await Deno.stat(join(dir, "d"))).isDirectory);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
 
