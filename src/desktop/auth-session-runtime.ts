@@ -1,8 +1,9 @@
 /**
  * Deno Desktop OAuth sign-in, server half: the RFC 8252 loopback-redirect flow. On a
  * token-gated POST it opens the system browser at the (rewritten) authorization URL and binds a
- * one-shot `127.0.0.1` listener on an ephemeral port for the redirect, then answers the caller
- * with the captured callback URL.
+ * one-shot `127.0.0.1` listener on an ephemeral port for the redirect — or, with `loopbackPort`,
+ * on that fixed port (a provider that only accepts its registered `http://localhost:1455/…`) —
+ * then answers the caller with the captured callback URL.
  *
  * This is AUTH-CRITICAL. Every check fails closed, the token compare is constant-time, and the
  * code/state carried in the auth and callback URLs are NEVER logged.
@@ -184,13 +185,30 @@ interface AuthStart {
   authUrl: URL;
   redirectUri: URL;
   timeoutMs: number | undefined;
+  /** The fixed loopback port (RFC 8252 §7.3 allows one), else an ephemeral port is chosen. */
+  loopbackPort?: number;
+}
+
+/**
+ * The `loopbackPort` of a start request: absent, or an integer port the `redirect_uri` agrees
+ * with (its port absent or the same). A `Response` (400 `invalid`) when it is not.
+ */
+function parseLoopbackPort(raw: unknown, redirectUri: URL): number | undefined | Response {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1 || raw > 65535) {
+    return fail(400, "invalid", "loopbackPort must be an integer port from 1 to 65535");
+  }
+  if (redirectUri.port !== "" && Number(redirectUri.port) !== raw) {
+    return fail(400, "invalid", `redirect_uri names port ${redirectUri.port}, not ${raw}`);
+  }
+  return raw;
 }
 
 /** The JSON body: `{ cancel: true }` (end the open session), or an https `authUrl` with a
  * loopback, fragment-less `redirect_uri` + optional positive `timeoutMs` (all 400 `invalid`).
  * Returns the parsed inputs or the error Response. */
 async function parseAuthBody(request: Request): Promise<AuthStart | { cancel: true } | Response> {
-  let payload: { authUrl?: unknown; timeoutMs?: unknown; cancel?: unknown };
+  let payload: { authUrl?: unknown; timeoutMs?: unknown; cancel?: unknown; loopbackPort?: unknown };
   try {
     payload = await request.json();
   } catch {
@@ -218,10 +236,14 @@ async function parseAuthBody(request: Request): Promise<AuthStart | { cancel: tr
   ) {
     return fail(400, "invalid", "timeoutMs must be a positive number of milliseconds");
   }
+  const redirectUri = new URL(redirectUriStr);
+  const loopbackPort = parseLoopbackPort(payload.loopbackPort, redirectUri);
+  if (loopbackPort instanceof Response) return loopbackPort;
   return {
     authUrl: authParsed,
-    redirectUri: new URL(redirectUriStr),
+    redirectUri,
     timeoutMs: timeoutMs as number | undefined,
+    ...(loopbackPort !== undefined ? { loopbackPort } : {}),
   };
 }
 
@@ -245,11 +267,13 @@ async function validateAuthRequest(
  *    origin; in the memory world the memory transport and an `Origin` absent or equal to the app
  *    origin ({@link DesktopRequestAccess});
  * 4. `content-type` starts with `application/json`, else 415;
- * 5. body `{ authUrl, timeoutMs? }`: `authUrl` parses and is `https:` with a loopback,
- *    fragment-less `redirect_uri`, and `timeoutMs` (if present) is a positive finite number,
- *    else 400 `{code:"invalid"}`.
+ * 5. body `{ authUrl, timeoutMs?, loopbackPort? }`: `authUrl` parses and is `https:` with a
+ *    loopback, fragment-less `redirect_uri`, `timeoutMs` (if present) is a positive finite number,
+ *    and `loopbackPort` (if present) is a port the `redirect_uri` does not contradict, else 400
+ *    `{code:"invalid"}`.
  *
- * Then a single-session guard (409 `{code:"busy"}`), the loopback listener, and a timeout
+ * Then a single-session guard (409 `{code:"busy"}`), the loopback listener (a fixed
+ * `loopbackPort` already in use: 409 `{code:"port_in_use"}`), and a timeout
  * (408 `{code:"timeout"}`). On success: 200 `{ url }`.
  *
  * A body of `{ cancel: true }` (behind the same checks 1–4) ends the open session instead: the
@@ -275,42 +299,18 @@ export async function handleDesktopAuthSession(
   if (busy) return fail(409, "busy", "another desktop auth session is still open");
   busy = true;
 
-  const redirectPath = redirectUri.pathname;
   let server: Deno.HttpServer | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    let onCallback: (url: string) => void = () => {};
+    const bound = bindCallbackListener(redirectUri, parsed.loopbackPort, (url) => onCallback(url));
+    if (bound instanceof Response) return bound;
+    server = bound.server;
     const callbackUrl = await new Promise<string | null | typeof CANCELLED>((resolve) => {
       cancelOpen = () => resolve(CANCELLED);
-      server = Deno.serve(
-        {
-          hostname: "127.0.0.1",
-          port: 0,
-          // Silence the default "Listening on…" line; keep the port off any log.
-          onListen: () => {},
-          onError: () => new Response(null, { status: 500 }),
-        },
-        (req) => {
-          const path = new URL(req.url).pathname;
-          if (path !== redirectPath) return new Response("not found", { status: 404 });
-          // The code/state ride the query on a loopback redirect — capture the whole URL.
-          resolve(req.url);
-          return new Response(SUCCESS_HTML, {
-            status: 200,
-            headers: {
-              "content-type": "text/html; charset=utf-8",
-              "content-security-policy": "default-src 'none'",
-            },
-          });
-        },
-      );
-
-      const port = (server.addr as Deno.NetAddr).port;
-      // Rewrite ONLY the redirect_uri host+port to the chosen loopback port; keep its path/query.
-      const rewrittenRedirect = new URL(redirectUri.href);
-      rewrittenRedirect.hostname = "127.0.0.1";
-      rewrittenRedirect.port = String(port);
+      onCallback = resolve;
       const rewrittenAuth = new URL(authParsed.href);
-      rewrittenAuth.searchParams.set("redirect_uri", rewrittenRedirect.href);
+      rewrittenAuth.searchParams.set("redirect_uri", bound.redirect);
 
       timer = setTimeout(() => resolve(null), timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -329,6 +329,65 @@ export async function handleDesktopAuthSession(
     if (server) await server.shutdown().catch(() => {});
     busy = false;
   }
+}
+
+/** The address a fixed-port listener binds for the `redirect_uri` host (`[::1]` → IPv6). */
+function bindHost(redirectUri: URL): string {
+  return redirectUri.hostname === "[::1]" ? "::1" : "127.0.0.1";
+}
+
+/**
+ * Bind the one-shot listener for the redirect and say which `redirect_uri` the browser is sent to.
+ *
+ * - Ephemeral (no `loopbackPort`): `127.0.0.1` on a port the OS picks; the `redirect_uri` host and
+ *   port are rewritten to it, its path and query kept.
+ * - Fixed (`loopbackPort`): that port, on `::1` for a `[::1]` redirect and `127.0.0.1` otherwise
+ *   (a `localhost` redirect reaches it: browsers fall back to IPv4). The `redirect_uri` keeps its
+ *   host as written, since a provider compares it with the registered one, and gains the port.
+ *   A port in use answers 409 `port_in_use`.
+ *
+ * Only a request to the redirect's path is taken; anything else is a 404.
+ */
+function bindCallbackListener(
+  redirectUri: URL,
+  loopbackPort: number | undefined,
+  onCallback: (url: string) => void,
+): { server: Deno.HttpServer; redirect: string } | Response {
+  const redirectPath = redirectUri.pathname;
+  let server: Deno.HttpServer;
+  try {
+    server = Deno.serve(
+      {
+        hostname: loopbackPort === undefined ? "127.0.0.1" : bindHost(redirectUri),
+        port: loopbackPort ?? 0,
+        // Silence the default "Listening on…" line; keep the port off any log.
+        onListen: () => {},
+        onError: () => new Response(null, { status: 500 }),
+      },
+      (req) => {
+        const path = new URL(req.url).pathname;
+        if (path !== redirectPath) return new Response("not found", { status: 404 });
+        // The code/state ride the query on a loopback redirect — capture the whole URL.
+        onCallback(req.url);
+        return new Response(SUCCESS_HTML, {
+          status: 200,
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "content-security-policy": "default-src 'none'",
+          },
+        });
+      },
+    );
+  } catch (err) {
+    if (err instanceof Deno.errors.AddrInUse) {
+      return fail(409, "port_in_use", `loopback port ${loopbackPort} is in use`);
+    }
+    return fail(500, "unsupported", "could not listen for the OAuth redirect");
+  }
+  const redirect = new URL(redirectUri.href);
+  if (loopbackPort === undefined) redirect.hostname = "127.0.0.1";
+  redirect.port = String((server.addr as Deno.NetAddr).port);
+  return { server, redirect: redirect.href };
 }
 
 /** Forget the module's single-session flag (tests only). */

@@ -34,6 +34,9 @@ import { nativePlugin } from "./plugin.ts";
  * - `scheme_not_registered`: the app could not register itself for the scheme (an unpackaged dev
  *   run);
  * - `session_in_progress`: another custom-scheme session is still open.
+ *
+ * Its loopback flow adds `port_in_use`: another program holds the fixed
+ * {@linkcode AuthSessionOptions.loopbackPort}.
  */
 export type AuthSessionErrorCode =
   | "cancelled"
@@ -45,7 +48,8 @@ export type AuthSessionErrorCode =
   | "pkce_required"
   | "scheme_owned_by_other_app"
   | "scheme_not_registered"
-  | "session_in_progress";
+  | "session_in_progress"
+  | "port_in_use";
 
 /** The `Error` an {@linkcode openAuthSession} promise rejects with. */
 export interface AuthSessionError extends Error {
@@ -125,6 +129,16 @@ export interface AuthSessionOptions {
    * where the OS's auth session has its own Cancel (macOS), nor on iOS, Android or the web.
    */
   readonly cancelOverlay?: false | AuthCancelOverlayText;
+  /**
+   * Deno Desktop, loopback flow (an `http://127.0.0.1` / `localhost` / `[::1]` `redirect_uri`):
+   * listen for the redirect on this fixed port instead of one the OS picks, for a provider that
+   * only accepts its registered loopback redirect (`http://localhost:1455/auth/callback`). The
+   * `redirect_uri` then keeps its host as written and must name this port or none. A port another
+   * program holds rejects `port_in_use`. RFC 8252 §7.3 allows a fixed port; an ephemeral one is
+   * still the better default, because a fixed port is easier for another local program to take
+   * first. Ignored elsewhere.
+   */
+  readonly loopbackPort?: number;
 }
 
 /** What {@linkcode openAuthSession} resolves with. */
@@ -398,7 +412,8 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   reads as `cancelled`: use a full-page redirect for such providers.
  *
  * - **Deno Desktop**: with a loopback `redirect_uri` (`http://127.0.0.1/cb`) the system browser,
- *   and the runtime catches the redirect on an ephemeral loopback port (RFC 8252). Otherwise a
+ *   and the runtime catches the redirect on an ephemeral loopback port (RFC 8252), or on
+ *   `loopbackPort` for a provider with a fixed registered redirect. Otherwise a
  *   custom-scheme callback: on macOS it runs in the OS's auth session (`ASWebAuthenticationSession`,
  *   a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows
  *   and Linux the system browser, and the callback comes back as a deep link. While the system
@@ -455,6 +470,7 @@ export async function openAuthSession(
         timeoutMs,
         ...(options?.signal ? { signal: options.signal } : {}),
         ...(options?.cancelOverlay !== undefined ? { cancelOverlay: options.cancelOverlay } : {}),
+        ...(options?.loopbackPort !== undefined ? { loopbackPort: options.loopbackPort } : {}),
       });
   }
   const scheme = checkScheme(options?.callbackScheme);

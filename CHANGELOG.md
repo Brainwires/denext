@@ -22,6 +22,11 @@ and this project adheres to
   small modal with a Cancel button (Escape too) that ends the session with `cancelled`; the timeout
   stays the backstop. `cancelOverlay: false` hides it, `{ message, cancelLabel }` translates it,
   and `signal` now cancels the loopback flow too (a token-gated `{ cancel: true }` to its endpoint).
+- **A fixed loopback port for desktop sign-in.** `openAuthSession(url, { loopbackPort: 1455 })`
+  runs Deno Desktop's loopback flow on that port instead of an ephemeral one, for providers that
+  only accept their registered loopback redirect (`http://localhost:1455/auth/callback`). The
+  `redirect_uri` keeps its host as written and must name that port or none (else `invalid`); a
+  port another program holds rejects the new `port_in_use` code before the browser opens.
 - **`ctx.runOnMainThread(fn, context?)` for desktop extensions.** A `defineDesktopExtension`
   handler can call a C function on the app's UI thread (AppKit, Win32, GTK) over
   `Deno.desktop.runOnMainThread`, resolving with its return value as a `bigint`. It is FFI: full

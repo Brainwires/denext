@@ -437,8 +437,8 @@ export async function signIn() {
           </strong>{" "}
           and the <code>redirect_uri</code> must be a loopback <code>http</code>{" "}
           URI with no fragment: <code>http://127.0.0.1/...</code> (<code>localhost</code> and{" "}
-          <code>[::1]</code> are accepted and rewritten to{" "}
-          <code>127.0.0.1</code>). The authorization URL itself must be{" "}
+          <code>[::1]</code> are accepted and rewritten to <code>127.0.0.1</code>, unless{" "}
+          <code>loopbackPort</code> is set). The authorization URL itself must be{" "}
           <code>https</code>. Anything else rejects <code>invalid</code>. Register the loopback{" "}
           redirect with the provider as a desktop / native client that allows any port, since the
           port changes on every sign-in.
@@ -465,6 +465,31 @@ export async function signIn() {
           to translate it. The timeout stays the backstop: <code>timeoutMs</code>{" "}
           (default 5 minutes on desktop), then <code>timeout</code>. One session runs at a time (
           <code>busy</code>), and outside a desktop window the call takes the web path.
+        </li>
+        <li>
+          <strong>
+            A provider with a fixed loopback redirect: <code>loopbackPort</code>.
+          </strong>{" "}
+          Some providers accept only the exact loopback redirect they registered (OpenAI&apos;s
+          Codex sign-in uses{" "}
+          <code>http://localhost:1455/auth/callback</code>). Pass the port, and the runtime listens
+          on it instead of an ephemeral one; the <code>redirect_uri</code>{" "}
+          then keeps its host as written (<code>localhost</code> stays{" "}
+          <code>localhost</code>) and must name that port or none:
+          <Code lang="ts">
+            {`const { url } = await openAuthSession(authorize.href, {
+  callbackScheme: "myapp", // ignored with a loopback redirect_uri
+  loopbackPort: 1455,      // redirect_uri: http://localhost:1455/auth/callback
+});`}
+          </Code>
+          The listener binds <code>127.0.0.1</code> (<code>::1</code> for a <code>[::1]</code>{" "}
+          redirect; browsers reach a <code>localhost</code>{" "}
+          redirect over IPv4 when nothing answers on IPv6). If another program holds the port, the
+          call rejects <code>port_in_use</code>{" "}
+          before the browser opens: ask the user to quit the other program (often another sign-in
+          tool for the same provider) and retry. RFC 8252 allows a fixed port, but a known port is
+          easier for a local program to take first, so <code>state</code>{" "}
+          and PKCE matter even more here.
         </li>
       </ul>
       <p>

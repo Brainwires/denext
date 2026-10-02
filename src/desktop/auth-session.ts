@@ -35,6 +35,7 @@ const AUTH_SESSION_CODES: ReadonlySet<string> = new Set<AuthSessionErrorCode>([
   "scheme_owned_by_other_app",
   "scheme_not_registered",
   "session_in_progress",
+  "port_in_use",
 ]);
 
 /** The path the desktop runtime serves the loopback auth-session endpoint at. */
@@ -75,7 +76,8 @@ function authSessionError(
  * injects); elsewhere it rejects `unsupported`.
  *
  * PKCE and `state` stay your job: build the authorization URL (with a `redirect_uri` whose host
- * the runtime rewrites to its ephemeral loopback port), pass it here, then verify `state` and
+ * the runtime rewrites to its ephemeral loopback port, or that keeps its host and gets the fixed
+ * `loopbackPort`), pass it here, then verify `state` and
  * exchange the `code` from the returned URL. They are also what defeats a local-process race:
  * another process that discovered the random callback port could hit it with a forged redirect
  * before the real browser does, so a `state` you generated and re-check (and PKCE) are required.
@@ -86,7 +88,8 @@ function authSessionError(
  *
  * @param url The provider's authorization URL (absolute `https:`, with a loopback `redirect_uri`).
  * @param opts `timeoutMs` — give up after this many ms (the runtime's default is 5 minutes);
- * `signal` — abort to cancel; `cancelOverlay` — `false` to hide the overlay, or its text.
+ * `signal` — abort to cancel; `cancelOverlay` — `false` to hide the overlay, or its text;
+ * `loopbackPort` — a fixed port for the redirect listener (`port_in_use` when taken).
  * @returns The full callback URL (`code`, `state` and all). Rejects with an
  * {@linkcode AuthSessionError} whose `code` is one of {@linkcode AuthSessionErrorCode}.
  */
@@ -96,6 +99,7 @@ export async function startDesktopAuthSession(
     timeoutMs?: number;
     signal?: AbortSignal;
     cancelOverlay?: false | AuthCancelOverlayText;
+    loopbackPort?: number;
   },
 ): Promise<{ url: string }> {
   const token = desktopGlobals()?.token;
@@ -113,7 +117,11 @@ export async function startDesktopAuthSession(
 
   let res: Response;
   try {
-    res = await postAuthSession(token, { authUrl: url, timeoutMs: opts?.timeoutMs });
+    res = await postAuthSession(token, {
+      authUrl: url,
+      timeoutMs: opts?.timeoutMs,
+      ...(opts?.loopbackPort !== undefined ? { loopbackPort: opts.loopbackPort } : {}),
+    });
   } catch {
     // Network failure — treat as unsupported (no runtime answered).
     throw authSessionError("unsupported", "the desktop auth-session request failed");
