@@ -268,6 +268,29 @@ If the script aborts (a failed gate), fix, **commit the fix**, and rerun — aft
 `git checkout -- .` of the half-prepared bump/changelog, or the rerun double-rolls
 the changelog.
 
+### Manual desktop checks before a final release
+
+CI covers the desktop surface on every push to `development` (`desktop-ci.yml`, with the
+per-file coverage floor, and the kitchen sink's real-window test in `desktop-window.yml`).
+Before tagging, run `deno task coverage:desktop` once locally as well. What no hosted runner
+can prove — a person at a fingerprint reader, a paid signing identity, a real display — is
+checked by hand before a **final** (not an rc) version, and its result recorded in this table
+before the tag. Each row is the user's (owner **user**); a row that has not passed is either
+fixed or named in the release notes, never silently skipped.
+
+| Check                                                                                                                                                                                                                                                                                                                                         | Owner | Result (3.1.0) |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | -------------- |
+| **Security — Clerk `rotating_token_nonce`:** a real Clerk sign-in through the desktop OAuth flow settles whether the nonce is bound to the initiating client. If an intercepted nonce alone completes a sign-in (a custom-scheme hijack), the Clerk bridge moves to hosted auth with PKCE / a loopback redirect **before** the final release. | user  | open           |
+| Passkey **success** on macOS with Touch ID: an entitled app (associated domain `webcredentials:denext.dev`, the user's provisioning profile, the AASA served by denext.dev) creates and then uses a passkey.                                                                                                                                  | user  | open           |
+| Passkey **success** on Windows with Windows Hello: create, then sign in.                                                                                                                                                                                                                                                                      | user  | open           |
+| macOS notifications from a **signed** app (an ad-hoc signature gets `UNErrorDomain` 1): shown, and a click reaches the app.                                                                                                                                                                                                                   | user  | open           |
+| Full-app update **signer match** with real identities: a Developer ID (macOS Team ID) and a real Authenticode certificate (Windows) — the same signer installs, a different signer is refused.                                                                                                                                                | user  | open           |
+| Windows 11 **Mica** / Acrylic backdrops look right on a real display.                                                                                                                                                                                                                                                                         | user  | open           |
+| Real **HiDPI** displays (a Retina Mac, Windows at 150–200%): window size, position and placement restore.                                                                                                                                                                                                                                     | user  | open           |
+| A real **MSI** install's deep links (admin account, with approval): a link clicked before the first launch, a scheme another app owns is left alone, uninstall removes the rows.                                                                                                                                                              | user  | open           |
+| macOS window **fullscreen** and **close-button** clicks through `Deno.BrowserWindow` (the window probe, with the Mac unlocked).                                                                                                                                                                                                               | user  | open           |
+| T3 Connect click-through: the passkey sign-in end to end in the T3 desktop app.                                                                                                                                                                                                                                                               | user  | open           |
+
 ### Releasing a workspace package
 
 For any `packages/*` member (a codec, `@denext/htmx`, `@denext/openapi`, …) — publish
