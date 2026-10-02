@@ -346,7 +346,11 @@ Deno.test("ensureDesktopRuntime re-signs laufey's Mach-Os once at install, then 
       if (args[0] === "-dv") {
         return {
           code: 0,
-          text: path.includes("cef") ? "Identifier=com.deno.desktop\n" : "Identifier=laufey\n",
+          // Match the laufey/cef/ path SEGMENT: the absolute path also holds random temp-dir
+          // names (hex), which contain "cef" now and then.
+          text: /[\\/]laufey[\\/]cef[\\/]/.test(path)
+            ? "Identifier=com.deno.desktop\n"
+            : "Identifier=laufey\n",
         };
       }
       await Deno.writeFile(path, new Uint8Array([...macho, 9, 9, 9]));
