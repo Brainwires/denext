@@ -185,3 +185,109 @@ Deno.test("launch router: no Deno.desktop (stock runtime) → install is a no-op
   router.install();
   assert(router.capabilities.length === 2);
 });
+
+Deno.test("launch router: the default resolver accepts only real, existing regular files", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_launch_" }));
+  try {
+    const file = `${dir}/notes.txt`;
+    await Deno.writeTextFile(file, "hi");
+    await Deno.mkdir(`${dir}/folder`);
+    const posix = Deno.build.os !== "windows";
+    if (posix) await Deno.symlink(file, `${dir}/link.txt`);
+    // No resolveFile and no picked set: the router's own defaults.
+    const emitted: string[] = [];
+    const router = createLaunchRouter({
+      schemes: [],
+      api: fakeApi(),
+      emit: (cap, event) => emitted.push(`${cap}.${event}`),
+    });
+    for (const path of [file, `${dir}/folder`, `${dir}/missing.txt`, "", 42, null]) {
+      await router.acceptFile(path, false);
+    }
+    if (posix) await router.acceptFile(`${dir}/link.txt`, true);
+    const files = await call(router, "openFiles", "take") as { path: string; name: string }[];
+    // A symlink is reported as the file it points at; a directory or a missing path is dropped.
+    assertEquals(
+      files.map((f) => [f.name, f.path]),
+      posix ? [["notes.txt", file], ["notes.txt", file]] : [["notes.txt", file]],
+    );
+    assertEquals(emitted.length, files.length);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("launch router: malformed launch lists and event details queue nothing", async () => {
+  const api = fakeApi({
+    launchUrls: "myapp://not-a-list" as unknown as string[],
+    launchFiles: [42, "/ok/real.txt"] as unknown as string[],
+  });
+  const { router, emitted } = setup({}, api);
+  router.install();
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(emitted, ["openFiles.available"], "only the string entry of a list counts");
+  for (const detail of [null, "myapp://x", 7]) {
+    api.fire("openurl", detail);
+    api.fire("openfile", detail);
+    api.fire("secondinstance", detail);
+  }
+  api.fire("secondinstance", { urls: "myapp://x", files: { 0: "/ok/x" } });
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(await call(router, "deepLinks", "take"), []);
+  assertEquals((await call(router, "openFiles", "take") as unknown[]).length, 1);
+});
+
+Deno.test("launch router: a runtime without addEventListener still queues the cold-start items", async () => {
+  const api: DesktopAppApi = { launchUrls: ["myapp://cold"], launchFiles: ["/ok/cold.txt"] };
+  const { router } = setup({}, api as ReturnType<typeof fakeApi>);
+  router.install();
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(await call(router, "deepLinks", "take"), [{ url: "myapp://cold", launch: true }]);
+  assertEquals((await call(router, "openFiles", "take") as unknown[]).length, 1);
+});
+
+Deno.test("launch router: owner / claim report only the fields the runtime gave", async () => {
+  const api = fakeApi({
+    getSchemeOwner: () => Promise.resolve({ owner: "none" }),
+    registerScheme: () =>
+      Promise.resolve({
+        registered: "yes" as unknown as boolean, // anything but `true` is not registered
+        owner: "other",
+        handler: "com.other.app",
+        reason: "UserChoice is set",
+      }),
+  });
+  const { router } = setup({}, api);
+  assertEquals(await call(router, "deepLinks", "owner", { scheme: "myapp" }), { owner: "none" });
+  assertEquals(await call(router, "deepLinks", "claim", { scheme: "myapp" }), {
+    registered: false,
+    owner: "other",
+    handler: "com.other.app",
+    reason: "UserChoice is set",
+  });
+});
+
+Deno.test("launch router: without an api option it uses Deno.desktop when that is an object", async () => {
+  const had = Object.getOwnPropertyDescriptor(Deno, "desktop");
+  const define = (value: unknown) =>
+    Object.defineProperty(Deno, "desktop", { value, configurable: true });
+  try {
+    define(fakeApi({ launchUrls: ["myapp://from-runtime"] }));
+    const live = createLaunchRouter({ schemes: ["myapp"], emit: () => {} });
+    live.install();
+    assertEquals(await call(live, "deepLinks", "take"), [
+      { url: "myapp://from-runtime", launch: true },
+    ]);
+    define(true); // not an app API: the stock runtime path
+    const stock = createLaunchRouter({ schemes: ["myapp"], emit: () => {} });
+    stock.install();
+    const err = await assertRejects(
+      () => call(stock, "deepLinks", "owner", { scheme: "myapp" }) as Promise<unknown>,
+      DesktopCapError,
+    );
+    assertEquals(err.code, "unsupported");
+  } finally {
+    if (had) Object.defineProperty(Deno, "desktop", had);
+    else delete (Deno as unknown as Record<string, unknown>).desktop;
+  }
+});

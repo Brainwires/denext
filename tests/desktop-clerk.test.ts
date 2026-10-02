@@ -4,13 +4,16 @@
 // passkey bridge over the passkeys capability, including the `invalid_rp` degrade + browser
 // fallback; and the hosted (browser) sign-in's state + PKCE binding.
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
   type ClerkLike,
   installClerkDesktopBridge,
   startClerkBrowserSignIn,
 } from "../src/desktop/clerk.ts";
-import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
+import {
+  isDesktopBridgeError,
+  resetDesktopBridgeForTesting,
+} from "../src/desktop/bridge-client.ts";
 import { createFakeDesktopRuntime, type FakeMethod } from "./helpers/desktop-fake-runtime.ts";
 
 type G = {
@@ -325,4 +328,250 @@ Deno.test("clerk passkeys: passkeyFallback none reports invalid_rp; no capabilit
     const pk = installClerkDesktopBridge({ passkeys: true })!.passkeys!;
     assertEquals((await pk.get(getOpts) as { error: { code: string } }).error.code, "unknown");
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Failure paths: the keychain, the passkey RPC, FAPI's hosted auth and the redemption.
+
+type FapiRes = Awaited<ReturnType<ReturnType<ClerkLike["getFapiClient"]>["request"]>>;
+
+const HOSTED_OK: FapiRes = {
+  ok: true,
+  status: 200,
+  payload: { response: { object: "hosted_auth", url: "https://accounts.example.com/sign-in" } },
+};
+const CLIENT_OK: FapiRes = {
+  ok: true,
+  status: 200,
+  payload: { response: { object: "client", sessions: [{ id: "sess_1" }] } },
+};
+
+/** A Clerk whose FAPI answers `answer(path, n)` (`n` counts the calls to that path from 1). */
+function scriptedClerk(
+  answer: (path: string, n: number) => FapiRes,
+  client: ClerkLike["client"] = { fromJSON: () => {} },
+) {
+  const calls: Array<{ path: string; body?: Record<string, unknown> }> = [];
+  const active: string[] = [];
+  const clerk: ClerkLike = {
+    getFapiClient: () => ({
+      request: (init) => {
+        calls.push({ path: init.path, body: init.body });
+        return Promise.resolve(answer(init.path, calls.filter((c) => c.path === init.path).length));
+      },
+    }),
+    client,
+    setActive: ({ session }) => Promise.resolve(void active.push(session)),
+  };
+  return { clerk, calls, active };
+}
+
+const fapiFailure = (status: number, extra: Partial<FapiRes> = {}): FapiRes => ({
+  ok: false,
+  status,
+  ...extra,
+});
+const signedOut = fapiFailure(401, {
+  payload: { errors: [{ code: "signed_out", long_message: "You are signed out." }] },
+});
+
+Deno.test("startClerkBrowserSignIn: a signed_out 401 is retried once, with mode, timeout and signal forwarded", async () => {
+  const starts: Record<string, unknown>[] = [];
+  const f = scriptedClerk((path, n) =>
+    path === "/client" ? CLIENT_OK : n === 1 ? signedOut : HOSTED_OK
+  );
+  await inDesktop({
+    authSession: {
+      start: (a) => {
+        starts.push(a as Record<string, unknown>);
+        return hostedCallback()(a);
+      },
+    },
+  }, async () => {
+    const out = await startClerkBrowserSignIn(f.clerk, {
+      redirectUrl: "t3code://app/",
+      mode: "sign-up",
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+    });
+    assertEquals(out, { createdSessionId: "sess_1" });
+  });
+  assertEquals(f.calls.map((c) => c.path), [
+    "/client/hosted_auth",
+    "/client/hosted_auth",
+    "/client",
+  ]);
+  assertEquals(f.calls[1].body!.mode, "sign-up");
+  assertEquals(starts[0].timeoutMs, 5_000);
+  assertEquals(f.active, ["sess_1"]);
+});
+
+Deno.test("startClerkBrowserSignIn: hosted-auth failures carry Clerk's message and never open a browser", async () => {
+  const cases: Array<[(n: number) => FapiRes, string, number]> = [
+    [() => signedOut, "Clerk: You are signed out. (401)", 2], // retried once, then refused
+    [
+      () => fapiFailure(401, { payload: { errors: [{ code: "other", long_message: "Nope." }] } }),
+      "Clerk: Nope. (401)",
+      1, // a 401 that is not signed_out is not retried
+    ],
+    [() => fapiFailure(500, { statusText: "Server Error" }), "Clerk: Server Error (500)", 1],
+    [() => fapiFailure(502), "Clerk: hosted auth failed (502)", 1],
+    [
+      () => ({ ok: true, status: 200, payload: { response: { object: "client" } } }),
+      "Clerk: hosted auth returned no URL",
+      1,
+    ],
+  ];
+  for (const [answer, message, hostedCalls] of cases) {
+    // Off desktop: had any case reached the auth session it would reject `unavailable` instead.
+    const f = scriptedClerk((_path, n) => answer(n));
+    const err = await assertRejects(() =>
+      startClerkBrowserSignIn(f.clerk, { redirectUrl: "t3code://app/" })
+    );
+    assertEquals((err as Error).message, message);
+    assertEquals(f.calls.length, hostedCalls);
+  }
+});
+
+Deno.test("startClerkBrowserSignIn: the redemption must succeed, load a client and include the created session", async () => {
+  let loaded = 0;
+  const fromJSON = { fromJSON: () => void loaded++ };
+  const cases: Array<[FapiRes, ClerkLike["client"], string]> = [
+    [
+      fapiFailure(400, { payload: { errors: [{ long_message: "The nonce expired." }] } }),
+      fromJSON,
+      "Clerk: The nonce expired. (400)",
+    ],
+    [{ ok: true, status: 200, payload: {} }, fromJSON, "returned no client"],
+    [CLIENT_OK, null, "returned no client"],
+    [CLIENT_OK, {}, "returned no client"],
+    [
+      {
+        ok: true,
+        status: 200,
+        payload: { response: { object: "client", sessions: [{ id: "x" }] } },
+      },
+      fromJSON,
+      "did not include the created session",
+    ],
+    [
+      { ok: true, status: 200, payload: { response: { object: "client" } } },
+      fromJSON,
+      "did not include the created session",
+    ],
+  ];
+  for (const [redeemed, client, message] of cases) {
+    const f = scriptedClerk((path) => path === "/client" ? redeemed : HOSTED_OK, client);
+    await inDesktop({ authSession: { start: hostedCallback() } }, async () => {
+      await assertRejects(
+        () => startClerkBrowserSignIn(f.clerk, { redirectUrl: "t3code://app/" }),
+        Error,
+        message,
+      );
+    });
+    assertEquals(f.active, [], `no session is activated: ${message}`);
+  }
+  assertEquals(loaded, 2, "the client is loaded only once the redemption returned one");
+});
+
+Deno.test("clerk bridge: a keychain failure other than `unavailable` reaches Clerk; the memory fallback warns once", async () => {
+  await inDesktop({
+    secureStore: {
+      get: () => 42, // not a string: read as no token
+      set: () => {
+        throw { code: "io", message: "keychain locked" };
+      },
+      delete: () => {
+        throw { code: "io", message: "keychain locked" };
+      },
+    },
+  }, async () => {
+    const { tokenCache } = installClerkDesktopBridge()!.bridge;
+    assertEquals(await tokenCache.getToken("k"), null);
+    const err = await assertRejects(() => tokenCache.saveToken("k", "v"));
+    assertEquals([isDesktopBridgeError(err), (err as { code?: string }).code], [true, "io"]);
+    await assertRejects(() => tokenCache.clearToken("k"));
+  });
+  const warnings: unknown[] = [];
+  const warn = console.warn;
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  try {
+    await inDesktop({}, async () => {
+      const { tokenCache } = installClerkDesktopBridge()!.bridge;
+      await tokenCache.saveToken("a", "1");
+      await tokenCache.saveToken("b", "2");
+      assertEquals(await tokenCache.getToken("b"), "2");
+    });
+  } finally {
+    console.warn = warn;
+  }
+  assertEquals(warnings.length, 1);
+  assertStringIncludes(String(warnings[0]), "denext desktop add secure-store");
+});
+
+Deno.test("clerk bridge: getRedirectUrl refuses an http(s), file or missing location", async () => {
+  for (const location of [null, { protocol: "https:" }, { protocol: "file:" }, {}]) {
+    await inDesktop({}, async () => {
+      const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+      await assertRejects(() => t.getRedirectUrl(), Error, "custom page origin");
+    }, location);
+  }
+});
+
+Deno.test("clerk passkeys: the platform follows __denext.os; RPC failures are `unknown` envelopes", async () => {
+  await inDesktop({
+    passkeys: {
+      get: () => {
+        throw { code: "io", message: "the authenticator is busy" };
+      },
+      capabilities: () => null,
+    },
+  }, async () => {
+    for (const [os, platform] of [["windows", "win32"], ["linux", "linux"], [7, ""]] as const) {
+      g.__denext = { ...g.__denext, os };
+      assertEquals(installClerkDesktopBridge({ passkeys: true })!.passkeys!.platform, platform);
+    }
+    const pk = installClerkDesktopBridge({ passkeys: true })!.passkeys!;
+    const out = await pk.get(getOpts) as { ok: boolean; error: { code: string; message: string } };
+    assertEquals([out.ok, out.error.code], [false, "unknown"]);
+    assertStringIncludes(out.error.message, "the authenticator is busy");
+    // A capabilities answer without the fields reports nothing available.
+    assertEquals(await pk.capabilities(), {
+      available: false,
+      platformAuthenticator: false,
+      securityKeys: false,
+    });
+  });
+});
+
+Deno.test("clerk passkeys: invalid_rp falls back through globalThis.Clerk; a failed browser sign-in is logged", async () => {
+  const invalidRp = { ok: false as const, error: { code: "invalid_rp", message: "no AASA" } };
+  const gc = globalThis as { Clerk?: unknown };
+  const errors: unknown[][] = [];
+  const consoleError = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a);
+  try {
+    await inDesktop({ passkeys: { get: () => invalidRp } }, async () => {
+      // No Clerk instance anywhere (or not an object): nothing to continue in, the error stands.
+      for (const clerk of [undefined, "not a clerk"]) {
+        gc.Clerk = clerk;
+        const pk = installClerkDesktopBridge({ passkeys: true })!.passkeys!;
+        assertEquals(await pk.get(getOpts), invalidRp);
+      }
+      // globalThis.Clerk is the default instance; its hosted auth failing is logged, not thrown.
+      gc.Clerk = scriptedClerk(() => fapiFailure(503, { statusText: "Unavailable" })).clerk;
+      const pk = installClerkDesktopBridge({ passkeys: true })!.passkeys!;
+      const out = await pk.get(getOpts) as { error: { code: string } };
+      assertEquals(out.error.code, "cancelled");
+      for (let i = 0; i < 50 && errors.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    });
+  } finally {
+    console.error = consoleError;
+    delete gc.Clerk;
+  }
+  assertEquals(errors.length, 1);
+  assertEquals(errors[0][0], "denext/desktop/clerk: the browser sign-in failed");
+  assertEquals((errors[0][1] as Error).message, "Clerk: Unavailable (503)");
 });

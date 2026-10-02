@@ -1,7 +1,7 @@
 // `denext/desktop/client` (src/desktop/client.ts): the typed extension proxy and onDesktopEvent,
 // against the fake runtime gate (tests/helpers/desktop-fake-runtime.ts).
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { desktopExtension, isDesktopBridgeError, onDesktopEvent } from "../src/desktop/client.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
 import { createFakeDesktopRuntime, until } from "./helpers/desktop-fake-runtime.ts";
@@ -104,4 +104,23 @@ Deno.test("onDesktopEvent: typed handler receives the frame's data", async () =>
     resetDesktopBridgeForTesting();
     restore();
   }
+});
+
+Deno.test("desktopExtension: the proxy is read-only, has no `in` keys, and reuses one function per method", () => {
+  const client = desktopExtension("scanner") as unknown as Record<string, unknown>;
+  const first = client.listDevices;
+  assertEquals(typeof first, "function");
+  assert(client.listDevices === first, "the same method returns the same function");
+  assert(client.count !== first);
+  // `in` never claims a method (feature detection must not mistake it for a plain object).
+  assertEquals("listDevices" in client, false);
+  // Writes, definitions and deletes are refused (TypeError in strict-mode module code).
+  assertThrows(() => {
+    client.listDevices = () => "hijacked";
+  }, TypeError);
+  assertThrows(() => Object.defineProperty(client, "count", { value: 1 }), TypeError);
+  assertThrows(() => {
+    delete client.listDevices;
+  }, TypeError);
+  assert(client.listDevices === first, "the method survives the refused write and delete");
 });

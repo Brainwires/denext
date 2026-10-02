@@ -15,6 +15,7 @@ import {
   setAppMenu,
   setBadge,
   setLaunchAtLogin,
+  shortcutCapabilities,
   unregisterAllShortcuts,
   unregisterShortcut,
 } from "../src/desktop/app.ts";
@@ -245,5 +246,99 @@ Deno.test("setQuickActions on desktop: the Dock menu; onQuickAction gets its cli
     await until(() => got.length === 1);
     assertEquals(got, ["new-chat"]);
     stop();
+  });
+});
+
+Deno.test("trays: item icons, cleared dark icon / menu, and a runtime answering no id or bounds", async () => {
+  let bounds: unknown = null;
+  let created: unknown = null;
+  await inDesktop({
+    app: {
+      createTray: () => created,
+      updateTray: () => null,
+      trayBounds: () => bounds,
+    },
+  }, async (rt) => {
+    const tray = await createTray({
+      icon: "AAAA",
+      menu: [{ id: "a", label: "A", icon: "BBBB", checked: true, tooltip: "t", disabled: true }],
+    });
+    assertEquals(tray.id, "", "no id from the runtime is an empty id, not 'undefined'");
+    await tray.update({ iconDark: null, menu: null });
+    await tray.update({});
+    assertEquals(await tray.getBounds(), null);
+    bounds = { x: "1", y: 2 }; // not numeric: not bounds
+    assertEquals(await tray.getBounds(), null);
+    created = { id: 7 };
+    assertEquals((await createTray({ icon: "AAAA" })).id, "7");
+    assertEquals(rt.calls.map((c) => c.args).slice(0, 3), [
+      {
+        icon: "AAAA",
+        menu: [{
+          id: "a",
+          label: "A",
+          enabled: false,
+          checked: true,
+          tooltip: "t",
+          icon: "BBBB",
+        }],
+      },
+      { id: "", iconDark: null, menu: null },
+      { id: "" },
+    ]);
+  });
+});
+
+Deno.test("global shortcuts: capabilities, shared registrations, idempotent unregister, lenient wire", async () => {
+  const queued: unknown[] = [];
+  const unregistered: unknown[] = [];
+  let caps: unknown = { globalShortcuts: true, userBinds: "yes" };
+  let list: unknown = ["Alt+X", 3, null];
+  await inDesktop({
+    globalShortcuts: {
+      capabilities: () => caps,
+      register: () => ({}), // no canonical form: the given spelling is kept
+      unregister: (a) => {
+        unregistered.push(a);
+        return { removed: "yes" }; // anything but `true` is not removed
+      },
+      canonicalize: () => null,
+      unregisterAll: () => null,
+      list: () => list,
+      take: () => queued.splice(0),
+    },
+  }, async (rt) => {
+    assertEquals(await shortcutCapabilities(), { globalShortcuts: true, userBinds: false });
+    caps = null;
+    assertEquals(await shortcutCapabilities(), { globalShortcuts: false, userBinds: false });
+
+    const hits: string[] = [];
+    const first = await registerShortcut("Alt+X", () => hits.push("first"));
+    const second = await registerShortcut("Alt+X", () => hits.push("second"));
+    assertEquals(first.accelerator, "Alt+X");
+    // Malformed presses are skipped; a real one reaches every handler of that accelerator.
+    queued.push(null, { accelerator: 5 }, { accelerator: "Alt+X" });
+    rt.emit("globalShortcuts", "pressed", null);
+    await until(() => hits.length === 2);
+    assertEquals(hits, ["first", "second"]);
+
+    // Dropping one of two handlers keeps the system registration; a second call is a no-op.
+    await first.unregister();
+    await first.unregister();
+    assertEquals(unregistered, []);
+    await second.unregister();
+    assertEquals(unregistered, [{ accelerator: "Alt+X" }]);
+
+    assertEquals(await listShortcuts(), ["Alt+X"]);
+    list = { not: "a list" };
+    assertEquals(await listShortcuts(), []);
+
+    await registerShortcut("Alt+Y", () => hits.push("y"));
+    // No canonical form from the runtime: the handlers under the given spelling are dropped.
+    assertEquals(await unregisterShortcut("Alt+Y"), false);
+    queued.push({ accelerator: "Alt+Y" });
+    rt.emit("globalShortcuts", "pressed", null);
+    await sleep(20);
+    assertEquals(hits.includes("y"), false);
   });
 });

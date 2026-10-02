@@ -19,9 +19,8 @@
 /** One retained event. */
 interface LoggedEvent {
   readonly id: number;
-  readonly cap: string;
-  readonly event: string;
-  readonly data: unknown;
+  /** The SSE `data:` payload, `{ cap, event, data }` serialized once at append. */
+  readonly json: string;
 }
 
 /** A live subscriber's sink: called with each new event once it is connected. */
@@ -54,9 +53,23 @@ export class DesktopEventLog {
   /**
    * Append an event: assign the next id, retain it (evicting the oldest past the cap), and hand it
    * to every connected sink. Returns the assigned id.
+   *
+   * @throws {TypeError} when `data` is not JSON-serializable (a `BigInt`, a cycle). It is serialized
+   *   here, before anything is retained, so such an event can neither poison the replay buffer
+   *   (every later subscriber's backlog) nor silently detach the live subscribers.
    */
   append(cap: string, event: string, data: unknown): number {
-    const logged: LoggedEvent = { id: ++this.#nextId, cap, event, data };
+    let json: string;
+    try {
+      json = JSON.stringify({ cap, event, data });
+    } catch (err) {
+      throw new TypeError(
+        `desktop event "${cap}/${event}" data is not JSON-serializable: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+    const logged: LoggedEvent = { id: ++this.#nextId, json };
     this.#buffer.push(logged);
     if (this.#buffer.length > this.#max) this.#buffer.shift();
     for (const sink of [...this.#sinks]) {
@@ -99,9 +112,7 @@ export class DesktopEventLog {
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
         const send = (event: LoggedEvent) => {
-          const frame = `id: ${event.id}\ndata: ${
-            JSON.stringify({ cap: event.cap, event: event.event, data: event.data })
-          }\n\n`;
+          const frame = `id: ${event.id}\ndata: ${event.json}\n\n`;
           controller.enqueue(encoder.encode(frame));
         };
         // Backlog first (in id order), then attach for live events.

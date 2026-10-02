@@ -467,3 +467,75 @@ Deno.test("wrappers: download stages with the dev opt-out only when asked, and f
   assertEquals(calls[4], ["stage", { allowUnsignedDev: true }]);
   assertEquals(calls[5], ["apply", { force: true }]);
 });
+
+Deno.test("wrappers: progress, signal and timeout are forwarded only when given", async () => {
+  const calls: unknown[][] = [];
+  const onProgress = () => {};
+  const signal = new AbortController().signal;
+  await withRuntime({
+    check: (...a) => {
+      calls.push(a);
+      return Promise.resolve({ available: false, version: "1.0.0", currentVersion: "1.0.0" });
+    },
+    download: (...a) => {
+      calls.push(a);
+      return Promise.resolve({ version: "2.0.0", size: 1 });
+    },
+    stage: () => Promise.resolve({ version: "2.0.0", signature: { mode: "none", identity: null } }),
+    applyAndRelaunch: (...a) => {
+      calls.push(a);
+      return { quitting: false };
+    },
+  }, async () => {
+    const check = await checkForAppUpdate({ manifestUrl: "https://x/a.json", timeoutMs: 0 });
+    assertEquals(check.available, false);
+    await downloadAppUpdate({ manifestUrl: "https://x/a.json" }, { onProgress, signal });
+    // A refusing app reports quitting: false; without `force` the runtime gets no force flag.
+    assertEquals(installAppUpdateAndRelaunch(), { quitting: false });
+  });
+  assertEquals(calls[0], ["https://x/a.json", { timeoutMs: 0 }]);
+  assertEquals(calls[1], [{ onProgress, signal }]);
+  assertEquals(calls[2], [{}]);
+});
+
+Deno.test("wrappers: install / confirm / stage failures rethrow as AppUpdateError; status reads through", async () => {
+  await withRuntime({
+    stage: () => Promise.reject(runtimeError("integrity", "hash mismatch")),
+    download: () => Promise.resolve({ version: "2.0.0", size: 1 }),
+    applyAndRelaunch: () => {
+      throw runtimeError("not_staged", "nothing staged");
+    },
+    confirm: () => {
+      // Not an Error and no code: the message is the stringified value, the code `io`.
+      throw "disk on fire";
+    },
+    status: () => ({ configured: true, reason: null, version: "2.0.0", trial: true }),
+  }, async () => {
+    const staged = await assertRejects(
+      () => downloadAppUpdate({ manifestUrl: "https://x/a.json" }),
+      AppUpdateError,
+    );
+    assertEquals(staged.code, "integrity");
+    const install = assertThrows(() => installAppUpdateAndRelaunch(), AppUpdateError);
+    assertEquals(install.code, "not_staged");
+    assertEquals(install.message, "nothing staged");
+    const confirm = assertThrows(() => confirmAppUpdate(), AppUpdateError);
+    assertEquals(confirm.code, "io");
+    assertEquals(confirm.message, "disk on fire");
+    assertEquals(appUpdateStatus()?.version, "2.0.0");
+    assertEquals(appUpdateStatus()?.trial, true);
+  });
+  // A runtime whose status() answers nothing is reported as null, never undefined.
+  await withRuntime({ status: () => undefined }, () => {
+    assertEquals(appUpdateStatus(), null);
+    return Promise.resolve();
+  });
+  // A thrown null still becomes a typed error.
+  await withRuntime({ check: () => Promise.reject(null) }, async () => {
+    const e = await assertRejects(
+      () => checkForAppUpdate({ manifestUrl: "https://x/a.json" }),
+      AppUpdateError,
+    );
+    assertEquals([e.code, e.message], ["io", "null"]);
+  });
+});

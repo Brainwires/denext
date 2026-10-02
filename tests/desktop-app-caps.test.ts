@@ -23,6 +23,7 @@ import { launchAtLoginCapability } from "../src/desktop/caps/launch-at-login.ts"
 import { createAppController, type DockLike, type TrayLike } from "../src/desktop/caps/app.ts";
 import { nativeMenu } from "../src/desktop/caps/menu.ts";
 import { createPullQueue } from "../src/desktop/caps/queue.ts";
+import { withDenoProps, withProps } from "./helpers/deno-stub.ts";
 
 /** A handler context recording what the capability emits. */
 function ctxOf(window?: unknown): DesktopCapCtx & { emitted: Array<[string, unknown]> } {
@@ -675,4 +676,483 @@ Deno.test("pull queue: bounded, emptied by take, signals each push", () => {
   q.push(4);
   q.clear();
   assertEquals(q.take(), []);
+});
+
+// --- notifications: validation, one-shot triggers, recovery and permission ---------------------
+
+Deno.test("notifications: malformed arguments are validation errors and schedule nothing", async () => {
+  const f = fakeNotifications();
+  const cap = notificationsCapability({ api: f.api, autoTopUp: false, now: () => NOW });
+  for (
+    const args of [
+      [1, 2],
+      { id: 1, title: 5 },
+      { id: 1, title: "t", data: [1] },
+      { id: 1, title: "t", categoryId: 7 },
+      { id: 1, title: "t", trigger: "tomorrow" },
+      // A repeating interval must be at least a minute (a RangeError from the trigger check).
+      { id: 1, title: "t", trigger: { type: "interval", seconds: 30, repeats: true } },
+      // 30 February 2027 never comes.
+      { id: 1, title: "t", trigger: { type: "calendar", year: 2027, month: 2, day: 30 } },
+    ]
+  ) {
+    assertEquals(await codeOf(call(cap, "schedule", args)), "validation", JSON.stringify(args));
+  }
+  assertEquals(f.scheduled, []);
+  assertEquals(await codeOf(call(cap, "cancel", { ids: "1" })), "validation");
+  assertEquals(await codeOf(call(cap, "cancel", { ids: [1.5] })), "validation");
+  assertEquals(await call(cap, "cancel", undefined), null, "no ids: nothing to cancel");
+  assertEquals(await codeOf(call(cap, "setCategories", {})), "validation");
+  assertEquals(
+    await codeOf(call(cap, "setCategories", { categories: [{ id: "c", actions: "reply" }] })),
+    "validation",
+  );
+  assertEquals(await call(cap, "capabilities"), {
+    show: true,
+    schedule: true,
+    actions: true,
+    clicks: true,
+    categories: true,
+  });
+});
+
+Deno.test("notifications: one-shot interval / calendar triggers are one OS notification; a finite series stops", async () => {
+  const f = fakeNotifications();
+  const armed: number[] = [];
+  const cap = notificationsCapability({
+    api: f.api,
+    autoTopUp: false,
+    now: () => NOW,
+    timer: (_run, ms) => {
+      armed.push(ms);
+      return () => {};
+    },
+  });
+  await call(cap, "schedule", {
+    id: 1,
+    title: "In 90 s",
+    trigger: { type: "interval", seconds: 90 },
+  });
+  await call(cap, "schedule", {
+    id: 2,
+    title: "Next 09:00",
+    trigger: { type: "calendar", repeats: false, hour: 9, minute: 0 },
+  });
+  // A date already past fires now.
+  await call(cap, "schedule", {
+    id: 3,
+    title: "Late",
+    trigger: { type: "date", date: NOW - 5000 },
+  });
+  assertEquals(f.scheduled.map((e) => [e.tag, e.at]), [
+    ["denext-1", NOW + 90_000],
+    ["denext-2", new Date(2026, 9, 1, 9, 0, 0).getTime()],
+    ["denext-3", NOW],
+  ]);
+  assertEquals(f.scheduled[0].body, "", "an absent body is empty");
+  // A "repeating" calendar match that exists once is a series of one.
+  const once = new Date(2027, 0, 5, 9, 0, 0).getTime();
+  await call(cap, "schedule", {
+    id: 4,
+    title: "Once",
+    trigger: { type: "calendar", year: 2027, month: 1, day: 5, hour: 9, minute: 0 },
+  });
+  assertEquals(f.scheduled.filter((e) => e.tag.startsWith("denext-4")).map((e) => e.tag), [
+    `denext-4-${once}`,
+  ]);
+  assertEquals(armed.length, 1, "the series still arms its top-up check");
+});
+
+Deno.test("notifications: data too big for the meta drops the title/body copy, not the app data", async () => {
+  const f = fakeNotifications();
+  const cap = notificationsCapability({ api: f.api, autoTopUp: false, now: () => NOW });
+  const title = "T".repeat(3800);
+  await call(cap, "schedule", { id: 4, title, body: "", data: { x: "y".repeat(500) } });
+  assertEquals(f.scheduled[0].title, title, "the OS still shows the full title");
+  assertEquals(f.scheduled[0].data, { denext: { id: 4 }, data: { x: "y".repeat(500) } });
+  const ctx = ctxOf();
+  await call(cap, "take", {}, ctx);
+  f.listeners.get("notificationresponse")!(
+    new CustomEvent("notificationresponse", {
+      detail: { tag: "denext-4", action: null, data: f.scheduled[0].data },
+    }),
+  );
+  // No stored title/body: the tap carries only the id and the app's data.
+  assertEquals(await call(cap, "take", {}, ctx), [
+    { id: 4, actionId: "tap", data: { x: "y".repeat(500) }, launch: false },
+  ]);
+});
+
+Deno.test("notifications: a click is recovered from its tag alone; malformed responses are dropped", async () => {
+  const f = fakeNotifications();
+  const api: DesktopAppApi = { ...f.api, launchNotificationResponses: undefined };
+  const cap = notificationsCapability({ api, autoTopUp: false });
+  const ctx = ctxOf();
+  assertEquals(await call(cap, "take", {}, ctx), [], "no launch responses");
+  const respond = (detail: unknown) =>
+    f.listeners.get("notificationresponse")!(new CustomEvent("notificationresponse", { detail }));
+  respond(undefined);
+  respond({ tag: 5, data: null });
+  respond({ tag: "denext-oops", data: null });
+  // The data was lost (a runtime that does not round-trip it): the tag still names the id.
+  respond({ tag: "denext-12-1700000000000", action: "", data: "opaque", launch: true });
+  assertEquals(await call(cap, "take", {}, ctx), [
+    { id: 12, actionId: "tap", data: {}, launch: true },
+  ]);
+  // A runtime with no event target still answers take.
+  const quiet = notificationsCapability({
+    api: { notifications: f.api.notifications },
+    autoTopUp: false,
+  });
+  assertEquals(await call(quiet, "take", {}, ctxOf()), []);
+});
+
+Deno.test("notifications: pending lists each id once, in time order, skipping entries it cannot read", async () => {
+  const f = fakeNotifications();
+  const series = { trigger: { type: "daily", hour: 7, minute: 0 }, anchor: 100 };
+  const raw = [
+    { tag: "denext-7-200", at: 200, data: { denext: { id: 7, r: series }, data: {} } },
+    { tag: "denext-7-100", at: 100, data: { denext: { id: 7, r: series }, data: {} } },
+    { tag: "denext-8", title: "Eight", body: "b", data: null },
+    { tag: "denext-bogus", at: 50, data: null },
+    { tag: "someone-else", at: 1, data: null },
+  ] as unknown as DesktopScheduledNotification[];
+  const api: DesktopAppApi = {
+    notifications: { ...f.api.notifications!, getScheduled: () => Promise.resolve(raw) },
+  };
+  const cap = notificationsCapability({ api, autoTopUp: false });
+  assertEquals(await call(cap, "pending"), [
+    { id: 8, title: "Eight", body: "b", extra: {} },
+    { id: 7, title: "", body: "", extra: {} },
+  ]);
+});
+
+Deno.test("notifications: a launch tops up only the series that are short, soonest check first", async () => {
+  const f = fakeNotifications();
+  const short = { trigger: { type: "daily", hour: 7, minute: 0 }, anchor: NOW };
+  const full = { trigger: { type: "daily" as const, hour: 20, minute: 0 }, anchor: NOW };
+  // A bare entry (no title/body/actions stored) for the short series.
+  f.scheduled.push({
+    tag: `denext-1-${NOW + DAY}`,
+    at: NOW + DAY,
+    data: { denext: { id: 1, r: short }, data: {} },
+  } as DesktopScheduledNotification);
+  for (const at of seriesTimes(full, NOW, REPEAT_HORIZON)) {
+    f.scheduled.push({
+      tag: `denext-2-${at}`,
+      title: "Full",
+      body: "",
+      at,
+      data: { denext: { id: 2, r: full }, data: {} },
+      actions: [],
+    });
+  }
+  const armed: number[] = [];
+  notificationsCapability({
+    api: f.api,
+    now: () => NOW,
+    timer: (_run, ms) => {
+      armed.push(ms);
+      return () => {};
+    },
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  const ofSeries = (id: number) => f.scheduled.filter((e) => e.tag.startsWith(`denext-${id}-`));
+  assertEquals(ofSeries(1).length, REPEAT_HORIZON);
+  const added = ofSeries(1).filter((e) => e.at !== NOW + DAY);
+  assert(added.every((e) => e.title === "" && e.body === "" && e.actions?.length === 0));
+  assertEquals(ofSeries(2).length, REPEAT_HORIZON, "a full series gets nothing more");
+  assertEquals(armed.length, 1, "one check, for the series whose midpoint comes first");
+});
+
+Deno.test("notifications: permission — provisional requests and the no-prompt query fallbacks", async () => {
+  const f = fakeNotifications();
+  const asked: unknown[] = [];
+  const api: DesktopAppApi = {
+    notifications: {
+      ...f.api.notifications!,
+      requestPermission: (o) => {
+        asked.push(o);
+        return Promise.resolve("provisional");
+      },
+    },
+  };
+  const cap = notificationsCapability({ api, autoTopUp: false });
+  assertEquals(await call(cap, "permission", { request: true, provisional: true }), {
+    state: "provisional",
+  });
+  assertEquals(asked, [{ provisional: true }]);
+  // The Permissions API answers when it knows `notifications`.
+  await withProps(
+    navigator,
+    { permissions: { query: () => Promise.resolve({ state: "denied" }) } },
+    async () => assertEquals(await call(cap, "permission", {}), { state: "denied" }),
+  );
+  // It does not (no state): the cached Notification.permission is used, "default" reads prompt.
+  for (const [cached, state] of [["granted", "granted"], ["default", "prompt"]]) {
+    await withProps(
+      navigator,
+      { permissions: { query: () => Promise.resolve({}) } },
+      () =>
+        withProps(globalThis, { Notification: { permission: cached } }, async () => {
+          assertEquals(await call(cap, "permission", {}), { state });
+        }),
+    );
+  }
+});
+
+Deno.test("notifications: no runtime scheduling and no Notification → unsupported; action clicks are queued", async () => {
+  const f = fakeNotifications();
+  f.noSchedule();
+  const none = notificationsCapability({ api: f.api, autoTopUp: false });
+  await withProps(globalThis, { Notification: undefined }, async () => {
+    assertEquals(await codeOf(call(none, "schedule", { id: 1, title: "t" })), "unsupported");
+  });
+  const shown: EventTarget[] = [];
+  class FakeNotification extends EventTarget {
+    constructor() {
+      super();
+      shown.push(this);
+    }
+  }
+  const cap = notificationsCapability({ api: f.api, autoTopUp: false, showNow: FakeNotification });
+  const ctx = ctxOf();
+  await call(cap, "take", {}, ctx);
+  await call(cap, "schedule", { id: 2, title: "Hi" });
+  shown[0].dispatchEvent(Object.assign(new Event("action"), { action: "reply" }));
+  shown[0].dispatchEvent(new Event("action"));
+  assertEquals(
+    (await call(cap, "take", {}, ctx) as Array<{ actionId: string }>).map((t) => t.actionId),
+    ["reply", "tap"],
+  );
+});
+
+// --- menus / context menu / shortcuts: the remaining edges -------------------------------------
+
+Deno.test("menu: tooltips and icons convert; bad entries, empty ids and oversize menus are refused", () => {
+  const { items } = nativeMenu([{ id: "a", label: "A", tooltip: "Tip", icon: PNG }]);
+  const item = (items[0] as { item: { tooltip?: string; icon?: Uint8Array } }).item;
+  assertEquals(item.tooltip, "Tip");
+  assert(item.icon instanceof Uint8Array && item.icon.length > 0);
+  for (
+    const bad of [
+      [{ id: "a", label: "A", icon: "%%%" }],
+      [{ id: "a", label: "A", icon: 7 }],
+      [{ id: "", label: "Empty" }],
+      [42],
+      [null],
+      Array.from({ length: 501 }, (_, i) => ({ id: `i${i}`, label: "x" })),
+    ]
+  ) {
+    const err = assertThrows(() => nativeMenu(bad)) as { code?: string };
+    assertEquals(err.code, "validation");
+  }
+});
+
+Deno.test("contextMenu: capabilities report the runtime's, and bad coordinates are refused", async () => {
+  const api: DesktopAppApi = {
+    menuCapabilities: () => ({ contextMenu: true, contextClosed: true }),
+  };
+  const cap = contextMenuCapability({ api });
+  assertEquals(await call(cap, "capabilities"), {
+    native: true,
+    contextMenu: true,
+    contextClosed: true,
+  });
+  assertEquals(await call(contextMenuCapability({ api: {} }), "capabilities"), { native: false });
+  const win = { showContextMenu: () => Promise.resolve("a") };
+  const items = [{ id: "a", label: "A" }];
+  for (const at of [{ x: Number.NaN, y: 0 }, { x: 0, y: 200_000 }, { x: "1", y: 0 }]) {
+    assertEquals(
+      await codeOf(call(cap, "show", { items, ...at }, ctxOf(win))),
+      "validation",
+      JSON.stringify(at),
+    );
+  }
+  // No arguments at all: the menu itself is missing.
+  assertEquals(await codeOf(call(cap, "show", undefined, ctxOf(win))), "validation");
+  // An empty title adds no header row.
+  const shown: DesktopMenuItem[][] = [];
+  const recording = {
+    showContextMenu: (_x: number, _y: number, menu: DesktopMenuItem[]) => {
+      shown.push(menu);
+      return Promise.resolve(undefined);
+    },
+  };
+  assertEquals(await call(cap, "show", { items, x: 0, y: 0, title: "" }, ctxOf(recording)), {
+    id: null,
+  });
+  assertEquals(shown[0].length, 1);
+});
+
+Deno.test("globalShortcuts: every runtime error code maps; the cap limit, unregister and canonicalize", async () => {
+  const f = fakeShortcuts();
+  const failing = (code: unknown) =>
+    shortcutsCapability({
+      api: {
+        shortcuts: {
+          ...f.api.shortcuts!,
+          register: () => Promise.reject(Object.assign(new Error(`boom ${code}`), { code })),
+        },
+      },
+    });
+  for (
+    const [code, expected] of [
+      ["not_supported", "unsupported"],
+      ["already_registered", "already_registered"],
+      ["denied", "denied"],
+      ["ENOENT", "failed"],
+      [undefined, "failed"],
+    ]
+  ) {
+    assertEquals(
+      await codeOf(call(failing(code), "register", { accelerator: "Ctrl+J" })),
+      expected,
+      String(code),
+    );
+  }
+  const cap = shortcutsCapability({ api: f.api });
+  assertEquals(await call(cap, "capabilities"), { globalShortcuts: true, userBinds: false });
+  assertEquals(await call(cap, "canonicalize", { accelerator: "CommandOrControl+P" }), {
+    accelerator: "Ctrl+P",
+  });
+  assertEquals(await codeOf(call(cap, "canonicalize", null)), "validation");
+  assertEquals(
+    await codeOf(call(cap, "register", { accelerator: "K".repeat(65) })),
+    "validation",
+    "an over-long accelerator",
+  );
+  await call(cap, "register", { accelerator: "Ctrl+1" });
+  assertEquals(await call(cap, "unregister", { accelerator: "Ctrl+1" }), { removed: true });
+  assertEquals(await call(cap, "unregister", { accelerator: "Ctrl+1" }), { removed: false });
+  for (let i = 0; i < 64; i++) f.held.push(`Ctrl+F${i}`);
+  assertEquals(await codeOf(call(cap, "register", { accelerator: "Ctrl+Z" })), "validation");
+  assertEquals(await call(cap, "unregisterAll"), null);
+  assertEquals(f.held, []);
+  // A press event without an accelerator is ignored.
+  const ctx = ctxOf();
+  await call(cap, "take", {}, ctx);
+  f.press(undefined as unknown as string);
+  assertEquals(await call(cap, "take", {}, ctx), []);
+  // A page load under the stock runtime (no shortcuts API) is a no-op.
+  await shortcutsCapability({ api: {} }).onPageLoad!();
+});
+
+// --- the app controller: remaining edges -------------------------------------------------------
+
+/** A tray that also has a dark-mode icon and fails to destroy (the OS already removed it). */
+class DarkTray extends FakeTray {
+  iconDark?: Uint8Array | null;
+  override getBounds = undefined as unknown as FakeTray["getBounds"];
+  setIconDark(png: Uint8Array | null) {
+    this.iconDark = png;
+  }
+  override destroy() {
+    throw new Error("already gone");
+  }
+}
+
+Deno.test("app: tray argument checks, dark icons, destroyTray and the tray limit", async () => {
+  const { cap } = appController();
+  for (
+    const args of [
+      { icon: "%%%" },
+      { icon: "x".repeat(1024 * 1024 + 1) },
+      { icon: PNG, tooltip: 7 },
+      { icon: PNG, tooltip: "t".repeat(257) },
+    ]
+  ) {
+    assertEquals(await codeOf(call(cap, "createTray", args)), "validation");
+  }
+  const { id } = await call(cap, "createTray", { icon: PNG, tooltip: "" }) as { id: string };
+  assertEquals(FakeTray.made.at(-1)!.tooltip, null, "an empty tooltip clears it");
+  // A tray without setIconDark ignores the dark icon.
+  await call(cap, "updateTray", { id, iconDark: PNG, icon: PNG });
+  assertEquals(await codeOf(call(cap, "updateTray", { id: 1 })), "validation");
+  assertEquals(await call(cap, "destroyTray", { id }), null);
+  assert(FakeTray.made.at(-1)!.destroyed);
+  for (let i = 0; i < 8; i++) await call(cap, "createTray", { icon: PNG });
+  assertEquals(await codeOf(call(cap, "createTray", { icon: PNG })), "validation");
+});
+
+Deno.test("app: a dark-icon tray takes and clears its dark icon; a failing destroy does not stop a page load", async () => {
+  const dock = new FakeDock();
+  const ctl = createAppController({
+    window: undefined,
+    emit: () => {},
+    Tray: DarkTray,
+    dock,
+    os: "darwin",
+  });
+  const cap = ctl.capability;
+  const { id } = await call(cap, "createTray", { icon: PNG, iconDark: PNG }) as { id: string };
+  const tray = FakeTray.made.at(-1) as DarkTray;
+  assert(tray.iconDark && tray.iconDark.length > 0);
+  await call(cap, "updateTray", { id, iconDark: null, menu: [{ id: "m", label: "M" }] });
+  assertEquals(tray.iconDark, null);
+  assertEquals(await call(cap, "trayBounds", { id }), null, "no bounds API → null");
+  // A menu click with no id, or one the menu does not have, is not queued.
+  tray.dispatchEvent(new CustomEvent("menuclick", { detail: null }));
+  click(tray, "other");
+  assertEquals(await call(cap, "take"), []);
+  await cap.onPageLoad!();
+  assertEquals(await codeOf(call(cap, "trayBounds", { id })), "validation", "trays were dropped");
+});
+
+Deno.test("app: no window, dock or api — capabilities fall back and dock calls are unsupported", async () => {
+  const cap =
+    createAppController({ window: undefined, emit: () => {}, Tray: FakeTray, os: "linux" })
+      .capability;
+  assertEquals(await call(cap, "capabilities"), {
+    appMenu: false,
+    accelerators: false,
+    icons: false,
+    tooltips: false,
+    tray: true,
+    badge: false,
+    bounce: false,
+    dockMenu: false,
+  });
+  assertEquals(await codeOf(call(cap, "setBadge", { text: "1" })), "unsupported");
+  assertEquals(await codeOf(call(cap, "bounce", null)), "unsupported");
+  assertEquals(await call(cap, "setDockMenu", { menu: [] }), { applied: false });
+});
+
+Deno.test("app: badge text is checked; an empty dock menu clears it; install is idempotent", async () => {
+  const { ctl, cap, win, dock, emitted } = appController();
+  assertEquals(await codeOf(call(cap, "setBadge", { text: 3 })), "validation");
+  await call(cap, "setBadge", null);
+  assertEquals(dock.badge, "", "no arguments clears the badge");
+  await call(cap, "bounce", null);
+  assertEquals(dock.bounces, [false]);
+  await call(cap, "setDockMenu", { menu: [{ id: "a", label: "A" }] });
+  assertEquals(await call(cap, "setDockMenu", { menu: [] }), { applied: true });
+  assertEquals(dock.menu, null);
+  click(dock, "a");
+  dock.dispatchEvent(new CustomEvent("menuclick", { detail: {} }));
+  assertEquals(await call(cap, "take"), [], "the cleared dock menu's ids are gone");
+  // A second install adds no second listener: one click, one action.
+  ctl.install();
+  await call(cap, "setAppMenu", { menu: [{ id: "n", label: "N" }] });
+  win.dispatchEvent(new CustomEvent("menuclick", { detail: undefined }));
+  click(win, "n");
+  assertEquals(await call(cap, "take"), [{ source: "menu", id: "n" }]);
+  assertEquals(emitted, ["app:action"]);
+});
+
+Deno.test("app: the runtime's Deno.Tray and Deno.dock are used when none is injected", async () => {
+  const dock = new FakeDock();
+  await withDenoProps({ Tray: FakeTray, dock }, async () => {
+    const cap = createAppController({ window: undefined, emit: () => {} }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, boolean>;
+    assertEquals([caps.tray, caps.badge, caps.dockMenu], [true, true, Deno.build.os === "darwin"]);
+    await call(cap, "setBadge", { text: "9" });
+    assertEquals(dock.badge, "9");
+  });
+  // A non-object Deno.dock / non-constructor Deno.Tray is ignored.
+  await withDenoProps({ Tray: "nope", dock: null }, async () => {
+    const cap = createAppController({ window: undefined, emit: () => {} }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, boolean>;
+    assertEquals([caps.tray, caps.badge], [false, false]);
+  });
 });

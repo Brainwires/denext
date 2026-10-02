@@ -4,7 +4,7 @@
 // non-memory (TCP) response, or a loopback-world page. Plus the bundler (a classic IIFE with
 // dynamic imports inlined) and the inline-safety escaping.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { createDesktopHandler, injectDesktopGlobal } from "../src/build/desktop.ts";
 import { createDesktopBridge } from "../src/desktop/bridge.ts";
@@ -135,6 +135,8 @@ Deno.test("readDesktopPreload: missing → undefined; present → inline-safe te
     assertEquals(await readDesktopPreload(join(dir, "nope.js")), undefined);
     await Deno.writeTextFile(join(dir, "p.js"), 'x("</script>")');
     assertEquals(await readDesktopPreload(join(dir, "p.js")), 'x("<\\/script>")');
+    // Any other read failure (here: the path is a directory) is not "no preload": it surfaces.
+    await assertRejects(() => readDesktopPreload(dir));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

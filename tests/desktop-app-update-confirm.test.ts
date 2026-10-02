@@ -163,3 +163,37 @@ Deno.test("resolveDesktopCapabilities: desktop.update.autoConfirm (default on)",
     false,
   );
 });
+
+Deno.test("autoConfirm: the default deps read Deno.desktop.updater and log to stderr", () => {
+  const desktop = Object.getOwnPropertyDescriptor(Deno, "desktop");
+  const errors: unknown[] = [];
+  const consoleError = console.error;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  let confirms = 0;
+  const install = (updater: Record<string, () => unknown>) =>
+    Object.defineProperty(Deno, "desktop", { value: { updater }, configurable: true });
+  try {
+    // A status read that throws a non-Error is described by its string form.
+    install({
+      status: () => {
+        throw "state.json: permission denied";
+      },
+    });
+    assertEquals(appUpdateAutoConfirm(undefined), undefined);
+    assertEquals(errors, [
+      "desktop: cannot read the app update status: state.json: permission denied",
+    ]);
+
+    // A trial launch confirms through the runtime and says so.
+    install({ status: () => ({ trial: true }), confirm: () => ++confirms > 0 });
+    const hook = appUpdateAutoConfirm(undefined);
+    assert(hook);
+    hook();
+    assertEquals(confirms, 1);
+    assertStringIncludes(String(errors[1]), "desktop: the window loaded; confirmed");
+  } finally {
+    console.error = consoleError;
+    if (desktop) Object.defineProperty(Deno, "desktop", desktop);
+    else delete (Deno as unknown as Record<string, unknown>).desktop;
+  }
+});
