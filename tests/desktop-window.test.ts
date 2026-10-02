@@ -323,6 +323,19 @@ Deno.test("window: capabilities merge the runtime's report with closeGuard", asy
   assertEquals(caps.vibrancy, false, "unreported keys default to false");
 });
 
+Deno.test("window: dipGeometry is reported by a runtime with Deno.desktop.shortcuts (denext.5+)", async () => {
+  const legacy = await setup().call("capabilities") as Record<string, boolean>;
+  // Only WebView2 hosts before denext.5 placed windows in physical pixels.
+  assertEquals(legacy.dipGeometry, Deno.build.os !== "windows");
+  const current = await setup({ api: { ...fakeApi(), shortcuts: {} } }).call(
+    "capabilities",
+  ) as Record<
+    string,
+    boolean
+  >;
+  assertEquals(current.dipGeometry, true);
+});
+
 Deno.test("window: state and display events are emitted as signals", () => {
   const api = fakeApi();
   const { win, emitted, ctl } = setup({ api });

@@ -287,6 +287,10 @@ function capabilitiesOf(
     ...(reported ?? {}),
     // denext's own: a guarded close needs the pinned runtime's cancelable `close` event.
     closeGuard: typeof api?.quit === "function",
+    // Since 2.9.7-denext.5 (the first runtime with `Deno.desktop.shortcuts`) every backend sizes and
+    // places windows in device-independent pixels; WebView2 used physical pixels before.
+    dipGeometry: typeof api?.shortcuts === "object" ||
+      Deno.build.os !== "windows",
   };
 }
 

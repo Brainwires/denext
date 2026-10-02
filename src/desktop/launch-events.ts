@@ -110,6 +110,8 @@ export interface DesktopAppApi {
   readonly launchUrls?: readonly string[];
   /** The files the app was launched with (taken on first read). */
   readonly launchFiles?: readonly string[];
+  /** Global shortcuts (runtime 2.9.7-denext.5 and later); its presence marks that runtime. */
+  readonly shortcuts?: object;
   /** `openurl` / `openfile` / `secondinstance`. */
   addEventListener?(type: string, listener: (event: Event) => void): void;
   /** Who handles one of the app's declared schemes. */

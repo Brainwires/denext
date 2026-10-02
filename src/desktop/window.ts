@@ -132,6 +132,8 @@ export interface WindowCapabilities {
   readonly fileDialogs: boolean;
   /** {@linkcode onCloseRequested} can keep the window open. */
   readonly closeGuard: boolean;
+  /** Window sizes and positions are CSS (device-independent) pixels on this backend. */
+  readonly dipGeometry: boolean;
   /** Any other key the runtime reports. */
   readonly [key: string]: boolean;
 }
@@ -649,8 +651,12 @@ function engineHasDragRegions(): boolean {
   return ua.includes("Chrome/") && !ua.includes("Edg/");
 }
 
-/** Screen-position units per CSS pixel: WebView2 moves windows in physical pixels. */
-function positionScale(): number {
+/**
+ * Screen-position units per CSS pixel. A runtime that reports `dipGeometry` (denext's pinned runtime
+ * since 2.9.7-denext.5) moves windows in CSS pixels on every backend; older WebView2 hosts moved
+ * them in physical pixels.
+ */
+function legacyPositionScale(): number {
   const g = globalThis as { navigator?: { userAgent?: string }; devicePixelRatio?: number };
   return (g.navigator?.userAgent ?? "").includes("Edg/") ? g.devicePixelRatio ?? 1 : 1;
 }
@@ -675,7 +681,12 @@ export function makeWindowDraggable(element: DraggableElement): () => void {
     element.style.removeProperty("app-region");
   };
   if (engineHasDragRegions() || !hasDesktopBridge()) return restoreCss;
-  const scale = positionScale();
+  let scale = legacyPositionScale();
+  if (scale !== 1) {
+    windowCapabilities().then((caps) => {
+      if (caps.dipGeometry) scale = 1;
+    }, () => {});
+  }
   let drag: { id: number; sx: number; sy: number; origin?: WindowBounds } | undefined;
   let inFlight = false;
   let next: [number, number] | undefined;
