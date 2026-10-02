@@ -410,10 +410,22 @@ export async function walkBundle(root: string): Promise<BundleEntry[]> {
 // Windows: the .msi (WiX 5)
 // ---------------------------------------------------------------------------------------------
 
-/** XML-escape an attribute value. */
+/**
+ * XML-escape an attribute value, and escape WiX's own substitutions in it: the preprocessor's
+ * `$(var.X)` / `$(env.X)` / `$(sys.X)` and the binder's `!(loc.X)` / `!(bind.X)` are recognized
+ * anywhere in the source, so a literal `$(` / `!(` is doubled (`$$(` / `!!(`).
+ */
 function xml(s: string): string {
-  return s.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return s.replaceAll("$(", "$$$$(").replaceAll("!(", "!!(").replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/**
+ * {@linkcode xml} for a value Windows Installer reads as Formatted (a registry key or value),
+ * where `[Property]` expands: each literal bracket becomes the `[\[]` / `[\]]` escape.
+ */
+function xmlFormatted(s: string): string {
+  return xml(s.replace(/[[\]]/g, (c) => `[\\${c}]`));
 }
 
 /** What {@linkcode wixSource} authors. */
@@ -455,14 +467,24 @@ function wixTree(o: WixSourceOptions, ids: Map<string, string>): string {
   return render("", "        ");
 }
 
+/**
+ * The `shell\open\command` of a deep-link scheme. The `--` ends option parsing before the URL:
+ * Windows splices the URL into `%1` verbatim, so a URL carrying a `"` could otherwise close the
+ * quoted argument and smuggle switches (`--runtime`, Chromium flags) onto the command line (the
+ * Electron CVE-2018-1000006 class). Everything after `--` is a positional.
+ */
+const WIX_SCHEME_COMMAND = `"[#MainExe]" -- "%1"`;
+
 /** One deep-link scheme's registry component (`HKMU`: HKCU per-user, HKLM per-machine). */
 function wixScheme(scheme: string, i: number, identifier: string): string {
-  const cmd = xml(`"[#MainExe]" "%1"`);
+  const cmd = xml(WIX_SCHEME_COMMAND);
   return `      <Component Id="Scheme${i}" Directory="INSTALLFOLDER">
         <RegistryKey Root="HKMU" Key="Software\\Classes\\${scheme}" ForceDeleteOnUninstall="yes">
           <RegistryValue Type="string" Value="URL:${scheme}" KeyPath="yes" />
           <RegistryValue Name="URL Protocol" Type="string" Value="" />
-          <RegistryValue Name="DenoDesktopAppId" Type="string" Value="${xml(identifier)}" />
+          <RegistryValue Name="DenoDesktopAppId" Type="string" Value="${
+    xmlFormatted(identifier)
+  }" />
           <RegistryKey Key="DefaultIcon">
             <RegistryValue Type="string" Value="${xml(`"[#MainExe]",0`)}" />
           </RegistryKey>
@@ -522,8 +544,8 @@ ${wixTree(o, ids)}      </Directory>
         <Shortcut Id="AppShortcut" Name="${
     xml(m.name)
   }" Target="[#MainExe]" WorkingDirectory="INSTALLFOLDER"${shortcutIcon} />
-        <RegistryValue Root="HKMU" Key="Software\\${xml(m.publisher)}\\${
-    xml(m.name)
+        <RegistryValue Root="HKMU" Key="Software\\${xmlFormatted(m.publisher)}\\${
+    xmlFormatted(m.name)
   }" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
       </Component>
 ${m.deepLinks.map((s, i) => wixScheme(s, i, m.identifier)).join("")}    </Feature>
@@ -637,7 +659,10 @@ function oneLine(s: string): string {
  * The `.desktop` entry an installed package puts in `/usr/share/applications/<identifier>.desktop`:
  * `Exec` runs the `/usr/bin/<package>` link with the app id (and the single-instance lock) in the
  * environment, `StartupWMClass` matches the window's app id, and each deep-link scheme is claimed as
- * `x-scheme-handler/<scheme>` with the URL passed as `%u`.
+ * `x-scheme-handler/<scheme>` with the URL passed as `%u`. Unlike Windows' `%1`, the `%u` field
+ * code is expanded by the launcher into exactly one argv element (no shell, no re-splitting), and
+ * the value is a URL that starts with its scheme, so it can never be read as an option; it stays
+ * the last token, with no `--` that a runtime predating `--` handling would take as the URL.
  *
  * @param meta The package metadata.
  * @returns The entry text.
@@ -922,13 +947,16 @@ export async function buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<stri
  */
 export function rpmSpec(meta: DesktopPackageMeta, stage: string, owned: readonly string[]): string {
   const requires = linuxDeps(meta.backend).map(([so]) => `Requires: ${so}()(64bit)`);
+  // rpmbuild expands `%macro` / `%(shell)` / `%{lua:…}` everywhere in the spec, so every value
+  // that comes from the project carries its `%` as the literal `%%`.
+  const lit = (s: string) => s.replaceAll("%", "%%");
   return [
     `Name: ${debianPackageName(meta.name)}`,
     `Version: ${linuxPackageVersion(meta.version)}`,
     "Release: 1",
-    `Summary: ${oneLine(meta.description)}`,
-    `License: ${oneLine(meta.license ?? "Proprietary")}`,
-    `Vendor: ${oneLine(meta.publisher)}`,
+    `Summary: ${lit(oneLine(meta.description))}`,
+    `License: ${lit(oneLine(meta.license ?? "Proprietary"))}`,
+    `Vendor: ${lit(oneLine(meta.publisher))}`,
     "AutoReqProv: no",
     ...requires,
     "%global debug_package %{nil}",
@@ -936,15 +964,15 @@ export function rpmSpec(meta: DesktopPackageMeta, stage: string, owned: readonly
     "%global _build_id_links none",
     "",
     "%description",
-    oneLine(meta.description),
+    lit(oneLine(meta.description)),
     "",
     "%install",
     "mkdir -p %{buildroot}",
-    `cp -a '${stage.replaceAll("'", "'\\''")}'/. %{buildroot}/`,
+    `cp -a '${lit(stage.replaceAll("'", "'\\''"))}'/. %{buildroot}/`,
     "",
     "%files",
     "%defattr(-,root,root,-)",
-    ...owned,
+    ...owned.map(lit),
     "",
   ].join("\n");
 }

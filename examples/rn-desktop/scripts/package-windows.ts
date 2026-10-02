@@ -108,10 +108,12 @@ async function sign(file: string): Promise<void> {
     "/td",
     "sha256",
   ];
+  // signtool takes a .pfx password only as `/p` (no environment or file form), so it is
+  // redacted from the failure message; keep it out of logs by setting it as a CI secret.
   const pass = Deno.env.get("DENEXT_WINDOWS_CERT_PASSWORD");
   if (pass) args.push("/p", pass);
   args.push(file);
-  await run(["signtool", ...args]);
+  await run(["signtool", ...args], undefined, { secrets: pass ? [pass] : [] });
 }
 
 /** Build the .msi for a finished bundle with WiX; null when WiX can't run here and the .msi was

@@ -336,6 +336,20 @@ and this project adheres to
   `runDesktop`, and rn-desktop sets the `desktop.app.identifier` its `secureStore` capability
   requires.
 
+### Security
+
+- **Windows deep links can no longer smuggle command-line switches.** The `.msi`'s scheme
+  registration is now `"<app>.exe" -- "%1"`: Windows splices the URL into `%1` verbatim, so a URL
+  carrying a `"` could close the argument and append switches; after `--` it is a positional.
+  Rebuild the `.msi` (the runtime rewrites its own registration on launch). The Linux `.desktop`
+  entry keeps `%u`, which the launcher always passes as one argument.
+- **Installer metadata is literal.** Project text in the `.wxs` no longer expands WiX's
+  `$(env.X)` / `!(loc.X)` or Windows Installer's `[Property]`, and in the `.rpm` spec no longer
+  expands `%macro` / `%(shell)`.
+- **The `.pfx` password is redacted** from a failed `signtool` run's error (signtool only takes it
+  as `/p`); `desktopRun` takes `{ secrets }`. `desktopHasTool` no longer runs a shell. Refresh the
+  scripts with `denext desktop package --regenerate-scripts`.
+
 ## [3.0.2] - 2026-09-30
 
 ### Fixed

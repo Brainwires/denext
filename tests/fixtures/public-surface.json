@@ -1209,6 +1209,7 @@
     "DesktopPackageMeta:interface",
     "DesktopPermissions:interface",
     "DesktopProxyFn:typeAlias",
+    "DesktopRunOptions:interface",
     "DesktopRuntime:interface",
     "DesktopServeInfo:interface",
     "DesktopTrust:typeAlias",

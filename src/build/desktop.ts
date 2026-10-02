@@ -145,6 +145,7 @@ export {
   type DesktopPackageArgSpec,
   desktopRequireTool,
   desktopRun,
+  type DesktopRunOptions,
   desktopSlug,
   desktopToolGate,
   parseDesktopPackageArgs,

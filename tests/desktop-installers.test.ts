@@ -200,7 +200,9 @@ Deno.test("msi: the WiX source is dual-scope, upgrades in place, and registers t
   assertStringIncludes(wxs, 'Root="HKMU" Key="Software\\Classes\\myapp"');
   assertStringIncludes(wxs, 'Key="Software\\Classes\\myapp-dev"');
   assertStringIncludes(wxs, 'Name="DenoDesktopAppId" Type="string" Value="com.acme.myapp"');
-  assertStringIncludes(wxs, 'Value="&quot;[#MainExe]&quot; &quot;%1&quot;"');
+  // The URL is a positional after `--`: a `"` in it cannot turn the rest into switches.
+  assertStringIncludes(wxs, 'Value="&quot;[#MainExe]&quot; -- &quot;%1&quot;"');
+  assert(!wxs.includes("&quot;[#MainExe]&quot; &quot;%1&quot;"));
   // Every file component is in the feature.
   for (const id of ["f0", "f1", "MainExe", "f3"]) {
     assertStringIncludes(wxs, `<ComponentRef Id="c_${id}" />`);
@@ -219,6 +221,9 @@ Deno.test("linux: the .desktop entry launches with the app id and claims the sch
     entry,
     "Exec=env LAUFEY_APP_ID=com.acme.myapp LAUFEY_SINGLE_INSTANCE=1 my-app %u\n",
   );
+  // `%u` is one argv element and the last token on the line (no shell, no re-splitting).
+  const exec = entry.split("\n").find((l) => l.startsWith("Exec="))!;
+  assert(exec.endsWith(" %u") && exec.indexOf("%") === exec.length - 2);
   assertStringIncludes(entry, "StartupWMClass=com.acme.myapp\n");
   assertStringIncludes(entry, "MimeType=x-scheme-handler/myapp;x-scheme-handler/myapp-dev;\n");
   assertStringIncludes(entry, "Icon=my-app\n");
@@ -226,6 +231,42 @@ Deno.test("linux: the .desktop entry launches with the app id and claims the sch
   assertStringIncludes(plain, "Exec=env LAUFEY_APP_ID=com.acme.myapp a-b\n");
   assert(!plain.includes("MimeType"));
   assertStringIncludes(plain, "Name=A B\n");
+});
+
+Deno.test("msi: project text reaches the .wxs literal (no $(…) / !(…) / [Property] expansion)", () => {
+  const wxs = wixSource({
+    meta: {
+      ...META,
+      name: "A $(env.PATH) !(loc.X)",
+      publisher: "P [ProductName]",
+      description: "d $(var.Y)",
+    },
+    bundleDir: "C:\\b$(sys.X)",
+    exe: "a.exe",
+    upgradeCode: "{}",
+    entries: [{ path: "a.exe", kind: "file", mode: 0o755, size: 1 }],
+  });
+  // No unescaped preprocessor / binder reference survives anywhere in the source.
+  assert(!/(?<![$])\$\((env|var|sys)\./.test(wxs));
+  assert(!/(?<![!])!\(loc\./.test(wxs));
+  assertStringIncludes(wxs, 'Name="A $$(env.PATH) !!(loc.X)"');
+  assertStringIncludes(wxs, 'Description="d $$(var.Y)"');
+  // The Formatted registry key keeps the brackets literal; the launcher reference still expands.
+  assertStringIncludes(wxs, 'Key="Software\\P [\\[]ProductName[\\]]\\');
+  assertStringIncludes(wxs, 'Target="[#MainExe]"');
+});
+
+Deno.test("linux: project text reaches the rpm spec literal (no %macro expansion)", () => {
+  const spec = rpmSpec(
+    { ...META, description: "d %(id)", publisher: "p %{lua:x}", license: "L%" },
+    "/tmp/%s",
+    ["/usr/lib/%x"],
+  );
+  assertStringIncludes(spec, "Summary: d %%(id)\n");
+  assertStringIncludes(spec, "Vendor: p %%{lua:x}\n");
+  assertStringIncludes(spec, "License: L%%\n");
+  assertStringIncludes(spec, "cp -a '/tmp/%%s'/. %{buildroot}/\n");
+  assertStringIncludes(spec, "\n/usr/lib/%%x\n");
 });
 
 Deno.test("linux: control and spec carry the version, arch, deps and owned paths", () => {
@@ -473,6 +514,33 @@ Deno.test("tool gate: a default format is skipped, an asked-for one fails", asyn
     await desktopRequireTool(Deno.build.os === "windows" ? "cmd" : "sh", ".x", true),
     true,
   );
+  // The name is never shell text: anything but a plain command name is not found.
+  for (
+    const name of ["sh; true", "sh && true", "$(true)", "`true`", "./sh", "/bin/sh", "a b", ""]
+  ) {
+    assertEquals(await desktopHasTool(name), false, name);
+  }
+});
+
+Deno.test("tool probe: an executable on PATH is found without a shell, a plain file is not", async () => {
+  if (Deno.build.os === "windows") return;
+  const dir = await Deno.makeTempDir();
+  const prev = Deno.env.get("PATH");
+  try {
+    await Deno.writeTextFile(join(dir, "denext-fake-tool"), "#!/bin/sh\n");
+    await Deno.chmod(join(dir, "denext-fake-tool"), 0o755);
+    await Deno.writeTextFile(join(dir, "denext-not-exec"), "x");
+    await Deno.mkdir(join(dir, "denext-a-dir"));
+    Deno.env.set("PATH", `:${dir}`);
+    assertEquals(await desktopHasTool("denext-fake-tool"), true);
+    assertEquals(await desktopHasTool("denext-not-exec"), false);
+    assertEquals(await desktopHasTool("denext-a-dir"), false);
+    assertEquals(await desktopHasTool("denext-missing"), false);
+  } finally {
+    if (prev === undefined) Deno.env.delete("PATH");
+    else Deno.env.set("PATH", prev);
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("prepare: the plan, the app.json sync and the metadata of a project", async () => {
@@ -544,6 +612,17 @@ Deno.test("script helpers: the app name, its slug, and a failing command", async
     else Deno.env.set("DENEXT_APP_NAME", prev);
   }
   await assertRejects(() => desktopRun([Deno.execPath(), "eval", "Deno.exit(3)"]), Error, "(3)");
+  // A secret on the command line never reaches the failure message.
+  const err = await assertRejects(
+    () =>
+      desktopRun([Deno.execPath(), "eval", "Deno.exit(4)", "/p", "hunter2-pfx"], undefined, {
+        secrets: ["hunter2-pfx", ""],
+      }),
+    Error,
+    "(4)",
+  );
+  assert(!err.message.includes("hunter2-pfx"));
+  assertStringIncludes(err.message, "/p ***");
 });
 
 Deno.test('script app name: DENEXT_APP_NAME, else deno.json desktop.app.name, else "app"', async () => {

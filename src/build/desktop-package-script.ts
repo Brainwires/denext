@@ -109,19 +109,28 @@ export function desktopPackageArches(arch: string): Array<"x86_64" | "arm64"> {
 }
 
 /**
- * Whether a command is on PATH (`where` on Windows, `command -v` elsewhere).
+ * Whether a command is on PATH. No shell is involved: on Windows `where.exe` is run with the name
+ * as one argument; elsewhere each `PATH` directory is checked for an executable file of that name.
+ * A name that is not a plain command (a path separator, whitespace, a shell or wildcard character)
+ * is never found.
  *
  * @param cmd The command.
  * @returns Whether it resolves.
  */
 export async function desktopHasTool(cmd: string): Promise<boolean> {
-  const windows = Deno.build.os === "windows";
-  const probe = new Deno.Command(windows ? "cmd" : "sh", {
-    args: windows ? ["/c", "where", cmd] : ["-c", `command -v ${cmd}`],
-    stdout: "null",
-    stderr: "null",
-  });
-  return await probe.output().then((r) => r.code === 0, () => false);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(cmd)) return false;
+  if (Deno.build.os === "windows") {
+    const probe = new Deno.Command("where.exe", { args: [cmd], stdout: "null", stderr: "null" });
+    return await probe.output().then((r) => r.code === 0, () => false);
+  }
+  for (const dir of (Deno.env.get("PATH") ?? "").split(":")) {
+    if (!dir) continue;
+    try {
+      const st = await Deno.stat(`${dir}/${cmd}`);
+      if (st.isFile && st.mode !== null && (st.mode & 0o111) !== 0) return true;
+    } catch { /* not in this directory */ }
+  }
+  return false;
 }
 
 /**
@@ -196,13 +205,28 @@ export async function prepareDesktopPackage(
   return { name: desktopSlug(appName), plan, meta };
 }
 
+/** Options for {@linkcode desktopRun}. */
+export interface DesktopRunOptions {
+  /**
+   * Values that must never appear in the failure message (a certificate password a tool only
+   * takes on its command line): each is shown as `***`.
+   */
+  readonly secrets?: readonly string[];
+}
+
 /**
- * Run a command with inherited stdio; throws on a non-zero exit.
+ * Run a command with inherited stdio; throws on a non-zero exit. The error names the command
+ * line with every {@linkcode DesktopRunOptions.secrets} value redacted.
  *
  * @param cmd The command and its arguments.
  * @param env Extra environment variables.
+ * @param options Redaction.
  */
-export async function desktopRun(cmd: string[], env?: Record<string, string>): Promise<void> {
+export async function desktopRun(
+  cmd: string[],
+  env?: Record<string, string>,
+  options: DesktopRunOptions = {},
+): Promise<void> {
   const p = new Deno.Command(cmd[0], {
     args: cmd.slice(1),
     env,
@@ -210,7 +234,10 @@ export async function desktopRun(cmd: string[], env?: Record<string, string>): P
     stderr: "inherit",
   });
   const { code } = await p.output();
-  if (code !== 0) throw new Error(`command failed (${code}): ${cmd.join(" ")}`);
+  if (code === 0) return;
+  const secrets = (options.secrets ?? []).filter((s) => s.length > 0);
+  const shown = cmd.map((a) => secrets.reduce((t, s) => t.replaceAll(s, "***"), a));
+  throw new Error(`command failed (${code}): ${shown.join(" ")}`);
 }
 
 /**
