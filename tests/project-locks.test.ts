@@ -319,6 +319,84 @@ Deno.test("re-entrant in one process; never upgraded; never out of rank order", 
   }
 });
 
+/** Replace one `Deno.FsFile` method for the length of `fn` (the lock's OS calls). */
+async function withFsFile<K extends "tryLock" | "unlockSync">(
+  method: K,
+  impl: Deno.FsFile[K],
+  fn: () => Promise<void>,
+): Promise<void> {
+  const proto = Deno.FsFile.prototype;
+  const original = proto[method];
+  proto[method] = impl;
+  try {
+    await fn();
+  } finally {
+    proto[method] = original;
+  }
+}
+
+Deno.test("a filesystem that cannot lock proceeds unlocked (Cargo's rule)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const opts = { mode: "exclusive", description: "x", rank: 1 } as const;
+    // Deno's NotSupported, and the errno names / wording a network mount answers with.
+    for (
+      const err of [
+        new Deno.errors.NotSupported("lock"),
+        new Error("ENOLCK: No locks available"),
+        new Error("Operation not supported (os error 45)"),
+      ]
+    ) {
+      await withFsFile("tryLock", () => Promise.reject(err), async () => {
+        const lock = await acquireFileLock(join(dir, "nfs.lock"), opts);
+        assertEquals(lock.mode, "exclusive");
+        lock.release(); // nothing to unlock: the file was closed when locking failed
+        lock.release(); // and a second release is a no-op
+      });
+    }
+    // The lock is free again afterwards: a real acquire succeeds.
+    (await acquireFileLock(join(dir, "nfs.lock"), opts)).release();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a lock error fails every waiter on that file and leaves nothing held", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const path = join(dir, "eio.lock");
+    const opts = { mode: "shared", description: "x", rank: 1 } as const;
+    await withFsFile("tryLock", () => Promise.reject(new Error("EIO: i/o error")), async () => {
+      // A second acquire of the same file while the first is still locking joins it (a
+      // refcount) — and so shares its failure.
+      const first = acquireFileLock(path, opts);
+      const second = acquireFileLock(path, opts);
+      await assertRejects(() => first, Error, "EIO");
+      await assertRejects(() => second, Error, "EIO");
+    });
+    // Nothing stayed in the held table: an exclusive acquire is not refused as an "upgrade".
+    (await acquireFileLock(path, { ...opts, mode: "exclusive" })).release();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("release never throws when the OS lock is already gone", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const opts = { mode: "exclusive", description: "x", rank: 1 } as const;
+    await withFsFile("unlockSync", () => {
+      throw new Deno.errors.BadResource("gone");
+    }, async () => {
+      const lock = await acquireFileLock(join(dir, "gone.lock"), opts);
+      lock.release(); // the unlock throws; closing the file releases the lock anyway
+    });
+    (await acquireFileLock(join(dir, "gone.lock"), opts)).release();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("the plan: rank order, path order inside a rank, the build dir locked once", async () => {
   const dir = resolve("/proj");
   const lock = (suffix = "") => join(".denext", `${BUILD_DIR_LOCK}${suffix}`);

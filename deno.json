@@ -194,6 +194,8 @@
     "test:coverage": "deno run --allow-read --allow-write=.denext --allow-run --allow-env scripts/locked.ts coverage -- deno task test:coverage:run",
     "test:coverage:run": "rm -rf coverage/profile && deno test -A --unstable-kv --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --threshold=85 && deno coverage coverage/profile --include=/src/ --lcov --output=coverage/lcov.info && deno task coverage:floor",
     "coverage:floor": "deno run --allow-read scripts/coverage-floor.ts coverage/lcov.info",
+    "test:desktop": "deno test -A --unstable-kv tests/desktop-*.test.ts tests/safe-extract*.test.ts tests/cli-desktop-*.test.ts tests/notification-trigger.test.ts tests/coverage-floor.test.ts tests/project-locks.test.ts tests/install-sh.test.ts tests/react-native-core-desktop.test.ts",
+    "coverage:desktop": "rm -rf coverage/desktop && deno task test:desktop --coverage=coverage/desktop && deno coverage coverage/desktop --include=/src/ --lcov --output=coverage/desktop.lcov && deno run --allow-read scripts/coverage-floor.ts coverage/desktop.lcov",
     "coverage:fallow": "deno run --allow-read --allow-write=.denext --allow-run --allow-env scripts/locked.ts coverage -- deno task coverage:fallow:run",
     "coverage:fallow:run": "rm -rf coverage && deno test -A --unstable-kv --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --lcov --output=coverage/lcov.info && deno run --allow-read --allow-write scripts/coverage-to-istanbul.ts coverage/lcov.info coverage/coverage-final.json",
     "badge:tests": "deno run --allow-read --allow-write --allow-env=GIT_INDEX_FILE --allow-run=git scripts/badge-tests.ts",

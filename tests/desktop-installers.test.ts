@@ -442,6 +442,8 @@ Deno.test("script args: --arch / --format (both spellings), legacy flags, valida
     "--arch must be",
   );
   assertThrows(() => parseDesktopPackageArgs(["--dmg"], spec), Error, "unknown argument: --dmg");
+  // A trailing `--arch` with no value is an empty arch, refused like any other.
+  assertThrows(() => parseDesktopPackageArgs(["--arch"], spec), Error, "--arch must be");
 });
 
 Deno.test("script arches: both, host, or the one asked for", () => {
@@ -466,6 +468,11 @@ Deno.test("tool gate: a default format is skipped, an asked-for one fails", asyn
     console.warn = warn;
   }
   assertEquals(await desktopHasTool(Deno.build.os === "windows" ? "cmd" : "sh"), true);
+  // A tool that is there passes the gate without a warning, asked for or not.
+  assertEquals(
+    await desktopRequireTool(Deno.build.os === "windows" ? "cmd" : "sh", ".x", true),
+    true,
+  );
 });
 
 Deno.test("prepare: the plan, the app.json sync and the metadata of a project", async () => {
@@ -537,4 +544,28 @@ Deno.test("script helpers: the app name, its slug, and a failing command", async
     else Deno.env.set("DENEXT_APP_NAME", prev);
   }
   await assertRejects(() => desktopRun([Deno.execPath(), "eval", "Deno.exit(3)"]), Error, "(3)");
+});
+
+Deno.test('script app name: DENEXT_APP_NAME, else deno.json desktop.app.name, else "app"', async () => {
+  const dir = await Deno.makeTempDir();
+  const cwd = Deno.cwd();
+  const prev = Deno.env.get("DENEXT_APP_NAME");
+  Deno.env.delete("DENEXT_APP_NAME");
+  try {
+    Deno.chdir(dir);
+    assertEquals(await desktopAppName(), "app"); // no deno.json
+    await Deno.writeTextFile("deno.json", "{ not json");
+    assertEquals(await desktopAppName(), "app"); // an unreadable one
+    await Deno.writeTextFile("deno.json", JSON.stringify({ desktop: { app: { name: "   " } } }));
+    assertEquals(await desktopAppName(), "app"); // a blank name
+    await Deno.writeTextFile(
+      "deno.json",
+      JSON.stringify({ desktop: { app: { name: "  Named App " } } }),
+    );
+    assertEquals(await desktopAppName(), "Named App");
+  } finally {
+    Deno.chdir(cwd);
+    if (prev !== undefined) Deno.env.set("DENEXT_APP_NAME", prev);
+    await Deno.remove(dir, { recursive: true });
+  }
 });

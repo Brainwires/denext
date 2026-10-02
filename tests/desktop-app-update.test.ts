@@ -125,6 +125,23 @@ Deno.test("archive: a single file (an AppImage) is its own top-level entry", asy
   }
 });
 
+Deno.test("archive: a symlinked app root is refused (pass the real app)", {
+  ignore: !posix,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const app = await fakeApp(dir);
+    await Deno.symlink(app, join(dir, "link.app"));
+    await assertRejects(
+      () => writeAppUpdateArchive(join(dir, "link.app"), join(dir, "a.tar.gz")),
+      Error,
+      "is a symlink; pass the real app",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("manifest: signed envelope verifies; tampering, a wrong key and a bare manifest do not", async () => {
   const { key, publicKey } = await keys();
   const env = await signAppUpdatePayload(payload(), key);
@@ -202,6 +219,31 @@ Deno.test("manifest: publishing refuses what every installed app would refuse", 
     ],
     ["platforms", payload({ platforms: {} })],
   ];
+  const entry = (over: Partial<AppUpdatePayload["platforms"][string]>) =>
+    payload({
+      platforms: {
+        "aarch64-apple-darwin-webview": {
+          ...payload().platforms["aarch64-apple-darwin-webview"],
+          ...over,
+        },
+      },
+    });
+  // Each refusal names its problem (the message the publisher sees).
+  const named: [string, AppUpdatePayload][] = [
+    ["schema must be 1", payload({ schema: 2 as 1 })],
+    ["app (the identifier) is required", payload({ app: "" })],
+    ["minVersion 1.0 is not a semver", payload({ minVersion: "1.0" })],
+    ["publishedAt is required", payload({ publishedAt: "" })],
+    ["publishedAt is required", payload({ publishedAt: "x".repeat(65) })],
+    ['kind must be "bundle"', entry({ kind: "delta" as "bundle" })],
+    ["bad size", entry({ size: 0 })],
+    ["bad size", entry({ size: 1.5 })],
+    ["the archive url must be https", entry({ url: "http://x/a" })],
+    ["no credentials in the url", entry({ url: "https://u:p@x.example/a.tar.gz" })],
+  ];
+  for (const [message, p] of named) {
+    assertThrows(() => validateAppUpdatePayload(p), Error, message);
+  }
   for (const [what, p] of bad) {
     assertThrows(() => validateAppUpdatePayload(p), Error, undefined, what);
   }
@@ -225,6 +267,17 @@ Deno.test("platform keys and versions follow the runtime's rules", async () => {
     assertEquals(
       await appUpdatePlatformKey(app, "aarch64-apple-darwin"),
       "aarch64-apple-darwin-cef",
+    );
+    // An explicit backend skips detection; an AppImage gets its own key; an unknown target is
+    // refused before anything is packed.
+    assertEquals(
+      await appUpdatePlatformKey(join(dir, "My.AppImage"), "x86_64-unknown-linux-gnu", "cef"),
+      "x86_64-unknown-linux-gnu-cef-appimage",
+    );
+    await assertRejects(
+      () => appUpdatePlatformKey(app, "sparc-sun-solaris", "webview"),
+      Error,
+      "unsupported platform sparc-sun-solaris-webview",
     );
   } finally {
     await Deno.remove(dir, { recursive: true });

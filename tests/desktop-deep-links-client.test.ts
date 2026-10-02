@@ -7,7 +7,10 @@
 // AbortSignal cancels the runtime session.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { onDeepLink, onOpenFile, openAuthSession } from "../src/mobile/mod.ts";
+import { onDeepLink, onOpenFile, openAuthSession, useOpenFile } from "../src/mobile/mod.ts";
+import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
+import { h } from "../src/jsx/jsx-runtime.ts";
+import { makeDom } from "./helpers/dom.ts";
 import { resetDeepLinksForTesting } from "../src/mobile/deep-link.ts";
 import { resetOpenFilesForTesting } from "../src/mobile/open-file.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
@@ -111,6 +114,88 @@ Deno.test("desktop onOpenFile: opened files arrive as read-only handles, once", 
     rt.emit("openFiles", "available", null);
     await until(() => seen.length === 2);
     stop();
+  });
+});
+
+Deno.test("desktop onOpenFile: a file taken as the last subscriber leaves goes to the next one", async () => {
+  // The runtime empties its queue on take, so a take still in flight when the page unsubscribes
+  // must not lose the file: it is kept for the next subscriber.
+  let answer: (files: unknown[]) => void = () => {};
+  let takes = 0;
+  const take = () => {
+    takes++;
+    return new Promise<unknown[]>((r) => (answer = r));
+  };
+  await inDesktop({ openFiles: { take } }, async () => {
+    const first: unknown[] = [];
+    const stop = onOpenFile((f) => first.push(f));
+    await until(() => takes === 1);
+    stop();
+    answer([{ handle: "h1", name: "a.txt", path: "/x/a.txt", launch: true }]);
+    await new Promise((r) => setTimeout(r, 10));
+    assertEquals(first, []);
+    const next: unknown[] = [];
+    const stop2 = onOpenFile((f) => next.push(f));
+    await until(() => next.length === 1);
+    assertEquals(next[0], { handle: "h1", name: "a.txt", path: "/x/a.txt", launch: true });
+    answer([]);
+    stop2();
+  });
+});
+
+Deno.test("onOpenFile off Deno Desktop (the web, a phone): subscribing is a no-op", async () => {
+  const seen: unknown[] = [];
+  const stop = onOpenFile((f) => seen.push(f));
+  await new Promise((r) => setTimeout(r, 10));
+  assertEquals(seen, []);
+  stop();
+  resetOpenFilesForTesting();
+});
+
+Deno.test("desktop onOpenFile: unsubscribing at once never takes the queue", async () => {
+  let takes = 0;
+  await inDesktop({ openFiles: { take: () => (takes++, []) } }, async (rt) => {
+    const stop = onOpenFile(() => {});
+    stop(); // before the runtime client module has loaded: nothing attaches
+    await new Promise((r) => setTimeout(r, 20));
+    rt.emit("openFiles", "available", null);
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(takes, 0);
+  });
+});
+
+Deno.test("desktop useOpenFile: subscribes on mount, calls the latest callback, unsubscribes on unmount", async () => {
+  const queue = [{ handle: "h1", name: "a.txt", path: "/x/a.txt", launch: true }];
+  await inDesktop({ openFiles: { take: () => queue.splice(0) } }, async (rt) => {
+    const got: string[] = [];
+    const { doc, container } = makeDom();
+    // deno-lint-ignore no-explicit-any
+    setDocument(doc as any);
+    let label = "first";
+    function Probe() {
+      const tag = label;
+      useOpenFile((f) => got.push(`${tag} ${f.name}`));
+      return null;
+    }
+    // deno-lint-ignore no-explicit-any
+    const root = createRoot(container as any);
+    root.render(h(Probe as never, {}));
+    flushSync();
+    await until(() => got.length === 1);
+    // A re-render with a new closure does not re-subscribe; the next file reaches the new one.
+    label = "second";
+    root.render(h(Probe as never, { n: 2 })); // new props: a real re-render
+    flushSync();
+    queue.push({ handle: "h2", name: "b.txt", path: "/x/b.txt", launch: false });
+    rt.emit("openFiles", "available", null);
+    await until(() => got.length === 2);
+    assertEquals(got, ["first a.txt", "second b.txt"]);
+    root.unmount();
+    flushSync();
+    queue.push({ handle: "h3", name: "c.txt", path: "/x/c.txt", launch: false });
+    rt.emit("openFiles", "available", null);
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(got.length, 2);
   });
 });
 

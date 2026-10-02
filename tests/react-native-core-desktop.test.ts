@@ -352,6 +352,67 @@ Deno.test("Flyout / Popup: open against the target at the placement; light dismi
   popup.root.unmount();
 });
 
+Deno.test("Flyout: full placement fills the window; no target centres; overlay dims; unknown placement is top", () => {
+  const Flyout = createFlyout(fakeModal as Any, fakeView as Any);
+  const contentStyle = (props: Any) => {
+    const { container, root } = mount(() => h(Flyout as Any, { isOpen: true, ...props }, "x"));
+    const [backdrop, content] = (container.firstChild as Any).childNodes;
+    const out = {
+      backdrop: JSON.parse(backdrop.getAttribute("data-style")),
+      content: JSON.parse(content.getAttribute("data-style")),
+    };
+    root.unmount();
+    return out;
+  };
+  const target = {
+    current: {
+      getBoundingClientRect: () => ({
+        left: 100,
+        top: 200,
+        right: 140,
+        bottom: 220,
+        width: 40,
+        height: 20,
+      }),
+    },
+  };
+  // "full" ignores the target and the offsets.
+  assertEquals(contentStyle({ placement: "full", target, horizontalOffset: 9 }).content, {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  });
+  // No target (or one that cannot be measured): centred in the window, offsets as margins.
+  for (const t of [undefined, { current: null }, {}]) {
+    const c = contentStyle({ target: t, horizontalOffset: 3, verticalOffset: -2 }).content;
+    assertEquals([c.left, c.top, c.marginLeft, c.marginTop], ["50%", "50%", 3, -2]);
+    assertEquals(c.transform, [{ translateX: "-50%" }, { translateY: "-50%" }]);
+  }
+  // A ref target is measured; an unknown placement falls back to "top" (above, centred).
+  const top = contentStyle({ target, placement: "diagonal" }).content;
+  assertEquals([top.left, top.top], [120, 200]);
+  assertEquals(top.transform, [{ translateX: "-50%" }, { translateY: "-100%" }]);
+  // isOverlayEnabled dims the backdrop; without it the backdrop is clear.
+  assertEquals(
+    contentStyle({ isOverlayEnabled: true }).backdrop.backgroundColor,
+    "rgba(0,0,0,0.3)",
+  );
+  assertEquals(contentStyle({}).backdrop.backgroundColor, undefined);
+});
+
+Deno.test("Glyph without a font or size is plain text in the inherited font", () => {
+  const Glyph = createGlyph(fakeView as Any);
+  for (const fontUri of [undefined, "ms-appx:///Fonts/icons.ttf"]) {
+    const { container, root } = mount(() => h(Glyph as Any, { glyph: "A", fontUri }));
+    const el = container.firstChild as Any;
+    assertEquals(el.textContent, "A");
+    assertEquals(JSON.parse(el.getAttribute("data-style")), {});
+    root.unmount();
+  }
+});
+
 Deno.test("Glyph, AppTheme, supportKeyboard, EventPhase", async () => {
   const Glyph = createGlyph(fakeView as Any);
   const { container, root } = mount(() =>

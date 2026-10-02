@@ -12,7 +12,16 @@ import { join, relative, resolve } from "@std/path";
 /** The source trees held to the per-file floor (relative to the project root). */
 export const FLOORED: readonly { dir: string; match: RegExp }[] = [
   { dir: "src/desktop", match: /\.ts$/ }, // recursive (caps/ included)
-  { dir: "src/build", match: /^desktop[^/]*\.ts$/ }, // top level only: no "/" in the match
+  // top level only (no "/" in the match): the desktop build/package code, the full-app update
+  // format, the archive extractor it unpacks with, and the project/file locks
+  {
+    dir: "src/build",
+    match: /^(desktop[^/]*|app-update|safe-extract|file-lock|project-locks)\.ts$/,
+  },
+  { dir: "src/cli/commands", match: /^desktop[^/]*\.ts$/ }, // the `denext desktop` verbs
+  // the desktop paths of the shared mobile/desktop client modules
+  { dir: "src/mobile", match: /^(desktop-queue|open-file|notification-trigger)\.ts$/ },
+  { dir: "src/react-native", match: /^desktop\.ts$/ }, // React Native's desktop runtime
 ];
 
 /** One file's totals from an lcov record. */
@@ -60,9 +69,15 @@ export function pct([hit, found]: [number, number]): number {
   return found === 0 ? 100 : (hit / found) * 100;
 }
 
-/** Every file under `dir` (recursively), as absolute paths. */
+/** Every file under `dir` (recursively), as absolute paths; none when `dir` does not exist. */
 async function walk(dir: string): Promise<string[]> {
   const out: string[] = [];
+  try {
+    await Deno.stat(dir);
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) return out;
+    throw e;
+  }
   for await (const e of Deno.readDir(dir)) {
     const p = join(dir, e.name);
     if (e.isDirectory) out.push(...await walk(p));

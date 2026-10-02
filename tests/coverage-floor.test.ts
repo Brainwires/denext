@@ -65,7 +65,7 @@ Deno.test("checkFloor: each metric is held to the floor; an unloaded file fails"
   assertEquals(checkFloor(["src/desktop/a.ts"], lcov, ROOT, 30)[0].failures, []);
 });
 
-Deno.test("flooredFiles: src/desktop recursively, and only src/build/desktop*.ts", async () => {
+Deno.test("flooredFiles: src/desktop recursively, plus the named desktop files elsewhere", async () => {
   const root = await Deno.makeTempDir();
   try {
     for (
@@ -78,16 +78,40 @@ Deno.test("flooredFiles: src/desktop recursively, and only src/build/desktop*.ts
         "src/build/desktop-runtime-pin.json",
         "src/build/export.ts",
         "src/build/nested/desktop-x.ts",
+        "src/build/app-update.ts",
+        "src/build/safe-extract.ts",
+        "src/build/file-lock.ts",
+        "src/build/project-locks.ts",
+        "src/build/app-update-extra.ts",
+        "src/cli/commands/desktop.ts",
+        "src/cli/commands/desktop-add.ts",
+        "src/cli/commands/dev.ts",
+        "src/mobile/desktop-queue.ts",
+        "src/mobile/open-file.ts",
+        "src/mobile/notification-trigger.ts",
+        "src/mobile/haptics.ts",
+        "src/react-native/desktop.ts",
+        "src/react-native/web.ts",
       ]
     ) {
       await Deno.mkdir(join(root, f, ".."), { recursive: true });
       await Deno.writeTextFile(join(root, f), "");
     }
     assertEquals(await flooredFiles(root), [
+      "src/build/app-update.ts",
       "src/build/desktop-runtime.ts",
       "src/build/desktop.ts",
+      "src/build/file-lock.ts",
+      "src/build/project-locks.ts",
+      "src/build/safe-extract.ts",
+      "src/cli/commands/desktop-add.ts",
+      "src/cli/commands/desktop.ts",
       "src/desktop/a.ts",
       "src/desktop/caps/b.ts",
+      "src/mobile/desktop-queue.ts",
+      "src/mobile/notification-trigger.ts",
+      "src/mobile/open-file.ts",
+      "src/react-native/desktop.ts",
     ]);
   } finally {
     await Deno.remove(root, { recursive: true });
