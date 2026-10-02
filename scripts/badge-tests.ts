@@ -8,6 +8,10 @@
 // the `--check` gate behaves like `deno fmt --check`: fast and never flaky. CI's
 // actual test jobs are what prove those tests pass; this badge just reports how
 // many there are, and the freshness check keeps the number honest.
+//
+// Inside a git hook (git sets GIT_INDEX_FILE) it counts the STAGED test files, not the working
+// tree: other uncommitted work in the tree must not leak into the committed badge, or CI's
+// `--check` (which sees only the commit) fails.
 
 import { walk } from "@std/fs/walk";
 import { fromFileUrl } from "@std/path";
@@ -16,17 +20,40 @@ const REPO_ROOT = fromFileUrl(new URL("../", import.meta.url));
 const TESTS_DIR = `${REPO_ROOT}tests`;
 const BADGE_PATH = `${REPO_ROOT}.github/badges/tests.json`;
 
-/** Count `Deno.test(...)` declarations across every *.test.ts under tests/. */
-async function countTests(): Promise<number> {
-  const re = /\bDeno\.test\s*\(/g;
+const TEST_RE = /\bDeno\.test\s*\(/g;
+
+/** Run git in the repo and return stdout (throws on failure). */
+async function git(args: string[]): Promise<string> {
+  const out = await new Deno.Command("git", { args, cwd: REPO_ROOT, stdout: "piped" }).output();
+  if (!out.success) throw new Error(`git ${args.join(" ")} failed`);
+  return new TextDecoder().decode(out.stdout);
+}
+
+/** Count `Deno.test(...)` in the staged (index) copies of tests/**\/*.test.ts. */
+async function countStagedTests(): Promise<number> {
+  const files = (await git(["ls-files", "-z", "--", "tests"])).split("\0")
+    .filter((f) => f.endsWith(".test.ts"));
+  let total = 0;
+  for (const f of files) {
+    total += (await git(["show", `:${f}`])).match(TEST_RE)?.length ?? 0;
+  }
+  return total;
+}
+
+/** Count `Deno.test(...)` declarations across every *.test.ts under tests/ in the working tree. */
+async function countWorkingTreeTests(): Promise<number> {
   let total = 0;
   for await (
     const entry of walk(TESTS_DIR, { exts: [".ts"], match: [/\.test\.ts$/] })
   ) {
-    const source = await Deno.readTextFile(entry.path);
-    total += source.match(re)?.length ?? 0;
+    total += (await Deno.readTextFile(entry.path)).match(TEST_RE)?.length ?? 0;
   }
   return total;
+}
+
+/** The staged count inside a git hook, else the working-tree count. */
+function countTests(): Promise<number> {
+  return Deno.env.get("GIT_INDEX_FILE") ? countStagedTests() : countWorkingTreeTests();
 }
 
 /** The Shields.io "endpoint" badge document for a given test count. */

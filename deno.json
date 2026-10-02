@@ -196,7 +196,7 @@
     "coverage:floor": "deno run --allow-read scripts/coverage-floor.ts coverage/lcov.info",
     "coverage:fallow": "deno run --allow-read --allow-write=.denext --allow-run --allow-env scripts/locked.ts coverage -- deno task coverage:fallow:run",
     "coverage:fallow:run": "rm -rf coverage && deno test -A --unstable-kv --ignore=tests/e2e/,tests/migration-bed/ --coverage=coverage/profile && deno coverage coverage/profile --include=/src/ --lcov --output=coverage/lcov.info && deno run --allow-read --allow-write scripts/coverage-to-istanbul.ts coverage/lcov.info coverage/coverage-final.json",
-    "badge:tests": "deno run --allow-read --allow-write scripts/badge-tests.ts",
+    "badge:tests": "deno run --allow-read --allow-write --allow-env=GIT_INDEX_FILE --allow-run=git scripts/badge-tests.ts",
     "badge:fallow": "deno run --allow-read --allow-write --allow-run=fallow scripts/badge-fallow.ts",
     "lint": "deno lint",
     "fmt": "deno fmt",
