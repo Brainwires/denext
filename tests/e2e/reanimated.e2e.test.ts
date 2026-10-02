@@ -301,9 +301,32 @@ async function exercise(t: Deno.TestContext, server: RunningServer, label: strin
     );
 
     await t.step(`${label}: LayoutAnimation.configureNext animates the moved views`, async () => {
-      await page.evaluate(`${el("la-add")}.click()`);
-      await pollFor(page, `${el("la-a")} && ${el("la-b")}.getAnimations().length === 1`);
-      await pollFor(page, `${el("la-b")}.getAnimations().length === 0`, 10_000);
+      // The preset's move runs for 300 ms and pollFor samples every 100 ms plus a CDP round
+      // trip, so polling getAnimations() for it can miss the whole animation on a loaded runner.
+      // Record every animation started on the moved row instead, then wait for it to finish.
+      await page.evaluate(`(() => {
+        const started = globalThis.__laStarted = [];
+        const animate = Element.prototype.animate;
+        globalThis.__laRestore = () => { Element.prototype.animate = animate; };
+        Element.prototype.animate = function (...args) {
+          const a = animate.apply(this, args);
+          if (this.getAttribute("data-testid") === "la-b") started.push(a);
+          return a;
+        };
+      })()`);
+      try {
+        await page.evaluate(`${el("la-add")}.click()`);
+        await pollFor(page, `${el("la-a")} && globalThis.__laStarted.length > 0`, 10_000);
+        // FLIP: "a" is inserted above, so "b" moves down one 30 px row and starts drawn back
+        // at its old place (none at all: react-native-web's no-op configureNext).
+        const first = await page.evaluate(
+          "String(globalThis.__laStarted[0].effect.getKeyframes()[0].transform)",
+        ) as string;
+        assertStringIncludes(first, "translate(0px, -30px)");
+        await pollFor(page, `${el("la-b")}.getAnimations().length === 0`, 10_000);
+      } finally {
+        await page.evaluate("globalThis.__laRestore?.()");
+      }
     });
 
     await t.step(`${label}: no console errors`, () => {
