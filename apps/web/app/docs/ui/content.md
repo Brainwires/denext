@@ -611,14 +611,16 @@ its permission grants. That last point is the reason to bother — macOS keys **
 ad-hoc-signed app changes identity on every rebuild and has to be re-approved every time.
 Gatekeeper and TCC are different mechanisms: notarization (`DENEXT_NOTARY_PROFILE`) is what
 quiets Gatekeeper on someone else's Mac; a stable identity is what keeps permissions.
+`DENEXT_INSTALLER_IDENTITY` is the separate Developer ID **Installer** identity that signs the
+optional `.pkg` (`--format pkg`); an unsigned `.pkg` is rejected by MDM tools and Gatekeeper.
 
 **Windows.** `DENEXT_WINDOWS_CERT` (a `.pfx` path), `DENEXT_SIGN_TIMESTAMP_URL` and whether
 `signtool` is on `PATH`.
 
-**Linux.** Nothing to configure — packaging produces a `.tar.gz` (optionally an AppImage) and
-there is no signing step.
+**Linux.** Nothing to configure — packaging produces a `.tar.gz` and a `.deb` (an `.rpm` or an
+AppImage with `--format`) and there is no signing step.
 
-**One value this panel will never take.** Of the six variables the scripts read, exactly one is a
+**One value this panel will never take.** Of the seven variables the scripts read, exactly one is a
 true secret: `DENEXT_WINDOWS_CERT_PASSWORD`. It has **no field** here, its value is never read —
 only whether it is set, via `Deno.env.has` — and it is absent from the JSON twin as well. The
 macOS identity and notary profile are _names_: the private key and the notary credentials stay in
