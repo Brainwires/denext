@@ -46,6 +46,11 @@ export default {
       dialogs: true,
       keepAwake: true,
       clipboard: true,
+      // The OS's notifications and context menu, system-wide shortcuts and the login item.
+      notifications: true,
+      contextMenu: true,
+      globalShortcuts: true,
+      launchAtLogin: true,
       // Only https links, and the app-folder actions the test can run unattended.
       shell: {
         openExternal: ["https:"],

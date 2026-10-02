@@ -661,8 +661,8 @@ four documented bounds of the opt-in:
   scheduled notification while it runs and shows one whose time passed while it was closed at the
   next launch, and a click on a notification after the app quit does not start it. A repeating
   notification is scheduled for its next 16 occurrences and topped up whenever the app runs, so an
-  app not opened for longer stops showing it until it runs again. macOS grants the permission
-  only to a signed app. Action buttons carry a title only (no text input, destructive or
+  app not opened for longer stops showing it until it runs again. macOS asks for the permission
+  once, and only an app bundle has notifications. Action buttons carry a title only (no text input, destructive or
   authentication option), there are no channels, and a notification stores at most 4 KiB of
   `data`.
 - **Global shortcuts on Wayland need the XDG GlobalShortcuts portal.** The desktop asks the user

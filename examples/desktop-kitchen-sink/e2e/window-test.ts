@@ -26,7 +26,7 @@ const OS = Deno.build.os;
 const ARCH_LABEL = Deno.build.arch === "aarch64" ? "arm64" : "x64";
 const TIMEOUT_MS = Number(Deno.env.get("KITCHEN_SINK_TIMEOUT_MS") ?? 240_000);
 /** The page's check count (app/checks.ts); fewer means it shipped without some. */
-const MIN_CHECKS = 32;
+const MIN_CHECKS = 43;
 const OPEN_FILE_NAME = "open me.txt";
 const OPEN_FILE_TEXT = "opened by the kitchen sink window test";
 const PACKAGE_SCRIPTS: Record<string, string> = {

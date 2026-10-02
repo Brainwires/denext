@@ -7,21 +7,41 @@
 // Imported by the "use client" component only (it runs in the window, never on the server).
 
 import {
+  cancelNotification,
+  checkPermission,
   clipboardFormats,
   type DeepLinkEvent,
   deleteFile,
   deviceInfo,
   listDir,
   moveToTrash,
+  onLocalNotificationTapped,
   type OpenedFile,
   openSqlite,
+  pendingNotifications,
   readClipboard,
   readFile,
   runtimePlatform,
+  scheduleNotification,
   secureStore,
+  setNotificationCategories,
+  setQuickActions,
   writeClipboard,
   writeFile,
 } from "denext/mobile";
+import {
+  appCapabilities,
+  bounce,
+  createTray,
+  getLaunchAtLogin,
+  listShortcuts,
+  onAppMenuItem,
+  registerShortcut,
+  setAppMenu,
+  setBadge,
+  setLaunchAtLogin,
+  shortcutCapabilities,
+} from "denext/desktop/app";
 import { desktopExtension, onDesktopEvent } from "denext/desktop/client";
 import {
   getScreens,
@@ -590,12 +610,272 @@ const nativeChecks: Check[] = [
   }],
 ];
 
+// --- app: notifications, menus, tray, dock, shortcuts, login, DevTools -----------------------
+
+/** A notification id the checks own (cancelled again at the end of each check). */
+const NOTE_ID = 424242;
+
+/** Is this macOS refusing because the notification permission is not granted (asked once)? */
+async function macNotificationsRefused(setup: KitchenSetup, err: unknown): Promise<boolean> {
+  if (setup.os !== "darwin") return false;
+  const state = await checkPermission("notifications").catch(() => "unknown");
+  return state !== "granted" && /notif|authoriz|permission|denied/i.test(String(err));
+}
+
+/** Skip where the OS has no notification service (a headless Linux session without a server). */
+async function needScheduling(): Promise<void> {
+  const caps = await raw("notifications").capabilities({});
+  if (caps.schedule !== true) throw new Skip("no notification service in this session");
+}
+
+const appChecks: Check[] = [
+  ["DevTools: off in a packaged app (desktop.inspectable unset)", async () => {
+    const { enabled } = await kitchen.devtools({});
+    eq(enabled, false, "Deno.desktop.devtools.enabled");
+    return "off";
+  }],
+  ["app menu: accelerators and roles; a click reaches onAppMenuItem", async () => {
+    const caps = await appCapabilities();
+    eq(caps.appMenu, true, "appCapabilities().appMenu");
+    eq(caps.accelerators, true, "appCapabilities().accelerators");
+    await setAppMenu([
+      {
+        label: "Kitchen",
+        submenu: [
+          { id: "kitchen-new", label: "New Window", accelerator: "CommandOrControl+Shift+N" },
+          "separator",
+          { role: "quit" },
+        ],
+      },
+      { label: "Edit", submenu: [{ role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
+    ]);
+    const refused = await rejection(setAppMenu([{ role: "format-disk" as "quit" }]));
+    eq(refused, "validation", "an unknown role");
+    const got: string[] = [];
+    const stop = onAppMenuItem((id) => got.push(id));
+    try {
+      await sleep(300); // the subscription takes the queue once
+      // A synthetic OS click on the adopted window (no unattended keyboard): runtime → page.
+      await kitchen.synthetic({
+        kind: "window",
+        type: "menuclick",
+        detail: { id: "kitchen-new" },
+      });
+      await kitchen.synthetic({ kind: "window", type: "menuclick", detail: { id: "not-in-menu" } });
+      await waitFor(() => got.length > 0, "the menu click");
+      await sleep(200);
+      eq(got.join(","), "kitchen-new", "the clicks reported");
+    } finally {
+      stop();
+    }
+    return `menu set; click → ${got[0]}`;
+  }],
+  ["tray: create, bounds, update, destroy", async ({ setup }) => {
+    const caps = await appCapabilities();
+    eq(caps.tray, true, "appCapabilities().tray");
+    const tray = await createTray({
+      icon: PNG_1X1,
+      tooltip: "denext kitchen sink",
+      menu: [{ id: "show", label: "Show" }, "separator", { role: "quit" }],
+    });
+    try {
+      await sleep(300);
+      const bounds = await tray.getBounds();
+      if (setup.os === "darwin") {
+        assert(bounds && bounds.width > 0, `bounds ${JSON.stringify(bounds)}`);
+      }
+      await tray.update({ tooltip: null, menu: [{ id: "show", label: "Show again" }] });
+      return `bounds ${bounds ? `${bounds.width}x${bounds.height}` : "null (not reported here)"}`;
+    } finally {
+      await tray.destroy();
+    }
+  }],
+  ["dock: badge, attention and the Dock menu", async ({ setup }) => {
+    const caps = await appCapabilities();
+    eq(caps.badge, true, "appCapabilities().badge");
+    await setBadge(3);
+    await setBadge(null);
+    await bounce();
+    eq(caps.dockMenu, setup.os === "darwin", "appCapabilities().dockMenu");
+    await setQuickActions([{ id: "kitchen-chat", title: "New chat" }]);
+    const applied = await raw("app").setDockMenu({
+      menu: [{ id: "kitchen-chat", label: "New chat" }],
+    });
+    eq(applied?.applied, setup.os === "darwin", "the Dock menu applied");
+    await setQuickActions([]);
+    return `badge + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
+  }],
+  ["notifications: permission status from the OS", async () => {
+    const caps = await raw("notifications").capabilities({});
+    const state = await checkPermission("notifications");
+    assert(
+      ["granted", "prompt", "blocked", "denied"].includes(state),
+      `checkPermission("notifications") = ${state}`,
+    );
+    // Asked without prompting (requestPushPermission() would show the OS prompt).
+    const raw0 = await raw("notifications").permission({ request: false });
+    assert(["granted", "prompt", "denied"].includes(raw0?.state), `the OS state ${raw0?.state}`);
+    return `${state}; schedule ${caps.schedule}, persists ${caps.schedulePersists}, ` +
+      `actions ${caps.actions}, cold start ${caps.coldStart}`;
+  }],
+  ["notifications: schedule / pending / cancel through the OS", async ({ setup }) => {
+    await needScheduling();
+    await setNotificationCategories([{ id: "kitchen", actions: [{ id: "open", title: "Open" }] }]);
+    try {
+      await scheduleNotification({
+        id: NOTE_ID,
+        title: "Kitchen sink",
+        body: "scheduled by the window test",
+        trigger: { type: "date", date: Date.now() + 24 * 3600_000 },
+        categoryId: "kitchen",
+        data: { path: "/" },
+      });
+    } catch (err) {
+      if (await macNotificationsRefused(setup, err)) {
+        throw new Skip(
+          `macOS: notifications are not allowed for this app (${(err as Error).message})`,
+        );
+      }
+      throw err;
+    }
+    try {
+      // The OS adds the request asynchronously (macOS registers the category first).
+      let pending: Awaited<ReturnType<typeof pendingNotifications>> = [];
+      const mine = await waitFor(
+        async () => {
+          pending = await pendingNotifications();
+          return pending.find((n) => n.id === NOTE_ID);
+        },
+        "the notification in pendingNotifications()",
+        5000,
+        () => JSON.stringify(pending),
+      );
+      eq(mine.data.path, "/", "its data");
+      const tags = await kitchen.scheduledTags({}) as string[];
+      assert(tags.includes(`denext-${NOTE_ID}`), `the OS's scheduled tags: ${tags.join(", ")}`);
+    } finally {
+      await cancelNotification(NOTE_ID);
+    }
+    await waitFor(
+      async () => !(await pendingNotifications()).some((n) => n.id === NOTE_ID),
+      "the notification gone after cancel",
+    );
+    return "scheduled, listed, cancelled";
+  }],
+  ["notifications: a repeating trigger is scheduled ahead in the OS", async ({ setup }) => {
+    await needScheduling();
+    try {
+      await scheduleNotification({
+        id: NOTE_ID + 1,
+        title: "Kitchen sink",
+        body: "every day",
+        trigger: { type: "daily", hour: 4, minute: 4 },
+      });
+    } catch (err) {
+      if (await macNotificationsRefused(setup, err)) {
+        throw new Skip("macOS: notifications are not allowed for this app");
+      }
+      throw err;
+    }
+    try {
+      let tags: string[] = [];
+      await waitFor(
+        async () => {
+          tags = (await kitchen.scheduledTags({}) as string[])
+            .filter((t) => t.startsWith(`denext-${NOTE_ID + 1}-`));
+          return tags.length === 16;
+        },
+        "16 occurrences in the OS",
+        5000,
+        () => String(tags.length),
+      );
+      eq(
+        (await pendingNotifications()).filter((n) => n.id === NOTE_ID + 1).length,
+        1,
+        "one pending entry",
+      );
+      return `${tags.length} occurrences`;
+    } finally {
+      await cancelNotification(NOTE_ID + 1);
+    }
+  }],
+  ["notifications: a click reaches onLocalNotificationTapped (synthetic OS event)", async () => {
+    const taps: Array<{ id: number; actionId: string; path: unknown }> = [];
+    const stop = onLocalNotificationTapped(
+      (t) =>
+        taps.push({ id: t.notification.id, actionId: t.actionId, path: t.notification.data.path }),
+      { route: false },
+    );
+    try {
+      await sleep(300); // the subscription takes the queue once (installing the runtime listener)
+      await kitchen.synthetic({
+        kind: "desktop",
+        type: "notificationresponse",
+        detail: {
+          tag: `denext-${NOTE_ID}`,
+          action: "open",
+          data: { denext: { id: NOTE_ID, t: "Kitchen sink" }, data: { path: "/x" } },
+          launch: false,
+        },
+      });
+      await waitFor(() => taps.length > 0, "the tap");
+      eq(
+        JSON.stringify(taps[0]),
+        JSON.stringify({ id: NOTE_ID, actionId: "open", path: "/x" }),
+        "tap",
+      );
+    } finally {
+      stop();
+    }
+    return "routed";
+  }],
+  ["context menu: the native menu; arguments checked before it opens", async () => {
+    const caps = await raw("contextMenu").capabilities({});
+    eq(caps.native, true, "a native context menu with dismissal");
+    const code = await rejection(
+      raw("contextMenu").show({ items: [{ label: "no id" }], x: 1, y: 1 }),
+    );
+    eq(code, "validation", "an item without an id");
+    return `native; icons ${caps.icons}, tooltips ${caps.tooltips}`;
+  }],
+  ["global shortcuts: register / list / a press / unregister", async () => {
+    const caps = await shortcutCapabilities();
+    if (!caps.globalShortcuts) throw new Skip("no global shortcuts in this session");
+    let pressed = 0;
+    const s = await registerShortcut("CommandOrControl+Alt+Shift+F9", () => pressed++);
+    try {
+      assert((await listShortcuts()).includes(s.accelerator), "listShortcuts()");
+      await sleep(300);
+      // A synthetic press (no unattended keyboard): the runtime's event → the page's handler.
+      await kitchen.synthetic({
+        kind: "shortcuts",
+        type: "shortcut",
+        detail: { accelerator: s.accelerator },
+      });
+      await waitFor(() => pressed > 0, "the press");
+    } finally {
+      await s.unregister();
+    }
+    assert(!(await listShortcuts()).includes(s.accelerator), "still registered");
+    return s.accelerator;
+  }],
+  ["launch at login: the state, toggled where it needs no approval", async ({ setup }) => {
+    const before = await getLaunchAtLogin();
+    assert(before !== "not-supported", `getLaunchAtLogin() = ${before}`);
+    if (setup.os === "darwin") return `${before} (not toggled: macOS asks the user)`;
+    eq(await setLaunchAtLogin(true), "enabled", "after setLaunchAtLogin(true)");
+    eq(await setLaunchAtLogin(false), "disabled", "after setLaunchAtLogin(false)");
+    return `${before} → enabled → disabled`;
+  }],
+];
+
 /** Every check, in the order they run. */
 export const CHECKS: readonly Check[] = [
   ...runtimeChecks,
   ...storageChecks,
   ...systemChecks,
   ...windowChecks,
+  ...appChecks,
   ...launchChecks,
   ...nativeChecks,
 ];

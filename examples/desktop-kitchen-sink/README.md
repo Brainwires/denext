@@ -3,8 +3,10 @@
 A denext desktop app that turns on every shipped Deno Desktop capability and calls each one from the
 page, plus an automated window test that packages the app, launches it and asserts every result: the
 keychain, files, SQLite, device facts, keep-awake, the clipboard (text, HTML, PNG), the shell,
-native dialogs, the window API, drag and drop, deep links and opened files, a second instance, the
-preload, the stable app origin, a Node-API addon and the full-app updater.
+native dialogs, the window API, drag and drop, the OS's notifications and context menu, the
+application menu, a tray icon, the Dock / taskbar badge, global shortcuts, launch at login, the
+DevTools switch, deep links and opened files, a second instance, the preload, the stable app origin,
+a Node-API addon and the full-app updater.
 
 ## Run it
 
@@ -46,14 +48,26 @@ updater checks are skipped there, because only the test runner sets them up.
 | `dialogs`        | `windowCapabilities().fileDialogs`                      | native dialogs exist; bad arguments are refused before a panel opens             |
 | Window           | `denext/desktop/window`                                 | state, screens, size, min/max clamp, maximize, backdrop, a guarded close         |
 | Drag and drop    | `onFileDrop`, `startFileDrag`                           | the plumbing: no drag without a held button, no path escapes                     |
+| DevTools         | `desktop.inspectable` (unset)                           | off in the packaged app                                                          |
+| App menu         | `setAppMenu`, `onAppMenuItem` (`denext/desktop/app`)    | accelerators + roles accepted; a (synthetic) OS menu click reaches the page      |
+| Tray, Dock       | `createTray`, `setBadge`, `bounce`, `setQuickActions`   | a tray icon with bounds and a menu; the badge; the macOS Dock menu               |
+| Notifications    | `scheduleNotification`, `pendingNotifications`, …       | scheduled and cancelled in the OS; a daily one 16 ahead; a (synthetic) click     |
+| Context menu     | the `contextMenu` capability                            | native with dismissal; bad items refused before it opens                         |
+| Shortcuts        | `registerShortcut` (`denext/desktop/app`)               | registered, listed, a (synthetic) press reaches the handler, released            |
+| Launch at login  | `getLaunchAtLogin` / `setLaunchAtLogin`                 | the state; toggled on and off on Windows and Linux                               |
 | Deep links       | `onDeepLink`, `desktop.app.deepLinks`                   | a cold-start link, and one a second launch forwards (`singleInstance`)           |
 | Opened files     | `onOpenFile`                                            | a read-only handle that reads the file and refuses writes                        |
 | Node-API         | `@node-rs/crc32` in the `kitchen` extension             | a prebuilt `.node` loads in the packaged app                                     |
 | Full-app updater | `checkForAppUpdate` (`denext/desktop/updater`)          | a signed newer manifest is offered; another key and an older version are refused |
 
 Not automated: anything that needs a person at the screen (a real drop from the file manager,
-dragging a file out, choosing in a native dialog, the macOS Automation prompt the first trash asks
-for) and a full update install, which needs two signed builds.
+dragging a file out, choosing in a native dialog or a context menu, pressing a shortcut, clicking a
+notification, a tray icon or a menu, the macOS Automation prompt the first trash asks for, the macOS
+login-item approval) and a full update install, which needs two signed builds. The "synthetic"
+checks dispatch the OS event on the runtime object that would fire it (through the `kitchen`
+extension), so everything from the runtime's event to the page's handler runs. On macOS the first
+run asks for the notification permission (answer it once); while it is refused, the scheduling
+checks are skipped.
 
 ## How it's wired
 

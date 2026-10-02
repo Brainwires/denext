@@ -7,7 +7,10 @@
 // - `diskRead` reads a file in the app's data folder straight from disk, so the page can prove a
 //   `writeFile` went through the native `fs` capability and not a browser-storage fallback;
 // - `crc32` loads a Node-API addon (`@node-rs/crc32`, prebuilt for every desktop OS) in this process;
-// - `updateCheck` / `updateStatus` drive `denext/desktop/updater`'s full-app updater.
+// - `updateCheck` / `updateStatus` drive `denext/desktop/updater`'s full-app updater;
+// - `devtools`, `scheduledTags` read the runtime's DevTools switch and scheduled notifications, and
+//   `synthetic` dispatches an OS event (a notification click, a shortcut press, a menu click) on the
+//   runtime object that would fire it, for the plumbing no unattended test can press.
 
 import { defineDesktopExtension } from "denext/desktop";
 import { appUpdateStatus, checkForAppUpdate } from "denext/desktop/updater";
@@ -136,5 +139,46 @@ export default defineDesktopExtension({
     updateStatus: {
       handler: () => appUpdateStatus(),
     },
+    devtools: {
+      handler: () => ({ enabled: desktop()?.devtools?.enabled ?? null }),
+    },
+    scheduledTags: {
+      handler: async () => {
+        const list = await desktop()?.notifications?.getScheduled() ?? [];
+        return list.map((n) => n.tag);
+      },
+    },
+    synthetic: {
+      handler: (args, ctx) => {
+        const kind = stringField(args, "kind");
+        const type = stringField(args, "type");
+        // Only the three OS events the checks stand in for.
+        if (!["notificationresponse", "shortcut", "menuclick"].includes(type)) {
+          throw new TypeError(`event ${type} is not one the harness sends`);
+        }
+        const event = new CustomEvent(type, { detail: field(args, "detail") });
+        const target = kind === "desktop"
+          ? desktop()
+          : kind === "shortcuts"
+          ? desktop()?.shortcuts
+          : kind === "window"
+          ? ctx.window as EventTarget | undefined
+          : undefined;
+        if (!target) throw new TypeError(`no ${kind} event target in this runtime`);
+        target.dispatchEvent(event);
+        return { dispatched: true };
+      },
+    },
   },
 });
+
+/** The pinned runtime's `Deno.desktop`, as far as the harness uses it. */
+interface DesktopApi extends EventTarget {
+  devtools?: { enabled?: boolean };
+  notifications?: { getScheduled(): Promise<Array<{ tag: string }>> };
+  shortcuts?: EventTarget;
+}
+
+function desktop(): DesktopApi | undefined {
+  return (Deno as unknown as { desktop?: DesktopApi }).desktop;
+}

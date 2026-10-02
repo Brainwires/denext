@@ -30,6 +30,7 @@
     "denext/desktop": "../../src/build/desktop.ts",
     "denext/desktop/client": "../../src/desktop/client.ts",
     "denext/desktop/window": "../../src/desktop/window.ts",
+    "denext/desktop/app": "../../src/desktop/app.ts",
     "denext/desktop/updater": "../../src/desktop/updater.ts",
     "@node-rs/crc32": "npm:@node-rs/crc32@1.10.8",
     "@std/path": "jsr:@std/path@^1"

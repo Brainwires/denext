@@ -212,7 +212,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     notes:
       "OS notifications: scheduled, repeating, actions, click routing (pinned runtime; WebView otherwise)",
     manual: [
-      'notifications: macOS shows notifications only from a signed app (an ad-hoc signed or unsigned build gets no permission); ask first with requestPermission("notifications").',
+      'notifications: ask first with requestPermission("notifications"): macOS shows its prompt once (only from an app bundle, not an unbundled process), and a refusal can be changed only in System Settings › Notifications.',
       "notifications: Linux has no OS scheduler — a scheduled notification is delivered by the app while it runs and re-armed at its next launch (one whose time passed meanwhile shows then); a click on a notification of a closed app does not start it there.",
       "notifications: a repeating notification is scheduled for its next 16 occurrences; each launch tops the series up, so an app not opened for longer than that stops showing it until it runs again.",
     ],

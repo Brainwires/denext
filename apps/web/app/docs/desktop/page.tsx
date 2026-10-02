@@ -1273,8 +1273,9 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
           Linux notification after the app quit does not start it.
         </li>
         <li>
-          macOS shows notifications only from a signed app; an ad-hoc or unsigned build is refused
-          the permission. A notification stores at most 4 KiB of <code>data</code> (JSON).
+          macOS asks the user once (from an app bundle; an unbundled process has no notifications),
+          and a refusal can be changed only in System Settings. A notification stores at most 4 KiB
+          of <code>data</code> (JSON).
         </li>
       </ul>
       <p>
