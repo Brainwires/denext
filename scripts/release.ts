@@ -87,8 +87,8 @@ export interface ChangelogRoll {
  * moving the accumulated notes under the new release and leaving a fresh empty
  * [Unreleased] on top. A stable release also folds the rc sections in (see
  * {@linkcode foldPrereleases}) and, in the same step, re-points every docs link to a folded
- * rc anchor at the release header — otherwise the upgrading page's `/docs/changelog#…-rcN…`
- * links dangle the moment the tag lands.
+ * rc anchor at the release header — otherwise a docs page's `/docs/changelog#…-rcN…` link
+ * dangles the moment the tag lands.
  */
 export async function rollChangelog(version: string, dry: boolean): Promise<ChangelogRoll> {
   const path = join(REPO_ROOT, "CHANGELOG.md");

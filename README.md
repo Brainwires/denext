@@ -361,7 +361,7 @@ in the [API reference](https://denext.dev/docs/api); every config key in
 · [API](https://denext.dev/docs/api) · [Plugins](https://denext.dev/docs/plugins) ·
 [MCP server](https://denext.dev/docs/mcp) · [Project UI](https://denext.dev/docs/ui) ·
 [Examples](https://denext.dev/docs/examples) · [Troubleshooting](https://denext.dev/docs/troubleshooting)
-· [Upgrading](https://denext.dev/docs/upgrading) · [Changelog](https://denext.dev/docs/changelog)
+· [Changelog](https://denext.dev/docs/changelog)
 
 **Under the hood** — [FEATURES.md](./FEATURES.md) (every feature, with the mechanism) ·
 [Architecture](https://denext.dev/docs/architecture) ·

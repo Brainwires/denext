@@ -20,7 +20,6 @@ export const NAV: {
       { slug: "coming-from-react-native", label: "Coming from React Native" },
       { slug: "vs-react-native", label: "denext vs React Native" },
       { slug: "patches", label: "Patching packages" },
-      { slug: "upgrading", label: "Upgrading" },
     ],
   },
   {
