@@ -6,7 +6,7 @@
 // in them. This panel answers that: it lists the signing identities actually in your keychain,
 // says which variables are set, and composes the exact command to run.
 //
-// It never accepts, stores or displays a secret. Of the six variables the scripts read, exactly
+// It never accepts, stores or displays a secret. Of the seven variables the scripts read, exactly
 // one is a true secret — `DENEXT_WINDOWS_CERT_PASSWORD` — and it has no field here. The macOS
 // identity and notary profile are NAMES: the private key and the credentials stay in the
 // keychain, so reading those values is safe and showing them is the point. The password is
@@ -68,6 +68,11 @@ const VARS: Record<DesktopTab, readonly EnvVar[]> = {
       name: "DENEXT_NOTARY_PROFILE",
       purpose: "An `xcrun notarytool store-credentials` profile name. Set it to notarize and " +
         "staple; the credentials stay in your keychain.",
+    },
+    {
+      name: "DENEXT_INSTALLER_IDENTITY",
+      purpose: "The Developer ID Installer identity that signs the .pkg (`--format pkg`). Unset " +
+        "means an unsigned .pkg, which MDM tools and Gatekeeper reject.",
     },
     {
       name: "DENEXT_ENTITLEMENTS",
@@ -283,8 +288,8 @@ function LinuxNote(): VNode {
   return h(
     Note,
     null,
-    "Linux packaging produces a .tar.gz (and optionally an AppImage). There is no signing step " +
-      "and no certificate to configure.",
+    "Linux packaging produces a .tar.gz and a .deb (and, with --format, an .rpm or an AppImage). " +
+      "There is no signing step and no certificate to configure.",
   );
 }
 

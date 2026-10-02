@@ -12,6 +12,11 @@
 #   2. `deno desktop` packaging lands the binary at the path the packaging scripts expect on Windows
 #      and Linux. The macOS `.app.app` bug is fixed + verified locally; the Win/Linux `--output`
 #      naming is build-only (no WebView deps needed), so it is cheap to pin here.
+#   3. The installers the package scripts build (`desktop.installers`, `--format`) install, register
+#      and uninstall for real: the .msi per-user and per-machine (hosted runners are admin) with an
+#      in-place upgrade, the .deb through apt, the .rpm through dnf (a Fedora container), the .dmg
+#      mounted and the .pkg through `installer`. And install.ps1 against a loopback release and the
+#      real latest one.
 #
 # workflow_dispatch is available once this workflow reaches the default branch; the `push` trigger
 # (paths-filtered to the desktop surface) runs it whenever the workflow or the desktop code changes,
@@ -39,6 +44,10 @@ on:
       - "tests/notification-trigger.test.ts"
       - "tests/coverage-floor.test.ts"
       - "tests/helpers/**"
+      - "tests/install-ps1.test.ts"
+      - "scripts/install.ps1"
+      - "scripts/ci/msi-roundtrip.ps1"
+      - "examples/native/scripts/**"
       - ".github/workflows/desktop-ci.yml"
 
 permissions:
@@ -140,3 +149,145 @@ jobs:
           else
             echo "✗ no dist/denext-app* artifact — deno desktop --output naming changed"; exit 1
           fi
+
+  # The installer jobs package examples/native with a deep-link scheme added (and, on Windows, two
+  # versions), so each installer has a scheme to register and the .msi an upgrade to perform.
+  installers-windows:
+    name: installers (windows-latest — .msi per-user + per-machine, upgrade, uninstall)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: examples/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.7"
+      # WiX 5.0.2: the last release under MS-RL alone (WiX 6+ adds the OSMF EULA).
+      - name: WiX 5
+        run: dotnet tool install --global wix --version 5.0.2 && wix --version
+      - name: A deep link and version 1.0.0
+        run: |
+          sed -i 's/app: { identifier: "com.example.denext-native" }/app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }/' denext.config.ts
+          grep -q denextnative denext.config.ts
+          VERSION=1.0.0 deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.version = Deno.env.get("VERSION"); Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
+          deno install
+      - name: Package 1.0.0 (.msi + .zip, unsigned)
+        run: deno run -A scripts/package-windows.ts --format msi,zip && cp dist/denext-native-x64.msi dist/old.msi
+      - name: Package 1.0.1 (.msi)
+        run: |
+          VERSION=1.0.1 deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.version = Deno.env.get("VERSION"); Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
+          deno run -A scripts/package-windows.ts --no-export --format msi
+          ls -la dist
+      - name: Per-user install, upgrade, uninstall
+        shell: pwsh
+        run: ../../scripts/ci/msi-roundtrip.ps1 -Msi dist/old.msi -AppName "denext native" -Exe denext-native-x64.exe -Scheme denextnative -Upgrade dist/denext-native-x64.msi -UpgradeVersion 1.0.1
+      - name: Per-machine install, upgrade, uninstall
+        shell: pwsh
+        run: ../../scripts/ci/msi-roundtrip.ps1 -PerMachine -Msi dist/old.msi -AppName "denext native" -Exe denext-native-x64.exe -Scheme denextnative -Upgrade dist/denext-native-x64.msi -UpgradeVersion 1.0.1
+
+  installers-linux:
+    name: installers (ubuntu-latest — .deb via apt, .rpm via dnf)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: examples/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.7"
+      - name: rpmbuild
+        run: sudo apt-get update && sudo apt-get install -y rpm desktop-file-utils
+      - name: A deep link
+        run: |
+          sed -i 's/app: { identifier: "com.example.denext-native" }/app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }/' denext.config.ts
+          grep -q denextnative denext.config.ts
+          deno install
+      - name: Package (.tar.gz + .deb + .rpm)
+        run: deno run -A scripts/package-linux.ts --format tar.gz,deb,rpm && ls -la dist
+      - name: .deb — install through apt (dependencies resolved), check, remove
+        run: |
+          set -eux
+          dpkg-deb --info dist/denext-native-x64.deb
+          sudo apt-get install -y ./dist/denext-native-x64.deb
+          test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
+          desktop-file-validate /usr/share/applications/com.example.denext-native.desktop
+          grep -q 'MimeType=x-scheme-handler/denextnative;' /usr/share/applications/com.example.denext-native.desktop
+          grep -q '"inspectable": false' /usr/lib/denext-native/laufey-launch.json
+          ! ldd /usr/lib/denext-native/denext-native-x64 | grep 'not found'
+          sudo apt-get remove -y denext-native
+          test ! -e /usr/bin/denext-native && test ! -e /usr/lib/denext-native
+      - name: .rpm — install through dnf on Fedora, check, remove
+        run: |
+          docker run --rm -v "$PWD/dist:/dist" fedora:latest bash -euxc '
+            rpm -qpR /dist/denext-native-x64.rpm
+            dnf install -y /dist/denext-native-x64.rpm
+            test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
+            grep -q "MimeType=x-scheme-handler/denextnative;" /usr/share/applications/com.example.denext-native.desktop
+            ! ldd /usr/lib/denext-native/denext-native-x64 | grep "not found"
+            rpm -e denext-native
+            test ! -e /usr/lib/denext-native'
+
+  installers-macos:
+    name: installers (macos-latest — .dmg mounted, .pkg installed; unsigned)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: examples/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.7"
+      - run: deno install
+      # No signing secrets here: an ad-hoc .app, an unsigned .pkg.
+      - name: Package (.app + .dmg + .pkg)
+        run: deno run -A scripts/package-macos.ts --format dmg,pkg && ls -la dist
+      - name: .dmg — mount, find the app, detach
+        run: |
+          set -eux
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/denext-dmg "dist/denext native.dmg"
+          test -d "/tmp/denext-dmg/denext native.app"
+          codesign --verify --deep --strict "/tmp/denext-dmg/denext native.app"
+          hdiutil detach /tmp/denext-dmg
+      - name: .pkg — install into /Applications, check, remove
+        run: |
+          set -eux
+          pkgutil --check-signature "dist/denext native.pkg" || echo "unsigned .pkg (no DENEXT_INSTALLER_IDENTITY in CI)"
+          sudo installer -pkg "dist/denext native.pkg" -target /
+          test -d "/Applications/denext native.app"
+          codesign --verify --deep --strict "/Applications/denext native.app"
+          id="$(pkgutil --pkgs | grep -i denext-native | head -1)"
+          test -n "$id"
+          sudo rm -rf "/Applications/denext native.app"
+          sudo pkgutil --forget "$id"
+
+  install-ps1:
+    name: install.ps1 (windows-latest — loopback release + the real latest one)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: "2.9.7"
+      - name: The installer's own tests (Windows PowerShell 5.1 and pwsh)
+        shell: bash
+        run: deno test -A tests/install-ps1.test.ts
+      - name: Install the latest release for real, run it, uninstall
+        shell: powershell
+        env:
+          DENEXT_NO_PATH: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
+          & ./scripts/install.ps1
+          $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
+          if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
+          & ./scripts/install.ps1 -Uninstall
+          if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }

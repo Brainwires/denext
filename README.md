@@ -109,6 +109,7 @@ once and use it everywhere:
 
 ```sh
 curl -fsSL https://denext.dev/install.sh | sh     # macOS and Linux; checksum-verified
+irm https://denext.dev/install.ps1 | iex          # Windows (PowerShell); checksum-verified
 deno install -A -g -n denext jsr:@denext/denext/cli   # any platform, through Deno
 ```
 
@@ -302,8 +303,12 @@ the app re-execs the denext version the project pins, so `denext build` produces
 `deno task build` would. Four ways to get it:
 
 1. `curl -fsSL https://denext.dev/install.sh | sh` — the released binary for macOS and Linux
-   (`~/.denext/bin`; checksum-verified; `DENEXT_VERSION` picks a release). Windows: the `.zip` on
-   the [release page](https://github.com/Brainwires/denext/releases).
+   (`~/.denext/bin`; checksum-verified; `DENEXT_VERSION` picks a release). On Windows,
+   `irm https://denext.dev/install.ps1 | iex` in PowerShell does the same per-user, no admin
+   (`%USERPROFILE%\.denext\bin`, added to your user `Path`; uninstall with
+   `& ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall`). Each release
+   also carries a Homebrew formula, a Scoop manifest and a winget manifest set beside the
+   archives.
 2. `deno install -A -g -n denext jsr:@denext/denext/cli` — a launcher through your Deno.
 3. `deno task compile` from a checkout.
 4. Nothing at all: `deno run -A jsr:@denext/denext/cli <verb>` does the same thing, and the

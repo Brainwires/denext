@@ -20,7 +20,8 @@ export default function GettingStarted() {
       </p>
       <Code lang="sh">
         {`curl -fsSL https://denext.dev/install.sh | sh   # ~/.denext/bin/denext (macOS, Linux)
-# or, with Deno already installed (Windows too):
+irm https://denext.dev/install.ps1 | iex         # Windows PowerShell: %USERPROFILE%\\.denext\\bin
+# or, with Deno already installed:
 deno install -A -g -n denext jsr:@denext/denext/cli`}
       </Code>
       <p>
@@ -51,9 +52,14 @@ deno install -A -g -n denext jsr:@denext/denext/cli`}
         arrived by browser), so the macOS CLI binary is not stapled — a bare executable cannot be —
         and runs whether or not the release was signed. It <em>is</em>{" "}
         code-signed and notarized when the release was built with the Apple Developer ID secrets,
-        and ships unsigned otherwise. On Windows, download{" "}
-        <code>denext-x86_64-pc-windows-msvc.zip</code> from the release page or use the{" "}
-        <code>deno install</code> line.
+        and ships unsigned otherwise. On Windows, <code>install.ps1</code>{" "}
+        does the same per-user with no administrator rights: it downloads{" "}
+        <code>denext-x86_64-pc-windows-msvc.zip</code>, verifies it the same way, installs{" "}
+        <code>denext.exe</code> to <code>%USERPROFILE%\.denext\bin</code> and adds that to your user
+        {" "}
+        <code>Path</code> (<code>DENEXT_NO_PATH=1</code> leaves it alone). Uninstall with{" "}
+        <code>&amp; ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Uninstall</code>.
+        Each release also attaches a Homebrew formula, a Scoop manifest and a winget manifest set.
       </p>
 
       <h2>Create a project</h2>

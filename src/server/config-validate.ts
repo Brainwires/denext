@@ -310,6 +310,35 @@ function validateDesktopUpdate(update: unknown, fail: Fail): void {
   }
 }
 
+/** The installer formats per OS `desktop.installers.<os>` accepts. */
+const DESKTOP_INSTALLER_KEYS: Record<string, readonly string[]> = {
+  macos: ["dmg", "pkg"],
+  linux: ["tar.gz", "deb", "rpm", "appimage"],
+  windows: ["msi", "zip"],
+};
+
+/** `desktop.installers`: per-OS format lists, and the publisher / description strings. */
+function validateDesktopInstallers(installers: unknown, fail: Fail): void {
+  if (installers === undefined) return;
+  if (!isPlainObject(installers)) fail("desktop.installers", "must be an object");
+  const i = installers as Record<string, unknown>;
+  for (const [os, formats] of Object.entries(DESKTOP_INSTALLER_KEYS)) {
+    const v = i[os];
+    if (v === undefined) continue;
+    if (!Array.isArray(v) || !v.every((f) => formats.includes(f as string))) {
+      fail(
+        `desktop.installers.${os}`,
+        `must be an array of ${formats.map((f) => `"${f}"`).join(", ")}`,
+      );
+    }
+  }
+  for (const key of ["publisher", "description"]) {
+    if (i[key] !== undefined && (typeof i[key] !== "string" || i[key] === "")) {
+      fail(`desktop.installers.${key}`, "must be a non-empty string");
+    }
+  }
+}
+
 function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   if (desktop === undefined) return;
   if (typeof desktop !== "object" || Array.isArray(desktop)) {
@@ -319,6 +348,7 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   validateDesktopApp((desktop as { app?: unknown }).app, fail);
   validateDesktopWindowing(desktop as Record<string, unknown>, fail);
   validateDesktopUpdate((desktop as { update?: unknown }).update, fail);
+  validateDesktopInstallers((desktop as { installers?: unknown }).installers, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {

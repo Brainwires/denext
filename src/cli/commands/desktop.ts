@@ -76,6 +76,7 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
     "  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n" +
     "  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS\n" +
+    "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
     "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
     "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
     "                                         Sign a full-app update (archive + app-update.json)",
@@ -113,6 +114,14 @@ export const desktopCommand: CommandSpec = {
       name: "lan",
       type: "boolean",
       help: "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)",
+    },
+    {
+      name: "format",
+      type: "string",
+      valueName: "<list>",
+      help: "package: the installers to build, comma-separated — macOS dmg | pkg; Linux tar.gz | " +
+        "deb | rpm | appimage; Windows msi | zip (default: desktop.installers.<os>, else " +
+        "dmg / tar.gz,deb / msi)",
     },
     {
       name: "regenerate-scripts",
@@ -322,7 +331,9 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   // so clear the guards here before spawning.
   Deno.env.delete("DENEXT_CSS_ACTIVE");
   Deno.env.delete("DENEXT_MODULE_ACTIVE");
-  await spawnDenoAndExit(["run", "-A", script, ...ctx.rest], dir);
+  const format = ctx.flags.format as string | undefined;
+  const formatArgs = format ? ["--format", format] : [];
+  await spawnDenoAndExit(["run", "-A", script, ...formatArgs, ...ctx.rest], dir);
 }
 
 /** Whether `path` is itself a symbolic link (a missing path is not). */

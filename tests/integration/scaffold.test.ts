@@ -106,6 +106,11 @@ const MACOS_PACKAGING_KEYWORDS = [
   "notarytool",
   "DENEXT_CODESIGN_IDENTITY",
   "--include",
+  // Installers: the --format / desktop.installers plan, the .dmg default and the signed .pkg.
+  "desktopInstallerPlan",
+  "hdiutil",
+  "productbuild",
+  "DENEXT_INSTALLER_IDENTITY",
 ];
 // Linux: builds via `deno desktop --target`, tars the bundle, and uses
 // underscore-free arch labels (x64) so the .desktop survives.
@@ -115,7 +120,12 @@ const LINUX_PACKAGING_KEYWORDS = [
   "tar",
   "appimagetool",
   '"x64"',
-  "--target",
+  "buildDesktopBundle",
+  // Installers: the .deb (built by denext) by default, the .rpm through rpmbuild on request.
+  "prepareDesktopPackage",
+  "buildDesktopDeb",
+  "buildDesktopRpm",
+  "rpmbuild",
 ];
 // Windows: builds the .exe via `deno desktop --target`, zips it, and
 // Authenticode-signs when a cert is configured.
@@ -125,11 +135,16 @@ const WINDOWS_PACKAGING_KEYWORDS = [
   "signtool",
   "DENEXT_WINDOWS_CERT",
   "WebView2",
-  "--target",
+  "buildDesktopBundle",
   // Ships the VC++ runtime app-local so the packaged app needs no redistributable installed
   // (else it dies at launch with a silent 0xC0000135). Verified end-to-end on a real Windows box.
   "bundleVcRuntime",
   "vcruntime140.dll",
+  // Installers: the signed .msi (WiX 5) by default, per-user or per-machine; the zip on request.
+  "prepareDesktopPackage",
+  "buildDesktopMsi",
+  "ALLUSERS=1",
+  "--version 5.0.2",
 ];
 
 /** Asserts the desktop scaffold emits `script` and that it mentions every keyword. */

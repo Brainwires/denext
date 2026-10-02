@@ -857,6 +857,39 @@ export interface DesktopConfig {
    * app is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime.
    */
   update?: DesktopUpdateConfig;
+  /**
+   * The installers `denext desktop package` (the `scripts/package-*.ts`) builds, per OS. Unset,
+   * an OS builds its defaults: `.dmg` on macOS (beside the `.app`), `.tar.gz` + `.deb` on Linux,
+   * `.msi` on Windows. `--format` overrides the list for one run.
+   */
+  installers?: DesktopInstallersConfig;
+}
+
+/** {@link DesktopConfig.installers}: the installer formats per OS, and what they say about the app. */
+export interface DesktopInstallersConfig {
+  /**
+   * macOS installers built beside the `.app`: `"dmg"` (a drag-to-Applications disk image) and
+   * `"pkg"` (a `productbuild` installer package for MDM / `installer -pkg`; signed with
+   * `DENEXT_INSTALLER_IDENTITY`, a "Developer ID Installer" identity). Default `["dmg"]`.
+   */
+  macos?: Array<"dmg" | "pkg">;
+  /**
+   * Linux installers: `"tar.gz"` (the bundle directory), `"deb"` (built by denext, no tool),
+   * `"rpm"` (needs `rpmbuild`), `"appimage"` (needs `appimagetool`). Default `["tar.gz", "deb"]`.
+   */
+  linux?: Array<"tar.gz" | "deb" | "rpm" | "appimage">;
+  /**
+   * Windows installers: `"msi"` (per-user by default, per-machine with `ALLUSERS=1`; needs WiX 5,
+   * `wix`, on a Windows host) and `"zip"` (the bundle directory). Default `["msi"]`.
+   */
+  windows?: Array<"msi" | "zip">;
+  /**
+   * Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer
+   * (`"Name <email>"` there) and the `.rpm` Vendor. Default: the app name.
+   */
+  publisher?: string;
+  /** One line describing the app, for the package managers. Default `"<name> desktop application"`. */
+  description?: string;
 }
 
 /** {@link DesktopConfig.update}: full-app self-update. */

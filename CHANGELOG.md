@@ -10,6 +10,28 @@ and this project adheres to
 
 ### Added
 
+- **Desktop installers on every OS.** The package scripts now wrap the finished bundle in its
+  installers, chosen per OS by `desktop.installers` in `denext.config.ts` or `--format` for one
+  run (`denext desktop package --format msi,zip`): macOS `.dmg` (now the default beside the `.app`)
+  and a `productbuild` `.pkg` for MDM (`DENEXT_INSTALLER_IDENTITY` signs it, the notary profile
+  notarizes it); Linux `.tar.gz` + `.deb` by default (written by denext, no tool) and `.rpm`
+  (`rpmbuild`) / AppImage on request — installed to `/usr/lib/<app>` with a `/usr/bin` link, the
+  `.desktop` entry, the icon and the `desktop.app.deepLinks` schemes, the WebKitGTK dependency
+  declared; Windows `.msi` by default (WiX 5) and `.zip` — per-user with no admin rights or
+  per-machine with `ALLUSERS=1`, a Start-menu shortcut, the deep-link schemes, an in-place major
+  upgrade keyed on `desktop.app.identifier`, Authenticode-signed with the `.exe`.
+  `desktop.installers.publisher` / `description` fill the package metadata; deno.json `version`
+  is the package version. `denext/desktop` exports the builders (`buildDesktopMsi`,
+  `buildDesktopDeb`, `buildDesktopRpm`, `planDesktopInstallers`, …) and the scripts' shared
+  helpers; regenerate older scripts with `denext desktop package --regenerate-scripts`. The Project
+  UI Desktop panel lists `DENEXT_INSTALLER_IDENTITY`.
+- **A Windows installer for the `denext` CLI.** `irm https://denext.dev/install.ps1 | iex` mirrors
+  `install.sh`: the release's Windows archive, verified against `SHA256SUMS` (fatal when missing
+  unless `DENEXT_INSECURE=1`), installed per-user to `%USERPROFILE%\.denext\bin` and added to the
+  user `Path`; `-Uninstall` removes both. Each release now also attaches a Homebrew formula
+  (`denext.rb`), a Scoop manifest (`denext.json`) and a winget manifest set generated from its
+  `SHA256SUMS` (publishing them is a maintainer step; see CONTRIBUTING.md).
+
 - **fastlane, for teams that ship with it.** `denext mobile add fastlane` writes `fastlane/Appfile`
   (the bundle id / package name from `capacitor.config` `appId`; the Apple team and the Play key
   from the environment), `fastlane/Fastfile`, `fastlane/Matchfile`, `fastlane/.gitignore` and a

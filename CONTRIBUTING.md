@@ -255,6 +255,18 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
 6. **Deploy the docs site** (`deno task docs:build` + the rsync in
    [the docs-site notes](./apps/web/README.md)); it is not part of the script.
 
+7. **Package managers (stable releases, by hand).** The `release` job attaches
+   generated manifests to the GitHub release (`scripts/gen-package-manifests.ts`,
+   from its `SHA256SUMS`): `denext.rb` (Homebrew), `denext.json` (Scoop) and
+   `Brainwires.denext.yaml` + `.installer.yaml` + `.locale.en-US.yaml` (winget).
+   Publishing them is an outward step nothing automates: commit `denext.rb` to
+   the Homebrew tap repo (`Formula/denext.rb`), `denext.json` to the Scoop bucket
+   (`bucket/denext.json`), and open a PR to `microsoft/winget-pkgs` with the
+   three YAML files under `manifests/b/Brainwires/denext/<version>/` (validate
+   with `winget validate` first). Skip release candidates. `install.sh` and
+   `install.ps1` need nothing: they resolve the latest release themselves (the
+   served copies under `apps/web/public/` go live with the docs deploy).
+
 If the script aborts (a failed gate), fix, **commit the fix**, and rerun — after
 `git checkout -- .` of the half-prepared bump/changelog, or the rerun double-rolls
 the changelog.

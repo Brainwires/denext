@@ -243,7 +243,7 @@
       "name": "desktop",
       "summary": "Build/run/package the app as a native desktop app",
       "usage": "denext desktop [action] [dir] [options]",
-      "description": "  denext desktop run                     Export + open in a deno desktop window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n                                         Sign a full-app update (archive + app-update.json)",
+      "description": "  denext desktop run                     Export + open in a deno desktop window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS\n  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n                                         Sign a full-app update (archive + app-update.json)",
       "flags": [
         {
           "name": "entry",
@@ -274,6 +274,12 @@
           "name": "lan",
           "type": "boolean",
           "description": "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)"
+        },
+        {
+          "name": "format",
+          "type": "string",
+          "valueName": "<list>",
+          "description": "package: the installers to build, comma-separated — macOS dmg | pkg; Linux tar.gz | deb | rpm | appimage; Windows msi | zip (default: desktop.installers.<os>, else dmg / tar.gz,deb / msi)"
         },
         {
           "name": "regenerate-scripts",

@@ -236,7 +236,8 @@ jobs:
             --key key.p8 --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
           rm -f cert.p12 key.p8 denext.zip
 
-      # Asset names — the installer (scripts/install.sh) and the docs depend on these exactly:
+      # Asset names — the installers (scripts/install.sh, scripts/install.ps1) and the docs depend
+      # on these exactly:
       #   denext-<target>.tar.gz          (denext-<target>.zip on Windows)
       #   denext-<target>.tar.gz.sha256   one `sha256sum`-format line for that archive
       # The release job concatenates the per-archive lines into a combined SHA256SUMS.
@@ -270,6 +271,14 @@ jobs:
     permissions:
       contents: write # create the release and attach the assets
     steps:
+      # The checkout + Deno are for scripts/gen-package-manifests.ts (below) only.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.6"
+
       - name: Download every archive
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -289,6 +298,14 @@ jobs:
           for f in denext-*.tar.gz denext-*.zip; do grep -F " $f" SHA256SUMS >/dev/null; done
           sha256sum -c SHA256SUMS
           ls -l
+
+      # The package-manager manifests, from the SHA256SUMS just verified: a Homebrew formula
+      # (denext.rb), a Scoop manifest (denext.json) and the winget set (Brainwires.denext*.yaml).
+      # They are release assets only — publishing them to a tap, a bucket or winget-pkgs is a
+      # maintainer step (CONTRIBUTING.md → "Package managers"). Generated after SHA256SUMS, so
+      # SHA256SUMS lists only the archives install.sh / install.ps1 download.
+      - name: Generate the package-manager manifests
+        run: deno run -A scripts/gen-package-manifests.ts --version "$GITHUB_REF_NAME" --sums dist/SHA256SUMS --out dist
 
       # A tag with a prerelease suffix (`v2.5.0-rc.1`) is a GitHub PRERELEASE and is never
       # "latest": `releases/latest` — what the installer resolves with no DENEXT_VERSION — must

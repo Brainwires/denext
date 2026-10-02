@@ -6226,12 +6226,72 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopInstallersConfig",
+          "slug": "DesktopInstallersConfig",
+          "kind": "interface",
+          "signature": "interface DesktopInstallersConfig",
+          "doc": "DesktopConfig.installers: the installer formats per OS, and what they say about the app.",
+          "docFull": "{@link DesktopConfig.installers}: the installer formats per OS, and what they say about the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopPasskeysConfig",
+          "slug": "DesktopPasskeysConfig",
+          "kind": "interface",
+          "signature": "interface DesktopPasskeysConfig",
+          "doc": "desktop.capabilities.passkeys options.",
+          "docFull": "`desktop.capabilities.passkeys` options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopShellConfig",
           "slug": "DesktopShellConfig",
           "kind": "interface",
           "signature": "interface DesktopShellConfig",
           "doc": "The shell desktop capability's scoped options (an allowlist per action).",
           "docFull": "The `shell` desktop capability's scoped options (an allowlist per action).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSize",
+          "slug": "DesktopSize",
+          "kind": "interface",
+          "signature": "interface DesktopSize",
+          "doc": "A window size in CSS pixels (DesktopConfig.minSize / DesktopConfig.maxSize).",
+          "docFull": "A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopUpdateConfig",
+          "slug": "DesktopUpdateConfig",
+          "kind": "interface",
+          "signature": "interface DesktopUpdateConfig",
+          "doc": "DesktopConfig.update: full-app self-update.",
+          "docFull": "{@link DesktopConfig.update}: full-app self-update.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowConfig",
+          "slug": "DesktopWindowConfig",
+          "kind": "interface",
+          "signature": "interface DesktopWindowConfig",
+          "doc": "The initial window (DesktopConfig.window), applied when the runtime adopts it.",
+          "docFull": "The initial window ({@link DesktopConfig.window}), applied when the runtime adopts it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15286,12 +15346,124 @@
       "module": "denext/desktop",
       "symbols": [
         {
+          "name": "buildDesktopBundle",
+          "slug": "buildDesktopBundle",
+          "kind": "function",
+          "signature": "buildDesktopBundle(entryUrl: string, os: linux | windows, o: DesktopBundleOptions): Promise<string>",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable.",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), the export and the extension modules embedded, the first existing icon, then\nthe webview backend's `laufey-launch.json` beside the executable.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of the script."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            },
+            {
+              "name": "o",
+              "doc": "The target, output and icon candidates."
+            }
+          ],
+          "returns": "The bundle directory.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "buildDesktopDeb",
+          "slug": "buildDesktopDeb",
+          "kind": "function",
+          "signature": "buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<string>",
+          "doc": "Build a .deb for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written here), so it cross-builds from any OS. Installs into /usr/lib/<package> with a /usr/bin/<package> link, the .desktop entry (deep-link schemes as x-scheme-handler/*) and the icon; the desktop and icon databases are refreshed by their own dpkg triggers.",
+          "docFull": "Build a `.deb` for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written\nhere), so it cross-builds from any OS. Installs into `/usr/lib/<package>` with a\n`/usr/bin/<package>` link, the `.desktop` entry (deep-link schemes as `x-scheme-handler/*`) and\nthe icon; the desktop and icon databases are refreshed by their own dpkg triggers.",
+          "params": [
+            {
+              "name": "o",
+              "doc": "What to build."
+            }
+          ],
+          "returns": "The .deb path.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "buildDesktopMsi",
+          "slug": "buildDesktopMsi",
+          "kind": "function",
+          "signature": "buildDesktopMsi(o: BuildMsiOptions): Promise<string>",
+          "doc": "Author and build the .msi for a finished Windows bundle with WiX 5 (wix build); the .wxs is kept beside the .msi for inspection. Windows-only (WiX builds on Windows).",
+          "docFull": "Author and build the `.msi` for a finished Windows bundle with WiX 5 (`wix build`); the `.wxs`\nis kept beside the `.msi` for inspection. Windows-only (WiX builds on Windows).",
+          "params": [
+            {
+              "name": "o",
+              "doc": "What to build."
+            }
+          ],
+          "returns": "The .msi path.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "buildDesktopRpm",
+          "slug": "buildDesktopRpm",
+          "kind": "function",
+          "signature": "buildDesktopRpm(o: BuildLinuxPackageOptions): Promise<string>",
+          "doc": "Build an .rpm for a finished Linux bundle with rpmbuild (Fedora/RHEL, apt install rpm on Debian/Ubuntu, brew install rpm on macOS). Same installed layout as the .deb.",
+          "docFull": "Build an `.rpm` for a finished Linux bundle with `rpmbuild` (Fedora/RHEL, `apt install rpm` on\nDebian/Ubuntu, `brew install rpm` on macOS). Same installed layout as the `.deb`.",
+          "params": [
+            {
+              "name": "o",
+              "doc": "What to build."
+            }
+          ],
+          "returns": "The .rpm path.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuildLinuxPackageOptions",
+          "slug": "BuildLinuxPackageOptions",
+          "kind": "interface",
+          "signature": "interface BuildLinuxPackageOptions",
+          "doc": "What buildDesktopDeb / buildDesktopRpm build.",
+          "docFull": "What {@linkcode buildDesktopDeb} / {@linkcode buildDesktopRpm} build.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuildMsiOptions",
+          "slug": "BuildMsiOptions",
+          "kind": "interface",
+          "signature": "interface BuildMsiOptions",
+          "doc": "What buildDesktopMsi builds.",
+          "docFull": "What {@linkcode buildDesktopMsi} builds.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
-          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void): (request: Request, url: URL) => Promise<Response>",
+          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
           "doc": "The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
           "docFull": "The desktop request handler: the `onRequest` escape hatch, the token-gated local endpoints,\nthen — when `devProxy` is set (`denext desktop dev` only) — the reverse proxy to `denext dev`\nfor EVERYTHING else; otherwise the backend proxy, the export's static assets (`no-store`), the\n`index.html` shell for navigations, else 404. Exported for tests; {@linkcode runDesktop} wires\nit to `Deno.serve`.\n\nRequest order is load-bearing: the token-gated `/_denext/desktop/*` endpoints ({@link\nhandleLocalEndpoint}) run BEFORE the dev proxy, so they are always served LOCALLY and never\nforwarded to the dev server, even in live-reload mode.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DEFAULT_DESKTOP_INSTALLERS",
+          "slug": "DEFAULT_DESKTOP_INSTALLERS",
+          "kind": "variable",
+          "signature": "DEFAULT_DESKTOP_INSTALLERS: Readonly<Record<DesktopOs, typeOperator>>",
+          "doc": "The formats built when neither --format nor desktop.installers.<os> names any.",
+          "docFull": "The formats built when neither `--format` nor `desktop.installers.<os>` names any.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15314,6 +15486,30 @@
           "examples": [
             "```ts\n// desktop/extensions/scanner.ts  (runs in the Deno process only)\nimport { defineDesktopExtension } from \"denext/desktop\";\nimport { z } from \"zod\";\nexport default defineDesktopExtension({\n  name: \"scanner\",\n  methods: {\n    listDevices: {\n      input: z.object({}),\n      output: z.array(z.string()),\n      permissions: { ffi: [\"./native/libscanner.dylib\"] },\n      handler: () => listDevicesFromFfi(),\n    },\n  },\n});\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "DESKTOP_APP_CONFIG_FILE",
+          "slug": "DESKTOP_APP_CONFIG_FILE",
+          "kind": "variable",
+          "signature": "DESKTOP_APP_CONFIG_FILE: .deno-desktop/app.json",
+          "doc": "Where the runtime looks for the embedded origin + identifier, relative to the project root.",
+          "docFull": "Where the runtime looks for the embedded origin + identifier, relative to the project root.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DESKTOP_APP_ORIGIN_ENV",
+          "slug": "DESKTOP_APP_ORIGIN_ENV",
+          "kind": "variable",
+          "signature": "DESKTOP_APP_ORIGIN_ENV: DENO_DESKTOP_APP_ORIGIN",
+          "doc": "The env var the denext-pinned runtime publishes the page origin in (myapp://app).",
+          "docFull": "The env var the denext-pinned runtime publishes the page origin in (`myapp://app`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -15353,6 +15549,66 @@
           "denextOnly": true
         },
         {
+          "name": "DESKTOP_INSTALLER_FORMATS",
+          "slug": "DESKTOP_INSTALLER_FORMATS",
+          "kind": "variable",
+          "signature": "DESKTOP_INSTALLER_FORMATS: object",
+          "doc": "Every installer format, by the OS it is built for.",
+          "docFull": "Every installer format, by the OS it is built for.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DESKTOP_WS_ORIGIN_ENV",
+          "slug": "DESKTOP_WS_ORIGIN_ENV",
+          "kind": "variable",
+          "signature": "DESKTOP_WS_ORIGIN_ENV: DENO_DESKTOP_WS_ORIGIN",
+          "doc": "The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in (ws://127.0.0.1:<port>): the address the page dials for a WebSocket to its own server.",
+          "docFull": "The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in\n(`ws://127.0.0.1:<port>`): the address the page dials for a WebSocket to its own server.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopAppDirs",
+          "slug": "DesktopAppDirs",
+          "kind": "interface",
+          "signature": "interface DesktopAppDirs",
+          "doc": "The three per-app storage roots a desktop app uses (absolute paths, not created here).",
+          "docFull": "The three per-app storage roots a desktop app uses (absolute paths, not created here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopAppName",
+          "slug": "desktopAppName",
+          "kind": "function",
+          "signature": "desktopAppName(): Promise<string>",
+          "doc": "The app's name for artifact paths: DENEXT_APP_NAME, else deno.json desktop.app.name in the working directory, else \"app\".",
+          "docFull": "The app's name for artifact paths: `DENEXT_APP_NAME`, else deno.json `desktop.app.name` in the\nworking directory, else `\"app\"`.",
+          "params": [],
+          "returns": "The name.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopAppSyncReport",
+          "slug": "DesktopAppSyncReport",
+          "kind": "interface",
+          "signature": "interface DesktopAppSyncReport",
+          "doc": "What syncDesktopAppConfig did.",
+          "docFull": "What {@linkcode syncDesktopAppConfig} did.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopBridge",
           "slug": "DesktopBridge",
           "kind": "interface",
@@ -15369,8 +15625,8 @@
           "slug": "desktopBuildFlags",
           "kind": "function",
           "signature": "desktopBuildFlags(config: unknown, os: DesktopOs): string[]",
-          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag); - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
-          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it);\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag);\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
+          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's and desktop.update.hosts); - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
+          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it);\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s and `desktop.update.hosts`);\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
           "params": [
             {
               "name": "config",
@@ -15382,6 +15638,18 @@
             }
           ],
           "returns": "The flags, ready to splice into the deno desktop argv (never -A).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopBundleOptions",
+          "slug": "DesktopBundleOptions",
+          "kind": "interface",
+          "signature": "interface DesktopBundleOptions",
+          "doc": "What buildDesktopBundle builds.",
+          "docFull": "What {@linkcode buildDesktopBundle} builds.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -15470,6 +15738,23 @@
           "denextOnly": true
         },
         {
+          "name": "desktopHasTool",
+          "slug": "desktopHasTool",
+          "kind": "function",
+          "signature": "desktopHasTool(cmd: string): Promise<boolean>",
+          "doc": "Whether a command is on PATH (where on Windows, command -v elsewhere).",
+          "docFull": "Whether a command is on PATH (`where` on Windows, `command -v` elsewhere).",
+          "params": [
+            {
+              "name": "cmd",
+              "doc": "The command."
+            }
+          ],
+          "returns": "Whether it resolves.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopIncludeArgs",
           "slug": "desktopIncludeArgs",
           "kind": "function",
@@ -15487,12 +15772,106 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopInstallerFormat",
+          "slug": "DesktopInstallerFormat",
+          "kind": "typeAlias",
+          "signature": "type DesktopInstallerFormat = indexedAccess",
+          "doc": "One installer format (desktop.installers.<os> entries, --format values).",
+          "docFull": "One installer format (`desktop.installers.<os>` entries, `--format` values).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopInstallerPlan",
+          "slug": "desktopInstallerPlan-fn",
+          "kind": "function",
+          "signature": "desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: typeOperator, add?: typeOperator): Promise<DesktopInstallerPlan>",
+          "doc": "planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).",
+          "docFull": "{@linkcode planDesktopInstallers} for the project whose `scripts/` holds `entryUrl` (its\n`denext.config.ts` supplies `desktop.installers`).",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            },
+            {
+              "name": "requested",
+              "doc": "--format values."
+            },
+            {
+              "name": "add",
+              "doc": "Formats appended to the plan (a script's legacy --dmg / --appimage)."
+            }
+          ],
+          "returns": "The plan.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopInstallerPlan",
+          "slug": "DesktopInstallerPlan-iface",
+          "kind": "interface",
+          "signature": "interface DesktopInstallerPlan",
+          "doc": "What a package script builds.",
+          "docFull": "What a package script builds.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopOs",
           "slug": "DesktopOs",
           "kind": "typeAlias",
           "signature": "type DesktopOs = darwin | windows | linux",
           "doc": "The operating systems a Deno Desktop app ships for (Deno.build.os spelling).",
           "docFull": "The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopPackageArches",
+          "slug": "desktopPackageArches",
+          "kind": "function",
+          "signature": "desktopPackageArches(arch: string): Array<x86_64 | arm64>",
+          "doc": "The bundle arches a Linux / Windows run builds: both for both, the machine's own for host.",
+          "docFull": "The bundle arches a Linux / Windows run builds: both for `both`, the machine's own for `host`.",
+          "params": [
+            {
+              "name": "arch",
+              "doc": "The --arch value."
+            }
+          ],
+          "returns": "The arches.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopPackageArgs",
+          "slug": "DesktopPackageArgs",
+          "kind": "interface",
+          "signature": "interface DesktopPackageArgs",
+          "doc": "A package script's parsed command line.",
+          "docFull": "A package script's parsed command line.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopPackageArgSpec",
+          "slug": "DesktopPackageArgSpec",
+          "kind": "interface",
+          "signature": "interface DesktopPackageArgSpec",
+          "doc": "What parseDesktopPackageArgs accepts.",
+          "docFull": "What {@linkcode parseDesktopPackageArgs} accepts.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15516,6 +15895,39 @@
             }
           ],
           "returns": "The --allow-* flags, ready to splice into the deno desktop argv.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopPackageMeta",
+          "slug": "desktopPackageMeta-fn",
+          "kind": "function",
+          "signature": "desktopPackageMeta(entryUrl: string, fallbackName: string): Promise<DesktopPackageMeta>",
+          "doc": "packageMetaFrom for the project whose scripts/ holds entryUrl.",
+          "docFull": "{@linkcode packageMetaFrom} for the project whose `scripts/` holds `entryUrl`.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "fallbackName",
+              "doc": "The name to use when deno.json names no app."
+            }
+          ],
+          "returns": "The metadata.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopPackageMeta",
+          "slug": "DesktopPackageMeta-iface",
+          "kind": "interface",
+          "signature": "interface DesktopPackageMeta",
+          "doc": "What every installer says about the app.",
+          "docFull": "What every installer says about the app.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -15544,13 +15956,207 @@
           "denextOnly": true
         },
         {
+          "name": "desktopRequireTool",
+          "slug": "desktopRequireTool",
+          "kind": "function",
+          "signature": "desktopRequireTool(tool: string, format: string, explicit: boolean): Promise<boolean>",
+          "doc": "desktopToolGate for a tool that must be on PATH.",
+          "docFull": "{@linkcode desktopToolGate} for a tool that must be on PATH.",
+          "params": [
+            {
+              "name": "tool",
+              "doc": "The command."
+            },
+            {
+              "name": "format",
+              "doc": "The installer it builds."
+            },
+            {
+              "name": "explicit",
+              "doc": "Whether the format was asked for."
+            }
+          ],
+          "returns": "true when the tool is there.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopRun",
+          "slug": "desktopRun",
+          "kind": "function",
+          "signature": "desktopRun(cmd: string[], env?: Record<string, string>): Promise<void>",
+          "doc": "Run a command with inherited stdio; throws on a non-zero exit.",
+          "docFull": "Run a command with inherited stdio; throws on a non-zero exit.",
+          "params": [
+            {
+              "name": "cmd",
+              "doc": "The command and its arguments."
+            },
+            {
+              "name": "env",
+              "doc": "Extra environment variables."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopRuntime",
+          "slug": "DesktopRuntime",
+          "kind": "interface",
+          "signature": "interface DesktopRuntime",
+          "doc": "What runDesktop hands back once the server is up: the app window and a hook that pushes an event down the page's bridge stream (what subscribeDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.",
+          "docFull": "What {@linkcode runDesktop} hands back once the server is up: the app window and a hook that\npushes an event down the page's bridge stream (what `subscribeDesktopEvent(cap, event, …)` in\n`denext/desktop/client` receives) — the seam OS events (deep links, open-file, …) are emitted\nthrough.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopRuntimeEnv",
+          "slug": "desktopRuntimeEnv",
+          "kind": "function",
+          "signature": "desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>",
+          "doc": "The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.",
+          "docFull": "The env a scaffolded `scripts/package-*.ts` adds to its `deno desktop` command so it builds on\ndenext's pinned Deno Desktop runtime: `DENORT_DESKTOP_BIN` + `LAUFEY_DEV_DIR` for `target`\n(default: the host), downloaded and verified on first use. Empty under\n`DENEXT_DESKTOP_RUNTIME=stock`. The project is the script's parent directory.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "The packaging script's import.meta.url."
+            },
+            {
+              "name": "target",
+              "doc": "The Rust target triple passed to deno desktop --target (default: the host's)."
+            }
+          ],
+          "returns": "The env vars to set on the deno desktop child.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopServeInfo",
+          "slug": "DesktopServeInfo",
+          "kind": "interface",
+          "signature": "interface DesktopServeInfo",
+          "doc": "The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: \"memory\" is not in the stock Deno.NetAddr type.",
+          "docFull": "The part of `Deno.ServeHandlerInfo` the gates read. Typed loosely because `transport: \"memory\"`\nis not in the stock `Deno.NetAddr` type.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopSlug",
+          "slug": "desktopSlug",
+          "kind": "function",
+          "signature": "desktopSlug(name: string): string",
+          "doc": "A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.",
+          "docFull": "A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.",
+          "params": [
+            {
+              "name": "name",
+              "doc": "The app name."
+            }
+          ],
+          "returns": "The slug (\"app\" when nothing usable remains).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopToolGate",
+          "slug": "desktopToolGate",
+          "kind": "function",
+          "signature": "desktopToolGate(why: string | undefined, format: string, explicit: boolean): boolean",
+          "doc": "Whether why (a reason the tool for format cannot run, or undefined when it can) still lets the format build: a default format is skipped with a warning, an asked-for one fails.",
+          "docFull": "Whether `why` (a reason the tool for `format` cannot run, or `undefined` when it can) still\nlets the format build: a default format is skipped with a warning, an asked-for one fails.",
+          "params": [
+            {
+              "name": "why",
+              "doc": "Why the tool is unavailable, or undefined."
+            },
+            {
+              "name": "format",
+              "doc": "The installer it builds."
+            },
+            {
+              "name": "explicit",
+              "doc": "Whether the format was asked for."
+            }
+          ],
+          "returns": "true when the format can be built.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrust",
+          "slug": "DesktopTrust",
+          "kind": "typeAlias",
+          "signature": "type DesktopTrust = object | object | object",
+          "doc": "The desktop world the app runs in (see the module docs).",
+          "docFull": "The desktop world the app runs in (see the module docs).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowSettings",
+          "slug": "DesktopWindowSettings",
+          "kind": "interface",
+          "signature": "interface DesktopWindowSettings",
+          "doc": "The resolved initial-window settings runDesktop applies (every key optional).",
+          "docFull": "The resolved initial-window settings `runDesktop` applies (every key optional).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowSize",
+          "slug": "DesktopWindowSize",
+          "kind": "interface",
+          "signature": "interface DesktopWindowSize",
+          "doc": "A window size in CSS pixels.",
+          "docFull": "A window size in CSS pixels.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "injectDesktopGlobal",
           "slug": "injectDesktopGlobal",
           "kind": "function",
-          "signature": "injectDesktopGlobal(html: string, token: string | null, beacon?: boolean): Promise<string>",
+          "signature": "injectDesktopGlobal(html: string, token: string | null, beacon?: boolean, preload?: string): Promise<string>",
           "doc": "Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.",
-          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.",
+          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.\n\n`preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline\nscript right after the global — so it runs after `__denext` exists and before any page script —\nwith its own hash. It is injected only together with the token (a top-level document); the\ncaller additionally limits it to the memory world.",
           "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "installWindowCloseHandler",
+          "slug": "installWindowCloseHandler",
+          "kind": "function",
+          "signature": "installWindowCloseHandler(BrowserWindow?: unknown, exit?: (code: number) => void, intercept?: (event: Event) => boolean): unknown",
+          "doc": "Closing the window (macOS red light / Cmd-W) quits the app. Deno.serve is a permanently-live task, so deno desktop won't auto-exit on close; adopt the initial window and exit on its close. Guarded so a non-desktop run is a no-op. Returns the adopted window (handed to capabilities as ctx.window), or undefined outside the desktop runtime.",
+          "docFull": "Closing the window (macOS red light / Cmd-W) quits the app. `Deno.serve` is a\npermanently-live task, so deno desktop won't auto-exit on close; adopt the initial\nwindow and exit on its `close`. Guarded so a non-desktop run is a no-op. Returns the adopted\nwindow (handed to capabilities as `ctx.window`), or `undefined` outside the desktop runtime.",
+          "params": [
+            {
+              "name": "BrowserWindow",
+              "doc": "The runtime's window constructor (Deno.BrowserWindow); a parameter so a test can stand one in."
+            },
+            {
+              "name": "exit",
+              "doc": "How the process ends (default Deno.exit)."
+            },
+            {
+              "name": "intercept",
+              "doc": "Consulted first on every close: true when it took the close over (the page guards it, see onCloseRequested in denext/desktop/window), so the app keeps running."
+            }
+          ],
           "returns": "",
           "examples": [],
           "denextOnly": true
@@ -15564,6 +16170,141 @@
           "docFull": "Whether `execPath` is the `deno` CLI (`deno` / `deno.exe`, case-insensitive) rather than a\ncompiled/packaged app binary. Live-reload proxy mode runs under `deno desktop <entry>`, so its\nexecPath is `deno`; a packaged app's is its own binary. Pure, so the packaged-vs-dev decision\nis testable without the real {@linkcode Deno.execPath}.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LAUFEY_LAUNCH_FILE",
+          "slug": "LAUFEY_LAUNCH_FILE",
+          "kind": "variable",
+          "signature": "LAUFEY_LAUNCH_FILE: laufey-launch.json",
+          "doc": "The webview backend's launch-settings file name.",
+          "docFull": "The webview backend's launch-settings file name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "parseDesktopPackageArgs",
+          "slug": "parseDesktopPackageArgs",
+          "kind": "function",
+          "signature": "parseDesktopPackageArgs(argv: typeOperator, spec: DesktopPackageArgSpec): DesktopPackageArgs",
+          "doc": "Parse a package script's arguments: --arch <mode>, --no-export, --no-sign, --format <list> (repeatable), the script's legacy installer flags, and -h / --help. An unknown argument or an --arch outside spec.arches throws.",
+          "docFull": "Parse a package script's arguments: `--arch <mode>`, `--no-export`, `--no-sign`,\n`--format <list>` (repeatable), the script's legacy installer flags, and `-h` / `--help`.\nAn unknown argument or an `--arch` outside `spec.arches` throws.",
+          "params": [
+            {
+              "name": "argv",
+              "doc": "The script's Deno.args."
+            },
+            {
+              "name": "spec",
+              "doc": "The valid arches and legacy flags."
+            }
+          ],
+          "returns": "The parsed arguments.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PickedPaths",
+          "slug": "PickedPaths",
+          "kind": "class",
+          "signature": "class PickedPaths",
+          "doc": "The runtime's picked-path set. One instance per launch is threaded (by the caps resolver) into the dialogs cap (which adds a pick) and the fs / shell caps (which resolve a handle back to a confined path).",
+          "docFull": "The runtime's picked-path set. One instance per launch is threaded (by the caps resolver) into the\n`dialogs` cap (which {@link add}s a pick) and the `fs` / `shell` caps (which {@link resolve} a\nhandle back to a confined path).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PickedTarget",
+          "slug": "PickedTarget",
+          "kind": "interface",
+          "signature": "interface PickedTarget",
+          "doc": "A resolved access: the confined absolute path plus the root dir to ensure before a write.",
+          "docFull": "A resolved access: the confined absolute path plus the root dir to ensure before a write.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PickMode",
+          "slug": "PickMode",
+          "kind": "typeAlias",
+          "signature": "type PickMode = read | readwrite | folder | readFolder",
+          "doc": "How much access a picked handle grants.",
+          "docFull": "How much access a picked handle grants.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "planDesktopInstallers",
+          "slug": "planDesktopInstallers",
+          "kind": "function",
+          "signature": "planDesktopInstallers(os: DesktopOs, config: unknown, requested?: typeOperator, add?: typeOperator): DesktopInstallerPlan",
+          "doc": "Which installers to build for os: requested (--format) when it names any, else desktop.installers.<os> from the config, else DEFAULT_DESKTOP_INSTALLERS. add (a script's legacy --dmg / --appimage) is appended to whichever list applies.",
+          "docFull": "Which installers to build for `os`: `requested` (`--format`) when it names any, else\n`desktop.installers.<os>` from the config, else {@linkcode DEFAULT_DESKTOP_INSTALLERS}. `add`\n(a script's legacy `--dmg` / `--appimage`) is appended to whichever list applies.",
+          "params": [
+            {
+              "name": "os",
+              "doc": "The target OS."
+            },
+            {
+              "name": "config",
+              "doc": "The project's loaded denext.config.ts default export (or undefined)."
+            },
+            {
+              "name": "requested",
+              "doc": "--format values (comma lists allowed)."
+            },
+            {
+              "name": "add",
+              "doc": "Formats appended to the plan."
+            }
+          ],
+          "returns": "The plan.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PreparedDesktopPackage",
+          "slug": "PreparedDesktopPackage",
+          "kind": "interface",
+          "signature": "interface PreparedDesktopPackage",
+          "doc": "What prepareDesktopPackage resolved.",
+          "docFull": "What {@linkcode prepareDesktopPackage} resolved.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "prepareDesktopPackage",
+          "slug": "prepareDesktopPackage",
+          "kind": "function",
+          "signature": "prepareDesktopPackage(entryUrl: string, os: DesktopOs, args: Pick<DesktopPackageArgs, formats | add | export>): Promise<PreparedDesktopPackage>",
+          "doc": "A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), the .deno-desktop/app.json + compile.include sync, the package metadata (read after that sync wrote the deep links into deno.json), dist/, and — unless --no-export — the static export (deno task export).",
+          "docFull": "A package run's setup: the app name, the installer plan (`--format`, else\n`desktop.installers.<os>`, else the defaults), the `.deno-desktop/app.json` + `compile.include`\nsync, the package metadata (read after that sync wrote the deep links into deno.json), `dist/`,\nand — unless `--no-export` — the static export (`deno task export`).",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of the script."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            },
+            {
+              "name": "args",
+              "doc": "The parsed arguments."
+            }
+          ],
+          "returns": "The name, plan and metadata.",
           "examples": [],
           "denextOnly": true
         },
@@ -15597,7 +16338,7 @@
           "kind": "function",
           "signature": "resolveDesktopCapabilities(config: DenextConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
           "doc": "Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.",
-          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, and the `echo` diagnostic), plus any `extensions` module paths;\n`auth-session` is a runtime endpoint (not a bridge cap) so it only sets `authSessionEnabled`. A\nconfigured key with no built-in yet (`clipboard`/`contextMenu`/`notifications` — WebView-backed)\nis left unavailable (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
+          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
           "params": [
             {
               "name": "config",
@@ -15640,9 +16381,9 @@
           "name": "runDesktop",
           "slug": "runDesktop",
           "kind": "function",
-          "signature": "runDesktop(options?: RunDesktopOptions): Promise<void>",
-          "doc": "Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server.",
-          "docFull": "Serve a denext SPA export in a `deno desktop` window. Adopts the initial\n`Deno.BrowserWindow` and quits the process on window close; under a plain\n`deno run` (no desktop runtime) it just starts the server.",
+          "signature": "runDesktop(options?: RunDesktopOptions): Promise<DesktopRuntime>",
+          "doc": "Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server. Resolves once the server is started, with the window and an event hook (DesktopRuntime).",
+          "docFull": "Serve a denext SPA export in a `deno desktop` window. Adopts the initial\n`Deno.BrowserWindow` and quits the process on window close; under a plain\n`deno run` (no desktop runtime) it just starts the server. Resolves once the server is started,\nwith the window and an event hook ({@linkcode DesktopRuntime}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15661,6 +16402,18 @@
           "denextOnly": true
         },
         {
+          "name": "shouldInjectDesktopToken",
+          "slug": "shouldInjectDesktopToken",
+          "kind": "function",
+          "signature": "shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean",
+          "doc": "Whether the per-launch token may be injected into the document this request fetches: a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe gets the desktop global without the token. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.",
+          "docFull": "Whether the per-launch token may be injected into the document this request fetches: a\nTOP-LEVEL document only (`Sec-Fetch-Dest`, `document` when absent), so a subframe gets the\ndesktop global without the token. Then, per world: loopback — a LOOPBACK `Host`, so a\nDNS-rebinding Host gets no token; memory — the in-process memory transport and an `Origin` that\nis absent or exactly the app origin; refuse — never.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "stripDesktopCredentials",
           "slug": "stripDesktopCredentials",
           "kind": "function",
@@ -15669,6 +16422,48 @@
           "docFull": "The request to forward to the dev server with the desktop credential removed: the per-launch\n`x-denext-desktop-token` header is dropped so it never reaches the dev server (invariant: the\ntoken gates the LOCAL endpoints only). A WebSocket upgrade is returned untouched — it cannot be\nreconstructed (`Deno.upgradeWebSocket` needs the original connection), a browser cannot set a\ncustom header on a WS handshake, and {@link proxyToBackend}'s WS bridge forwards only\n`host`/`origin`/`cookie` upstream, never the token. denext injects no desktop-specific cookie\n(the token lives in `globalThis.__denext` and this header only), so there is none to strip.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "syncDesktopAppConfig",
+          "slug": "syncDesktopAppConfig",
+          "kind": "function",
+          "signature": "syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>",
+          "doc": "syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop.",
+          "docFull": "{@linkcode syncDesktopAppConfigAt} for the project that owns `entryUrl` (a script in its\n`scripts/` folder): what the scaffolded `scripts/package-*.ts` call before `deno desktop`.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            }
+          ],
+          "returns": "What changed.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "writeLaufeyLaunchConfig",
+          "slug": "writeLaufeyLaunchConfig",
+          "kind": "function",
+          "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>",
+          "doc": "Write the packaged app's laufey-launch.json from desktop.app and desktop.inspectable in the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
+          "docFull": "Write the packaged app's `laufey-launch.json` from `desktop.app` and `desktop.inspectable` in the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).\nOn macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            },
+            {
+              "name": "bundle",
+              "doc": "The .app (macOS) or bundle directory (Windows / Linux) deno desktop wrote."
+            }
+          ],
+          "returns": "The path written (always written: it carries inspectable).",
           "examples": [],
           "denextOnly": true
         }
@@ -15690,6 +16485,119 @@
           "denextOnly": true
         },
         {
+          "name": "AppUpdateCheck",
+          "slug": "AppUpdateCheck",
+          "kind": "interface",
+          "signature": "interface AppUpdateCheck",
+          "doc": "The result of checkForAppUpdate.",
+          "docFull": "The result of {@linkcode checkForAppUpdate}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AppUpdateError",
+          "slug": "AppUpdateError",
+          "kind": "class",
+          "signature": "class AppUpdateError",
+          "doc": "A refusal from the full-app updater, with a machine-readable AppUpdateErrorCode.",
+          "docFull": "A refusal from the full-app updater, with a machine-readable {@linkcode AppUpdateErrorCode}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AppUpdateErrorCode",
+          "slug": "AppUpdateErrorCode",
+          "kind": "typeAlias",
+          "signature": "type AppUpdateErrorCode = unsupported | not_configured | invalid_manifest | signature | wrong_app | downgrade | rejected | no_platform | insecure_url | size_exceeded | integrity | unsafe_archive | bundle_mismatch | os_signature | install_not_writable | unsupported_layout | not_staged | busy | io",
+          "doc": "Why a full-app update step refused (the runtime's codes, plus unsupported).",
+          "docFull": "Why a full-app update step refused (the runtime's codes, plus `unsupported`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AppUpdateProgress",
+          "slug": "AppUpdateProgress",
+          "kind": "interface",
+          "signature": "interface AppUpdateProgress",
+          "doc": "Download progress, in bytes.",
+          "docFull": "Download progress, in bytes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AppUpdaterConfig",
+          "slug": "AppUpdaterConfig",
+          "kind": "interface",
+          "signature": "interface AppUpdaterConfig",
+          "doc": "Where the signed manifest is and how to reach it.",
+          "docFull": "Where the signed manifest is and how to reach it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AppUpdateStaged",
+          "slug": "AppUpdateStaged",
+          "kind": "interface",
+          "signature": "interface AppUpdateStaged",
+          "doc": "The result of downloadAppUpdate: the update is verified and staged.",
+          "docFull": "The result of {@linkcode downloadAppUpdate}: the update is verified and staged.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "appUpdateStatus",
+          "slug": "appUpdateStatus-fn",
+          "kind": "function",
+          "signature": "appUpdateStatus(): AppUpdateStatus | null",
+          "doc": "The runtime's view of full-app updates for this app, or null outside denext's pinned Deno Desktop runtime.",
+          "docFull": "The runtime's view of full-app updates for this app, or `null` outside denext's pinned Deno\nDesktop runtime.",
+          "params": [],
+          "returns": "The status.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "AppUpdateStatus",
+          "slug": "AppUpdateStatus-iface",
+          "kind": "interface",
+          "signature": "interface AppUpdateStatus",
+          "doc": "appUpdateStatus: what the runtime knows about this app and any pending update.",
+          "docFull": "{@linkcode appUpdateStatus}: what the runtime knows about this app and any pending update.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "checkForAppUpdate",
+          "slug": "checkForAppUpdate",
+          "kind": "function",
+          "signature": "checkForAppUpdate(config: AppUpdaterConfig): Promise<AppUpdateCheck>",
+          "doc": "Fetch and verify the signed manifest. Resolves available: false when it offers the running version; throws on anything that does not verify (see the module's invariants).",
+          "docFull": "Fetch and verify the signed manifest. Resolves `available: false` when it offers the running\nversion; throws on anything that does not verify (see the module's invariants).",
+          "params": [
+            {
+              "name": "config",
+              "doc": "Where the manifest is."
+            }
+          ],
+          "returns": "What the manifest offers.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "checkForDesktopUpdate",
           "slug": "checkForDesktopUpdate",
           "kind": "function",
@@ -15698,6 +16606,18 @@
           "docFull": "Check the feed for a newer, fully-verified UI. Fetches `${feedUrl}/_denext/ota.json`,\nvalidates its shape, RECOMPUTES the version and refuses a mismatch, VERIFIES the ECDSA\nsignature, and refuses a non-monotonic `sequence` — all BEFORE reporting anything as available.\nA version equal to the active overlay resolves `{ available: false }`.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "confirmAppUpdate",
+          "slug": "confirmAppUpdate",
+          "kind": "function",
+          "signature": "confirmAppUpdate(): boolean",
+          "doc": "Confirm the running version after an update, once the app has shown it is healthy (its window loaded, its backend answered): the previous app is deleted and the update is final. An update not confirmed by its next launch is rolled back and that version is refused from then on. A no-op (false) when no update is pending, so it is safe to call on every launch. runDesktop calls it once the window has loaded unless desktop.update.autoConfirm is false.",
+          "docFull": "Confirm the running version after an update, once the app has shown it is healthy (its window\nloaded, its backend answered): the previous app is deleted and the update is final. An update\nnot confirmed by its next launch is rolled back and that version is refused from then on. A no-op\n(`false`) when no update is pending, so it is safe to call on every launch. `runDesktop` calls it\nonce the window has loaded unless `desktop.update.autoConfirm` is `false`.",
+          "params": [],
+          "returns": "Whether a pending update was confirmed.",
           "examples": [],
           "denextOnly": true
         },
@@ -15810,6 +16730,44 @@
           "denextOnly": true
         },
         {
+          "name": "downloadAppUpdate",
+          "slug": "downloadAppUpdate",
+          "kind": "function",
+          "signature": "downloadAppUpdate(config: AppUpdaterConfig, options?: object): Promise<AppUpdateStaged>",
+          "doc": "Download the update checkForAppUpdate found (size-capped, SHA-256 checked) next to the install, extract it safely and run the OS code-signature check. When this resolves, the update is verified and staged; nothing at the install path has changed yet.",
+          "docFull": "Download the update {@linkcode checkForAppUpdate} found (size-capped, SHA-256 checked) next to\nthe install, extract it safely and run the OS code-signature check. When this resolves, the\nupdate is verified and staged; nothing at the install path has changed yet.",
+          "params": [
+            {
+              "name": "config",
+              "doc": "The same config as the check (its allowUnsignedDev applies here)."
+            },
+            {
+              "name": "options",
+              "doc": "onProgress (bytes) and an abort signal."
+            }
+          ],
+          "returns": "The staged version and how its OS signature was established.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "installAppUpdateAndRelaunch",
+          "slug": "installAppUpdateAndRelaunch",
+          "kind": "function",
+          "signature": "installAppUpdateAndRelaunch(options?: object): object",
+          "doc": "Install the staged update: start the swap helper and quit the app (Electron's quitAndInstall). The helper waits for this process to exit, swaps the install, and relaunches the new version, which runDesktop confirms once its window has loaded (or, with desktop.update.autoConfirm: false, the app's own confirmAppUpdate call).",
+          "docFull": "Install the staged update: start the swap helper and quit the app (Electron's\n`quitAndInstall`). The helper waits for this process to exit, swaps the install, and relaunches\nthe new version, which `runDesktop` confirms once its window has loaded (or, with\n`desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).",
+          "params": [
+            {
+              "name": "options",
+              "doc": "force: true exits even when a beforequit / close listener refuses."
+            }
+          ],
+          "returns": "quitting: false when the app refused to quit (the helper then waits up to five minutes for it to exit before giving up, leaving the app as it was).",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "OtaManifest",
           "slug": "OtaManifest",
           "kind": "interface",
@@ -15862,6 +16820,64 @@
     {
       "module": "denext/desktop/client",
       "symbols": [
+        {
+          "name": "claimDeepLinkScheme",
+          "slug": "claimDeepLinkScheme",
+          "kind": "function",
+          "signature": "claimDeepLinkScheme(scheme: string): Promise<ClaimDeepLinkSchemeResult>",
+          "doc": "Make this app the handler of scheme (one of its desktop.app.deepLinks), taking it over from another app. **Only on an explicit user action** — a \"Make this app the handler of myapp: links\" button after openAuthSession rejected scheme_owned_by_other_app — because the other app loses the scheme. On macOS the OS may confirm it with the user; a Windows \"UserChoice\" cannot be overridden (registered: false).",
+          "docFull": "Make this app the handler of `scheme` (one of its `desktop.app.deepLinks`), taking it over from\nanother app. **Only on an explicit user action** — a \"Make this app the handler of myapp: links\"\nbutton after `openAuthSession` rejected `scheme_owned_by_other_app` — because the other app loses\nthe scheme. On macOS the OS may confirm it with the user; a Windows \"UserChoice\" cannot be\noverridden (`registered: false`).",
+          "params": [
+            {
+              "name": "scheme",
+              "doc": "A scheme from desktop.app.deepLinks."
+            }
+          ],
+          "returns": "The registration after the call.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ClaimDeepLinkSchemeResult",
+          "slug": "ClaimDeepLinkSchemeResult",
+          "kind": "interface",
+          "signature": "interface ClaimDeepLinkSchemeResult",
+          "doc": "What claimDeepLinkScheme reports.",
+          "docFull": "What {@linkcode claimDeepLinkScheme} reports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "deepLinkSchemeOwner",
+          "slug": "deepLinkSchemeOwner-fn",
+          "kind": "function",
+          "signature": "deepLinkSchemeOwner(scheme: string): Promise<DeepLinkSchemeOwner>",
+          "doc": "Which app handles scheme, one of the app's desktop.app.deepLinks (denext's pinned Deno Desktop runtime). A snapshot, and advisory: any program of the same user can register itself for a scheme at any time, so keep PKCE and state on every sign-in.",
+          "docFull": "Which app handles `scheme`, one of the app's `desktop.app.deepLinks` (denext's pinned Deno\nDesktop runtime). A snapshot, and advisory: any program of the same user can register itself for\na scheme at any time, so keep PKCE and `state` on every sign-in.",
+          "params": [
+            {
+              "name": "scheme",
+              "doc": "A scheme from desktop.app.deepLinks (\"myapp\")."
+            }
+          ],
+          "returns": "The owner. Rejects scheme_not_declared for another scheme, unsupported on a runtime without scheme registration, and unavailable off desktop.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DeepLinkSchemeOwner",
+          "slug": "DeepLinkSchemeOwner-iface",
+          "kind": "interface",
+          "signature": "interface DeepLinkSchemeOwner",
+          "doc": "Who handles one of the app's deep-link schemes (deepLinkSchemeOwner).",
+          "docFull": "Who handles one of the app's deep-link schemes ({@linkcode deepLinkSchemeOwner}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
         {
           "name": "DesktopBridgeError",
           "slug": "DesktopBridgeError",
@@ -16238,9 +17254,9 @@
           "name": "AuthSessionErrorCode",
           "slug": "AuthSessionErrorCode",
           "kind": "typeAlias",
-          "signature": "type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout",
+          "signature": "type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout | scheme_not_declared | pkce_required | scheme_owned_by_other_app | scheme_not_registered | session_in_progress",
           "doc": "The code on an openAuthSession rejection:",
-          "docFull": "The `code` on an {@linkcode openAuthSession} rejection:\n\n- `cancelled`: the user closed the sheet (or the popup) without finishing;\n- `busy`: another auth session is still open (one at a time);\n- `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,\n  or `timeoutMs` is not a positive number;\n- `unsupported`: the shell has no `DenextAuthSession` plugin, the sheet could not be\n  presented, the web popup was blocked, or there is no window (SSR);\n- `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform\n  allows it).",
+          "docFull": "The `code` on an {@linkcode openAuthSession} rejection:\n\n- `cancelled`: the user closed the sheet (or the popup) without finishing, or (Deno Desktop)\n  the `signal` aborted;\n- `busy`: another auth session is still open (one at a time);\n- `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,\n  or `timeoutMs` is not a positive number;\n- `unsupported`: the shell has no `DenextAuthSession` plugin, the sheet could not be\n  presented, the web popup was blocked, or there is no window (SSR);\n- `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform\n  allows it).\n\nDeno Desktop's custom-scheme callbacks add:\n\n- `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;\n- `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256`;\n- `scheme_owned_by_other_app`: another app handles the scheme (its identity in\n  {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call\n  `claimDeepLinkScheme` (`denext/desktop/client`);\n- `scheme_not_registered`: the app could not register itself for the scheme (an unpackaged dev\n  run);\n- `session_in_progress`: another custom-scheme session is still open.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16552,7 +17568,7 @@
           "kind": "function",
           "signature": "checkPermission(name: PermissionName): Promise<PermissionState>",
           "doc": "The current status of a permission, without prompting (see PermissionState for what each status means).",
-          "docFull": "The current status of a permission, without prompting (see {@linkcode PermissionState} for\nwhat each status means).\n\nIn the iOS/Android shell it asks the plugin behind the permission (`Camera` for `camera` and\n`photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for\n`notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the\nweb (and for `microphone`, which the WebView itself asks for) the browser's Permissions /\nNotifications API. It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing\nhere can answer: a plugin that is not installed and no browser API.",
+          "docFull": "The current status of a permission, without prompting (see {@linkcode PermissionState} for\nwhat each status means).\n\nIn the iOS/Android shell it asks the plugin behind the permission (`Camera` for `camera` and\n`photos`, `Geolocation` for `location`, `LocalNotifications` / `PushNotifications` for\n`notifications`, `Contacts`, `Calendar`, and the biometric plugin for `biometrics`); on the\nweb (and for `microphone`, which the WebView itself asks for) the browser's Permissions /\nNotifications API. In a Deno Desktop window with the `notifications` capability,\n`notifications` is the OS's own setting. It rejects with a {@linkcode PermissionError} (`unsupported`) when nothing\nhere can answer: a plugin that is not installed and no browser API.",
           "params": [
             {
               "name": "name",
@@ -16563,6 +17579,42 @@
           "examples": [
             "```ts\nimport { checkPermission, openAppSettings } from \"denext/mobile\";\n\nif ((await checkPermission(\"camera\")) === \"blocked\") {\n  if (confirm(\"Camera access is off. Open Settings?\")) await openAppSettings();\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "ClipboardContent",
+          "slug": "ClipboardContent",
+          "kind": "typeAlias",
+          "signature": "type ClipboardContent = object | object | object",
+          "doc": "Rich content for writeClipboard: text, HTML with an optional plain-text alternative (what apps without HTML paste), or a PNG image as base64. An image replaces the clipboard on its own: it cannot carry text alongside.",
+          "docFull": "Rich content for {@linkcode writeClipboard}: text, HTML with an optional plain-text\nalternative (what apps without HTML paste), or a PNG image as base64. An image replaces the\nclipboard on its own: it cannot carry text alongside.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ClipboardFormat",
+          "slug": "ClipboardFormat",
+          "kind": "typeAlias",
+          "signature": "type ClipboardFormat = text | html | image",
+          "doc": "What readClipboard can read.",
+          "docFull": "What {@linkcode readClipboard} can read.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "clipboardFormats",
+          "slug": "clipboardFormats",
+          "kind": "function",
+          "signature": "clipboardFormats(): Promise<string[]>",
+          "doc": "The kinds of content on the clipboard, as MIME types (\"text/plain\", \"text/html\", \"image/png\" for any image, \"text/uri-list\" for files, \"text/rtf\").",
+          "docFull": "The kinds of content on the clipboard, as MIME types (`\"text/plain\"`, `\"text/html\"`,\n`\"image/png\"` for any image, `\"text/uri-list\"` for files, `\"text/rtf\"`).\n\nIn a Deno Desktop window with the `clipboard` capability, the OS clipboard's formats without\nreading them; elsewhere the types `navigator.clipboard.read()` reports (a permission prompt in\nmost browsers), or the shell plugin's one item.",
+          "params": [],
+          "returns": "The MIME types; empty for an empty clipboard.",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -18383,7 +19435,7 @@
           "kind": "function",
           "signature": "onDeepLink(callback: (event: DeepLinkEvent) => void, options?: DeepLinkOptions): () => void",
           "doc": "Call callback for every link that opens the app, and (by default) navigate to it.",
-          "docFull": "Call `callback` for every link that opens the app, and (by default) navigate to it.\n\n- **Cold start:** the link that launched the app is delivered once per page, with\n  `launch: true`, to every subscriber registered before the shell answers (so subscribe\n  early: a root layout or the app shell). A subscriber that registers after that, say on a\n  component that remounts after a navigation, never sees it again, and neither does the\n  page after a reload in the same session (e.g. an OTA update).\n- **Warm:** every link opened while the app runs, with `launch: false`. A link that arrives\n  while nobody is subscribed waits in the shell for the next subscriber.\n- **Filter:** only links that pass `options.accept` (default: the app's custom schemes, no\n  `https` host) reach `callback`. An unfiltered deep link is an injection vector: anyone\n  can craft one, so treat its path and query as untrusted input.\n- **Route:** an accepted link's in-app path is navigated (see\n  {@linkcode DeepLinkOptions.route}), once per link however many subscribers see it.\n- **Auth callbacks:** while {@linkcode openAuthSession} waits in the shell, links with its\n  callback scheme (and, for a few seconds after, the callback it received) are its own and\n  are not delivered here.\n\nOn the web (and during SSR) there is no native plugin and this does nothing: the browser\nalready loaded the linked URL. Needs `@capacitor/app` in the shell (`denext mobile add\ndeep-links --scheme myapp`).",
+          "docFull": "Call `callback` for every link that opens the app, and (by default) navigate to it.\n\n- **Cold start:** the link that launched the app is delivered once per page, with\n  `launch: true`, to every subscriber registered before the shell answers (so subscribe\n  early: a root layout or the app shell). A subscriber that registers after that, say on a\n  component that remounts after a navigation, never sees it again, and neither does the\n  page after a reload in the same session (e.g. an OTA update).\n- **Warm:** every link opened while the app runs, with `launch: false`. A link that arrives\n  while nobody is subscribed waits in the shell for the next subscriber.\n- **Filter:** only links that pass `options.accept` (default: the app's custom schemes, no\n  `https` host) reach `callback`. An unfiltered deep link is an injection vector: anyone\n  can craft one, so treat its path and query as untrusted input.\n- **Route:** an accepted link's in-app path is navigated (see\n  {@linkcode DeepLinkOptions.route}), once per link however many subscribers see it.\n- **Auth callbacks:** while {@linkcode openAuthSession} waits in the shell, links with its\n  callback scheme (and, for a few seconds after, the callback it received) are its own and\n  are not delivered here.\n\nOn the web (and during SSR) there is no native plugin and this does nothing: the browser\nalready loaded the linked URL. Needs `@capacitor/app` in the shell (`denext mobile add\ndeep-links --scheme myapp`).\n\n**Deno Desktop** (denext's pinned runtime): links with a scheme declared in\n`desktop.app.deepLinks` — a cold start, a link opened while the app runs (macOS), or one a\nsecond launch forwards (`desktop.app.singleInstance`, Windows and Linux) — arrive here with the\nsame filter and once-only routing. The runtime hands each link over once: a link that came\nbefore anyone subscribed goes to the first subscriber, and none is replayed after a reload. A\ncallback a pending `openAuthSession` is waiting for never arrives here. The stock runtime\ndelivers no links.",
           "params": [
             {
               "name": "callback",
@@ -18515,8 +19567,8 @@
           "slug": "onLocalNotificationTapped",
           "kind": "function",
           "signature": "onLocalNotificationTapped(callback: (tap: LocalNotificationTap) => void, options?: LocalNotificationTapOptions): () => void",
-          "doc": "Call callback when the user taps a local notification (or one of its actions), and by default navigate to its data.path (an in-app path) or data.url (under the deep-link acceptance rules), exactly as onPushTapped does for a push. A tap that cold-started the app is kept by the shell for the first listener, so subscribe early. Outside the shell it does nothing.",
-          "docFull": "Call `callback` when the user taps a local notification (or one of its actions), and by\ndefault navigate to its `data.path` (an in-app path) or `data.url` (under the deep-link\nacceptance rules), exactly as `onPushTapped` does for a push. A tap that\ncold-started the app is kept by the shell for the first listener, so subscribe early.\nOutside the shell it does nothing.",
+          "doc": "Call callback when the user taps a local notification (or one of its actions), and by default navigate to its data.path (an in-app path) or data.url (under the deep-link acceptance rules), exactly as onPushTapped does for a push. A tap that cold-started the app is kept by the shell (or the Deno Desktop runtime) for the first listener, so subscribe early. In a Deno Desktop window it needs the notifications capability. Elsewhere it does nothing.",
+          "docFull": "Call `callback` when the user taps a local notification (or one of its actions), and by\ndefault navigate to its `data.path` (an in-app path) or `data.url` (under the deep-link\nacceptance rules), exactly as `onPushTapped` does for a push. A tap that\ncold-started the app is kept by the shell (or the Deno Desktop runtime) for the first\nlistener, so subscribe early. In a Deno Desktop window it needs the `notifications`\ncapability. Elsewhere it does nothing.",
           "params": [
             {
               "name": "callback",
@@ -18557,6 +19609,25 @@
           "returns": "A function that unsubscribes.",
           "examples": [
             "```ts\nimport { onNativeEvent } from \"denext/mobile\";\n\nconst stop = onNativeEvent<{ percent: number }>(\"Scanner\", \"progress\", ({ percent }) => {\n  progressBar.value = percent;\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "onOpenFile",
+          "slug": "onOpenFile",
+          "kind": "function",
+          "signature": "onOpenFile(callback: (file: OpenedFile) => void): () => void",
+          "doc": "Call callback for every file the OS opens with the app (Deno Desktop).",
+          "docFull": "Call `callback` for every file the OS opens with the app (Deno Desktop).\n\nEach file is delivered once: one that arrived before anyone subscribed (the file the app was\nlaunched with) goes to the first subscriber, so subscribe early (the root layout or app shell);\nnone is replayed after a reload. The OS hands the app a file it was asked to open, which any\nprogram of the same user can ask for, so the handle is read-only and the content is untrusted\ninput.",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each opened file."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [
+            "```ts\nimport { onOpenFile, readFile } from \"denext/mobile\";\n\nconst stop = onOpenFile(async ({ handle, name }) => {\n  const text = await readFile(\"\", { directory: { picked: handle } });\n  openDocument(name, text);\n});\n```"
           ],
           "denextOnly": true
         },
@@ -18627,7 +19698,7 @@
           "kind": "function",
           "signature": "onQuickAction(callback: (id: string) => void): () => void",
           "doc": "Call callback with the id of each quick action the user chooses, including the one that cold-started the app: the shell keeps that until the first listener, so subscribe early (a root layout or the app shell); only the subscribers present when it is handed over see it. Outside the native shell it does nothing.",
-          "docFull": "Call `callback` with the `id` of each quick action the user chooses, including the one that\ncold-started the app: the shell keeps that until the first listener, so subscribe early (a\nroot layout or the app shell); only the subscribers present when it is handed over see it.\nOutside the native shell it does nothing.\n\nOn iOS the action reaches the plugin through `SceneDelegate.swift` (or `AppDelegate.swift`\nin an app without scenes), which `denext mobile add quick-actions` wires.",
+          "docFull": "Call `callback` with the `id` of each quick action the user chooses, including the one that\ncold-started the app: the shell keeps that until the first listener, so subscribe early (a\nroot layout or the app shell); only the subscribers present when it is handed over see it.\nOutside the native shell it does nothing.\n\nOn iOS the action reaches the plugin through `SceneDelegate.swift` (or `AppDelegate.swift`\nin an app without scenes), which `denext mobile add quick-actions` wires. In a Deno Desktop\nwindow it reports the Dock-menu items chosen (macOS).",
           "params": [
             {
               "name": "callback",
@@ -18736,7 +19807,7 @@
           "kind": "function",
           "signature": "openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>",
           "doc": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.",
-          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\nOnly one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this\nonly opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)\nbefore the call, compare `state` after it, and exchange the `code` on your server.",
+          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\n- **Deno Desktop**: the system browser. With a loopback `redirect_uri` (`http://127.0.0.1/cb`)\n  the runtime catches the redirect on an ephemeral loopback port (RFC 8252). Otherwise the\n  callback comes back as a deep link: `callbackScheme` must be declared in\n  `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: \"not-applicable\"` with a\n  `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry\n  the same `state`, and another app handling the scheme is refused\n  (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches\n  {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,\n  denext's pinned runtime).\n\nOnly one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this\nonly opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)\nbefore the call, compare `state` after it, and exchange the `code` on your server.",
           "params": [
             {
               "name": "url",
@@ -18751,6 +19822,18 @@
           "examples": [
             "```ts\nimport { openAuthSession } from \"denext/mobile\";\n\nexport async function signIn(): Promise<void> {\n  const state = crypto.randomUUID();\n  const authorize = new URL(\"https://auth.example.com/authorize\");\n  authorize.searchParams.set(\"client_id\", \"my-app\");\n  authorize.searchParams.set(\"redirect_uri\", \"myapp://auth/callback\");\n  authorize.searchParams.set(\"response_type\", \"code\");\n  authorize.searchParams.set(\"state\", state);\n  // (add code_challenge / code_challenge_method for PKCE)\n  const { url } = await openAuthSession(authorize.href, { callbackScheme: \"myapp\" });\n  const params = new URL(url).searchParams;\n  if (params.get(\"state\") !== state) throw new Error(\"state mismatch\");\n  await fetch(\"/api/auth/exchange\", { method: \"POST\", body: params.get(\"code\") });\n}\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "OpenedFile",
+          "slug": "OpenedFile",
+          "kind": "interface",
+          "signature": "interface OpenedFile",
+          "doc": "A file the OS opened with the app.",
+          "docFull": "A file the OS opened with the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -19606,14 +20689,31 @@
           "name": "readClipboard",
           "slug": "readClipboard",
           "kind": "function",
-          "signature": "readClipboard(): Promise<string>",
-          "doc": "Read text from the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.readText(), which browsers gate behind a permission prompt or a user gesture. A Deno Desktop window uses the WebView's navigator.clipboard too: the desktop runtime has no clipboard capability.",
-          "docFull": "Read text from the clipboard: through `@capacitor/clipboard` inside the native shell\n(`denext mobile add clipboard`), else `navigator.clipboard.readText()`, which browsers\ngate behind a permission prompt or a user gesture. A Deno Desktop window uses the WebView's\n`navigator.clipboard` too: the desktop runtime has no clipboard capability.",
-          "params": [],
-          "returns": "The clipboard's text (\"\" when it holds none).",
-          "examples": [
-            "```tsx\n\"use client\";\nimport { readClipboard } from \"denext/mobile\";\n\nexport function PasteCode({ onCode }: { onCode: (code: string) => void }) {\n  return <button type=\"button\" onClick={async () => onCode(await readClipboard())}>Paste</button>;\n}\n```"
+          "signature": "readClipboard(options?: ReadClipboardOptions): Promise<string>",
+          "doc": "Read the clipboard: its text by default, or the HTML / image options.format asks for.",
+          "docFull": "Read the clipboard: its text by default, or the HTML / image `options.format` asks for.\n\n- In a Deno Desktop window with the `clipboard` capability (`denext desktop add clipboard`),\n  the OS clipboard through the desktop runtime (no permission prompt, no user gesture): text,\n  HTML and images under denext's pinned runtime.\n- Inside the native shell, `@capacitor/clipboard` (`denext mobile add clipboard`): text, and an\n  image when the clipboard holds one.\n- Otherwise the async Clipboard API (`navigator.clipboard`), which browsers gate behind a\n  permission prompt or a user gesture; HTML and images need `navigator.clipboard.read()`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "format: \"text\" (default), \"html\" or \"image\"."
+            }
           ],
+          "returns": "The text, the HTML, or the image as base64 PNG — \"\" when the clipboard holds none of that format.",
+          "examples": [
+            "```tsx\n\"use client\";\nimport { readClipboard } from \"denext/mobile\";\n\nexport function PasteCode({ onCode }: { onCode: (code: string) => void }) {\n  return <button type=\"button\" onClick={async () => onCode(await readClipboard())}>Paste</button>;\n}\n// Rich paste: const html = await readClipboard({ format: \"html\" });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "ReadClipboardOptions",
+          "slug": "ReadClipboardOptions",
+          "kind": "interface",
+          "signature": "interface ReadClipboardOptions",
+          "doc": "Options for readClipboard.",
+          "docFull": "Options for {@linkcode readClipboard}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -19801,8 +20901,8 @@
           "slug": "requestPushPermission",
           "kind": "function",
           "signature": "requestPushPermission(): Promise<PushPermission>",
-          "doc": "Ask for permission to show notifications, when it has not been decided yet, and report the result: \"granted\", \"denied\" (the user said no; only the system settings can change it) or \"prompt\" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is \"unsupported\": there is no web-push fallback.",
-          "docFull": "Ask for permission to show notifications, when it has not been decided yet, and report the\nresult: `\"granted\"`, `\"denied\"` (the user said no; only the system settings can change it)\nor `\"prompt\"` (still undecided). A decided state comes back without prompting again.\nOutside the native shell (or without `@capacitor/push-notifications`) it is\n`\"unsupported\"`: there is no web-push fallback.\n\nAndroid before 13 needs no permission and always reads `\"granted\"`.",
+          "doc": "Ask for permission to show notifications, when it has not been decided yet, and report the result: \"granted\", \"denied\" (the user said no; only the system settings can change it) or \"prompt\" (still undecided). A decided state comes back without prompting again. Outside the native shell (or without @capacitor/push-notifications) it is \"unsupported\": there is no web-push fallback. In a Deno Desktop window with the notifications capability it is the OS's notification permission (the app's own notifications; there is no push service on desktop).",
+          "docFull": "Ask for permission to show notifications, when it has not been decided yet, and report the\nresult: `\"granted\"`, `\"denied\"` (the user said no; only the system settings can change it)\nor `\"prompt\"` (still undecided). A decided state comes back without prompting again.\nOutside the native shell (or without `@capacitor/push-notifications`) it is\n`\"unsupported\"`: there is no web-push fallback. In a Deno Desktop window with the\n`notifications` capability it is the OS's notification permission (the app's own\nnotifications; there is no push service on desktop).\n\nAndroid before 13 needs no permission and always reads `\"granted\"`.",
           "params": [],
           "returns": "The permission state.",
           "examples": [
@@ -20166,7 +21266,7 @@
           "kind": "function",
           "signature": "scheduleNotification(notification: LocalNotificationInput): Promise<number>",
           "doc": "Schedule a local notification (or show it now, without a trigger). Scheduling an id that is already pending replaces it.",
-          "docFull": "Schedule a local notification (or show it now, without a trigger). Scheduling an `id` that is\nalready pending replaces it.\n\nPermission: ask first with `requestPermission(\"notifications\")`; without it the OS drops\nthe notification silently. Android 12+ may deliver an exact-time trigger a few minutes late\nunless the user allowed exact alarms.\n\nOn the web and on Deno Desktop there is no scheduler: a notification without a trigger shows\nthrough the Notifications API (when permission is granted), and one with a trigger rejects.",
+          "docFull": "Schedule a local notification (or show it now, without a trigger). Scheduling an `id` that is\nalready pending replaces it.\n\nPermission: ask first with `requestPermission(\"notifications\")`; without it the OS drops\nthe notification silently. Android 12+ may deliver an exact-time trigger a few minutes late\nunless the user allowed exact alarms.\n\nOn the web there is no scheduler: a notification without a trigger shows through the\nNotifications API (when permission is granted), and one with a trigger rejects. On Deno Desktop\nwith the `notifications` capability the OS schedules it (a repeating one for its next 16\noccurrences, topped up whenever the app runs; Linux delivers while the app runs).",
           "params": [
             {
               "name": "notification",
@@ -20278,7 +21378,7 @@
           "kind": "function",
           "signature": "setNotificationCategories(categories: typeOperator): Promise<void>",
           "doc": "Register the app's notification categories: the action buttons a notification shows when its categoryId names one. The call **replaces** every category registered before, so pass the full set each time.",
-          "docFull": "Register the app's notification categories: the action buttons a notification shows when its\n`categoryId` names one. The call **replaces** every category registered before, so pass the\nfull set each time.\n\nOn iOS the categories live in the app's one `UNUserNotificationCenter`, so they apply to\nremote pushes too: a push whose `aps.category` names a category shows its buttons, and the\ntapped button arrives through `onPushTapped` as `actionId`. On Android they apply to local\nnotifications only (FCM draws its own notification without buttons). Outside the shell it\ndoes nothing.",
+          "docFull": "Register the app's notification categories: the action buttons a notification shows when its\n`categoryId` names one. The call **replaces** every category registered before, so pass the\nfull set each time.\n\nOn iOS the categories live in the app's one `UNUserNotificationCenter`, so they apply to\nremote pushes too: a push whose `aps.category` names a category shows its buttons, and the\ntapped button arrives through `onPushTapped` as `actionId`. On Android they apply to local\nnotifications only (FCM draws its own notification without buttons). On Deno Desktop with\nthe `notifications` capability they are the notification's buttons (title only: no text input,\ndestructive or authentication options there). Elsewhere it does nothing.",
           "params": [
             {
               "name": "categories",
@@ -20320,7 +21420,7 @@
           "kind": "function",
           "signature": "setQuickActions(actions: typeOperator): Promise<void>",
           "doc": "Replace the app's home-screen quick actions (long-press on the icon).",
-          "docFull": "Replace the app's home-screen quick actions (long-press on the icon).\n\nInside the native shell with `@capawesome/capacitor-app-shortcuts` installed (`denext mobile\nadd quick-actions`), the iOS Home Screen quick actions / Android app shortcuts; an empty list\nremoves them all. Outside the shell it does nothing. iOS shows at most four; Android's\nlauncher shows about four.",
+          "docFull": "Replace the app's home-screen quick actions (long-press on the icon).\n\nInside the native shell with `@capawesome/capacitor-app-shortcuts` installed (`denext mobile\nadd quick-actions`), the iOS Home Screen quick actions / Android app shortcuts; an empty list\nremoves them all. iOS shows at most four; Android's launcher shows about four. In a Deno\nDesktop window, the Dock icon's menu on macOS (titles only); nothing on Windows and Linux.\nElsewhere it does nothing.",
           "params": [
             {
               "name": "actions",
@@ -20476,7 +21576,7 @@
           "kind": "function",
           "signature": "showContextMenu(items: typeOperator, options?: ContextMenuOptions): Promise<string | null>",
           "doc": "Open a context menu and resolve the chosen item's id, or null if it was dismissed.",
-          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add\n  context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,\n  iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive\n  and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`\n  (submenus as labelled groups, destructive items in the error color). For the long-press\n  menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the\n  element with {@linkcode useContextMenu} instead.\n- Inside a Deno Desktop window, the in-page popover below: the desktop runtime has no\n  context-menu capability yet (a native menu awaits an upstream dismiss event), so the\n  bridge answers `unavailable` and the web path runs.\n- Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item (a submenu is a `role=\"group\"` labelled by its item),\n  opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,\n  Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects\n  `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it\n  added when it resolves.\n\nEvery path renders **every** item, so no menu action is silently dropped.",
+          "docFull": "Open a context menu and resolve the chosen item's `id`, or `null` if it was dismissed.\n\n- Inside the native shell with the `DenextContextMenu` plugin (`denext mobile add\n  context-menu`), the OS menu: on iOS a `UIMenu` at `(x, y)` (the edit-menu presentation,\n  iOS 16+; an action sheet on iOS 15) with SF Symbol `systemIcon`s, subtitles, destructive\n  and disabled items and submenus; on Android a Material `PopupMenu` anchored at `(x, y)`\n  (submenus as labelled groups, destructive items in the error color). For the long-press\n  menu that lifts the pressed element (`UIContextMenuInteraction` with its preview), bind the\n  element with {@linkcode useContextMenu} instead.\n- Inside a Deno Desktop window with the `contextMenu` capability (`denext desktop add\n  context-menu`) and denext's pinned runtime, the OS's own menu at `(x, y)`: submenus,\n  disabled items, subtitles appended to the label, and `null` when the user dismisses it\n  (`destructive`, `icon` and `systemIcon` are not drawn there; a `title` is a disabled first\n  item). Without the capability, or under the stock runtime, the in-page popover below.\n- Otherwise (the web, and SSR-safe) an accessible in-DOM popover: `role=\"menu\"`\n  with a `role=\"menuitem\"` per item (a submenu is a `role=\"group\"` labelled by its item),\n  opened at `(x, y)` or under `anchor`. It is keyboard navigable (Up/Down to move,\n  Enter/Space to choose, Escape to dismiss), dismisses on an outside pointer press, respects\n  `disabled` (shown, not selectable) and `destructive`, and removes every node and listener it\n  added when it resolves.\n\nEvery path renders **every** item, so no menu action is silently dropped.",
           "params": [
             {
               "name": "items",
@@ -21255,6 +22355,23 @@
           "denextOnly": true
         },
         {
+          "name": "useOpenFile",
+          "slug": "useOpenFile",
+          "kind": "function",
+          "signature": "useOpenFile(callback: (file: OpenedFile) => void): void",
+          "doc": "Hook form of onOpenFile: subscribes on mount, unsubscribes on unmount, and calls the latest callback (held in a ref, so a fresh closure each render never re-subscribes).",
+          "docFull": "Hook form of {@linkcode onOpenFile}: subscribes on mount, unsubscribes on unmount, and calls the\nlatest `callback` (held in a ref, so a fresh closure each render never re-subscribes).",
+          "params": [
+            {
+              "name": "callback",
+              "doc": "Called with each opened file."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "useOrientation",
           "slug": "useOrientation",
           "kind": "function",
@@ -21563,18 +22680,18 @@
           "name": "writeClipboard",
           "slug": "writeClipboard",
           "kind": "function",
-          "signature": "writeClipboard(text: string): Promise<void>",
-          "doc": "Write text to the clipboard: through @capacitor/clipboard inside the native shell (denext mobile add clipboard), else navigator.clipboard.writeText() (a Deno Desktop window included: the desktop runtime has no clipboard capability).",
-          "docFull": "Write text to the clipboard: through `@capacitor/clipboard` inside the native shell\n(`denext mobile add clipboard`), else `navigator.clipboard.writeText()` (a Deno Desktop\nwindow included: the desktop runtime has no clipboard capability).",
+          "signature": "writeClipboard(content: string | ClipboardContent): Promise<void>",
+          "doc": "Write to the clipboard: text, or rich content (HTML with a plain-text alternative, or a PNG image as base64).",
+          "docFull": "Write to the clipboard: text, or rich content (HTML with a plain-text alternative, or a PNG\nimage as base64).\n\n- In a Deno Desktop window with the `clipboard` capability (`denext desktop add clipboard`),\n  the OS clipboard through the desktop runtime: text, HTML and images under denext's pinned\n  runtime (a format the backend lacks takes the WebView path below).\n- Inside the native shell, `@capacitor/clipboard` (`denext mobile add clipboard`): text and\n  images (HTML is written as its text).\n- Otherwise the async Clipboard API: `writeText`, and `ClipboardItem` for HTML and images.",
           "params": [
             {
-              "name": "text",
-              "doc": "The text to copy."
+              "name": "content",
+              "doc": "The text, or { text, html? } / { html, text? } / { image }."
             }
           ],
-          "returns": "A promise that settles once the text is on the clipboard. It rejects where there is no clipboard (an insecure context, SSR) or when the platform refuses.",
+          "returns": "A promise that settles once the content is on the clipboard. It rejects where there is no clipboard (an insecure context, SSR), for an image where the platform has no image clipboard, or when the platform refuses.",
           "examples": [
-            "```tsx\n\"use client\";\nimport { writeClipboard } from \"denext/mobile\";\n\nexport function CopyLink({ url }: { url: string }) {\n  return <button type=\"button\" onClick={() => writeClipboard(url)}>Copy link</button>;\n}\n```"
+            "```tsx\n\"use client\";\nimport { writeClipboard } from \"denext/mobile\";\n\nexport function CopyLink({ url }: { url: string }) {\n  return <button type=\"button\" onClick={() => writeClipboard(url)}>Copy link</button>;\n}\n// Rich copy: await writeClipboard({ html: \"<b>Hi</b>\", text: \"Hi\" });\n```"
           ],
           "denextOnly": true
         },
@@ -22305,6 +23422,18 @@
           "signature": "interface CommandContext",
           "doc": "The parsed invocation handed to a command's CommandSpec.run.",
           "docFull": "The parsed invocation handed to a command's {@linkcode CommandSpec.run}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "CommandLocks",
+          "slug": "CommandLocks",
+          "kind": "interface",
+          "signature": "interface CommandLocks",
+          "doc": "The locks a CommandSpec takes for one invocation — Cargo's build-dir / artifact-dir split over a denext project. Output paths are relative to projectDir.",
+          "docFull": "The locks a {@linkcode CommandSpec} takes for one invocation — Cargo's build-dir /\nartifact-dir split over a denext project. Output paths are relative to `projectDir`.",
           "params": [],
           "returns": "",
           "examples": [],

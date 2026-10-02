@@ -11,7 +11,7 @@ export default function Desktop() {
     <DocsShell
       active="desktop"
       title="Desktop apps"
-      lead="denext exports a self-contained static app, and deno desktop wraps it in a native window and compiles it to a single binary. The denext desktop verb drives it — run to open a dev window, build to export, and package to produce a distributable bundle: a macOS .app (code-signed and, with a Developer ID identity and notarytool credentials, notarized + stapled) or a Linux bundle (.tar.gz, plus an AppImage when appimagetool is present). Windows packages to a zip via denext desktop package --target-os windows (Authenticode-signed when DENEXT_WINDOWS_CERT is set). The same export ships to iOS and Android in a Capacitor shell: see Mobile (Capacitor)."
+      lead="denext exports a self-contained static app, and deno desktop wraps it in a native window and compiles it to a single binary. The denext desktop verb drives it — run to open a dev window, build to export, and package to produce the app and its installers: a macOS .app (code-signed and, with a Developer ID identity and notarytool credentials, notarized + stapled) with a .dmg and optionally a .pkg; a Linux .tar.gz and .deb, plus an .rpm or an AppImage on request; a Windows .msi (Authenticode-signed when DENEXT_WINDOWS_CERT is set) or .zip. The same export ships to iOS and Android in a Capacitor shell: see Mobile (Capacitor)."
     >
       <h2>The desktop target</h2>
       <p>
@@ -189,11 +189,11 @@ denext desktop package -- --arch universal`}
         A universal bundle is built by compiling both architectures and merging each Mach-O binary
         with{" "}
         <code>lipo</code>; the merged bundle is then re-signed (merging invalidates the previous
-        signature). Everything lands in <code>dist/</code>. Pass <code>--dmg</code>{" "}
-        to also wrap each
-        <code>.app</code> in a <code>.dmg</code>, and <code>--no-export</code> to reuse an existing
+        signature). Everything lands in <code>dist/</code>: each <code>.app</code>{" "}
+        and, by default, a <code>.dmg</code> of it (see <a href="#desktop-installers">Installers</a>
         {" "}
-        <code>out/</code>.
+        for the <code>.pkg</code> and <code>--format</code>). Pass <code>--no-export</code>{" "}
+        to reuse an existing <code>out/</code>.
       </p>
 
       <h2>Code signing</h2>
@@ -268,7 +268,7 @@ deno task desktop:package --arch universal`}
       <Code lang="bash">
         {`export DENEXT_CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 export DENEXT_NOTARY_PROFILE="denext-notary"
-deno task desktop:package --arch universal --dmg`}
+deno task desktop:package --arch universal`}
       </Code>
       <p>
         The resulting <code>.app</code> (and <code>.dmg</code>) in <code>dist/</code>{" "}
@@ -281,9 +281,9 @@ deno task desktop:package --arch universal --dmg`}
         from any OS) runs <code>scripts/package-linux.ts</code>. <code>deno desktop</code>{" "}
         produces a complete bundle directory — the executable, its{" "}
         <code>.so</code>, and a freedesktop <code>.desktop</code>{" "}
-        launcher — which the script wraps as a <code>.tar.gz</code> per architecture (and an{" "}
-        <code>AppImage</code> when <code>appimagetool</code> is on{" "}
-        <code>PATH</code>). It cross-builds from any OS and takes an{" "}
+        launcher — which the script wraps in a <code>.tar.gz</code> and a <code>.deb</code>{" "}
+        per architecture (an <code>.rpm</code> and an AppImage on request; see{" "}
+        <a href="#desktop-installers">Installers</a>). It cross-builds from any OS and takes an{" "}
         <code>--arch host|x86_64|arm64|both</code>{" "}
         flag, so the same distribution flow works from a Mac or in CI:
       </p>
@@ -291,14 +291,107 @@ deno task desktop:package --arch universal --dmg`}
         {`# host arch (default); on macOS this cross-builds a Linux bundle
 denext desktop package --target-os linux
 
-# both Linux arches, with an AppImage each
-deno task desktop:package:linux --arch both --appimage`}
+# both Linux arches, with every installer
+deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
       </Code>
       <Callout kind="note">
         The end user's Linux desktop needs a <strong>WebKitGTK</strong> runtime (<code>
           webkit2gtk
-        </code>) installed for the window — that's a deploy-environment dependency, not baked into
-        the bundle. There is no code-signing/notarization step on Linux.
+        </code>) for the window. The <code>.deb</code> and <code>.rpm</code>{" "}
+        declare it (<code>libwebkit2gtk-4.1-0</code> /{" "}
+        <code>libwebkit2gtk-4.1.so.0</code>), so apt and dnf install it with the app; the{" "}
+        <code>.tar.gz</code>{" "}
+        and the AppImage leave it to the machine. There is no code-signing/notarization step on
+        Linux.
+      </Callout>
+
+      <h2 id="desktop-installers">Installers</h2>
+      <p>
+        Each package script wraps the bundle it finished in the installers for its OS. Pick them per
+        OS in <code>denext.config.ts</code>, or for one run with <code>--format</code>{" "}
+        (comma-separated; it replaces the list):
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    installers: {
+      macos: ["dmg", "pkg"], // default ["dmg"]
+      linux: ["tar.gz", "deb", "rpm"], // default ["tar.gz", "deb"]
+      windows: ["msi", "zip"], // default ["msi"]
+      publisher: "Acme Inc.", // MSI Manufacturer, .deb Maintainer, .rpm Vendor
+      description: "Acme's desktop app",
+    },
+  },
+};`}
+      </Code>
+      <Code lang="bash">
+        {`denext desktop package --format dmg,pkg
+denext desktop package --target-os windows --format msi,zip`}
+      </Code>
+      <ul>
+        <li>
+          <strong>macOS</strong> — the <code>.app</code> always; <code>dmg</code>{" "}
+          (a drag-to-Applications disk image, <code>hdiutil</code>) and <code>pkg</code>{" "}
+          (<code>productbuild</code>, installing into <code>/Applications</code>{" "}
+          — what MDM tools and <code>installer -pkg</code> deploy). Set{" "}
+          <code>DENEXT_INSTALLER_IDENTITY</code> to a <em>Developer ID Installer</em>{" "}
+          identity to sign the <code>.pkg</code>; with <code>DENEXT_NOTARY_PROFILE</code>{" "}
+          it is notarized and stapled like the app. Without one the <code>.pkg</code>{" "}
+          is unsigned, which Gatekeeper and MDM reject.
+        </li>
+        <li>
+          <strong>Linux</strong> — <code>tar.gz</code>, <code>deb</code>{" "}
+          (written by denext itself, no tool, cross-builds anywhere), <code>rpm</code> (needs{" "}
+          <code>rpmbuild</code>: Fedora/RHEL, <code>apt install rpm</code>,{" "}
+          <code>brew install rpm</code>) and <code>appimage</code> (needs{" "}
+          <code>appimagetool</code>). The <code>.deb</code> and <code>.rpm</code> install the app to
+          {" "}
+          <code>/usr/lib/&lt;app&gt;</code> with a <code>/usr/bin/&lt;app&gt;</code> link, a{" "}
+          <code>.desktop</code> entry named after{" "}
+          <code>desktop.app.identifier</code>, the icon (pixmaps and the hicolor theme), and every
+          {" "}
+          <code>desktop.app.deepLinks</code> scheme as an <code>x-scheme-handler</code>.
+        </li>
+        <li>
+          <strong>Windows</strong> — <code>msi</code> (needs WiX 5 on a Windows host:{" "}
+          <code>dotnet tool install --global wix --version 5.0.2</code>) and <code>zip</code>. The
+          {" "}
+          <code>.msi</code> installs per-user into <code>%LOCALAPPDATA%\Programs\&lt;App&gt;</code>
+          {" "}
+          with no administrator rights, or per-machine into <code>Program Files</code> with{" "}
+          <code>msiexec /i app.msi ALLUSERS=1</code>{" "}
+          (what an MDM or a software-deployment tool runs). It adds a Start-menu shortcut, an
+          Add/Remove Programs entry with the app's icon, and the deep-link schemes under the
+          install's own hive; a newer version upgrades in place (the UpgradeCode is derived from
+          {" "}
+          <code>desktop.app.identifier</code>, the same one{" "}
+          <code>deno desktop</code>'s own MSI uses), and uninstalling removes all of it. It is
+          Authenticode-signed with the <code>.exe</code> when <code>DENEXT_WINDOWS_CERT</code>{" "}
+          is set. Without WiX the default <code>.msi</code> falls back to the <code>.zip</code>.
+        </li>
+      </ul>
+      <p>
+        The package version is deno.json's <code>version</code> (an MSI keeps its numeric{" "}
+        <code>major.minor.build</code>; the <code>.deb</code>/<code>
+          .rpm
+        </code>{" "}
+        turn a <code>-rc.1</code> prerelease into{" "}
+        <code>~rc.1</code>, which sorts before the release). A default installer whose tool is
+        missing is skipped with a warning; one you asked for — in <code>--format</code>{" "}
+        or the config — fails the run.
+      </p>
+      <Callout kind="note">
+        The installers wrap the bundle the script <em>finished</em>, not a second{" "}
+        <code>deno desktop --output app.msi|.deb|.rpm</code>{" "}
+        build: that one-step path stages its own copy, so it would miss the{" "}
+        <code>laufey-launch.json</code>{" "}
+        that turns DevTools off in a packaged app, the app-local VC++ runtime and the signed{" "}
+        <code>.exe</code>; its MSI is also per-machine only with no major upgrade. MSIX and Flatpak
+        are not built: MSIX needs a trusted signing certificate even to sideload and runs the app in
+        a container that the runtime's per-app storage and deep-link registration do not account
+        for; Flatpak needs a runtime/SDK manifest and a portal-aware WebKitGTK sandbox. Both are
+        better served by the formats above today.
       </Callout>
 
       <h2 id="desktop-sign-in">Sign-in on Deno Desktop</h2>

@@ -1467,6 +1467,52 @@
               "type": "boolean"
             }
           }
+        },
+        "installers": {
+          "description": "The installers `denext desktop package` (the `scripts/package-*.ts`) builds, per OS. Unset, an OS builds its defaults: `.dmg` on macOS (beside the `.app`), `.tar.gz` + `.deb` on Linux, `.msi` on Windows. `--format` overrides the list for one run.",
+          "type": "object",
+          "properties": {
+            "macos": {
+              "description": "macOS installers built beside the `.app`: `\"dmg\"` (a drag-to-Applications disk image) and `\"pkg\"` (a `productbuild` installer package for MDM / `installer -pkg`; signed with `DENEXT_INSTALLER_IDENTITY`, a \"Developer ID Installer\" identity). Default `[\"dmg\"]`.",
+              "type": "array",
+              "items": {
+                "enum": [
+                  "dmg",
+                  "pkg"
+                ]
+              }
+            },
+            "linux": {
+              "description": "Linux installers: `\"tar.gz\"` (the bundle directory), `\"deb\"` (built by denext, no tool), `\"rpm\"` (needs `rpmbuild`), `\"appimage\"` (needs `appimagetool`). Default `[\"tar.gz\", \"deb\"]`.",
+              "type": "array",
+              "items": {
+                "enum": [
+                  "tar.gz",
+                  "deb",
+                  "rpm",
+                  "appimage"
+                ]
+              }
+            },
+            "windows": {
+              "description": "Windows installers: `\"msi\"` (per-user by default, per-machine with `ALLUSERS=1`; needs WiX 5, `wix`, on a Windows host) and `\"zip\"` (the bundle directory). Default `[\"msi\"]`.",
+              "type": "array",
+              "items": {
+                "enum": [
+                  "msi",
+                  "zip"
+                ]
+              }
+            },
+            "publisher": {
+              "description": "Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer (`\"Name <email>\"` there) and the `.rpm` Vendor. Default: the app name.",
+              "type": "string"
+            },
+            "description": {
+              "description": "One line describing the app, for the package managers. Default `\"<name> desktop application\"`.",
+              "type": "string"
+            }
+          }
         }
       }
     },

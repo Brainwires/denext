@@ -116,6 +116,41 @@ export {
 // `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR` env the scaffolded package scripts set on `deno desktop`.
 export { desktopRuntimeEnv } from "./desktop-runtime.ts";
 
+// The installers the scaffolded package scripts build from a finished bundle (`desktop.installers`,
+// `--format`): the per-OS format plan, the package metadata, and the .msi / .deb / .rpm builders.
+export {
+  buildDesktopDeb,
+  buildDesktopMsi,
+  buildDesktopRpm,
+  type BuildLinuxPackageOptions,
+  type BuildMsiOptions,
+  DEFAULT_DESKTOP_INSTALLERS,
+  DESKTOP_INSTALLER_FORMATS,
+  type DesktopInstallerFormat,
+  type DesktopInstallerPlan,
+  desktopInstallerPlan,
+  type DesktopPackageMeta,
+  desktopPackageMeta,
+  planDesktopInstallers,
+} from "./desktop-installers.ts";
+// The scaffolded package scripts' shared command line, tool probe and run setup.
+export {
+  buildDesktopBundle,
+  desktopAppName,
+  type DesktopBundleOptions,
+  desktopHasTool,
+  desktopPackageArches,
+  type DesktopPackageArgs,
+  type DesktopPackageArgSpec,
+  desktopRequireTool,
+  desktopRun,
+  desktopSlug,
+  desktopToolGate,
+  parseDesktopPackageArgs,
+  type PreparedDesktopPackage,
+  prepareDesktopPackage,
+} from "./desktop-package-script.ts";
+
 /** The lazily-imported reverse-proxy module ({@link ./dev-proxy.ts}) {@linkcode createDesktopHandler}
  * forwards to when a backend proxy is configured; exported so the handler's signature is public. */
 export type ProxyModule = typeof import("./dev-proxy.ts");

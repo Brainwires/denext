@@ -256,6 +256,7 @@ export {
   type DesktopConfig,
   type DesktopExtraPermissions,
   type DesktopFsConfig,
+  type DesktopInstallersConfig,
   type DesktopPasskeysConfig,
   type DesktopShellConfig,
   type DesktopSize,

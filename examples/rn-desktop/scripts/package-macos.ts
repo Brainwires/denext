@@ -1,9 +1,10 @@
 #!/usr/bin/env -S deno run -A
 /**
  * Package this `deno desktop` app for macOS distribution: build (for one or more
- * architectures), code-sign, and optionally notarize + staple. Run on a macOS host.
+ * architectures), code-sign, optionally notarize + staple, and wrap each .app in its installers.
+ * Run on a macOS host.
  *
- *   deno run -A scripts/package-macos.ts [--arch <mode>] [--no-export] [--dmg]
+ *   deno run -A scripts/package-macos.ts [--arch <mode>] [--no-export] [--format <list>]
  *
  * --arch  host | arm64 | x86_64 | both | universal   (default: host)
  *           host      the machine's own architecture
@@ -12,7 +13,11 @@
  *           both      arm64 AND x86_64 as two separate .app bundles
  *           universal one .app whose binaries are lipo-merged (runs natively on both)
  * --no-export  skip `deno task export` and reuse the existing out/ (faster iteration)
- * --dmg        also wrap each .app in a .dmg
+ * --format     installers to build beside each .app, comma-separated: dmg, pkg. Default: the
+ *              denext.config.ts `desktop.installers.macos` list, else dmg.
+ *                dmg  a drag-to-Applications disk image (hdiutil)
+ *                pkg  an installer package for MDM / `installer -pkg` (productbuild)
+ * --dmg        add a .dmg to whatever --format / the config asks for
  *
  * Signing / notarization are driven by env vars (nothing secret is hard-coded):
  *   DENEXT_CODESIGN_IDENTITY  "Developer ID Application: Name (TEAMID)". REQUIRED to
@@ -20,7 +25,10 @@
  *                             Gatekeeper will block it on other Macs).
  *   DENEXT_ENTITLEMENTS       path to an entitlements .plist (optional).
  *   DENEXT_NOTARY_PROFILE     a `xcrun notarytool store-credentials` keychain profile.
- *                             Set (with a real identity) → notarize + staple each app.
+ *                             Set (with a real identity) → notarize + staple each app (and
+ *                             each signed .pkg).
+ *   DENEXT_INSTALLER_IDENTITY "Developer ID Installer: Name (TEAMID)" — signs the .pkg.
+ *                             Omit → an unsigned .pkg (MDM tools and Gatekeeper reject it).
  *   DENEXT_APP_NAME           output base name (default: the deno.json `desktop.app.name`).
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
@@ -38,9 +46,14 @@
  */
 
 import {
+  desktopAppName as appName,
   desktopIncludeArgs,
+  desktopInstallerPlan,
+  type DesktopPackageArgs,
   desktopPackageFlags,
+  desktopRun as run,
   desktopRuntimeEnv,
+  parseDesktopPackageArgs,
   syncDesktopAppConfig,
   writeLaufeyLaunchConfig,
 } from "denext/desktop";
@@ -50,60 +63,7 @@ const TARGETS: Record<string, string> = {
   x86_64: "x86_64-apple-darwin",
 };
 
-interface Opts {
-  arch: "host" | "arm64" | "x86_64" | "both" | "universal";
-  export: boolean;
-  dmg: boolean;
-}
-
-function parseOpts(argv: string[]): Opts {
-  const o: Opts = { arch: "host", export: true, dmg: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--arch") o.arch = argv[++i] as Opts["arch"];
-    else if (a.startsWith("--arch=")) o.arch = a.slice(7) as Opts["arch"];
-    else if (a === "--no-export") o.export = false;
-    else if (a === "--dmg") o.dmg = true;
-    else if (a === "-h" || a === "--help") {
-      console.log(
-        import.meta.filename ?? import.meta.url,
-        "\nSee the header comment for usage.",
-      );
-      Deno.exit(0);
-    } else throw new Error(`unknown argument: ${a}`);
-  }
-  const valid = ["host", "arm64", "x86_64", "both", "universal"];
-  if (!valid.includes(o.arch)) {
-    throw new Error(`--arch must be one of ${valid.join(", ")}`);
-  }
-  return o;
-}
-
-async function run(
-  cmd: string[],
-  opts: { env?: Record<string, string> } = {},
-): Promise<void> {
-  const p = new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
-    env: opts.env,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const { code } = await p.output();
-  if (code !== 0) throw new Error(`command failed (${code}): ${cmd.join(" ")}`);
-}
-
-/** Read the desktop app name from deno.json (falls back to "app"). */
-async function appName(): Promise<string> {
-  const env = Deno.env.get("DENEXT_APP_NAME");
-  if (env) return env;
-  try {
-    const cfg = JSON.parse(await Deno.readTextFile("deno.json"));
-    const n = cfg?.desktop?.app?.name;
-    if (typeof n === "string" && n.trim()) return n.trim();
-  } catch { /* no/invalid deno.json */ }
-  return "app";
-}
+type Opts = DesktopPackageArgs;
 
 /** Build a single .app for `target` (undefined = host arch). deno desktop signs it
  * ad-hoc; the caller re-signs with the real identity afterwards. */
@@ -125,7 +85,7 @@ async function buildApp(out: string, target?: string): Promise<void> {
   // ".app") to land exactly at `out` — else it writes `out.app` and sign/lipo/dmg miss it.
   cmd.push("--output", out.replace(/\.app$/, ""), "desktop.ts");
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
-  await run(cmd, { env: await desktopRuntimeEnv(import.meta.url, target) });
+  await run(cmd, await desktopRuntimeEnv(import.meta.url, target));
   // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
   // read from Contents/Resources at launch. Writing into the bundle breaks deno desktop's ad-hoc
   // seal, so a bundle that got one is always re-signed.
@@ -270,7 +230,7 @@ async function notarize(app: string, profile: string): Promise<void> {
   }
 }
 
-async function makeDmg(app: string): Promise<void> {
+async function makeDmg(app: string): Promise<string> {
   const dmg = app.replace(/\.app$/, ".dmg");
   await Deno.remove(dmg).catch(() => {});
   await run([
@@ -285,6 +245,40 @@ async function makeDmg(app: string): Promise<void> {
     "UDZO",
     dmg,
   ]);
+  return dmg;
+}
+
+/** Wrap a .app in an installer package (productbuild) that installs it into /Applications;
+ * signed with the Developer ID Installer identity, and notarized + stapled with a notary profile. */
+async function makePkg(app: string, s: Signing): Promise<string> {
+  const pkg = app.replace(/\.app$/, ".pkg");
+  await Deno.remove(pkg).catch(() => {});
+  const sign = s.installerIdentity ? ["--sign", s.installerIdentity] : [];
+  await run([
+    "productbuild",
+    ...sign,
+    "--component",
+    app,
+    "/Applications",
+    pkg,
+  ]);
+  if (s.installerIdentity && s.notaryProfile) {
+    await run([
+      "xcrun",
+      "notarytool",
+      "submit",
+      pkg,
+      "--keychain-profile",
+      s.notaryProfile,
+      "--wait",
+    ]);
+    await run(["xcrun", "stapler", "staple", pkg]);
+  } else if (!s.installerIdentity) {
+    console.warn(
+      `  ${pkg}: unsigned (set DENEXT_INSTALLER_IDENTITY to a "Developer ID Installer" identity).`,
+    );
+  }
+  return pkg;
 }
 
 /** The signing setup, from env (nothing secret is hard-coded). */
@@ -292,6 +286,8 @@ interface Signing {
   identity: string | undefined;
   entitlements: string | undefined;
   notaryProfile: string | undefined;
+  /** "Developer ID Installer: …" for the .pkg. */
+  installerIdentity: string | undefined;
 }
 
 function signingFromEnv(): Signing {
@@ -313,6 +309,7 @@ function signingFromEnv(): Signing {
     identity,
     entitlements: Deno.env.get("DENEXT_ENTITLEMENTS") || undefined,
     notaryProfile,
+    installerIdentity: Deno.env.get("DENEXT_INSTALLER_IDENTITY") || undefined,
   };
 }
 
@@ -352,22 +349,26 @@ async function buildArtifacts(opts: Opts, name: string): Promise<string[]> {
 }
 
 /**
- * Sign, notarize and wrap each bundle. A lipo-merged (universal) bundle always needs
- * re-signing; for others we re-sign only when a real identity is provided (deno desktop
- * already applied ad-hoc).
+ * Sign, notarize and wrap each bundle in its installers; returns the installer paths. A
+ * lipo-merged (universal) bundle always needs re-signing; for others we re-sign only when a real
+ * identity is provided (deno desktop already applied ad-hoc).
  */
 async function finishArtifacts(
   artifacts: string[],
   opts: Opts,
+  formats: string[],
   s: Signing,
-): Promise<void> {
+): Promise<string[]> {
+  const installers: string[] = [];
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
       await sign(app, s.identity, s.entitlements);
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
-    if (opts.dmg) await makeDmg(app);
+    if (formats.includes("dmg")) installers.push(await makeDmg(app));
+    if (formats.includes("pkg")) installers.push(await makePkg(app, s));
   }
+  return installers;
 }
 
 function distributionNote(s: Signing): string {
@@ -387,17 +388,32 @@ async function main(): Promise<void> {
     );
     Deno.exit(1);
   }
-  const opts = parseOpts(Deno.args);
+  const opts = parseDesktopPackageArgs(Deno.args, {
+    arches: ["host", "arm64", "x86_64", "both", "universal"],
+    legacy: { "--dmg": "dmg" },
+  });
   const signing = signingFromEnv();
   const name = await appName();
+  // --format, else desktop.installers.macos in denext.config.ts, else a .dmg.
+  const plan = await desktopInstallerPlan(
+    import.meta.url,
+    "darwin",
+    opts.formats,
+    opts.add,
+  );
   // .deno-desktop/app.json (the app origin + identifier) and its deno.json compile.include.
   await syncDesktopAppConfig(import.meta.url);
   if (opts.export) await run(["deno", "task", "export"]);
   await Deno.mkdir("dist", { recursive: true });
   const artifacts = await buildArtifacts(opts, name);
-  await finishArtifacts(artifacts, opts, signing);
+  const installers = await finishArtifacts(
+    artifacts,
+    opts,
+    plan.formats,
+    signing,
+  );
   console.log("\n✓ Packaged:");
-  for (const a of artifacts) console.log("  " + a);
+  for (const a of [...artifacts, ...installers]) console.log("  " + a);
   console.log(distributionNote(signing));
 }
 

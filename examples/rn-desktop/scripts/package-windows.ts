@@ -2,11 +2,11 @@
 /**
  * Package this `deno desktop` app for Windows distribution. `deno desktop` produces a
  * complete bundle directory (the `.exe`, its `.dll`s, and resources); this builds one or
- * both arches and wraps each as a `.zip`, then Authenticode-signs the `.exe` when a code-
- * signing certificate is provided. The `.exe` cross-builds from any OS; signing only runs
- * where `signtool` is available (Windows) and a cert is configured.
+ * both arches, Authenticode-signs the `.exe` when a code-signing certificate is provided, and
+ * wraps each bundle in its installers (an `.msi` by default). Signing only runs where
+ * `signtool` is available (Windows) and a cert is configured.
  *
- *   deno run -A scripts/package-windows.ts [--arch <mode>] [--no-export] [--no-sign]
+ *   deno run -A scripts/package-windows.ts [--arch <mode>] [--no-export] [--no-sign] [--format <list>]
  *
  * --arch  host | x86_64 | arm64 | both   (default: host)
  *           host    the machine's own architecture
@@ -15,12 +15,24 @@
  *           both    x86_64 AND arm64 as two bundles
  * --no-export  skip `deno task export` and reuse the existing out/ (faster iteration)
  * --no-sign    skip Authenticode signing even when a certificate is configured
+ * --format     installers per arch, comma-separated: msi, zip. Default: the denext.config.ts
+ *              `desktop.installers.windows` list, else msi.
+ *                msi  a Windows Installer package (WiX 5: `dotnet tool install --global wix
+ *                     --version 5.0.2`; builds on Windows). Installs per-user into
+ *                     %LOCALAPPDATA%\Programs\<App> with no admin rights, or per-machine into
+ *                     Program Files with `msiexec /i <app>.msi ALLUSERS=1`; adds a Start-menu
+ *                     shortcut and the deno.json `desktop.app.deepLinks` schemes; a newer
+ *                     version upgrades in place (the UpgradeCode follows `desktop.app.identifier`).
+ *                     Signed like the .exe. Without WiX a default .msi falls back to the .zip.
+ *                zip  the bundle directory
  *
  *   DENEXT_APP_NAME                output base name (default: the deno.json `desktop.app.name`).
  *   DENEXT_WINDOWS_CERT            path to a code-signing certificate (.pfx) — signing is
  *                                  skipped when unset (no secrets are ever baked in).
  *   DENEXT_WINDOWS_CERT_PASSWORD   the .pfx password, if any.
  *   DENEXT_SIGN_TIMESTAMP_URL      RFC-3161 timestamp server (default: DigiCert's).
+ *   deno.json `version` is the MSI ProductVersion (numeric major.minor.build); denext.config.ts
+ *   `desktop.installers.publisher` its Manufacturer.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
@@ -36,11 +48,15 @@
  */
 
 import {
-  desktopIncludeArgs,
-  desktopPackageFlags,
-  desktopRuntimeEnv,
-  syncDesktopAppConfig,
-  writeLaufeyLaunchConfig,
+  buildDesktopBundle,
+  buildDesktopMsi,
+  desktopHasTool as has,
+  desktopPackageArches,
+  type DesktopPackageMeta,
+  desktopRun as run,
+  desktopToolGate,
+  parseDesktopPackageArgs,
+  prepareDesktopPackage,
 } from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
@@ -54,127 +70,68 @@ const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
 const OS = "windows";
 
-interface Opts {
-  arch: "host" | "x86_64" | "arm64" | "both";
-  export: boolean;
-  sign: boolean;
-}
-
-function parseOpts(argv: string[]): Opts {
-  const o: Opts = { arch: "host", export: true, sign: true };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--arch") o.arch = argv[++i] as Opts["arch"];
-    else if (a.startsWith("--arch=")) o.arch = a.slice(7) as Opts["arch"];
-    else if (a === "--no-export") o.export = false;
-    else if (a === "--no-sign") o.sign = false;
-    else if (a === "-h" || a === "--help") {
-      console.log(
-        import.meta.filename ?? import.meta.url,
-        "\nSee the header comment for usage.",
-      );
-      Deno.exit(0);
-    } else throw new Error(`unknown argument: ${a}`);
-  }
-  const valid = ["host", "x86_64", "arm64", "both"];
-  if (!valid.includes(o.arch)) {
-    throw new Error(`--arch must be one of ${valid.join(", ")}`);
-  }
-  return o;
-}
-
-async function run(cmd: string[], env?: Record<string, string>): Promise<void> {
-  const p = new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
-    env,
-    stdout: "inherit",
-    stderr: "inherit",
+/** Build a Windows bundle directory for `arch` at dist/<name>-<label> (.ico icon). */
+async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<string> {
+  return await buildDesktopBundle(import.meta.url, OS, {
+    target: TARGETS[arch],
+    out: `dist/${name}-${LABELS[arch]}`,
+    icons: ["icons/app.ico", "desktop-icon.ico"],
   });
-  const { code } = await p.output();
-  if (code !== 0) throw new Error(`command failed (${code}): ${cmd.join(" ")}`);
 }
 
-/** Whether a command exists on PATH. */
-async function has(cmd: string): Promise<boolean> {
-  const probe = Deno.build.os === "windows"
-    ? { args: ["/c", "where", cmd] }
-    : { args: ["-c", `command -v ${cmd}`] };
-  const bin = Deno.build.os === "windows" ? "cmd" : "sh";
-  return await new Deno.Command(bin, { ...probe, stdout: "null", stderr: "null" })
-    .output().then((r) => r.code === 0, () => false);
-}
-
-/** Read the desktop app name from deno.json (falls back to "app"). */
-async function appName(): Promise<string> {
-  const env = Deno.env.get("DENEXT_APP_NAME");
-  if (env) return env;
-  try {
-    const cfg = JSON.parse(await Deno.readTextFile("deno.json"));
-    const n = cfg?.desktop?.app?.name;
-    if (typeof n === "string" && n.trim()) return n.trim();
-  } catch { /* no/invalid deno.json */ }
-  return "app";
-}
-
-/** Build a Windows bundle directory for `arch` at dist/<name>-<label>. */
-async function buildBundle(
-  name: string,
-  arch: "x86_64" | "arm64",
-): Promise<string> {
-  const out = `dist/${name}-${LABELS[arch]}`;
-  await Deno.remove(out, { recursive: true }).catch(() => {});
-  const cmd = [
-    "deno",
-    "desktop",
-    // Baked least-privilege flags mean an unbaked permission should fail fast, not block on a
-    // prompt the packaged GUI has no TTY to answer.
-    "--no-prompt",
-    ...await desktopPackageFlags(import.meta.url, "windows"),
-    "--include",
-    "out",
-    ...await desktopIncludeArgs(import.meta.url),
-    "--target",
-    TARGETS[arch],
-  ];
-  // Windows uses an .ico icon; deno desktop skips a non-.ico gracefully.
-  for (const icon of ["icons/app.ico", "desktop-icon.ico"]) {
-    try {
-      await Deno.stat(icon);
-      cmd.push("--icon", icon);
-      break;
-    } catch { /* no icon at this path */ }
-  }
-  cmd.push("--output", out, "desktop.ts");
-  // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
-  await run(cmd, await desktopRuntimeEnv(import.meta.url, TARGETS[arch]));
-  // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
-  // read from next to the executable at launch.
-  await writeLaufeyLaunchConfig(import.meta.url, OS, out);
-  return out;
-}
-
-/** Authenticode-sign the bundle's .exe when a certificate is configured; else skip. */
-async function sign(name: string, arch: "x86_64" | "arm64", dir: string): Promise<void> {
+/** Authenticode-sign `file` (the bundle's .exe, or an .msi) when a certificate is configured;
+ * else skip with a warning. */
+async function sign(file: string): Promise<void> {
   const cert = Deno.env.get("DENEXT_WINDOWS_CERT");
   if (!cert) {
     console.warn(
-      `  no DENEXT_WINDOWS_CERT set — skipping Authenticode signing for ${arch} (zip still built).`,
+      `  no DENEXT_WINDOWS_CERT set — ${file} is not Authenticode-signed.`,
     );
     return;
   }
   if (!(await has("signtool"))) {
     console.warn(
-      `  signtool not found (Windows SDK) — skipping signing for ${arch}; sign on a Windows host/CI.`,
+      `  signtool not found (Windows SDK) — ${file} is not signed; sign on a Windows host/CI.`,
     );
     return;
   }
-  const exe = `${dir}/${name}-${LABELS[arch]}.exe`;
-  const timestamp = Deno.env.get("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
-  const args = ["sign", "/f", cert, "/fd", "sha256", "/tr", timestamp, "/td", "sha256"];
+  const timestamp = Deno.env.get("DENEXT_SIGN_TIMESTAMP_URL") ??
+    DEFAULT_TIMESTAMP_URL;
+  const args = [
+    "sign",
+    "/f",
+    cert,
+    "/fd",
+    "sha256",
+    "/tr",
+    timestamp,
+    "/td",
+    "sha256",
+  ];
   const pass = Deno.env.get("DENEXT_WINDOWS_CERT_PASSWORD");
   if (pass) args.push("/p", pass);
-  args.push(exe);
+  args.push(file);
   await run(["signtool", ...args]);
+}
+
+/** Build the .msi for a finished bundle with WiX; null when WiX can't run here and the .msi was
+ * only a default (an asked-for .msi without WiX fails the run). */
+async function msi(
+  name: string,
+  arch: "x86_64" | "arm64",
+  dir: string,
+  meta: DesktopPackageMeta,
+  explicit: boolean,
+): Promise<string | null> {
+  const why = Deno.build.os !== "windows"
+    ? "WiX builds an .msi on Windows only"
+    : !(await has("wix"))
+    ? "wix not found (WiX 5: dotnet tool install --global wix --version 5.0.2)"
+    : undefined;
+  if (!desktopToolGate(why, `.msi for ${arch} (the .zip is built instead)`, explicit)) return null;
+  const out = `dist/${name}-${LABELS[arch]}.msi`;
+  await buildDesktopMsi({ meta, bundleDir: dir, exe: `${name}-${LABELS[arch]}.exe`, arch, out });
+  return out;
 }
 
 /** Zip a bundle directory for distribution (prefers `zip`, falls back to bsdtar). */
@@ -195,12 +152,6 @@ async function zipBundle(
   return zip;
 }
 
-/** Filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths. */
-function slugify(name: string): string {
-  return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") ||
-    "app";
-}
-
 /** Ship the VC++ 2015-2022 runtime DLLs the deno desktop binary imports (VCRUNTIME140,
  * VCRUNTIME140_1, MSVCP140) next to the .exe, so the packaged app runs with NO redistributable
  * installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found).
@@ -211,10 +162,12 @@ function slugify(name: string): string {
 async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
   if (Deno.build.os !== "windows" || arch !== hostArch) {
     console.warn(
-      "  not bundling the VC++ runtime (" + arch + " packaged on " + Deno.build.os + "/" +
+      "  not bundling the VC++ runtime (" + arch + " packaged on " +
+        Deno.build.os + "/" +
         hostArch +
         ") — the target must install the VC++ 2015-2022 redistributable: " +
-        "https://aka.ms/vs/17/release/vc_redist." + (arch === "arm64" ? "arm64" : "x64") + ".exe",
+        "https://aka.ms/vs/17/release/vc_redist." +
+        (arch === "arm64" ? "arm64" : "x64") + ".exe",
     );
     return;
   }
@@ -229,7 +182,9 @@ async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
     }
   }
   if (missing.length === 0) {
-    console.log("  bundled the VC++ runtime app-local (the target needs no VC++ redistributable)");
+    console.log(
+      "  bundled the VC++ runtime app-local (the target needs no VC++ redistributable)",
+    );
   } else {
     console.warn(
       "  could not bundle the VC++ runtime (" + missing.join(", ") +
@@ -239,24 +194,38 @@ async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
   }
 }
 
-async function main(): Promise<void> {
-  const opts = parseOpts(Deno.args);
-  const name = slugify(await appName());
-  // .deno-desktop/app.json (the app origin + identifier) and its deno.json compile.include.
-  await syncDesktopAppConfig(import.meta.url);
-  await Deno.mkdir("dist", { recursive: true });
-  if (opts.export) await run(["deno", "task", "export"]);
+/** Build, sign and wrap one arch's bundle; returns what it wrote. */
+async function packageArch(
+  name: string,
+  arch: "x86_64" | "arm64",
+  signing: boolean,
+  { plan, meta }: Awaited<ReturnType<typeof prepareDesktopPackage>>,
+): Promise<string[]> {
+  const dir = await buildBundle(name, arch);
+  await bundleVcRuntime(dir, arch);
+  if (signing) await sign(`${dir}/${name}-${LABELS[arch]}.exe`);
+  const out = [dir];
+  const built = plan.formats.includes("msi")
+    ? await msi(name, arch, dir, meta, plan.explicit)
+    : null;
+  if (built && signing) await sign(built);
+  if (built) out.push(built);
+  // A default .msi that could not be built falls back to the .zip.
+  const msiSkipped = plan.formats.includes("msi") && !built;
+  if (plan.formats.includes("zip") || msiSkipped) out.push(await zipBundle(name, arch, dir));
+  return out;
+}
 
-  const arches: Array<"x86_64" | "arm64"> = opts.arch === "both"
-    ? ["x86_64", "arm64"]
-    : [opts.arch === "host" ? hostArch : opts.arch];
+async function main(): Promise<void> {
+  const opts = parseDesktopPackageArgs(Deno.args, { arches: ["host", "x86_64", "arm64", "both"] });
+  // --format, else desktop.installers.windows in denext.config.ts, else an .msi; the
+  // .deno-desktop/app.json sync, the package metadata (name, version, deep links), the export.
+  const prepared = await prepareDesktopPackage(import.meta.url, OS, opts);
+  const name = prepared.name;
 
   const artifacts: string[] = [];
-  for (const arch of arches) {
-    const dir = await buildBundle(name, arch);
-    await bundleVcRuntime(dir, arch);
-    if (opts.sign) await sign(name, arch, dir);
-    artifacts.push(await zipBundle(name, arch, dir));
+  for (const arch of desktopPackageArches(opts.arch)) {
+    artifacts.push(...await packageArch(name, arch, opts.sign, prepared));
   }
 
   console.log("\n  Built:");

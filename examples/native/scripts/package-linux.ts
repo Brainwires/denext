@@ -2,10 +2,9 @@
 /**
  * Package this `deno desktop` app for Linux distribution. `deno desktop` produces a
  * complete bundle directory (the executable, its `.so`, and a freedesktop `.desktop`
- * launcher); this builds one or both arches and wraps each as a `.tar.gz` (and an
- * AppImage when `appimagetool` is available). Cross-builds from any OS.
+ * launcher); this builds one or both arches and wraps each in its installers.
  *
- *   deno run -A scripts/package-linux.ts [--arch <mode>] [--no-export] [--appimage]
+ *   deno run -A scripts/package-linux.ts [--arch <mode>] [--no-export] [--format <list>]
  *
  * --arch  host | x86_64 | arm64 | both   (default: host)
  *           host    the machine's own architecture (x86_64 when cross-building from macOS Intel)
@@ -13,9 +12,20 @@
  *           arm64   aarch64-unknown-linux-gnu
  *           both    x86_64 AND arm64 as two bundles
  * --no-export  skip `deno task export` and reuse the existing out/ (faster iteration)
- * --appimage   also build an AppImage per arch (needs `appimagetool` on PATH)
+ * --format     installers per arch, comma-separated: tar.gz, deb, rpm, appimage. Default: the
+ *              denext.config.ts `desktop.installers.linux` list, else tar.gz,deb.
+ *                tar.gz    the bundle directory
+ *                deb       Debian/Ubuntu package (built by denext; no tool needed)
+ *                rpm       Fedora/RHEL/openSUSE package (needs `rpmbuild`)
+ *                appimage  a single-file AppImage (needs `appimagetool`)
+ *              The .deb/.rpm install to /usr/lib/<app>, link /usr/bin/<app>, and register the
+ *              launcher, the icon and the deno.json `desktop.app.deepLinks` schemes. A default
+ *              format whose tool is missing is skipped with a warning; one you asked for fails.
+ * --appimage   add an AppImage to whatever --format / the config asks for
  *
  *   DENEXT_APP_NAME  output base name (default: the deno.json `desktop.app.name`).
+ *   deno.json `version` is the package version; denext.config.ts `desktop.installers`
+ *   `publisher` / `description` fill the package metadata.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
@@ -30,11 +40,15 @@
  */
 
 import {
-  desktopIncludeArgs,
-  desktopPackageFlags,
-  desktopRuntimeEnv,
-  syncDesktopAppConfig,
-  writeLaufeyLaunchConfig,
+  buildDesktopBundle,
+  buildDesktopDeb,
+  buildDesktopRpm,
+  desktopPackageArches,
+  type DesktopPackageMeta,
+  desktopRequireTool,
+  desktopRun as run,
+  parseDesktopPackageArgs,
+  prepareDesktopPackage,
 } from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
@@ -44,96 +58,15 @@ const TARGETS: Record<string, string> = {
 // Underscore-free labels for output paths: `deno desktop` derives a reverse-DNS bundle id
 // from the output basename and rejects '_' (so a raw `x86_64` suffix drops the .desktop file).
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
-const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 const OS = "linux";
 
-interface Opts {
-  arch: "host" | "x86_64" | "arm64" | "both";
-  export: boolean;
-  appimage: boolean;
-}
-
-function parseOpts(argv: string[]): Opts {
-  const o: Opts = { arch: "host", export: true, appimage: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--arch") o.arch = argv[++i] as Opts["arch"];
-    else if (a.startsWith("--arch=")) o.arch = a.slice(7) as Opts["arch"];
-    else if (a === "--no-export") o.export = false;
-    else if (a === "--appimage") o.appimage = true;
-    else if (a === "-h" || a === "--help") {
-      console.log(
-        import.meta.filename ?? import.meta.url,
-        "\nSee the header comment for usage.",
-      );
-      Deno.exit(0);
-    } else throw new Error(`unknown argument: ${a}`);
-  }
-  const valid = ["host", "x86_64", "arm64", "both"];
-  if (!valid.includes(o.arch)) {
-    throw new Error(`--arch must be one of ${valid.join(", ")}`);
-  }
-  return o;
-}
-
-async function run(cmd: string[], env?: Record<string, string>): Promise<void> {
-  const p = new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
-    env,
-    stdout: "inherit",
-    stderr: "inherit",
+/** Build a Linux bundle directory for `arch` at dist/<name>-<label> (PNG icon). */
+async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<string> {
+  return await buildDesktopBundle(import.meta.url, OS, {
+    target: TARGETS[arch],
+    out: `dist/${name}-${LABELS[arch]}`,
+    icons: ["icons/app.png", "desktop-icon.png"],
   });
-  const { code } = await p.output();
-  if (code !== 0) throw new Error(`command failed (${code}): ${cmd.join(" ")}`);
-}
-
-/** Read the desktop app name from deno.json (falls back to "app"). */
-async function appName(): Promise<string> {
-  const env = Deno.env.get("DENEXT_APP_NAME");
-  if (env) return env;
-  try {
-    const cfg = JSON.parse(await Deno.readTextFile("deno.json"));
-    const n = cfg?.desktop?.app?.name;
-    if (typeof n === "string" && n.trim()) return n.trim();
-  } catch { /* no/invalid deno.json */ }
-  return "app";
-}
-
-/** Build a Linux bundle directory for `arch` at dist/<name>-<label>. */
-async function buildBundle(
-  name: string,
-  arch: "x86_64" | "arm64",
-): Promise<string> {
-  const out = `dist/${name}-${LABELS[arch]}`;
-  await Deno.remove(out, { recursive: true }).catch(() => {});
-  const cmd = [
-    "deno",
-    "desktop",
-    // Baked least-privilege flags mean an unbaked permission should fail fast, not block on a
-    // prompt the packaged GUI has no TTY to answer.
-    "--no-prompt",
-    ...await desktopPackageFlags(import.meta.url, "linux"),
-    "--include",
-    "out",
-    ...await desktopIncludeArgs(import.meta.url),
-    "--target",
-    TARGETS[arch],
-  ];
-  // Linux uses a PNG icon; deno desktop skips a non-PNG gracefully.
-  for (const icon of ["icons/app.png", "desktop-icon.png"]) {
-    try {
-      await Deno.stat(icon);
-      cmd.push("--icon", icon);
-      break;
-    } catch { /* no icon at this path */ }
-  }
-  cmd.push("--output", out, "desktop.ts");
-  // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
-  await run(cmd, await desktopRuntimeEnv(import.meta.url, TARGETS[arch]));
-  // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
-  // read from next to the executable at launch.
-  await writeLaufeyLaunchConfig(import.meta.url, OS, out);
-  return out;
 }
 
 /** tar.gz a bundle directory for distribution. */
@@ -147,23 +80,12 @@ async function tarball(
   return tgz;
 }
 
-/** Build an AppImage for a bundle if appimagetool is available; returns its path or null. */
+/** Build an AppImage for a bundle with appimagetool; returns its path. */
 async function appImage(
   name: string,
   arch: "x86_64" | "arm64",
   dir: string,
-): Promise<string | null> {
-  const tool = await new Deno.Command("sh", {
-    args: ["-c", "command -v appimagetool"],
-    stdout: "null",
-    stderr: "null",
-  }).output().then((r) => r.code === 0, () => false);
-  if (!tool) {
-    console.warn(
-      `  appimagetool not found — skipping AppImage for ${arch} (tar.gz still built).`,
-    );
-    return null;
-  }
+): Promise<string> {
   const appdir = `${dir}.AppDir`;
   await Deno.remove(appdir, { recursive: true }).catch(() => {});
   await Deno.mkdir(appdir, { recursive: true });
@@ -180,32 +102,45 @@ async function appImage(
   return outFile;
 }
 
-/** Filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths. */
-function slugify(name: string): string {
-  return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") ||
-    "app";
+/** Wrap one finished bundle in each planned installer; returns their paths. */
+async function installers(
+  name: string,
+  arch: "x86_64" | "arm64",
+  dir: string,
+  plan: { formats: string[]; explicit: boolean },
+  meta: DesktopPackageMeta,
+): Promise<string[]> {
+  const out: string[] = [];
+  const base = `dist/${name}-${LABELS[arch]}`;
+  const pkg = { meta, bundleDir: dir, exe: `${name}-${LABELS[arch]}`, arch };
+  for (const format of plan.formats) {
+    if (format === "tar.gz") out.push(await tarball(name, arch, dir));
+    if (format === "deb") out.push(await buildDesktopDeb({ ...pkg, out: `${base}.deb` }));
+    if (format === "rpm" && await desktopRequireTool("rpmbuild", ".rpm", plan.explicit)) {
+      out.push(await buildDesktopRpm({ ...pkg, out: `${base}.rpm` }));
+    }
+    if (
+      format === "appimage" && await desktopRequireTool("appimagetool", "AppImage", plan.explicit)
+    ) {
+      out.push(await appImage(name, arch, dir));
+    }
+  }
+  return out;
 }
 
 async function main(): Promise<void> {
-  const opts = parseOpts(Deno.args);
-  const name = slugify(await appName());
-  // .deno-desktop/app.json (the app origin + identifier) and its deno.json compile.include.
-  await syncDesktopAppConfig(import.meta.url);
-  await Deno.mkdir("dist", { recursive: true });
-  if (opts.export) await run(["deno", "task", "export"]);
-
-  const arches: Array<"x86_64" | "arm64"> = opts.arch === "both"
-    ? ["x86_64", "arm64"]
-    : [opts.arch === "host" ? hostArch : opts.arch];
+  const opts = parseDesktopPackageArgs(Deno.args, {
+    arches: ["host", "x86_64", "arm64", "both"],
+    legacy: { "--appimage": "appimage" },
+  });
+  // --format, else desktop.installers.linux in denext.config.ts, else tar.gz + deb; the
+  // .deno-desktop/app.json sync, the package metadata (name, version, deep links), the export.
+  const { name, plan, meta } = await prepareDesktopPackage(import.meta.url, OS, opts);
 
   const artifacts: string[] = [];
-  for (const arch of arches) {
+  for (const arch of desktopPackageArches(opts.arch)) {
     const dir = await buildBundle(name, arch);
-    artifacts.push(await tarball(name, arch, dir));
-    if (opts.appimage) {
-      const img = await appImage(name, arch, dir);
-      if (img) artifacts.push(img);
-    }
+    artifacts.push(dir, ...await installers(name, arch, dir, plan, meta));
   }
 
   console.log("\n  Built:");
