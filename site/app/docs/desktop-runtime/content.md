@@ -550,8 +550,14 @@ machine, and whether `deno` is the version it needs.
 | `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | `gh attestation verify` a fresh download (`--attest-runtime`).     |
 
 The provenance check accepts only an attestation from the runtime repository's release workflow
-(`.github/workflows/denext_runtime.yml`) built from the pinned tag, on a GitHub-hosted runner; the
-`desktop:pin-runtime` task applies the same check to every archive before it writes a new pin.
+(`.github/workflows/denext_runtime.yml`) built from the pinned tag, on a GitHub-hosted runner.
+
+A new runtime release is pinned in the denext repository with
+`deno task desktop:pin-runtime <tag>` (for example `denext-runtime-v2.9.7-denext.6`). It reads the
+release's `manifest.json` and `SHA256SUMS`, requires them to agree on every archive and every URL to
+be that tag's download, then downloads (or, with `--archives <dir>`, reads) each archive, hashes it
+and runs the same provenance check, and writes `src/build/desktop-runtime-pin.json` only when all of
+them pass.
 
 The packaged app's `--allow-*` flags don't change: the download happens in the packaging step, not
 in the app.

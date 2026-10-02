@@ -82,6 +82,31 @@ await runDesktop({
         and the page keeps its web path; add the spread to serve the ones you enable. To
         reverse-proxy a backend, pass <code>proxy: config.spa?.proxy</code> too.
       </p>
+      <p>
+        <code>runDesktop</code> resolves once the server is up to{" "}
+        <code>{"{ window, trust, emit }"}</code>: <code>window</code> is the adopted{" "}
+        <code>Deno.BrowserWindow</code> (<code>undefined</code> outside the desktop runtime),{" "}
+        <code>trust</code> is the world the gates enforce (<code>loopback</code>{" "}
+        under the stock runtime, <code>memory</code>{" "}
+        at the app origin under denext&apos;s pinned one; see{" "}
+        <a href="#desktop-security">Security model</a>), and <code>emit(cap, event, data)</code>
+        {" "}
+        pushes an event to the page, where <code>onDesktopEvent(cap, event, handler)</code> from
+        {" "}
+        <code>denext/desktop/client</code>{" "}
+        receives it. An event emitted before the page subscribes is kept and delivered then:
+      </p>
+      <Code lang="ts">
+        {`const { emit } = await runDesktop({
+  importMetaUrl: import.meta.url,
+  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
+});
+watchScanner((id) => emit("scanner", "attached", { id })); // an OS event of your own
+
+// in the page
+import { onDesktopEvent } from "denext/desktop/client";
+const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => refresh(id));`}
+      </Code>
       <Callout kind="note">
         <code>runDesktop</code> serves the static export (with a history-API fallback and{" "}
         <code>no-store</code>{" "}
@@ -516,10 +541,11 @@ denext desktop package --target-os windows --format msi,zip`}
         <a href="/docs/mobile#auth-sessions">
           <code>openAuthSession</code>
         </a>{" "}
-        call runs the RFC 8252 loopback flow instead, with nothing to install: the desktop runtime
-        opens the provider's page in the system browser, listens once on an ephemeral{" "}
-        <code>127.0.0.1</code> port, rewrites the host and port of the authorization URL's{" "}
-        <code>redirect_uri</code>{" "}
+        call runs the RFC 8252 loopback flow instead, once the <code>auth-session</code>{" "}
+        capability is on (<code>denext desktop add auth-session</code>; the runtime refuses it until
+        then): the desktop runtime opens the provider's page in the system browser, listens once on
+        an ephemeral <code>127.0.0.1</code>{" "}
+        port, rewrites the host and port of the authorization URL's <code>redirect_uri</code>{" "}
         to that listener (keeping its path and query), and resolves with the callback URL when the
         provider redirects there. The browser tab then shows a static "You can close this tab."
         page.
@@ -609,10 +635,46 @@ export async function signIn() {
       <p>
         The runtime's local endpoint only answers a <code>POST</code>{" "}
         carrying the per-launch token it injects into the page (compared in constant time), from the
-        app's own loopback origin, and it never logs the authorization or callback URL.
+        app's own origin (over the in-process transport under denext&apos;s pinned runtime, the
+        loopback origin under the stock one; see{" "}
+        <a href="#desktop-security">Security model</a>), and it never logs the authorization or
+        callback URL.
       </p>
 
       <h3 id="desktop-scheme-callback">A custom-scheme callback</h3>
+      <p>
+        Under denext's pinned runtime, the callback can come back to the app's own URL scheme
+        instead, for a provider whose redirect allowlist holds it: give the authorization URL a{" "}
+        <code>redirect_uri</code> with a scheme from <code>desktop.app.deepLinks</code> (or pass
+        {" "}
+        <code>callbackPrefix</code>{" "}
+        when the provider redirects through its own server first). A loopback{" "}
+        <code>redirect_uri</code> keeps the loopback flow above.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts → desktop: { app: { deepLinks: ["myapp"] }, capabilities: { authSession: true } }
+import { openAuthSession } from "denext/mobile";
+
+const base64url = (b: Uint8Array) =>
+  btoa(String.fromCharCode(...b)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+const challenge = base64url(
+  new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))),
+);
+const state = crypto.randomUUID();
+const authorize = new URL("https://auth.example.com/authorize");
+authorize.searchParams.set("redirect_uri", "myapp://auth/callback");
+authorize.searchParams.set("code_challenge", challenge); // 43 characters, base64url
+authorize.searchParams.set("code_challenge_method", "S256"); // mandatory here
+authorize.searchParams.set("state", state);
+
+const { url } = await openAuthSession(authorize.href, {
+  callbackScheme: "myapp", // must be in desktop.app.deepLinks
+  preferEphemeral: true, // macOS: a private sheet
+  cancelOverlay: { message: "Finish signing in in your browser.", cancelLabel: "Cancel" },
+});
+// state is already checked; exchange new URL(url).searchParams.get("code") with the verifier`}
+      </Code>
       <p>
         On macOS the custom-scheme sign-in runs in the OS's own auth session (
         <code>ASWebAuthenticationSession</code>{" "}
@@ -623,17 +685,7 @@ export async function signIn() {
         <code>cancelled</code>{" "}
         when the user closes it. Windows and Linux have no OS equivalent, so there the system
         browser opens and the callback comes back as a deep link, with the Cancel overlay above. The
-        checks below apply to both.
-      </p>
-      <p>
-        Under denext's pinned runtime, the callback can come back as a deep link instead, for a
-        provider whose redirect allowlist holds the app's scheme: give the authorization URL a{" "}
-        <code>redirect_uri</code> with a scheme from <code>desktop.app.deepLinks</code> (or pass
-        {" "}
-        <code>callbackPrefix</code>{" "}
-        when the provider redirects through its own server first). A loopback{" "}
-        <code>redirect_uri</code>{" "}
-        keeps the loopback flow above. The custom scheme is not owned by anyone — any program of the
+        checks below apply to both. The custom scheme is not owned by anyone — any program of the
         user can register for it and receive the callback (RFC 8252 §8.6) — so every check fails
         closed:
       </p>
@@ -946,6 +998,7 @@ desktop: {
   update: {
     publicKey: "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…", // ota.key.pub: baked into the app
     manifestUrl: "https://updates.example.com/myapp/app-update.json", // added to --allow-net
+    hosts: ["cdn.example.com"], // other download hosts (the archive's, a redirect's): --allow-net too
     // autoConfirm: false, // confirm yourself (default: confirmed once the window has loaded)
   },
 },`}
@@ -1023,7 +1076,14 @@ if (found.available) {
         rolls back. When your app has a better health check (its backend answered, the user is still
         signed in), set <code>desktop.update.autoConfirm: false</code> and call{" "}
         <code>confirmAppUpdate()</code> from <code>denext/desktop/updater</code>{" "}
-        yourself; it is a no-op when no update is pending, so it is safe on every launch.
+        yourself; it is a no-op when no update is pending, so it is safe on every launch.{" "}
+        <code>appUpdateStatus()</code>{" "}
+        reports the running version, whether updates can run here (and why not), the update phase, a
+        version on trial, the last one rolled back and where this launch came from (<code>
+          null
+        </code>{" "}
+        outside the pinned runtime). A refusal throws an <code>AppUpdateError</code> whose{" "}
+        <code>code</code> is one of those above.
       </p>
       <p>
         <strong>Where it cannot update.</strong>{" "}
@@ -1059,18 +1119,14 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         scripts derive the app's <code>--allow-*</code> flags from.
       </p>
       <Callout kind="note">
-        <strong>Packaging permissions.</strong> The page side described here (the{" "}
-        <code>denext/mobile</code> desktop branches, <code>denext desktop add</code> and{" "}
-        <code>denext/desktop/client</code>) and the runtime that answers it — the gated bridge, the
-        built-in capabilities, and the config→capabilities resolver — ship together. A window serves
-        each enabled capability (falling back to the web path only for one you have not enabled, or
-        under the stock runtime), so app data survives relaunch. The scaffolded packaging scripts
-        derive the app's <code>--allow-*</code>{" "}
-        from its enabled capabilities (the table below) in place of <code>-A</code>: a loopback{" "}
-        <code>--allow-net</code>, broad <code>--allow-read</code> / <code>--allow-env</code>{" "}
-        for the app's own bundle and support directory, and only the <code>--allow-run</code> /{" "}
-        <code>--allow-ffi</code> / <code>--allow-sys</code> (plus a broad <code>--allow-write</code>
+        <strong>Packaging permissions.</strong> The scaffolded packaging scripts derive the app's
         {" "}
+        <code>--allow-*</code> from its enabled capabilities (the table below) in place of{" "}
+        <code>-A</code>: a loopback <code>--allow-net</code>, broad <code>--allow-read</code> /{" "}
+        <code>--allow-env</code> for the app's own bundle and support directory, and only the{" "}
+        <code>--allow-run</code> / <code>--allow-ffi</code> / <code>--allow-sys</code> (plus a broad
+        {" "}
+        <code>--allow-write</code>{" "}
         when a capability writes) that the enabled capabilities actually need. A project scaffolded
         before 2.11 keeps its older scripts until you refresh them —{" "}
         <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
@@ -1472,8 +1528,9 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
           (the traffic lights), <code>setWindowBackdrop</code> (<code>"mica"</code>,{" "}
           <code>"acrylic"</code>, <code>"tabbed"</code> on Windows 11; <code>"vibrancy"</code>{" "}
           on macOS; none on the CEF backend), each resolving whether it applied, plus{" "}
-          <code>setWindowTitle</code>, <code>setWindowResizable</code>, <code>setAlwaysOnTop</code>.
+          <code>setWindowTitle</code>, <code>setWindowResizable</code>, <code>setAlwaysOnTop</code>,
           {" "}
+          <code>showWindow</code> / <code>hideWindow</code> / <code>focusWindow</code>.{" "}
           <code>makeWindowDraggable(element)</code> turns a toolbar into a drag region: CSS{" "}
           <code>app-region: drag</code>{" "}
           (native on CEF) and, on the system WebView backends, the window follows the pointer.
@@ -1656,6 +1713,7 @@ onLocalNotificationTapped(({ actionId }) => console.log(actionId)); // "tap" or 
       </p>
       <Code lang="ts">
         {`import { bounce, createTray, onAppMenuItem, setAppMenu, setBadge } from "denext/desktop/app";
+import { focusWindow, showWindow } from "denext/desktop/window";
 
 await setAppMenu([
   { label: "File", submenu: [
@@ -1671,7 +1729,9 @@ onAppMenuItem((id) => id === "new" && openWindow());
 const icon = new Uint8Array(await (await fetch("/tray.png")).arrayBuffer());
 const tray = await createTray({ icon, tooltip: "Acme",
   menu: [{ id: "show", label: "Show Acme" }, "separator", { role: "quit" }] });
-tray.onMenuItem((id) => id === "show" && showWindow());
+tray.onMenuItem(async (id) => {
+  if (id === "show") await showWindow().then(() => focusWindow());
+});
 
 await setBadge(3);                // the Dock / taskbar badge; null clears it
 await bounce({ critical: true }); // until the app is focused`}
@@ -1729,11 +1789,19 @@ await bounce({ critical: true }); // until the app is focused`}
         adds a Deno permission.
       </p>
       <Code lang="ts">
-        {`import { registerShortcut, setLaunchAtLogin } from "denext/desktop/app";
+        {`import {
+  registerShortcut,
+  setLaunchAtLogin,
+  shortcutCapabilities,
+  unregisterAllShortcuts,
+} from "denext/desktop/app";
 
 const quick = await registerShortcut("CommandOrControl+Shift+Space", () => toggleQuickEntry());
 // rejects with code "conflict" (another app holds it), "denied" (Wayland), "unsupported", …
 await quick.unregister();
+
+await unregisterAllShortcuts(); // e.g. when the user turns the feature off
+const { globalShortcuts, userBinds } = await shortcutCapabilities(); // userBinds: Wayland's portal
 
 const state = await setLaunchAtLogin(true);
 if (state === "requires-approval") hint("Allow Acme in System Settings › Login Items");`}
@@ -1830,8 +1898,9 @@ desktop: {
         <code>void* fn(void* context)</code> (a <code>Deno.UnsafeFnPointer</code>, a{" "}
         <code>Deno.UnsafeCallback</code>, or a pointer from{" "}
         <code>dlsym</code>) on the UI thread, queued behind the UI work already posted, and resolves
-        with its pointer-sized return value as a{" "}
-        <code>bigint</code>. It is FFI, so it is full trust: grant <code>ffi</code> in{" "}
+        with its pointer-sized return value as a <code>bigint</code> (the pointer's type is{" "}
+        <code>DesktopMainThreadFn</code>, from{" "}
+        <code>denext/desktop</code>). It is FFI, so it is full trust: grant <code>ffi</code> in{" "}
         <code>desktop.extraPermissions</code>, and a wrong pointer or signature crashes the app. A
         {" "}
         <code>Deno.UnsafeCallback</code>{" "}
@@ -2147,6 +2216,45 @@ export default { desktop: { preload: "./desktop/preload.ts" } };`}
         untrusted input. <code>denext desktop run</code> and <code>dev</code>{" "}
         windows never take the single-instance lock.
       </p>
+      <Code lang="tsx">
+        {`// denext.config.ts → desktop: { app: { deepLinks: ["myapp"], singleInstance: true },
+//                               capabilities: { fs: true } }
+"use client";
+import { useEffect, useState } from "denext";
+import { readFile, useDeepLink, useOpenFile } from "denext/mobile";
+import { claimDeepLinkScheme, deepLinkSchemeOwner } from "denext/desktop/client";
+
+export function AppShell() {
+  // myapp://threads/42 navigates to /threads/42 (route: false leaves it to you)
+  useDeepLink(({ url, launch }) => console.log("opened by", url, launch ? "(cold start)" : ""), {
+    accept: { schemes: ["myapp"] },
+  });
+  useOpenFile(async ({ handle, name }) => {
+    openDocument(name, await readFile("", { directory: { picked: handle } }));
+  });
+  return <SchemeCheck />;
+}
+
+function SchemeCheck() {
+  // advisory: which app gets myapp: links right now ("self" | "other" | "none")
+  const [owner, setOwner] = useState<string>();
+  useEffect(() => void deepLinkSchemeOwner("myapp").then((o) => setOwner(o.owner)), []);
+  return owner === "other"
+    ? <button type="button" onClick={() => claimDeepLinkScheme("myapp")}>Open myapp: links here</button>
+    : null;
+}`}
+      </Code>
+      <p>
+        <code>deepLinkSchemeOwner(scheme)</code> (from{" "}
+        <code>denext/desktop/client</code>) reports which app the OS hands the scheme to (<code>
+          self
+        </code>, <code>other</code> with its <code>handler</code> for display, or{" "}
+        <code>none</code>), a snapshot any program can change.{" "}
+        <code>claimDeepLinkScheme(scheme)</code>{" "}
+        takes it over, only from the user&apos;s click (<code>user_activation_required</code>{" "}
+        otherwise) and at most once per scheme per launch (<code>claim_limit</code>); a Windows{" "}
+        &quot;UserChoice&quot; cannot be overridden (<code>registered: false</code>).
+      </p>
 
       <h2 id="desktop-security">Security model</h2>
       <p>
@@ -2406,9 +2514,34 @@ export default { desktop: { preload: "./desktop/preload.ts" } };`}
           <code>DENEXT_ENTITLEMENTS</code> — path to an entitlements <code>.plist</code> (optional).
         </li>
         <li>
+          <code>DENEXT_INSTALLER_IDENTITY</code> — a{" "}
+          <code>"Developer ID Installer: … (TEAMID)"</code> identity that signs the macOS{" "}
+          <code>.pkg</code> (unsigned without it).
+        </li>
+        <li>
+          <code>DENEXT_WINDOWS_CERT</code> — a code-signing <code>.pfx</code> for Authenticode (the
+          {" "}
+          <code>.exe</code> and the <code>.msi</code>); unset, nothing is signed.{" "}
+          <code>DENEXT_WINDOWS_CERT_PASSWORD</code> is its password (redacted from errors) and{" "}
+          <code>DENEXT_SIGN_TIMESTAMP_URL</code>{" "}
+          an RFC 3161 timestamp server (default DigiCert&apos;s).
+        </li>
+        <li>
           <code>DENEXT_APP_NAME</code> — output base name (defaults to <code>desktop.app.name</code>
           {" "}
           from <code>denext.config.ts</code>, else from <code>deno.json</code>).
+        </li>
+        <li>
+          <code>DENEXT_OTA_SIGNING_KEY</code> — the private signing key for{" "}
+          <code>denext ota manifest --sign</code> and{" "}
+          <code>denext desktop publish-update</code>, in place of <code>--key</code>.
+        </li>
+        <li>
+          <code>DENEXT_DESKTOP_RUNTIME</code>, <code>DENEXT_DESKTOP_RUNTIME_DIR</code>,{" "}
+          <code>DENEXT_DESKTOP_RUNTIME_VERIFY</code>, <code>DENEXT_DESKTOP_RUNTIME_ATTEST</code>
+          {" "}
+          — which Deno Desktop runtime builds the app and how it is checked; see{" "}
+          <a href="/docs/desktop-runtime#how-it-works">the runtime page</a>.
         </li>
       </ul>
 
