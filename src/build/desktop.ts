@@ -72,6 +72,7 @@ export {
   type DesktopCapabilityMethod,
   type DesktopCapCtx,
   DesktopCapError,
+  type DesktopMainThreadFn,
   type DesktopPermissions,
 } from "../desktop/extension.ts";
 

@@ -15,11 +15,13 @@
  */
 
 import type {
+  AuthCancelOverlayText,
   AuthSessionError,
   AuthSessionErrorCode,
   AuthSessionOptions,
 } from "../mobile/auth-session.ts";
 import { desktopRpc, isDesktopBridgeError } from "./bridge-client.ts";
+import { showAuthCancelOverlay } from "./auth-cancel-overlay.ts";
 
 /** The error codes the runtime may send back as-is; anything else becomes `unsupported`. */
 const AUTH_SESSION_CODES: ReadonlySet<string> = new Set<AuthSessionErrorCode>([
@@ -78,64 +80,94 @@ function authSessionError(
  * another process that discovered the random callback port could hit it with a forged redirect
  * before the real browser does, so a `state` you generated and re-check (and PKCE) are required.
  *
+ * The system browser reports no cancellation, so while the session waits a cancel overlay (see
+ * {@linkcode showAuthCancelOverlay}) offers the user a Cancel button, unless `cancelOverlay` is
+ * `false`; aborting `signal` cancels too. Either ends the session with `cancelled`.
+ *
  * @param url The provider's authorization URL (absolute `https:`, with a loopback `redirect_uri`).
- * @param opts `timeoutMs` — give up after this many ms (the runtime's default is 5 minutes).
+ * @param opts `timeoutMs` — give up after this many ms (the runtime's default is 5 minutes);
+ * `signal` — abort to cancel; `cancelOverlay` — `false` to hide the overlay, or its text.
  * @returns The full callback URL (`code`, `state` and all). Rejects with an
  * {@linkcode AuthSessionError} whose `code` is one of {@linkcode AuthSessionErrorCode}.
  */
 export async function startDesktopAuthSession(
   url: string,
-  opts: { timeoutMs?: number },
+  opts: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    cancelOverlay?: false | AuthCancelOverlayText;
+  },
 ): Promise<{ url: string }> {
   const token = desktopGlobals()?.token;
   if (typeof token !== "string" || token === "") {
     throw authSessionError("unsupported", "not running under Deno Desktop");
   }
+  const signal = opts?.signal;
+  if (signal?.aborted) throw authSessionError("cancelled", "the sign-in was cancelled");
+  const cancel = () =>
+    void postAuthSession(token, { cancel: true }).then((r) => r.body?.cancel(), () => {});
+  signal?.addEventListener("abort", cancel, { once: true });
+  const hideOverlay = opts?.cancelOverlay === false
+    ? () => {}
+    : showAuthCancelOverlay(cancel, opts?.cancelOverlay || undefined);
 
   let res: Response;
   try {
-    res = await fetch(AUTH_SESSION_PATH, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-denext-desktop-token": token,
-      },
-      body: JSON.stringify({ authUrl: url, timeoutMs: opts?.timeoutMs }),
-    });
+    res = await postAuthSession(token, { authUrl: url, timeoutMs: opts?.timeoutMs });
   } catch {
     // Network failure — treat as unsupported (no runtime answered).
     throw authSessionError("unsupported", "the desktop auth-session request failed");
+  } finally {
+    hideOverlay();
+    signal?.removeEventListener("abort", cancel);
   }
+  return await authSessionResult(res);
+}
 
+/** POST `body` to the runtime's token-gated loopback auth-session endpoint. */
+function postAuthSession(token: string, body: unknown): Promise<Response> {
+  return fetch(AUTH_SESSION_PATH, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-denext-desktop-token": token,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+/** The endpoint's answer as the callback URL, or the {@linkcode AuthSessionError} it carries. */
+async function authSessionResult(res: Response): Promise<{ url: string }> {
   let body: { url?: unknown; code?: unknown; message?: unknown };
   try {
     body = await res.json();
   } catch {
     throw authSessionError("unsupported", "the desktop auth-session response was not JSON");
   }
-
-  if (res.status !== 200) {
-    // The runtime answers `unavailable` when the app hasn't enabled the `auth-session` desktop
-    // capability (`denext desktop add auth-session`); surface that as `unsupported` with the fix.
-    if (body?.code === "unavailable") {
-      throw authSessionError(
-        "unsupported",
-        "the desktop auth-session capability is not enabled: run `denext desktop add auth-session`",
-      );
-    }
-    const code = typeof body?.code === "string" && AUTH_SESSION_CODES.has(body.code)
-      ? body.code as AuthSessionErrorCode
-      : "unsupported";
-    const message = typeof body?.message === "string"
-      ? body.message
-      : "the desktop auth session failed";
-    throw authSessionError(code, message);
-  }
-
+  if (res.status !== 200) throw authSessionFailure(body);
   if (typeof body?.url !== "string") {
     throw authSessionError("unsupported", "the desktop auth session returned no callback URL");
   }
   return { url: body.url };
+}
+
+/** A non-200 envelope `{ code, message }` as an {@linkcode AuthSessionError}. */
+function authSessionFailure(body: { code?: unknown; message?: unknown }): AuthSessionError {
+  // The runtime answers `unavailable` when the app hasn't enabled the `auth-session` desktop
+  // capability (`denext desktop add auth-session`); surface that as `unsupported` with the fix.
+  if (body?.code === "unavailable") {
+    return authSessionError(
+      "unsupported",
+      "the desktop auth-session capability is not enabled: run `denext desktop add auth-session`",
+    );
+  }
+  const code = typeof body?.code === "string" && AUTH_SESSION_CODES.has(body.code)
+    ? body.code as AuthSessionErrorCode
+    : "unsupported";
+  const message = typeof body?.message === "string"
+    ? body.message
+    : "the desktop auth session failed";
+  return authSessionError(code, message);
 }
 
 /** Whether `uri` is an http(s) URL (a loopback redirect is the loopback flow's). */
@@ -188,13 +220,35 @@ function fromBridge(err: unknown): AuthSessionError {
 }
 
 /**
- * The Deno Desktop custom-scheme sign-in: the runtime opens the system browser and resolves with
- * the callback deep link once it matches (see `src/desktop/scheme-auth-session.ts` for every
- * check). Aborting `options.signal` cancels the session (`cancelled`).
+ * Whether the runtime runs a custom-scheme sign-in in the OS's own auth session (macOS), whose
+ * sheet has its own Cancel button. `false` on Windows and Linux, and on a runtime that cannot say.
+ */
+async function hasOsAuthSession(): Promise<boolean> {
+  try {
+    const caps = await desktopRpc<{ osSession?: unknown } | null>(
+      "authSession",
+      "capabilities",
+      {},
+    );
+    return caps?.osSession === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The Deno Desktop custom-scheme sign-in, resolving with the callback URL once it matches (see
+ * `src/desktop/scheme-auth-session.ts` for every check). On macOS it runs in the OS's auth session
+ * (`ASWebAuthenticationSession`: a sheet on the app's window, a real `cancelled` when the user
+ * closes it, private with `preferEphemeral`); on Windows and Linux the runtime opens the system
+ * browser and the callback comes back as a deep link, and a cancel overlay (see
+ * {@linkcode showAuthCancelOverlay}) offers the user a Cancel button unless `cancelOverlay` is
+ * `false`. Aborting `options.signal` cancels the session (`cancelled`) everywhere.
  *
  * @param url The provider's authorization URL (absolute `https:`).
  * @param options `callbackScheme` (declared in `desktop.app.deepLinks`), and optionally
- * `callbackPrefix`, `pkce` + `reason`, `state`, `timeoutMs`, `signal`.
+ * `callbackPrefix`, `pkce` + `reason`, `state`, `timeoutMs`, `signal`, `preferEphemeral`,
+ * `cancelOverlay`.
  * @returns The full callback URL. Rejects with an {@linkcode AuthSessionError}.
  */
 export async function startDesktopSchemeAuthSession(
@@ -205,6 +259,14 @@ export async function startDesktopSchemeAuthSession(
   if (signal?.aborted) throw authSessionError("cancelled", "the sign-in was cancelled");
   const onAbort = () => void desktopRpc("authSession", "cancel", {}).catch(() => {});
   signal?.addEventListener("abort", onAbort, { once: true });
+  const osSession = options.cancelOverlay !== false && await hasOsAuthSession();
+  if (signal?.aborted) {
+    signal.removeEventListener("abort", onAbort);
+    throw authSessionError("cancelled", "the sign-in was cancelled");
+  }
+  const hideOverlay = options.cancelOverlay === false || osSession
+    ? () => {}
+    : showAuthCancelOverlay(onAbort, options.cancelOverlay || undefined);
   let out: { url?: unknown } | null;
   try {
     out = await desktopRpc<{ url?: unknown } | null>("authSession", "start", {
@@ -214,10 +276,12 @@ export async function startDesktopSchemeAuthSession(
       ...(options.pkce !== undefined ? { pkce: options.pkce, reason: options.reason } : {}),
       ...(options.state !== undefined ? { state: options.state } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.preferEphemeral === true ? { ephemeral: true } : {}),
     }, { timeoutMs: false });
   } catch (err) {
     throw fromBridge(err);
   } finally {
+    hideOverlay();
     signal?.removeEventListener("abort", onAbort);
   }
   if (typeof out?.url !== "string") {

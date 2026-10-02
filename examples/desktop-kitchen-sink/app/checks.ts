@@ -617,6 +617,20 @@ const nativeChecks: Check[] = [
     eq(out.value, CRC32_HELLO, "crc32('hello')");
     return "@node-rs/crc32";
   }],
+  ["runOnMainThread: an extension's native call runs on the UI thread", async ({ setup }) => {
+    if (!setup.pinnedRuntime) {
+      throw new Skip("Deno.desktop.runOnMainThread needs the pinned runtime");
+    }
+    const out = await kitchen.mainThread({}) as { fn: string; js: string; ui: string; pid: number };
+    assert(out.ui !== out.js, `${out.fn} answered ${out.ui} on both threads`);
+    if (setup.os === "darwin") {
+      eq(out.ui, "1", "pthread_main_np() on the UI thread");
+      eq(out.js, "0", "pthread_main_np() on the JavaScript thread");
+    } else if (setup.os === "linux") {
+      eq(out.ui, String(out.pid), "gettid() on the UI thread (the process main thread)");
+    }
+    return `${out.fn}: UI thread ${out.ui}, JavaScript thread ${out.js}`;
+  }],
   [
     "updater: full-app updates configured, no pending trial",
     async ({ setup }) => {
@@ -819,10 +833,47 @@ const securityChecks: Check[] = [
     await assertNotReached("tcp-probe-reached");
     return probes.map((p) => `${p.name} → ${p.status.replace(/^HTTP\/1\.1 /, "")}`).join("; ");
   }],
+  ["auth session: the OS's own session where it has one, else not_supported", async ({ setup }) => {
+    if (!setup.pinnedRuntime) throw new Skip("Deno.desktop.authSession needs the pinned runtime");
+    const page = await raw("authSession").capabilities({}) as { osSession: boolean };
+    const out = await kitchen.osAuthSession({}, { timeoutMs: 60_000 }) as {
+      available: boolean;
+      caps?: { supported: boolean; ephemeral: boolean };
+      start?: string;
+      expected?: string;
+      url?: string;
+      error?: string;
+      timeout?: boolean;
+    };
+    eq(out.available, true, "Deno.desktop.authSession");
+    eq(out.caps?.supported, setup.os === "darwin", "capabilities().supported");
+    eq(page.osSession, setup.os === "darwin", "the authSession capability's osSession");
+    if (setup.os !== "darwin") {
+      eq(out.start, "not_supported", "start() without an OS auth session");
+      return "not_supported: openAuthSession uses the system browser and the Cancel overlay";
+    }
+    eq(out.caps?.ephemeral, true, "capabilities().ephemeral");
+    if (out.timeout || out.error === "failed" || out.error === "cancelled") {
+      throw new Skip(
+        `the OS auth session could not run unattended on this runner (${
+          out.timeout ? "no callback in 45 s" : out.error
+        })`,
+      );
+    }
+    eq(out.error, undefined, "the ephemeral round trip's error");
+    eq(out.url, out.expected, "the callback URL the sheet ended at");
+    return "ephemeral ASWebAuthenticationSession round trip";
+  }],
   [
     "auth session: a forged-state callback from a second instance leaves it pending",
     async ({ setup, links }) => {
       if (!setup.autorun) throw new Skip("the window test starts the second instances");
+      if ((await raw("authSession").capabilities({}) as { osSession: boolean }).osSession) {
+        throw new Skip(
+          "this OS runs the sign-in in its own auth session (no system browser, no deep-link " +
+            "callback); the OS-session check covers it",
+        );
+      }
       const state = crypto.randomUUID();
       const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
       const challenge = base64Url(
@@ -852,6 +903,12 @@ const securityChecks: Check[] = [
         10_000,
         async () => `${JSON.stringify((await kitchen.browserLog({})).lines)}; session ${settled}`,
       );
+      // The system browser reports no cancellation: the page shows its Cancel overlay meanwhile.
+      const overlay = document.getElementById("denext-auth-cancel");
+      assert(
+        overlay?.querySelector("button"),
+        "no Cancel overlay while the browser has the sign-in",
+      );
       const forged = await kitchen.secondInstance(
         { id: "auth-forged", args: [`${callback}?code=forged&state=forged-${state}`] },
         { timeoutMs: 60_000 },
@@ -869,6 +926,7 @@ const securityChecks: Check[] = [
       const got = new URL(done.url);
       eq(got.searchParams.get("code"), "real", "the callback's code");
       eq(got.searchParams.get("state"), state, "the callback's state");
+      eq(document.getElementById("denext-auth-cancel"), null, "the Cancel overlay after sign-in");
       assert(
         !links.some((l) => l.url.startsWith(callback)),
         "an auth callback reached onDeepLink (it must be consumed by the session)",

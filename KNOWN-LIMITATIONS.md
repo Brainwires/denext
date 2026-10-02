@@ -447,10 +447,12 @@ four documented bounds of the opt-in:
   `capacitor://localhost`, which WebKit does not accept for WebAuthn, so
   `navigator.credentials` passkey ceremonies fail there. Run a passkey sign-in on the provider's
   own `https` page through `openAuthSession`.
-- **The Deno Desktop auth session sees a cancel only as a timeout.** `openAuthSession` in a
-  desktop window opens the system browser and waits on a one-shot loopback listener; closing
-  the browser tab sends nothing back, so it rejects `timeout` when `timeoutMs` (default 5
-  minutes) runs out, not `cancelled`.
+- **On Windows and Linux, the Deno Desktop auth session cannot see the browser tab close.** The
+  OS has no auth session of its own (macOS's `ASWebAuthenticationSession` reports `cancelled`),
+  so `openAuthSession` opens the system browser, and closing its tab sends nothing back. denext
+  shows the page a Cancel overlay meanwhile (`cancelOverlay`), and `timeoutMs` stays the backstop.
+  The same holds for the loopback flow on every OS. On macOS the sheet cannot be closed from code,
+  so a page cancel or a timeout leaves it open until the user closes it.
 - **The Deno Desktop self-updater replaces the UI, not the app.** `denext/desktop/updater`
   verifies and overlays a signed UI export in the app-support directory; the executable and
   the runtime are updated only by shipping a new build. Every manifest must be signed.

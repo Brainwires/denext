@@ -250,6 +250,7 @@ export { type DeepLinkEvent, type DeepLinkOptions, onDeepLink, useDeepLink } fro
 export { onOpenFile, type OpenedFile, useOpenFile } from "./open-file.ts";
 export type { LinkAccept, LinkAllowList, LinkRoute } from "./link-routing.ts";
 export {
+  type AuthCancelOverlayText,
   type AuthSessionError,
   type AuthSessionErrorCode,
   type AuthSessionOptions,

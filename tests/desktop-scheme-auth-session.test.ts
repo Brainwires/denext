@@ -58,6 +58,7 @@ function schemeApi(
 const ctx = {
   emit: () => {},
   appSupportDir: "",
+  runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
   os: "darwin" as const,
   signal: new AbortController().signal,
 };

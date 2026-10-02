@@ -19,6 +19,7 @@ import { PickedPaths } from "../src/desktop/picked-paths.ts";
 const ctx = (window?: unknown): DesktopCapCtx => ({
   emit: () => {},
   appSupportDir: "",
+  runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
   os: "darwin",
   signal: new AbortController().signal,
   ...(window !== undefined ? { window } : {}),

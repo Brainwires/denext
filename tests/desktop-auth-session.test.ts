@@ -209,6 +209,48 @@ Deno.test("desktop auth-session: happy path resolves 200 with the callback URL",
   assertStringIncludes(await browserFetch!, "You can close this tab.");
 });
 
+Deno.test("desktop auth-session: { cancel: true } ends the open session (499 cancelled)", async () => {
+  resetDesktopAuthSessionForTesting();
+  const open = handleDesktopAuthSession(req({ authUrl: VALID_AUTH_URL }), TOKEN, noopBrowser);
+  await new Promise((r) => setTimeout(r, 60)); // past body-parse: the session is open
+  const cancel = await handleDesktopAuthSession(req({ cancel: true }), TOKEN, noopBrowser);
+  assertEquals(cancel.status, 200);
+  assertEquals(await cancel.json(), { cancelled: true });
+  const res = await open;
+  assertEquals(res.status, 499);
+  assertEquals((await res.json()).code, "cancelled");
+  // Nothing open any more: a cancel says so, and a new session may start.
+  const idle = await handleDesktopAuthSession(req({ cancel: true }), TOKEN, noopBrowser);
+  assertEquals(await idle.json(), { cancelled: false });
+});
+
+Deno.test("desktop auth-session: a cancel goes through the same gate (token, origin)", async () => {
+  resetDesktopAuthSessionForTesting();
+  const open = handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL, timeoutMs: 300 }),
+    TOKEN,
+    noopBrowser,
+  );
+  await new Promise((r) => setTimeout(r, 60));
+  const forged = await handleDesktopAuthSession(
+    req({ cancel: true }, { token: "wrong-token-xxxxxxxxx" }),
+    TOKEN,
+    noopBrowser,
+  );
+  assertEquals(forged.status, 403);
+  const foreign = await handleDesktopAuthSession(
+    req({ cancel: true }, { origin: "http://evil.example" }),
+    TOKEN,
+    noopBrowser,
+  );
+  assertEquals(foreign.status, 403);
+  const res = await open; // still open: it times out, not cancelled
+  assertEquals(res.status, 408);
+  await res.body?.cancel();
+  await forged.body?.cancel();
+  await foreign.body?.cancel();
+});
+
 Deno.test("injectDesktopGlobal: inserts the script with the token after <head>", async () => {
   const html =
     '<!doctype html><html><head><meta charset="utf-8"><title>x</title></head><body><div id="root"></div></body></html>';

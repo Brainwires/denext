@@ -265,8 +265,11 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   `ASWebAuthenticationSession` anchored to the app's window on macOS, ending at a custom-scheme
   (or, on macOS 14.4+, https) callback. Windows and Linux have no OS equivalent and answer
   `not_supported`, so denext's `openAuthSession` falls back to the system browser (RFC 8252).
-  `Deno.desktop.runOnMainThread` calls native code on the app's UI thread, which a
-  `defineDesktopExtension` reaches as `ctx.runOnMainThread`.
+  denext runs `openAuthSession`'s custom-scheme sign-in in it on macOS (`preferEphemeral` makes it
+  ephemeral) and, where the system browser has the sign-in, shows the page a Cancel overlay, since
+  the browser reports no cancellation. `Deno.desktop.runOnMainThread` calls native code on the
+  app's UI thread, which a `defineDesktopExtension` reaches as `ctx.runOnMainThread` (full trust:
+  it is FFI and needs `--allow-ffi`; `unsupported` on the stock runtime).
 - **Why:** sign-in should look and behave like the platform's, share its cookies and close itself
   when the provider redirects back. AppKit APIs must be called on the main thread, and laufey's
   existing UI-task hook forgot a task posted after the event loop ended, so a caller waiting on

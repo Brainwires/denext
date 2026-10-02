@@ -1,7 +1,12 @@
 /**
- * Deno Desktop OAuth sign-in with a CUSTOM-SCHEME callback (`myapp://auth/callback`), runtime side:
- * open the system browser at the authorization URL, then wait for the callback to come back as a
- * deep link ({@link ./launch-events.ts}). The loopback-redirect flow
+ * Deno Desktop OAuth sign-in with a CUSTOM-SCHEME callback (`myapp://auth/callback`), runtime side.
+ * Where the OS has an auth session of its own (macOS: `ASWebAuthenticationSession`, through
+ * `Deno.desktop.authSession` of denext's pinned runtime 2.9.7-denext.6 and later) the sign-in runs
+ * in it: a sheet on the app's window that ends at the callback scheme, reports a real `cancelled`
+ * when the user closes it, and can be `ephemeral` (no cookies shared with the browser). Elsewhere
+ * (Windows and Linux answer `not_supported`, and older runtimes have no `authSession`) it opens the
+ * system browser at the authorization URL, then waits for the callback to come back as a deep link
+ * ({@link ./launch-events.ts}). The loopback-redirect flow
  * ({@link ./auth-session-runtime.ts}) stays the default; this one exists for providers whose
  * redirect allowlist holds the app's scheme (Clerk's native flow, most mobile-style OAuth apps).
  *
@@ -31,6 +36,12 @@
  *    cancellation, so the page's cancel and the timeout are the only ends there). A page reload
  *    cancels the session of the page that started it.
  *
+ * The OS session runs after the same checks (1–5), and its callback URL is held to rule 3 and 4
+ * too: a sheet that ends anywhere else, or with another `state`, rejects `invalid` (it cannot keep
+ * waiting: the OS session is over). The runtime cannot close an open sheet, so a page cancel or the
+ * timeout settles the page's promise and the sheet stays until the user closes it; until then a
+ * new session gets `session_in_progress`.
+ *
  * The callback URL is consumed here BEFORE the deep-link routing, so it never reaches `onDeepLink`
  * or the page's router. Nothing here logs a URL (they carry codes and states).
  *
@@ -40,7 +51,7 @@
  */
 
 import { type DesktopCapability, DesktopCapError } from "./extension.ts";
-import type { DesktopAppApi } from "./launch-events.ts";
+import type { DesktopAppApi, DesktopAuthSessionApi } from "./launch-events.ts";
 
 /** The default session timeout: 10 minutes. */
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
@@ -64,6 +75,8 @@ interface StartRequest {
   /** The `state` the callback must carry, or `null` when none is expected. */
   readonly state: string | null;
   readonly timeoutMs: number;
+  /** A private OS auth session (macOS); ignored by the system browser. */
+  readonly ephemeral: boolean;
 }
 
 /** The open session. */
@@ -206,6 +219,13 @@ function checkPkce(url: URL, args: Record<string, unknown>): void {
   }
 }
 
+/** `ephemeral`: absent → `false`; else a boolean. */
+function checkEphemeral(raw: unknown): boolean {
+  if (raw === undefined || raw === null) return false;
+  if (typeof raw !== "boolean") throw invalid("ephemeral must be a boolean");
+  return raw;
+}
+
 /** The timeout: absent → the default; else a positive finite number of ms up to an hour. */
 function checkTimeout(raw: unknown): number {
   if (raw === undefined || raw === null) return DEFAULT_TIMEOUT_MS;
@@ -224,7 +244,14 @@ export function parseSchemeAuthStart(schemes: readonly string[], raw: unknown): 
   const { target, fromRedirect } = resolveTarget(url, scheme, optString(args, "callbackPrefix"));
   checkPkce(url, args);
   const state = fromRedirect ? url.searchParams.get("state") : optString(args, "state") ?? null;
-  return { url: url.href, scheme, target, state, timeoutMs: checkTimeout(args.timeoutMs) };
+  return {
+    url: url.href,
+    scheme,
+    target,
+    state,
+    timeoutMs: checkTimeout(args.timeoutMs),
+    ephemeral: checkEphemeral(args.ephemeral),
+  };
 }
 
 /**
@@ -263,6 +290,45 @@ async function ensureSchemeOwner(api: DesktopAppApi | undefined, scheme: string)
   }
 }
 
+/** Where an incoming callback URL stands against the open session (rules 3 and 4). */
+function matchCallback(open: Pending, url: string): "match" | "bad_state" | "other" {
+  const got = targetOf(url);
+  if (!got || !sameTarget(got, open.target)) return "other";
+  if (open.state !== null && new URL(url).searchParams.get("state") !== open.state) {
+    return "bad_state";
+  }
+  return "match";
+}
+
+/** The OS auth session when this runtime has one and it is supported here, else `undefined`. */
+async function osAuthSession(
+  api: DesktopAppApi | undefined,
+): Promise<DesktopAuthSessionApi | undefined> {
+  const session = api?.authSession;
+  if (typeof session?.start !== "function" || typeof session.capabilities !== "function") {
+    return undefined;
+  }
+  try {
+    return (await session.capabilities())?.supported === true ? session : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** An OS auth-session rejection (`AuthSessionError.code`) as the bridge's code, message, status. */
+function osSessionError(err: unknown): [code: string, message: string, status: number] {
+  switch ((err as { code?: unknown } | null)?.code) {
+    case "cancelled":
+      return ["cancelled", "the sign-in was cancelled", 499];
+    case "busy":
+      return ["session_in_progress", "another OS sign-in session is still open", 409];
+    case "invalid":
+      return ["invalid", "the OS sign-in session refused the URL or callback scheme", 400];
+    default:
+      return ["unsupported", "the OS sign-in session failed", 500];
+  }
+}
+
 /**
  * Create the custom-scheme auth sessions: the `authSession` bridge capability and the claim hook
  * the launch router offers every incoming deep link to first.
@@ -277,15 +343,64 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
   /** A cancel that arrived while the session was still starting (the owner check). */
   let cancelEarly = false;
 
+  /** End `open` with an error, if it is still the open session. */
+  const endIf = (open: Pending, code: string, message: string, status: number): void => {
+    if (pending !== open) return;
+    pending = undefined;
+    open.reject(new DesktopCapError(code, message, { status }));
+  };
+
   const cancelPending = (code: string, message: string, status: number): boolean => {
     const open = pending;
     if (!open) {
       if (busy) cancelEarly = true;
       return busy;
     }
-    pending = undefined;
-    open.reject(new DesktopCapError(code, message, { status }));
+    endIf(open, code, message, status);
     return true;
+  };
+
+  /** The OS session's outcome for `open`: its callback, or why it ended. */
+  const runOsSession = async (
+    os: DesktopAuthSessionApi,
+    req: StartRequest,
+    open: Pending,
+  ): Promise<void> => {
+    let url: string;
+    try {
+      ({ url } = await os.start({
+        url: req.url,
+        callbackScheme: req.scheme,
+        ...(req.ephemeral ? { ephemeral: true } : {}),
+      }));
+    } catch (err) {
+      if ((err as { code?: unknown } | null)?.code === "not_supported" && pending === open) {
+        await options.openBrowser(req.url); // no OS session after all: the system browser
+        return;
+      }
+      endIf(open, ...osSessionError(err));
+      return;
+    }
+    if (pending !== open) return; // cancelled or timed out while the sheet was up
+    if (typeof url !== "string" || matchCallback(open, url) !== "match") {
+      endIf(
+        open,
+        "invalid",
+        "the OS sign-in session ended at a callback that does not match the redirect or state",
+        400,
+      );
+      return;
+    }
+    pending = undefined;
+    open.resolve(url);
+  };
+
+  /** Hand the sign-in to the OS session where there is one, else to the system browser. */
+  const launch = async (req: StartRequest, open: Pending): Promise<void> => {
+    const os = await osAuthSession(options.api);
+    if (pending !== open) return;
+    if (os) await runOsSession(os, req, open);
+    else await options.openBrowser(req.url);
   };
 
   const run = (req: StartRequest): Promise<string> =>
@@ -299,15 +414,16 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
         req.timeoutMs,
       );
       const settle = () => clearTimeout(timer);
-      pending = {
+      const open: Pending = {
         target: req.target,
         state: req.state,
         resolve: (url) => (settle(), resolve(url)),
         reject: (err) => (settle(), reject(err)),
       };
+      pending = open;
       // Fire-and-forget like the loopback flow, but a failed launch ends the session.
-      Promise.resolve().then(() => options.openBrowser(req.url)).catch(() =>
-        cancelPending("unsupported", "the system browser could not be opened", 500)
+      Promise.resolve().then(() => launch(req, open)).catch(() =>
+        endIf(open, "unsupported", "the system browser could not be opened", 500)
       );
     });
 
@@ -332,6 +448,18 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
     }
   };
 
+  /** What the page needs to know before it starts: whether the OS gives a sheet with a cancel. */
+  const capabilities = async (): Promise<{ osSession: boolean; ephemeral: boolean }> => {
+    const os = await osAuthSession(options.api);
+    let ephemeral = false;
+    try {
+      ephemeral = os !== undefined && (await os.capabilities())?.ephemeral === true;
+    } catch {
+      ephemeral = false;
+    }
+    return { osSession: os !== undefined, ephemeral };
+  };
+
   return {
     capability: {
       name: "authSession",
@@ -343,6 +471,7 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
             cancelled: cancelPending("cancelled", "the sign-in was cancelled", 499),
           }),
         },
+        capabilities: { handler: capabilities },
       },
       // The page that started the session is gone: end it rather than hand the callback to a
       // page that is not waiting for it.
@@ -351,11 +480,9 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
     claim: (url) => {
       const open = pending;
       if (!open) return false;
-      const got = targetOf(url);
-      if (!got || !sameTarget(got, open.target)) return false;
-      if (open.state !== null && new URL(url).searchParams.get("state") !== open.state) {
-        return true; // a forged / stale callback for our target: swallowed, keep waiting
-      }
+      const match = matchCallback(open, url);
+      if (match === "other") return false;
+      if (match === "bad_state") return true; // a forged / stale callback: swallowed, keep waiting
       pending = undefined;
       open.resolve(url);
       return true;

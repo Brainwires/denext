@@ -167,7 +167,8 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       linux: { run: ["xdg-open"] },
     },
     trust: "full",
-    notes: "system-browser OAuth via a loopback redirect (openAuthSession)",
+    notes:
+      "OAuth sign-in (openAuthSession): the OS auth session on macOS for a custom-scheme callback, else the system browser with a Cancel overlay",
     manual: [
       "auth-session: --allow-run of the system browser opener (open / rundll32 / xdg-open) can start any app the user can; the runtime only hands it the provider auth URL you pass, and the loopback endpoint is default-deny unless this capability is enabled.",
     ],

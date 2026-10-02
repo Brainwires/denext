@@ -1890,6 +1890,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type DesktopInstallerFormat = indexedAccess` — One installer format (desktop.installers.<os> entries, --format values).
 - `desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: typeOperator, add?: typeOperator): Promise<DesktopInstallerPlan>` — planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).
 - `interface DesktopInstallerPlan` — What a package script builds.
+- `type DesktopMainThreadFn = Deno.UnsafeFnPointer<any> | Deno.UnsafeCallback<any> | Deno.PointerObject` — A C function void* fn(void* context) that DesktopCapCtx.runOnMainThread calls on the UI thread: a Deno.UnsafeFnPointer, a Deno.UnsafeCallback, or a function pointer.
 - `type DesktopOs = darwin | windows | linux` — The operating systems a Deno Desktop app ships for (Deno.build.os spelling).
 - `desktopPackageArches(arch: string): Array<x86_64 | arm64>` — The bundle arches a Linux / Windows run builds: both for both, the machine's own for host.
 - `interface DesktopPackageArgs` — A package script's parsed command line.
@@ -1994,6 +1995,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AppUpdateInfo` — What getAppUpdateInfo reports. Fields a platform does not know are absent.
 - `type AppUpdateOutcome = accepted | cancelled | failed | not-available | not-allowed | info-missing | unsupported` — How an in-app update call ended: the plugin's AppUpdateResultCode, named, plus "unsupported" (not Android, or no plugin).
 - `attachContextMenu(el: ContextMenuElement, items: ContextMenuItems, onSelect: (id: string) => void, options?: ContextMenuTargetOptions): () => void` — Bind a context menu to el: a long press (or a right click) opens it and onSelect gets the chosen item's id. Inside the iOS shell with denext mobile add context-menu it is the system's UIContextMenuInteraction with the lifted element as its preview; see the module docs for the other platforms.
+- `interface AuthCancelOverlayText` — The text of the cancel overlay (both optional; English by default).
 - `authenticateBiometric(options?: BiometricAuthOptions): Promise<void>` — Ask the user to authenticate with Face ID / Touch ID / a fingerprint (or, with allowDeviceCredential, the device passcode).
 - `interface AuthSessionError` — The Error an openAuthSession promise rejects with.
 - `type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout | scheme_not_declared | pkce_required | scheme_owned_by_other_app | scheme_not_registered | session_in_progress` — The code on an openAuthSession rejection:

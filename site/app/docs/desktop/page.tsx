@@ -454,12 +454,17 @@ export async function signIn() {
           is useless without your verifier.
         </li>
         <li>
-          <strong>Cancel is only a timeout.</strong>{" "}
-          The app cannot see the user close the browser tab, so the session waits until{" "}
-          <code>timeoutMs</code> (default 5 minutes on desktop) and then rejects{" "}
-          <code>timeout</code>. Pass a shorter <code>timeoutMs</code>{" "}
-          if your UI offers a retry. One session runs at a time (<code>busy</code>), and outside a
-          desktop window the call takes the web path.
+          <strong>The browser reports no cancel, so denext shows one.</strong>{" "}
+          The app cannot see the user close the browser tab. While the session waits, a small modal
+          over the app says "Finish signing in in your browser." with a Cancel button (Escape works
+          too), which ends the session with <code>cancelled</code>. Aborting <code>signal</code>
+          {" "}
+          does the same. Pass <code>cancelOverlay: false</code> to render your own button wired to
+          {" "}
+          <code>signal</code>, or <code>{"{ message, cancelLabel }"}</code>{" "}
+          to translate it. The timeout stays the backstop: <code>timeoutMs</code>{" "}
+          (default 5 minutes on desktop), then <code>timeout</code>. One session runs at a time (
+          <code>busy</code>), and outside a desktop window the call takes the web path.
         </li>
       </ul>
       <p>
@@ -469,6 +474,18 @@ export async function signIn() {
       </p>
 
       <h3 id="desktop-scheme-callback">A custom-scheme callback</h3>
+      <p>
+        On macOS the custom-scheme sign-in runs in the OS's own auth session (
+        <code>ASWebAuthenticationSession</code>{" "}
+        through denext's pinned runtime): a sheet on the app's window that shares Safari's cookies
+        (or not, with{" "}
+        <code>preferEphemeral: true</code>, which also skips the "Wants to Use … to Sign In"
+        prompt), closes itself when the provider redirects to the scheme, and rejects{" "}
+        <code>cancelled</code>{" "}
+        when the user closes it. Windows and Linux have no OS equivalent, so there the system
+        browser opens and the callback comes back as a deep link, with the Cancel overlay above. The
+        checks below apply to both.
+      </p>
       <p>
         Under denext's pinned runtime, the callback can come back as a deep link instead, for a
         provider whose redirect allowlist holds the app's scheme: give the authorization URL a{" "}
@@ -519,9 +536,14 @@ export async function signIn() {
           One session at a time (<code>session_in_progress</code>), a 10-minute default timeout, and
           {" "}
           <code>signal</code>{" "}
-          to cancel. The system browser on Windows and Linux reports no cancellation, so give the
-          user a Cancel button wired to an{" "}
-          <code>AbortController</code>. A page reload cancels the session.
+          to cancel. The system browser on Windows and Linux reports no cancellation, so the Cancel
+          overlay covers it there (<code>cancelOverlay</code>). A page reload cancels the session.
+          The OS sheet on macOS cannot be closed from code: a cancel or timeout settles your
+          promise, and the sheet stays until the user closes it.
+        </li>
+        <li>
+          On macOS the sheet's callback is held to the same exact <code>redirect_uri</code> and{" "}
+          <code>state</code>; one that ends anywhere else rejects <code>invalid</code>.
         </li>
         <li>
           The callback is consumed before deep-link routing: it never reaches{" "}
@@ -1556,6 +1578,45 @@ desktop: {
   capabilities: { extensions: ["./desktop/extensions/scanner.ts"] },
   extraPermissions: { ffi: ["./native/libscanner.dylib"] }, // baked into the package
 },`}
+      </Code>
+
+      <h3 id="desktop-main-thread">Native code on the UI thread</h3>
+      <p>
+        AppKit, Win32 windows and GTK objects belong to the app's UI thread, and a handler runs on
+        the JavaScript thread. <code>ctx.runOnMainThread(fn, context?)</code> calls a C function
+        {" "}
+        <code>void* fn(void* context)</code> (a <code>Deno.UnsafeFnPointer</code>, a{" "}
+        <code>Deno.UnsafeCallback</code>, or a pointer from{" "}
+        <code>dlsym</code>) on the UI thread, queued behind the UI work already posted, and resolves
+        with its pointer-sized return value as a{" "}
+        <code>bigint</code>. It is FFI, so it is full trust: grant <code>ffi</code> in{" "}
+        <code>desktop.extraPermissions</code>, and a wrong pointer or signature crashes the app. A
+        {" "}
+        <code>Deno.UnsafeCallback</code>{" "}
+        runs on the JavaScript thread while the UI thread waits for it, so it must not wait for the
+        UI thread itself. It needs denext's pinned runtime: on the stock runtime it rejects with a
+        {" "}
+        <code>DesktopCapError</code> whose code is{" "}
+        <code>unsupported</code>, and once the app is quitting it rejects without calling{" "}
+        <code>fn</code>.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/dock.ts: runs in the Deno process only (macOS)
+import { defineDesktopExtension } from "denext/desktop";
+const c = (s: string) => new TextEncoder().encode(\`\${s}\\0\`);
+const dl = Deno.dlopen("/usr/lib/libSystem.B.dylib", {
+  dlopen: { parameters: ["buffer", "i32"], result: "pointer" },
+  dlsym: { parameters: ["pointer", "buffer"], result: "pointer" },
+});
+// void* dock_refresh(void* context) touches AppKit, so it must run on the UI thread
+const lib = dl.symbols.dlopen(c("/path/to/libdock.dylib"), 2 /* RTLD_NOW */);
+const refresh = dl.symbols.dlsym(lib, c("dock_refresh"))!;
+export default defineDesktopExtension({
+  name: "dock",
+  methods: {
+    refresh: { handler: async (_args, ctx) => String(await ctx.runOnMainThread(refresh)) },
+  },
+});`}
       </Code>
 
       <h3 id="desktop-node-api">Node-API addons</h3>

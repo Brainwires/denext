@@ -58,6 +58,14 @@ export interface AuthSessionError extends Error {
   readonly handler?: string;
 }
 
+/** The text of the cancel overlay (both optional; English by default). */
+export interface AuthCancelOverlayText {
+  /** The line shown while the sign-in runs in the browser. */
+  readonly message?: string;
+  /** The button's label. */
+  readonly cancelLabel?: string;
+}
+
 /** Options for {@linkcode openAuthSession}. */
 export interface AuthSessionOptions {
   /**
@@ -69,8 +77,11 @@ export interface AuthSessionOptions {
    */
   readonly callbackScheme: string;
   /**
-   * iOS only: do not share cookies with Safari (`prefersEphemeralWebBrowserSession`), so no
-   * existing provider login is reused and none is kept. Default `false`.
+   * Do not share cookies with the browser (`prefersEphemeralWebBrowserSession`), so no existing
+   * provider login is reused and none is kept: iOS, and Deno Desktop on macOS when a custom-scheme
+   * callback runs in the OS's auth session (which then also skips the "Wants to Use … to Sign In"
+   * prompt). Ignored by the system browser (Android, Windows, Linux, the loopback flow). Default
+   * `false`.
    */
   readonly preferEphemeral?: boolean;
   /**
@@ -100,9 +111,20 @@ export interface AuthSessionOptions {
   readonly state?: string;
   /**
    * Deno Desktop: aborting it cancels the session (`cancelled`). The system browser on Windows and
-   * Linux reports no cancellation, so offer the user a Cancel button wired to this.
+   * Linux reports no cancellation, so denext shows a Cancel button there (see
+   * {@linkcode AuthSessionOptions.cancelOverlay}); wire your own to this instead if you hide it.
    */
   readonly signal?: AbortSignal;
+  /**
+   * Deno Desktop, when the sign-in runs in the system browser (Windows and Linux, the loopback flow
+   * everywhere, and runtimes without an OS auth session): while it waits, a small modal over the
+   * app says "Finish signing in in your browser." with a Cancel button (Escape too), which ends the
+   * session with `cancelled`, because the browser reports no cancellation and otherwise only
+   * `timeoutMs` would. `false` hides it (render your own, wired to
+   * {@linkcode AuthSessionOptions.signal}); `{ message, cancelLabel }` changes its text. Not shown
+   * where the OS's auth session has its own Cancel (macOS), nor on iOS, Android or the web.
+   */
+  readonly cancelOverlay?: false | AuthCancelOverlayText;
 }
 
 /** What {@linkcode openAuthSession} resolves with. */
@@ -375,9 +397,13 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then
  *   reads as `cancelled`: use a full-page redirect for such providers.
  *
- * - **Deno Desktop**: the system browser. With a loopback `redirect_uri` (`http://127.0.0.1/cb`)
- *   the runtime catches the redirect on an ephemeral loopback port (RFC 8252). Otherwise the
- *   callback comes back as a deep link: `callbackScheme` must be declared in
+ * - **Deno Desktop**: with a loopback `redirect_uri` (`http://127.0.0.1/cb`) the system browser,
+ *   and the runtime catches the redirect on an ephemeral loopback port (RFC 8252). Otherwise a
+ *   custom-scheme callback: on macOS it runs in the OS's auth session (`ASWebAuthenticationSession`,
+ *   a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows
+ *   and Linux the system browser, and the callback comes back as a deep link. While the system
+ *   browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser
+ *   reports no cancellation. Either way `callbackScheme` must be declared in
  *   `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: "not-applicable"` with a
  *   `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry
  *   the same `state`, and another app handling the scheme is refused
@@ -425,7 +451,11 @@ export async function openAuthSession(
     const desktop = await import("../desktop/auth-session.ts");
     return desktop.usesSchemeCallback(target, options)
       ? await desktop.startDesktopSchemeAuthSession(target, { ...options, timeoutMs })
-      : await desktop.startDesktopAuthSession(target, { timeoutMs });
+      : await desktop.startDesktopAuthSession(target, {
+        timeoutMs,
+        ...(options?.signal ? { signal: options.signal } : {}),
+        ...(options?.cancelOverlay !== undefined ? { cancelOverlay: options.cancelOverlay } : {}),
+      });
   }
   const scheme = checkScheme(options?.callbackScheme);
   if (active) throw authSessionError("busy", "another auth session is still open");

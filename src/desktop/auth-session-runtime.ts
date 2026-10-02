@@ -38,6 +38,10 @@ const SUCCESS_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"
 
 /** One session at a time (this process); a second concurrent call gets `busy`. */
 let busy = false;
+/** Ends the open session as `cancelled` (set while one is open). */
+let cancelOpen: (() => void) | undefined;
+/** What the open session's wait resolves with when the page cancels it. */
+const CANCELLED = Symbol("cancelled");
 
 /** A structured JSON error envelope the client half maps back to an `AuthSessionError`. */
 function fail(status: number, code: AuthSessionErrorCode, message: string): Response {
@@ -175,17 +179,24 @@ function validateAuthHeaders(
   return null;
 }
 
-/** The JSON body: an https `authUrl` with a loopback, fragment-less `redirect_uri` + optional
- * positive `timeoutMs` (all 400 `invalid`). Returns the parsed inputs or the error Response. */
-async function parseAuthBody(
-  request: Request,
-): Promise<{ authUrl: URL; redirectUri: URL; timeoutMs: number | undefined } | Response> {
-  let payload: { authUrl?: unknown; timeoutMs?: unknown };
+/** A parsed start request. */
+interface AuthStart {
+  authUrl: URL;
+  redirectUri: URL;
+  timeoutMs: number | undefined;
+}
+
+/** The JSON body: `{ cancel: true }` (end the open session), or an https `authUrl` with a
+ * loopback, fragment-less `redirect_uri` + optional positive `timeoutMs` (all 400 `invalid`).
+ * Returns the parsed inputs or the error Response. */
+async function parseAuthBody(request: Request): Promise<AuthStart | { cancel: true } | Response> {
+  let payload: { authUrl?: unknown; timeoutMs?: unknown; cancel?: unknown };
   try {
     payload = await request.json();
   } catch {
     return fail(400, "invalid", "body must be JSON");
   }
+  if (payload?.cancel === true) return { cancel: true };
   const { authUrl, timeoutMs } = payload ?? {};
 
   let authParsed: URL;
@@ -218,7 +229,7 @@ async function validateAuthRequest(
   request: Request,
   token: string,
   access: DesktopRequestAccess,
-): Promise<{ authUrl: URL; redirectUri: URL; timeoutMs: number | undefined } | Response> {
+): Promise<AuthStart | { cancel: true } | Response> {
   return validateAuthHeaders(request, token, access) ?? await parseAuthBody(request);
 }
 
@@ -240,6 +251,10 @@ async function validateAuthRequest(
  *
  * Then a single-session guard (409 `{code:"busy"}`), the loopback listener, and a timeout
  * (408 `{code:"timeout"}`). On success: 200 `{ url }`.
+ *
+ * A body of `{ cancel: true }` (behind the same checks 1–4) ends the open session instead: the
+ * page's cancel, since the system browser reports no cancellation. That session answers 499
+ * `{code:"cancelled"}`, and the cancel request 200 `{ cancelled }` (whether one was open).
  */
 export async function handleDesktopAuthSession(
   request: Request,
@@ -249,6 +264,11 @@ export async function handleDesktopAuthSession(
 ): Promise<Response> {
   const parsed = await validateAuthRequest(request, token, access);
   if (parsed instanceof Response) return parsed;
+  if ("cancel" in parsed) {
+    const open = cancelOpen;
+    open?.();
+    return Response.json({ cancelled: open !== undefined });
+  }
   const { authUrl: authParsed, redirectUri, timeoutMs } = parsed;
 
   // Single session.
@@ -259,7 +279,8 @@ export async function handleDesktopAuthSession(
   let server: Deno.HttpServer | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const callbackUrl = await new Promise<string | null>((resolve) => {
+    const callbackUrl = await new Promise<string | null | typeof CANCELLED>((resolve) => {
+      cancelOpen = () => resolve(CANCELLED);
       server = Deno.serve(
         {
           hostname: "127.0.0.1",
@@ -300,9 +321,11 @@ export async function handleDesktopAuthSession(
     if (callbackUrl === null) {
       return fail(408, "timeout", "no OAuth redirect within the timeout");
     }
+    if (callbackUrl === CANCELLED) return fail(499, "cancelled", "the sign-in was cancelled");
     return Response.json({ url: callbackUrl });
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    cancelOpen = undefined;
     if (server) await server.shutdown().catch(() => {});
     busy = false;
   }
@@ -311,4 +334,5 @@ export async function handleDesktopAuthSession(
 /** Forget the module's single-session flag (tests only). */
 export function resetDesktopAuthSessionForTesting(): void {
   busy = false;
+  cancelOpen = undefined;
 }

@@ -15825,6 +15825,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopMainThreadFn",
+          "slug": "DesktopMainThreadFn",
+          "kind": "typeAlias",
+          "signature": "type DesktopMainThreadFn = Deno.UnsafeFnPointer<any> | Deno.UnsafeCallback<any> | Deno.PointerObject",
+          "doc": "A C function void* fn(void* context) that DesktopCapCtx.runOnMainThread calls on the UI thread: a Deno.UnsafeFnPointer, a Deno.UnsafeCallback, or a function pointer.",
+          "docFull": "A C function `void* fn(void* context)` that {@linkcode DesktopCapCtx.runOnMainThread} calls on the\nUI thread: a `Deno.UnsafeFnPointer`, a `Deno.UnsafeCallback`, or a function pointer.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopOs",
           "slug": "DesktopOs",
           "kind": "typeAlias",
@@ -17217,6 +17229,18 @@
           "examples": [
             "```ts\nimport { attachContextMenu } from \"denext/mobile\";\nconst off = attachContextMenu(row, [{ id: \"delete\", label: \"Delete\", destructive: true }], (id) => {\n  if (id === \"delete\") remove(row.dataset.id!);\n});\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "AuthCancelOverlayText",
+          "slug": "AuthCancelOverlayText",
+          "kind": "interface",
+          "signature": "interface AuthCancelOverlayText",
+          "doc": "The text of the cancel overlay (both optional; English by default).",
+          "docFull": "The text of the cancel overlay (both optional; English by default).",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -19807,7 +19831,7 @@
           "kind": "function",
           "signature": "openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>",
           "doc": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.",
-          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\n- **Deno Desktop**: the system browser. With a loopback `redirect_uri` (`http://127.0.0.1/cb`)\n  the runtime catches the redirect on an ephemeral loopback port (RFC 8252). Otherwise the\n  callback comes back as a deep link: `callbackScheme` must be declared in\n  `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: \"not-applicable\"` with a\n  `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry\n  the same `state`, and another app handling the scheme is refused\n  (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches\n  {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,\n  denext's pinned runtime).\n\nOnly one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this\nonly opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)\nbefore the call, compare `state` after it, and exchange the `code` on your server.",
+          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\n- **Deno Desktop**: with a loopback `redirect_uri` (`http://127.0.0.1/cb`) the system browser,\n  and the runtime catches the redirect on an ephemeral loopback port (RFC 8252). Otherwise a\n  custom-scheme callback: on macOS it runs in the OS's auth session (`ASWebAuthenticationSession`,\n  a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows\n  and Linux the system browser, and the callback comes back as a deep link. While the system\n  browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser\n  reports no cancellation. Either way `callbackScheme` must be declared in\n  `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: \"not-applicable\"` with a\n  `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry\n  the same `state`, and another app handling the scheme is refused\n  (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches\n  {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,\n  denext's pinned runtime).\n\nOnly one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this\nonly opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)\nbefore the call, compare `state` after it, and exchange the `code` on your server.",
           "params": [
             {
               "name": "url",

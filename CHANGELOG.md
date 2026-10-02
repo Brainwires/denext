@@ -10,6 +10,24 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop sign-in on macOS runs in the OS's own auth session.** Under the pinned runtime
+  (2.9.7-denext.6), `openAuthSession`'s custom-scheme flow (and so `denext/desktop/clerk`) uses
+  `ASWebAuthenticationSession` through `Deno.desktop.authSession`: a sheet on the app's window that
+  rejects a real `cancelled` when the user closes it, and is private with `preferEphemeral: true`.
+  The declared scheme, PKCE S256, owner check and the exact `redirect_uri` + `state` match still
+  apply (a sheet that ends elsewhere rejects `invalid`). Windows and Linux, which have no OS
+  session (`not_supported`), keep the system browser and the deep-link callback.
+- **A Cancel overlay for system-browser sign-ins on Deno Desktop.** While the system browser has
+  the sign-in (Windows and Linux, and the loopback flow everywhere), `openAuthSession` shows a
+  small modal with a Cancel button (Escape too) that ends the session with `cancelled`; the timeout
+  stays the backstop. `cancelOverlay: false` hides it, `{ message, cancelLabel }` translates it,
+  and `signal` now cancels the loopback flow too (a token-gated `{ cancel: true }` to its endpoint).
+- **`ctx.runOnMainThread(fn, context?)` for desktop extensions.** A `defineDesktopExtension`
+  handler can call a C function on the app's UI thread (AppKit, Win32, GTK) over
+  `Deno.desktop.runOnMainThread`, resolving with its return value as a `bigint`. It is FFI: full
+  trust, `--allow-ffi` (grant it in `desktop.extraPermissions`); on the stock runtime it rejects
+  `unsupported`. `DesktopMainThreadFn` is exported from `denext/desktop`.
+
 - **Desktop installers on every OS.** The package scripts now wrap the finished bundle in its
   installers, chosen per OS by `desktop.installers` in `denext.config.ts` or `--format` for one
   run (`denext desktop package --format msi,zip`): macOS `.dmg` (now the default beside the `.app`)

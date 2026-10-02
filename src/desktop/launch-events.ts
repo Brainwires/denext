@@ -180,6 +180,21 @@ export interface DesktopShortcutsApi {
 }
 
 /**
+ * `Deno.desktop.authSession` (runtime 2.9.7-denext.6 and later): a sign-in in the OS's own auth
+ * session, `ASWebAuthenticationSession` on macOS. Windows and Linux report `supported: false` and
+ * reject `start` with the code `not_supported`.
+ */
+export interface DesktopAuthSessionApi {
+  capabilities(): { supported?: boolean; ephemeral?: boolean; httpsCallback?: boolean };
+  start(options: {
+    url: string;
+    callbackScheme?: string;
+    callbackUrl?: string;
+    ephemeral?: boolean;
+  }): Promise<{ url: string }>;
+}
+
+/**
  * The slice of `Deno.desktop` (denext's pinned Deno Desktop runtime) the app events use. Every
  * member is optional: the stock runtime has no `Deno.desktop`, and an older pinned runtime lacks
  * scheme registration and passkeys — each is feature-detected where it is used.
@@ -210,6 +225,8 @@ export interface DesktopAppApi {
   getSchemeOwner?(scheme: string): Promise<SchemeOwnerInfo>;
   /** Register the app as a declared scheme's handler (`force` only on an explicit user action). */
   registerScheme?(scheme: string, options?: { force?: boolean }): Promise<RegisterSchemeResult>;
+  /** OS auth sessions (runtime 2.9.7-denext.6 and later). */
+  readonly authSession?: DesktopAuthSessionApi;
   /** Native passkeys (`@clerk/electron-passkeys` wire format). */
   readonly passkeys?: {
     capabilities(): Promise<{ platformAuthenticator?: boolean; securityKeys?: boolean }>;

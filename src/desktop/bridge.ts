@@ -51,6 +51,7 @@ import {
   type DesktopCapability,
   type DesktopCapCtx,
   DesktopCapError,
+  type DesktopMainThreadFn,
   validateStandard,
 } from "./extension.ts";
 
@@ -287,6 +288,37 @@ async function runHandlerWithDeadline(
   }
 }
 
+/** The slice of the pinned runtime's `Deno.desktop` that {@link runOnDesktopMainThread} uses. */
+interface MainThreadApi {
+  runOnMainThread?(fn: DesktopMainThreadFn, context?: Deno.PointerValue): Promise<bigint>;
+}
+
+/**
+ * {@linkcode DesktopCapCtx.runOnMainThread}: `Deno.desktop.runOnMainThread` (denext's pinned
+ * runtime, 2.9.7-denext.6 and later), or an `unsupported` {@linkcode DesktopCapError} on a runtime
+ * without it (the stock one, or a plain `deno run`). Exported for tests.
+ *
+ * @param fn The native function to call on the UI thread.
+ * @param context The pointer passed to `fn` (the runtime's default `null` when omitted).
+ * @returns `fn`'s return value as an unsigned `bigint`.
+ */
+export function runOnDesktopMainThread(
+  fn: DesktopMainThreadFn,
+  context?: Deno.PointerValue,
+): Promise<bigint> {
+  const api = (Deno as unknown as { desktop?: MainThreadApi }).desktop;
+  if (typeof api?.runOnMainThread !== "function") {
+    return Promise.reject(
+      new DesktopCapError(
+        "unsupported",
+        "ctx.runOnMainThread needs denext's pinned Deno Desktop runtime (2.9.7-denext.6 or later)",
+        { status: 501 },
+      ),
+    );
+  }
+  return context === undefined ? api.runOnMainThread(fn) : api.runOnMainThread(fn, context);
+}
+
 /**
  * Create a desktop bridge over the enabled capabilities. Rejects duplicate capability names (an
  * extension colliding with a built-in) at construction.
@@ -323,6 +355,7 @@ export function createDesktopBridge(
     os: Deno.build.os as "darwin" | "windows" | "linux",
     window: options.getWindow?.(),
     signal,
+    runOnMainThread: runOnDesktopMainThread,
   });
 
   const invokeMethod = async (

@@ -34,6 +34,7 @@ async function call(router: LaunchRouter, cap: string, method: string, args: unk
   return await c.methods[method].handler(args, {
     emit: () => {},
     appSupportDir: "",
+    runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
     os: "darwin",
     signal: new AbortController().signal,
   });

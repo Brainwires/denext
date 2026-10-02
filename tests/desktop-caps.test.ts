@@ -57,6 +57,7 @@ function ctx(overrides: Partial<DesktopCapCtx> = {}): DesktopCapCtx {
   return {
     emit: () => {},
     appSupportDir: "",
+    runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
     os: OS,
     signal: new AbortController().signal,
     ...overrides,

@@ -16,6 +16,11 @@
 //   `denext/desktop/updater`'s full-app updater;
 // - `tcpProbe` sends bridge requests carrying the page's token to the runtime's loopback TCP relay;
 // - `browserLog` reads what the runner's stand-in system browser was asked to open;
+// - `mainThread` calls a native thread-identity function through `ctx.runOnMainThread` and on the
+//   JavaScript thread, so the page can prove the first ran on the UI thread;
+// - `osAuthSession` reads `Deno.desktop.authSession.capabilities()`, checks that `start` answers
+//   `not_supported` where the OS has no auth session, and on macOS runs an unattended ephemeral
+//   round trip through a loopback page that redirects to the app's callback scheme;
 // - `devtools`, `scheduledTags` read the runtime's DevTools switch and scheduled notifications, and
 //   `synthetic` dispatches an OS event (a notification click, a shortcut press, a menu click) on the
 //   runtime object that would fire it, for the plumbing no unattended test can press.
@@ -344,6 +349,22 @@ export default defineDesktopExtension({
         return { relay, probes };
       },
     },
+    mainThread: {
+      handler: async (_args, ctx) => {
+        const probe = threadProbe();
+        try {
+          const js = probe.callHere();
+          const ui = await ctx.runOnMainThread(probe.pointer);
+          return { fn: probe.name, js: String(js), ui: String(ui), pid: Deno.pid };
+        } finally {
+          probe.close();
+        }
+      },
+    },
+    osAuthSession: {
+      timeoutMs: 60_000,
+      handler: () => osAuthSessionProbe(),
+    },
     devtools: {
       handler: () => ({ enabled: desktop()?.devtools?.enabled ?? null }),
     },
@@ -377,9 +398,105 @@ export default defineDesktopExtension({
   },
 });
 
+/**
+ * A native function that tells which thread calls it, both as a pointer for `ctx.runOnMainThread`
+ * and callable here on the JavaScript thread: `pthread_main_np` on macOS (1 on the process main
+ * thread), `gettid` on Linux (the main thread's id is the pid), `GetCurrentThreadId` on Windows.
+ * The pointer comes from `dlsym` / `GetProcAddress`; each takes `(void*)` and ignores it.
+ */
+function threadProbe(): {
+  name: string;
+  pointer: Deno.PointerObject;
+  callHere(): bigint;
+  close(): void;
+} {
+  const os = Deno.build.os;
+  if (os === "windows") {
+    const k32 = Deno.dlopen("kernel32.dll", {
+      GetModuleHandleA: { parameters: ["buffer"], result: "pointer" },
+      GetProcAddress: { parameters: ["pointer", "buffer"], result: "pointer" },
+      GetCurrentThreadId: { parameters: [], result: "u32" },
+    });
+    const module = k32.symbols.GetModuleHandleA(cString("kernel32.dll"));
+    const pointer = k32.symbols.GetProcAddress(module, cString("GetCurrentThreadId"));
+    if (!pointer) throw new Error("GetProcAddress(GetCurrentThreadId) failed");
+    return {
+      name: "GetCurrentThreadId",
+      pointer,
+      callHere: () => BigInt(k32.symbols.GetCurrentThreadId()),
+      close: () => k32.close(),
+    };
+  }
+  const name = os === "darwin" ? "pthread_main_np" : "gettid";
+  const libc = Deno.dlopen(
+    os === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6",
+    {
+      dlsym: { parameters: ["pointer", "buffer"], result: "pointer" },
+      [name]: { name, parameters: [], result: "i32" },
+    } as const,
+  );
+  // RTLD_DEFAULT: (void*)-2 on macOS, NULL with glibc.
+  const rtldDefault = os === "darwin" ? Deno.UnsafePointer.create(0xfffffffffffffffen) : null;
+  const pointer = libc.symbols.dlsym(rtldDefault, cString(name));
+  if (!pointer) throw new Error(`dlsym(${name}) failed`);
+  const callHere = libc.symbols[name] as () => number;
+  return { name, pointer, callHere: () => BigInt(callHere()), close: () => libc.close() };
+}
+
+function cString(text: string): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(`${text}\0`) as Uint8Array<ArrayBuffer>;
+}
+
+/** What `Deno.desktop.authSession` answers here (see `osAuthSession` in the methods). */
+async function osAuthSessionProbe(): Promise<Record<string, unknown>> {
+  const auth = desktop()?.authSession;
+  if (!auth) return { available: false };
+  const caps = await auth.capabilities();
+  if (!caps.supported) {
+    // Windows and Linux: start() must refuse without opening anything.
+    const code = await auth.start({
+      url: "https://auth.invalid/",
+      callbackScheme: "kitchensink-link",
+    })
+      .then(() => "resolved", (err) => String((err as { code?: unknown }).code ?? err));
+    return { available: true, caps, start: code };
+  }
+  // macOS: an ephemeral session (no "wants to sign in" prompt, so it runs unattended) over a
+  // loopback page that redirects straight to the callback scheme, which ends the session.
+  const state = crypto.randomUUID();
+  const callback = `kitchensink-link://auth/callback?code=os&state=${state}`;
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    () => new Response(null, { status: 302, headers: { location: callback } }),
+  );
+  try {
+    const url = `http://127.0.0.1:${server.addr.port}/authorize`;
+    const outcome = await Promise.race([
+      auth.start({ url, callbackScheme: "kitchensink-link", ephemeral: true }).then(
+        (r) => ({ url: r.url }),
+        (err) => ({ error: String((err as { code?: unknown }).code ?? err) }),
+      ),
+      sleep(45_000).then(() => ({ timeout: true })),
+    ]);
+    return { available: true, caps, expected: callback, ...outcome };
+  } finally {
+    await server.shutdown();
+  }
+}
+
 /** The pinned runtime's `Deno.desktop`, as far as the harness uses it. */
 interface DesktopApi extends EventTarget {
   devtools?: { enabled?: boolean };
+  authSession?: {
+    capabilities():
+      | { supported: boolean; ephemeral: boolean }
+      | Promise<
+        { supported: boolean; ephemeral: boolean }
+      >;
+    start(options: { url: string; callbackScheme: string; ephemeral?: boolean }): Promise<
+      { url: string }
+    >;
+  };
   notifications?: { getScheduled(): Promise<Array<{ tag: string }>> };
   shortcuts?: EventTarget;
 }
