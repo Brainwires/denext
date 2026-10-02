@@ -412,7 +412,8 @@ is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`
 `onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
 `setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
-`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. An extension's
+`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
+packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
 `--allow-*` goes in `desktop.extraPermissions`, never in `scripts/package-*.ts`. Under the stock
 runtime these answer `unavailable` and the page keeps its web path. Under the pinned runtime `clipboard` reaches the OS clipboard
 (`readClipboard({ format: "html" | "image" })`, `writeClipboard({ html, text? } | { image })` with
