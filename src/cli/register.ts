@@ -8,6 +8,7 @@ import { buildCommand, devCommand, exportCommand, startCommand } from "./command
 import { codemodCommand, migrateCommand } from "./commands/migrate.ts";
 import { createCommand, initCommand } from "./commands/create.ts";
 import { generateCommand } from "./commands/generate.ts";
+import { fallowCommand } from "./commands/fallow.ts";
 import { taskCommand } from "./commands/task.ts";
 import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
@@ -54,6 +55,7 @@ export function buildRegistry(): CommandRegistry {
   reg.register(createCommand);
   reg.register(initCommand);
   reg.register(generateCommand);
+  reg.register(fallowCommand);
   // Desktop packaging.
   reg.register(desktopCommand);
   // Capacitor mobile: over-the-air UI manifest + native plugin install.

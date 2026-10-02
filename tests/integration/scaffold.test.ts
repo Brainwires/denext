@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
+import { FALLOW_VERSION } from "../../src/build/fallow-template.ts";
 import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
@@ -417,6 +418,94 @@ Deno.test("init scaffolds into an existing dir but won't overwrite existing file
       threw = true;
     }
     assert(threw, "init must refuse to overwrite an existing generated file");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("scaffoldFiles: fallow writes the gate, its tasks and the agent guide", () => {
+  const files = scaffoldFiles({ dir: "/x", fallow: true });
+  const paths = files.map((f) => f.path);
+  for (
+    const p of [
+      "fallow.toml",
+      ".githooks/pre-commit",
+      "scripts/coverage-to-istanbul.ts",
+      "AGENTS.md",
+      "CLAUDE.md",
+    ]
+  ) {
+    assert(paths.includes(p), `missing ${p}`);
+  }
+  const tasks = JSON.parse(files.find((f) => f.path === "deno.json")!.content).tasks;
+  assertEquals(tasks.fallow, `deno run -A npm:fallow@${FALLOW_VERSION}`);
+  assertStringIncludes(tasks["fallow:audit"], `npm:fallow@${FALLOW_VERSION} audit`);
+  assertStringIncludes(tasks["coverage:fallow"], "deno test -A --coverage=coverage/profile");
+  assertStringIncludes(tasks["coverage:fallow"], "scripts/coverage-to-istanbul.ts");
+  // Enabling the hook is the developer's step: the task only points git at .githooks/.
+  assertEquals(tasks["hooks:install"], "git config core.hooksPath .githooks");
+  const gitignore = files.find((f) => f.path === ".gitignore")!.content;
+  assertStringIncludes(gitignore, "coverage/\n.fallow/\n");
+  // The hook is written executable and runs the gate through the pinned task.
+  const hook = files.find((f) => f.path === ".githooks/pre-commit")!;
+  assertEquals(hook.mode, 0o755);
+  assert(hook.content.startsWith("#!/bin/sh"));
+  assertStringIncludes(hook.content, "task fallow:audit $BASE $COV");
+  // fallow.toml declares denext's path-loaded conventions as entry points.
+  const toml = files.find((f) => f.path === "fallow.toml")!.content;
+  for (const e of ["**/app/**/page.tsx", "denext.config.ts", "middleware.ts", "tasks/*.ts"]) {
+    assertStringIncludes(toml, `"${e}"`);
+  }
+  assertStringIncludes(toml, '".denext/**"');
+  assertStringIncludes(files.find((f) => f.path === "AGENTS.md")!.content, "## Fallow task map");
+  assertStringIncludes(files.find((f) => f.path === "README.md")!.content, "hooks:install");
+});
+
+Deno.test("scaffoldFiles: without fallow nothing of it is written", () => {
+  for (const opts of [{ dir: "/x" }, { dir: "/x", fallow: false }]) {
+    const files = scaffoldFiles(opts);
+    const paths = files.map((f) => f.path);
+    for (const p of ["fallow.toml", ".githooks/pre-commit", "AGENTS.md", "CLAUDE.md"]) {
+      assert(!paths.includes(p), `unexpected ${p}`);
+    }
+    assert(!paths.some((p) => p.startsWith("scripts/")));
+    const denoJson = files.find((f) => f.path === "deno.json")!.content;
+    assert(!denoJson.includes("fallow"), denoJson);
+    assert(!denoJson.includes("hooks:install"), denoJson);
+    assert(!files.find((f) => f.path === ".gitignore")!.content.includes("coverage/"));
+    assert(!files.find((f) => f.path === "README.md")!.content.includes("fallow"));
+  }
+});
+
+Deno.test("scaffoldFiles: the scaffolded coverage converter matches denext's own script", async () => {
+  // One source of truth: the converter `coverage:fallow` runs in an app is denext's own
+  // scripts/coverage-to-istanbul.ts (tested by tests/coverage-to-istanbul.test.ts).
+  const scaffolded = scaffoldFiles({ dir: "/x", fallow: true })
+    .find((f) => f.path === "scripts/coverage-to-istanbul.ts")!.content;
+  const repo = await Deno.readTextFile(
+    new URL("../../scripts/coverage-to-istanbul.ts", import.meta.url),
+  );
+  assertEquals(scaffolded, repo);
+});
+
+Deno.test("scaffoldProject writes the fallow hook executable and init keeps an existing AGENTS.md", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_fallow_" });
+  try {
+    await Deno.writeTextFile(join(dir, "AGENTS.md"), "# ours\n");
+    const written = await scaffoldProject({
+      dir,
+      fallow: true,
+      vscode: false,
+      allowExisting: true,
+    });
+    assert(written.includes("fallow.toml"));
+    assert(!written.includes("AGENTS.md"), "init keeps the project's own AGENTS.md");
+    assertEquals(await Deno.readTextFile(join(dir, "AGENTS.md")), "# ours\n");
+    assertEquals(await Deno.readTextFile(join(dir, "CLAUDE.md")), "@AGENTS.md\n");
+    if (Deno.build.os !== "windows") {
+      const mode = (await Deno.stat(join(dir, ".githooks", "pre-commit"))).mode!;
+      assertEquals(mode & 0o111, 0o111, "the hook must be executable for git to run it");
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

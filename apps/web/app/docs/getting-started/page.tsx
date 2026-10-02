@@ -230,6 +230,45 @@ export const listNotes = () => db.prepare("SELECT * FROM notes").all();`}
         <code>denext/*</code> rules (rules-of-hooks, directive placement) run there too.
       </p>
 
+      <h2 id="fallow">Code health gate (fallow)</h2>
+      <p>
+        <code>denext create my-app --fallow</code> (or the picker's fallow entry) adds{" "}
+        <a href="https://docs.fallow.tools">fallow</a>, the dead-code, duplication and complexity
+        gate denext itself is built under. It writes a <code>fallow.toml</code>{" "}
+        that declares denext's path-loaded files (routes, <code>denext.config.ts</code>,{" "}
+        <code>middleware.ts</code>, <code>tasks/*.ts</code>, …) as entry points, a{" "}
+        <code>.githooks/pre-commit</code> gate, the coverage converter, and an{" "}
+        <code>AGENTS.md</code>{" "}
+        telling coding agents to run the gate before committing. fallow runs from npm through Deno
+        at a pinned version, so nothing is installed globally:
+      </p>
+      <Code lang="sh">
+        {`deno task fallow:audit      # the changed-code gate: exit 1 on a "fail" verdict
+deno task hooks:install     # git runs that gate before every commit (git config core.hooksPath)
+deno task fallow            # dead code + duplication + health over the whole project
+deno task coverage:fallow   # deno test --coverage → coverage/coverage-final.json (measured CRAP)`}
+      </Code>
+      <p>
+        The hook is installed only when you run <code>hooks:install</code>{" "}
+        — the scaffold never touches{" "}
+        <code>.git</code>. To add the same setup to an existing project, run{" "}
+        <code>denext fallow init</code> (it writes only the missing files and splices the tasks into
+        {" "}
+        <code>deno.json</code>
+        ). In CI, run the gate against the pull request's base branch:
+      </p>
+      <Code lang="yaml">
+        {`- uses: actions/checkout@v4
+  with: { fetch-depth: 0 } # the audit diffs against the base branch
+- uses: denoland/setup-deno@v2
+- run: deno task fallow:audit --base origin/\${{ github.base_ref }}`}
+      </Code>
+      <p>
+        Prefer a global binary (it also lets fallow's own <code>fallow agent install</code>{" "}
+        wire editor and agent hooks)? <code>npm install -g fallow</code> or{" "}
+        <code>cargo install fallow-cli</code> works with the same <code>fallow.toml</code>.
+      </p>
+
       <h2>Coming from Next.js?</h2>
       <p>
         The file conventions, hooks, and <code>app/</code>{" "}

@@ -1,4 +1,11 @@
-// Convert Deno's lcov coverage into an Istanbul `coverage-final.json` for fallow.
+// The coverage converter `denext create --fallow` / `denext fallow init` write to
+// `scripts/coverage-to-istanbul.ts` in the app. It is byte-identical to denext's own
+// `scripts/coverage-to-istanbul.ts` (tests/integration/scaffold.test.ts pins the two), so a fix
+// lands in one place: edit the repo script, then paste it here.
+
+/** The text of the scaffolded `scripts/coverage-to-istanbul.ts` (lcov → Istanbul map). */
+export const COVERAGE_TO_ISTANBUL_SCRIPT =
+  `// Convert Deno's lcov coverage into an Istanbul \`coverage-final.json\` for fallow.
 //
 //   deno task coverage:fallow      # tests → lcov → coverage/coverage-final.json
 //   deno run -A scripts/coverage-to-istanbul.ts <in.lcov> <out.json> [projectRoot]
@@ -10,10 +17,10 @@
 // function with cyclomatic ≥ 10 regardless of how well-tested it really is. fallow accepts only the
 // Istanbul JSON map (not lcov, not raw V8), so this script bridges the two.
 //
-// `deno coverage --lcov` is already source-mapped to TypeScript lines, so the line
+// \`deno coverage --lcov\` is already source-mapped to TypeScript lines, so the line
 // numbers here line up with the source fallow parses. The Istanbul map is built from
-// the lcov records directly: one statement per `DA` line, one function per `FN`
-// (spanning to the next function's start), and one branch group per `BRDA` line/block.
+// the lcov records directly: one statement per \`DA\` line, one function per \`FN\`
+// (spanning to the next function's start), and one branch group per \`BRDA\` line/block.
 
 type Loc = { line: number; column: number };
 type Range = { start: Loc; end: Loc };
@@ -48,7 +55,7 @@ function newRecord(path: string): LcovRecord {
   return { path, fns: [], lines: [], branches: new Map() };
 }
 
-/** Feed one lcov line into the record being built; returns true at `end_of_record`. */
+/** Feed one lcov line into the record being built; returns true at \`end_of_record\`. */
 function readLcovLine(rec: LcovRecord, line: string): boolean {
   if (line.startsWith("FN:")) {
     const [l, ...name] = line.slice(3).split(",");
@@ -62,7 +69,7 @@ function readLcovLine(rec: LcovRecord, line: string): boolean {
     rec.lines.push([Number(l), Number(c)]);
   } else if (line.startsWith("BRDA:")) {
     const [l, block, _branch, c] = line.slice(5).split(",");
-    const key = `${l}:${block}`;
+    const key = \`\${l}:\${block}\`;
     const entry = rec.branches.get(key) ?? { line: Number(l), counts: [] };
     entry.counts.push(c === "-" ? 0 : Number(c));
     rec.branches.set(key, entry);
@@ -112,17 +119,17 @@ function toIstanbul(rec: LcovRecord): IstanbulFileCoverage {
 }
 
 /**
- * Convert lcov text to an Istanbul coverage map. Relative `SF:` paths are resolved
- * against `root` (lcov from `deno coverage` is already absolute).
+ * Convert lcov text to an Istanbul coverage map. Relative \`SF:\` paths are resolved
+ * against \`root\` (lcov from \`deno coverage\` is already absolute).
  */
 export function lcovToIstanbul(lcov: string, root: string): IstanbulCoverageMap {
   const map: IstanbulCoverageMap = {};
   let rec: LcovRecord | null = null;
-  for (const raw of lcov.split("\n")) {
+  for (const raw of lcov.split("\\n")) {
     const line = raw.trim();
     if (line.startsWith("SF:")) {
       const p = line.slice(3);
-      rec = newRecord(p.startsWith("/") ? p : `${root.replace(/\/$/, "")}/${p}`);
+      rec = newRecord(p.startsWith("/") ? p : \`\${root.replace(/\\/$/, "")}/\${p}\`);
       continue;
     }
     if (rec !== null && readLcovLine(rec, line)) {
@@ -141,5 +148,6 @@ if (import.meta.main) {
   }
   const map = lcovToIstanbul(await Deno.readTextFile(inPath), rootArg ?? Deno.cwd());
   await Deno.writeTextFile(outPath, JSON.stringify(map));
-  console.log(`coverage-to-istanbul: wrote ${Object.keys(map).length} files to ${outPath}`);
+  console.log(\`coverage-to-istanbul: wrote \${Object.keys(map).length} files to \${outPath}\`);
 }
+`;

@@ -44,6 +44,11 @@ export const FEATURES: readonly ScaffoldFeature[] = [
     flag: "compatibility",
     label: "React + Next import aliases",
   },
+  {
+    key: "fallow",
+    flag: "fallow",
+    label: "fallow code-health gate (dead code, duplication, complexity)",
+  },
 ];
 
 const SCAFFOLD_FLAGS = [
@@ -96,6 +101,7 @@ async function runCreate(
     desktop: on("desktop"),
     capacitor: on("capacitor"),
     compatibilityMode: on("compatibility"),
+    fallow: on("fallow"),
     vscode: ctx.flags["no-vscode"] !== true,
     allowExisting: mode === "init",
   });
@@ -115,7 +121,7 @@ function createTarget(ctx: CommandContext, mode: "create" | "init"): string {
   if (target) return target;
   console.error(
     "denext create: missing target directory.\n" +
-      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility] [--no-vscode]\n" +
+      "  denext create my-app [--tailwind] [--src-dir] [--compiler] [--desktop] [--capacitor] [--compatibility] [--fallow] [--no-vscode]\n" +
       "  denext init            (scaffold into the current directory)",
   );
   Deno.exit(1);
@@ -148,6 +154,10 @@ function featureNotes(on: (key: string) => boolean): string[] {
       : "",
     on("compatibility")
       ? '  React/Next aliases added: `import ... from "react"`/`"next/*"` resolves to denext.'
+      : "",
+    on("fallow")
+      ? "  fallow: `deno task fallow:audit` runs the gate; `git init`, then `deno task hooks:install`\n" +
+        "  runs it before every commit (AGENTS.md tells coding agents the same)."
       : "",
   ].filter(Boolean);
 }

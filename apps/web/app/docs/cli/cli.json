@@ -203,6 +203,11 @@
           "description": "React + Next import aliases"
         },
         {
+          "name": "fallow",
+          "type": "boolean",
+          "description": "fallow code-health gate (dead code, duplication, complexity)"
+        },
+        {
           "name": "template",
           "type": "string",
           "valueName": "<name>",
@@ -448,6 +453,33 @@
       ]
     },
     {
+      "name": "fallow",
+      "summary": "Add the fallow code-health gate to a project",
+      "usage": "denext fallow <action> [dir] [options]",
+      "description": "  denext fallow init [dir] [--dry-run]\n\n  init  writes fallow.toml, .githooks/pre-commit, scripts/coverage-to-istanbul.ts and\n        AGENTS.md (each only when missing), adds the fallow / fallow:audit /\n        coverage:fallow / hooks:install tasks to deno.json (npm:fallow@3.30.0)\n        and coverage/ + .fallow/ to .gitignore. Run `deno task hooks:install` to\n        enable the commit gate.",
+      "flags": [
+        {
+          "name": "dry-run",
+          "type": "boolean",
+          "description": "Print what would change; write nothing"
+        }
+      ],
+      "positionals": [
+        {
+          "name": "action",
+          "required": true,
+          "variadic": false,
+          "description": "init"
+        },
+        {
+          "name": "dir",
+          "required": false,
+          "variadic": false,
+          "description": "Project directory (default: .)"
+        }
+      ]
+    },
+    {
       "name": "fmt",
       "summary": "Format the app (deno fmt)",
       "usage": "denext fmt [paths] [-- <deno args>]",
@@ -540,6 +572,11 @@
           "name": "compatibility",
           "type": "boolean",
           "description": "React + Next import aliases"
+        },
+        {
+          "name": "fallow",
+          "type": "boolean",
+          "description": "fallow code-health gate (dead code, duplication, complexity)"
         },
         {
           "name": "template",

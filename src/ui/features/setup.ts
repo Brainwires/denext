@@ -645,6 +645,7 @@ async function opScaffold(ctx: UiContext, s: Survey, form: FormData): Promise<Op
       desktop: on("desktop"),
       capacitor: on("capacitor"),
       compatibilityMode: on("compatibility"),
+      fallow: on("fallow"),
     });
     return {
       step: "features",

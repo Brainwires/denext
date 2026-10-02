@@ -8,6 +8,7 @@ import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
+import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
 /** Named starter templates `denext create --template <name>` can choose. */
@@ -53,6 +54,14 @@ export interface ScaffoldOptions {
    */
   compatibilityMode?: boolean;
   /**
+   * Add the fallow code-health gate (dead code, duplication, complexity): a `fallow.toml`
+   * tuned for a denext app, `fallow` / `fallow:audit` / `coverage:fallow` / `hooks:install`
+   * tasks running the pinned `npm:fallow` through Deno, a `.githooks/pre-commit` gate (enabled
+   * only by `deno task hooks:install`), the coverage converter, and an `AGENTS.md` with the
+   * gate's instructions for coding agents.
+   */
+  fallow?: boolean;
+  /**
    * Allow scaffolding into an existing, non-empty directory (`denext init` into
    * `.`). Existing files are never overwritten — a conflict is an error.
    */
@@ -77,7 +86,7 @@ ${
     opts.desktop || opts.capacitor
       ? "| `deno task export` | Static export into `out/` (the native shells ship this) |\n"
       : ""
-  }
+  }${opts.fallow ? FALLOW_README_ROWS : ""}
 The first \`dev\`/\`build\` downloads the framework from JSR (a few seconds); later runs
 are cached.
 
@@ -112,10 +121,17 @@ ${
 `;
 }
 
+/** The README task rows `--fallow` adds. */
+const FALLOW_README_ROWS =
+  "| `deno task fallow:audit` | fallow's changed-code gate (dead code, duplication, complexity) |\n" +
+  "| `deno task hooks:install` | Run that gate before every `git commit` (`.githooks/pre-commit`) |\n";
+
 /** A generated file: repo-relative path + contents. */
 export interface ScaffoldFile {
   path: string;
   content: string;
+  /** File mode on creation (e.g. `0o755` for the git hook); the default otherwise. */
+  mode?: number;
 }
 
 const dep = `jsr:@denext/denext@^${VERSION}`;
@@ -187,6 +203,7 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     tasks["mobile:ios"] = `${cap} open ios`;
     tasks["mobile:android"] = `${cap} open android`;
   }
+  if (opts.fallow) Object.assign(tasks, fallowTasks());
   return tasks;
 }
 
@@ -533,6 +550,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
   if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
+  if (opts.fallow) ignore.push(...FALLOW_GITIGNORE);
   const gitignore = ignore.join("\n") + "\n";
 
   const files: ScaffoldFile[] = [
@@ -578,6 +596,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     files.push({ path: "capacitor.config.ts", content: capacitorConfig() });
     files.push({ path: "package.json", content: packageJson() });
   }
+  if (opts.fallow) files.push(...fallowFiles());
   return files;
 }
 
@@ -599,7 +618,7 @@ export async function scaffoldProject(
   for (const f of files) {
     const abs = join(opts.dir, f.path);
     await Deno.mkdir(join(abs, ".."), { recursive: true });
-    await Deno.writeTextFile(abs, f.content);
+    await Deno.writeTextFile(abs, f.content, f.mode ? { mode: f.mode } : undefined);
   }
   const written = files.map((f) => f.path);
   if (opts.vscode !== false) {
@@ -614,9 +633,9 @@ export async function scaffoldProject(
 /** `init`: never clobber an existing file; `create`: the target must be empty or absent. */
 async function refuseToClobber(files: ScaffoldFile[], opts: ScaffoldOptions): Promise<void> {
   if (opts.allowExisting) {
-    // `init` into an existing dir: never clobber a file that already exists. A README is
-    // the one file a repo commonly already has — keep theirs and skip ours.
-    await dropExistingReadme(files, opts.dir);
+    // `init` into an existing dir: never clobber a file that already exists. A README (or
+    // an agent guide) is the file a repo commonly already has — keep theirs and skip ours.
+    await dropExistingDocs(files, opts.dir);
     for (const f of files) {
       if (await exists(join(opts.dir, f.path))) {
         throw new Error(
@@ -702,10 +721,15 @@ async function writeVscodeJson(
   written.push(path);
 }
 
-/** Remove the generated README from `files` when the target dir already has one. */
-async function dropExistingReadme(files: ScaffoldFile[], dir: string): Promise<void> {
-  const i = files.findIndex((f) => f.path === "README.md");
-  if (i !== -1 && await exists(join(dir, "README.md"))) files.splice(i, 1);
+/** The generated docs `init` leaves out when the target dir already has its own. */
+const KEEP_THEIRS = ["README.md", "AGENTS.md", "CLAUDE.md"];
+
+/** Remove the generated README / agent guide from `files` when the target dir has one. */
+async function dropExistingDocs(files: ScaffoldFile[], dir: string): Promise<void> {
+  for (const name of KEEP_THEIRS) {
+    const i = files.findIndex((f) => f.path === name);
+    if (i !== -1 && await exists(join(dir, name))) files.splice(i, 1);
+  }
 }
 
 async function exists(path: string): Promise<boolean> {

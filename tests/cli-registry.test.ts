@@ -21,6 +21,7 @@ Deno.test("registry exposes every first-party verb", () => {
     "dev",
     "doctor",
     "export",
+    "fallow",
     "fmt",
     "generate",
     "info",
@@ -56,7 +57,7 @@ Deno.test("module-loading verbs are flagged loadsModules", () => {
   // deliberately among them: it DOES import denext.config.ts (through loadPluginCommands), but
   // a listing verb must never build the app's CSS or re-exec — the config load is budgeted and
   // degrades to a notice, exactly as `completions` has always done.
-  for (const name of ["test", "lint", "fmt", "create", "migrate", "ui", "commands"]) {
+  for (const name of ["test", "lint", "fmt", "create", "migrate", "ui", "commands", "fallow"]) {
     assert(!reg.get(name)?.loadsModules, `${name} should not load modules`);
   }
 });
