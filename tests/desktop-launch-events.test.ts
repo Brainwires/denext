@@ -163,6 +163,13 @@ Deno.test("launch router: owner / claim only for declared schemes; claim forces"
     owner: "self",
   });
   assertEquals(registered, [["myapp", { force: true }]]);
+  // Taken over once per launch: a second forced claim is refused before the OS is asked.
+  const again = await assertRejects(
+    () => call(router, "deepLinks", "claim", { scheme: "myapp" }) as Promise<unknown>,
+    DesktopCapError,
+  );
+  assertEquals((again as DesktopCapError).code, "claim_limit");
+  assertEquals(registered.length, 1);
   for (const scheme of ["https", "other", 1]) {
     await assertRejects(
       () => call(router, "deepLinks", "claim", { scheme }) as Promise<unknown>,
@@ -291,5 +298,23 @@ Deno.test("launch router: without an api option it uses Deno.desktop when that i
   } finally {
     if (had) Object.defineProperty(Deno, "desktop", had);
     else delete (Deno as unknown as Record<string, unknown>).desktop;
+  }
+});
+
+Deno.test("launch router: claim forces only against another app's registration", async () => {
+  for (const owner of ["self", "none"] as const) {
+    const registered: unknown[] = [];
+    const api = fakeApi({
+      getSchemeOwner: () => Promise.resolve({ owner }),
+      registerScheme: (s, o) => {
+        registered.push([s, o]);
+        return Promise.resolve({ registered: true, owner: "self" });
+      },
+    });
+    const { router } = setup({}, api);
+    // Not forced, and not counted: claiming again is fine.
+    await call(router, "deepLinks", "claim", { scheme: "myapp" });
+    await call(router, "deepLinks", "claim", { scheme: "myapp" });
+    assertEquals(registered, [["myapp", undefined], ["myapp", undefined]], owner);
   }
 });

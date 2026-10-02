@@ -162,6 +162,7 @@ Deno.test("deep link SECURITY: a forged-state callback leaves the auth session p
       const session = rpc("authSession", "start", {
         callbackScheme: "myapp",
         url: authorizeUrl("st-real"),
+        session: "page-key-0123456789abcdef",
       }).then((r) => (settled = r));
       for (let i = 0; i < 100 && opened.length === 0; i++) {
         await new Promise((r) => setTimeout(r, 2));

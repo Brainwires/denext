@@ -360,3 +360,40 @@ Deno.test("events: ctx.emit rejects an undeclared event name", async () => {
   assertEquals(res.status, 500);
   assertEquals(res.env.error?.code, "internal");
 });
+
+Deno.test("bridge: a no-deadline method ends with its page's request; a deadline method does not", async () => {
+  const seen: Record<string, AbortSignal> = {};
+  const waiter: DesktopCapability = {
+    name: "waiter",
+    methods: {
+      // Waits on the page (a sign-in): its signal follows the calling request.
+      long: {
+        timeoutMs: false,
+        handler: (_a, ctx) =>
+          new Promise((resolve) => {
+            seen.long = ctx.signal;
+            ctx.signal.addEventListener("abort", () => resolve("ended with the page"));
+          }),
+      },
+      // A deadline method keeps the deadline signal only.
+      short: { handler: (_a, ctx) => (seen.short = ctx.signal, "ok") },
+    },
+  };
+  const bridge = createDesktopBridge([waiter]);
+  const page = new AbortController();
+  const base = rpc({ cap: "waiter", method: "long", args: null });
+  const req = new Request(base, { signal: page.signal });
+  const pending = bridge.handle(req, new URL(req.url), TOKEN);
+  await new Promise((r) => setTimeout(r, 5));
+  assert(seen.long && !seen.long.aborted);
+  page.abort(); // the page that called reloaded
+  const res = await pending;
+  assertEquals((await res!.json()).data, "ended with the page");
+  const other = new AbortController();
+  const shortReq = new Request(rpc({ cap: "waiter", method: "short", args: null }), {
+    signal: other.signal,
+  });
+  await bridge.handle(shortReq, new URL(shortReq.url), TOKEN);
+  other.abort();
+  assertEquals(seen.short.aborted, false);
+});

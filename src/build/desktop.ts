@@ -290,6 +290,7 @@ async function devProxyResponse(
   token: string,
   injectToken: boolean,
   preload?: string,
+  preloadKey?: string,
 ): Promise<Response> {
   const res = await devProxy(stripDesktopCredentials(request), url);
   const type = (res.headers.get("content-type") ?? "").toLowerCase();
@@ -303,6 +304,7 @@ async function devProxyResponse(
     injectToken ? token : null,
     injectToken,
     injectToken ? preload : undefined,
+    preloadKey,
   );
   const headers = new Headers(res.headers);
   headers.delete("content-length");
@@ -500,13 +502,17 @@ const QUIT_OVERRIDE_JS = ";(function(){var c=window.close;window.close=function(
  * `preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline
  * script right after the global — so it runs after `__denext` exists and before any page script —
  * with its own hash. It is injected only together with the token (a top-level document); the
- * caller additionally limits it to the memory world.
+ * caller additionally limits it to the memory world. With a `preloadKey`, the preload is framed by
+ * two more scripts that set `globalThis.__denextPreloadKey` before it and delete it after (even
+ * when the preload throws), so only code the preload runs synchronously can read the key — the
+ * proof `denext/desktop/clerk` presents for its Clerk-only session binding.
  */
 export async function injectDesktopGlobal(
   html: string,
   token: string | null,
   beacon = false,
   preload?: string,
+  preloadKey?: string,
 ): Promise<string> {
   // A null token marks the window desktop WITHOUT handing it the per-launch token (the --lan
   // live-reload case): runtimePlatform() reads "desktop", but the token-gated endpoints stay
@@ -517,7 +523,13 @@ export async function injectDesktopGlobal(
   const body = `globalThis.__denext=${JSON.stringify(globals)}` +
     (token !== null ? QUIT_OVERRIDE_JS : "") +
     (token !== null && beacon ? BOOT_BEACON_JS : "");
-  const scripts = token !== null && preload !== undefined ? [body, preload] : [body];
+  const withPreload = token !== null && preload !== undefined;
+  const scripts = !withPreload ? [body] : preloadKey === undefined ? [body, preload] : [
+    body,
+    `globalThis.${PRELOAD_KEY_GLOBAL}=${JSON.stringify(preloadKey)}`,
+    preload,
+    `delete globalThis.${PRELOAD_KEY_GLOBAL}`,
+  ];
   const scriptTag = scripts.map((code) => `<script>${code}</script>`).join("");
   const headMatch = html.match(/<head\b[^>]*>/i);
   const bodyMatch = headMatch ? null : html.match(/<body\b[^>]*>/i);
@@ -536,6 +548,9 @@ export async function injectDesktopGlobal(
   );
   return addScriptHashToCspMeta(out, hashes);
 }
+
+/** The one-shot global the preload key is handed to `desktop.preload` in. */
+const PRELOAD_KEY_GLOBAL = "__denextPreloadKey";
 
 /** The export dir: `outDir` (relative to the entry module when given), else `out/`. */
 /** The static-export dir to serve: `outDir` (relative to `importMetaUrl` when given), else `out/`. */
@@ -712,6 +727,7 @@ export function createDesktopHandler(
   onQuit?: () => void,
   trust: DesktopTrust = LOOPBACK_TRUST,
   preload?: string,
+  preloadKey?: string,
 ): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response> {
   const proxyCfg = options.proxy;
   const indexHtmlPath = join(outDir, "index.html");
@@ -732,6 +748,7 @@ export function createDesktopHandler(
       injectToken ? token : null,
       onBooted !== undefined,
       injectToken ? memoryPreload : undefined,
+      preloadKey,
     );
     return noStore(
       new Response(isHead ? null : injected, {
@@ -815,6 +832,7 @@ export function createDesktopHandler(
         token,
         devInjectToken && injectToken,
         memoryPreload,
+        preloadKey,
       );
     }
     return await serveBackendOrExport(request, url, injectToken);
@@ -831,12 +849,13 @@ export function createDesktopHandler(
 function desktopAppEvents(
   options: RunDesktopOptions,
   emit: (cap: string, event: string, data: unknown) => void,
+  preloadKey: string,
 ): { capabilities: DesktopCapability[]; install(): void } {
   const api = desktopAppApi();
   if (!api) return { capabilities: [], install: () => {} };
   const schemes = options.deepLinks ?? [];
   const auth = options.authSessionEnabled === true
-    ? createSchemeAuthSessions({ schemes, api, openBrowser: defaultOpenBrowser })
+    ? createSchemeAuthSessions({ schemes, api, openBrowser: defaultOpenBrowser, preloadKey })
     : undefined;
   const router = createLaunchRouter({
     schemes,
@@ -929,6 +948,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // A per-launch token gates the loopback OAuth endpoint and is injected into every served
   // shell so only this app's own pages can drive `startDesktopAuthSession`.
   const token = crypto.randomUUID();
+  // A second per-launch secret, handed only to `desktop.preload` (see injectDesktopGlobal): what
+  // denext/desktop/clerk installed there proves for its Clerk-only auth-session binding.
+  const preloadKey = crypto.randomUUID();
   // The updater's boot watchdog is confirmed by the injected beacon hitting BOOTED_PATH once the
   // page has actually LOADED (proof the UI rendered) — not a timer. A crash before render never
   // beacons, so the trial version stays PENDING and the next launch rolls it back.
@@ -954,7 +976,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // links, opened files, custom-scheme auth sessions). `dev` (live-reload mode) lets an unexpected
   // handler error include its message; a packaged build stays generic.
   const emitToPage = (cap: string, event: string, data: unknown) => bridge.emit(cap, event, data);
-  const appEvents = desktopAppEvents(options, emitToPage);
+  const appEvents = desktopAppEvents(options, emitToPage, preloadKey);
   // The page's control over its own window (state, size, displays, chrome, a guarded close, quit,
   // files dragged in and out): registered whenever a window was adopted.
   const windowCtl = appWindow === undefined ? undefined : createWindowController({
@@ -999,6 +1021,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     () => Deno.exit(0), // a page-initiated window.close() quits, like the native window close
     trust,
     await loadDesktopPreload(outDir, devDecision.proxy),
+    preloadKey,
   );
   // Under the pinned runtime `DENO_SERVE_ADDRESS=memory:…` overrides this port/hostname, so the
   // server listens on the in-process memory transport; under the stock runtime it is loopback.

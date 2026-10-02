@@ -41,7 +41,11 @@
  */
 
 import { desktopRpc, hasDesktopBridge, isDesktopBridgeError } from "./bridge-client.ts";
-import { startDesktopSchemeAuthSession } from "./auth-session.ts";
+import {
+  hasOsAuthSession,
+  type SchemeSessionInternals,
+  startDesktopSchemeAuthSession,
+} from "./auth-session.ts";
 import { isPasskeyEnvelope, type PasskeyEnvelope, passkeyFailure } from "./passkey-envelope.ts";
 
 export type { PasskeyEnvelope } from "./passkey-envelope.ts";
@@ -197,8 +201,22 @@ function tokenCache(prefix: string): ClerkTokenCache {
   };
 }
 
+/**
+ * How a Clerk OAuth session is bound, since Clerk's callback carries no `state` the transport
+ * could set: in the OS's auth session where the runtime has one (macOS; the callback goes to the
+ * sheet, never through a deep link), else by Clerk's own client-bound `rotating_token_nonce`,
+ * claimed with the preload key (only a bridge installed from `desktop.preload` holds it).
+ */
+async function clerkBinding(preloadKey: string | undefined): Promise<SchemeSessionInternals> {
+  if (await hasOsAuthSession()) return { osSessionOnly: true };
+  return preloadKey ? { binding: "clerk-client-nonce", bindingKey: preloadKey } : {};
+}
+
 /** The OAuth transport (`@clerk/electron`'s main-process semantics, see the module docs). */
-function oauthTransport(redirectUrl: () => string): ClerkOAuthTransport {
+function oauthTransport(
+  redirectUrl: () => string,
+  preloadKey: string | undefined,
+): ClerkOAuthTransport {
   let pending = false;
   return {
     getRedirectUrl: () => Promise.resolve().then(redirectUrl),
@@ -216,7 +234,7 @@ function oauthTransport(redirectUrl: () => string): ClerkOAuthTransport {
           pkce: "not-applicable",
           reason: CLERK_OAUTH_PKCE_REASON,
           timeoutMs: OAUTH_TIMEOUT_MS,
-        });
+        }, await clerkBinding(preloadKey));
         return { callbackUrl };
       } finally {
         pending = false;
@@ -316,6 +334,8 @@ export function installClerkDesktopBridge(
   options: ClerkDesktopBridgeOptions = {},
 ): ClerkDesktopBridge | undefined {
   if (!hasDesktopBridge()) return undefined;
+  // The per-launch preload key exists only while desktop.preload runs (read it now, synchronously).
+  const preloadKey = (globalThis as { __denextPreloadKey?: unknown }).__denextPreloadKey;
   const redirectUrl = () => {
     const url = options.redirectUrl ?? originRedirect();
     if (url === undefined) {
@@ -328,7 +348,10 @@ export function installClerkDesktopBridge(
   };
   const bridge = {
     tokenCache: tokenCache(options.keyPrefix ?? "clerk."),
-    oauthTransport: oauthTransport(redirectUrl),
+    oauthTransport: oauthTransport(
+      redirectUrl,
+      typeof preloadKey === "string" ? preloadKey : undefined,
+    ),
   };
   const g = globalThis as {
     __clerk_internal_electron?: unknown;

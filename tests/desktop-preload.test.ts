@@ -48,6 +48,25 @@ Deno.test("injectDesktopGlobal: the CSP meta allows both injected scripts by has
   assertStringIncludes(policy, `script-src 'self' ${globalHash} ${preloadHash}`);
 });
 
+Deno.test("injectDesktopGlobal: the preload key exists only while the preload runs", async () => {
+  const KEY = "preload-key-0123456789";
+  const html = await injectDesktopGlobal(SHELL, TOKEN, false, PRELOAD, KEY);
+  const list = scripts(html);
+  assertEquals(list[1], `<script>globalThis.__denextPreloadKey=${JSON.stringify(KEY)}</script>`);
+  assertEquals(list[2], `<script>${PRELOAD}</script>`);
+  assertEquals(list[3], "<script>delete globalThis.__denextPreloadKey</script>");
+  assertStringIncludes(list[4], 'src="/_denext/client/index.js"'); // the page's own scripts after
+  // Every injected script is allowed by hash; the key appears nowhere else.
+  const policy = html.match(/content="([^"]*)"/)![1];
+  for (const el of list.slice(0, 4)) {
+    const code = el.replace(/^<script>|<\/script>$/g, "");
+    assertStringIncludes(policy, `'sha256-${await sha256Base64(code)}'`);
+  }
+  assertEquals(html.split(KEY).length, 2);
+  // Without a token (a subframe) there is no preload, so no key either.
+  assert(!(await injectDesktopGlobal(SHELL, null, false, PRELOAD, KEY)).includes(KEY));
+});
+
 Deno.test("injectDesktopGlobal: no token (an iframe / --lan) means no preload", async () => {
   const html = await injectDesktopGlobal(SHELL, null, false, PRELOAD);
   assert(!html.includes(PRELOAD));

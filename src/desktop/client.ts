@@ -30,7 +30,12 @@
  * @module
  */
 
-import { desktopRpc, type DesktopRpcOptions, subscribeDesktopEvent } from "./bridge-client.ts";
+import {
+  desktopError,
+  desktopRpc,
+  type DesktopRpcOptions,
+  subscribeDesktopEvent,
+} from "./bridge-client.ts";
 
 export {
   type DesktopBridgeError,
@@ -209,11 +214,25 @@ export async function deepLinkSchemeOwner(scheme: string): Promise<DeepLinkSchem
  * another app. **Only on an explicit user action** — a "Make this app the handler of myapp: links"
  * button after `openAuthSession` rejected `scheme_owned_by_other_app` — because the other app loses
  * the scheme. On macOS the OS may confirm it with the user; a Windows "UserChoice" cannot be
- * overridden (`registered: false`).
+ * overridden (`registered: false`). It must run inside that click: where the webview reports user
+ * activation (`navigator.userActivation`) and there is none, it rejects `user_activation_required`
+ * without calling the runtime. The runtime also takes a scheme over only from ANOTHER app (this
+ * app's own or an unclaimed scheme is registered without force), and only once per scheme per
+ * launch.
  *
  * @param scheme A scheme from `desktop.app.deepLinks`.
  * @returns The registration after the call.
  */
 export async function claimDeepLinkScheme(scheme: string): Promise<ClaimDeepLinkSchemeResult> {
+  const activation = (globalThis as { navigator?: { userActivation?: { isActive?: unknown } } })
+    .navigator?.userActivation;
+  if (activation !== undefined && activation.isActive !== true) {
+    throw desktopError(
+      "deepLinks",
+      "claim",
+      "user_activation_required",
+      "call claimDeepLinkScheme from the user's click on your confirmation button",
+    );
+  }
   return await desktopRpc<ClaimDeepLinkSchemeResult>("deepLinks", "claim", { scheme });
 }

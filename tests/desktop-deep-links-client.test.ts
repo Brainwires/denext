@@ -227,7 +227,11 @@ Deno.test("desktop openAuthSession (custom scheme): the runtime session, its arg
     const authUrl = `https://idp.example/authorize?redirect_uri=myapp%3A%2F%2Fcb&state=s${PKCE}`;
     const result = await openAuthSession(authUrl, { callbackScheme: "myapp", timeoutMs: 1000 });
     assertEquals(result, { url: "myapp://cb?code=c&state=s" });
-    assertEquals(starts, [{ url: authUrl, callbackScheme: "myapp", timeoutMs: 1000 }]);
+    // The page's own session key rides along (its cancel must name it).
+    const [args] = starts as Array<{ session: string }>;
+    assert(/^[0-9a-f-]{36}$/.test(args.session));
+    assertEquals(starts, [{ url: authUrl, callbackScheme: "myapp", timeoutMs: 1000, ...args }]);
+    assertEquals(Object.keys(args).sort(), ["callbackScheme", "session", "timeoutMs", "url"]);
   });
 });
 
@@ -338,4 +342,27 @@ Deno.test("deepLinkSchemeOwner / claimDeepLinkScheme: the deepLinks RPCs", async
       "deepLinks.claim",
     ]);
   });
+});
+
+Deno.test("claimDeepLinkScheme: outside a user gesture it refuses before reaching the runtime", async () => {
+  const nav = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const setActive = (isActive: boolean) =>
+    Object.defineProperty(globalThis, "navigator", {
+      value: { userActivation: { isActive } },
+      configurable: true,
+    });
+  try {
+    await inDesktop({
+      deepLinks: { claim: () => ({ registered: true, owner: "self" }) },
+    }, async (rt) => {
+      setActive(false);
+      const err = await assertRejects(() => claimDeepLinkScheme("myapp")) as { code: string };
+      assertEquals(err.code, "user_activation_required");
+      assertEquals(rt.calls.length, 0);
+      setActive(true);
+      assertEquals(await claimDeepLinkScheme("myapp"), { registered: true, owner: "self" });
+    });
+  } finally {
+    if (nav) Object.defineProperty(globalThis, "navigator", nav);
+  }
 });

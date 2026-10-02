@@ -51,6 +51,9 @@ function osSession(caps: ReturnType<DesktopAuthSessionApi["capabilities"]> = {
   };
 }
 
+/** The starting page's session key. */
+const KEY = "page-key-0123456789abcdef";
+
 /** The sessions over an app API whose scheme is ours, with `authSession` and a browser log. */
 function sessions(authSession?: DesktopAuthSessionApi, owner: "self" | "other" = "self") {
   const opened: string[] = [];
@@ -66,10 +69,11 @@ function sessions(authSession?: DesktopAuthSessionApi, owner: "self" | "other" =
   });
   const start = (args: Record<string, unknown> = {}) =>
     s.capability.methods.start.handler(
-      { callbackScheme: "myapp", url: AUTH_URL, ...args },
+      { callbackScheme: "myapp", url: AUTH_URL, session: KEY, ...args },
       ctx,
     ) as Promise<{ url: string }>;
-  const cancel = () => s.capability.methods.cancel.handler({}, ctx) as { cancelled: boolean };
+  const cancel = () =>
+    s.capability.methods.cancel.handler({ session: KEY }, ctx) as { cancelled: boolean };
   const capabilities = () =>
     s.capability.methods.capabilities.handler({}, ctx) as Promise<
       { osSession: boolean; ephemeral: boolean }
@@ -224,4 +228,30 @@ Deno.test("OS auth session: the timeout settles the session; the sheet's late ca
   await rejectsCode(run, "timeout");
   os.resolve("myapp://auth/cb?code=late&state=st-1"); // ignored: nothing is pending
   await tick();
+});
+
+Deno.test("OS auth session: a matching deep link during the sheet is swallowed, never resolving", async () => {
+  const os = osSession();
+  const { s, start } = sessions(os.api);
+  const run = start();
+  await started(os.starts);
+  let settled = false;
+  run.then(() => (settled = true), () => (settled = true));
+  // The OS delivers the same callback as a deep link (another app sent it): not routed, not used.
+  assertEquals(s.claim("myapp://auth/cb?code=evil&state=st-1"), true);
+  await tick(5);
+  assertEquals(settled, false);
+  // Only the sheet completes the session.
+  os.resolve("myapp://auth/cb?code=good&state=st-1");
+  assertEquals((await run).url, "myapp://auth/cb?code=good&state=st-1");
+});
+
+Deno.test("OS auth session: osSessionOnly runs in the sheet; a runtime saying not_supported refuses", async () => {
+  const os = osSession();
+  const { start, opened } = sessions(os.api);
+  const run = start({ osSessionOnly: true });
+  await started(os.starts);
+  os.reject("not_supported");
+  await rejectsCode(run, "unsupported");
+  assertEquals(opened, []); // never the system browser
 });

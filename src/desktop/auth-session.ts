@@ -223,7 +223,7 @@ function fromBridge(err: unknown): AuthSessionError {
  * Whether the runtime runs a custom-scheme sign-in in the OS's own auth session (macOS), whose
  * sheet has its own Cancel button. `false` on Windows and Linux, and on a runtime that cannot say.
  */
-async function hasOsAuthSession(): Promise<boolean> {
+export async function hasOsAuthSession(): Promise<boolean> {
   try {
     const caps = await desktopRpc<{ osSession?: unknown } | null>(
       "authSession",
@@ -234,6 +234,42 @@ async function hasOsAuthSession(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * What only denext's own callers (`denext/desktop/clerk`) add to a custom-scheme session; never
+ * reachable from {@linkcode AuthSessionOptions}.
+ */
+export interface SchemeSessionInternals {
+  /** Run only in the OS's auth session (the callback never travels as a deep link). */
+  readonly osSessionOnly?: boolean;
+  /** The Clerk transport's nonce binding, with the preload key that proves it. */
+  readonly binding?: string;
+  /** The per-launch preload key (see `injectDesktopGlobal`). */
+  readonly bindingKey?: string;
+}
+
+/** The `authSession.start` arguments: only what was given, plus the page's session key. */
+function schemeStartArgs(
+  url: string,
+  options: AuthSessionOptions,
+  internal: SchemeSessionInternals,
+  session: string,
+): Record<string, unknown> {
+  const args: Record<string, unknown> = { url, callbackScheme: options.callbackScheme };
+  if (options.callbackPrefix !== undefined) args.callbackPrefix = options.callbackPrefix;
+  if (options.pkce !== undefined) {
+    Object.assign(args, { pkce: options.pkce, reason: options.reason });
+  }
+  if (options.state !== undefined) args.state = options.state;
+  if (options.timeoutMs !== undefined) args.timeoutMs = options.timeoutMs;
+  if (options.preferEphemeral === true) args.ephemeral = true;
+  if (internal.osSessionOnly === true) args.osSessionOnly = true;
+  if (internal.binding !== undefined) {
+    Object.assign(args, { binding: internal.binding, bindingKey: internal.bindingKey ?? "" });
+  }
+  args.session = session;
+  return args;
 }
 
 /**
@@ -249,15 +285,19 @@ async function hasOsAuthSession(): Promise<boolean> {
  * @param options `callbackScheme` (declared in `desktop.app.deepLinks`), and optionally
  * `callbackPrefix`, `pkce` + `reason`, `state`, `timeoutMs`, `signal`, `preferEphemeral`,
  * `cancelOverlay`.
+ * @param internal What denext's own callers add (never from the page's options).
  * @returns The full callback URL. Rejects with an {@linkcode AuthSessionError}.
  */
 export async function startDesktopSchemeAuthSession(
   url: string,
   options: AuthSessionOptions,
+  internal: SchemeSessionInternals = {},
 ): Promise<{ url: string }> {
   const signal = options.signal;
   if (signal?.aborted) throw authSessionError("cancelled", "the sign-in was cancelled");
-  const onAbort = () => void desktopRpc("authSession", "cancel", {}).catch(() => {});
+  // This page's key for the session: only a cancel naming it ends the session (not another window).
+  const session = crypto.randomUUID();
+  const onAbort = () => void desktopRpc("authSession", "cancel", { session }).catch(() => {});
   signal?.addEventListener("abort", onAbort, { once: true });
   const osSession = options.cancelOverlay !== false && await hasOsAuthSession();
   if (signal?.aborted) {
@@ -269,15 +309,12 @@ export async function startDesktopSchemeAuthSession(
     : showAuthCancelOverlay(onAbort, options.cancelOverlay || undefined);
   let out: { url?: unknown } | null;
   try {
-    out = await desktopRpc<{ url?: unknown } | null>("authSession", "start", {
-      url,
-      callbackScheme: options.callbackScheme,
-      ...(options.callbackPrefix !== undefined ? { callbackPrefix: options.callbackPrefix } : {}),
-      ...(options.pkce !== undefined ? { pkce: options.pkce, reason: options.reason } : {}),
-      ...(options.state !== undefined ? { state: options.state } : {}),
-      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.preferEphemeral === true ? { ephemeral: true } : {}),
-    }, { timeoutMs: false });
+    out = await desktopRpc<{ url?: unknown } | null>(
+      "authSession",
+      "start",
+      schemeStartArgs(url, options, internal, session),
+      { timeoutMs: false },
+    );
   } catch (err) {
     throw fromBridge(err);
   } finally {

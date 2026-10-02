@@ -62,7 +62,11 @@ export interface DesktopCapCtx {
    * the ambient lib; a window capability narrows it.
    */
   readonly window?: unknown;
-  /** Aborts when the handler exceeds its timeout, so a long native call can cooperate. */
+  /**
+   * Aborts when the handler exceeds its timeout, so a long native call can cooperate. For a
+   * method with `timeoutMs: false` it also aborts when the calling page's request goes away (that
+   * page reloaded, navigated or closed).
+   */
   readonly signal: AbortSignal;
   /**
    * Call a native function on the app's UI thread (the thread AppKit, Win32 windows and GTK objects

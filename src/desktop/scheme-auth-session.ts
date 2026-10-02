@@ -15,10 +15,14 @@
  * closed:
  *
  * 1. The scheme must be declared in `desktop.app.deepLinks` (`scheme_not_declared`).
- * 2. PKCE S256 is mandatory: the URL carries `code_challenge` and `code_challenge_method=S256`
- *    (`pkce_required`), so an intercepted `code` is useless without the verifier the app kept.
- *    The only exception is an explicit `pkce: "not-applicable"` with a `reason`, for a provider
- *    that binds the callback to the initiating client some other way (see `denext/desktop/clerk`).
+ * 2. PKCE S256 is mandatory: the URL carries exactly one `code_challenge` (43 base64url
+ *    characters, a SHA-256) and one `code_challenge_method=S256` (`pkce_required`), so an
+ *    intercepted `code` is useless without the verifier the app kept. The only exception is an
+ *    explicit `pkce: "not-applicable"` with a `reason`, for a provider that binds the callback to
+ *    the initiating client some other way — and then a `state` is mandatory too, unless the session
+ *    may only run in the OS's auth session (`osSessionOnly`, whose callback never travels as a deep
+ *    link) or it is `denext/desktop/clerk`'s transport, proven by the per-launch preload key
+ *    (`binding: "clerk-client-nonce"`; see that module).
  * 3. The callback must match the expected target EXACTLY: scheme, host and path of the URL's own
  *    `redirect_uri` when that is a `<scheme>:` URL, else of the `callbackPrefix` the caller gives.
  * 4. `state` round-trips: when the target is the URL's `redirect_uri`, the URL's `state` (if any)
@@ -33,12 +37,16 @@
  *    any same-user program may re-register at any time — which is why 2–4 are the real defence.
  * 6. One session at a time (`session_in_progress`), a timeout (10 minutes by default), and
  *    `cancel` (the page's `AbortSignal`; the system browser on Windows and Linux reports no
- *    cancellation, so the page's cancel and the timeout are the only ends there). A page reload
- *    cancels the session of the page that started it.
+ *    cancellation, so the page's cancel and the timeout are the only ends there). A session is
+ *    bound to the page that started it: `cancel` must name the session's own key (`session`, a
+ *    random value the starting page keeps), and the session ends when the starting page's `start`
+ *    request goes away (a reload or navigation of THAT page) — a navigation in another window does
+ *    not touch it.
  *
  * The OS session runs after the same checks (1–5), and its callback URL is held to rule 3 and 4
  * too: a sheet that ends anywhere else, or with another `state`, rejects `invalid` (it cannot keep
- * waiting: the OS session is over). The runtime cannot close an open sheet, so a page cancel or the
+ * waiting: the OS session is over). While the sheet is up, only the sheet can complete the
+ * session: a matching link the OS delivers as a deep link meanwhile is swallowed, never resolving. The runtime cannot close an open sheet, so a page cancel or the
  * timeout settles the page's promise and the sheet stays until the user closes it; until then a
  * new session gets `session_in_progress`.
  *
@@ -59,6 +67,14 @@ const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const MAX_TIMEOUT_MS = 60 * 60_000;
 /** The longest `reason` kept for a `pkce: "not-applicable"` session. */
 const MAX_REASON_CHARS = 500;
+/** The `binding` only `denext/desktop/clerk`'s transport may claim (with the preload key). */
+const CLERK_NONCE_BINDING = "clerk-client-nonce";
+/** The query parameter Clerk's native OAuth callback carries (the client-bound sign-in nonce). */
+const CLERK_NONCE_PARAM = "rotating_token_nonce";
+/** A PKCE S256 `code_challenge`: base64url(SHA-256), 43 characters, no padding. */
+const S256_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+/** A session key: what the starting page keeps to cancel its own session. */
+const SESSION_KEY = /^[A-Za-z0-9_-]{16,128}$/;
 
 /** Where a callback must land: scheme, host and path (compared exactly). */
 interface Target {
@@ -77,6 +93,10 @@ interface StartRequest {
   readonly timeoutMs: number;
   /** A private OS auth session (macOS); ignored by the system browser. */
   readonly ephemeral: boolean;
+  /** Run only in the OS's auth session; refuse (`unsupported`) where there is none. */
+  readonly osSessionOnly: boolean;
+  /** The starting page's key for this session (its `cancel` must name it). */
+  readonly key: string;
 }
 
 /** The open session. */
@@ -85,6 +105,8 @@ interface Pending {
   readonly state: string | null;
   readonly resolve: (url: string) => void;
   readonly reject: (err: DesktopCapError) => void;
+  /** Set while the OS's auth session (the sheet) owns the session: deep links never resolve it. */
+  viaOs: boolean;
 }
 
 /** Options for {@linkcode createSchemeAuthSessions}. */
@@ -95,6 +117,12 @@ export interface SchemeAuthOptions {
   readonly api?: DesktopAppApi;
   /** Open the system browser (default: the loopback flow's argv-only opener). */
   readonly openBrowser: (url: string) => Promise<void> | void;
+  /**
+   * The per-launch key injected only into `desktop.preload` (gone before the page's own scripts
+   * run): the proof a `binding: "clerk-client-nonce"` session comes from `denext/desktop/clerk`
+   * installed there. Without one, that binding is always refused.
+   */
+  readonly preloadKey?: string;
 }
 
 /** What {@linkcode createSchemeAuthSessions} returns. */
@@ -196,8 +224,18 @@ function resolveTarget(
   );
 }
 
-/** Rule 2: PKCE S256 in the URL, unless explicitly not applicable with a reason. */
-function checkPkce(url: URL, args: Record<string, unknown>): void {
+/** The single value of a query parameter: `null` when absent; a repeated one is `invalid`. */
+function single(url: URL, name: string): string | null {
+  const all = url.searchParams.getAll(name);
+  if (all.length > 1) throw invalid(`the URL carries ${name} more than once`);
+  return all[0] ?? null;
+}
+
+/**
+ * Rule 2: PKCE S256 in the URL (each parameter once, the challenge a SHA-256's base64url), unless
+ * explicitly not applicable with a reason. Returns whether it was waived.
+ */
+function checkPkce(url: URL, args: Record<string, unknown>): boolean {
   const pkce = optString(args, "pkce");
   if (pkce !== undefined && pkce !== "not-applicable") {
     throw invalid('pkce must be "not-applicable" when given');
@@ -207,16 +245,76 @@ function checkPkce(url: URL, args: Record<string, unknown>): void {
     if (reason === "" || reason.length > MAX_REASON_CHARS) {
       throw invalid('pkce: "not-applicable" needs a reason (why the provider binds the callback)');
     }
-    return;
+    return true;
   }
-  const challenge = url.searchParams.get("code_challenge") ?? "";
-  if (challenge === "" || url.searchParams.get("code_challenge_method") !== "S256") {
+  const challenge = single(url, "code_challenge") ?? "";
+  if (!S256_CHALLENGE.test(challenge) || single(url, "code_challenge_method") !== "S256") {
     throw new DesktopCapError(
       "pkce_required",
-      "a custom-scheme callback needs PKCE: the URL must carry code_challenge and " +
-        "code_challenge_method=S256",
+      "a custom-scheme callback needs PKCE: the URL must carry one code_challenge (a 43-character " +
+        "base64url SHA-256) and code_challenge_method=S256",
     );
   }
+  return false;
+}
+
+/**
+ * Rule 4's expected `state`: the URL's own (once) when the target is its `redirect_uri`, AND the
+ * caller's option — they must agree when both are given, and either alone is kept; with a
+ * `callbackPrefix` target only the caller's (the URL's belongs to another hop).
+ */
+function expectedState(url: URL, args: Record<string, unknown>, fromRedirect: boolean) {
+  const caller = optString(args, "state") ?? null;
+  if (!fromRedirect) return caller;
+  const own = single(url, "state");
+  if (own !== null && caller !== null && own !== caller) {
+    throw invalid("state does not match the URL's state");
+  }
+  return own ?? caller;
+}
+
+/** `true` only for a boolean `true`; absent → `false`; anything else is `invalid`. */
+function optFlag(args: Record<string, unknown>, key: string): boolean {
+  const v = args[key];
+  if (v === undefined || v === null) return false;
+  if (typeof v !== "boolean") throw invalid(`${key} must be a boolean`);
+  return v;
+}
+
+/** The starting page's session key (required: its `cancel` must name it). */
+function checkKey(raw: unknown): string {
+  if (typeof raw !== "string" || !SESSION_KEY.test(raw)) {
+    throw invalid("session must be a random key of 16–128 base64url characters");
+  }
+  return raw;
+}
+
+/** Constant-time string equality (the preload key). */
+function sameSecret(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a);
+  const y = new TextEncoder().encode(b);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
+
+/**
+ * Whether a waived-PKCE session without `state` is allowed: only with `osSessionOnly`, or as the
+ * Clerk transport proven by the preload key. A `binding` without a valid key is `invalid` (a page
+ * cannot claim it).
+ */
+function checkStateless(
+  args: Record<string, unknown>,
+  osSessionOnly: boolean,
+  preloadKey: string | undefined,
+): boolean {
+  const binding = optString(args, "binding");
+  if (binding === undefined) return osSessionOnly;
+  const key = optString(args, "bindingKey") ?? "";
+  if (binding !== CLERK_NONCE_BINDING || !preloadKey || !sameSecret(key, preloadKey)) {
+    throw invalid("binding is reserved for denext/desktop/clerk installed from desktop.preload");
+  }
+  return true;
 }
 
 /** `ephemeral`: absent → `false`; else a boolean. */
@@ -235,15 +333,33 @@ function checkTimeout(raw: unknown): number {
   return raw;
 }
 
-/** Validate a `start` call (rules 1–4 of the module docs), failing closed. */
-export function parseSchemeAuthStart(schemes: readonly string[], raw: unknown): StartRequest {
+/**
+ * Validate a `start` call (rules 1–4 of the module docs), failing closed.
+ *
+ * @param schemes The declared schemes.
+ * @param raw The call's arguments.
+ * @param preloadKey The per-launch preload key ({@linkcode SchemeAuthOptions.preloadKey}).
+ * @returns The validated request.
+ */
+export function parseSchemeAuthStart(
+  schemes: readonly string[],
+  raw: unknown,
+  preloadKey?: string,
+): StartRequest {
   if (typeof raw !== "object" || raw === null) throw invalid("arguments must be an object");
   const args = raw as Record<string, unknown>;
   const scheme = checkScheme(schemes, args.callbackScheme);
   const url = checkAuthUrl(args.url);
   const { target, fromRedirect } = resolveTarget(url, scheme, optString(args, "callbackPrefix"));
-  checkPkce(url, args);
-  const state = fromRedirect ? url.searchParams.get("state") : optString(args, "state") ?? null;
+  const waived = checkPkce(url, args);
+  const state = expectedState(url, args, fromRedirect);
+  const osSessionOnly = optFlag(args, "osSessionOnly");
+  const stateless = checkStateless(args, osSessionOnly, preloadKey);
+  if (waived && state === null && !stateless) {
+    throw invalid(
+      'pkce: "not-applicable" needs a state the callback must carry (or osSessionOnly)',
+    );
+  }
   return {
     url: url.href,
     scheme,
@@ -251,6 +367,8 @@ export function parseSchemeAuthStart(schemes: readonly string[], raw: unknown): 
     state,
     timeoutMs: checkTimeout(args.timeoutMs),
     ephemeral: checkEphemeral(args.ephemeral),
+    osSessionOnly,
+    key: checkKey(args.session),
   };
 }
 
@@ -294,10 +412,20 @@ async function ensureSchemeOwner(api: DesktopAppApi | undefined, scheme: string)
 function matchCallback(open: Pending, url: string): "match" | "bad_state" | "other" {
   const got = targetOf(url);
   if (!got || !sameTarget(got, open.target)) return "other";
-  if (open.state !== null && new URL(url).searchParams.get("state") !== open.state) {
+  const states = new URL(url).searchParams.getAll("state");
+  if (open.state !== null && (states.length !== 1 || states[0] !== open.state)) {
     return "bad_state";
   }
   return "match";
+}
+
+/** Whether `url` carries a Clerk sign-in nonce (never routed to the page outside its session). */
+function hasClerkNonce(url: string): boolean {
+  try {
+    return new URL(url).searchParams.has(CLERK_NONCE_PARAM);
+  } catch {
+    return false;
+  }
 }
 
 /** The OS auth session when this runtime has one and it is supported here, else `undefined`. */
@@ -340,6 +468,8 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
   const schemes = options.schemes.map((s) => s.toLowerCase());
   let busy = false;
   let pending: Pending | undefined;
+  /** The open session's key (from `start`), which `cancel` must name. */
+  let currentKey: string | undefined;
   /** A cancel that arrived while the session was still starting (the owner check). */
   let cancelEarly = false;
 
@@ -367,6 +497,7 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
     open: Pending,
   ): Promise<void> => {
     let url: string;
+    open.viaOs = true;
     try {
       ({ url } = await os.start({
         url: req.url,
@@ -374,7 +505,12 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
         ...(req.ephemeral ? { ephemeral: true } : {}),
       }));
     } catch (err) {
+      open.viaOs = false;
       if ((err as { code?: unknown } | null)?.code === "not_supported" && pending === open) {
+        if (req.osSessionOnly) {
+          endIf(open, "unsupported", "this sign-in needs the OS's auth session", 501);
+          return;
+        }
         await options.openBrowser(req.url); // no OS session after all: the system browser
         return;
       }
@@ -400,7 +536,9 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
     const os = await osAuthSession(options.api);
     if (pending !== open) return;
     if (os) await runOsSession(os, req, open);
-    else await options.openBrowser(req.url);
+    else if (req.osSessionOnly) {
+      endIf(open, "unsupported", "this sign-in needs the OS's auth session", 501);
+    } else await options.openBrowser(req.url);
   };
 
   const run = (req: StartRequest): Promise<string> =>
@@ -419,6 +557,7 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
         state: req.state,
         resolve: (url) => (settle(), resolve(url)),
         reject: (err) => (settle(), reject(err)),
+        viaOs: false,
       };
       pending = open;
       // Fire-and-forget like the loopback flow, but a failed launch ends the session.
@@ -427,8 +566,8 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
       );
     });
 
-  const start = async (args: unknown): Promise<{ url: string }> => {
-    const req = parseSchemeAuthStart(schemes, args);
+  const start = async (args: unknown, ctx: { signal?: AbortSignal }): Promise<{ url: string }> => {
+    const req = parseSchemeAuthStart(schemes, args, options.preloadKey);
     if (busy) {
       throw new DesktopCapError(
         "session_in_progress",
@@ -438,14 +577,31 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
     }
     busy = true;
     cancelEarly = false;
+    currentKey = req.key;
+    // The starting page's request is the session's lifeline: when that page reloads or navigates
+    // away, its `start` request is aborted and the session ends (no other window can end it).
+    const gone = () => void cancelPending("cancelled", "the page that started it is gone", 499);
+    ctx.signal?.addEventListener("abort", gone, { once: true });
     try {
+      if (ctx.signal?.aborted) cancelEarly = true;
       await ensureSchemeOwner(options.api, req.scheme);
       return { url: await run(req) };
     } finally {
+      ctx.signal?.removeEventListener("abort", gone);
       busy = false;
       cancelEarly = false;
+      currentKey = undefined;
       pending = undefined;
     }
+  };
+
+  /** `cancel`: only the starting page's own key ends the session. */
+  const cancel = (args: unknown): { cancelled: boolean } => {
+    const key = (args as { session?: unknown } | null)?.session;
+    if (currentKey === undefined || typeof key !== "string" || !sameSecret(key, currentKey)) {
+      return { cancelled: false };
+    }
+    return { cancelled: cancelPending("cancelled", "the sign-in was cancelled", 499) };
   };
 
   /** What the page needs to know before it starts: whether the OS gives a sheet with a cancel. */
@@ -466,23 +622,22 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
       methods: {
         // The session runs as long as its own timeout (≤ 1 h); the bridge deadline is off.
         start: { timeoutMs: false, handler: start },
-        cancel: {
-          handler: () => ({
-            cancelled: cancelPending("cancelled", "the sign-in was cancelled", 499),
-          }),
-        },
+        cancel: { handler: cancel },
         capabilities: { handler: capabilities },
       },
-      // The page that started the session is gone: end it rather than hand the callback to a
-      // page that is not waiting for it.
-      onPageLoad: () => void cancelPending("cancelled", "the page was reloaded", 499),
+      // No onPageLoad: a navigation can come from ANY window. The session ends with its own
+      // page's `start` request instead (see `start`).
     },
     claim: (url) => {
       const open = pending;
-      if (!open) return false;
+      // A Clerk nonce link outside its session (none open, another target) is a forgery or a
+      // replay: dropped, never routed to the page.
+      if (!open) return hasClerkNonce(url);
       const match = matchCallback(open, url);
-      if (match === "other") return false;
+      if (match === "other") return hasClerkNonce(url);
       if (match === "bad_state") return true; // a forged / stale callback: swallowed, keep waiting
+      // The OS's sheet owns the session: only it can complete it (rule 6, OS session).
+      if (open.viaOs) return true;
       pending = undefined;
       open.resolve(url);
       return true;

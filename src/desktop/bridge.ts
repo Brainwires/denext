@@ -362,12 +362,17 @@ export function createDesktopBridge(
     cap: DesktopCapability,
     method: CapMethod,
     args: unknown,
+    request: Request,
   ): Promise<Response> => {
     const inp = await checkInput(method, args);
     if (inp instanceof Response) return inp;
+    // A method with no deadline waits on the page (a sign-in, a download): it also ends when the
+    // page's request goes away (that page reloaded or navigated), never with another window.
+    const lifeline = (deadline: AbortSignal) =>
+      method.timeoutMs === false ? AbortSignal.any([deadline, request.signal]) : deadline;
     const ran = await runHandlerWithDeadline(
       method,
-      (signal) => makeCtx(cap, signal),
+      (signal) => makeCtx(cap, lifeline(signal)),
       inp.input,
       dev,
     );
@@ -395,7 +400,7 @@ export function createDesktopBridge(
     if (!cap || !method) {
       return fail(404, "unavailable", `capability ${call.cap}.${call.method} is not enabled`);
     }
-    return await invokeMethod(cap, method, call.args);
+    return await invokeMethod(cap, method, call.args, request);
   };
 
   const handleEvents = (request: Request, token: string, info?: DesktopServeInfo): Response => {

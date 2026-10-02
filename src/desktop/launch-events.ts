@@ -389,6 +389,8 @@ export function createLaunchRouter(options: LaunchRouterOptions): LaunchRouter {
   const resolveFile = options.resolveFile ?? realFile;
   const api = options.api ?? desktopAppApi();
   const links: QueuedDeepLink[] = [];
+  /** The schemes `claim` has force-registered this launch (at most once each). */
+  const forced = new Set<string>();
   const files: QueuedOpenedFile[] = [];
   let installed = false;
 
@@ -424,10 +426,22 @@ export function createLaunchRouter(options: LaunchRouterOptions): LaunchRouter {
         },
       },
       claim: {
-        // The user confirmed it in the app's UI (the page's job): take the scheme over.
+        // The user confirmed it in the app's UI (the page's job; the client also demands user
+        // activation): take the scheme over. Force only against ANOTHER app's registration, and
+        // only once per scheme per launch, so a page cannot keep re-taking it.
         handler: async (args) => {
           const scheme = declaredScheme(schemes, args);
-          const r = await schemeApi(api, "registerScheme")(scheme, { force: true });
+          const owner = await schemeApi(api, "getSchemeOwner")(scheme);
+          if (owner.owner === "other" && forced.has(scheme)) {
+            throw new DesktopCapError(
+              "claim_limit",
+              `${scheme}: was already taken over once this launch; ask the user to restart the app`,
+              { status: 429 },
+            );
+          }
+          const force = owner.owner === "other";
+          if (force) forced.add(scheme);
+          const r = await schemeApi(api, "registerScheme")(scheme, force ? { force } : undefined);
           return {
             registered: r.registered === true,
             owner: r.owner,

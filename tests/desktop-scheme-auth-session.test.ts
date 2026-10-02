@@ -63,21 +63,27 @@ const ctx = {
   signal: new AbortController().signal,
 };
 
-function sessions(api: DesktopAppApi = schemeApi(["self"])) {
+/** The starting page's session key (what its `cancel` names). */
+const KEY = "page-key-0123456789abcdef";
+const PRELOAD_KEY = "preload-key-0123456789";
+
+function sessions(api: DesktopAppApi = schemeApi(["self"]), preloadKey?: string) {
   const opened: string[] = [];
   const s = createSchemeAuthSessions({
     schemes: ["myapp"],
     api,
     openBrowser: (url) => void opened.push(url),
+    ...(preloadKey ? { preloadKey } : {}),
   });
-  const start = (args: Record<string, unknown>) =>
+  const start = (args: Record<string, unknown>, signal?: AbortSignal) =>
     s.capability.methods.start.handler(
-      { callbackScheme: "myapp", url: authUrl(), ...args },
-      ctx,
+      { callbackScheme: "myapp", url: authUrl(), session: KEY, ...args },
+      signal ? { ...ctx, signal } : ctx,
     ) as Promise<
       { url: string }
     >;
-  const cancel = () => s.capability.methods.cancel.handler({}, ctx) as { cancelled: boolean };
+  const cancel = (session: string = KEY) =>
+    s.capability.methods.cancel.handler({ session }, ctx) as { cancelled: boolean };
   return { s, start, cancel, opened };
 }
 
@@ -243,12 +249,104 @@ Deno.test("scheme auth: cancel ends the session; a cancel during the owner check
   assertEquals(late.opened, []); // the browser never opened
 });
 
-Deno.test("scheme auth: a page reload cancels the session of the page that started it", async () => {
-  const { s, start, opened: list } = sessions();
-  const run = start({});
+Deno.test("scheme auth: bound to its page — its request going away ends it, another window cannot", async () => {
+  const { s, start, cancel, opened: list } = sessions();
+  const page = new AbortController();
+  const run = start({}, page.signal);
   await opened(list);
-  await s.capability.onPageLoad!();
+  // Navigation elsewhere no longer touches it (there is no page-load hook), and a cancel that
+  // does not name this page's key (another window's) is refused.
+  assertEquals(s.capability.onPageLoad, undefined);
+  assertEquals(cancel("other-window-key-0123456"), { cancelled: false });
+  assertEquals(
+    s.capability.methods.cancel.handler({}, ctx) as { cancelled: boolean },
+    { cancelled: false },
+  );
+  // The starting page reloads: its `start` request is aborted, so the session ends.
+  page.abort();
   await rejectsCode(run, "cancelled");
+  // A start without its page key is refused.
+  await rejectsCode(start({ session: "short" }), "invalid");
+  await rejectsCode(start({ session: undefined }), "invalid");
+});
+
+Deno.test("scheme auth: PKCE parameters appear once and the challenge is a SHA-256", async () => {
+  const { start } = sessions();
+  const dup = new URL(authUrl());
+  dup.searchParams.append("code_challenge", CHALLENGE);
+  await rejectsCode(start({ url: dup.href }), "invalid");
+  const dupMethod = new URL(authUrl());
+  dupMethod.searchParams.append("code_challenge_method", "plain");
+  await rejectsCode(start({ url: dupMethod.href }), "invalid");
+  for (
+    const c of ["short", `${CHALLENGE}x`, CHALLENGE.slice(0, 42) + "=", CHALLENGE.replace("-", "+")]
+  ) {
+    await rejectsCode(start({ url: authUrl({ code_challenge: c }) }), "pkce_required");
+  }
+  const dupState = new URL(authUrl());
+  dupState.searchParams.append("state", "st-2");
+  await rejectsCode(start({ url: dupState.href }), "invalid");
+});
+
+Deno.test("scheme auth: pkce not-applicable needs a state, unless OS-only or the Clerk binding", async () => {
+  const noPkce = authUrl({ code_challenge: null, code_challenge_method: null, state: null });
+  const waived = { url: noPkce, pkce: "not-applicable", reason: "bound by the provider" };
+  // A direct caller without state: refused.
+  await rejectsCode(sessions().start(waived), "invalid");
+  // With a caller state it runs (and the state is enforced on the callback).
+  const ok = sessions();
+  const run = ok.start({ ...waived, state: "mine" });
+  await opened(ok.opened);
+  assert(ok.s.claim("myapp://auth/cb?code=x&state=forged"));
+  assert(ok.s.claim("myapp://auth/cb?code=x&state=mine"));
+  assertEquals((await run).url, "myapp://auth/cb?code=x&state=mine");
+  // osSessionOnly where there is no OS sheet: refused, the browser never opens.
+  const os = sessions();
+  await rejectsCode(os.start({ ...waived, osSessionOnly: true }), "unsupported");
+  assertEquals(os.opened, []);
+  // A page passing the Clerk binding without the preload key (or a wrong one) is refused.
+  const page = sessions(schemeApi(["self"]), PRELOAD_KEY);
+  await rejectsCode(page.start({ ...waived, binding: "clerk-client-nonce" }), "invalid");
+  await rejectsCode(
+    page.start({ ...waived, binding: "clerk-client-nonce", bindingKey: "guess-0123456789" }),
+    "invalid",
+  );
+  await rejectsCode(
+    sessions().start({ ...waived, binding: "clerk-client-nonce", bindingKey: PRELOAD_KEY }),
+    "invalid",
+  );
+  await rejectsCode(
+    page.start({ ...waived, binding: "other", bindingKey: PRELOAD_KEY }),
+    "invalid",
+  );
+});
+
+Deno.test("scheme auth: the Clerk nonce binding — one callback per pending session, no strays", async () => {
+  const noPkce = authUrl({
+    code_challenge: null,
+    code_challenge_method: null,
+    state: null,
+    redirect_uri: "https://clerk.example.com/v1/oauth_callback",
+  });
+  const { s, start, opened: list } = sessions(schemeApi(["self"]), PRELOAD_KEY);
+  // A forged nonce callback with no session pending is dropped (never routed to the page).
+  assertEquals(s.claim("myapp://app/?rotating_token_nonce=forged"), true);
+  const run = start({
+    url: noPkce,
+    callbackPrefix: "myapp://app/",
+    pkce: "not-applicable",
+    reason: "clerk",
+    binding: "clerk-client-nonce",
+    bindingKey: PRELOAD_KEY,
+  });
+  await opened(list);
+  // Another path is not this session's (and, carrying a nonce, is dropped, not routed).
+  assertEquals(s.claim("myapp://app/other?rotating_token_nonce=x"), true);
+  assertEquals(s.claim("myapp://app/other?plain=1"), false);
+  assert(s.claim("myapp://app/?rotating_token_nonce=first"));
+  assertEquals((await run).url, "myapp://app/?rotating_token_nonce=first");
+  // A second callback after the session settled is ignored (dropped).
+  assertEquals(s.claim("myapp://app/?rotating_token_nonce=second"), true);
 });
 
 Deno.test("scheme auth: a browser that fails to open ends the session", async () => {
@@ -257,13 +355,21 @@ Deno.test("scheme auth: a browser that fails to open ends the session", async ()
     api: schemeApi(["self"]),
     openBrowser: () => Promise.reject(new Error("no opener")),
   });
-  const run = s.capability.methods.start.handler({ callbackScheme: "myapp", url: authUrl() }, ctx);
+  const run = s.capability.methods.start.handler(
+    { callbackScheme: "myapp", url: authUrl(), session: KEY },
+    ctx,
+  );
   await rejectsCode(run as Promise<unknown>, "unsupported");
 });
 
 Deno.test("scheme auth: the target and state rules (redirect_uri vs callbackPrefix)", () => {
   const parse = (args: Record<string, unknown>) =>
-    parseSchemeAuthStart(["myapp"], { callbackScheme: "myapp", url: authUrl(), ...args });
+    parseSchemeAuthStart(["myapp"], {
+      callbackScheme: "myapp",
+      url: authUrl(),
+      session: KEY,
+      ...args,
+    });
   // redirect_uri with the scheme: its state is the URL's.
   assertEquals(parse({}).state, "st-1");
   assertEquals(parse({}).target, { protocol: "myapp:", host: "auth", path: "/cb" });
@@ -328,7 +434,11 @@ Deno.test("scheme auth + router + bridge: the callback resolves the RPC and neve
       new URL(`${origin}/_denext/desktop/rpc`),
       "t",
     ).then((r) => r!.json());
-  const started = rpc("start", "authSession", { callbackScheme: "myapp", url: authUrl() });
+  const started = rpc("start", "authSession", {
+    callbackScheme: "myapp",
+    url: authUrl(),
+    session: KEY,
+  });
   await new Promise((r) => setTimeout(r, 5));
   router.acceptUrl("myapp://auth/cb?code=evil&state=nope", false); // forged: swallowed
   router.acceptUrl("myapp://threads/1", false); // an ordinary link: queued

@@ -374,6 +374,21 @@ and this project adheres to
   config validation error, and the capability itself refuses every ceremony (`invalid_rp`) when no
   RP ID is listed. `denext desktop add passkeys` writes `{ rpIds: [] }` for you to fill in. The
   type is now `false | { rpIds: string[] }`.
+- **Custom-scheme sign-ins on Deno Desktop are bound tighter.** While the macOS OS sheet runs, a
+  matching callback the OS delivers as a deep link is dropped; only the sheet finishes the
+  session. A session belongs to the page that started it: it ends when that page reloads or
+  leaves, and a navigation in another window no longer cancels it, nor does a `cancel` from
+  another page. `pkce: "not-applicable"` now requires a `state`. PKCE parameters must appear once,
+  with a 43-character base64url challenge. A caller's `state` is kept (and must agree) when the
+  target comes from the URL's `redirect_uri`. `denext/desktop/clerk`'s OAuth transport runs only
+  in the OS sheet on macOS. On Windows and Linux it is bound by Clerk's client nonce, which only a
+  bridge installed synchronously from `desktop.preload` may claim (a per-launch preload key). A
+  Clerk nonce callback outside its session is dropped, never routed to `onDeepLink`.
+- **`claimDeepLinkScheme` needs the user's click.** It rejects `user_activation_required` outside
+  a user gesture. It force-registers only when another app holds the scheme, and at most once per
+  scheme per launch (`claim_limit`).
+- **Capability methods without a deadline end with their page.** For a `timeoutMs: false` method,
+  `ctx.signal` now also aborts when the calling page's request goes away.
 
 ## [3.0.2] - 2026-09-30
 

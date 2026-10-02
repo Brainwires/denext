@@ -147,6 +147,39 @@ Deno.test("clerk bridge: open() runs the custom-scheme session exactly like @cle
   });
 });
 
+Deno.test("clerk bridge: the OAuth session is bound — OS sheet when there is one, else the preload key", async () => {
+  const run = async (osSession: boolean, preloadKey?: string) => {
+    const starts: Record<string, unknown>[] = [];
+    await inDesktop({
+      authSession: {
+        capabilities: () => ({ osSession, ephemeral: false }),
+        start: (a) => {
+          starts.push(a as Record<string, unknown>);
+          return { url: "t3code://app/?rotating_token_nonce=n1" };
+        },
+      },
+    }, async () => {
+      const gk = globalThis as { __denextPreloadKey?: string };
+      if (preloadKey) gk.__denextPreloadKey = preloadKey;
+      const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+      delete gk.__denextPreloadKey; // what the injected script does after the preload
+      await t.open("https://accounts.google.com/o/oauth2/auth?state=x");
+    });
+    return starts[0];
+  };
+  // macOS (an OS sheet): only the sheet may complete it; no binding needed or sent.
+  const mac = await run(true, "pk-0123456789abcdef");
+  assertEquals(mac.osSessionOnly, true);
+  assertEquals(mac.binding, undefined);
+  // Windows / Linux: the Clerk nonce binding, proven by the key read while the preload ran.
+  const win = await run(false, "pk-0123456789abcdef");
+  assertEquals([win.binding, win.bindingKey], ["clerk-client-nonce", "pk-0123456789abcdef"]);
+  assertEquals(win.osSessionOnly, undefined);
+  // Installed outside the preload (no key): no binding — the runtime then requires a state.
+  const late = await run(false);
+  assertEquals([late.binding, late.osSessionOnly], [undefined, undefined]);
+});
+
 /** A fake Clerk instance answering hosted_auth and the redemption. */
 function fakeClerk(onRedeem?: (body: Record<string, unknown>) => void) {
   const requests: Array<{ path: string; body?: Record<string, unknown> }> = [];

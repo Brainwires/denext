@@ -507,17 +507,21 @@ export async function signIn() {
           <strong>PKCE S256 is mandatory:</strong> the URL carries <code>code_challenge</code> and
           {" "}
           <code>code_challenge_method=S256</code>{" "}
-          (<code>pkce_required</code>). The only exception is an explicit{" "}
-          <code>pkce: "not-applicable"</code> with a{" "}
-          <code>reason</code>, for a provider that binds the callback another way (Clerk's native
-          flow, below).
+          (<code>pkce_required</code>), each once, the challenge a 43-character base64url SHA-256.
+          The only exception is an explicit <code>pkce: "not-applicable"</code> with a{" "}
+          <code>reason</code>, for a provider that binds the callback another way, and then a{" "}
+          <code>state</code>{" "}
+          is required too (Clerk's native flow, below, is bound by the macOS sheet or by Clerk's own
+          client nonce instead).
         </li>
         <li>
           The callback must match the <code>redirect_uri</code> (or{" "}
           <code>callbackPrefix</code>) exactly on scheme, host and path, and carry the URL's{" "}
           <code>state</code> (with <code>callbackPrefix</code>, the <code>state</code>{" "}
-          option you pass). A callback with a missing or different <code>state</code>{" "}
-          is dropped and the session keeps waiting.
+          option you pass; given both, they must agree). A callback with a missing or different{" "}
+          <code>state</code>{" "}
+          is dropped and the session keeps waiting. While the macOS sheet is up, only the sheet can
+          finish the session: the same callback arriving as a deep link is dropped.
         </li>
         <li>
           Before the browser opens, the runtime asks the OS who handles the scheme. Nobody → it
@@ -526,9 +530,11 @@ export async function signIn() {
           (for display; any program can write it). Fall back to the loopback flow, or ask the user
           and call <code>claimDeepLinkScheme(scheme)</code> from <code>denext/desktop/client</code>
           {" "}
-          — only on an explicit user action, since the other app loses the scheme. This check is
-          advisory (a program can re-register at any time); PKCE and <code>state</code>{" "}
-          are the defence. An unpackaged dev run cannot register (<code>
+          — only on an explicit user action, since the other app loses the scheme. It must run in
+          that click (<code>user_activation_required</code>{" "}
+          otherwise), and takes a scheme over at most once per launch (<code>claim_limit</code>).
+          This check is advisory (a program can re-register at any time); PKCE and{" "}
+          <code>state</code> are the defence. An unpackaged dev run cannot register (<code>
             scheme_not_registered
           </code>).
         </li>
@@ -537,9 +543,10 @@ export async function signIn() {
           {" "}
           <code>signal</code>{" "}
           to cancel. The system browser on Windows and Linux reports no cancellation, so the Cancel
-          overlay covers it there (<code>cancelOverlay</code>). A page reload cancels the session.
-          The OS sheet on macOS cannot be closed from code: a cancel or timeout settles your
-          promise, and the sheet stays until the user closes it.
+          overlay covers it there (<code>cancelOverlay</code>). The session belongs to the page that
+          started it: reloading or leaving that page ends it, a navigation in another window does
+          not, and only that page can cancel it. The OS sheet on macOS cannot be closed from code: a
+          cancel or timeout settles your promise, and the sheet stays until the user closes it.
         </li>
         <li>
           On macOS the sheet's callback is held to the same exact <code>redirect_uri</code> and{" "}
