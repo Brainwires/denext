@@ -47,6 +47,7 @@ import { privacyEntriesFor, privacyLabels, writePrivacyManifests } from "./mobil
 import { PLATFORM_CAPABILITIES } from "./mobile-capabilities-platform.ts";
 import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
 import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
+import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -60,6 +61,8 @@ export interface CapabilityOptions {
   readonly names: readonly string[];
   /** `--configurable`: a widget's enum parameters (`param:enum=a|b`). */
   readonly configurable: readonly string[];
+  /** `--ci`: also write a CI workflow (fastlane). */
+  readonly ci?: boolean;
 }
 
 /** One text edit to a native file, with the line the plan prints for it. */
@@ -105,6 +108,8 @@ export interface CapabilityConfig {
 export interface MobileCapability {
   /** The npm package that provides the native plugin (none: denext's own plugin). */
   readonly npm?: string;
+  /** What `--list` shows in the package column without `npm` (default: denext native plugin). */
+  readonly listing?: string;
   /**
    * The version range added (`<npm>@<version>`), pinned to the plugin's Capacitor major. A
    * project that pins its `@capacitor/*` packages exactly gets the range's minimum, exactly.
@@ -836,6 +841,8 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   ...PLATFORM_CAPABILITIES,
   "native-module": NATIVE_MODULE_CAPABILITY,
   ...NATIVE_VIEW_CAPABILITIES,
+  // Release tooling, not a plugin: fastlane lanes over `denext mobile build`.
+  fastlane: FASTLANE_CAPABILITY,
 };
 
 /** A package manager `denext mobile add` can drive. */
@@ -951,6 +958,8 @@ export interface AddCapabilitiesOptions {
   readonly configurable?: readonly string[];
   /** `--force`: replace denext plugin templates that were edited (auth-session). */
   readonly force?: boolean;
+  /** `--ci`: also write a CI workflow (fastlane). */
+  readonly ci?: boolean;
 }
 
 const INFO_PLIST = "ios/App/App/Info.plist";
@@ -1208,6 +1217,7 @@ function capabilityOptions(
     appGroups: [...new Set(opts.appGroups ?? [])],
     names: [...new Set(opts.names ?? [])],
     configurable: [...new Set(opts.configurable ?? [])],
+    ci: opts.ci === true,
   };
   const flags = [
     ["schemes", "--scheme"],
@@ -1220,6 +1230,9 @@ function capabilityOptions(
     if (options[key].length === 0) continue;
     if (names.some((n) => table[n].options?.includes(key))) continue;
     throw new Error(`${flag} is only for ${takersOf(table, key)}; add it or drop ${flag}.`);
+  }
+  if (options.ci && !names.some((n) => table[n].options?.includes("ci"))) {
+    throw new Error(`--ci is only for ${takersOf(table, "ci")}; add it or drop --ci.`);
   }
   return options;
 }
@@ -1534,7 +1547,7 @@ export function formatCapabilityTable(
   return Object.entries(table).map(([name, c]) =>
     // A name longer than the column (background-location) still gets one space.
     `  ${name.padEnd(16)} ${
-      (c.npm ? `${c.npm}@${c.version}` : "(denext native plugin)").padEnd(46)
+      (c.npm ? `${c.npm}@${c.version}` : c.listing ?? "(denext native plugin)").padEnd(46)
     }${c.notes ?? ""}`
   ).join("\n");
 }

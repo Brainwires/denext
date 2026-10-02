@@ -15,7 +15,8 @@
 //                                 --list lists, --scheme / --domain configure deep-links);
 //                                 auth-session installs denext's own DenextAuthSession plugin;
 //                                 share-extension / widget / live-activity add app extension
-//                                 targets (--app-group, --name, --configurable)
+//                                 targets (--app-group, --name, --configurable); fastlane
+//                                 writes fastlane/ lanes over `mobile build` (--ci: a workflow)
 //   denext mobile dev [project]   live reload: start (or attach to) `denext dev`, point the
 //                                 Capacitor config's server.url at it for the session and
 //                                 `cap copy`; restored on exit (--lan for a physical device)
@@ -475,6 +476,8 @@ function printAddReport(report: AddCapabilitiesReport): void {
     console.log("\n  Now call from denext/mobile:");
     for (const note of report.plan.notes) console.log(`    - ${note}`);
   }
+  // fastlane is release tooling: it changes nothing in the app.
+  if (report.plan.capabilities.every((c) => c === "fastlane")) return;
   console.log("\n  Native plugins changed: ship a new app binary (OTA only updates the web UI).");
 }
 
@@ -505,6 +508,7 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
       names: listFlag(ctx.flags.name),
       configurable: listFlag(ctx.flags.configurable),
       force: ctx.flags.force === true,
+      ci: ctx.flags.ci === true,
     });
   } catch (err) {
     fail(`denext mobile add: ${err instanceof Error ? err.message : String(err)}`);
@@ -691,6 +695,9 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "                                An iOS Live Activity (startLiveActivity)\n" +
     "  denext mobile add native-module --name Scanner\n" +
     "                                Your own Swift + Kotlin plugin (nativeModule, TurboModules)\n" +
+    "  denext mobile add fastlane --ci\n" +
+    "                                fastlane lanes (match, TestFlight, Play tracks) over\n" +
+    "                                `mobile build`, a Gemfile, and a GitHub Actions workflow\n" +
     "  denext mobile add --list      List the capabilities and the plugins they install\n" +
     "  denext mobile add-ota [dir]   Install the DenextOta plugin into ios/ and android/\n" +
     "  denext mobile dev [project] --lan\n" +
@@ -804,6 +811,17 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  comma-separated. The widget and Live Activity views are yours to edit: an edited file is\n" +
     "  kept on the next run.\n" +
     "\n" +
+    "  fastlane is release tooling for teams that already use fastlane (`mobile build` and\n" +
+    "  `mobile submit` need none of it): it writes fastlane/Appfile (capacitor.config appId; the\n" +
+    "  team and Play key from the environment), fastlane/Fastfile (ios and android build, beta\n" +
+    "  and release lanes that run `denext mobile build <platform> --release` and hand its\n" +
+    "  artifact to match, upload_to_testflight / upload_to_app_store and upload_to_play_store;\n" +
+    "  flavor:, build_number:, bump: and track: pass through), fastlane/Matchfile, a\n" +
+    "  fastlane/.gitignore and a Gemfile pinning fastlane. --ci also writes\n" +
+    "  .github/workflows/mobile-release.yml at the repository root (ruby/setup-ruby, then\n" +
+    "  `bundle exec fastlane <platform> <lane>`, credentials as repository secrets). Edited files\n" +
+    "  are kept on a re-run (--force replaces them); nothing is installed and no `cap sync` runs.\n" +
+    "\n" +
     "  iOS: writes DenextOtaPlugin.swift, DenextOtaStore.swift and DenextBridgeViewController.swift\n" +
     "  into ios/App/App/, adds them to the App target in project.pbxproj, and switches\n" +
     "  Main.storyboard and SceneDelegate to DenextBridgeViewController when they still use\n" +
@@ -834,6 +852,9 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
     "  security settings (debuggable WebView, cleartext, mixed content, allowNavigation *,\n" +
     "  android:debuggable, the CSP, secrets in the export). Both read the native config copies\n" +
     "  `cap sync` wrote (what ships) as well as capacitor.config.*; run them after export + sync.\n" +
+    "  With a fastlane/ folder, --release also checks it: the Appfile ids against capacitor.config,\n" +
+    "  a Gemfile with its lock, a Fastfile that skips `denext export` + `cap sync`, and secrets in\n" +
+    "  or written into fastlane/.\n" +
     "\n" +
     "  inspect: prints how to attach Safari's Web Inspector (iOS) and chrome://inspect (Android)\n" +
     "  to the app's WebView, opens Safari (macOS) and Chrome at chrome://inspect/#devices, and\n" +
@@ -859,7 +880,7 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "force",
       type: "boolean",
       help:
-        "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session / share-extension / widget / live-activity / native-module)",
+        "Replace native template files that differ from denext's (loses local edits; add-ota, add auth-session / share-extension / widget / live-activity / native-module / fastlane)",
     },
     {
       name: "public-key",
@@ -952,6 +973,12 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       name: "list",
       type: "boolean",
       help: "add: list the capabilities and the plugins they install",
+    },
+    {
+      name: "ci",
+      type: "boolean",
+      help:
+        "add fastlane: also write .github/workflows/mobile-release.yml (fastlane in GitHub Actions)",
     },
     {
       name: "scheme",

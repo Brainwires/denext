@@ -3177,9 +3177,10 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         <code>DenextBridgeViewController.swift</code>{" "}
         written before the main-frame guard: the one every <code>denext mobile add</code>{" "}
         of a denext native plugin now writes accepts native plugin calls from the page&apos;s main
-        frame only, never from an iframe (Capacitor&apos;s own iOS handler answers every frame). Not
-        checked: whether icons are still Capacitor&apos;s placeholders, and anything about the
-        content itself.
+        frame only, never from an iframe (Capacitor&apos;s own iOS handler answers every frame).
+        With a <code>fastlane/</code> folder, <code>--release</code>{" "}
+        also checks it (<a href="/docs/mobile-build#fastlane">fastlane</a>). Not checked: whether
+        icons are still Capacitor&apos;s placeholders, and anything about the content itself.
       </p>
 
       <h2 id="crash-reporting">Crash reporting</h2>
@@ -3290,7 +3291,11 @@ npx @sentry/cli sourcemaps upload \\
         <code>denext mobile submit ios|android</code>{" "}
         generate every icon and splash, build signed store binaries (with flavors) and upload them
         to App Store Connect and Google Play, locally or in CI: see{" "}
-        <a href="/docs/mobile-build">Mobile builds &amp; store submission</a>.
+        <a href="/docs/mobile-build">Mobile builds &amp; store submission</a>. A team already on
+        fastlane keeps it: <code>denext mobile add fastlane</code>{" "}
+        writes lanes over the same build (match, TestFlight, Play tracks, metadata) and, with{" "}
+        <code>--ci</code>, a GitHub Actions workflow (see{" "}
+        <a href="/docs/mobile-build#fastlane">fastlane</a>).
       </p>
       <p>
         <a href="https://github.com/Brainwires/denext/tree/main/examples/capacitor-ci">

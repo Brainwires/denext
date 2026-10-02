@@ -3,10 +3,11 @@
 // SHA-256 of the rest of the file. A file whose marker still matches its body is an unedited
 // denext template, which a later install may upgrade in place. XML templates (Android layouts
 // and resources, which cannot hold a `//` line) carry the same marker as an XML comment:
-// `<!-- denext-<family>-template: <version> sha256=<hex> -->`.
+// `<!-- denext-<family>-template: <version> sha256=<hex> -->`. Ruby / YAML / ignore files (the
+// fastlane templates) carry it as a `#` comment.
 
-/** How a marker line is written: a `//` comment, or an XML `<!-- … -->` comment. */
-export type MarkerStyle = "line" | "xml";
+/** How a marker line is written: a `//` comment, an XML `<!-- … -->` comment, or a `#` comment. */
+export type MarkerStyle = "line" | "xml" | "hash";
 
 /**
  * Lowercase hex SHA-256 of `text`'s UTF-8 (also for recognising files shipped before markers).
@@ -25,7 +26,8 @@ export async function sha256Text(text: string): Promise<string> {
  * @param family The template family (`ota`, `auth-session`).
  * @param version The family's template generation.
  * @param template The template text.
- * @param style `"xml"` for an XML file (the marker as a `<!-- … -->` comment); default `"line"`.
+ * @param style `"xml"` for an XML file (the marker as a `<!-- … -->` comment), `"hash"` for a
+ *   `#`-comment file (Ruby, YAML); default `"line"`.
  * @returns The file content.
  */
 export async function renderMarkedTemplate(
@@ -35,7 +37,8 @@ export async function renderMarkedTemplate(
   style: MarkerStyle = "line",
 ): Promise<string> {
   const marker = `denext-${family}-template: ${version} sha256=${await sha256Text(template)}`;
-  return style === "xml" ? `<!-- ${marker} -->\n${template}` : `// ${marker}\n${template}`;
+  if (style === "xml") return `<!-- ${marker} -->\n${template}`;
+  return style === "hash" ? `# ${marker}\n${template}` : `// ${marker}\n${template}`;
 }
 
 /**
@@ -51,7 +54,7 @@ export async function markedTemplateIntact(
   text: string,
 ): Promise<boolean | undefined> {
   const marker = new RegExp(
-    `^(?://|<!--) denext-${family}-template: \\d+ sha256=([0-9a-f]{64})(?: -->)?\\n`,
+    `^(?://|<!--|#) denext-${family}-template: \\d+ sha256=([0-9a-f]{64})(?: -->)?\\n`,
   ).exec(text);
   if (!marker) return undefined;
   return await sha256Text(text.slice(marker[0].length)) === marker[1];
