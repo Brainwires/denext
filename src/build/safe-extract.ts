@@ -95,6 +95,31 @@ function symlinkStaysInside(linkPath: string, target: string): boolean {
   return true;
 }
 
+/**
+ * Create the symlink `dest` -> `target` (an archive's relative, `/`-separated target). Windows
+ * needs the native separator in a relative target, and says whether the link is a file or a
+ * directory link: Deno cannot infer that there, because it checks whether `target` exists relative
+ * to the process's working directory rather than the link's own (every file is written before the
+ * links, so an internal target exists by now; a missing one is a file link, refused as dangling
+ * right after).
+ */
+async function createLink(target: string, dest: string): Promise<void> {
+  if (Deno.build.os !== "windows") return await Deno.symlink(target, dest);
+  const native = target.replaceAll("/", "\\");
+  const info = await Deno.stat(join(dirname(dest), native)).catch(() => null);
+  try {
+    await Deno.symlink(native, dest, { type: info?.isDirectory ? "dir" : "file" });
+  } catch (err) {
+    // ERROR_PRIVILEGE_NOT_HELD: a standard user without Developer Mode cannot create symlinks.
+    if (!/os error 1314\b/.test(String(err))) throw err;
+    throw new Error(
+      `cannot create the symlink ${dest}: Windows allows symlinks only with Developer Mode on ` +
+        "or from an elevated process",
+      { cause: err },
+    );
+  }
+}
+
 /** Bookkeeping shared by the tar and zip walkers. */
 class Writer {
   readonly files: Record<string, ExtractedFile> = {};
@@ -197,7 +222,7 @@ class Writer {
       }
       const dest = join(this.root, ...segs);
       await Deno.mkdir(dirname(dest), { recursive: true });
-      await Deno.symlink(this.symlinks[path], dest);
+      await createLink(this.symlinks[path], dest);
     }
     // The lexical check above can't see a target that walks THROUGH another link (`p/..` where
     // `p -> .`), so resolve every link for real: it must exist and land inside the destination.

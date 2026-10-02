@@ -189,13 +189,28 @@ Deno.test("sync: removing the origin removes app.json and only its include entry
   }
 });
 
+/**
+ * Point `path` at the directory `target` with a link. A symlink where this process may create one;
+ * on Windows without that privilege (a standard user without Developer Mode: os error 1314) a
+ * directory junction, which needs none and which `Deno.lstat` reports as a symlink too — so the
+ * refusal is asserted for every user, not skipped.
+ */
+async function linkDir(target: string, path: string): Promise<void> {
+  try {
+    await Deno.symlink(target, path, { type: "dir" });
+  } catch (err) {
+    if (Deno.build.os !== "windows" || !/os error 1314\b/.test(String(err))) throw err;
+    await Deno.symlink(target, path, { type: "junction" });
+  }
+}
+
 Deno.test("sync: a non-array compile.include and a symlinked .deno-desktop are refused", async () => {
   const odd = await project('{ "compile": { "include": "out" } }\n');
   const linked = await project("{}\n");
   const elsewhere = await Deno.makeTempDir();
   try {
     await assertRejects(() => syncDesktopAppConfigAt(odd, T3), Error, "must be an array");
-    await Deno.symlink(elsewhere, join(linked, ".deno-desktop"));
+    await linkDir(elsewhere, join(linked, ".deno-desktop"));
     await assertRejects(() => syncDesktopAppConfigAt(linked, T3), Error, "symlink");
   } finally {
     for (const d of [odd, linked, elsewhere]) await Deno.remove(d, { recursive: true });

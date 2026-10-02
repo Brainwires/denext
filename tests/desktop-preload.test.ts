@@ -5,7 +5,7 @@
 // dynamic imports inlined) and the inline-safety escaping.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { createDesktopHandler, injectDesktopGlobal } from "../src/build/desktop.ts";
 import { createDesktopBridge } from "../src/desktop/bridge.ts";
 import { sha256Base64 } from "../src/server/csp.ts";
@@ -155,7 +155,7 @@ Deno.test("desktopPreloadBundleArgs: a browser IIFE with the project's config", 
   }
   assertEquals(args.slice(args.indexOf("--config"), args.indexOf("--config") + 2), [
     "--config",
-    "/p/deno.json",
+    fromFileUrl("file:///p/deno.json"), // `\\p\\deno.json` on Windows
   ]);
   assertEquals(args.at(-1), join("/p", "./desktop/preload.ts"));
   // A remote (framework) config is not passed.

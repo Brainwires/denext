@@ -411,11 +411,15 @@ async function withEnv(
   const saved = Object.keys(vars).map((name) => [name, Deno.env.get(name)] as const);
   const apply = (name: string, value: string | undefined) =>
     value === undefined ? Deno.env.delete(name) : Deno.env.set(name, value);
-  for (const [name, value] of Object.entries(vars)) apply(name, value);
+  // Deletions first: Windows env names are case-insensitive, so deleting `http_proxy` after
+  // setting `HTTP_PROXY` would delete the value just set.
+  const deletionsFirst = <T>(list: ReadonlyArray<readonly [string, T | undefined]>) =>
+    [...list].sort(([, a], [, b]) => Number(a !== undefined) - Number(b !== undefined));
+  for (const [name, value] of deletionsFirst(Object.entries(vars))) apply(name, value);
   try {
     await f();
   } finally {
-    for (const [name, value] of saved) apply(name, value);
+    for (const [name, value] of deletionsFirst(saved)) apply(name, value);
   }
 }
 

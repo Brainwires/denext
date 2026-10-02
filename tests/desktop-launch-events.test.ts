@@ -5,6 +5,7 @@
 // only touch declared schemes.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
+import { join } from "@std/path";
 import {
   createLaunchRouter,
   type DesktopAppApi,
@@ -189,7 +190,7 @@ Deno.test("launch router: no Deno.desktop (stock runtime) → install is a no-op
 Deno.test("launch router: the default resolver accepts only real, existing regular files", async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_launch_" }));
   try {
-    const file = `${dir}/notes.txt`;
+    const file = join(dir, "notes.txt");
     await Deno.writeTextFile(file, "hi");
     await Deno.mkdir(`${dir}/folder`);
     const posix = Deno.build.os !== "windows";

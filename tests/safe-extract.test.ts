@@ -35,6 +35,33 @@ async function tgzRefused(entries: TarEntry[], match: RegExp | string) {
   }
 }
 
+/**
+ * Whether this process may create symlinks. Always on POSIX; on Windows only with Developer Mode
+ * or elevation (a standard user gets os error 1314), where extraction must refuse clearly instead.
+ */
+const canSymlink = await (async () => {
+  if (Deno.build.os !== "windows") return true;
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(join(dir, "t"), "");
+    await Deno.symlink("t", join(dir, "l"), { type: "file" });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+})();
+
+/** Without the symlink privilege, an archive with a link fails with a clear message, not 1314. */
+async function refusesWithoutSymlinkPrivilege(archive: string, dest: string): Promise<void> {
+  await assertRejects(
+    () => extractArchive(archive, "tar.gz", dest),
+    Error,
+    "Windows allows symlinks only with Developer Mode",
+  );
+}
+
 Deno.test("safeEntryPath normalizes ./ and refuses traversal, absolute, backslash, ':' and NUL", () => {
   assertEquals(safeEntryPath("./laufey/webview/x"), "laufey/webview/x");
   assertEquals(safeEntryPath("./"), "");
@@ -65,6 +92,7 @@ Deno.test("extractArchive(tar.gz): files, dirs, modes, an internal symlink and p
   );
   await Deno.mkdir(dirname(dest), { recursive: true });
   try {
+    if (!canSymlink) return await refusesWithoutSymlinkPrivilege(archive, dest);
     const r = await extractArchive(archive, "tar.gz", dest);
     assertEquals(Object.keys(r.files).sort(), [
       "BUILD_INFO.json",
@@ -114,10 +142,14 @@ Deno.test("extractArchive(tar.gz): pax and GNU long names / link targets, and a 
   );
   await Deno.mkdir(dirname(dest), { recursive: true });
   try {
-    const r = await extractArchive(archive, "tar.gz", dest);
-    assertEquals(await Deno.readTextFile(join(dest, long)), "pax");
-    assertEquals(await Deno.readTextFile(join(dest, "gnu/long/name.txt")), "gnu");
-    assertEquals(r.symlinks, { lnk: "gnu/long/name.txt" });
+    if (canSymlink) {
+      const r = await extractArchive(archive, "tar.gz", dest);
+      assertEquals(await Deno.readTextFile(join(dest, long)), "pax");
+      assertEquals(await Deno.readTextFile(join(dest, "gnu/long/name.txt")), "gnu");
+      assertEquals(r.symlinks, { lnk: "gnu/long/name.txt" });
+    } else {
+      await refusesWithoutSymlinkPrivilege(archive, dest);
+    }
   } finally {
     await Deno.remove(base, { recursive: true });
   }

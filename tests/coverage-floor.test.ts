@@ -6,8 +6,13 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { join, resolve } from "@std/path";
 import { checkFloor, flooredFiles, main, parseLcov, pct } from "../scripts/coverage-floor.ts";
 
+/** The fixture project root, absolute on this OS (`D:\\p` on Windows). */
+const ROOT = resolve("/p");
+/** An lcov `SF:` path as \`deno coverage\` writes it: absolute, with this OS's separators. */
+const sf = (rel: string) => resolve(ROOT, rel);
+
 const LCOV = `TN:
-SF:/p/src/desktop/a.ts
+SF:${sf("src/desktop/a.ts")}
 FN:1,f
 FN:5,g
 FNDA:3,f
@@ -22,19 +27,19 @@ DA:2,3
 DA:3,0
 DA:5,0
 end_of_record
-SF:/p/src/desktop/caps/b.ts
+SF:${sf("src/desktop/caps/b.ts")}
 DA:1,1
 end_of_record
 `;
 
 Deno.test("parseLcov: counts lines, branches (`-` = not taken) and functions per file", () => {
   const m = parseLcov(LCOV.replaceAll("\n", "\r\n"));
-  assertEquals(m.get("/p/src/desktop/a.ts"), {
+  assertEquals(m.get(sf("src/desktop/a.ts")), {
     lines: [2, 4],
     branches: [1, 3],
     functions: [1, 2],
   });
-  assertEquals(m.get("/p/src/desktop/caps/b.ts"), {
+  assertEquals(m.get(sf("src/desktop/caps/b.ts")), {
     lines: [1, 1],
     branches: [0, 0],
     functions: [0, 0],
@@ -51,13 +56,13 @@ Deno.test("pct: a metric with nothing to cover is 100%", () => {
 Deno.test("checkFloor: each metric is held to the floor; an unloaded file fails", () => {
   const lcov = parseLcov(LCOV);
   const files = ["src/desktop/a.ts", "src/desktop/caps/b.ts", "src/desktop/never.ts"];
-  const results = checkFloor(files, lcov, "/p", 85);
+  const results = checkFloor(files, lcov, ROOT, 85);
   assertEquals(results.map((r) => [r.file, r.failures]), [
     ["src/desktop/a.ts", ["lines 50.0%", "branches 33.3%", "functions 50.0%"]],
     ["src/desktop/caps/b.ts", []],
     ["src/desktop/never.ts", ["never loaded by a test"]],
   ]);
-  assertEquals(checkFloor(["src/desktop/a.ts"], lcov, "/p", 30)[0].failures, []);
+  assertEquals(checkFloor(["src/desktop/a.ts"], lcov, ROOT, 30)[0].failures, []);
 });
 
 Deno.test("flooredFiles: src/desktop recursively, and only src/build/desktop*.ts", async () => {
