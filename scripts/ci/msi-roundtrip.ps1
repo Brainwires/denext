@@ -54,13 +54,18 @@ function Get-UpgradeCode([string]$path) {
 
 function Get-Products([string]$upgradeCode) {
   $installer = New-Object -ComObject WindowsInstaller.Installer
-  $related = $installer.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null, $installer, @($upgradeCode))
-  @($related | ForEach-Object {
-      [pscustomobject]@{
-        ProductCode = $_
-        Version = $installer.GetType().InvokeMember('ProductInfo', 'GetProperty', $null, $installer, @($_, 'VersionString'))
-      }
-    })
+  $type = $installer.GetType()
+  # COM wants plain strings: PowerShell's PSObject-wrapped pipeline items are a DISP_E_TYPEMISMATCH.
+  $related = $type.InvokeMember('RelatedProducts', 'GetProperty', $null, $installer,
+    [object[]]@([string]$upgradeCode))
+  $out = @()
+  foreach ($item in $related) {
+    $code = [string]$item
+    $version = $type.InvokeMember('ProductInfo', 'GetProperty', $null, $installer,
+      [object[]]@($code, 'VersionString'))
+    $out += [pscustomobject]@{ ProductCode = $code; Version = [string]$version }
+  }
+  return , $out
 }
 
 $msiPath = (Resolve-Path $Msi).Path
