@@ -37,6 +37,9 @@ function fake(answer: string | Error = '{"ok":true,"credential":{"id":"c1"}}') {
   return { api, calls };
 }
 
+/** The pin every ceremony test runs under (the capability refuses all without one). */
+const PIN = ["clerk.example.com"];
+
 const getOptions = (rpId = "clerk.example.com") => ({
   optionsJson: JSON.stringify({ challenge: "abc", rpId, allowCredentials: [] }),
 });
@@ -46,7 +49,7 @@ const createOptions = (id = "clerk.example.com") => ({
 
 Deno.test("passkeys: a ceremony forwards the JSON, anchors the window, returns the envelope", async () => {
   const { api, calls } = fake();
-  const cap = passkeysCapability({ api });
+  const cap = passkeysCapability({ rpIds: PIN, api });
   const out = await cap.methods.get.handler(getOptions(), ctx(WINDOW));
   assertEquals(out, { ok: true, credential: { id: "c1" } });
   assertEquals(calls[0].kind, "get");
@@ -76,19 +79,36 @@ Deno.test("passkeys: the RP-ID pin refuses a foreign RP without reaching the OS"
   );
 });
 
+Deno.test("passkeys: no pin, or an empty one, refuses every RP without reaching the OS", async () => {
+  for (const rpIds of [undefined, []]) {
+    const { api, calls } = fake();
+    const cap = passkeysCapability(rpIds ? { api, rpIds } : { api });
+    for (
+      const out of [
+        await cap.methods.get.handler(getOptions(), ctx()),
+        await cap.methods.create.handler(createOptions("anything.example"), ctx()),
+      ]
+    ) {
+      assertEquals((out as { error?: { code: string } }).error?.code, "invalid_rp");
+    }
+    assertEquals(calls.length, 0);
+  }
+});
+
 Deno.test("passkeys: a malformed native answer is `unknown`; a native throw too", async () => {
   for (const answer of ['{"ok":true}', '{"ok":false,"error":{"code":"weird"}}', "not json"]) {
-    const cap = passkeysCapability({ api: fake(answer).api });
+    const cap = passkeysCapability({ rpIds: PIN, api: fake(answer).api });
     const out = await cap.methods.get.handler(getOptions(), ctx()) as { error?: { code: string } };
     assertEquals(out.error?.code, "unknown", answer);
   }
-  const cap = passkeysCapability({ api: fake(new Error("boom")).api });
+  const cap = passkeysCapability({ rpIds: PIN, api: fake(new Error("boom")).api });
   const out = await cap.methods.create.handler(createOptions(), ctx()) as {
     error?: { code: string };
   };
   assertEquals(out.error?.code, "unknown");
   // The OS's own failure envelopes pass through (Clerk maps invalid_rp, cancelled, …).
   const rp = passkeysCapability({
+    rpIds: PIN,
     api: fake('{"ok":false,"error":{"code":"invalid_rp","message":"no AASA"}}').api,
   });
   assertEquals(await rp.methods.get.handler(getOptions(), ctx()), {
@@ -98,7 +118,7 @@ Deno.test("passkeys: a malformed native answer is `unknown`; a native throw too"
 });
 
 Deno.test("passkeys: bad arguments are a validation error", async () => {
-  const cap = passkeysCapability({ api: fake().api });
+  const cap = passkeysCapability({ rpIds: PIN, api: fake().api });
   for (
     const args of [{}, { optionsJson: 1 }, { optionsJson: "x".repeat(70_000) }, {
       optionsJson: "[",
@@ -114,7 +134,7 @@ Deno.test("passkeys: bad arguments are a validation error", async () => {
 });
 
 Deno.test("passkeys: a runtime without passkeys → not_supported; capabilities report none", async () => {
-  const cap = passkeysCapability({ api: {}, os: "darwin" });
+  const cap = passkeysCapability({ rpIds: PIN, api: {}, os: "darwin" });
   assertEquals(await cap.methods.get.handler(getOptions(), ctx()), {
     ok: false,
     error: { code: "not_supported", message: "this Deno Desktop runtime has no native passkeys" },
@@ -129,19 +149,23 @@ Deno.test("passkeys: a runtime without passkeys → not_supported; capabilities 
 Deno.test("passkeys: capabilities mirror @clerk/electron (available on macOS/Windows, not Linux)", async () => {
   const { api } = fake();
   assertEquals(
-    await passkeysCapability({ api, os: "darwin" }).methods.capabilities.handler({}, ctx()),
+    await passkeysCapability({ rpIds: PIN, api, os: "darwin" }).methods.capabilities.handler(
+      {},
+      ctx(),
+    ),
     {
       available: true,
       platformAuthenticator: true,
       securityKeys: false,
     },
   );
-  const linux = await passkeysCapability({ api, os: "linux" }).methods.capabilities.handler(
-    {},
-    ctx(),
-  ) as {
-    available: boolean;
-  };
+  const linux = await passkeysCapability({ rpIds: PIN, api, os: "linux" }).methods.capabilities
+    .handler(
+      {},
+      ctx(),
+    ) as {
+      available: boolean;
+    };
   assertEquals(linux.available, false);
 });
 

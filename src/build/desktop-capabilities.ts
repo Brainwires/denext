@@ -278,14 +278,15 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
   },
   passkeys: {
     key: "passkeys",
-    value: true,
+    // Fail closed: an empty pin allows no relying party until the project lists its own.
+    value: { rpIds: [] },
     api: ["installClerkDesktopBridge (denext/desktop/clerk)"],
     // A runtime API (Deno.desktop.passkeys), no --allow-* of its own.
     trust: "none",
     notes: "native passkeys: macOS Touch ID / iCloud Keychain, Windows Hello (pinned runtime)",
     manual: [
       "passkeys: macOS needs the associated-domains entitlement (webcredentials:<rp-id>) with a provisioning profile, and the RP's apple-app-site-association must list <TeamID>.<bundle id>; otherwise every request is invalid_rp.",
-      "passkeys: pin the relying parties with desktop.capabilities.passkeys = { rpIds: [...] } (on Windows nothing else ties the RP ID to the app). Linux has no native passkeys.",
+      "passkeys: list your relying parties in desktop.capabilities.passkeys = { rpIds: [...] } — it is written empty, and until it names one every request is invalid_rp (on Windows nothing else ties the RP ID to the app). Linux has no native passkeys.",
     ],
   },
 };

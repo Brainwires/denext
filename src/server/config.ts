@@ -729,9 +729,10 @@ export interface DesktopCapabilitiesConfig {
    * Native passkeys (macOS Touch ID / iCloud Keychain, Windows Hello; none on Linux) through
    * denext's pinned runtime, for a page whose custom-scheme origin the webview's own WebAuthn cannot
    * use (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app
-   * may request; anything else answers `invalid_rp` without reaching the OS.
+   * may request and is required; anything else answers `invalid_rp` without reaching the OS.
+   * `false` (or leaving it out) disables it.
    */
-  passkeys?: boolean | DesktopPasskeysConfig;
+  passkeys?: false | DesktopPasskeysConfig;
   /** The `echo` diagnostic capability (bridge connectivity check). */
   echo?: boolean;
   /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
@@ -740,8 +741,11 @@ export interface DesktopCapabilitiesConfig {
 
 /** `desktop.capabilities.passkeys` options. */
 export interface DesktopPasskeysConfig {
-  /** The relying-party IDs (`"clerk.example.com"`) the app may request; absent: any. */
-  rpIds?: string[];
+  /**
+   * The relying-party IDs (`"example.com"`) the app may request. Required: an empty list allows
+   * none, and no default allows any.
+   */
+  rpIds: string[];
 }
 
 /**

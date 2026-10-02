@@ -15,7 +15,8 @@
  * SECURITY. The native path skips the browser's origin check (the OS builds `clientDataJSON` for
  * `https://<rp-id>`), and on Windows nothing ties the RP ID to the app. So the options are
  * untrusted input, and `desktop.capabilities.passkeys: { rpIds: [...] }` pins the RP IDs this app
- * may request (anything else answers `invalid_rp` without reaching the OS). The bridge's gate
+ * may request (anything else answers `invalid_rp` without reaching the OS). The pin is mandatory:
+ * with no RP ID listed, every ceremony answers `invalid_rp` (fail closed). The bridge's gate
  * already limits the caller to the app's own top-level page.
  *
  * macOS: a request succeeds only when the app's code signature carries
@@ -40,7 +41,7 @@ const CEREMONY_TIMEOUT_MS = 5 * 60_000;
 
 /** Options for {@linkcode passkeysCapability}. */
 export interface PasskeysCapabilityOptions {
-  /** The RP IDs the app may request (absent: any). */
+  /** The RP IDs the app may request. Absent or empty: none (every ceremony is `invalid_rp`). */
   readonly rpIds?: readonly string[];
   /** The runtime's app API (default `Deno.desktop`); tests pass a fake. */
   readonly api?: DesktopAppApi;
@@ -79,13 +80,19 @@ function rpIdOf(kind: "create" | "get", options: Record<string, unknown>): strin
  * @returns The capability.
  */
 export function passkeysCapability(options: PasskeysCapabilityOptions = {}): DesktopCapability {
-  const rpIds = options.rpIds?.map((id) => id.toLowerCase());
+  const rpIds = (options.rpIds ?? []).map((id) => id.toLowerCase());
   const api = () => options.api ?? desktopAppApi();
 
   const ceremony = (kind: "create" | "get") => async (args: unknown, ctx: { window?: unknown }) => {
     const { json, parsed } = readOptions(args);
     const rpId = rpIdOf(kind, parsed).toLowerCase();
-    if (rpIds && !rpIds.includes(rpId)) {
+    if (rpIds.length === 0) {
+      return failure(
+        "invalid_rp",
+        "desktop.capabilities.passkeys pins no RP ID: list the relying parties in { rpIds: [...] }",
+      );
+    }
+    if (rpId === "" || !rpIds.includes(rpId)) {
       return failure("invalid_rp", `the RP ID "${rpId}" is not in desktop.capabilities.passkeys`);
     }
     const native = api()?.passkeys;

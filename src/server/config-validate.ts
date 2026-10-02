@@ -218,10 +218,20 @@ function validateDesktopOrigin(app: Record<string, unknown>, fail: Fail): void {
   if (idError) fail("desktop.app.identifier", `is invalid: ${idError}`);
 }
 
-/** `desktop.capabilities.passkeys.rpIds`: relying-party ID strings. */
+/**
+ * `desktop.capabilities.passkeys`: `false`, or `{ rpIds: string[] }`. The pin is mandatory — the
+ * native path skips the browser's origin check, and on Windows nothing else ties the RP ID to the
+ * app — so a bare `true` (which once meant "any RP") is an error, not a default.
+ */
 function validatePasskeys(passkeys: unknown, fail: Fail): void {
-  const rpIds = isPlainObject(passkeys) ? passkeys.rpIds : undefined;
-  if (rpIds === undefined) return;
+  if (passkeys === undefined || passkeys === false) return;
+  if (!isPlainObject(passkeys) || passkeys.rpIds === undefined) {
+    fail(
+      "desktop.capabilities.passkeys",
+      'must pin its relying parties: { rpIds: ["example.com"] } (a bare `true` allowed any RP ID)',
+    );
+  }
+  const rpIds = (passkeys as Record<string, unknown>).rpIds;
   if (!Array.isArray(rpIds) || !rpIds.every((id) => typeof id === "string" && id !== "")) {
     fail("desktop.capabilities.passkeys.rpIds", "must be an array of RP ID strings");
   }

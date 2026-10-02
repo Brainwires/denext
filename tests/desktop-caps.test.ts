@@ -2097,7 +2097,7 @@ Deno.test("resolver: a shell object enables only what it names (least privilege)
   }
 });
 
-Deno.test("resolver: the pinned-runtime caps map by name; passkeys: true pins no RP ID", async () => {
+Deno.test("resolver: the pinned-runtime caps map by name; passkeys without rpIds refuses every RP", async () => {
   const r = await resolveDesktopCapabilities({
     desktop: {
       capabilities: {
@@ -2116,12 +2116,15 @@ Deno.test("resolver: the pinned-runtime caps map by name; passkeys: true pins no
     "globalShortcuts",
     "launchAtLogin",
   ]);
-  // No RP allowlist: an arbitrary RP reaches the runtime check (absent here), not `invalid_rp`.
+  // No RP allowlist (a bare `true` the config validation rejects) fails closed: `invalid_rp`
+  // before the runtime is even asked.
   const passkeys = r.capabilities[0];
-  const out = await call(passkeys, "create", {
-    optionsJson: JSON.stringify({ rp: { id: "anything.example" } }),
-  }) as { ok: boolean; error?: { code: string } };
-  assertEquals(out.error?.code, "not_supported");
+  for (const rp of ["anything.example", ""]) {
+    const out = await call(passkeys, "create", {
+      optionsJson: JSON.stringify({ rp: { id: rp } }),
+    }) as { ok: boolean; error?: { code: string } };
+    assertEquals(out.error?.code, "invalid_rp", rp);
+  }
 });
 
 Deno.test("resolver: a relative extension resolves against `base`; a module without a default cap is refused", async () => {

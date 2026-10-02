@@ -306,8 +306,12 @@ function systemCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCa
   if (caps.keepAwake) out.push(keepAwakeCapability());
   if (caps.clipboard) out.push(clipboardCapability());
   if (caps.passkeys) {
-    const rpIds = typeof caps.passkeys === "object" ? caps.passkeys.rpIds : undefined;
-    out.push(passkeysCapability(rpIds ? { rpIds } : {}));
+    // Fail closed: no `rpIds` (a bare `true`, which config validation rejects) pins nothing, so
+    // every ceremony answers `invalid_rp`.
+    const rpIds = typeof caps.passkeys === "object" && Array.isArray(caps.passkeys.rpIds)
+      ? caps.passkeys.rpIds
+      : [];
+    out.push(passkeysCapability({ rpIds }));
   }
   return out;
 }

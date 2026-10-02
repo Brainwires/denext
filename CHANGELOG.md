@@ -368,6 +368,12 @@ and this project adheres to
   (or reads `--archives <dir>`), hashes and attests every archive before writing a pin. Every
   GitHub Actions step in denext's own workflows is pinned to a commit SHA, and the desktop window
   job re-hashes its cached runtime.
+- **Desktop passkeys fail closed (breaking for `passkeys: true`).** `desktop.capabilities.passkeys`
+  must now pin its relying parties: `{ rpIds: ["example.com"] }`. A bare `true` — which let the
+  page request a ceremony for any RP ID, with nothing on Windows tying the RP to the app — is a
+  config validation error, and the capability itself refuses every ceremony (`invalid_rp`) when no
+  RP ID is listed. `denext desktop add passkeys` writes `{ rpIds: [] }` for you to fill in. The
+  type is now `false | { rpIds: string[] }`.
 
 ## [3.0.2] - 2026-09-30
 

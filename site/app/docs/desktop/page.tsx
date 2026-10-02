@@ -610,9 +610,13 @@ export default {
         </li>
         <li>
           <code>window.__clerk_internal_electron_passkeys</code> runs ceremonies through the{" "}
-          <code>passkeys</code>{" "}
-          capability (Touch ID / iCloud Keychain, Windows Hello). On macOS the app's signature needs
-          the <code>com.apple.developer.associated-domains</code> entitlement{" "}
+          <code>passkeys</code> capability (Touch ID / iCloud Keychain, Windows Hello).{" "}
+          <code>rpIds</code>{" "}
+          is required and must name the relying party your passkeys belong to (the instance's
+          application domain, which is not the Frontend API host the publishable key encodes, so
+          denext does not guess it); <code>passkeys: true</code>{" "}
+          is a config error, and an empty list refuses every request. On macOS the app's signature
+          needs the <code>com.apple.developer.associated-domains</code> entitlement{" "}
           (<code>webcredentials:&lt;rp-id&gt;</code>) with a provisioning profile, and the RP's{" "}
           <code>apple-app-site-association</code> must list{" "}
           <code>&lt;TeamID&gt;.&lt;bundle id&gt;</code>

@@ -385,11 +385,23 @@ Deno.test("csp / spa.csp: opt-in values must be string arrays; unknown keys warn
   assert(warns[0].includes("did you mean `frameSrc`?"), warns[0]);
 });
 
-Deno.test("desktop.capabilities.passkeys: a boolean or { rpIds: string[] }", () => {
-  validateDenextConfig({ desktop: { capabilities: { passkeys: true } } });
+Deno.test("desktop.capabilities.passkeys: false or a required { rpIds: string[] } pin", () => {
   validateDenextConfig({
     desktop: { capabilities: { passkeys: { rpIds: ["clerk.example.com"] } } },
   });
+  validateDenextConfig({ desktop: { capabilities: { passkeys: { rpIds: [] } } } });
+  validateDenextConfig({ desktop: { capabilities: { passkeys: false } } });
+  // Fail closed: no pin is an error, never "any RP ID".
+  for (const passkeys of [true, {}]) {
+    assertThrows(
+      () =>
+        validateDenextConfig(
+          { desktop: { capabilities: { passkeys } } } as unknown as Record<never, never>,
+        ),
+      Error,
+      "must pin its relying parties",
+    );
+  }
   for (const passkeys of [{ rpIds: "x" }, { rpIds: [""] }, { rpIds: [1] }, "yes"]) {
     assertThrows(
       () =>
