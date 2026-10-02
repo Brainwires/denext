@@ -847,13 +847,18 @@ cache uses Deno's built-in `node:sqlite`.)
   server's errors/console/HMR events, render a route or component server-side,
   show a path's render tree, read the **live component tree** from a running dev
   page (`denext_component_tree` / `denext_why_render` / `denext_hook_state`),
-  search the whole docs site and API reference offline (BM25, `kind: "guide" |
-  "api"`) and read a page, a section or an API symbol as Markdown
+  search the whole docs site, every example's README and the API reference
+  offline (BM25, `kind: "guide" | "api"`) and read a page, a section or an API
+  symbol as Markdown
   (`denext_read_docs`, also the `denext://docs/<slug>` resources), and
   index/query the codebase; `--disable` trims tool groups. `denext create --mcp`
   / `denext mcp init` register it per project (`.mcp.json`, VS Code, Cursor,
   optionally Gemini and Codex) as a `deno task mcp` pinned to the project's
-  denext. — `src/mcp/tools.ts`, `src/build/mcp-template.ts`. Plus `llms.txt` / `llms-full.txt`
+  denext. — `src/mcp/tools.ts`, `src/build/mcp-template.ts`.
+- **Every example, documented** — each `examples/*` app has a page at
+  `denext.dev/docs/examples/<name>` rendered from its own README (run commands,
+  category, related examples), and the examples index groups them by category.
+  — `scripts/gen-examples-index.ts`. Plus `llms.txt` / `llms-full.txt`
   (the authoring guide + an API summary) and the checked-in
   [AGENTS.md](./AGENTS.md) authoring guide that the MCP `denext://guide`
   resource and the docs corpus are generated from.
