@@ -158,7 +158,14 @@ async function fetchText(url: string): Promise<string> {
   return await res.text();
 }
 
-async function main(args: string[]): Promise<void> {
+/**
+ * The CLI: fetch (or read, with `--manifest` / `--sums`) the release's files, build the pin and
+ * write it to `out`.
+ *
+ * @param args The command line (`<tag> [--manifest <file> --sums <file>]`).
+ * @param out Where the pin is written (default: `src/build/desktop-runtime-pin.json`).
+ */
+export async function main(args: string[], out: string = OUT): Promise<void> {
   const tag = args[0];
   if (!tag || tag.startsWith("-")) {
     fail("usage: deno task desktop:pin-runtime <tag> [--manifest <file> --sums <file>]");
@@ -175,12 +182,12 @@ async function main(args: string[]): Promise<void> {
     ? await Deno.readTextFile(flag("--sums")!)
     : await fetchText(`${base}/SHA256SUMS`);
   const pin = pinFromRelease(tag, JSON.parse(manifestText), sumsText);
-  await Deno.writeTextFile(OUT, JSON.stringify(pin, null, 2) + "\n");
+  await Deno.writeTextFile(out, JSON.stringify(pin, null, 2) + "\n");
   const count = Object.values(pin.targets).reduce(
     (n, t) => n + BACKENDS.filter((b) => t[b]).length,
     0,
   );
-  console.log(`wrote ${OUT}: runtime ${pin.version} (deno ${pin.deno}), ${count} archives`);
+  console.log(`wrote ${out}: runtime ${pin.version} (deno ${pin.deno}), ${count} archives`);
 }
 
 if (import.meta.main) await main(Deno.args);

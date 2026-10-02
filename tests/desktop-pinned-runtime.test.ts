@@ -18,7 +18,11 @@ import {
   RUNTIME_MARKER,
   verifiedRuntime,
 } from "../src/build/desktop-runtime.ts";
-import { parseSha256Sums, pinFromRelease } from "../scripts/desktop-pin-runtime.ts";
+import {
+  main as pinRuntimeMain,
+  parseSha256Sums,
+  pinFromRelease,
+} from "../scripts/desktop-pin-runtime.ts";
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { sha256Hex, tarGz } from "./_archive-fixtures.ts";
 
@@ -701,6 +705,142 @@ Deno.test("pinFromRelease refuses any inconsistency", () => {
     }
     assert(err instanceof Error, msg);
     assertStringIncludes(err.message, msg);
+  }
+});
+
+Deno.test("pinFromRelease refuses a malformed manifest or archive entry", () => {
+  // deno-lint-ignore no-explicit-any
+  type R = { manifest: any; sums: string };
+  const mac = (r: R) => r.manifest.targets["x86_64-apple-darwin"];
+  const cases: Array<[string, (r: R) => void]> = [
+    ["not a schema-1 runtime manifest", (r) => (r.manifest.schema = 2)],
+    ["not a schema-1 runtime manifest", (r) => (r.manifest.name = "something-else")],
+    ["does not match version", (r) => (r.manifest.version = "2.9.7-denext.2")],
+    ["bad deno version", (r) => (r.manifest.deno = {})],
+    ["unexpected runtimeLib", (r) => (mac(r).runtimeLib = "../evil.dylib")],
+    ["expected deno-desktop-runtime", (r) => (mac(r).webview.file = "other.tar.gz")],
+    ["format zip, expected tar.gz", (r) => (mac(r).webview.format = "zip")],
+    ["bad sha256", (r) => (mac(r).webview.sha256 = "ABC")],
+    ["bad size", (r) => (mac(r).webview.size = 0)],
+    ["bad size", (r) => (mac(r).webview.size = 1.5)],
+    ["lists no archives", (r) => {
+      for (const t of Object.values(r.manifest.targets) as Array<Record<string, unknown>>) {
+        delete t.webview;
+        delete t.cef;
+      }
+    }],
+  ];
+  for (const [msg, mutate] of cases) {
+    const r = release() as R;
+    mutate(r);
+    const err = (() => {
+      try {
+        pinFromRelease(TAG, r.manifest, r.sums);
+      } catch (e) {
+        return e;
+      }
+    })();
+    assert(err instanceof Error, msg);
+    assertStringIncludes(err.message, `desktop:pin-runtime: `);
+    assertStringIncludes(err.message, msg);
+  }
+});
+
+Deno.test("pinFromRelease: a target may ship one backend; laufey's api version is optional", () => {
+  const r = release();
+  // deno-lint-ignore no-explicit-any
+  const m = r.manifest as any;
+  const cefFile = m.targets["x86_64-apple-darwin"].cef.file;
+  delete m.targets["x86_64-apple-darwin"].cef;
+  r.sums = r.sums.split("\n").filter((l) => !l.endsWith(cefFile)).join("\n");
+  delete m.laufey;
+  const pin = pinFromRelease(TAG, m, r.sums);
+  assertEquals(Object.keys(pin.targets["x86_64-apple-darwin"]), ["runtimeLib", "webview"]);
+  assertEquals(pin.laufeyApiVersion, null);
+  assertEquals(pin.laufeySha, "");
+  // Targets are written sorted, whatever the manifest's order.
+  assertEquals(Object.keys(pin.targets), ["x86_64-apple-darwin", "x86_64-pc-windows-msvc"]);
+});
+
+Deno.test("parseSha256Sums: text and binary mode lines, CRLF; anything else is skipped", () => {
+  const a = "a".repeat(64);
+  const b = "b".repeat(64);
+  const sums = parseSha256Sums(
+    `${a}  one.tar.gz\r\n${b} *two.zip\r\n# comment\n${
+      "C".repeat(64)
+    }  upper.zip\nshort  x.zip\n\n`,
+  );
+  assertEquals([...sums], [["one.tar.gz", a], ["two.zip", b]]);
+});
+
+Deno.test("desktop:pin-runtime CLI: fetches the tag's manifest + SHA256SUMS and writes the pin", async () => {
+  const { manifest, sums } = release();
+  const dir = await Deno.makeTempDir();
+  const out = join(dir, "pin.json");
+  const fetched: string[] = [];
+  const prevFetch = globalThis.fetch;
+  const prevLog = console.log;
+  const logged: string[] = [];
+  globalThis.fetch = (input: RequestInfo | URL) => {
+    const url = String(input instanceof Request ? input.url : input);
+    fetched.push(url);
+    if (url.endsWith("/manifest.json")) return Promise.resolve(Response.json(manifest));
+    if (url.endsWith("/SHA256SUMS")) return Promise.resolve(new Response(sums));
+    return Promise.resolve(new Response("nope", { status: 404, statusText: "Not Found" }));
+  };
+  console.log = (...a: unknown[]) => void logged.push(a.join(" "));
+  try {
+    await pinRuntimeMain([TAG], out);
+    const base = `https://github.com/Brainwires/deno/releases/download/${TAG}`;
+    assertEquals(fetched, [`${base}/manifest.json`, `${base}/SHA256SUMS`]);
+    const text = await Deno.readTextFile(out);
+    assert(text.endsWith("}\n"));
+    assertEquals(JSON.parse(text), pinFromRelease(TAG, manifest, sums));
+    assertStringIncludes(logged.join("\n"), "runtime 2.9.7-denext.1 (deno 2.9.7), 4 archives");
+
+    // A failed download is an error naming the URL and status; nothing is written.
+    globalThis.fetch = () =>
+      Promise.resolve(new Response("gone", { status: 404, statusText: "Not Found" }));
+    await Deno.remove(out);
+    const err = await assertRejects(() => pinRuntimeMain([TAG], out));
+    assertStringIncludes((err as Error).message, `GET ${base}/manifest.json: 404 Not Found`);
+    await assertRejects(() => Deno.stat(out), Deno.errors.NotFound);
+  } finally {
+    globalThis.fetch = prevFetch;
+    console.log = prevLog;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop:pin-runtime CLI: local --manifest/--sums never fetch; a bad release writes nothing", async () => {
+  const { manifest, sums } = release();
+  const dir = await Deno.makeTempDir();
+  const out = join(dir, "pin.json");
+  const mf = join(dir, "manifest.json");
+  const sf = join(dir, "SHA256SUMS");
+  await Deno.writeTextFile(mf, JSON.stringify(manifest));
+  await Deno.writeTextFile(sf, sums);
+  const prevFetch = globalThis.fetch;
+  const prevLog = console.log;
+  globalThis.fetch = () => Promise.reject(new Error("must not fetch"));
+  console.log = () => {};
+  try {
+    await pinRuntimeMain([TAG, "--manifest", mf, "--sums", sf], out);
+    assertEquals(JSON.parse(await Deno.readTextFile(out)).tag, TAG);
+    // Usage errors: no tag, or a flag where the tag goes.
+    for (const args of [[], ["--manifest", mf]]) {
+      const err = await assertRejects(() => pinRuntimeMain(args, out));
+      assertStringIncludes((err as Error).message, "usage: deno task desktop:pin-runtime <tag>");
+    }
+    // A SHA256SUMS that disagrees with the manifest refuses before writing.
+    await Deno.remove(out);
+    await Deno.writeTextFile(sf, sums.replace(/^[0-9a-f]{64}/, "f".repeat(64)));
+    await assertRejects(() => pinRuntimeMain([TAG, "--manifest", mf, "--sums", sf], out));
+    await assertRejects(() => Deno.stat(out), Deno.errors.NotFound);
+  } finally {
+    globalThis.fetch = prevFetch;
+    console.log = prevLog;
+    await Deno.remove(dir, { recursive: true });
   }
 });
 
