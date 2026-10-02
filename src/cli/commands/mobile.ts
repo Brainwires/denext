@@ -74,6 +74,7 @@ import {
   MOBILE_BUILD_USAGE,
   mobileAssets,
   mobileBuild,
+  mobileBuildLocks,
   mobileSubmit,
 } from "./mobile-build.ts";
 
@@ -669,6 +670,7 @@ export function createMobileCommand(run: CommandRunner = runInherit): CommandSpe
 
 const mobileCommandSpec: Omit<CommandSpec, "run"> = {
   name: "mobile",
+  locks: (ctx) => ctx.positionals[0] === "build" ? mobileBuildLocks(ctx) : undefined,
   summary:
     "Capacitor helpers (add: native capabilities; add-ota: over-the-air UI updates; dev: live reload; fingerprint: native-layer hash; assets / build / submit: icons, store builds, store uploads)",
   usage: "  denext mobile add <capability...>\n" +

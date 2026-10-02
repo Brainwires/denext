@@ -22,6 +22,7 @@ import type { CommandContext, CommandSpec } from "../command.ts";
 import { runBuildStep, spawnDenoAndExit } from "../shared.ts";
 import { spawnDenoChild, startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
 import { staticExport } from "../../build/export.ts";
+import { withProjectLocks } from "../../build/project-locks.ts";
 import { desktopDevTarget, type DesktopWindow, runDesktopDev } from "../../build/desktop-dev.ts";
 import { DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
@@ -45,9 +46,16 @@ function desktopDir(ctx: CommandContext): string {
   );
 }
 
+/**
+ * Export the SPA to out/, holding the build-dir and out/ locks for the export only — `desktop
+ * run` then keeps its window open for as long as the user likes, and must not block builds.
+ */
 async function exportSpa(dir: string): Promise<void> {
   console.log(`\n  denext desktop — exporting SPA  ▸  ${dir}\n`);
-  const result = await runBuildStep(() => staticExport(dir), "desktop export");
+  const result = await withProjectLocks(
+    { projectDir: dir, buildDir: "exclusive", outputDirs: ["out"] },
+    () => runBuildStep(() => staticExport(dir), "desktop export"),
+  );
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }
 
@@ -56,6 +64,12 @@ export const desktopCommand: CommandSpec = {
   summary: "Build/run/package the app as a native desktop app",
   loadsModules: true,
   moduleDir: desktopDir,
+  // `package` writes dist/ and runs the packaging script, whose `deno task export` child takes
+  // the build dir and out/ itself — so the parent locks dist/ only (rank 0, below the child's).
+  locks: (ctx) =>
+    ctx.positionals[0] === "package" && ctx.flags["regenerate-scripts"] !== true
+      ? { projectDir: desktopDir(ctx), packageDirs: ["dist"] }
+      : undefined,
   usage: "  denext desktop run                     Export + open in a deno desktop window\n" +
     "  denext desktop build                   Export the SPA to out/\n" +
     "  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n" +

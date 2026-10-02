@@ -44,6 +44,7 @@ import { type CommandRegistry, GLOBAL_FLAGS } from "./src/cli/command.ts";
 import { buildRegistry } from "./src/cli/register.ts";
 import { envTierFor, projectDir, SHUTDOWN_SIGNALS } from "./src/cli/shared.ts";
 import { readCommandCache } from "./src/cli/command-cache.ts";
+import { acquireProjectLocks } from "./src/build/project-locks.ts";
 
 /**
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse
@@ -404,6 +405,10 @@ async function main(): Promise<void> {
     return printOutcome(registry, outcome, project);
   }
   if (await moduleGate(outcome.command, outcome.ctx)) return;
+  // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —
+  // and held for the whole run (the OS drops them if the process exits or is killed).
+  const lockRequest = outcome.command.locks?.(outcome.ctx);
+  using _locks = lockRequest ? await acquireProjectLocks(lockRequest) : undefined;
   await outcome.command.run(outcome.ctx);
 }
 

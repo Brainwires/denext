@@ -481,6 +481,9 @@ export const doctorCommand: CommandSpec = {
   summary: "Diagnose the project (supersedes probe)",
   aliases: ["probe"],
   loadsModules: true,
+  // Reads the last build in `.denext/` (and probes the routes in-process): a SHARED build-dir
+  // lock, so it runs beside other readers and waits out a build rather than reading it half-done.
+  locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "shared" }),
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [{
     name: "report",

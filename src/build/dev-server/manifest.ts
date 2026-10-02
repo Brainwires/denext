@@ -6,6 +6,7 @@ import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts"
 import { applyPlugins } from "../../plugin/mod.ts";
 import { tagServerModules } from "../../runtime/server-action.ts";
 import { emitTypedModules } from "../emit-typed-modules.ts";
+import { withBuildDirLock } from "../project-locks.ts";
 import {
   type BoundaryManifest,
   buildBoundaryManifest,
@@ -53,7 +54,13 @@ async function scanManifest(st: DevState): Promise<RouteManifest> {
   const manifest = await scanRoutes(st.paths.appDir);
   if (manifest !== st.lastEmittedManifest) {
     st.lastEmittedManifest = manifest;
-    void emitTypedModules(manifest, { outDir: st.paths.outDir, configPath: st.paths.configPath });
+    // Per-rebuild build-dir lock (Cargo's watch model): a concurrent `denext build` writing the
+    // same typed modules is waited out, not interleaved.
+    void withBuildDirLock(
+      st.paths.projectDir,
+      () =>
+        emitTypedModules(manifest, { outDir: st.paths.outDir, configPath: st.paths.configPath }),
+    ).catch((err) => console.warn(`denext: typed modules not refreshed — ${err}`));
   }
   return manifest;
 }

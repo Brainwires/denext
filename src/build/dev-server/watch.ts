@@ -5,6 +5,7 @@
 import { resetModuleGraphCache } from "../module-graph.ts";
 import { clearLiveCacheResults } from "../../server/cache.ts";
 import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
+import { withBuildDirLock } from "../project-locks.ts";
 import type { PluginBuildContext } from "../../plugin/mod.ts";
 import { basename, join } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
@@ -165,7 +166,11 @@ export async function watch(st: DevState): Promise<void> {
         changed = [];
         // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
         // reload the change set triggers serves freshly generated types/store — then apply the set.
-        void runMatchingPrepareSteps(prepareContext(st), changedPaths)
+        // Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
+        void withBuildDirLock(
+          st.paths.projectDir,
+          () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
+        )
           .catch(() => false)
           .finally(() => handleChangeSet(st, configBasenames, changedPaths));
       }, 60);

@@ -94,6 +94,18 @@ in a transitively-tested module — regenerate then. Re-run the task after large
 to source lines, and a function whose lines drifted falls back to the estimate. The full task map (trace an "unused" export, prove a symbol's
 consumers, etc.) lives in [`AGENTS.md`](./AGENTS.md).
 
+**Concurrent runs (agents, hooks, people).** `coverage:fallow` and `test:coverage` hold
+denext's Cargo-style lock on `coverage/` (`scripts/locked.ts`, an OS lock in
+`.denext/.denext-lock-coverage`): a second run prints
+`Blocking waiting for file lock on output directory coverage` and waits for the first
+instead of deleting its output. Seeing that line means another run is in progress — let it
+finish; do not kill it or delete the lock file (the OS releases the lock when the holder
+exits, so there is never a stale lock to clear). The same applies to `denext build` /
+`export` / `dev` / packaging on one project; the lock map is in
+[the CLI reference](https://denext.dev/docs/cli#build-locks) and
+`src/build/project-locks.ts`. Call the `*:run` tasks directly only when you know nothing
+else writes `coverage/`.
+
 If a report is a **genuine false positive**, scope the suppression as narrowly
 as possible — prefer a per-line/file marker over widening config:
 

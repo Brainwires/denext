@@ -28,6 +28,8 @@ export const analyzeCommand: CommandSpec = {
   name: "analyze",
   summary: "Build, then break down client bundle sizes by chunk",
   loadsModules: true,
+  // analyze runs a full build into `.denext/` (Cargo's `check` likewise locks the build dir).
+  locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive" }),
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [{
     name: "md",

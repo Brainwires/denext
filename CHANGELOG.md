@@ -10,6 +10,33 @@ and this project adheres to
 
 ### Added
 
+- **Cargo-style build locks.** Two denext commands writing the same output no longer interleave
+  or delete each other's work: a verb that writes build output holds a real OS file lock
+  (`flock` / `LockFileEx`, released by the OS when the process exits — no stale locks, nothing to
+  clean up after a crash) for the whole command, and a second invocation prints
+  `Blocking waiting for file lock on build directory .denext` once and waits. As in Cargo the
+  build directory (`.denext/`) and the output directories (`out/`, `dist/`, `dist/mobile/`,
+  `coverage/`) are separate locks, taken in one fixed order: `build`, `analyze` and
+  `content build` lock `.denext/`; `export` and `desktop build` lock `.denext/` + `out/`;
+  `desktop package` and `mobile build` lock their `dist` output (the `denext export` they run
+  takes the rest); `test --coverage[=dir]` locks the coverage dir; `dev` locks `.denext/` per
+  rebuild, not per session; `doctor` takes it shared; `start` never locks. The pinned Deno
+  Desktop runtime cache uses Cargo's package-cache modes (shared reads, exclusive downloads, a
+  mutate lock to replace a bad tree). A plugin verb declares its locks with the new
+  `CommandSpec.locks` field. denext's own `coverage:fallow` / `test:coverage` tasks hold the
+  `coverage/` lock, so two concurrent runs no longer delete each other's coverage.
+- **MCP: the whole docs site, offline.** `denext_search_docs` now searches every docs page
+  (split by h2/h3 section, deep-linked to `/docs/<slug>#<anchor>`), the root guides the site
+  renders (features, known limitations and differences, the latest changelog entries), the
+  authoring guide and the full API reference, ranked together; `kind: "guide" | "api" | "all"`
+  narrows it, and every hit carries a ref for the new **`denext_read_docs`** tool, which returns a
+  whole page (`desktop-runtime`, `/docs/deployment-targets`), one section
+  (`desktop#desktop-notifications`) or an API symbol's full docs (`api:denext/useApi`) as
+  Markdown, with did-you-mean suggestions for an unknown page. Both are in the `docs` tool group
+  (`denext mcp --disable docs`), and the pages are also MCP resources (`denext://docs`,
+  `denext://docs/<slug>`). The corpus ships in the package and is loaded only on the first docs
+  call, so `denext` CLI start-up does not pay for it; a test fails when it is stale against its
+  sources (`deno task docs:corpus`).
 - **Deno Desktop: native notifications.** With `denext desktop add notifications` and denext's
   pinned runtime, `denext/mobile`'s local notifications are the OS's own (macOS
   `UNUserNotificationCenter`, Windows toasts, Linux `org.freedesktop.Notifications`):
@@ -181,6 +208,16 @@ and this project adheres to
 - **`runDesktop` resolves to `{ window, trust, emit }`**: the adopted window, and a hook that
   pushes an event to the page's bridge stream (`subscribeDesktopEvent` in
   `denext/desktop/client`).
+- **`denext create --fallow`: the fallow code-health gate in a new app.** An opt-in entry in the
+  feature picker (and on `denext ui`'s Setup page) adds the dead-code, duplication and complexity
+  gate denext itself is built under: a `fallow.toml` declaring denext's path-loaded files (routes,
+  `denext.config.ts`, `middleware.ts`, `tasks/*.ts`, `desktop.ts`, …) as entry points; `fallow`,
+  `fallow:audit`, `coverage:fallow` (`deno test --coverage` → an Istanbul map for measured CRAP
+  scores) and `hooks:install` tasks running `npm:fallow@3.30.0` through Deno, so nothing is
+  installed globally; a `.githooks/pre-commit` gate that `deno task hooks:install` enables (the
+  scaffold never touches `.git`); and an `AGENTS.md` (plus a `CLAUDE.md` including it) telling
+  coding agents to run the gate before committing. **`denext fallow init`** adds the same setup
+  to an existing project, writing only missing files and splicing the tasks into `deno.json`.
 
 ### Changed
 

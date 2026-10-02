@@ -27,6 +27,22 @@ function runDeno(
   return spawnDenoAndExit(args, commandCwd(ctx));
 }
 
+/**
+ * The directory `deno test --coverage[=<dir>]` writes (`coverage` when the flag has no value),
+ * or undefined without the flag.
+ *
+ * @param args The forwarded `deno test` arguments.
+ * @returns The coverage directory, or undefined.
+ */
+export function coverageDir(args: readonly string[]): string | undefined {
+  for (const arg of args) {
+    if (arg === "--") break;
+    if (arg === "--coverage") return "coverage";
+    if (arg.startsWith("--coverage=")) return arg.slice("--coverage=".length) || "coverage";
+  }
+  return undefined;
+}
+
 export const testCommand: CommandSpec = {
   name: "test",
   summary: "Run the app's tests (deno test)",
@@ -38,6 +54,12 @@ export const testCommand: CommandSpec = {
     "  denext test --filter Auth    Forward deno test flags\n" +
     "  denext test routes/          Restrict to a path",
   positionals: [{ name: "paths", help: "Test files/dirs (default: all)" }],
+  // `--coverage[=<dir>]` writes a coverage profile: lock that output dir, so two runs never
+  // delete or interleave each other's profiles.
+  locks: (ctx) => {
+    const dir = coverageDir(ctx.rest);
+    return dir === undefined ? undefined : { projectDir: commandCwd(ctx), outputDirs: [dir] };
+  },
   run: (ctx) => runDeno("test", ctx, ["-A"]),
 };
 
