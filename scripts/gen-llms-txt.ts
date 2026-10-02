@@ -68,7 +68,8 @@ export function llmsIndex(): string {
   \`deno run -A jsr:@denext/denext/cli mcp\`). Tools (derived from the live
   registry so this never drifts): ${TOOLS.map((t) => `\`${t.name}\``).join(", ")}. It can lint a
   snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
-  running dev server's errors + console, and render a route/component server-side.
+  running dev server's errors + console, render a route/component server-side, and search or
+  read every docs page and API symbol offline (\`denext_search_docs\` / \`denext_read_docs\`).
 - **Migrate** a Next.js / Remix / Pages-Router app in one pass: \`denext migrate\`.
 `;
 }

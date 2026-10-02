@@ -10,6 +10,33 @@ and this project adheres to
 
 ### Added
 
+- **fastlane, for teams that ship with it.** `denext mobile add fastlane` writes `fastlane/Appfile`
+  (the bundle id / package name from `capacitor.config` `appId`; the Apple team and the Play key
+  from the environment), `fastlane/Fastfile`, `fastlane/Matchfile`, `fastlane/.gitignore` and a
+  `Gemfile` pinning fastlane. The `ios` and `android` lanes `build`, `beta` (TestFlight / a Play
+  testing track) and `release` (App Store / Play production, staged rollouts, optional metadata)
+  build with `denext mobile build <platform> --release` and hand its artifact to match (read-only),
+  `upload_to_testflight`, `upload_to_app_store` and `upload_to_play_store`, so the binary carries
+  the current web UI and a flavor's own app id; `flavor:`, `build_number:`, `version_name:` and
+  `bump:` pass through, and store lanes take the store's next build number for that build only.
+  `--ci` adds `.github/workflows/mobile-release.yml` (ruby/setup-ruby, `bundle exec fastlane`,
+  every credential a repository secret). Edited files are kept on a re-run (`--force` replaces
+  them), `--dry-run` lists them. `denext mobile doctor --release` checks a `fastlane/` folder: an
+  Appfile id that is not `capacitor.config`'s, a Gemfile without its lock, a Fastfile that skips
+  `denext export` + `cap sync`, and credentials in or written into `fastlane/`. `denext mobile
+  build` / `submit` remain the zero-setup path; fastlane is never required, and nothing of it
+  reaches the app or its native fingerprint.
+- **The denext MCP server, installed per project.** `denext create --mcp` (pre-checked in the
+  interactive picker and on `denext ui`'s Setup page; `--yes` without the flag writes what it
+  always did) and `denext mcp init [dir]` for an existing app add a `mcp` task to `deno.json` that
+  runs `denext mcp` at the version the project pins, and register `deno task mcp` as the `denext`
+  server in `.mcp.json` (Claude Code), `.vscode/mcp.json` (VS Code) and `.cursor/mcp.json`
+  (Cursor) — `--clients gemini,codex` (or `all`) adds `.gemini/settings.json` and
+  `.codex/config.toml`. No client file names a version, so the server always matches the
+  framework and moves with a `deno.json` upgrade; `deno` runs directly on Windows too. Existing
+  files keep their other servers and comments, a re-run is a no-op, `--force` rewrites the
+  `denext` entry and task, `--dry-run` prints the plan, and `--disable <groups>` is baked into the
+  task. With `--fallow` too, the generated `AGENTS.md` lists the MCP tools.
 - **Cargo-style build locks.** Two denext commands writing the same output no longer interleave
   or delete each other's work: a verb that writes build output holds a real OS file lock
   (`flock` / `LockFileEx`, released by the OS when the process exits — no stale locks, nothing to
@@ -236,6 +263,12 @@ and this project adheres to
   forge) and carry the token; an `Origin`, when present, must equal the app origin exactly. The
   token is injected only into a top-level document served over that transport, and a WebSocket
   upgrade must carry the app origin. Under the stock runtime the loopback rules are unchanged.
+- **Docs: [Our Deno Desktop runtime: what we ship and why](https://denext.dev/docs/desktop-runtime).**
+  The runtime page now explains why denext ships its own Deno Desktop runtime (Clerk's
+  `origin_invalid` for the loopback origin, storage lost every launch, and the rest of what stock
+  Deno Desktop 2.9.7 couldn't do), catalogs every change it carries with the problem it solves,
+  its layer (laufey, the Deno runtime, denext) and its upstream status, and describes how each
+  layer is tested.
 
 ### Fixed
 

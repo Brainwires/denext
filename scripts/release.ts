@@ -414,10 +414,11 @@ async function runGate(): Promise<void> {
   }
   // The MCP docs corpus + llms*.txt ship IN the JSR package (src/mcp/docs-corpus.json) and
   // embed the version, so they must be regenerated on the release commit, not after the tag.
+  // docs:mcp runs first: the MCP page (mcp.json) is one of the corpus's inputs.
   console.log(
-    "\n3a. Regenerating docs corpus + llms.txt (deno task docs:corpus/docs:mcp/docs:llms)…",
+    "\n3a. Regenerating docs corpus + llms.txt (deno task docs:mcp/docs:corpus/docs:llms)…",
   );
-  for (const task of ["docs:corpus", "docs:mcp", "docs:llms"]) {
+  for (const task of ["docs:mcp", "docs:corpus", "docs:llms"]) {
     if (await run("deno", "task", task) !== 0) die(`${task} failed — release aborted.`);
   }
   console.log("\n3b. Regenerating the test-count badge (deno task badge:tests)…");

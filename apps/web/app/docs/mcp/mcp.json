@@ -224,7 +224,7 @@
     },
     {
       "name": "denext_search_docs",
-      "description": "Search the denext docs — the API reference + the authoring guide — by keyword and get the top matching symbols/sections with links and snippets. Use it to find the right denext API or rule before writing code, instead of guessing Next.js.",
+      "description": "Search ALL of denext's docs, offline — every docs-site guide page (by section) plus the full API reference — by keyword or question. Returns the top sections/symbols with a `read:` ref, a denext.dev link and a snippet; pass the ref to denext_read_docs for the full text. Use it before writing code (and instead of fetching denext.dev) to find the right denext API, config key or recipe rather than guessing Next.js.",
       "params": [
         {
           "name": "query",
@@ -233,9 +233,33 @@
           "required": true
         },
         {
+          "name": "kind",
+          "type": "string",
+          "description": "Restrict to guide pages (`guide`), API symbols (`api`), or both (`all`, default).",
+          "required": false
+        },
+        {
           "name": "limit",
           "type": "number",
           "description": "Max results (default 8).",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "denext_read_docs",
+      "description": "Read denext docs offline, as Markdown: a whole docs page by slug or URL (\"desktop-runtime\", \"/docs/deployment-targets\"), one section (\"desktop#desktop-notifications\"), or an API symbol's full docs (\"api:denext/useApi\", \"api:denext/server/getSession\"). An unknown page lists the closest matches and every page. Pair it with denext_search_docs, whose results carry the ref to pass here.",
+      "params": [
+        {
+          "name": "ref",
+          "type": "string",
+          "description": "Page slug or URL, \"slug#anchor\" for one section, or \"api:<module>/<name>\" for a symbol.",
+          "required": true
+        },
+        {
+          "name": "maxChars",
+          "type": "number",
+          "description": "Cap for a whole-page read (default 60000); past it the page is cut at a section boundary and the remaining sections are listed by ref.",
           "required": false
         }
       ]
@@ -419,6 +443,11 @@
       "uri": "denext://import-map",
       "name": "Next.js → denext import map",
       "description": "How each Next.js/React import maps to its denext equivalent."
+    },
+    {
+      "uri": "denext://docs",
+      "name": "denext docs index",
+      "description": "Every denext docs page (offline). Read one as denext://docs/<slug> or denext://docs/<slug>#<anchor> — the same text denext_read_docs returns."
     }
   ]
 }

@@ -103,6 +103,9 @@ Deno.test("dispatch: tools/list lists every registered tool with a schema", asyn
   assert(names.includes("denext_component_tree"));
   assert(names.includes("denext_why_render"));
   assert(names.includes("denext_hook_state"));
+  // The offline docs pair: search + read.
+  assert(names.includes("denext_search_docs"));
+  assert(names.includes("denext_read_docs"));
   for (const t of res?.result.tools) assertEquals(t.inputSchema.type, "object");
 });
 
