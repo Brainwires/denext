@@ -21,6 +21,8 @@
 #      in-place upgrade, the .deb through apt, the .rpm through dnf (a Fedora container), the .dmg
 #      mounted and the .pkg through `installer`. And install.ps1 against a loopback release and the
 #      real latest one.
+#   4. `denext desktop run` builds outside the project, launches the app (Linux under Xvfb, and macOS)
+#      and quits cleanly (`scripts/ci/desktop-run-smoke.ts`).
 #
 # workflow_dispatch is available once this workflow reaches the default branch; the `push` trigger
 # (paths-filtered to the desktop surface) runs it whenever the workflow or the desktop code changes,
@@ -47,6 +49,7 @@ on:
       - "scripts/desktop-pin-runtime.ts"
       - "scripts/coverage-floor.ts"
       - "scripts/ci/desktop-secure-store-roundtrip.ts"
+      - "scripts/ci/desktop-run-smoke.ts"
       - "tests/desktop-*.test.ts"
       - "tests/safe-extract*.test.ts"
       - "tests/cli-desktop-*.test.ts"
@@ -163,6 +166,50 @@ jobs:
           else
             echo "✗ no dist/denext-app* artifact — deno desktop --output naming changed"; exit 1
           fi
+
+  # `denext desktop run` end to end on examples/native: build into a temp dir with the app's
+  # least-privilege flags, launch the built executable (Linux under Xvfb), wait for its server, quit it
+  # as Ctrl-C does, and check nothing was left in the project. The kitchen sink's window test drives
+  # the PACKAGED app, so this is the only CI coverage of the verb itself.
+  desktop-run:
+    name: desktop run smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - name: Cache the Deno Desktop runtime
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/deno/denext-desktop-runtime
+            ~/Library/Caches/deno/denext-desktop-runtime
+          key: desktop-runtime-run-${{ matrix.os }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
+      - name: Linux — a display, a D-Bus session and the WebKitGTK runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth dbus dbus-x11 libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0
+      - name: Install examples/native's npm packages
+        working-directory: examples/native
+        run: deno install
+      - name: denext desktop run (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        env:
+          DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
+        run: xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- deno run -A scripts/ci/desktop-run-smoke.ts examples/native
+      - name: denext desktop run (macOS)
+        if: runner.os == 'macOS'
+        env:
+          DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
+        run: deno run -A scripts/ci/desktop-run-smoke.ts examples/native
 
   # The installer jobs package examples/native with a deep-link scheme added (and, on Windows, two
   # versions), so each installer has a scheme to register and the .msi an upgrade to perform.

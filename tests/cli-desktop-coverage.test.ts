@@ -304,7 +304,8 @@ Deno.test("desktop run: a failing export stops before any window is opened", asy
     assert(r.thrown instanceof Error);
     assertStringIncludes(r.thrown.message, "denext: desktop export failed — page boom");
     assertStringIncludes(r.out, "exporting SPA");
-    assert(!r.out.includes("Opening desktop window"));
+    assert(!r.out.includes("Building the desktop app"));
+    assert(!r.out.includes("Opening the desktop window"));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -441,15 +442,20 @@ Deno.test({
       () => new Response("dev"),
     );
     try {
-      // An entry `deno desktop` refuses at once (it type-checks first), so no window ever opens:
-      // the session must still end when the window process does, leaving the attached server up.
+      // An entry `deno desktop` refuses at once (it type-checks first), so the build fails and no
+      // window opens: the session ends with the verb's error, leaving the attached server up.
       await Deno.writeTextFile(join(dir, "desktop.ts"), 'const n: number = "not a number";\n');
       const r = await withEnv(
         STOCK,
         () => runVerb(["dev"], dir, { host: "127.0.0.1", port: server.addr.port }),
       );
-      assertEquals(r.code, 0, r.err);
+      assertEquals(r.code, 1, r.err);
+      assertStringIncludes(r.err, "denext desktop dev: deno desktop exited with code 1");
       assertStringIncludes(r.out, `http://127.0.0.1:${server.addr.port}`);
+      // The build went to a scratch dir outside the project, and the generated dev entry is in .denext/.
+      assertStringIncludes(r.out, "Building the desktop app (deno desktop) into ");
+      assert(!r.out.includes(`into ${dir}`));
+      assert(await exists(join(dir, ".denext", "desktop-dev-entry.ts")));
       assertEquals(await (await fetch(`http://127.0.0.1:${server.addr.port}/`)).text(), "dev");
     } finally {
       ac.abort();

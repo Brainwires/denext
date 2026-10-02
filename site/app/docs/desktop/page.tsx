@@ -28,7 +28,17 @@ export default function Desktop() {
       </p>
       <ul>
         <li>
-          <code>denext desktop run</code> — export and open the app in a native window (dev).
+          <code>denext desktop run</code> — export, build the app with <code>deno desktop</code>
+          {" "}
+          into a temporary directory (never the project folder) with the same least-privilege
+          permissions the packaging scripts derive from{" "}
+          <code>desktop.capabilities</code>, then open it and stream its output until it quits
+          (<kbd>Ctrl-C</kbd> quits it too). On macOS it launches the{" "}
+          <code>.app</code>&apos;s executable directly so the output reaches your terminal. A bare
+          {" "}
+          <code>deno desktop desktop.ts</code>{" "}
+          only compiles: it writes a bundle into the current folder, opens no window, and that build
+          has no permissions.
         </li>
         <li>
           <code>denext desktop build</code> — export the app to <code>out/</code>{" "}
@@ -217,7 +227,13 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
         {" "}
         <code>DENEXT_DESKTOP_DEV_URL</code>{" "}
         environment variable on the window process, and that is the only switch that turns proxy
-        mode on. The runtime honours it only when the window runs under the <code>deno</code>{" "}
+        mode on. Like <code>run</code>, <code>desktop dev</code>{" "}
+        builds the app into a temporary directory and launches it, but from a generated entry
+        (<code>.denext/desktop-dev-entry.ts</code>) that marks the build as a dev build before your
+        {" "}
+        <code>desktop.ts</code>{" "}
+        runs. The runtime honours the variable only in such a build or under the <code>deno</code>
+        {" "}
         CLI (a packaged app ignores it), only for an <code>http:</code> loopback URL unless{" "}
         <code>--lan</code> also set its own opt-in, so a <code>denext desktop run</code>{" "}
         or a packaged build serves the static export exactly as before, whatever its environment.
@@ -239,13 +255,13 @@ denext desktop dev --lan           # attach to a dev server elsewhere on your ne
       </Callout>
       <Callout kind="note">
         <strong>No extra permissions.</strong> <code>denext desktop dev</code>{" "}
-        needs network access to the loopback dev port only — exactly what the{" "}
-        <code>--allow-net=127.0.0.1,localhost</code> a migrated SPA bakes into its{" "}
-        <code>deno task desktop</code>{" "}
-        already grants, because the window talks only to the local dev server. (The scaffolded
-        packaging scripts derive the app's <code>--allow-*</code> from its enabled capabilities; see
+        builds with the app&apos;s own <code>--allow-*</code>{" "}
+        flags, the ones the scaffolded packaging scripts derive from its enabled capabilities (see
         {" "}
-        <a href="#desktop-capabilities">Native capabilities</a>.)
+        <a href="#desktop-capabilities">Native capabilities</a>): the window talks only to the local
+        dev server, which the baseline <code>--allow-net=127.0.0.1,localhost</code>{" "}
+        already reaches. Only <code>--lan</code> adds the dev server&apos;s LAN address to{" "}
+        <code>--allow-net</code>.
       </Callout>
       <Callout kind="note">
         In proxy mode the runtime injects its <code>globalThis.__denext</code>{" "}

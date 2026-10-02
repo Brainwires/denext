@@ -14,6 +14,7 @@ import { basename, fromFileUrl, join } from "@std/path";
 import type { SpaProxyConfig } from "../server/config.ts";
 import { serveStatic } from "../server/static.ts";
 import { isLoopbackHost } from "./dev-server/lan.ts";
+import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { wantsShell } from "./spa/shared.ts";
 import {
   authSessionUnavailable,
@@ -178,7 +179,7 @@ const QUIT_PATH = "/_denext/desktop/quit";
 const DESKTOP_TOKEN_HEADER = "x-denext-desktop-token";
 
 /**
- * The env var `denext desktop dev` sets on the `deno desktop` child to put the runtime into
+ * The env var `denext desktop dev` sets on the window process to put the runtime into
  * live-reload PROXY mode: its value is the loopback `denext dev` URL to reverse-proxy to. It is
  * the ONLY switch that turns proxy-all on — a release / `run` / `package` invocation never sets
  * it, so those windows serve the static export exactly as before (see {@linkcode runDesktop}).
@@ -195,12 +196,18 @@ export const DESKTOP_DEV_LAN_ENV = "DENEXT_DESKTOP_DEV_LAN";
 
 /**
  * Whether `execPath` is the `deno` CLI (`deno` / `deno.exe`, case-insensitive) rather than a
- * compiled/packaged app binary. Live-reload proxy mode runs under `deno desktop <entry>`, so its
- * execPath is `deno`; a packaged app's is its own binary. Pure, so the packaged-vs-dev decision
- * is testable without the real {@linkcode Deno.execPath}.
+ * compiled/packaged app binary. A packaged app's execPath is its own binary; the window
+ * `denext desktop dev` builds is one too, and carries the dev-build mark instead (see
+ * {@linkcode desktopDevProxyDecision}). Pure, so the packaged-vs-dev decision is testable without
+ * the real {@linkcode Deno.execPath}.
  */
 export function isDenoCliExecPath(execPath: string): boolean {
   return ["deno", "deno.exe"].includes(basename(execPath).toLowerCase());
+}
+
+/** Whether this process runs a `denext desktop dev` build (its generated entry set the mark). */
+function isDesktopDevBuild(): boolean {
+  return (globalThis as Record<symbol, unknown>)[Symbol.for(DESKTOP_DEV_BUILD_KEY)] === true;
 }
 
 /** The live-reload proxy decision from the env + the running binary — see {@linkcode desktopDevProxyDecision}. */
@@ -213,8 +220,9 @@ export type DesktopDevProxyDecision =
  * RUNTIME rather than trusting the env (invariant: a release build never proxies to a remote
  * origin). Pure + testable. Proxy mode requires ALL of:
  * - a `devUrl` (the {@linkcode DESKTOP_DEV_URL_ENV} value);
- * - `execPath` being the `deno` CLI ({@linkcode isDenoCliExecPath}) — a packaged app IGNORES the
- *   env, so an inherited/hostile env cannot turn a shipped window into a proxy;
+ * - `execPath` being the `deno` CLI ({@linkcode isDenoCliExecPath}), or `devBuild` (the mark only a
+ *   `denext desktop dev` build compiles in) — a packaged app IGNORES the env, so an
+ *   inherited/hostile env cannot turn a shipped window into a proxy;
  * - a parseable URL whose host is loopback — OR non-loopback WITH `lan` (the
  *   {@linkcode DESKTOP_DEV_LAN_ENV} opt-in that only `desktop dev --lan` sets). `allowNonLoopback`
  *   is true only in that LAN case.
@@ -224,9 +232,10 @@ export function desktopDevProxyDecision(
   devUrl: string | undefined,
   lan: boolean,
   execPath: string,
+  devBuild = false,
 ): DesktopDevProxyDecision {
   if (!devUrl) return { proxy: false };
-  if (!isDenoCliExecPath(execPath)) {
+  if (!devBuild && !isDenoCliExecPath(execPath)) {
     return {
       proxy: false,
       refused: `${DESKTOP_DEV_URL_ENV} is ignored outside \`denext desktop dev\``,
@@ -966,6 +975,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     Deno.env.get(DESKTOP_DEV_URL_ENV),
     Deno.env.get(DESKTOP_DEV_LAN_ENV) === "1",
     Deno.execPath(),
+    isDesktopDevBuild(),
   );
   if (!devDecision.proxy && devDecision.refused) {
     console.error(`desktop: ${devDecision.refused}; serving the static export.`);

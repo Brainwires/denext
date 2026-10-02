@@ -395,6 +395,19 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop run` and `dev` open a window again.** Deno 2.9.7's `deno desktop` only
+  compiles: the verbs left a `<name>.app` in the project folder, opened no window, and that build
+  had no permissions (`NotCapable: PORT`). Both now build into a temporary directory outside the
+  project with the packaging scripts' flags (`--no-prompt`, the least-privilege `--allow-*` from
+  `desktop.capabilities`, `desktop.denoFlags`, the extension modules, the npm args and the icon),
+  launch the built executable directly (on macOS the `.app`'s `Contents/MacOS/<executable>`, so
+  stdout and stderr reach the terminal), stream its output until it exits, and remove the build.
+  `desktop dev` builds from a generated `.denext/desktop-dev-entry.ts` that marks the build as a dev
+  build, which the runtime accepts in place of the `deno` CLI before honouring
+  `DENEXT_DESKTOP_DEV_URL` (a packaged app still ignores it, and the loopback rule is unchanged);
+  `--lan` now also sets `DENEXT_DESKTOP_DEV_LAN` and adds the dev server's address to
+  `--allow-net`. A failed build ends `desktop dev` with an error instead of exit 0.
+
 - **Deno Desktop packaging takes the app's name, identifier and icon from `denext.config.ts`.** The
   package scripts read only deno.json's `desktop.app`, and the macOS script passed no `--icon`.
   Now `desktop.app.name` / `identifier` in `denext.config.ts` come first (written into deno.json's
