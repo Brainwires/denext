@@ -150,7 +150,7 @@ Deno.test("docs corpus: every docs-site page is in the corpus", async () => {
     pages: { slug: string }[];
   };
   const slugs = new Set(corpus.pages.map((p) => p.slug));
-  const docs = new URL("../apps/web/app/docs/", import.meta.url);
+  const docs = new URL("../site/app/docs/", import.meta.url);
   for await (const e of Deno.readDir(docs)) {
     if (e.isDirectory && !e.name.includes("[")) assert(slugs.has(e.name), `missing page ${e.name}`);
   }

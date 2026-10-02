@@ -13,7 +13,7 @@ export const metadata = {
 
 export default async function Differences() {
   return await MarkdownDoc({
-    url: new URL("../../../../../KNOWN-DIFFERENCES.md", import.meta.url),
+    url: new URL("../../../../KNOWN-DIFFERENCES.md", import.meta.url),
     active: "differences",
     title: "Deliberate differences",
     sourcePath: "KNOWN-DIFFERENCES.md",

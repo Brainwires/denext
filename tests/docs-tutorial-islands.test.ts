@@ -12,7 +12,7 @@ import { act, createTestApp, createTestClient, render } from "../src/testing/mod
 import { h } from "../src/jsx/jsx-runtime.ts";
 
 const REPO = new URL("../", import.meta.url);
-const DOC = "apps/web/app/docs/tutorial/content.md";
+const DOC = "site/app/docs/tutorial/content.md";
 const EXAMPLE = "examples/notes";
 
 /** A step-8 block: `// app/notes/x.tsx (… not in examples/notes)` on its first line. */

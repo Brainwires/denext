@@ -1,4 +1,4 @@
-// Renders the repo-root FEATURES.md into the docs site so the feature ledger reads here too
+// Renders the repo-root CONTRIBUTING.md into the docs site so contributors can read it here too
 // (single source of truth — no duplicated copy). The file has no frontmatter, so its own H1 is
 // split off the body by `renderDoc` and `title` supplies the shell's page heading; `sourcePath`
 // rewrites its repo-relative links to docs routes / GitHub URLs, and `active` drives the sidebar
@@ -6,16 +6,16 @@
 import { MarkdownDoc } from "../../../components/markdown.tsx";
 
 export const metadata = {
-  title: "Features",
+  title: "Contributing",
   description:
-    "The master list of everything denext ships, plus the mechanism-by-mechanism ledger of where it beats React and Next.js.",
+    "How to contribute to denext — the checks, the run-from-JSR build rule, lint rules, releasing, and conventions.",
 };
 
-export default async function Features() {
+export default async function Contributing() {
   return await MarkdownDoc({
-    url: new URL("../../../../../FEATURES.md", import.meta.url),
-    active: "features",
-    title: "Features",
-    sourcePath: "FEATURES.md",
+    url: new URL("../../../../CONTRIBUTING.md", import.meta.url),
+    active: "contributing",
+    title: "Contributing",
+    sourcePath: "CONTRIBUTING.md",
   });
 }

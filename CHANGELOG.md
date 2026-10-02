@@ -270,6 +270,9 @@ and this project adheres to
 
 ### Changed
 
+- **The docs site moved from `apps/web/` to `site/`.** `apps/` held nothing else, so it is gone;
+  `deno task docs:build` exports to `site/out/`, and guides live in
+  `site/app/docs/<slug>/content.md`. Older entries below keep the paths of their day.
 - **Deno Desktop: DevTools are off in a packaged app.** `desktop.inspectable` is applied: the
   package scripts always write `"inspectable"` to the app's `laufey-launch.json` (`false` unless
   `desktop.inspectable: true`), `denext desktop dev` turns DevTools on and `denext desktop run`

@@ -13,7 +13,7 @@ export const metadata = {
 
 export default async function Policies() {
   return await MarkdownDoc({
-    url: new URL("../../../../../POLICIES.md", import.meta.url),
+    url: new URL("../../../../POLICIES.md", import.meta.url),
     active: "policies",
     title: "Policies & security policy",
     sourcePath: "POLICIES.md",

@@ -155,7 +155,7 @@ Deno.test("desktop permission flags: per OS, unioned, unscoped where a picked pa
 
 Deno.test("docs: the desktop page lists every capability `denext desktop add` knows", async () => {
   const page = await Deno.readTextFile(
-    new URL("../apps/web/app/docs/desktop/page.tsx", import.meta.url),
+    new URL("../site/app/docs/desktop/page.tsx", import.meta.url),
   );
   for (const name of Object.keys(DESKTOP_CAPABILITIES)) {
     assertStringIncludes(page, `<code>${name}</code>`, `docs/desktop is missing ${name}`);

@@ -8,7 +8,7 @@ import { doctorCommand, infoCommand } from "../src/cli/commands/doctor.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
 
 /** A conforming, all-static example app (used by the conformance suite). */
-const DOCS = fromFileUrl(new URL("../apps/web", import.meta.url));
+const DOCS = fromFileUrl(new URL("../site", import.meta.url));
 
 async function tempApp(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_doctor_" });

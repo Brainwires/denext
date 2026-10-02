@@ -8,14 +8,14 @@
 //   deno task docs:llms     # regenerate both files
 //   deno task docs:build    # docs:api + docs:llms + export the site
 //
-// Output → apps/web/public/, which the static export copies to the site root.
+// Output → site/public/, which the static export copies to the site root.
 
 import { publicGuide } from "../src/mcp/guide.ts";
 import { TOOLS } from "../src/mcp/tools.ts";
 import { fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
-const OUT_DIR = `${ROOT}apps/web/public`;
+const OUT_DIR = `${ROOT}site/public`;
 const SITE = "https://denext.dev";
 const REPO = "https://github.com/Brainwires/denext";
 
@@ -92,7 +92,7 @@ export async function llmsFull(): Promise<string> {
   let api = "";
   try {
     const ref = JSON.parse(
-      await Deno.readTextFile(`${ROOT}apps/web/app/docs/api/reference.json`),
+      await Deno.readTextFile(`${ROOT}site/app/docs/api/reference.json`),
     ) as { groups: RefGroup[] };
     api = `\n\n---\n\n# API reference (summary)\n\nEvery public symbol, grouped by module. ` +
       `Full signatures + docs at ${SITE}/docs/api.\n\n${apiSummary(ref.groups)}\n`;

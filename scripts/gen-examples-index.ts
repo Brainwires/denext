@@ -17,7 +17,7 @@ import { dirname, fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const EXAMPLES_DIR = `${ROOT}examples`;
-export const OUT = `${ROOT}apps/web/app/docs/examples/examples.json`;
+export const OUT = `${ROOT}site/app/docs/examples/examples.json`;
 const REPO_TREE = "https://github.com/Brainwires/denext/tree/main/examples";
 
 /** One row of the generated index. */

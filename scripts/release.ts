@@ -24,7 +24,7 @@
 // tag (a hard rule — see AGENTS.md "Releasing"); this script prints the `gh pr create`
 // command to run. The docs-site DEPLOY stays separate on purpose (it targets a server):
 // after the tag,
-// run `deno task docs:build`, then rsync the built `apps/web/out/` to your docs host.
+// run `deno task docs:build`, then rsync the built `site/out/` to your docs host.
 
 import { exists, walk } from "@std/fs";
 import { join, relative } from "@std/path";
@@ -237,7 +237,7 @@ function renderRelease(version: string, date: string, groups: Map<string, string
 
 /**
  * The id the docs site gives a heading — `packages/content-collections/markdown.ts`'s
- * `slugify`, which `apps/web/lib/toc.ts` mirrors: lowercase, everything but word characters,
+ * `slugify`, which `site/lib/toc.ts` mirrors: lowercase, everything but word characters,
  * whitespace and dashes dropped, whitespace to dashes. `## [2.5.0-rc.1] - 2026-09-14` is
  * `250-rc1---2026-09-14`, and `## [2.5.0] - 2026-09-18` is `250---2026-09-18`.
  */
@@ -275,7 +275,7 @@ export function rewriteFoldedAnchors(doc: string, rewrites: Map<string, string>)
 }
 
 /** Where the docs pages live: every `.md` under here is a candidate for a changelog link. */
-const DOCS_PAGES = join(REPO_ROOT, "apps", "web", "app");
+const DOCS_PAGES = join(REPO_ROOT, "site", "app");
 
 /**
  * Re-point the folded anchors in every docs page that links one. Returns the pages (relative
@@ -481,7 +481,7 @@ async function publish(version: string, tag: string, branch: string): Promise<vo
       "  REQUIRED next: open a PR so `main` catches up to this tag —\n" +
       `    gh pr create --base main --head ${branch}\n` +
       "  (every release tag gets a `development → main` PR; see AGENTS.md).\n" +
-      "  Docs deploy is separate: run `deno task docs:build`, then rsync apps/web/out/ " +
+      "  Docs deploy is separate: run `deno task docs:build`, then rsync site/out/ " +
       "to your docs host.",
   );
 }

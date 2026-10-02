@@ -125,7 +125,7 @@ export function rewriteDocLinks(html: string, sourcePath: string): string {
 
 // The renderer itself is the first-party one @denext/content-collections ships (moved there
 // so content collections and the docs render Markdown identically); re-exported for callers.
-import { renderMarkdown } from "../../../packages/content-collections/markdown.ts";
+import { renderMarkdown } from "../../packages/content-collections/markdown.ts";
 import { DOC_URLS, GITHUB_BLOB, GITHUB_TREE } from "./docs-map.ts";
 export { renderMarkdown };
 

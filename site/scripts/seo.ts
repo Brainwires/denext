@@ -12,7 +12,7 @@
 //      Cloudflare "markdown for agents" convention, provided from our own origin.
 //   3. Collects URLs for sitemap.xml, and writes robots.txt.
 //
-// This file lives under apps/web (outside the framework test/lint gate) so it can be a
+// This file lives under site (outside the framework test/lint gate) so it can be a
 // straightforward build tool.
 
 import { DOMParser, type Element, type Node } from "deno-dom";

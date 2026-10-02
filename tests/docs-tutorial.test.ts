@@ -7,7 +7,7 @@
 import { assert } from "@std/assert";
 
 const REPO = new URL("../", import.meta.url);
-const DOC = "apps/web/app/docs/tutorial/content.md";
+const DOC = "site/app/docs/tutorial/content.md";
 
 /** One fenced block of the tutorial: its declared source file and its code. */
 interface Block {

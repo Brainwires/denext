@@ -1,6 +1,6 @@
 // Generate the in-site API reference from `deno doc --json`.
 // Runs deno doc over denext's first-party public entry points and emits a compact
-// JSON the docs site (apps/web) renders at /docs/api as static 0-KB-JS HTML.
+// JSON the docs site (site) renders at /docs/api as static 0-KB-JS HTML.
 //
 //   deno task docs:api      # regenerate reference.json
 //   deno task docs:build    # regenerate + export the site
@@ -21,7 +21,7 @@ import { denoDocJson } from "./deno-doc.ts";
 import { dirname, fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
-const OUT = `${ROOT}apps/web/app/docs/api/reference.json`;
+const OUT = `${ROOT}site/app/docs/api/reference.json`;
 const PARITY_BASELINE = `${ROOT}tests/fixtures/react-surface.baseline.json`;
 
 // The first-party public API surface, in the order it appears in the reference.

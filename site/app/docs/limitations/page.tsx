@@ -13,7 +13,7 @@ export const metadata = {
 
 export default async function Limitations() {
   return await MarkdownDoc({
-    url: new URL("../../../../../KNOWN-LIMITATIONS.md", import.meta.url),
+    url: new URL("../../../../KNOWN-LIMITATIONS.md", import.meta.url),
     active: "limitations",
     title: "Known limitations",
     sourcePath: "KNOWN-LIMITATIONS.md",

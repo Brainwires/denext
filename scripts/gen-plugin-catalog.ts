@@ -29,7 +29,7 @@ import { fromFileUrl } from "@std/path";
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 /** Where the generated catalog is committed (it ships inside the published package). */
 export const CATALOG_OUT = `${ROOT}src/plugin/catalog.json`;
-const DOCS_DIR = `${ROOT}apps/web/app/docs`;
+const DOCS_DIR = `${ROOT}site/app/docs`;
 
 /** What a first-party package is: a `plugins: []` entry, or a plain library you import. */
 export type CatalogKind = "plugin" | "library";

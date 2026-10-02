@@ -5,12 +5,8 @@
 // can import it.
 
 import { publicGuide } from "../../src/mcp/guide.ts";
-import { DOC_URLS } from "../../apps/web/lib/docs-map.ts";
-import {
-  parseFrontmatter,
-  splitLeadingH1,
-  stripLeadingRawHtml,
-} from "../../apps/web/lib/markdown.ts";
+import { DOC_URLS } from "../../site/lib/docs-map.ts";
+import { parseFrontmatter, splitLeadingH1, stripLeadingRawHtml } from "../../site/lib/markdown.ts";
 
 /** One docs-site page (or root guide) in the corpus. */
 export interface CorpusPage {
@@ -49,7 +45,7 @@ export interface MdSection {
 
 /**
  * The docs renderer's heading anchor (packages/content-collections/markdown.ts `slugify`, which
- * the JSX TOC in apps/web/lib/toc.ts mirrors): lower-case, tags and punctuation dropped, one
+ * the JSX TOC in site/lib/toc.ts mirrors): lower-case, tags and punctuation dropped, one
  * hyphen per whitespace character (runs are NOT collapsed, matching GitHub).
  */
 export function anchorOf(text: string): string {
@@ -390,7 +386,7 @@ export class VNodeMarkdown {
     const text = (await this.children(props)).replace(/\s+/g, " ").trim();
     const plain = textOf(props.children).replace(/\s+/g, " ").trim();
     // h2/h3 carry the anchor the site emits: the explicit `id`, else the TOC's slug of the
-    // visible text (apps/web/lib/toc.ts) — written as `{#id}` so the chunker keeps it exact.
+    // visible text (site/lib/toc.ts) — written as `{#id}` so the chunker keeps it exact.
     const id = typeof props.id === "string" && props.id ? props.id : anchorOf(plain);
     const suffix = level === 2 || level === 3 ? ` {#${id}}` : "";
     return `\n\n${"#".repeat(level)} ${text}${suffix}\n\n`;

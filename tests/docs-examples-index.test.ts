@@ -1,4 +1,4 @@
-// Drift check for the generated examples index (apps/web/app/docs/examples/examples.json)
+// Drift check for the generated examples index (site/app/docs/examples/examples.json)
 // against the `examples/` directories themselves, plus unit tests of the README/config
 // readers in scripts/gen-examples-index.ts.
 

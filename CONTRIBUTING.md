@@ -33,8 +33,8 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   _estimates_ coverage and can block a commit on framework internals that tests
   reach only transitively. Details under _The Fallow gate_ below.
 - **Formatting is `deno fmt`** (no Prettier, no npm), configured under `fmt` in
-  `deno.json`; format files under `apps/web` **from the repo root**
-  (`deno fmt --config deno.json <paths>`), never from inside `apps/web`.
+  `deno.json`; format files under `site` **from the repo root**
+  (`deno fmt --config deno.json <paths>`), never from inside `site`.
 - **`deno task test:e2e`** and **`deno task test:migration-bed`** are the two
   network-bound suites `check` never runs; the nightly workflow
   (`.github/workflows/e2e.yml`) does. The e2e suite drives the examples in a real
@@ -242,9 +242,9 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    publish.
 3. **Before running it for a stable major/minor**, hand-edit the prose the bump
    does not: `ROADMAP.md`'s status paragraph, any `README.md` stage language, and
-   any stage language on the docs-site pages (`apps/web/app/docs/*/content.md`).
+   any stage language on the docs-site pages (`site/app/docs/*/content.md`).
    A `### Breaking` changelog entry also gets a row on `/docs/upgrading`
-   (`apps/web/app/docs/upgrading/content.md`): one bullet, a one-line action,
+   (`site/app/docs/upgrading/content.md`): one bullet, a one-line action,
    linked to that release's changelog anchor.
 4. **Watch the publish and verify it went live:**
    `gh run watch "$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`,
@@ -253,7 +253,7 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    release: `gh pr create --base main --head development` then
    `gh pr merge <n> --merge`. A tag without this merge is an incomplete release.
 6. **Deploy the docs site** (`deno task docs:build` + the rsync in
-   [the docs-site notes](./apps/web/README.md)); it is not part of the script.
+   [the docs-site notes](./site/README.md)); it is not part of the script.
 
 7. **Package managers (stable releases, by hand).** The `release` job attaches
    generated manifests to the GitHub release (`scripts/gen-package-manifests.ts`,
@@ -265,7 +265,7 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    three YAML files under `manifests/b/Brainwires/denext/<version>/` (validate
    with `winget validate` first). Skip release candidates. `install.sh` and
    `install.ps1` need nothing: they resolve the latest release themselves (the
-   served copies under `apps/web/public/` go live with the docs deploy).
+   served copies under `site/public/` go live with the docs deploy).
 
 If the script aborts (a failed gate), fix, **commit the fix**, and rerun — after
 `git checkout -- .` of the half-prepared bump/changelog, or the rerun double-rolls
@@ -332,7 +332,7 @@ deployed.
 ## Where docs live
 
 One topic, one Markdown source. Guides live in
-`apps/web/app/docs/<slug>/content.md` with a 13-line `page.tsx` wrapper and
+`site/app/docs/<slug>/content.md` with a 13-line `page.tsx` wrapper and
 render at `https://denext.dev/docs/<slug>`. Taxonomy files stay at the repo root
 and are rendered from there by a wrapper:
 
@@ -350,7 +350,7 @@ Never write a fact in two files: put it in the owning file and link it. From a
 root file link the site (`https://denext.dev/docs/<slug>`); from a `content.md`
 link `/docs/<slug>` and use absolute
 `github.com/Brainwires/denext/blob/main/…` URLs for repo files. A new guide page
-needs a `NAV` entry in `apps/web/components/ui.tsx` or it gets no sidebar entry.
+needs a `NAV` entry in `site/components/ui.tsx` or it gets no sidebar entry.
 A root `docs/` folder is reserved for `deno doc --html` output (gitignored).
 
 Some docs are **generated** and must never be hand-edited — regenerate them
@@ -378,7 +378,7 @@ src/client    virtual-DOM reconciler, hydration, soft navigation
 src/build     deno-bundle integration, dev server, prod server, CLI wiring
 src/compat    the React / Next / next-intl compat surface
 packages/*    first-party JSR packages
-apps/web      the docs site
+site/         the docs site
 examples/*    runnable example apps
 cli.ts        the `denext` CLI entry
 mod.ts        the package entry

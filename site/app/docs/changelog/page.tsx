@@ -10,7 +10,7 @@ export const metadata = {
   description: "Every denext release, newest first — what was added, changed, fixed, and removed.",
 };
 
-const CHANGELOG = new URL("../../../../../CHANGELOG.md", import.meta.url);
+const CHANGELOG = new URL("../../../../CHANGELOG.md", import.meta.url);
 
 export default async function Changelog() {
   const src = await Deno.readTextFile(CHANGELOG);

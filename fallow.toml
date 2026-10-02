@@ -82,7 +82,7 @@ ignoreDependencies = [
 # the drop-in demos, see bench/README.md). fallow reports each such directory as an
 # "undeclared workspace" (informational, not a finding) and those imports as unlisted. Declaring
 # them as `[workspaces]` is worse: workspace mode re-roots every entry glob and un-ignores
-# apps/web. So the manifests stay per-directory and the packages are listed here, each verified
+# site. So the manifests stay per-directory and the packages are listed here, each verified
 # against the package.json / deno.json of the directory that imports it.
 #   bench/package.json:
 #     "@radix-ui/react-dialog", "lucide-react", "next", "react", "react-dom",
@@ -183,12 +183,12 @@ entry = [
   "bench/packages/*_bench.ts",
 ]
 
-# The docs site (apps/web) is a satellite static-export app, not shipped framework code, and
+# The docs site (site) is a satellite static-export app, not shipped framework code, and
 # it is deliberately outside the test suite (its own deno.json, not a workspace member). So
 # fallow's CRAP-on-zero-coverage penalizes its untested-by-design components/tree-walkers,
 # which isn't a meaningful signal for a docs site. Exclude it from the framework's gate.
 ignorePatterns = [
-  "apps/web/**",
+  "site/**",
   # Generated wasm glue (`@generated file from wasmbuild -- do not edit` / emscripten output).
   # Regenerated from the Rust/C sources; never hand-edited, so its findings are not actionable.
   "packages/photon/lib/*.js",

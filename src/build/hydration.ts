@@ -85,7 +85,7 @@ export async function routeNeedsHydration(
       // Exclude framework internals (`src/`, `packages/`, the root barrels): they DEFINE
       // the hooks, so scanning them would flag every route. Only the framework SOURCE is
       // excluded, not everything under the repo root — an app that lives inside the
-      // framework checkout (apps/web, examples/*) still has its own modules scanned.
+      // framework checkout (site, examples/*) still has its own modules scanned.
       graph = await crawlLocalModules(roots, { exclude: isFrameworkSource });
     }
   } catch {

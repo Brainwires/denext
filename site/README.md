@@ -1,4 +1,4 @@
-# apps/web — the denext docs site (built in denext)
+# site — the denext docs site (built in denext)
 
 A small documentation site that is itself a denext app, **static-exported to
 pure HTML**. It's dogfooding: every docs page is a Server Component with no

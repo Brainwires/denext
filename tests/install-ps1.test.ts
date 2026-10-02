@@ -207,10 +207,10 @@ Deno.test("install.ps1 and publish.yml agree on the Windows asset and checksum n
 });
 
 Deno.test("docs: the served install.ps1 matches the one in scripts/", async () => {
-  // `irm https://denext.dev/install.ps1 | iex` serves apps/web/public/install.ps1.
+  // `irm https://denext.dev/install.ps1 | iex` serves site/public/install.ps1.
   assertEquals(
-    await Deno.readTextFile(new URL("apps/web/public/install.ps1", ROOT)),
+    await Deno.readTextFile(new URL("site/public/install.ps1", ROOT)),
     await Deno.readTextFile(SCRIPT),
-    "apps/web/public/install.ps1 is stale — `cp scripts/install.ps1 apps/web/public/install.ps1`",
+    "site/public/install.ps1 is stale — `cp scripts/install.ps1 site/public/install.ps1`",
   );
 });

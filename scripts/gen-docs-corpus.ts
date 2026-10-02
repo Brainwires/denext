@@ -1,10 +1,10 @@
 // Generate the docs corpus behind the `denext_search_docs` + `denext_read_docs` MCP tools.
 //
-// Sources: the API reference (apps/web/app/docs/api/reference.json, one chunk per symbol), EVERY
-// docs-site page under apps/web/app/docs/<slug>/ (chunked by h2/h3, so a hit deep-links to
+// Sources: the API reference (site/app/docs/api/reference.json, one chunk per symbol), EVERY
+// docs-site page under site/app/docs/<slug>/ (chunked by h2/h3, so a hit deep-links to
 // `/docs/<slug>#<anchor>`), the root guides the site renders (FEATURES.md, KNOWN-*.md, …, and a
 // recent slice of CHANGELOG.md), the authoring guide (AGENTS.md) and README.md. The output,
-// `src/mcp/docs-corpus.json`, ships in the package (src/** publishes; apps/** does not), so an
+// `src/mcp/docs-corpus.json`, ships in the package (src/** publishes; site/** does not), so an
 // agent can search and read the whole manual offline.
 //
 // How a page becomes Markdown:
@@ -23,7 +23,7 @@
 //   deno task docs:build     # regenerates it as part of the site build
 
 import { fromFileUrl } from "@std/path";
-import { Callout, Code, DocsShell } from "../apps/web/components/ui.tsx";
+import { Callout, Code, DocsShell } from "../site/components/ui.tsx";
 import {
   agentsSource,
   changelogSlice,
@@ -39,7 +39,7 @@ import {
 } from "./lib/docs-corpus.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
-const DOCS = `${ROOT}apps/web/app/docs/`;
+const DOCS = `${ROOT}site/app/docs/`;
 const REF = `${DOCS}api/reference.json`;
 /** Where the corpus is written (and read by the staleness test). */
 export const CORPUS_OUT = `${ROOT}src/mcp/docs-corpus.json`;
@@ -72,7 +72,7 @@ interface ApiChunk {
   denextOnly?: true;
 }
 
-/** `denext/server` → `denext-server` (matches apps/web/lib/api.ts). */
+/** `denext/server` → `denext-server` (matches site/lib/api.ts). */
 const moduleSlug = (m: string) => m.replace(/\//g, "-");
 
 /** An API symbol's full docs as Markdown (signature, prose, params, returns, examples). */
@@ -125,7 +125,7 @@ async function pageSources(slug: string): Promise<{ files: CorpusInput[]; rootMd
   const files: CorpusInput[] = [];
   for await (const e of Deno.readDir(`${DOCS}${slug}`)) {
     if (!e.isFile || !/\.(md|tsx?|json)$/.test(e.name)) continue;
-    const path = `apps/web/app/docs/${slug}/${e.name}`;
+    const path = `site/app/docs/${slug}/${e.name}`;
     files.push({ path, text: await Deno.readTextFile(`${ROOT}${path}`) });
   }
   const page = files.find((f) => f.path.endsWith("/page.tsx"));
@@ -145,7 +145,7 @@ async function rootMdText(file: string): Promise<string> {
  */
 export async function corpusInputs(): Promise<CorpusInput[]> {
   const inputs: CorpusInput[] = [
-    { path: "apps/web/app/docs/api/reference.json", text: await Deno.readTextFile(REF) },
+    { path: "site/app/docs/api/reference.json", text: await Deno.readTextFile(REF) },
     { path: "AGENTS.md", text: agentsSource(await Deno.readTextFile(`${ROOT}AGENTS.md`)) },
     { path: "README.md", text: await Deno.readTextFile(`${ROOT}README.md`) },
     {

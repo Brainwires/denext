@@ -3,9 +3,9 @@
 // GitHub-shaped links into docs routes / GitHub URLs.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { renderDoc, renderMarkdown, rewriteDocLinks } from "../apps/web/lib/markdown.ts";
-import { GITHUB_BLOB, GITHUB_TREE } from "../apps/web/lib/docs-map.ts";
-import { tocFromVNodes } from "../apps/web/lib/toc.ts";
+import { renderDoc, renderMarkdown, rewriteDocLinks } from "../site/lib/markdown.ts";
+import { GITHUB_BLOB, GITHUB_TREE } from "../site/lib/docs-map.ts";
+import { tocFromVNodes } from "../site/lib/toc.ts";
 import type { VNodeChildren } from "denext";
 
 Deno.test("renderDoc: a body with no frontmatter title takes its first H1 as the title", () => {
@@ -71,8 +71,8 @@ Deno.test("rewriteDocLinks: absolute, mailto, site-absolute and in-page hrefs ar
 
 Deno.test("rewriteDocLinks: a nested source path resolves links against its own directory", () => {
   const html = rewriteDocLinks(
-    '<a href="../../../../../src/x.ts">x</a>',
-    "apps/web/app/docs/deploy/content.md",
+    '<a href="../../../../src/x.ts">x</a>',
+    "site/app/docs/deploy/content.md",
   );
   assertStringIncludes(html, `href="${GITHUB_BLOB}/src/x.ts"`);
 });
