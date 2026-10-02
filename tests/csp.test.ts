@@ -150,3 +150,17 @@ Deno.test("resolveStreamingCsp: strict by default, off suppresses, route wins", 
   const opt = await resolveStreamingCsp("<div/>", { scriptSrc: ["https://x.io"] }, "off");
   assertStringIncludes(opt!, `script-src 'self' ${await swapRuntimeHash()} https://x.io`);
 });
+
+Deno.test("csp: opting into style-src 'unsafe-inline' drops the style hashes that would void it", async () => {
+  const html = "<html><head><style>body{color:red}</style></head><body></body></html>";
+  // A hash in style-src makes a browser ignore 'unsafe-inline' (CSP Level 2): runtime-inserted
+  // <style> elements (Clerk's CSS-in-JS) would stay blocked.
+  const withInline = await computeCsp(html, { styleSrc: ["'unsafe-inline'"] });
+  assertStringIncludes(withInline, "style-src 'self' 'unsafe-inline';");
+  assert(!/style-src [^;]*sha256-/.test(withInline));
+  const streamed = await computeStreamingCsp(html, { styleSrc: ["'unsafe-inline'"] });
+  assert(!/style-src [^;]*sha256-/.test(streamed));
+  // Without the opt-in the hash stays, as before.
+  const strict = await computeCsp(html, { styleSrc: ["https://fonts.googleapis.com"] });
+  assert(/style-src 'self' 'sha256-[^']+' https:\/\/fonts\.googleapis\.com;/.test(strict));
+});

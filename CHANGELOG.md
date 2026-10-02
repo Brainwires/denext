@@ -391,6 +391,10 @@ and this project adheres to
   `useLive`, `usePresence`, channels and subscriptions) dials it. `denext/desktop/client` exports
   `desktopWebSocketUrl(path)` for the app's own sockets (the relay in such a window,
   `ws(s)://<host>` elsewhere) and `desktopWsOrigin()`.
+- **CSP: `styleSrc: ["'unsafe-inline'"]` works.** A browser ignores `'unsafe-inline'` in a
+  directive that also lists a hash, so with any inline `<style>` on the page the opt-in silently
+  kept blocking the `<style>` elements a CSS-in-JS library inserts at run time (Clerk's
+  components). With the opt-in, `style-src` now leaves the style hashes out.
 - **next-compat: a library's Next.js control flow and middleware request headers.** denext's
   `notFound()` / `forbidden()` / `unauthorized()` / `redirect()` errors now carry Next's `digest`
   (`NEXT_HTTP_ERROR_FALLBACK;404`, `NEXT_REDIRECT;replace;<url>;307;`), which libraries built for

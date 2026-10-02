@@ -58,6 +58,18 @@ function extractInlineForCsp(html: string): { styles: string[] } {
   return { styles };
 }
 
+/**
+ * `style-src` for a document: `'self'`, a hash per inline `<style>`, and the route's opt-ins —
+ * minus the hashes when the opt-ins include `'unsafe-inline'`. A browser ignores
+ * `'unsafe-inline'` in a directive that also lists a hash or nonce (CSP Level 2), so keeping
+ * them would silently block what the opt-in allows: the `<style>` elements a CSS-in-JS
+ * library inserts at run time (Clerk's components, for one).
+ */
+function styleSources(styleHashes: string[], route?: RouteCsp): string[] {
+  const extra = route?.styleSrc ?? [];
+  return ["'self'", ...(extra.includes("'unsafe-inline'") ? [] : styleHashes), ...extra];
+}
+
 /** A directive's fixed base sources followed by the route's opt-ins for it. */
 function directive(base: string, extra: string[] = []): string {
   return [base, ...extra].join(" ");
@@ -113,7 +125,7 @@ export async function computeCsp(html: string, route?: RouteCsp): Promise<string
 
   return assembleCsp(
     ["'self'", ...(route?.scriptSrc ?? [])],
-    ["'self'", ...styleHashes, ...(route?.styleSrc ?? [])],
+    styleSources(styleHashes, route),
     route,
   );
 }
@@ -140,7 +152,7 @@ export async function computeStreamingCsp(
 
   return assembleCsp(
     ["'self'", await swapRuntimeHash(), ...(route?.scriptSrc ?? [])],
-    ["'self'", ...styleHashes, ...(route?.styleSrc ?? [])],
+    styleSources(styleHashes, route),
     route,
   );
 }
