@@ -454,6 +454,10 @@ registered `http://localhost:<port>/…` redirect (`port_in_use` when taken). `d
 passes allow-listed `deno desktop` flags (a pnpm workspace: `["--node-modules-dir=none",
 "--exclude-unused-npm"]`; never permission flags). The bundle's name, identifier and icon come from
 `desktop.app.name` / `identifier` / `icons.{macos,windows,linux}`, falling back to deno.json.
+A denext backend (`denext start` / `denext dev`) accepts the app's own `desktop.app.origin` as
+same-origin (Server Actions, the API batch, Live, `denextAuth` POSTs, the dev origin gate) by exact
+match; a separate backend lists the origin in `allowedDevOrigins` (custom-scheme entries are allowed)
+or `createApp({ allowedOrigins })`. `denext migrate --desktop` writes `desktop.denoFlags`.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
