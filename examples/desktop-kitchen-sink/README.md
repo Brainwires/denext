@@ -26,6 +26,26 @@ Opened by hand, the window lists the checks and runs them on **Run checks**; the
 cold-start deep link, a file the OS opens with the app, a link a second launch forwards) and the
 updater checks are skipped there, because only the test runner sets them up.
 
+### Manual release checks
+
+Opened by hand (never under the window test), the window also shows **Manual release checks**:
+buttons for the rows of CONTRIBUTING.md › _Manual desktop checks before a final release_ that need a
+person at the screen. Nothing in the panel runs until you click.
+
+- **Passkey**: _Create passkey_, then _Sign in with passkey_, for the relying party `denext.dev`
+  (pinned in `desktop.capabilities.passkeys.rpIds`) through the `passkeys` capability. It shows
+  whether the platform authenticator is ready (`passkeys.capabilities()`), then the credential id or
+  the error code. Windows Hello needs no association between the app and the RP (set up a PIN in
+  Settings › Accounts › Sign-in options first); macOS also needs the associated-domains entitlement,
+  so an unentitled build answers `invalid_rp`. The passkey lands in the OS's passkey list (Windows:
+  Settings › Accounts › Passkeys); delete it there afterwards.
+- **Backdrop**: none / mica / acrylic / tabbed (and vibrancy on macOS), with what
+  `windowCapabilities()` reports; the page turns transparent while one is applied, so the whole
+  window background should change.
+- **HiDPI**: `devicePixelRatio`, the window bounds and every screen's scale factor (live), a test
+  pattern drawn in device pixels (sharp only when the scale is right) and text, and _Save_ /
+  _Restore placement_ for the size-and-position restore check across monitors and scales.
+
 `deno task test:window` needs a display and a desktop session:
 
 - **macOS**: a logged-in session. The clipboard checks put your clipboard text back afterwards.
@@ -76,12 +96,12 @@ updater checks are skipped there, because only the test runner sets them up.
 Not automated: anything that needs a person at the screen (a real drop from the file manager,
 dragging a file out, choosing in a native dialog or a context menu, pressing a shortcut, clicking a
 notification, a tray icon or a menu, the macOS Automation prompt the first trash asks for, the macOS
-login-item approval), a real passkey ceremony, and an OS code-signature check of an update between
-two Developer ID / Authenticode signed builds (the test's builds are unsigned, so the updater runs
-with its dev-only `allowUnsignedDev`). The "synthetic" checks dispatch the OS event on the runtime
-object that would fire it (through the `kitchen` extension), so everything from the runtime's event
-to the page's handler runs. On macOS the first run asks for the notification permission (answer it
-once); while it is refused, the scheduling checks are skipped.
+login-item approval), a real passkey ceremony (the manual checks above), and an OS code-signature
+check of an update between two Developer ID / Authenticode signed builds (the test's builds are
+unsigned, so the updater runs with its dev-only `allowUnsignedDev`). The "synthetic" checks dispatch
+the OS event on the runtime object that would fire it (through the `kitchen` extension), so
+everything from the runtime's event to the page's handler runs. On macOS the first run asks for the
+notification permission (answer it once); while it is refused, the scheduling checks are skipped.
 
 ## How it's wired
 

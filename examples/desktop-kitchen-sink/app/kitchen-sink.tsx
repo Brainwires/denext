@@ -2,7 +2,7 @@
 // Runs the checks (`checks.ts`) in the window and shows each result. Launched by the window test
 // (the runner leaves `kitchen-sink-runner.json` in the app's data folder), it runs them at once,
 // hands the results to the `kitchen` extension (which writes the runner's report) and quits; opened
-// by hand, it waits for the button. On the window test's full-app update launches it runs only that
+// by hand, it waits for the button and shows the manual release checks (`manual-checks.tsx`). On the window test's full-app update launches it runs only that
 // phase's checks, and the install phase hands over to the updater instead of quitting.
 
 import { useEffect, useRef, useState } from "denext";
@@ -16,6 +16,7 @@ import {
   type KitchenSetup,
   runChecks,
 } from "./checks.ts";
+import { ManualChecks } from "./manual-checks.tsx";
 
 export function KitchenSink() {
   const [results, setResults] = useState<CheckResult[]>([]);
@@ -82,6 +83,10 @@ export function KitchenSink() {
         {state === "done" &&
           `${results.length - failed}/${results.length} passed or skipped, ${failed} failed.`}
       </p>
+      {
+        // Opened by hand only: the window test (autorun) never mounts the manual checks.
+        ctx.current && !ctx.current.setup.autorun && state !== "loading" && <ManualChecks />
+      }
       <button
         type="button"
         disabled={state !== "idle" && state !== "done"}
