@@ -488,7 +488,7 @@ the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 `denext/desktop/updater` (`checkForDesktopUpdate` / `prepareDesktopUpdate` /
 `applyDesktopUpdate`), and full-app updates under the pinned runtime (`checkForAppUpdate` /
 `downloadAppUpdate` / `installAppUpdateAndRelaunch` / `confirmAppUpdate`: a signed manifest from
-`denext desktop publish-update`, no downgrades, the same code-signing identity required, an atomic
+`denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build), an atomic
 bundle swap that rolls back if the new version never confirms).
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
