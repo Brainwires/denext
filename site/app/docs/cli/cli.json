@@ -243,7 +243,7 @@
       "name": "desktop",
       "summary": "Build/run/package the app as a native desktop app",
       "usage": "denext desktop [action] [dir] [options]",
-      "description": "  denext desktop run                     Export + open in a deno desktop window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle for the host OS\n  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n                                         Sign a full-app update (archive + app-update.json)",
+      "description": "  denext desktop run                     Export, build into a temp dir and open the window\n  denext desktop build                   Export the SPA to out/\n  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n  denext desktop package                 Build a distributable bundle for the host OS\n  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n                                         Sign a full-app update (archive + app-update.json)",
       "flags": [
         {
           "name": "entry",
@@ -366,7 +366,7 @@
           "name": "action",
           "required": false,
           "variadic": false,
-          "description": "run | build | dev | package | publish-update (default: run)"
+          "description": "run | build | dev | package | add | publish-update (default: run)"
         },
         {
           "name": "dir",

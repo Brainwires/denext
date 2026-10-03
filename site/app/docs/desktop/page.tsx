@@ -45,12 +45,13 @@ export default function Desktop() {
           (what the window serves).
         </li>
         <li>
-          <code>denext desktop package</code>{" "}
-          — build a distributable bundle for the host OS (macOS or Linux);{" "}
-          <code>--target-os linux</code>{" "}
-          cross-builds the Linux bundle from any OS. It runs the matching{" "}
-          <code>scripts/package-*.ts</code>: export, build (embedding{" "}
-          <code>out/</code>), and — on macOS — code-sign into <code>dist/</code>.
+          <code>denext desktop package</code> — build the app and its{" "}
+          <a href="#desktop-installers">installers</a> for the host OS;{" "}
+          <code>--target-os linux</code> or <code>windows</code>{" "}
+          cross-builds those from any OS (a macOS app packages on a Mac). It runs the matching{" "}
+          <code>scripts/package-*.ts</code>: export, build (embedding <code>out/</code>), sign (
+          <code>codesign</code> on macOS, Authenticode where <code>signtool</code>{" "}
+          runs) and wrap the installers, into <code>dist/</code>.
         </li>
       </ul>
       <p>
@@ -2576,8 +2577,11 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         </code>). Windows packages from any OS with{" "}
         <code>denext desktop package --target-os windows</code> (the scaffolded{" "}
         <code>scripts/package-windows.ts</code> / <code>desktop:package:windows</code>{" "}
-        task, on denext&apos;s pinned runtime from any host): a zip per architecture,
-        Authenticode-signed when <code>DENEXT_WINDOWS_CERT</code> (+{" "}
+        task, on denext&apos;s pinned runtime from any host). The <code>.msi</code>{" "}
+        needs WiX 5 and Authenticode needs{" "}
+        <code>signtool</code>, both on a Windows host: elsewhere the default <code>.msi</code>{" "}
+        falls back to a <code>.zip</code> per architecture and the <code>.exe</code>{" "}
+        stays unsigned. On Windows both are signed when <code>DENEXT_WINDOWS_CERT</code> (+{" "}
         <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
         <code>DENEXT_SIGN_TIMESTAMP_URL</code>) is set.
       </Callout>

@@ -1,14 +1,16 @@
-// `denext desktop <run|build|package>` — promotes the scaffold-generated desktop
-// `deno task`s to first-class verbs over the `denext/desktop` runtime.
+// `denext desktop <run|build|dev|package|add|publish-update>` — promotes the scaffold-generated
+// desktop `deno task`s to first-class verbs over the `denext/desktop` runtime.
 //
 //   run      export the SPA, build the app with `deno desktop` into a temp dir (the packaging
 //            scripts' least-privilege flags), launch it and stream its output until it exits
 //   build    export the SPA to out/ (what the desktop window serves)
 //   dev      live reload: start (or attach to) `denext dev`, then build and open a window whose
 //            runtime reverse-proxies EVERYTHING (HTTP + HMR) to it, so edits hot-reload in it
-//   package  build a distributable app bundle — macOS (.app, signed/notarized), Linux
-//            (bundle → .tar.gz / AppImage) or Windows (.exe, Authenticode-signed when a
-//            cert is supplied); `--target-os` cross-builds everything but macOS.
+//   package  build the app and its installers with scripts/package-<os>.ts — macOS (.app +
+//            .dmg / .pkg, signed and notarized), Linux (.tar.gz + .deb, .rpm / AppImage) or
+//            Windows (.msi / .zip, Authenticode-signed when a cert is supplied); `--target-os`
+//            cross-builds Linux and Windows from any OS, macOS packages on a Mac.
+//   add      enable Deno Desktop capabilities in desktop.capabilities (./desktop-add.ts)
 //   publish-update  pack a packaged app into a signed full-app update (archive + app-update.json)
 //
 // `run`/`build`/`package` serve a static export over loopback. `dev` is the desktop half of
@@ -80,7 +82,8 @@ export const desktopCommand: CommandSpec = {
     ctx.positionals[0] === "package" && ctx.flags["regenerate-scripts"] !== true
       ? { projectDir: desktopDir(ctx), packageDirs: ["dist"] }
       : undefined,
-  usage: "  denext desktop run                     Export + open in a deno desktop window\n" +
+  usage:
+    "  denext desktop run                     Export, build into a temp dir and open the window\n" +
     "  denext desktop build                   Export the SPA to out/\n" +
     "  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n" +
     "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
@@ -88,10 +91,14 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n" +
     "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
     "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
+    "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
     "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
     "                                         Sign a full-app update (archive + app-update.json)",
   positionals: [
-    { name: "action", help: "run | build | dev | package | publish-update (default: run)" },
+    {
+      name: "action",
+      help: "run | build | dev | package | add | publish-update (default: run)",
+    },
     { name: "dir", help: "Project directory (default: .)" },
   ],
   flags: [
@@ -170,7 +177,7 @@ export const desktopCommand: CommandSpec = {
     if (action === "add") return await desktopAdd(ctx);
     if (action === "publish-update") return await desktopPublishUpdate(ctx, dir);
     console.error(
-      `denext desktop: unknown action "${action}" (expected run | build | dev | package | ` +
+      `denext desktop: unknown action "${action}" (expected run | build | dev | package | add | ` +
         `publish-update).`,
     );
     Deno.exit(1);
