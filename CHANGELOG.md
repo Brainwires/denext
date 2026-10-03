@@ -442,6 +442,14 @@ and this project adheres to
   OTA 6, auth-session 3, app-extension 3, MainActivity 4); `denext mobile add export-routes`
   installs it in an app with no denext plugin, and `denext mobile doctor` flags a multi-page
   export whose shell lacks it. Ship a new binary.
+- **`.denext/dev.json` names an IPv6 dev server with a valid origin.** A dev server whose
+  `localhost` bind resolved to `::1` published `http://::1:5199`, which no URL parser accepts,
+  so `denext_dev_logs`, the component-tree tools and `denext ui` reported "No running dev server
+  found" while it was answering. The origin is now bracketed (`http://[::1]:5199`; a `::` bind
+  publishes `[::1]`), and readers accept the old unbracketed form and try every loopback spelling
+  of the port (`127.0.0.1`, `[::1]`, `localhost`) until one answers. Whether a server is running
+  is still decided by asking it, and the pid the file names is the listening process (the
+  re-exec'd child), which is also the pid its `/_denext/dev-state` reports.
 - **A desktop notification permission request settles when the OS never answers.** The
   `notifications` capability's prompting `permission` request (behind `requestPermission("notifications")`
   and `requestPushPermission()` in a Deno Desktop window) waited forever when macOS never answered
