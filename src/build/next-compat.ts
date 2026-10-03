@@ -1516,38 +1516,147 @@ export async function resolveInPackageDir(
   conditions: string[] = BROWSER_CONDITIONS,
   platformExtensions?: readonly string[],
 ): Promise<string | null> {
-  let pkg: { exports?: unknown; module?: string; main?: string };
+  return orNull(await resolveInPackageDirBrowser(pkgDir, subpath, conditions, platformExtensions));
+}
+
+/** A browser-field `false` (an empty module) as "unresolved", for callers that can't express it. */
+function orNull(r: string | false | null): string | null {
+  return r === false ? null : r;
+}
+
+/** A package's `browser` field: a main replacement, a map of files/specifiers, or nothing. */
+type BrowserField = string | Record<string, string | false> | undefined;
+
+/** The object form of a `browser` field (`{ "./lib/node.js": "./lib/web.js", "fs": false }`), or null. */
+function browserMap(browser: BrowserField): Record<string, string | false> | null {
+  return browser && typeof browser === "object" && !Array.isArray(browser) ? browser : null;
+}
+
+/** Strip a leading `./` and a JS extension: the form `browser` keys are compared in. */
+function browserKey(p: string): string {
+  return p.replace(/^\.\//, "").replace(/\.(?:m?js|cjs|json)$/, "");
+}
+
+/**
+ * What a package's `browser` map says about one of its own files (`file` absolute): the
+ * replacement file, `false` (an empty module), or null when the map does not mention it.
+ * Keys match with or without `./` and the extension (`"./lib/index"` names `lib/index.js`),
+ * and a directory key names its `index` file — the forms esbuild accepts.
+ */
+async function browserFileRemap(
+  pkgDir: string,
+  map: Record<string, string | false>,
+  file: string,
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
+  const rel = relative(pkgDir, file).replaceAll("\\", "/");
+  const want = new Set([browserKey(rel)]);
+  if (/(^|\/)index$/.test(browserKey(rel))) want.add(browserKey(rel).replace(/\/?index$/, ""));
+  for (const [key, target] of Object.entries(map)) {
+    if (!key.startsWith(".") && !key.includes("/")) continue; // a bare specifier, not a file
+    if (!want.has(browserKey(key))) continue;
+    if (target === false) return false;
+    return await probePackageFile(join(pkgDir, target.replace(/^\.\//, "")), platformExtensions);
+  }
+  return null;
+}
+
+/**
+ * What the `browser` map of the package owning `importer` says about the bare specifier
+ * `spec` (`"readable-stream": "./lib/readable-stream-browser.js"`, `"fs": false`): the
+ * replacement file, `false` (an empty module), or null when the map does not remap it.
+ * Exported for testing.
+ */
+export async function resolveBrowserSpecifier(
+  importer: string,
+  spec: string,
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
+  const pkgDir = await ownerPackageDir(importer);
+  if (!pkgDir) return null;
+  let pkg: { browser?: BrowserField };
   try {
     pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
   } catch {
     return null;
   }
-  let rel = pkg.exports ? resolveExportsField(pkg.exports, subpath, conditions) : null;
-  // No `exports` field: fall back to the legacy fields. The SSR bundle (no `browser`
-  // condition) prefers `main` (the Node/CJS build) over `module` so an isomorphic-but-
-  // browser-leaning ESM build doesn't reach server render; the browser bundle keeps
-  // `module` first for tree-shakeable ESM.
-  const prefersNode = conditions === SSR_CONDITIONS;
-  if (!rel) {
-    rel = subpath === ""
-      ? (prefersNode
-        ? (pkg.main ?? pkg.module ?? "index.js")
-        : (pkg.module ?? pkg.main ?? "index.js"))
-      : "." + subpath;
+  const map = browserMap(pkg.browser);
+  if (!map || !(spec in map)) return null;
+  const target = map[spec];
+  if (target === false) return false;
+  // A remap to another package (`"lodash": "lodash-es"`) is a bare specifier again.
+  if (!target.startsWith(".")) {
+    return await resolveNodeFromBrowser(pkgDir, target, BROWSER_CONDITIONS, platformExtensions);
   }
   const file = await probePackageFile(
-    join(pkgDir, rel.replace(/^\.\//, "")),
+    join(pkgDir, target.replace(/^\.\//, "")),
     platformExtensions,
   );
-  if (!file) return null;
-  // Realpath through pnpm's symlink: a package's private deps live next to its REAL
-  // location (`.pnpm/<parent>/node_modules/<dep>`), so the next importer-relative walk
-  // must start from the real dir — exactly what Node's resolver does (and why pnpm works).
+  return file ? await realPathOr(file) : null;
+}
+
+/** `file` through its symlinks (pnpm's layout), or `file` itself when that fails. */
+async function realPathOr(file: string): Promise<string> {
   try {
     return await Deno.realPath(file);
   } catch {
     return file;
   }
+}
+
+/**
+ * The package-relative target of `subpath`: the `exports` map, else (for the root) a string
+ * `browser` field, else the legacy fields. The SSR bundle (no `browser` condition) prefers
+ * `main` (the Node/CJS build) over `module` so an isomorphic-but-browser-leaning ESM build
+ * doesn't reach server render; the browser bundle keeps `module` first for tree-shakeable ESM.
+ */
+function packageEntryRel(
+  pkg: { exports?: unknown; module?: string; main?: string },
+  subpath: string,
+  conditions: string[],
+  browser: BrowserField,
+): string {
+  const rel = pkg.exports ? resolveExportsField(pkg.exports, subpath, conditions) : null;
+  if (rel) return rel;
+  if (subpath !== "") return "." + subpath;
+  if (typeof browser === "string") return browser;
+  return conditions === SSR_CONDITIONS
+    ? (pkg.main ?? pkg.module ?? "index.js")
+    : (pkg.module ?? pkg.main ?? "index.js");
+}
+
+/**
+ * {@link resolveInPackageDir}, honoring the package's `browser` field when `conditions` are
+ * a browser build's (as esbuild does for `platform: "browser"`): a string replaces the main
+ * entry, and the object form remaps the resolved file — to another file, or to `false` (an
+ * empty module, returned as `false`).
+ */
+async function resolveInPackageDirBrowser(
+  pkgDir: string,
+  subpath: string,
+  conditions: string[],
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
+  let pkg: { exports?: unknown; module?: string; main?: string; browser?: BrowserField };
+  try {
+    pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
+  } catch {
+    return null;
+  }
+  const browser = conditions.includes("browser") ? pkg.browser : undefined;
+  const rel = packageEntryRel(pkg, subpath, conditions, browser);
+  let file: string | false | null = await probePackageFile(
+    join(pkgDir, rel.replace(/^\.\//, "")),
+    platformExtensions,
+  );
+  if (!file) return null;
+  const map = browserMap(browser);
+  if (map) file = (await browserFileRemap(pkgDir, map, file, platformExtensions)) ?? file;
+  if (file === false) return false;
+  // Realpath through pnpm's symlink: a package's private deps live next to its REAL
+  // location (`.pnpm/<parent>/node_modules/<dep>`), so the next importer-relative walk
+  // must start from the real dir — exactly what Node's resolver does (and why pnpm works).
+  return await realPathOr(file);
 }
 
 /**
@@ -1568,18 +1677,33 @@ export async function resolveNodeFrom(
   conditions: string[] = BROWSER_CONDITIONS,
   platformExtensions?: readonly string[],
 ): Promise<string | null> {
+  return orNull(await resolveNodeFromBrowser(fromDir, spec, conditions, platformExtensions));
+}
+
+/**
+ * {@link resolveNodeFrom}, with a `browser`-field `false` (an empty module) kept as `false`
+ * instead of folded into "unresolved".
+ */
+async function resolveNodeFromBrowser(
+  fromDir: string,
+  spec: string,
+  conditions: string[],
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
   const [name, subpath] = splitPackageSpecifier(spec);
   let dir = fromDir;
   for (;;) {
     const pkgDir = join(dir, "node_modules", name);
-    const r = await resolveInPackageDir(pkgDir, subpath, conditions, platformExtensions);
-    if (r) return r;
+    const r = await resolveInPackageDirBrowser(pkgDir, subpath, conditions, platformExtensions);
+    if (r !== null) return r;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
   const self = await selfPackageDir(fromDir, name);
-  return self ? await resolveInPackageDir(self, subpath, conditions, platformExtensions) : null;
+  return self
+    ? await resolveInPackageDirBrowser(self, subpath, conditions, platformExtensions)
+    : null;
 }
 
 /**
@@ -1685,6 +1809,24 @@ export async function withPackageSideEffects(
     : { path };
 }
 
+/**
+ * Resolve the bare `spec` for the resolver plugin. A browser build honors the importing
+ * package's `browser` map first (jszip's `"readable-stream": "./lib/readable-stream-browser.js"`),
+ * as esbuild does; `false` is an empty module.
+ */
+async function resolveBareForBuild(
+  importer: string,
+  fromDir: string,
+  spec: string,
+  conditions: string[],
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
+  const remapped = conditions.includes("browser") && importer
+    ? await resolveBrowserSpecifier(importer, spec, platformExtensions)
+    : null;
+  return remapped ?? await resolveNodeFromBrowser(fromDir, spec, conditions, platformExtensions);
+}
+
 export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
@@ -1713,16 +1855,31 @@ export function catalogResolverPlugin(
           : (packages.has(name) && !importerInNodeModules) || !args.importer
           ? projectDir
           : dirname(args.importer);
-        const resolved = await resolveNodeFrom(fromDir, args.path, conditions, platformExtensions);
+        const resolved = await resolveBareForBuild(
+          args.importer,
+          fromDir,
+          args.path,
+          conditions,
+          platformExtensions,
+        );
+        if (resolved === false) return { path: args.path, namespace: BROWSER_EMPTY_NS };
         if (!resolved) return null;
         // Mark modules of a `"sideEffects": false` package so esbuild can tree-shake unused
         // barrel re-exports (denext's own resolver otherwise hands esbuild a bare path, which
         // it must treat as side-effectful).
         return await withPackageSideEffects(resolved);
       });
+      // A `browser`-field `false`: an empty CommonJS module (named imports read `undefined`).
+      build.onLoad({ filter: /.*/, namespace: BROWSER_EMPTY_NS }, () => ({
+        contents: "module.exports = {};",
+        loader: "js",
+      }));
     },
   };
 }
+
+/** The esbuild namespace of a module a package's `browser` field maps to `false`. */
+const BROWSER_EMPTY_NS = "denext-browser-empty";
 
 /** Deterministic short hash of a string (FNV-1a, base36) — for worker asset names. */
 function assetHash(s: string): string {
