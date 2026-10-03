@@ -140,6 +140,10 @@ Deno.test("publish-update: a signed run writes the archive and a manifest the pu
     // The version came from deno.jsonc (comments allowed), the identifier from the config.
     assertStringIncludes(r.out, `published com.example.pub 1.2.3 for ${PLATFORM}`);
     assertStringIncludes(r.out, `point desktop.update.manifestUrl at ${APP_UPDATE_MANIFEST_FILE}`);
+    // The fake .app is not notarized (spctl rejects it, or is missing off macOS): published with
+    // a warning, not refused.
+    assertStringIncludes(r.err, "publish-update: warning:");
+    assertStringIncludes(r.err, "DENEXT_NOTARY_PROFILE");
     const manifest = JSON.parse(
       await Deno.readTextFile(join(dir, "release", APP_UPDATE_MANIFEST_FILE)),
     );

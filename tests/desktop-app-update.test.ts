@@ -20,6 +20,8 @@ import {
   appUpdatePlatformKey,
   isAppUpdatePlatform,
   isAppUpdateVersion,
+  macNotarizationWarning,
+  type NotarizationCommandRunner,
   publishAppUpdate,
   signAppUpdatePayload,
   validateAppUpdatePayload,
@@ -468,6 +470,43 @@ Deno.test("wrappers: runtime refusals surface as AppUpdateError with the runtime
   });
 });
 
+Deno.test("wrappers: a macOS Gatekeeper refusal carries the notarization hint; others do not", async () => {
+  const gatekeeper = "Gatekeeper rejects the staged app (spctl --assess): rejected";
+  await withRuntime({
+    stage: () => {
+      throw runtimeError("os_signature", gatekeeper);
+    },
+    download: () => Promise.resolve(),
+  }, async () => {
+    const e = await assertRejects(
+      () => downloadAppUpdate({ manifestUrl: "https://x/a.json" }),
+      AppUpdateError,
+    );
+    assertEquals(e.code, "os_signature");
+    assertStringIncludes(e.message, gatekeeper);
+    assertStringIncludes(
+      e.message,
+      "hint: on macOS a full-app update must be signed with your Developer ID and notarized " +
+        "(DENEXT_NOTARY_PROFILE when packaging)",
+    );
+  });
+  // A Team ID mismatch, or a Gatekeeper word under another code, gets no hint.
+  for (
+    const [code, message] of [
+      ["os_signature", "the staged app is signed by Team ID B, the running app by A"],
+      ["io", "spctl could not be started"],
+    ]
+  ) {
+    await withRuntime({ check: () => Promise.reject(runtimeError(code, message)) }, async () => {
+      const e = await assertRejects(
+        () => checkForAppUpdate({ manifestUrl: "https://x/a.json" }),
+        AppUpdateError,
+      );
+      assertEquals(e.message, message);
+    });
+  }
+});
+
 Deno.test("wrappers: download stages with the dev opt-out only when asked, and forwards fetch options", async () => {
   const calls: unknown[][] = [];
   const stub: Stub = {
@@ -591,4 +630,70 @@ Deno.test("wrappers: install / confirm / stage failures rethrow as AppUpdateErro
     );
     assertEquals([e.code, e.message], ["io", "null"]);
   });
+});
+
+/** A runner that answers `spctl` with `result` (or throws `result`) and records its calls. */
+function stubSpctl(result: { success: boolean; stdout?: string; stderr?: string } | Error) {
+  const calls: { cmd: string; args: string[] }[] = [];
+  const run: NotarizationCommandRunner = (cmd, args) => {
+    calls.push({ cmd, args });
+    if (result instanceof Error) return Promise.reject(result);
+    return Promise.resolve({ stdout: "", stderr: "", ...result });
+  };
+  return { run, calls };
+}
+
+Deno.test("publish-update notarization: a notarized Developer ID app passes without a warning", async () => {
+  const s = stubSpctl({
+    success: true,
+    stderr: "/x/My App.app: accepted\nsource=Notarized Developer ID\norigin=Developer ID " +
+      "Application: Example (TEAM123456)\n",
+  });
+  assertEquals(await macNotarizationWarning("/x/My App.app", s.run), null);
+  assertEquals(s.calls, [{ cmd: "spctl", args: ["-a", "-vv", "-t", "exec", "/x/My App.app"] }]);
+});
+
+Deno.test("publish-update notarization: an unnotarized Developer ID app is warned about with spctl's source", async () => {
+  const s = stubSpctl({
+    success: false,
+    stderr: "/x/My App.app: rejected\nsource=Unnotarized Developer ID\n",
+  });
+  const w = await macNotarizationWarning("/x/My App.app", s.run);
+  assert(w);
+  assertStringIncludes(w, "source=Unnotarized Developer ID");
+  assertStringIncludes(w, "os_signature");
+  assertStringIncludes(w, "DENEXT_NOTARY_PROFILE");
+});
+
+Deno.test("publish-update notarization: an Apple Development build, a bare rejection and an accepted non-notarized source warn", async () => {
+  for (
+    const [result, expected] of [
+      [
+        { success: false, stderr: "/x/A.app: rejected\nsource=Apple Development\n" },
+        "source=Apple Development",
+      ],
+      [{ success: false, stderr: "/x/A.app: rejected\n" }, "rejected"],
+      [
+        { success: true, stderr: "/x/A.app: accepted\nsource=Developer ID\n" },
+        "source=Developer ID",
+      ],
+    ] as const
+  ) {
+    const w = await macNotarizationWarning("/x/A.app", stubSpctl(result).run);
+    assert(w, expected);
+    assertStringIncludes(w, expected);
+  }
+});
+
+Deno.test("publish-update notarization: no spctl on this host is a softer warning; non-.app artifacts are not checked", async () => {
+  const missing = stubSpctl(new Deno.errors.NotFound("spctl"));
+  const w = await macNotarizationWarning("/x/A.app/", missing.run);
+  assert(w);
+  assertStringIncludes(w, "could not check");
+  assertStringIncludes(w, "DENEXT_NOTARY_PROFILE");
+  for (const artifact of ["/x/MyApp.AppImage", "/x/my-app", "C:\\x\\MyApp"]) {
+    const s = stubSpctl({ success: false });
+    assertEquals(await macNotarizationWarning(artifact, s.run), null);
+    assertEquals(s.calls.length, 0);
+  }
 });

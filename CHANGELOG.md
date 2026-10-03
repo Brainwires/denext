@@ -388,6 +388,16 @@ and this project adheres to
 
 ### Changed
 
+- **Docs: a macOS full-app update must be notarized.** The Desktop and Deno Desktop runtime
+  pages now state what the runtime checks before it installs a macOS update (`codesign --verify
+  --deep --strict`, the same Team ID, Gatekeeper's `spctl --assess --type execute`, the same
+  signing identifier): "same signer" means the same Team ID plus Gatekeeper acceptance, so any
+  notarized identity from the team passes while an unnotarized Developer ID build (`os_signature:
+  Gatekeeper rejects the staged app`) or an Apple Development build from the same team is
+  refused. `denext desktop publish-update` now warns when the `.app` it publishes is not accepted
+  as notarized (`spctl -a -vv -t exec`), and an `AppUpdateError` for a Gatekeeper refusal carries
+  a hint to sign with the Developer ID and notarize (`DENEXT_NOTARY_PROFILE` when packaging).
+
 - **The pinned Deno Desktop runtime is 2.9.7-denext.8; the custom origin requires 2.9.7-denext.7
   or later.** denext.8 opens macOS windows in front at launch (the first window had opened behind
   other apps' windows, so WebKit paused `requestAnimationFrame`), has WKWebView report

@@ -501,3 +501,57 @@ export async function publishAppUpdate(
     platforms: Object.keys(payload.platforms).sort(),
   };
 }
+
+/** The outcome of one external command (for {@linkcode macNotarizationWarning}). */
+export interface NotarizationCommandResult {
+  readonly success: boolean;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** Runs `cmd args…`; rejects when the command cannot be started (tests pass a stub). */
+export type NotarizationCommandRunner = (
+  cmd: string,
+  args: string[],
+) => Promise<NotarizationCommandResult>;
+
+const runCommand: NotarizationCommandRunner = async (cmd, args) => {
+  const out = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped" }).output();
+  const text = new TextDecoder();
+  return { success: out.success, stdout: text.decode(out.stdout), stderr: text.decode(out.stderr) };
+};
+
+const NOTARIZE_FIX = "package it with a Developer ID identity and DENEXT_NOTARY_PROFILE set";
+
+/**
+ * Whether a macOS update archive would pass the runtime's Gatekeeper check. Before it installs a
+ * full-app update the runtime requires `spctl --assess --type execute` to accept the staged
+ * `.app`, so a Developer ID build that is not notarized (or an Apple Development build) is
+ * refused on every installed app (`os_signature`) even when the Team ID matches. This runs the
+ * same assessment (`spctl -a -vv -t exec`) on the artifact being published.
+ *
+ * @param artifact The packaged artifact; anything but a `.app` is not checked.
+ * @param run The command runner (default: `Deno.Command`).
+ * @returns A warning to print, or `null` when Gatekeeper accepts the app as notarized (or it is
+ *   not a macOS `.app`).
+ */
+export async function macNotarizationWarning(
+  artifact: string,
+  run: NotarizationCommandRunner = runCommand,
+): Promise<string | null> {
+  if (!/\.app\/?$/i.test(artifact)) return null;
+  let r: NotarizationCommandResult;
+  try {
+    r = await run("spctl", ["-a", "-vv", "-t", "exec", artifact]);
+  } catch {
+    return `could not check that ${artifact} is notarized (spctl is unavailable on this host). ` +
+      `Installed apps refuse a macOS update Gatekeeper rejects: ${NOTARIZE_FIX}.`;
+  }
+  // spctl prints its verdict and `source=` to stderr.
+  const output = `${r.stderr}\n${r.stdout}`;
+  const source = /^\s*source=(.*)$/m.exec(output)?.[1]?.trim();
+  if (r.success && (source === undefined || /notarized/i.test(source))) return null;
+  const why = source ? ` (source=${source})` : r.success ? "" : ` (${output.trim() || "rejected"})`;
+  return `${artifact} is not a notarized Developer ID app${why}: installed apps refuse it ` +
+    `(os_signature: Gatekeeper rejects the staged app). ${NOTARIZE_FIX}, then publish again.`;
+}

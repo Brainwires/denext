@@ -1,12 +1,17 @@
 // `denext desktop publish-update`: pack a packaged desktop app into a full-app update archive and
 // write (or extend) the signed manifest the pinned runtime's `Deno.desktop.updater` checks. See
 // `src/build/app-update.ts` for the formats. Signing is mandatory: without `--key` (a PKCS#8 PEM
-// from `denext ota keygen`) or `DENEXT_OTA_SIGNING_KEY`, nothing is written.
+// from `denext ota keygen`) or `DENEXT_OTA_SIGNING_KEY`, nothing is written. A macOS `.app` that
+// Gatekeeper does not accept as notarized is published with a warning: installed apps refuse it.
 
 import { join, resolve } from "@std/path";
 import type { CommandContext, FlagSpec } from "../command.ts";
 import { loadOtaSigningKey, OTA_SIGNING_KEY_ENV } from "../../build/ota-signing.ts";
-import { APP_UPDATE_MANIFEST_FILE, publishAppUpdate } from "../../build/app-update.ts";
+import {
+  APP_UPDATE_MANIFEST_FILE,
+  macNotarizationWarning,
+  publishAppUpdate,
+} from "../../build/app-update.ts";
 import { resolveProject } from "../../build/paths.ts";
 
 /** The flags `desktop publish-update` adds to the `desktop` verb. */
@@ -15,7 +20,8 @@ export const PUBLISH_UPDATE_FLAGS: FlagSpec[] = [
     name: "artifact",
     type: "string",
     valueName: "<path>",
-    help: "publish-update: the packaged app (.app, app directory or .AppImage)",
+    help:
+      "publish-update: the packaged app (.app, app directory or .AppImage); a macOS .app must be notarized",
   },
   {
     name: "url-base",
@@ -135,6 +141,8 @@ async function publishFromFlags(flags: Record<string, unknown>, dir: string): Pr
     minVersion: opt("min-version"),
     releaseNotes: opt("notes"),
   });
+  const notarization = await macNotarizationWarning(resolve(dir, artifact));
+  if (notarization) console.error(`denext desktop publish-update: warning: ${notarization}`);
   console.log(
     `\n  denext desktop — published ${app} ${version} for ${r.platform}\n` +
       `    archive   ${r.archive} (${r.size} bytes, sha256 ${r.sha256})\n` +

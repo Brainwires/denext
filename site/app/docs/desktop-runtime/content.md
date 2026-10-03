@@ -433,6 +433,14 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   the same code-signing identity (Team ID on macOS, signer on Windows). A helper swaps it in
   atomically, and a version that doesn't confirm itself on its next launch is rolled back. denext's
   `denext/desktop/updater` confirms after the first window loads.
+- **macOS requirements:** the runtime checks the staged app in this order: `codesign --verify
+  --deep --strict`; the same Team ID as the running app; `spctl --assess --type execute`
+  (Gatekeeper); the same signing identifier. So "same signer" on macOS means the same Team ID
+  _and_ Gatekeeper acceptance: any notarized identity from the same team passes, but a Developer ID
+  build that is not notarized is refused (`os_signature: Gatekeeper rejects the staged app`) even
+  with the same signer, and so is an Apple Development–signed build from the same team. Notarize
+  the build you publish (`DENEXT_NOTARY_PROFILE` at package time); `denext desktop publish-update`
+  warns when Gatekeeper does not accept the `.app` as notarized.
 - **Why:** Deno's `Deno.autoUpdate` patches the runtime library in place with bsdiff. Inside a
   signed `.app` that breaks the code signature; it is Unix only, the signature is optional, and
   nothing stops a downgrade. The updater ops are also gated to a packaged app: they had been

@@ -389,7 +389,7 @@ deno task desktop:package --arch universal`}
         <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, only whether it is set.
       </p>
 
-      <h2>Notarization</h2>
+      <h2 id="notarization">Notarization</h2>
       <p>
         Notarization is a separate step: Apple scans the signed bundle and issues a ticket that you
         staple into the app so it opens without a warning offline. First store your notary
@@ -1063,10 +1063,24 @@ if (found.available) {
         without traversal, escaping links or special files (<code>unsafe_archive</code>) that holds
         this app (<code>bundle_mismatch</code>), and the operating system&apos;s code signature
         (<code>os_signature</code>): on macOS{" "}
-        <code>codesign --verify --deep --strict</code>, Gatekeeper and the same Team ID as the
-        running app; on Windows a trusted Authenticode signature with the same signer as the running
-        executable. Linux has no OS signature; the manifest signature and the hash are the whole
-        check there.
+        <code>codesign --verify --deep --strict</code>, the same Team ID as the running app,
+        Gatekeeper (<code>spctl --assess --type execute</code>) and the same signing identifier; on
+        Windows a trusted Authenticode signature with the same signer as the running executable.
+        Linux has no OS signature; the manifest signature and the hash are the whole check there.
+      </p>
+      <p>
+        <strong>On macOS the update must be notarized.</strong>{" "}
+        &quot;Same signer&quot; on macOS means the same Team ID <em>and</em>{" "}
+        Gatekeeper acceptance. Any notarized identity from the same team passes; a Developer ID
+        build that is not notarized is refused (<code>
+          os_signature: Gatekeeper rejects the staged app
+        </code>) even though its signer matches, and so is an Apple Development–signed build from
+        the same team. Package the release you publish with your Developer ID identity and{" "}
+        <code>DENEXT_NOTARY_PROFILE</code> set (see <a href="#notarization">Notarization</a>).{" "}
+        <code>denext desktop publish-update</code> runs <code>spctl -a -vv -t exec</code> on the
+        {" "}
+        <code>.app</code> and warns when Gatekeeper does not accept it as notarized, and an{" "}
+        <code>AppUpdateError</code> for a Gatekeeper refusal carries the same hint.
       </p>
       <p>
         <strong>Dev builds.</strong>{" "}

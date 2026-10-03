@@ -310,7 +310,7 @@
           "name": "artifact",
           "type": "string",
           "valueName": "<path>",
-          "description": "publish-update: the packaged app (.app, app directory or .AppImage)"
+          "description": "publish-update: the packaged app (.app, app directory or .AppImage); a macOS .app must be notarized"
         },
         {
           "name": "url-base",

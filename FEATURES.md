@@ -514,7 +514,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   (`checkForAppUpdate` / `downloadAppUpdate` / `installAppUpdateAndRelaunch` /
   `confirmAppUpdate`, published by `denext desktop publish-update`): the whole
   signed app swapped atomically, no downgrades, the same code-signing identity
-  required, rolled back if the new version never confirms. —
+  required (on macOS the same Team ID and a notarized build Gatekeeper accepts),
+  rolled back if the new version never confirms. —
   `src/desktop/updater.ts`, `src/desktop/app-updater.ts`.
 - **React Native / Expo apps on the web** ⚑ — `reactNative: true` (SPA mode)
   builds an Expo / React Native app's own source through react-native-web:

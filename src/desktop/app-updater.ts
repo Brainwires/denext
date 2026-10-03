@@ -18,8 +18,10 @@
 //     download stops at the declared size (`size_exceeded`) and must hash to the signed SHA-256
 //     (`integrity`), the archive is extracted with tar-slip / symlink / special-file refusal
 //     (`unsafe_archive`), and it must be this app's shape (`bundle_mismatch`).
-//  4. OS CODE SIGNATURE. macOS: `codesign --verify --deep --strict` + Gatekeeper + the SAME Team ID
-//     as the running app; Windows: `WinVerifyTrust` with the SAME signer subject (`os_signature`).
+//  4. OS CODE SIGNATURE. macOS: `codesign --verify --deep --strict`, the SAME Team ID as the
+//     running app, Gatekeeper (`spctl --assess --type execute`, so the update must be NOTARIZED: a
+//     Developer ID build that is not, or an Apple Development build, is refused) and the same
+//     signing identifier; Windows: `WinVerifyTrust` with the SAME signer subject (`os_signature`).
 //     An unsigned / ad-hoc running app (a dev build) needs the dev-only `allowUnsignedDev`.
 //  5. ATOMIC SWAP, CONFIRM OR ROLL BACK. A helper swaps the install once the app has exited (an
 //     atomic exchange on macOS / Linux), keeps the previous app as `<name>.old`, and relaunches. The
@@ -214,12 +216,26 @@ function requireUpdater(): RuntimeUpdater {
   return updater;
 }
 
+/** What a macOS Gatekeeper refusal of the staged app almost always means, and the fix. */
+const GATEKEEPER_HINT = "on macOS a full-app update must be signed with your Developer ID and " +
+  "notarized (DENEXT_NOTARY_PROFILE when packaging)";
+
+/**
+ * The runtime's message, plus {@linkcode GATEKEEPER_HINT} when it is the macOS Gatekeeper
+ * (`spctl --assess`) refusal: the runtime reports only spctl's bare verdict ("rejected"), and the
+ * usual cause is a Developer ID build that was never notarized (or an Apple Development one).
+ */
+function withHint(code: string, message: string): string {
+  if (code !== "os_signature" || !/gatekeeper|spctl/i.test(message)) return message;
+  return message.includes(GATEKEEPER_HINT) ? message : `${message} (hint: ${GATEKEEPER_HINT})`;
+}
+
 /** Rethrow a runtime error as an {@linkcode AppUpdateError} (an unknown code becomes `io`). */
 function rethrow(err: unknown): never {
   const e = err as { code?: unknown; message?: unknown } | null;
   const code = typeof e?.code === "string" && CODES.has(e.code) ? e.code : "io";
   const message = typeof e?.message === "string" ? e.message : String(err);
-  throw new AppUpdateError(code as AppUpdateErrorCode, message);
+  throw new AppUpdateError(code as AppUpdateErrorCode, withHint(code, message));
 }
 
 async function guard<T>(f: () => T | Promise<T>): Promise<T> {
