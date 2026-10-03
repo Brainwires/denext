@@ -13,6 +13,7 @@ import {
   sweepOtherBuildPages,
 } from "../../server/cache.ts";
 import {
+  configuredDesktopAppOrigin,
   resolveCacheComponents,
   resolveConfigRules,
   resolveLive,
@@ -26,6 +27,7 @@ import {
 } from "../../server/instrumentation.ts";
 import { bootScheduledTasks } from "../../server/task-loader.ts";
 import { installLiveHub } from "../../server/live.ts";
+import { sameOriginUpgrade } from "../../server/origin-check.ts";
 import { createMiddlewareRunner, type MiddlewareRunner } from "../../server/middleware.ts";
 import { defaultLoader } from "../../server/mod.ts";
 import type { ModuleLoader } from "../../server/types.ts";
@@ -65,18 +67,6 @@ async function loadMiddleware(paths: ProjectPaths, load: ModuleLoader): Promise<
   if (!paths.middlewarePath) return null;
   const mod = await load(paths.middlewarePath);
   return createMiddlewareRunner(mod as never);
-}
-
-/** Strict same-origin check for the Live WebSocket handshake. */
-function sameOrigin(req: Request): boolean {
-  const origin = req.headers.get("origin");
-  const host = req.headers.get("host");
-  if (!origin || !host) return false;
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -196,7 +186,14 @@ export async function createProdApp(
     ...resolveServerOptions(paths.config),
   });
   if (flightRoutes.size > 0) {
-    installLiveHub({ appHandler, originAllowed: sameOrigin, config: resolveLive(paths.config) });
+    // Strict same-origin for the Live handshake; a Deno Desktop window's own
+    // `desktop.app.origin` (exactly) counts as same-origin.
+    const desktopAppOrigin = configuredDesktopAppOrigin(paths.config);
+    installLiveHub({
+      appHandler,
+      originAllowed: (req) => sameOriginUpgrade(req, desktopAppOrigin),
+      config: resolveLive(paths.config),
+    });
   }
   return appHandler;
 }

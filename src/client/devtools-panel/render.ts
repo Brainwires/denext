@@ -11,6 +11,8 @@ import { renderRenderModes } from "./render-modes.ts";
 import { refreshCacheTab, renderCacheTab } from "./cache.ts";
 import { refreshNetworkTab, renderNetworkTab } from "./network.ts";
 import { refreshRoutesTab, renderRoutesTab } from "./routes.ts";
+import { renderConsoleTab } from "./console.ts";
+import { syncSize } from "./size.ts";
 import type { PanelCtx, TabId } from "./ctx.ts";
 import { type Shell, syncTitle, TABS } from "./shell.ts";
 import { el } from "./styles.ts";
@@ -36,6 +38,7 @@ const TAB_RENDERERS: Record<TabId, TabRenderer> = {
   network: renderNetworkTab,
   cache: renderCacheTab,
   routes: renderRoutesTab,
+  console: renderConsoleTab,
 };
 
 /** Tab id → its dev-server read, for the tabs that have one. */
@@ -66,6 +69,7 @@ function syncChrome(ctx: PanelCtx, shell: Shell): void {
     btn.setAttribute("tabindex", on ? "0" : "-1");
   }
   shell.leftPane.style.display = state.tab === "components" ? "" : "none";
+  syncSize(ctx, shell);
   syncTitle(shell);
 }
 

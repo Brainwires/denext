@@ -168,6 +168,7 @@ Deno.test("dispatch: a filtered tool set hides disabled tools from tools/list", 
   assertEquals(names.length, tools.length);
   assert(!names.includes("denext_query_codebase"), "rag tool is hidden");
   assert(!names.includes("denext_search_docs"), "docs tool is hidden");
+  assert(!names.includes("denext_read_docs"), "docs read tool is hidden too");
   assert(names.includes("denext_check_snippet"), "an unaffected tool remains");
 });
 

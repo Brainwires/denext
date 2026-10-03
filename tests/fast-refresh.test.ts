@@ -335,7 +335,7 @@ Deno.test("generateFlightEntry emits Fast Refresh registration only in dev", () 
   };
   const dev = generateFlightEntry(boundary, true);
   assertStringIncludes(dev, "enableFastRefresh()");
-  assertStringIncludes(dev, "registerFamily(mod[k]");
+  assertStringIncludes(dev, "registerFamily(v, clientId");
 
   const prod = generateFlightEntry(boundary);
   assert(!prod.includes("enableFastRefresh"), "prod flight entry has no refresh runtime");

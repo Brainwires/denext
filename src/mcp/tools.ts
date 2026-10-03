@@ -19,7 +19,8 @@ import { profileApp } from "../profile/core.ts";
 import type { Budget } from "../profile/budget.ts";
 import { checkSnippet, type Diagnostic } from "./check.ts";
 import { IMPORT_RULES, lookupImport } from "./next-denext-map.ts";
-import { formatHits, searchDocs } from "./rag/search.ts";
+import { type DocsKind, formatHits, searchDocs } from "./rag/search.ts";
+import { readDocs } from "./rag/read.ts";
 import { ensureCodeIndex, indexStats } from "./rag/codebase.ts";
 import {
   findDefinition,
@@ -421,9 +422,11 @@ export const TOOLS: readonly Tool[] = [
   {
     name: "denext_search_docs",
     description:
-      "Search the denext docs — the API reference + the authoring guide — by keyword and get " +
-      "the top matching symbols/sections with links and snippets. Use it to find the right " +
-      "denext API or rule before writing code, instead of guessing Next.js.",
+      "Search ALL of denext's docs, offline — every docs-site guide page (by section) plus the " +
+      "full API reference — by keyword or question. Returns the top sections/symbols with a " +
+      "`read:` ref, a denext.dev link and a snippet; pass the ref to denext_read_docs for the " +
+      "full text. Use it before writing code (and instead of fetching denext.dev) to find the " +
+      "right denext API, config key or recipe rather than guessing Next.js.",
     inputSchema: {
       type: "object",
       properties: {
@@ -431,17 +434,64 @@ export const TOOLS: readonly Tool[] = [
           type: "string",
           description: 'Keywords or a natural-language question, e.g. "read a session cookie".',
         },
+        kind: {
+          type: "string",
+          enum: ["all", "guide", "api"],
+          description:
+            "Restrict to guide pages (`guide`), API symbols (`api`), or both (`all`, default).",
+        },
         limit: { type: "number", description: "Max results (default 8)." },
       },
       required: ["query"],
     },
-    run: (args) => {
+    run: async (args) => {
       const query = str(args.query);
-      if (!query) {
-        return Promise.resolve({ text: "Pass a `query` string to search.", isError: true });
+      if (!query) return { text: "Pass a `query` string to search.", isError: true };
+      const kind = str(args.kind) || "all";
+      if (!["all", "guide", "api"].includes(kind)) {
+        return { text: `\`kind\` must be "all", "guide" or "api" (got "${kind}").`, isError: true };
       }
       const limit = typeof args.limit === "number" ? args.limit : undefined;
-      return Promise.resolve({ text: formatHits(searchDocs(query, limit), query) });
+      const hits = await searchDocs(query, { limit, kind: kind as DocsKind });
+      return { text: formatHits(hits, query) };
+    },
+  },
+  {
+    name: "denext_read_docs",
+    description: "Read denext docs offline, as Markdown: a whole docs page by slug or URL " +
+      '("desktop-runtime", "/docs/deployment-targets"), one section ("desktop#desktop-notifications"), ' +
+      'or an API symbol\'s full docs ("api:denext/useApi", "api:denext/server/getSession"). ' +
+      "An unknown page lists the closest matches and every page. Pair it with " +
+      "denext_search_docs, whose results carry the ref to pass here.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: {
+          type: "string",
+          description:
+            'Page slug or URL, "slug#anchor" for one section, or "api:<module>/<name>" for a symbol.',
+        },
+        maxChars: {
+          type: "number",
+          description:
+            "Cap for a whole-page read (default 60000); past it the page is cut at a section " +
+            "boundary and the remaining sections are listed by ref.",
+        },
+      },
+      required: ["ref"],
+    },
+    run: (args) => {
+      const ref = str(args.ref);
+      if (!ref) {
+        return Promise.resolve({
+          text: 'Pass a `ref`: a page slug ("desktop"), "slug#anchor", or "api:denext/useApi".',
+          isError: true,
+        });
+      }
+      const max = typeof args.maxChars === "number" && args.maxChars > 0
+        ? args.maxChars
+        : undefined;
+      return readDocs(ref, max);
     },
   },
   {
@@ -549,8 +599,8 @@ export const TOOL_GROUPS: Readonly<Record<string, readonly string[]>> = {
   dev: ["denext_dev_logs"],
   /** The in-page DevTools bridge: a running page's live component tree, renders, hooks. */
   devtools: ["denext_component_tree", "denext_why_render", "denext_hook_state"],
-  /** denext's own docs search (API reference + authoring guide). */
-  docs: ["denext_search_docs"],
+  /** denext's own docs, offline: search + read every guide page and the API reference. */
+  docs: ["denext_search_docs", "denext_read_docs"],
   /** Project-codebase search: index, query, find-definition, find-references. */
   rag: [
     "denext_index_codebase",

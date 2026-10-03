@@ -22,6 +22,7 @@ import { copyPublic, renderAllPages } from "./export-pipeline/render.ts";
 import { stopNextCompat } from "./next-compat.ts";
 import { resolveProject } from "./paths.ts";
 import { writeMobileExportExtras } from "./mobile-export-extras.ts";
+import { writeDesktopPreload } from "./desktop-preload.ts";
 
 export type { StaticExportOptions, StaticExportResult } from "./export-pipeline/context.ts";
 
@@ -53,6 +54,8 @@ export async function staticExport(
   await copyPublic(paths.publicDir, ctx.outDir);
   // 3b. Mobile extras: the appLinks association files and the Background Runner script.
   await writeMobileExportExtras(paths.projectDir, paths.config, ctx.outDir);
+  // 3c. `desktop.preload`, bundled for the desktop runtime to inline first into every page.
+  await writeDesktopPreload(paths, ctx.outDir);
   // Tear down the shared esbuild service the compat SSR build started (one-shot export).
   if (ctx.compat) await stopNextCompat();
   // 4. Everything rendered: swap the staging dir into `out/`.

@@ -2,6 +2,7 @@
 // SSE, the `__denextDev` marker, the dev error overlay). Served as an external
 // same-origin module at DEV_RELOAD_JS_PATH so the strict dev CSP allows it.
 
+import { consoleCaptureScript } from "./console-capture-script.ts";
 import { DEV_LOG_PATH, OPEN_IN_EDITOR_PATH, RELOAD_PATH } from "./state.ts";
 
 /**
@@ -17,36 +18,11 @@ import { DEV_LOG_PATH, OPEN_IN_EDITOR_PATH, RELOAD_PATH } from "./state.ts";
  * unhandled rejections, and server-pushed build errors). Exported for tests;
  * never emitted into a production build.
  */
-export const DEV_RELOAD_SCRIPT = `
+export const DEV_RELOAD_SCRIPT = consoleCaptureScript(DEV_LOG_PATH) + `
 (function () {
   window.__denextDev = true;
-  // --- Dev log capture (browser -> server ring buffer, read via MCP) ---------
-  // Ship console.error/warn + uncaught errors/rejections back to the dev server so the
-  // running app's browser signal is readable out-of-process (GET /_denext/dev-state).
-  // Best-effort and same-origin (the dev page's own origin); never breaks the app.
-  var DEV_LOG = ${JSON.stringify(DEV_LOG_PATH)};
-  function report(level, message, stack) {
-    try {
-      fetch(DEV_LOG, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          level: level,
-          message: String(message == null ? "" : message).slice(0, 2000),
-          stack: stack ? String(stack).slice(0, 4000) : "",
-          url: location.pathname,
-        }),
-        keepalive: true,
-      }).catch(function () {});
-    } catch (_) {}
-  }
-  ["error", "warn"].forEach(function (lvl) {
-    var orig = console[lvl];
-    console[lvl] = function () {
-      try { report(lvl, Array.prototype.join.call(arguments, " "), ""); } catch (_) {}
-      return orig.apply(this, arguments);
-    };
-  });
+  // Console capture, browser -> server log forwarding and the boot diagnosis live in the
+  // capture script that heads this one (./console-capture-script.ts).
   // --- Dev error overlay -----------------------------------------------------
   var overlay = null;
   function hideOverlay() { if (overlay) { overlay.remove(); overlay = null; } }
@@ -101,14 +77,12 @@ export const DEV_RELOAD_SCRIPT = `
   window.addEventListener("error", function (e) {
     if (e && e.error) {
       showOverlay("Runtime error", e.error.message, e.error.stack);
-      report("error", e.error.message, e.error.stack);
     }
   });
   window.addEventListener("unhandledrejection", function (e) {
     var r = e && e.reason;
     if (r) {
       showOverlay("Unhandled rejection", r.message || String(r), r.stack);
-      report("error", r.message || String(r), r.stack);
     }
   });
 
@@ -186,7 +160,13 @@ export const DEV_RELOAD_SCRIPT = `
     es.onmessage = function (e) {
       if (e.data === "refresh") { hideOverlay(); refresh(); }
       else if (e.data === "css") { hideOverlay(); swapCss(); }
-      else if (e.data === "reload") location.reload();
+      else if (e.data === "reload") {
+        // Marked first, so the console capture can tell a reload loop from a page someone
+        // reloaded (it counts the reloads the dev server ordered).
+        var c = window.__denextConsole;
+        if (c && c.markReload) c.markReload("the dev server rebuilt and ordered a reload");
+        location.reload();
+      }
       else if (e.data.indexOf("update:") === 0) { hideOverlay(); update(e.data.slice(7)); }
       else if (e.data.indexOf("error:") === 0) {
         try {

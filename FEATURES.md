@@ -353,7 +353,7 @@ rework (the enhancement rationale + mechanism is in **Part 2 §4**):
 
 Nothing Android below has run on a device or emulator yet (compiled and
 unit-tested); the iOS halves were run on an iPhone — per-item status in
-[REACT-NATIVE-EXPO.md](./REACT-NATIVE-EXPO.md).
+[denext vs React Native](https://denext.dev/docs/vs-react-native).
 
 - **`denext/mobile`** — a client runtime for a Capacitor iOS/Android shell that
   talks to Capacitor only through the `window.Capacitor` global (no
@@ -380,8 +380,10 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   notification's `data.path` is navigated, cold start included; no web push);
   `openAuthSession` / `completeAuthSession` — an `ASWebAuthenticationSession`
   sheet on iOS, a Custom Tab on Android, a popup on the web, and in a Deno
-  Desktop window the system browser with an RFC 8252 one-shot loopback redirect
-  behind a per-launch token. — `src/mobile/auth-session.ts`,
+  Desktop window an `ASWebAuthenticationSession` sheet on macOS or the system
+  browser (with a Cancel overlay) on Windows and Linux, ending at a declared
+  custom scheme or an RFC 8252 one-shot loopback redirect behind a per-launch
+  token. — `src/mobile/auth-session.ts`,
   `src/desktop/auth-session.ts`.
 - **`denext mobile add <capability...>`** — installs and registers the plugins
   behind those functions in a Capacitor 8 project (`haptics`, `clipboard`,
@@ -416,18 +418,105 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `@expo/fingerprint` equivalent. **`examples/capacitor-ci`** is a GitHub
   Actions recipe that routes each push to a signed OTA manifest or signed store
   binaries on it. — `src/build/mobile-fingerprint.ts`.
+- **fastlane, when a team ships with it** — `denext mobile add fastlane
+  [--ci]` writes `fastlane/` (Appfile from `capacitor.config`, Matchfile and
+  `ios` / `android` `build` · `beta` · `release` lanes over `denext mobile build
+  --release`), a pinned Gemfile and, with `--ci`, a GitHub Actions workflow;
+  `denext mobile doctor --release` checks it. Never required: `denext mobile
+  build` / `submit` stay the zero-setup path. — `src/build/mobile-fastlane.ts`.
 - **Dev-server attach (the Metro model)** — `denext mobile dev [--lan]` points
   the Capacitor app at `denext dev` for the session (config, iOS local-network
   Info.plist keys and the native config copies all restored on exit or with
   `--restore`); `denext dev --lan` binds the LAN IPv4 and prints a QR code;
   `allowedDevOrigins` / `--allowed-dev-origin` and an explicit `--host` open
   the dev origin gate to a named host only.
+- **Deno Desktop apps** — `denext desktop run | dev | build | package` export
+  the app and build it with `deno desktop`: `run` and `dev` build into a temp
+  directory with the packaged app's own least-privilege `--allow-*` and launch it,
+  streaming its output (`dev` proxies the window to `denext dev`, HMR included);
+  `package` runs the scaffolded `scripts/package-*.ts` (`--regenerate-scripts`
+  refreshes them). The app's name, identifier and icon come from
+  `desktop.app` in `denext.config.ts`, and `desktop.denoFlags` adds an
+  allow-listed set of extra `deno desktop` flags (resolution and type-check
+  only; `denext migrate --desktop` writes the pnpm pair). —
+  `src/cli/commands/desktop.ts`, `src/build/desktop-launch.ts`,
+  `src/desktop/deno-flags.ts`.
+- **Desktop installers** — each package script wraps the finished bundle in its
+  OS's installers, picked by `desktop.installers` or `--format`: macOS `.dmg`
+  and a signed, notarized `.pkg`; Linux `.tar.gz` + `.deb` (written by denext,
+  no tool), `.rpm` and AppImage; Windows `.msi` (per-user or per-machine, an
+  in-place upgrade keyed on the app identifier, Authenticode-signed) and
+  `.zip`. — `src/build/desktop-installers.ts`.
+- **denext's pinned Deno Desktop runtime** — `run`, `dev`, `package` and the
+  scripts build on a prebuilt runtime (Deno 2.9.7 plus the laufey patches)
+  pinned by URL, size and SHA-256, downloaded once, verified before extraction,
+  extracted safely and cached for offline use, with optional `gh attestation`
+  provenance pinned to the release workflow and tag; `deno task
+  desktop:pin-runtime <tag>` writes a new pin; `DENEXT_DESKTOP_RUNTIME=stock`
+  opts out. It carries a **stable app origin** (`desktop.app.origin`, so
+  storage and server allow-lists survive relaunch), **deep links and opened
+  files** (`onDeepLink`, `onOpenFile`, `desktop.app.singleInstance`), a
+  **preload** (`desktop.preload`, Electron's preload), WebSockets through the
+  runtime's relay (`desktopWebSocketUrl`) and DevTools off when packaged. A
+  denext backend accepts the app's own origin in every same-origin check, and
+  `allowedDevOrigins` takes custom-scheme origins. —
+  `src/build/desktop-runtime.ts`, `src/build/desktop-runtime-pin.json`,
+  `src/desktop/app-origin.ts`, `src/desktop/launch-events.ts`,
+  `src/build/desktop-preload.ts`, `src/server/origin-check.ts`.
+- **Native desktop capabilities** — the `denext/mobile` calls reach the OS
+  through a token-gated bridge once `denext desktop add <capability>` lists them
+  in `desktop.capabilities` (which also derives the packaged app's permissions):
+  `secureStore` (Keychain, PasswordVault, libsecret), `fs` / `sqlite` in the
+  app's folders, the OS's own open/save panels, the OS clipboard (text, HTML,
+  PNG), native notifications (scheduled, repeating, action buttons, launch
+  clicks) and the web `Notification` API on top of them, native context menus,
+  `shell`, `keep-awake`, `device`, global shortcuts, launch at login and native
+  passkeys (`{ rpIds }` required). Picked files and folders travel as scoped
+  handles, never paths. — `src/desktop/caps/mod.ts`,
+  `src/desktop/notification-shim.ts`, `src/cli/commands/desktop-add.ts`.
+- **The window and the app's chrome** — `denext/desktop/window`: maximize,
+  minimize, fullscreen and their events, size, position and limits, the
+  displays, title-bar styles, Mica / Acrylic / vibrancy backdrops, a cancelable
+  close, `quitApp`, file drag and drop in (read-only handles) and out
+  (`startFileDrag`); `denext/desktop/app`: the application menu with
+  accelerators and roles, tray icons, the Dock / taskbar badge and bounce.
+  The basics (size, position, title, show / hide) work on the stock runtime too.
+  — `src/desktop/window.ts`, `src/desktop/caps/window.ts`, `src/desktop/app.ts`.
+- **Desktop sign-in** — `openAuthSession` runs in `ASWebAuthenticationSession`
+  on macOS and in the system browser with a Cancel overlay on Windows and Linux,
+  ending at a declared custom scheme (PKCE S256 mandatory, exact
+  `redirect_uri` + `state`, scheme owner checked) or an RFC 8252 loopback
+  redirect (`loopbackPort` for a provider with a fixed registered port).
+  `denext/desktop/clerk` fills `@clerk/electron`'s bridge, so
+  `@clerk/electron/react` runs unchanged, and `nativeClerk` lets the app's own
+  `@clerk/nextjs` `<ClerkProvider>` sign in natively; **`examples/clerk`** is
+  one Next.js-style Clerk app on the web and in a Deno Desktop window. —
+  `src/desktop/scheme-auth-session.ts`, `src/desktop/auth-cancel-overlay.ts`,
+  `src/desktop/clerk.ts`.
+- **Your own native code on desktop** — `defineDesktopExtension` (Standard
+  Schema-validated methods and events, called from the page with typed
+  `desktopExtension<typeof ext>()` and `onDesktopEvent`), FFI and Node-API
+  addons in the packaged app (`desktop.extraPermissions`, `"*"` for the unscoped
+  flag), and `ctx.runOnMainThread` for C code on the UI thread. `runDesktop`
+  resolves to `{ window, trust, emit }` for pushing OS events to the page. —
+  `src/desktop/extension.ts`, `src/build/desktop.ts`.
+- **Desktop kitchen sink, window-tested** — `examples/desktop-kitchen-sink`
+  turns on every capability, packages the app on the pinned runtime and asserts
+  each from the page (deep links, a second instance, a real update installed and
+  rolled back) on Linux, macOS and Windows in CI. —
+  `.github/workflows/desktop-window.yml`.
 - **Deno Desktop self-updater** — `denext/desktop/updater`
   (`checkForDesktopUpdate` / `prepareDesktopUpdate` / `applyDesktopUpdate`,
   enabled by `runDesktop({ updater })`): the mobile OTA manifest and signature,
   verified in-process before anything is swapped, into a UI overlay outside the
   signed bundle, with an atomic pointer swap, downgrade refusal and a rollback
-  when the page never confirms its boot. — `src/desktop/updater.ts`.
+  when the page never confirms its boot; and signed full-app updates
+  (`checkForAppUpdate` / `downloadAppUpdate` / `installAppUpdateAndRelaunch` /
+  `confirmAppUpdate`, published by `denext desktop publish-update`): the whole
+  signed app swapped atomically, no downgrades, the same code-signing identity
+  required (on macOS the same Team ID and a notarized build Gatekeeper accepts),
+  rolled back if the new version never confirms. —
+  `src/desktop/updater.ts`, `src/desktop/app-updater.ts`.
 - **React Native / Expo apps on the web** ⚑ — `reactNative: true` (SPA mode)
   builds an Expo / React Native app's own source through react-native-web:
   `react-native` (and deep `Libraries/…` paths) resolves to react-native-web for
@@ -528,6 +617,12 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
 - **`deno check` is clean** for typical apps (`skipLibCheck` + a
   `JSX.ElementType` admitting `ReactNode`-returning components) —
   Radix/lucide/recharts/cva type-check.
+- **`"use client"` / `"use server"` inside npm packages** — a Server Component
+  importing a library's client components from the package (`@clerk/nextjs`'s
+  `ClerkProvider`) renders them as hydrating islands and its `"use server"`
+  actions as server references, as Next does; `middleware.ts` is bundled through
+  the compat pipeline, and a library's Next-format `redirect()` / `notFound()`
+  errors are recognized. — `src/build/npm-boundary.ts`.
 - The full `next/*` surface is aliased (link, image, navigation, headers, cache,
   server, font, script, dynamic, form, og, …).
 
@@ -686,9 +781,10 @@ cache uses Deno's built-in `node:sqlite`.)
   route's conformance result, and the last build's client bundle by chunk and
   role, read from `.denext/client` without building — and `--json` emits the same
   data structurally), `audit` (dependency inventory + zero-npm proof + CycloneDX
-  SBOM), `desktop run|build|package`, `mobile add|add-ota|dev|fingerprint`, `ota
-  keygen|manifest`, `migrate`, `codemod`, `mcp` (the agent
-  server below), `version`. **A project can add its own verbs two ways**: a
+  SBOM), `desktop run|dev|build|package|add|publish-update`,
+  `mobile add|add-ota|dev|fingerprint|assets|build|submit|doctor|privacy|inspect`, `ota
+  keygen|manifest`, `migrate`, `codemod`, `mcp` / `mcp init` (the agent
+  server below), `fallow init`, `version`. **A project can add its own verbs two ways**: a
   `commands: [{ name, summary, usage?, flags?, positionals?, run }]` array in
   `denext.config.ts` (no plugin needed) or a plugin's `addCommand` seam. Both are
   enumerable by **`denext commands [--json]`** — the one verb that imports the
@@ -724,6 +820,22 @@ cache uses Deno's built-in `node:sqlite`.)
   `deno add`, the `next.config` evaluator and even project-verb discovery
   (`denext commands --json`) are each a `deno` subprocess. The default port falls
   forward when busy; an explicit `--port` is required exactly.
+- **Cargo-style build locks** — verbs that write `.denext/`, `out/`, `dist/`
+  or a coverage directory hold real OS file locks (`flock` / `LockFileEx`,
+  released by the OS when the process exits, so nothing goes stale) in one fixed
+  order; a second invocation prints `Blocking waiting for file lock on …` and
+  waits. A plugin or project verb declares its own with `CommandSpec.locks`. —
+  `src/build/file-lock.ts`, `src/build/project-locks.ts`.
+- **The fallow code-health gate, opt-in** — `denext create --fallow` (or
+  `denext fallow init` in an existing app) adds denext's own dead-code,
+  duplication and complexity gate: `fallow.toml` with the path-loaded files as
+  entry points, `fallow:audit` / `coverage:fallow` / `hooks:install` tasks over
+  a pinned `npm:fallow` through Deno, a pre-commit hook and an `AGENTS.md`. —
+  `src/cli/commands/fallow.ts`, `src/build/fallow-template.ts`.
+- **Installers for the CLI** — `install.sh` and, on Windows, `install.ps1`
+  (per-user, no admin) verify the release archive against `SHA256SUMS`; each
+  release also attaches a Homebrew formula, a Scoop manifest and a winget
+  manifest set. — `scripts/install.ps1`, `scripts/gen-package-manifests.ts`.
 - **A generated first-party package catalog** (`src/plugin/catalog.json`): every
   `@denext/*` package's version, `jsr:` range, plugin-or-library kind, factory
   export, CLI verb, option keys and an options JSON Schema, emitted from the
@@ -736,8 +848,18 @@ cache uses Deno's built-in `node:sqlite`.)
   server's errors/console/HMR events, render a route or component server-side,
   show a path's render tree, read the **live component tree** from a running dev
   page (`denext_component_tree` / `denext_why_render` / `denext_hook_state`),
-  search the docs (BM25) and index/query the
-  codebase; `--disable` trims tool groups. Plus `llms.txt` / `llms-full.txt`
+  search the whole docs site, every example's README and the API reference
+  offline (BM25, `kind: "guide" | "api"`) and read a page, a section or an API
+  symbol as Markdown
+  (`denext_read_docs`, also the `denext://docs/<slug>` resources), and
+  index/query the codebase; `--disable` trims tool groups. `denext create --mcp`
+  / `denext mcp init` register it per project (`.mcp.json`, VS Code, Cursor,
+  optionally Gemini and Codex) as a `deno task mcp` pinned to the project's
+  denext. — `src/mcp/tools.ts`, `src/build/mcp-template.ts`.
+- **Every example, documented** — each `examples/*` app has a page at
+  `denext.dev/docs/examples/<name>` rendered from its own README (run commands,
+  category, related examples), and the examples index groups them by category.
+  — `scripts/gen-examples-index.ts`. Plus `llms.txt` / `llms-full.txt`
   (the authoring guide + an API summary) and the checked-in
   [AGENTS.md](./AGENTS.md) authoring guide that the MCP `denext://guide`
   resource and the docs corpus are generated from.

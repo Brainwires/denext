@@ -243,7 +243,8 @@ Deno.test("desktop View: tooltip → title, onDoubleClick, focus ring, no-op pro
         onDoubleClick: (e: Any) => clicks.push(e),
         enableFocusRing: false,
         acceptsFirstMouse: true,
-        mouseDownCanMoveWindow: false,
+        mouseDownCanMoveWindow: true,
+        allowsVibrancy: false,
       }, "x")
     );
     const el = container.firstChild as Any;
@@ -253,7 +254,11 @@ Deno.test("desktop View: tooltip → title, onDoubleClick, focus ring, no-op pro
     assertEquals(clicks.length, 1);
     assertEquals(clicks[0].nativeEvent, clicks[0], "the event carries nativeEvent");
     rerender();
-    assertEquals(warnings.length, 2, "acceptsFirstMouse and mouseDownCanMoveWindow, once each");
+    assertEquals(
+      warnings.length,
+      2,
+      "acceptsFirstMouse and (off desktop) mouseDownCanMoveWindow, once each",
+    );
     root.unmount();
   } finally {
     console.warn = warn;
@@ -345,6 +350,67 @@ Deno.test("Flyout / Popup: open against the target at the placement; light dismi
   popBackdrop.dispatch("click");
   assertEquals(popupDismiss, [], "Popup: no light dismiss by default");
   popup.root.unmount();
+});
+
+Deno.test("Flyout: full placement fills the window; no target centres; overlay dims; unknown placement is top", () => {
+  const Flyout = createFlyout(fakeModal as Any, fakeView as Any);
+  const contentStyle = (props: Any) => {
+    const { container, root } = mount(() => h(Flyout as Any, { isOpen: true, ...props }, "x"));
+    const [backdrop, content] = (container.firstChild as Any).childNodes;
+    const out = {
+      backdrop: JSON.parse(backdrop.getAttribute("data-style")),
+      content: JSON.parse(content.getAttribute("data-style")),
+    };
+    root.unmount();
+    return out;
+  };
+  const target = {
+    current: {
+      getBoundingClientRect: () => ({
+        left: 100,
+        top: 200,
+        right: 140,
+        bottom: 220,
+        width: 40,
+        height: 20,
+      }),
+    },
+  };
+  // "full" ignores the target and the offsets.
+  assertEquals(contentStyle({ placement: "full", target, horizontalOffset: 9 }).content, {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  });
+  // No target (or one that cannot be measured): centred in the window, offsets as margins.
+  for (const t of [undefined, { current: null }, {}]) {
+    const c = contentStyle({ target: t, horizontalOffset: 3, verticalOffset: -2 }).content;
+    assertEquals([c.left, c.top, c.marginLeft, c.marginTop], ["50%", "50%", 3, -2]);
+    assertEquals(c.transform, [{ translateX: "-50%" }, { translateY: "-50%" }]);
+  }
+  // A ref target is measured; an unknown placement falls back to "top" (above, centred).
+  const top = contentStyle({ target, placement: "diagonal" }).content;
+  assertEquals([top.left, top.top], [120, 200]);
+  assertEquals(top.transform, [{ translateX: "-50%" }, { translateY: "-100%" }]);
+  // isOverlayEnabled dims the backdrop; without it the backdrop is clear.
+  assertEquals(
+    contentStyle({ isOverlayEnabled: true }).backdrop.backgroundColor,
+    "rgba(0,0,0,0.3)",
+  );
+  assertEquals(contentStyle({}).backdrop.backgroundColor, undefined);
+});
+
+Deno.test("Glyph without a font or size is plain text in the inherited font", () => {
+  const Glyph = createGlyph(fakeView as Any);
+  for (const fontUri of [undefined, "ms-appx:///Fonts/icons.ttf"]) {
+    const { container, root } = mount(() => h(Glyph as Any, { glyph: "A", fontUri }));
+    const el = container.firstChild as Any;
+    assertEquals(el.textContent, "A");
+    assertEquals(JSON.parse(el.getAttribute("data-style")), {});
+    root.unmount();
+  }
 });
 
 Deno.test("Glyph, AppTheme, supportKeyboard, EventPhase", async () => {
@@ -449,4 +515,85 @@ Deno.test("Flyout content is rendered with flushSync-stable identity", () => {
   const style = JSON.parse((container.firstChild as Any).childNodes[1].getAttribute("data-style"));
   assertEquals([style.left, style.top], ["50%", "50%"], "no target: centred");
   root.unmount();
+});
+
+Deno.test("desktop View: draggedTypes — files dragged onto the view (web: the DOM's File objects)", () => {
+  const View = createDesktopView(fakeView as Any, "macos");
+  const seen: Array<[string, Any]> = [];
+  const { container, root } = mount(() =>
+    h(View as Any, {
+      draggedTypes: ["fileUrl"],
+      onDragEnter: (e: Any) => seen.push(["enter", e]),
+      onDragLeave: (e: Any) => seen.push(["leave", e]),
+      onDrop: (e: Any) => seen.push(["drop", e]),
+    }, "x")
+  );
+  const el = container.firstChild as Any;
+  const file = { name: "a.png", type: "image/png", size: 3 };
+  let prevented = 0;
+  const preventDefault = () => void prevented++;
+  el.dispatch("dragenter", { dataTransfer: { files: [file] }, preventDefault });
+  el.dispatch("dragover", { preventDefault });
+  el.dispatch("drop", { dataTransfer: { files: [file] }, preventDefault });
+  el.dispatch("dragleave", { dataTransfer: { files: [] } });
+  assertEquals(seen.map(([k]) => k), ["enter", "drop", "leave"]);
+  const dropped = seen[1][1].nativeEvent.dataTransfer;
+  assertEquals(dropped.types, ["fileUrl"]);
+  assertEquals(
+    [dropped.files[0].name, dropped.files[0].type, dropped.files[0].size],
+    ["a.png", "image/png", 3],
+  );
+  assertEquals(dropped.files[0].file, file);
+  assertEquals(prevented, 3, "dragenter, dragover and drop accept the drag");
+  // Without draggedTypes the view takes no drags.
+  root.unmount();
+});
+
+Deno.test("desktop View in a Deno Desktop window: native drops, drag region and vibrancy", async () => {
+  const { createFakeDesktopRuntime, until } = await import("./helpers/desktop-fake-runtime.ts");
+  const { resetDesktopBridgeForTesting } = await import("../src/desktop/bridge-client.ts");
+  let queue: unknown[] = [];
+  const rt = createFakeDesktopRuntime({
+    window: {
+      capabilities: () => ({ fileDrop: true }),
+      takeDrops: () => queue.splice(0, queue.length),
+      setBackdrop: () => ({ applied: true }),
+    },
+  });
+  const restore = rt.install();
+  try {
+    assertEquals(runtimePlatform(), "desktop");
+    const View = createDesktopView(fakeView as Any, "macos");
+    const drops: Any[] = [];
+    const { container, root } = mount(() =>
+      h(View as Any, {
+        draggedTypes: "fileUrl",
+        onDrop: (e: Any) => drops.push(e.nativeEvent.dataTransfer.files),
+        mouseDownCanMoveWindow: true,
+        allowsVibrancy: true,
+      }, "x")
+    );
+    const el = container.firstChild as Any;
+    await until(() => rt.calls.some((c) => c.method === "capabilities"));
+    await until(() => rt.calls.some((c) => c.method === "setBackdrop"));
+    assertEquals(rt.calls.find((c) => c.method === "setBackdrop")!.args, { backdrop: "vibrancy" });
+    await until(() => String(el.getAttribute("style") ?? "").includes("app-region"));
+    await new Promise((r) => setTimeout(r, 20));
+    // The DOM drop is only accepted: the files come from the runtime, with handles.
+    el.dispatch("drop", { dataTransfer: { files: [{ name: "dom.txt" }] } });
+    queue = [
+      { x: 0, y: 0, files: [{ handle: "h1", name: "a.txt", path: "/tmp/a.txt", size: 1 }] },
+      { x: 500, y: 500, files: [{ handle: "h2", name: "b.txt", path: "/tmp/b.txt", size: 1 }] },
+    ];
+    rt.emit("window", "drop", null);
+    await until(() => drops.length === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    assertEquals(drops.length, 1, "the drop outside the view is not its drop");
+    assertEquals(drops[0][0].handle, "h1");
+    assertEquals(drops[0][0].uri, "file:///tmp/a.txt");
+    root.unmount();
+  } finally {
+    resetDesktopBridgeForTesting();
+    restore();
+  }
 });

@@ -27,10 +27,12 @@ const ASSET = `denext-${TARGET}.tar.gz`;
  * call is answered by `latest.json`). A file that is not there is a 404 — curl's exit 22.
  */
 const CURL_STUB = `#!/bin/sh
-out=""; url=""; proto=""; tls=""
+out=""; url=""; proto=""; tls=""; header=""; wfmt=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift ;;
+    -H) header="$2"; shift ;;
+    -w) wfmt="$2"; shift ;;
     --proto) proto="$2"; shift ;;
     --tlsv1.2) tls=1 ;;
     http*) url="$1" ;;
@@ -38,9 +40,20 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ "$proto" = "=https" ] && [ -n "$tls" ] || { echo "stub curl: unhardened call" >&2; exit 99; }
+[ "$header" = "@-" ] && header="$(cat)"
 echo "$url" >> "$STUB_LOG"
+[ -n "$header" ] && echo "$url $header" >> "$STUB_LOG.headers"
 name="\${url##*/}"
-case "$url" in */releases/latest) name="latest.json" ;; esac
+case "$url" in
+  https://api.github.com/*/releases/latest)
+    [ -n "$STUB_RATE_LIMITED" ] && exit 22
+    name="latest.json" ;;
+  https://github.com/*/releases/latest)
+    # The web page's redirect: curl -L lands on releases/tag/<tag>; -w prints where.
+    [ -n "$STUB_REDIRECT_TAG" ] || exit 22
+    [ -n "$wfmt" ] && printf '%s' "https://github.com/Brainwires/denext/releases/tag/$STUB_REDIRECT_TAG"
+    exit 0 ;;
+esac
 [ -f "$STUB_DIR/$name" ] || exit 22
 if [ -n "$out" ]; then cp "$STUB_DIR/$name" "$out"; else cat "$STUB_DIR/$name"; fi
 `;
@@ -56,6 +69,8 @@ interface Run {
   stderr: string;
   /** Every URL the stub curl was asked for, in order. */
   urls: string[];
+  /** `<url> <header>` for every call that sent a header. */
+  headers: string[];
   /** Where a binary would land. */
   binary: string;
 }
@@ -127,6 +142,7 @@ class Release {
   /** Run the installer with `env` on top of a minimal environment (`deno` NOT on PATH). */
   async run(env: Record<string, string> = {}, extraPath: string[] = []): Promise<Run> {
     await Deno.writeTextFile(this.log, "");
+    await Deno.writeTextFile(`${this.log}.headers`, "");
     const out = await new Deno.Command("sh", {
       args: [SCRIPT],
       clearEnv: true,
@@ -146,6 +162,7 @@ class Release {
       stdout: decoder.decode(out.stdout),
       stderr: decoder.decode(out.stderr),
       urls: (await Deno.readTextFile(this.log)).split("\n").filter(Boolean),
+      headers: (await Deno.readTextFile(`${this.log}.headers`)).split("\n").filter(Boolean),
       binary: join(this.install, "bin", "denext"),
     };
   }
@@ -352,4 +369,50 @@ Deno.test("publish.yml: one release job, prereleases never latest, every action 
   // The binary is executed, not merely linked, before it ships.
   assertStringIncludes(workflow, "./denext --version");
   assertStringIncludes(workflow, "pins no denext");
+});
+
+Deno.test("install.sh: a GITHUB_TOKEN goes to the API lookup only, never shown", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({ GITHUB_TOKEN: "ghs_secret123" });
+    assertEquals(run.code, 0, run.stderr);
+    assertEquals(run.headers, [
+      "https://api.github.com/repos/Brainwires/denext/releases/latest Authorization: Bearer ghs_secret123",
+    ]);
+    assert(!run.stdout.includes("ghs_secret123") && !run.stderr.includes("ghs_secret123"));
+    assert(await r.installed());
+    // GH_TOKEN is the fallback name.
+    const gh = await r.run({ GH_TOKEN: "gho_other" });
+    assertEquals(gh.headers.length, 1);
+    assertStringIncludes(gh.headers[0], "api.github.com");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: a rate-limited API falls back to the releases/latest redirect", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({ STUB_RATE_LIMITED: "1", STUB_REDIRECT_TAG: "v9.9.9" });
+    assertEquals(run.code, 0, run.stderr);
+    assert(
+      run.urls.includes("https://github.com/Brainwires/denext/releases/latest"),
+      run.urls.join(),
+    );
+    assert(run.urls.some((u) => u.endsWith("/v9.9.9/" + ASSET)), run.urls.join());
+    assertEquals(run.headers, []);
+    assert(await r.installed());
+    // Neither answers → the documented failure, nothing installed.
+    await Deno.remove(join(r.install), { recursive: true });
+    const none = await r.run({ STUB_RATE_LIMITED: "1" });
+    assertEquals(none.code, 1);
+    assertStringIncludes(none.stderr, "could not determine the latest release");
+    assert(!(await r.installed()));
+  } finally {
+    await r.remove();
+  }
 });

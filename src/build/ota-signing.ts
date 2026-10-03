@@ -17,14 +17,14 @@ const KEY_ALGORITHM = { name: "ECDSA", namedCurve: "P-256" } as const;
 const SIGN_ALGORITHM = { name: "ECDSA", hash: "SHA-256" } as const;
 
 /** Standard, padded base64 of `bytes`. */
-function toBase64(bytes: Uint8Array): string {
+export function toBase64(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
 }
 
 /** The bytes of standard base64 `text`; throws on anything else. */
-function fromBase64(text: string): Uint8Array {
+export function fromBase64(text: string): Uint8Array {
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(text) || text.length % 4 !== 0) {
     throw new Error("not base64");
   }

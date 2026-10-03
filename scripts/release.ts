@@ -24,7 +24,7 @@
 // tag (a hard rule — see AGENTS.md "Releasing"); this script prints the `gh pr create`
 // command to run. The docs-site DEPLOY stays separate on purpose (it targets a server):
 // after the tag,
-// run `deno task docs:build`, then rsync the built `apps/web/out/` to your docs host.
+// run `deno task docs:build`, then rsync the built `site/out/` to your docs host.
 
 import { exists, walk } from "@std/fs";
 import { join, relative } from "@std/path";
@@ -87,8 +87,8 @@ export interface ChangelogRoll {
  * moving the accumulated notes under the new release and leaving a fresh empty
  * [Unreleased] on top. A stable release also folds the rc sections in (see
  * {@linkcode foldPrereleases}) and, in the same step, re-points every docs link to a folded
- * rc anchor at the release header — otherwise the upgrading page's `/docs/changelog#…-rcN…`
- * links dangle the moment the tag lands.
+ * rc anchor at the release header — otherwise a docs page's `/docs/changelog#…-rcN…` link
+ * dangles the moment the tag lands.
  */
 export async function rollChangelog(version: string, dry: boolean): Promise<ChangelogRoll> {
   const path = join(REPO_ROOT, "CHANGELOG.md");
@@ -237,7 +237,7 @@ function renderRelease(version: string, date: string, groups: Map<string, string
 
 /**
  * The id the docs site gives a heading — `packages/content-collections/markdown.ts`'s
- * `slugify`, which `apps/web/lib/toc.ts` mirrors: lowercase, everything but word characters,
+ * `slugify`, which `site/lib/toc.ts` mirrors: lowercase, everything but word characters,
  * whitespace and dashes dropped, whitespace to dashes. `## [2.5.0-rc.1] - 2026-09-14` is
  * `250-rc1---2026-09-14`, and `## [2.5.0] - 2026-09-18` is `250---2026-09-18`.
  */
@@ -275,7 +275,7 @@ export function rewriteFoldedAnchors(doc: string, rewrites: Map<string, string>)
 }
 
 /** Where the docs pages live: every `.md` under here is a candidate for a changelog link. */
-const DOCS_PAGES = join(REPO_ROOT, "apps", "web", "app");
+const DOCS_PAGES = join(REPO_ROOT, "site", "app");
 
 /**
  * Re-point the folded anchors in every docs page that links one. Returns the pages (relative
@@ -302,14 +302,21 @@ export async function relinkDocsPages(
   return changed.sort();
 }
 
-/** Append the `[<version>]: https://jsr.io/…` link-reference definition if absent. */
+/**
+ * Add the `[<version>]: https://jsr.io/…` link-reference definition if absent, and point the
+ * `[Unreleased]: …/compare/v<x>...<branch>` link at the new tag (it compares from the LAST release).
+ */
 export function withLinkRef(text: string, version: string): string {
+  const out = text.replace(
+    /^\[Unreleased\]: (\S+\/compare\/)v\S+?\.\.\.(\S+)$/m,
+    `[Unreleased]: $1v${version}...$2`,
+  );
   const ref = `[${version}]: https://jsr.io/@denext/denext@${version}`;
-  if (text.includes(ref)) return text;
-  const idx = text.search(/^\[[0-9][^\]]*\]: https:/m);
+  if (out.includes(ref)) return out;
+  const idx = out.search(/^\[[0-9][^\]]*\]: https:/m);
   return idx === -1
-    ? `${text.trimEnd()}\n\n${ref}\n`
-    : text.slice(0, idx) + ref + "\n" + text.slice(idx);
+    ? `${out.trimEnd()}\n\n${ref}\n`
+    : out.slice(0, idx) + ref + "\n" + out.slice(idx);
 }
 
 /** The `- ` entries under [Unreleased] (up to the next release header). */
@@ -414,10 +421,11 @@ async function runGate(): Promise<void> {
   }
   // The MCP docs corpus + llms*.txt ship IN the JSR package (src/mcp/docs-corpus.json) and
   // embed the version, so they must be regenerated on the release commit, not after the tag.
+  // docs:mcp runs first: the MCP page (mcp.json) is one of the corpus's inputs.
   console.log(
-    "\n3a. Regenerating docs corpus + llms.txt (deno task docs:corpus/docs:mcp/docs:llms)…",
+    "\n3a. Regenerating docs corpus + llms.txt (deno task docs:mcp/docs:corpus/docs:llms)…",
   );
-  for (const task of ["docs:corpus", "docs:mcp", "docs:llms"]) {
+  for (const task of ["docs:mcp", "docs:corpus", "docs:llms"]) {
     if (await run("deno", "task", task) !== 0) die(`${task} failed — release aborted.`);
   }
   console.log("\n3b. Regenerating the test-count badge (deno task badge:tests)…");
@@ -480,7 +488,7 @@ async function publish(version: string, tag: string, branch: string): Promise<vo
       "  REQUIRED next: open a PR so `main` catches up to this tag —\n" +
       `    gh pr create --base main --head ${branch}\n` +
       "  (every release tag gets a `development → main` PR; see AGENTS.md).\n" +
-      "  Docs deploy is separate: run `deno task docs:build`, then rsync apps/web/out/ " +
+      "  Docs deploy is separate: run `deno task docs:build`, then rsync site/out/ " +
       "to your docs host.",
   );
 }

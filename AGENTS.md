@@ -1,7 +1,8 @@
 # Writing denext apps (for AI coding agents)
 
-**denext is Next.js's App Router, reimplemented for Deno with its own small
-React.** If you know Next.js, you already know denext — the file conventions,
+**denext is a complete, lightweight framework for Deno: write an app once and ship it to the web,
+iOS, Android and the desktop. Its API is surface compatible with React and Next.js's App Router,
+with its own small React core.** If you know Next.js, you already know denext — the file conventions,
 hooks, and `app/` router are the same. This file lists ONLY what differs, so you
 emit correct denext instead of Next.js.
 
@@ -232,6 +233,16 @@ export const middleware = (request: Request) => requireAuth(request, { role: "ad
 export const GET = createApi().use(requireSession({ role: "admin" })).define(/* … */);
 ```
 
+**Clerk (hosted auth):** `@clerk/nextjs` runs unchanged in compat mode: `clerkMiddleware()` +
+`createRouteMatcher` in `middleware.ts`, `<ClerkProvider>` in the root layout, `auth()` /
+`currentUser()` from `@clerk/nextjs/server` in Server Components and route handlers. In a Deno Desktop
+window the same provider signs in via `installClerkDesktopBridge({ nativeClerk: true })` from
+`desktop.preload`; the Clerk instance's `allowed_origins` must include `desktop.app.origin`. In the Capacitor shell:
+`installClerkMobileBridge({ scheme, nativeClerk: true })` from `denext/mobile/clerk` in
+`instrumentation-client.ts`; `denext mobile add clerk --scheme <s>` sets it up (add
+`capacitor://localhost` + `https://localhost` to `allowed_origins`). See
+[`examples/clerk`](https://github.com/Brainwires/denext/tree/main/examples/clerk).
+
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
 `inMemoryAuthAdapter()`), and gate a machine-to-machine API with
 `requireBearer({ scope: "pets:write" })` (it reads the config `denextAuth()` was built with;
@@ -265,6 +276,14 @@ export default {
 // fingerprinted against denext.config.* / deno.json / deno.lock) without importing your
 // config; before the first run, or once one of those files changes, it points at `denext commands`.
 ```
+
+**Code health and concurrency:** `denext create --fallow` (or `denext fallow init` in an existing
+app) adds the fallow gate denext itself uses — `fallow.toml` with the path-loaded files as entry
+points, `deno task fallow:audit` / `coverage:fallow` / `hooks:install` (a pinned `npm:fallow`
+through Deno, nothing global). Commands that write `.denext/`, `out/`, `dist/` or a coverage dir
+take Cargo-style OS locks: `Blocking waiting for file lock on …` means another denext command
+holds that directory — wait; never delete `.denext/.denext-lock*` (the OS releases a lock when its
+holder exits).
 
 **A GUI over the project:** `denext ui` serves a loopback (127.0.0.1) project-management
 page — schema-driven `denext.config.ts` editing (a comment-preserving splice: outside the
@@ -342,13 +361,18 @@ prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-no
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
 `storage` (`openKeyValueStore`: durable SQLite, behind React Native mode's AsyncStorage / MMKV),
 `system-icons` (`<SystemIcon>`: SF Symbols in the iOS shell, Material Symbols elsewhere),
-`sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing.
+`sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing. An exported multi-page app in the shell needs `export-routes` (Capacitor serves the root `index.html` for every extensionless path; any denext native plugin includes it, and `denext mobile doctor --release` checks it).
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy
 manifest), `denext mobile doctor --store | --release`, `denext mobile inspect`.
 Ship without a hosted service: `denext mobile assets` (every icon + splash from one image),
 `denext mobile build ios|android [--release] [--flavor <name>]` (export → `cap sync` → a signed
 `.ipa` / `.aab` in `dist/mobile/`; flavors in `mobile.flavors`), `denext mobile submit
-ios|android [--dry-run]` (App Store Connect / Google Play). App backend:
+ios|android [--dry-run]` (App Store Connect / Google Play). Teams already on fastlane keep it:
+`denext mobile add fastlane [--ci]` writes `fastlane/` (Appfile from capacitor.config, Matchfile,
+`ios|android build|beta|release` lanes that run `denext mobile build --release` and hand the
+artifact to match / TestFlight / Play tracks; `flavor:` / `build_number:` pass through), a pinned
+Gemfile and, with `--ci`, a GitHub Actions workflow; `denext mobile doctor --release` checks it.
+Credentials are env-only. App backend:
 `cors` in config, `denextAuth({ native })` sessions, `createApiClient({ base, auth:
 nativeSession(…) })`, `sendPush` from `denext/server`. Docs: https://denext.dev/docs/mobile,
 https://denext.dev/docs/app-backend
@@ -368,19 +392,89 @@ pops. Docs: https://denext.dev/docs/navigation-native
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
-`keep-awake`, `clipboard`, `device`; written to `desktop.capabilities`), plus desktop-only
+`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`; written to
+`desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS / Linux; fails closed on Windows) and your `defineDesktopExtension` modules (from
-`denext/desktop`, listed in `desktop.capabilities.extensions`) — but only when `desktop.ts`
+(macOS Keychain, Linux libsecret, Windows PasswordVault) and your `defineDesktopExtension` modules (from
+`denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
+`ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
+in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`
 spreads `...(await resolveDesktopCapabilities(config, { base: import.meta.url }))` into
 `runDesktop` (a new scaffold does; an older or `migrate --desktop` entry must add it, else every
-call answers `unavailable`); `context-menu`, `clipboard` and `notifications` stay WebView-backed (a
-scheduled notification rejects). Packaging is least-privilege: `scripts/package-*.ts` derive
+call answers `unavailable`). Under the pinned runtime `notifications` are the OS's own: scheduled
+(repeating ones 16 occurrences ahead, topped up while the app runs), cancel / pending, category action
+buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`;
+`requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
+is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
+`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. `registerShortcut(accel, fn)`
+needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
+`desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
+packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
+`--allow-*` goes in `desktop.extraPermissions`, never in `scripts/package-*.ts`. Under the stock
+runtime these answer `unavailable` and the page keeps its web path. Under the pinned runtime `clipboard` reaches the OS clipboard
+(`readClipboard({ format: "html" | "image" })`, `writeClipboard({ html, text? } | { image })` with
+base64 PNG, `clipboardFormats()`) and `dialogs` uses the OS's own panels (MIME `types` → filters).
+The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `minimizeWindow` /
+`restoreWindow` / `setFullScreen` + `onWindowStateChange`, `getWindowState` (persist `normalBounds`),
+`setWindowBounds` / `setMinimumWindowSize` / `setMaximumWindowSize`, `getScreens` + `onDisplayChanged`,
+`setTitleBarStyle` / `setWindowButtonPosition` / `setWindowBackdrop` (Mica / Acrylic / vibrancy),
+`makeWindowDraggable(el)` for a hidden title bar, `onCloseRequested(() => boolean)` (cancelable close),
+`closeWindow` / `quitApp`, `onFileDrop` (read-only picked handles) and
+`startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
+`desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position, title and
+show / hide need the pinned runtime (`unsupported` elsewhere; ask `windowCapabilities()`). React Native desktop
+`View`'s `mouseDownCanMoveWindow`, `allowsVibrancy` and `draggedTypes` + `onDrop` work in the window. Node-API addons (an npm package's prebuilt `.node`) load in a
+packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtension` module and set
+`desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
+confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
+leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A`, and
 `denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
-a diff for each changed file).
+a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
+`denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
+(+ `.rpm`, AppImage), Windows a per-user-or-machine `.msi` (+ `.zip`); an empty list builds just
+the bundle.
+A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
+`desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
+packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; the custom origin requires runtime 2.9.7-denext.7+, older ones start with every desktop endpoint refused; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
+detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
+package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
+`dev` warn and use the stock runtime when `deno` is not 2.9.7 (`DENO_BIN` points them at a 2.9.7
+binary); `package` refuses. A default installer that can't be built (missing tool, WiX other than 5,
+a version MSI/Debian can't express) is skipped with a warning; an asked-for one fails.
+`DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
+Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
+top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
+links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
+custom-scheme callback (a declared scheme, PKCE S256 mandatory, exact redirect + `state`, owner-checked;
+`claimDeepLinkScheme` only on a user action) — on macOS it runs in `ASWebAuthenticationSession` (a real
+`cancelled`; `preferEphemeral` for a private session; a page cancel, the timeout or leaving the page closes the sheet), and where the system browser has the sign-in
+(Windows, Linux, the loopback flow) denext shows a Cancel overlay (`cancelOverlay: false` to render
+your own wired to `signal`); `installClerkDesktopBridge()` from `denext/desktop/clerk`
+makes `@clerk/electron`'s React provider and `passkeys` run unchanged
+(`denext desktop add secure-store auth-session passkeys`).
+Native passkeys are macOS (needs the associated-domains entitlement: `desktop.macos: {
+provisioningProfile, entitlements }` signs it in with the profile) and Windows only; Linux has no OS
+passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
+only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
+Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay: denext's Live
+client does this itself; for your own sockets use `desktopWebSocketUrl(path)` from
+`denext/desktop/client`. With `notifications` enabled, the web `new Notification(...)` /
+`Notification.requestPermission()` / `onclick` work, backed by the OS (no icons or buttons).
+`openAuthSession(url, { loopbackPort: 1455 })` uses a fixed loopback port for a provider with a
+registered `http://localhost:<port>/…` redirect (`port_in_use` when taken). `desktop.denoFlags`
+passes allow-listed `deno desktop` flags (a pnpm workspace: `["--node-modules-dir=none",
+"--exclude-unused-npm"]`; never permission flags). The bundle's name, identifier and icon come from
+`desktop.app.name` / `identifier` / `icons.{macos,windows,linux}`, falling back to deno.json.
+A denext backend (`denext start` / `denext dev`) accepts the app's own `desktop.app.origin` as
+same-origin (Server Actions, the API batch, Live, `denextAuth` POSTs, the dev origin gate) by exact
+match; a separate backend lists the origin in `allowedDevOrigins` (custom-scheme entries are allowed)
+or `createApp({ allowedOrigins })`. `denext migrate --desktop` writes `desktop.denoFlags`.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
@@ -393,7 +487,10 @@ plain `http` is refused beyond loopback. Whether a change can ship over the air:
 `denext ota manifest --native-fingerprint auto` makes a binary with another fingerprint refuse
 the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 `denext/desktop/updater` (`checkForDesktopUpdate` / `prepareDesktopUpdate` /
-`applyDesktopUpdate`).
+`applyDesktopUpdate`), and full-app updates under the pinned runtime (`checkForAppUpdate` /
+`downloadAppUpdate` / `installAppUpdateAndRelaunch` / `confirmAppUpdate`: a signed manifest from
+`denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build), an atomic
+bundle swap that rolls back if the new version never confirms).
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
@@ -609,13 +706,19 @@ denext ships tooling so agents get it right the first time:
   unminified, serve, and profile a route in headless Chromium — CPU self-time by
   function + heap growth + a leak check; pass `interact` to profile a re-render, `budget`
   to gate a regression), `denext_search_docs` (BM25
-  over the denext docs), and the codebase tools `denext_index_codebase` /
+  over ALL of the denext docs, offline — every docs-site page by section plus the API reference;
+  `kind: "guide" | "api"` narrows it) and `denext_read_docs` (a whole page, one `slug#anchor`
+  section, or `api:<module>/<name>` as Markdown — use it instead of fetching denext.dev), and the codebase tools `denext_index_codebase` /
   `denext_query_codebase` / `denext_find_definition` / `denext_find_references`.
   `denext mcp --disable rag,docs` hides tool groups or individual tools to trim an
-  agent's context. Resources: `denext://guide`, `denext://import-map`.
+  agent's context. Resources: `denext://guide`, `denext://import-map`, `denext://docs`
+  (`denext://docs/<slug>`). Install it in a project with `denext create --mcp` (pre-checked in the
+  picker) or `denext mcp init`: a `deno task mcp` that runs the denext the project pins, registered
+  in `.mcp.json` (Claude Code), `.vscode/mcp.json` and `.cursor/mcp.json` (`--clients all` adds
+  `.gemini/settings.json` and `.codex/config.toml`).
 - **`llms.txt`** — [denext.dev/llms.txt](https://denext.dev/llms.txt) (concise) and
   [llms-full.txt](https://denext.dev/llms-full.txt) (this guide + an API summary).
-- **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), [Upgrading](https://denext.dev/docs/upgrading) (breaking changes per version), the [Project UI](https://denext.dev/docs/ui) and the [examples index](https://denext.dev/docs/examples).
+- **Docs pages worth pointing an agent at:** the generated [CLI reference](https://denext.dev/docs/cli), [Troubleshooting](https://denext.dev/docs/troubleshooting) (symptom → cause → fix), the [changelog](https://denext.dev/docs/changelog) (every change per version), the [Project UI](https://denext.dev/docs/ui) and the [examples index](https://denext.dev/docs/examples).
 
 ---
 

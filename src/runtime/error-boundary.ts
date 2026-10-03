@@ -120,6 +120,8 @@ const NOT_FOUND: symbol = /* @__PURE__ */ Symbol.for("denext.notFound");
 export class NotFoundError extends Error {
   /** Brand flag identifying this as a not-found signal. */
   declare readonly [NOT_FOUND]: true;
+  /** Next.js's `digest` for the signal, which libraries built for Next test for. */
+  readonly digest: string = `${HTTP_FALLBACK_DIGEST};404`;
   /** Create a not-found error with the standard `NEXT_NOT_FOUND` message. */
   constructor() {
     super("NEXT_NOT_FOUND");
@@ -134,12 +136,36 @@ export function notFound(): never {
   throw new NotFoundError();
 }
 
-/** True if `value` is a {@link NotFoundError} raised by `notFound()`. */
+/** The `digest` prefix of Next.js's HTTP access errors (`NEXT_HTTP_ERROR_FALLBACK;<status>`). */
+const HTTP_FALLBACK_DIGEST = "NEXT_HTTP_ERROR_FALLBACK";
+
+/** Which control-flow signal a check asks about (see {@link FOREIGN_SIGNALS}). */
+type SignalKind = "notFound" | "forbidden" | "unauthorized" | "redirect";
+
+/**
+ * Where the server installs its recognizer for a library's own Next.js-format errors (a plain
+ * Error with a Next `digest`, which `@clerk/nextjs`'s `auth.protect()` throws itself): on
+ * globalThis under a global Symbol, so every copy of this module (the one inside a next-compat
+ * bundle too) consults it. `src/server/next-signals.ts` installs it; the browser never does, so
+ * client bundles carry only this lookup.
+ */
+const FOREIGN_SIGNALS = Symbol.for("denext.foreignSignals");
+
+/** Whether `value` is a library's Next-format error for `kind` (adopted as denext's signal). */
+function foreignSignal(value: object, kind: SignalKind): boolean {
+  const recognize = (globalThis as {
+    [FOREIGN_SIGNALS]?: (value: object, kind: SignalKind) => boolean;
+  })[FOREIGN_SIGNALS];
+  return recognize ? recognize(value, kind) : false;
+}
+
+/**
+ * True if `value` is a {@link NotFoundError} raised by `notFound()`, or (on the server) Next.js's
+ * own not-found error (`digest` `NEXT_HTTP_ERROR_FALLBACK;404`) thrown by a library built for Next.
+ */
 export function isNotFound(value: unknown): value is NotFoundError {
-  return (
-    typeof value === "object" && value !== null &&
-    (value as Record<symbol, unknown>)[NOT_FOUND] === true
-  );
+  if (typeof value !== "object" || value === null) return false;
+  return (value as Record<symbol, unknown>)[NOT_FOUND] === true || foreignSignal(value, "notFound");
 }
 
 // ---- forbidden() / unauthorized() ------------------------------------------
@@ -153,6 +179,8 @@ const UNAUTHORIZED: symbol = /* @__PURE__ */ Symbol.for("denext.unauthorized");
 export class ForbiddenError extends Error {
   /** Brand flag identifying this as a forbidden signal. */
   declare readonly [FORBIDDEN]: true;
+  /** Next.js's `digest` for the signal. */
+  readonly digest: string = `${HTTP_FALLBACK_DIGEST};403`;
   /** Create a forbidden error. */
   constructor() {
     super("NEXT_FORBIDDEN");
@@ -166,6 +194,8 @@ export class ForbiddenError extends Error {
 export class UnauthorizedError extends Error {
   /** Brand flag identifying this as an unauthorized signal. */
   declare readonly [UNAUTHORIZED]: true;
+  /** Next.js's `digest` for the signal. */
+  readonly digest: string = `${HTTP_FALLBACK_DIGEST};401`;
   /** Create an unauthorized error. */
   constructor() {
     super("NEXT_UNAUTHORIZED");
@@ -185,20 +215,18 @@ export function unauthorized(): never {
   throw new UnauthorizedError();
 }
 
-/** True if `value` is a {@link ForbiddenError} raised by `forbidden()`. */
+/** True if `value` is a {@link ForbiddenError} raised by `forbidden()` (or Next's own). */
 export function isForbidden(value: unknown): value is ForbiddenError {
-  return (
-    typeof value === "object" && value !== null &&
-    (value as Record<symbol, unknown>)[FORBIDDEN] === true
-  );
+  if (typeof value !== "object" || value === null) return false;
+  return (value as Record<symbol, unknown>)[FORBIDDEN] === true ||
+    foreignSignal(value, "forbidden");
 }
 
-/** True if `value` is an {@link UnauthorizedError} raised by `unauthorized()`. */
+/** True if `value` is an {@link UnauthorizedError} raised by `unauthorized()` (or Next's own). */
 export function isUnauthorized(value: unknown): value is UnauthorizedError {
-  return (
-    typeof value === "object" && value !== null &&
-    (value as Record<symbol, unknown>)[UNAUTHORIZED] === true
-  );
+  if (typeof value !== "object" || value === null) return false;
+  return (value as Record<symbol, unknown>)[UNAUTHORIZED] === true ||
+    foreignSignal(value, "unauthorized");
 }
 
 // ---- redirect() / permanentRedirect() --------------------------------------
@@ -226,6 +254,11 @@ export class RedirectError extends Error {
   readonly status: number;
   /** Client soft-nav history behavior (`push`/`replace`), when specified. */
   readonly redirectType?: RedirectType;
+  /**
+   * Next.js's `digest` for the signal (`NEXT_REDIRECT;<type>;<url>;<status>;`), which libraries
+   * built for Next test for.
+   */
+  readonly digest: string;
   /** Create a redirect signal to `url` with the given `status` and optional soft-nav type. */
   constructor(url: string, status: number, redirectType?: RedirectType) {
     super(`NEXT_REDIRECT:${status}:${url}`);
@@ -235,6 +268,7 @@ export class RedirectError extends Error {
     this.url = url;
     this.status = status;
     this.redirectType = redirectType;
+    this.digest = `NEXT_REDIRECT;${redirectType ?? "replace"};${url};${status};`;
   }
 }
 
@@ -269,12 +303,14 @@ export function permanentRedirect(
   throw new RedirectError(url, 308, type);
 }
 
-/** True if `value` is a {@link RedirectError} raised by `redirect()`. */
+/**
+ * True if `value` is a {@link RedirectError} raised by `redirect()`, or (on the server) Next.js's
+ * own redirect error (a `NEXT_REDIRECT;…` digest) thrown by a library built for Next — which is
+ * then given the `url` / `status` / `redirectType` a `RedirectError` has.
+ */
 export function isRedirect(value: unknown): value is RedirectError {
-  return (
-    typeof value === "object" && value !== null &&
-    (value as Record<symbol, unknown>)[REDIRECT] === true
-  );
+  if (typeof value !== "object" || value === null) return false;
+  return (value as Record<symbol, unknown>)[REDIRECT] === true || foreignSignal(value, "redirect");
 }
 
 /**

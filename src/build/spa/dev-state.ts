@@ -15,6 +15,7 @@ import { buildAppCss, concatCss } from "../css.ts";
 import { createUnbundledDev, type UnbundledDev } from "../dev-unbundled.ts";
 import { detectNextCompat } from "../next-compat-detect.ts";
 import type { ProjectPaths } from "../paths.ts";
+import { DevEventLog } from "../dev-events.ts";
 import { type SseClients, sseSend } from "../sse.ts";
 import { tailwindPaths } from "../tailwind.ts";
 import { bundleSpaInto, spaCssRoots, spaDefines, usesExpoRouter } from "./bundle.ts";
@@ -64,6 +65,11 @@ export interface SpaDevState {
   building: Promise<string> | null;
   /** Live-reload (SSE) subscribers. */
   readonly reloadClients: SseClients;
+  /**
+   * The dev black box: the page's console (POSTed to `/_denext/dev-log` by the dev-reload
+   * script's capture), read back via `/_denext/dev-state` (`denext_dev_logs`).
+   */
+  readonly devEvents: DevEventLog;
   /** Unbundled dev loop opt-in (default-on; DENEXT_DEV_UNBUNDLED=0 or `unbundled: false`). */
   readonly unbundledOptIn: boolean;
   unbundled: UnbundledDev | null;
@@ -95,6 +101,7 @@ export function createSpaDevState(options: SpaDevServerOptions): SpaDevState {
     hasStyles: false,
     building: null,
     reloadClients: new Set(),
+    devEvents: new DevEventLog(),
     unbundledOptIn: unbundledOptIn(options),
     unbundled: null,
     unbundledReady: null,

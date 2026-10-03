@@ -19,6 +19,7 @@ import { routeNeedsHydration } from "../hydration.ts";
 import { routeId } from "../paths.ts";
 import { appBoundaryManifest } from "../pipeline-shared.ts";
 import { type BuildContext, FLIGHT_BUNDLE_FILE, GLOBAL_ERROR_BUNDLE_FILE, log } from "./context.ts";
+import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
 /** Bundle key for the global-error entry — namespaced so it can't collide with any routeId. */
 const GLOBAL_ERROR_KEY = "__denext_global_error__";
@@ -124,7 +125,9 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
  */
 export async function computeBoundary(ctx: BuildContext): Promise<void> {
   if (!ctx.hasFlight) return;
-  ctx.boundary = await appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages);
+  ctx.boundary = await appBoundaryManifest(ctx.paths.appDir, ctx.manifest.pages, {
+    npm: ctx.compat ? npmBoundaryByImporter : undefined,
+  });
   ctx.usesLive = await appImportsLive(
     ctx.projectDir,
     await localModulesOutside(ctx.projectDir, ctx.manifest.pages),

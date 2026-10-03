@@ -112,6 +112,27 @@ export interface CommandContext {
   readonly rest: string[];
 }
 
+/**
+ * The locks a {@linkcode CommandSpec} takes for one invocation — Cargo's build-dir /
+ * artifact-dir split over a denext project. Output paths are relative to `projectDir`.
+ */
+export interface CommandLocks {
+  /** The project whose `.denext/` holds the lock files. */
+  readonly projectDir: string;
+  /**
+   * The build directory (`.denext/`): `exclusive` for a verb that writes it (`build`,
+   * `export`), `shared` for one that only reads it (`doctor`); omitted, it is not locked.
+   */
+  readonly buildDir?: "shared" | "exclusive";
+  /** Output directories the verb writes (locked exclusive): `out`, `coverage`. */
+  readonly outputDirs?: readonly string[];
+  /**
+   * Output directories of a verb that spawns a `denext export` child (`dist`, `dist/mobile`),
+   * locked exclusive BEFORE the build directory so the child can take it.
+   */
+  readonly packageDirs?: readonly string[];
+}
+
 /** A first-class denext CLI verb. */
 export interface CommandSpec {
   /** The verb (e.g. `"dev"`). */
@@ -146,6 +167,14 @@ export interface CommandSpec {
    * {@linkcode loadsModules} is set.
    */
   readonly moduleDir?: (ctx: CommandContext) => string;
+  /**
+   * The project directories this invocation writes or reads, locked Cargo-style for the whole
+   * of {@linkcode run} (OS file locks in `.denext/`; a second invocation prints `Blocking
+   * waiting for file lock on build directory .denext` and waits). Return `undefined` for an
+   * invocation that touches no build output. Taken after the re-exec gate, in the process that
+   * runs the command.
+   */
+  readonly locks?: (ctx: CommandContext) => CommandLocks | undefined;
   /**
    * When true, unrecognized flags are collected into {@linkcode CommandContext.rest}
    * instead of erroring — for verbs that forward to a `deno` subcommand.
@@ -336,7 +365,7 @@ export class CommandRegistry {
     const table = (list: { label: string; summary: string }[]) =>
       list.map((row) => `${row.label.padEnd(width)}${row.summary}`).join("\n");
     const projectSection = own.length === 0 ? "" : `\n\nProject commands:\n${table(own)}`;
-    return `denext ${version} — one power tool for all of React\n\n` +
+    return `denext ${version} — write it once, ship it everywhere: web, iOS, Android and desktop\n\n` +
       `Usage: denext <command> [options]\n\n` +
       `Commands:\n${table(builtIns)}${projectSection}\n\n` +
       `Global options:\n${globalFlagsHelp()}\n\n` +

@@ -14,7 +14,8 @@ import { nativePlugin } from "./plugin.ts";
 /**
  * The `code` on an {@linkcode openAuthSession} rejection:
  *
- * - `cancelled`: the user closed the sheet (or the popup) without finishing;
+ * - `cancelled`: the user closed the sheet (or the popup) without finishing, or (Deno Desktop)
+ *   the `signal` aborted;
  * - `busy`: another auth session is still open (one at a time);
  * - `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,
  *   or `timeoutMs` is not a positive number;
@@ -22,13 +23,51 @@ import { nativePlugin } from "./plugin.ts";
  *   presented, the web popup was blocked, or there is no window (SSR);
  * - `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform
  *   allows it).
+ *
+ * Deno Desktop's custom-scheme callbacks add:
+ *
+ * - `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;
+ * - `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256`;
+ * - `scheme_owned_by_other_app`: another app handles the scheme (its identity in
+ *   {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call
+ *   `claimDeepLinkScheme` (`denext/desktop/client`);
+ * - `scheme_not_registered`: the app could not register itself for the scheme (an unpackaged dev
+ *   run);
+ * - `session_in_progress`: another custom-scheme session is still open.
+ *
+ * Its loopback flow adds `port_in_use`: another program holds the fixed
+ * {@linkcode AuthSessionOptions.loopbackPort}.
  */
-export type AuthSessionErrorCode = "cancelled" | "busy" | "invalid" | "unsupported" | "timeout";
+export type AuthSessionErrorCode =
+  | "cancelled"
+  | "busy"
+  | "invalid"
+  | "unsupported"
+  | "timeout"
+  | "scheme_not_declared"
+  | "pkce_required"
+  | "scheme_owned_by_other_app"
+  | "scheme_not_registered"
+  | "session_in_progress"
+  | "port_in_use";
 
 /** The `Error` an {@linkcode openAuthSession} promise rejects with. */
 export interface AuthSessionError extends Error {
   /** Why it failed. */
   readonly code: AuthSessionErrorCode;
+  /**
+   * `scheme_owned_by_other_app` only: what the OS names as the scheme's handler (a bundle id, an
+   * executable path or a `.desktop` id), for display. Any program of the user can write it.
+   */
+  readonly handler?: string;
+}
+
+/** The text of the cancel overlay (both optional; English by default). */
+export interface AuthCancelOverlayText {
+  /** The line shown while the sign-in runs in the browser. */
+  readonly message?: string;
+  /** The button's label. */
+  readonly cancelLabel?: string;
 }
 
 /** Options for {@linkcode openAuthSession}. */
@@ -42,12 +81,64 @@ export interface AuthSessionOptions {
    */
   readonly callbackScheme: string;
   /**
-   * iOS only: do not share cookies with Safari (`prefersEphemeralWebBrowserSession`), so no
-   * existing provider login is reused and none is kept. Default `false`.
+   * Do not share cookies with the browser (`prefersEphemeralWebBrowserSession`), so no existing
+   * provider login is reused and none is kept: iOS, and Deno Desktop on macOS when a custom-scheme
+   * callback runs in the OS's auth session (which then also skips the "Wants to Use … to Sign In"
+   * prompt). Ignored by the system browser (Android, Windows, Linux, the loopback flow). Default
+   * `false`.
    */
   readonly preferEphemeral?: boolean;
-  /** Give up after this many ms with code `timeout`. Default: no limit. */
+  /**
+   * Give up after this many ms with code `timeout`. Default: no limit (Deno Desktop: 5 minutes for
+   * the loopback flow, 10 for a custom-scheme callback).
+   */
   readonly timeoutMs?: number;
+  /**
+   * Deno Desktop, custom-scheme callback: where the callback lands (`"myapp://auth/callback"`) when
+   * the URL's own `redirect_uri` is not a `callbackScheme` URL (a provider that redirects through
+   * its own server first). It is matched exactly on scheme, host and path.
+   */
+  readonly callbackPrefix?: string;
+  /**
+   * Deno Desktop, custom-scheme callback: PKCE (S256) is mandatory unless this is
+   * `"not-applicable"`, for a provider that binds the callback to the initiating client another
+   * way; then {@linkcode AuthSessionOptions.reason} says how.
+   */
+  readonly pkce?: "not-applicable";
+  /** Why PKCE does not apply (required with `pkce: "not-applicable"`; kept with the session). */
+  readonly reason?: string;
+  /**
+   * Deno Desktop, custom-scheme callback with a {@linkcode AuthSessionOptions.callbackPrefix}: the
+   * `state` the callback must carry. (When the callback is the URL's own `redirect_uri`, the URL's
+   * `state` is checked automatically.)
+   */
+  readonly state?: string;
+  /**
+   * Deno Desktop: aborting it cancels the session (`cancelled`). The system browser on Windows and
+   * Linux reports no cancellation, so denext shows a Cancel button there (see
+   * {@linkcode AuthSessionOptions.cancelOverlay}); wire your own to this instead if you hide it.
+   */
+  readonly signal?: AbortSignal;
+  /**
+   * Deno Desktop, when the sign-in runs in the system browser (Windows and Linux, the loopback flow
+   * everywhere, and runtimes without an OS auth session): while it waits, a small modal over the
+   * app says "Finish signing in in your browser." with a Cancel button (Escape too), which ends the
+   * session with `cancelled`, because the browser reports no cancellation and otherwise only
+   * `timeoutMs` would. `false` hides it (render your own, wired to
+   * {@linkcode AuthSessionOptions.signal}); `{ message, cancelLabel }` changes its text. Not shown
+   * where the OS's auth session has its own Cancel (macOS), nor on iOS, Android or the web.
+   */
+  readonly cancelOverlay?: false | AuthCancelOverlayText;
+  /**
+   * Deno Desktop, loopback flow (an `http://127.0.0.1` / `localhost` / `[::1]` `redirect_uri`):
+   * listen for the redirect on this fixed port instead of one the OS picks, for a provider that
+   * only accepts its registered loopback redirect (`http://localhost:1455/auth/callback`). The
+   * `redirect_uri` then keeps its host as written and must name this port or none. A port another
+   * program holds rejects `port_in_use`. RFC 8252 §7.3 allows a fixed port; an ephemeral one is
+   * still the better default, because a fixed port is easier for another local program to take
+   * first. Ignored elsewhere.
+   */
+  readonly loopbackPort?: number;
 }
 
 /** What {@linkcode openAuthSession} resolves with. */
@@ -320,6 +411,21 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then
  *   reads as `cancelled`: use a full-page redirect for such providers.
  *
+ * - **Deno Desktop**: with a loopback `redirect_uri` (`http://127.0.0.1/cb`) the system browser,
+ *   and the runtime catches the redirect on an ephemeral loopback port (RFC 8252), or on
+ *   `loopbackPort` for a provider with a fixed registered redirect. Otherwise a
+ *   custom-scheme callback: on macOS it runs in the OS's auth session (`ASWebAuthenticationSession`,
+ *   a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows
+ *   and Linux the system browser, and the callback comes back as a deep link. While the system
+ *   browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser
+ *   reports no cancellation. Either way `callbackScheme` must be declared in
+ *   `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: "not-applicable"` with a
+ *   `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry
+ *   the same `state`, and another app handling the scheme is refused
+ *   (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches
+ *   {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,
+ *   denext's pinned runtime).
+ *
  * Only one session is open at a time (`busy` otherwise). PKCE and `state` stay your job: this
  * only opens the page and hands back the callback URL. Generate `state` (and a PKCE verifier)
  * before the call, compare `state` after it, and exchange the `code` on your server.
@@ -353,11 +459,19 @@ export async function openAuthSession(
 ): Promise<AuthSessionResult> {
   const target = checkUrl(url);
   const timeoutMs = checkTimeout(options?.timeoutMs);
-  // Deno Desktop: hand off to the loopback system-browser flow (it ignores callbackScheme, so
-  // this runs before checkScheme). Dynamic import keeps the desktop client out of web/mobile bundles.
+  // Deno Desktop: the system browser, with the callback coming back either to a loopback listener
+  // (a loopback `redirect_uri`; the default) or as a deep link with a scheme from
+  // `desktop.app.deepLinks`. Dynamic import keeps the desktop client out of web/mobile bundles.
   if (runtimePlatform() === "desktop") {
-    return await (await import("../desktop/auth-session.ts"))
-      .startDesktopAuthSession(target, { timeoutMs });
+    const desktop = await import("../desktop/auth-session.ts");
+    return desktop.usesSchemeCallback(target, options)
+      ? await desktop.startDesktopSchemeAuthSession(target, { ...options, timeoutMs })
+      : await desktop.startDesktopAuthSession(target, {
+        timeoutMs,
+        ...(options?.signal ? { signal: options.signal } : {}),
+        ...(options?.cancelOverlay !== undefined ? { cancelOverlay: options.cancelOverlay } : {}),
+        ...(options?.loopbackPort !== undefined ? { loopbackPort: options.loopbackPort } : {}),
+      });
   }
   const scheme = checkScheme(options?.callbackScheme);
   if (active) throw authSessionError("busy", "another auth session is still open");
@@ -415,12 +529,46 @@ export function isAuthSessionCallback(url: string): boolean {
   if (claimedScheme !== undefined && url.toLowerCase().startsWith(`${claimedScheme}:`)) {
     return true;
   }
+  if (isStrayClerkCallback(url)) return true;
   return url === claimedUrl && Date.now() < claimedUntil;
+}
+
+/** The Clerk redirect URLs (lower-cased) whose stray callbacks are dropped, never routed. */
+const clerkRedirects = new Set<string>();
+
+/**
+ * Drop Clerk callbacks to `redirectUrl` that arrive outside an auth session (a forgery or a
+ * replay of a link carrying `rotating_token_nonce`): `onDeepLink` never sees them. Internal:
+ * `denext/mobile/clerk` calls it; not re-exported from `denext/mobile`.
+ *
+ * @param redirectUrl The Clerk OAuth redirect URL (`myapp://app/`).
+ */
+export function dropStrayClerkCallbacks(redirectUrl: string): void {
+  clerkRedirects.add(callbackTarget(redirectUrl) ?? redirectUrl.toLowerCase());
+}
+
+/** `url`'s scheme, host and path, lower-cased, or undefined. */
+function callbackTarget(url: string): string | undefined {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname || "/"}`.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `url` is a Clerk callback (a nonce) to a registered redirect. */
+function isStrayClerkCallback(url: string): boolean {
+  if (clerkRedirects.size === 0) return false;
+  const target = callbackTarget(url);
+  if (target === undefined || !clerkRedirects.has(target)) return false;
+  return new URL(url).searchParams.has("rotating_token_nonce");
 }
 
 /** Forget the module's session state (tests only). */
 export function resetAuthSessionForTesting(): void {
   active = false;
+  clerkRedirects.clear();
   claimedScheme = undefined;
   claimedUrl = undefined;
   claimedUntil = 0;

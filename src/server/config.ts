@@ -7,6 +7,7 @@ import type { DenextPlugin } from "../plugin/mod.ts";
 import type { CspSetting } from "./segment-config.ts";
 import type { CacheStore } from "./cache.ts";
 import { envGet } from "../runtime/env-safe.ts";
+import { parseDesktopAppOrigin } from "../desktop/app-origin.ts";
 // Type-only (erased at runtime) — `src/cli/command.ts` is a dependency-free leaf whose
 // only import is a pure util, so naming it here adds no runtime edge and no cycle.
 import type { CommandContext, FlagSpec, PositionalSpec } from "../cli/command.ts";
@@ -680,7 +681,11 @@ export interface DesktopCapabilitiesConfig {
   fs?: boolean | DesktopFsConfig;
   /** An app SQLite database under the app-support folder. */
   sqlite?: boolean;
-  /** `showContextMenu` (no runtime capability yet: the WebView's in-page menu). */
+  /**
+   * `showContextMenu` / `useContextMenu` as the OS's native menu (submenus, disabled and checked
+   * items, a real dismissal) through denext's pinned runtime; under the stock runtime the page keeps
+   * its in-page menu.
+   */
   contextMenu?: boolean;
   /** Open external URLs / paths / reveal / trash (scoped). */
   shell?: boolean | DesktopShellConfig;
@@ -693,20 +698,55 @@ export interface DesktopCapabilitiesConfig {
   /** Native open/save/folder dialogs returning paths. */
   dialogs?: boolean;
   /**
-   * Local notifications (no runtime capability yet: the WebView's Notification API, immediate
-   * only; a scheduled trigger rejects and a click is not routed).
+   * Local notifications as the OS's own through denext's pinned runtime: shown now or scheduled
+   * (repeating triggers too), cancelled and listed, with action buttons, the permission status, and
+   * clicks routed to `onLocalNotificationTapped` (including the one that launched the app). Under the
+   * stock runtime the page keeps the WebView's Notification API (immediate only).
    */
   notifications?: boolean;
+  /**
+   * System-wide keyboard shortcuts (`registerShortcut` in `denext/desktop/app`) through denext's
+   * pinned runtime: macOS hot keys, Windows `RegisterHotKey`, X11 key grabs, the Wayland
+   * GlobalShortcuts portal (the user approves each).
+   */
+  globalShortcuts?: boolean;
+  /**
+   * Start the app at login (`getLaunchAtLogin` / `setLaunchAtLogin` in `denext/desktop/app`)
+   * through denext's pinned runtime: a macOS login item, a Windows `Run` value, a Linux XDG
+   * autostart entry, named after `desktop.app.identifier`.
+   */
+  launchAtLogin?: boolean;
   /** Prevent the machine from sleeping while held. */
   keepAwake?: boolean;
-  /** Clipboard text (no runtime capability yet: the WebView's `navigator.clipboard`). */
+  /**
+   * The OS clipboard — text, HTML and PNG images (`readClipboard` / `writeClipboard` /
+   * `clipboardFormats`) — through denext's pinned runtime; under the stock runtime the page keeps
+   * the WebView's `navigator.clipboard` (text).
+   */
   clipboard?: boolean;
   /** Device info (`os`, `osVersion`, `model?`). */
   device?: boolean;
+  /**
+   * Native passkeys (macOS Touch ID / iCloud Keychain, Windows Hello; none on Linux) through
+   * denext's pinned runtime, for a page whose custom-scheme origin the webview's own WebAuthn cannot
+   * use (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app
+   * may request and is required; anything else answers `invalid_rp` without reaching the OS.
+   * `false` (or leaving it out) disables it.
+   */
+  passkeys?: false | DesktopPasskeysConfig;
   /** The `echo` diagnostic capability (bridge connectivity check). */
   echo?: boolean;
   /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
   extensions?: string[];
+}
+
+/** `desktop.capabilities.passkeys` options. */
+export interface DesktopPasskeysConfig {
+  /**
+   * The relying-party IDs (`"example.com"`) the app may request. Required: an empty list allows
+   * none, and no default allows any.
+   */
+  rpIds: string[];
 }
 
 /**
@@ -729,14 +769,98 @@ export interface DesktopConfig {
     /**
      * A unique reverse-DNS id (e.g. `"com.example.myapp"`) that keys the OS app-support/cache/
      * documents folders and the `secureStore` keychain service. Required once a data-storing cap
-     * (`secureStore`/`fs`/`sqlite`) is enabled. Keep it equal to `deno.json`'s `desktop.app.identifier`.
+     * (`secureStore`/`fs`/`sqlite`) is enabled, and once {@link origin} is set (then it must be a
+     * valid bundle identifier: ASCII letters, digits, `-` and `.`, at least one dot). Keep it equal
+     * to `deno.json`'s `desktop.app.identifier`.
      */
     identifier?: string;
-    /** The app's display name for tooling; the packaged bundle name comes from `deno.json`. */
+    /**
+     * The app's display name: the packaged bundle's name (`MyApp.app`, the executable, the Linux
+     * `.desktop` entry, the installers) and the package scripts' artifact names. The scripts write
+     * it into `deno.json`'s `desktop.app.name`, which `deno desktop` reads; unset, `deno.json`'s is
+     * used. `DENEXT_APP_NAME` overrides the artifact names for one run.
+     */
     name?: string;
+    /**
+     * The app icon per OS, relative to the project: `macos` an `.icns` (or a 1024² `.png`),
+     * `windows` an `.ico`, `linux` a `.png` (512² or larger). The package scripts pass it to
+     * `deno desktop --icon`; unset, `deno.json`'s `desktop.app.icons` is used, then
+     * `icons/app.icns` / `icons/app.ico` / `icons/app.png`, then `desktop-icon.png`.
+     */
+    icons?: DesktopAppIcons;
+    /**
+     * The stable page origin, `<scheme>://<host>` (e.g. `"myapp://app"`): the window's
+     * `location.origin` and the `Origin` header its requests carry, the same on every launch and
+     * machine — so a server that validates `Origin` can allow-list it, and origin-keyed browser
+     * storage survives a relaunch. The scheme is a custom one (not `http`, `https`, `file`, `ws`,
+     * `wss`, `ftp`, `blob`, `data`, `about`, …); the host carries no port or path. Requires
+     * {@link identifier}. The packaging scripts write it into `.deno-desktop/app.json`.
+     *
+     * Needs the denext-pinned Deno Desktop runtime; the stock runtime ignores it and serves the app
+     * on a loopback port (`http://127.0.0.1:<port>`). Default: `app://localhost` under the pinned
+     * runtime.
+     */
+    origin?: string;
+    /**
+     * URL schemes the app registers with the OS as deep links (bare, e.g. `["myapp"]`). Packaging
+     * writes them to deno.json `desktop.app.deepLinks` (the OS registration: Info.plist
+     * `CFBundleURLTypes`, the Windows registry, the Linux `.desktop` entry) and to
+     * `.deno-desktop/app.json` (the runtime's list). Under denext's pinned runtime a link with one of
+     * these schemes reaches `onDeepLink` / `useDeepLink` (`denext/mobile`), cold or warm, and a
+     * scheme listed here may be an `openAuthSession` callback scheme. The stock runtime delivers
+     * none.
+     */
+    deepLinks?: string[];
+    /**
+     * Keep one running instance per identifier: a second launch hands its arguments (deep links,
+     * files) to the first — which the webview backend brings to the front — and exits. Written to
+     * the packaged app's `laufey-launch.json`; needs denext's pinned runtime. Not applied to
+     * `denext desktop run` / `dev` windows (a dev window must not hand itself to an installed copy).
+     */
+    singleInstance?: boolean;
   };
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
+  /**
+   * Whether the web inspector (DevTools) can be opened in the window: F12, the context menu,
+   * Safari's Develop menu and remote debugging. Default: on in `denext desktop dev` (always) and
+   * `denext desktop run`, OFF in a packaged app — set `true` to ship an inspectable build. The
+   * package scripts write it to the app's `laufey-launch.json` (`"inspectable"`); `run` passes it as
+   * `LAUFEY_INSPECTABLE`. Needs denext's pinned runtime (the stock runtime ignores it).
+   */
+  inspectable?: boolean;
+  /**
+   * A module run in the window before the page's scripts (Electron's preload), e.g.
+   * `"./desktop/preload.ts"` (relative to the project). The export bundles it into one classic
+   * script (`out/_denext/desktop-preload.js`), and the desktop runtime inlines it as the first page
+   * script of every top-level document it serves over the memory transport (the denext-pinned
+   * runtime), right after the `__denext` global, with its own CSP hash. Never in an iframe, and not
+   * under the stock runtime (loopback). It runs in the page's world with the page's privileges
+   * (trusted app code, no isolated world): use it to expose bridges such as `window.desktopBridge`
+   * or Clerk's (`installClerkDesktopBridge` from `denext/desktop/clerk`) before the app reads them.
+   */
+  preload?: string;
+  /**
+   * The initial window: size, title and resizability, applied by the desktop runtime when it
+   * adopts the window (on every runtime). The page changes it later with `denext/desktop/window`.
+   */
+  window?: DesktopWindowConfig;
+  /**
+   * The title bar style (macOS): `"hidden"` draws the page under a transparent title bar,
+   * `"hiddenInset"` also insets the traffic lights. Give the page a drag region
+   * (`makeWindowDraggable` from `denext/desktop/window`). Needs denext's pinned runtime.
+   */
+  titleBar?: "default" | "hidden" | "hiddenInset";
+  /**
+   * The window backdrop, showing where the page's background is transparent: `"mica"` /
+   * `"acrylic"` on Windows 11, `"vibrancy"` (the `under-window` material) on macOS. Ignored on
+   * other OSes and on the CEF backend. Needs denext's pinned runtime.
+   */
+  backdrop?: "none" | "mica" | "acrylic" | "vibrancy";
+  /** The smallest window size the user can resize to. Needs denext's pinned runtime. */
+  minSize?: DesktopSize;
+  /** The largest window size the user can resize to. Needs denext's pinned runtime. */
+  maxSize?: DesktopSize;
   /**
    * Extra Deno permissions the packaging scripts bake into the `deno desktop` binary beyond what
    * the enabled {@link DesktopCapabilitiesConfig capabilities} imply — the escape hatch for what
@@ -745,6 +869,166 @@ export interface DesktopConfig {
    * `denext desktop package --regenerate-scripts` preserves it (it lives here, not in the script).
    */
   extraPermissions?: DesktopExtraPermissions;
+  /**
+   * Full-app self-update (`checkForAppUpdate` … from `denext/desktop/updater`): the whole signed
+   * app is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime.
+   */
+  update?: DesktopUpdateConfig;
+  /**
+   * The installers `denext desktop package` (the `scripts/package-*.ts`) builds, per OS. Unset,
+   * an OS builds its defaults: `.dmg` on macOS (beside the `.app`), `.tar.gz` + `.deb` on Linux,
+   * `.msi` on Windows. `--format` overrides the list for one run.
+   */
+  installers?: DesktopInstallersConfig;
+  /**
+   * macOS code-signing extras for `scripts/package-macos.ts`: a provisioning profile embedded as
+   * `Contents/embedded.provisionprofile`, and entitlements signed into the app. What an app needs
+   * for a restricted entitlement such as `com.apple.developer.associated-domains` (native passkeys,
+   * universal links), which macOS honours only with a profile that grants it. Applied when the
+   * bundle is signed with a real identity (`DENEXT_CODESIGN_IDENTITY`).
+   */
+  macos?: DesktopMacosConfig;
+  /**
+   * Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the
+   * package scripts: for a project that needs them to build at all. A pnpm workspace (deno.json
+   * `nodeModulesDir: "manual"`) needs `["--node-modules-dir=none", "--exclude-unused-npm"]`, or
+   * `deno desktop` type-checks against its `node_modules` and rewrites the root `package.json`.
+   * One flag per entry, `--flag` or `--flag=value`, from an allow-list: `--node-modules-dir`,
+   * `--node-modules-linker`, `--exclude-unused-npm`, `--no-check`, `--check`, `--no-lock`,
+   * `--lock`, `--frozen-lockfile`, `--cached-only`, `--no-remote`, `--no-npm`, `--no-code-cache`,
+   * `--conditions` and `--unstable-*`. Permission flags are refused: they come from
+   * {@link capabilities} and {@link extraPermissions}.
+   */
+  denoFlags?: string[];
+}
+
+/** One entitlement's value in {@link DesktopMacosConfig.entitlements}. */
+export type DesktopEntitlementValue = string | number | boolean | string[];
+
+/** {@link DesktopConfig.macos}: the macOS provisioning profile and entitlements. */
+export interface DesktopMacosConfig {
+  /**
+   * The provisioning profile (`.provisionprofile`) to embed, relative to the project or absolute:
+   * a Developer ID profile for the App ID `<TeamID>.<desktop.app.identifier>` that grants every
+   * restricted entitlement in {@link entitlements}. `DENEXT_PROVISIONING_PROFILE` overrides it for
+   * one run (a profile is account-specific: keep it out of the repository). The package script
+   * checks it before building (its App ID, team, expiry, and that it grants each restricted
+   * entitlement), embeds it as `Contents/embedded.provisionprofile`, and adds the
+   * `com.apple.application-identifier` / `com.apple.developer.team-identifier` entitlements macOS
+   * matches it by. Needs a real signing identity (`DENEXT_CODESIGN_IDENTITY`) of the same team.
+   */
+  provisioningProfile?: string;
+  /**
+   * Entitlements signed into the app, e.g.
+   * `{ "com.apple.developer.associated-domains": ["webcredentials:example.com"] }`. Merged over
+   * the `DENEXT_ENTITLEMENTS` plist when both are set (these win). A restricted entitlement
+   * (`com.apple.developer.*`, `com.apple.application-identifier`, `keychain-access-groups`) needs
+   * {@link provisioningProfile}.
+   */
+  entitlements?: Record<string, DesktopEntitlementValue>;
+}
+
+/** {@link DesktopConfig.app}'s `icons`: the app icon file per OS, relative to the project. */
+export interface DesktopAppIcons {
+  /** macOS: an `.icns`, or a 1024² `.png`. */
+  macos?: string;
+  /** Windows: an `.ico`. */
+  windows?: string;
+  /** Linux: a `.png` (512² or larger). */
+  linux?: string;
+}
+
+/** {@link DesktopConfig.installers}: the installer formats per OS, and what they say about the app. */
+export interface DesktopInstallersConfig {
+  /**
+   * macOS installers built beside the `.app`: `"dmg"` (a drag-to-Applications disk image) and
+   * `"pkg"` (a `productbuild` installer package for MDM / `installer -pkg`; signed with
+   * `DENEXT_INSTALLER_IDENTITY`, a "Developer ID Installer" identity). Default `["dmg"]`.
+   */
+  macos?: Array<"dmg" | "pkg">;
+  /**
+   * Linux installers: `"tar.gz"` (the bundle directory), `"deb"` (built by denext, no tool),
+   * `"rpm"` (needs `rpmbuild`), `"appimage"` (needs `appimagetool`). Default `["tar.gz", "deb"]`.
+   */
+  linux?: Array<"tar.gz" | "deb" | "rpm" | "appimage">;
+  /**
+   * Windows installers: `"msi"` (per-user by default, per-machine with `ALLUSERS=1`; needs WiX 5,
+   * `wix`, on a Windows host) and `"zip"` (the bundle directory). Default `["msi"]`.
+   */
+  windows?: Array<"msi" | "zip">;
+  /**
+   * Who publishes the app: the MSI Manufacturer (Add/Remove Programs), the `.deb` Maintainer
+   * (`"Name <email>"` there) and the `.rpm` Vendor. Default: the app name.
+   */
+  publisher?: string;
+  /** One line describing the app, for the package managers. Default `"<name> desktop application"`. */
+  description?: string;
+}
+
+/** {@link DesktopConfig.update}: full-app self-update. */
+export interface DesktopUpdateConfig {
+  /**
+   * The public half of the release signing key, baked into the packaged app (it goes into
+   * `.deno-desktop/app.json`): every update manifest must be signed by the matching private key,
+   * and there is no unsigned path. The `denext ota keygen` format: base64 SPKI (the `.pub` file) or
+   * a `PUBLIC KEY` PEM of an ECDSA P-256 key.
+   */
+  publicKey?: string;
+  /**
+   * The signed manifest's https URL (what `denext desktop publish-update` writes). Its host is added
+   * to the packaged app's `--allow-net`, so the app can reach it.
+   */
+  manifestUrl?: string;
+  /**
+   * Other hosts the update downloads come from (the archive host, a CDN a redirect goes to), added
+   * to the packaged app's `--allow-net`.
+   */
+  hosts?: string[];
+  /**
+   * Confirm a newly installed version automatically once its window has loaded (the page's `load`
+   * event reached the desktop runtime), so an app that never calls `confirmAppUpdate()` does not
+   * roll back every update on its next launch. Default `true`. Set `false` to confirm yourself
+   * with `confirmAppUpdate()` from `denext/desktop/updater` after your own health check (the
+   * backend answered, the user signed in): until then the update stays on trial, and a launch that
+   * never confirms is rolled back.
+   */
+  autoConfirm?: boolean;
+}
+
+/** A window size in CSS pixels ({@link DesktopConfig.minSize} / {@link DesktopConfig.maxSize}). */
+export interface DesktopSize {
+  /**
+   * Width in CSS pixels.
+   *
+   * @minimum 1
+   */
+  width: number;
+  /**
+   * Height in CSS pixels.
+   *
+   * @minimum 1
+   */
+  height: number;
+}
+
+/** The initial window ({@link DesktopConfig.window}), applied when the runtime adopts it. */
+export interface DesktopWindowConfig {
+  /**
+   * Initial width in CSS pixels.
+   *
+   * @minimum 1
+   */
+  width?: number;
+  /**
+   * Initial height in CSS pixels.
+   *
+   * @minimum 1
+   */
+  height?: number;
+  /** The window title (defaults to the page's `<title>`). */
+  title?: string;
+  /** Whether the user can resize the window (default `true`). */
+  resizable?: boolean;
 }
 
 /**
@@ -758,13 +1042,17 @@ export interface DesktopExtraPermissions {
   write?: string[];
   /** `--allow-net` hosts, e.g. the updater's feed host. */
   net?: string[];
-  /** `--allow-run` programs. */
+  /** `--allow-run` programs; `["*"]` bakes an unscoped `--allow-run`. */
   run?: string[];
-  /** `--allow-ffi` libraries. */
+  /**
+   * `--allow-ffi` libraries; `["*"]` bakes an unscoped `--allow-ffi`, which a Node-API addon (an
+   * npm package's prebuilt `.node`) needs: the packaged app loads it from its embedded file system,
+   * whose path cannot be named at package time.
+   */
   ffi?: string[];
   /** `--allow-env` variable names. */
   env?: string[];
-  /** `--allow-sys` kinds. */
+  /** `--allow-sys` kinds; `["*"]` bakes an unscoped `--allow-sys`. */
   sys?: string[];
 }
 
@@ -984,7 +1272,10 @@ export interface DenextConfig {
    * bundles, the module graph, the reload stream, the Live hub), beyond loopback. Each entry is
    * an origin (`"http://192.168.1.5:3000"`) or a bare host (`"192.168.1.5"`, `"mac.local"`,
    * `"mac.local:3000"`); matching is on the hostname. Wildcards are not supported: list each
-   * host. Mirrors Next.js's `allowedDevOrigins`.
+   * host. Mirrors Next.js's `allowedDevOrigins`. An entry may also be a Deno Desktop app's
+   * custom-scheme origin (`"myapp://app"`, validated as `desktop.app.origin` is), which admits a
+   * request whose `Origin` is exactly that value — for a backend project that a separate desktop
+   * app talks to. The project's own `desktop.app.origin` is admitted without listing it.
    *
    * Without it the dev server refuses those assets to any non-loopback `Host` (the DNS-rebinding
    * defense, cf. CVE-2025-48068), so a phone or another machine gets a dead page. You rarely
@@ -1529,7 +1820,8 @@ export function resolveCacheComponents(
  * `DENEXT_TRUST_PROXY=1`, `DENEXT_REQUEST_TIMEOUT_MS`, `DENEXT_MAX_CONCURRENCY`), else
  * `undefined` so `createApp`'s own default applies — config > env > default. A malformed env value (a non-numeric
  * timeout, a non-origin) is ignored with one warning rather than failing the boot, since
- * env is set by an operator, not type-checked like the config.
+ * env is set by an operator, not type-checked like the config. Plus the normalized
+ * `desktop.app.origin` (config only), which the same-origin checks accept.
  */
 export interface ServerOptions {
   /** The pinned public origin, if any. */
@@ -1548,6 +1840,11 @@ export interface ServerOptions {
   cacheKeyParams?: string[];
   /** Whether dynamic responses are compressed (`false` = off; default on, gzip). */
   compress?: boolean | CompressConfig;
+  /**
+   * The app's own Deno Desktop origin (`desktop.app.origin`, normalized), accepted by the
+   * same-origin checks (Server Actions, the API batch, Live, `denextAuth`'s POSTs).
+   */
+  desktopAppOrigin?: string;
 }
 
 /** One env var, or `undefined` when unset, empty, or not permitted (a narrowed `--allow-env`). */
@@ -1601,7 +1898,25 @@ export function resolveServerOptions(config: DenextConfig | null | undefined): S
     actionMaxBodyBytes: config?.actionMaxBodyBytes,
     cacheKeyParams: config?.cacheKeyParams,
     compress: config?.compress,
+    desktopAppOrigin: configuredDesktopAppOrigin(config),
   };
+}
+
+/**
+ * The configured `desktop.app.origin`, validated and normalized as the desktop runtime does
+ * (`myapp://app`), or `undefined` when unset or invalid (the config validator reports an
+ * invalid one at load).
+ *
+ * @param config The loaded config.
+ * @returns The normalized origin, or `undefined`.
+ */
+export function configuredDesktopAppOrigin(
+  config: DenextConfig | null | undefined,
+): string | undefined {
+  const raw = config?.desktop?.app?.origin;
+  if (typeof raw !== "string") return undefined;
+  const parsed = parseDesktopAppOrigin(raw);
+  return parsed.ok ? parsed.value.origin : undefined;
 }
 
 /**

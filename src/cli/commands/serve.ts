@@ -156,6 +156,8 @@ export const buildCommand: CommandSpec = {
   envTier: "production",
   summary: "Build for production",
   loadsModules: true,
+  // `.denext/` is both the build dir and the artifact dir: one exclusive lock.
+  locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive" }),
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   run: async (ctx) => {
     const { dir } = await appProject(ctx);
@@ -169,6 +171,7 @@ export const exportCommand: CommandSpec = {
   envTier: "production",
   summary: "Static export (SSG) to out/",
   loadsModules: true,
+  locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive", outputDirs: ["out"] }),
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [{
     name: "sourcemaps",

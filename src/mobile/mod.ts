@@ -13,10 +13,12 @@
  * - {@linkcode openExternal}: the in-app browser via the native `Browser` plugin, else
  *   `window.open` with `noopener`; only http(s), mailto: and tel: are allowed.
  * - In a Deno Desktop window ({@linkcode runtimePlatform} `"desktop"`), `secureStore`, the
- *   file functions, `openSqlite`, `openExternal`, `pickDocument`, `useKeepAwake` and
- *   `deviceInfo` go through the desktop runtime's capabilities (`denext desktop add
- *   <capability>`); `showContextMenu`, the notifications and the clipboard have no runtime
- *   capability and take their WebView (web) path there; {@linkcode openPath},
+ *   file functions, `openSqlite`, `openExternal`, `pickDocument`, `useKeepAwake`,
+ *   `deviceInfo`, the clipboard (text, HTML and images), `showContextMenu` (the OS menu), the
+ *   local notifications (scheduled, with click routing) and `setQuickActions` (the macOS Dock
+ *   menu) go through the desktop runtime's capabilities (`denext desktop add <capability>`;
+ *   the menus and notifications need denext's pinned runtime, else they keep their web path);
+ *   {@linkcode openPath},
  *   {@linkcode revealInFileManager}, {@linkcode moveToTrash}, {@linkcode saveFile} and
  *   {@linkcode pickFolder} are the desktop file-manager and dialog extras. A picked file or
  *   folder comes back with an opaque `handle` ({@linkcode PickedHandle}): the file functions
@@ -49,7 +51,8 @@
  *   {@linkcode otaSignaturePayload} builds the exact bytes a manifest signature covers.
  * - Native capabilities, each through its official Capacitor plugin in the shell
  *   (`denext mobile add <capability>` installs it) and a web fallback elsewhere:
- *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard},
+ *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard} /
+ *   {@linkcode clipboardFormats},
  *   {@linkcode share}, {@linkcode deviceInfo}, {@linkcode networkStatus} /
  *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
@@ -61,7 +64,9 @@
  * - {@linkcode setQuickActions} / {@linkcode onQuickAction} / {@linkcode useQuickAction}:
  *   home-screen quick actions (long-press on the app icon), cold-start action included.
  * - {@linkcode onDeepLink} / {@linkcode useDeepLink}: the custom-scheme and universal / app
- *   links that open the app, filtered and routed (`denext mobile add deep-links`).
+ *   links that open the app, filtered and routed (`denext mobile add deep-links`; on Deno Desktop
+ *   the schemes of `desktop.app.deepLinks`). {@linkcode onOpenFile} / {@linkcode useOpenFile}: the
+ *   files the OS opens with a Deno Desktop app, as read-only picked handles.
  * - {@linkcode openAuthSession}: OAuth / OIDC sign-in in a system browser sheet
  *   (ASWebAuthenticationSession on iOS, a Custom Tab on Android, a popup finished by
  *   {@linkcode completeAuthSession} on the web), resolving with the callback URL
@@ -217,7 +222,14 @@ export {
 } from "./ota.ts";
 export { type OtaManifest, type OtaManifestFile, otaSignaturePayload } from "./ota-manifest.ts";
 export { haptic, type HapticKind } from "./haptics.ts";
-export { readClipboard, writeClipboard } from "./clipboard.ts";
+export {
+  type ClipboardContent,
+  type ClipboardFormat,
+  clipboardFormats,
+  readClipboard,
+  type ReadClipboardOptions,
+  writeClipboard,
+} from "./clipboard.ts";
 export { share, type ShareOptions, type ShareResult } from "./share.ts";
 export { type DeviceInfo, deviceInfo } from "./device.ts";
 export {
@@ -235,8 +247,10 @@ export {
   type SecureStoreSetOptions,
 } from "./secure-store.ts";
 export { type DeepLinkEvent, type DeepLinkOptions, onDeepLink, useDeepLink } from "./deep-link.ts";
+export { onOpenFile, type OpenedFile, useOpenFile } from "./open-file.ts";
 export type { LinkAccept, LinkAllowList, LinkRoute } from "./link-routing.ts";
 export {
+  type AuthCancelOverlayText,
   type AuthSessionError,
   type AuthSessionErrorCode,
   type AuthSessionOptions,

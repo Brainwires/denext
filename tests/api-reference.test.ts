@@ -1,4 +1,4 @@
-// The generated API reference (apps/web/app/docs/api/reference.json, also the basis of
+// The generated API reference (site/app/docs/api/reference.json, also the basis of
 // llms-full.txt) must render every signature faithfully: no phantom `_: unknown` parameters
 // (defaulted / destructured params) and no generic references stripped to a bare name.
 
@@ -6,7 +6,7 @@ import { assert } from "@std/assert";
 
 Deno.test("API reference: signatures carry real parameter names and generic type arguments", async () => {
   const ref = JSON.parse(
-    await Deno.readTextFile(new URL("../apps/web/app/docs/api/reference.json", import.meta.url)),
+    await Deno.readTextFile(new URL("../site/app/docs/api/reference.json", import.meta.url)),
   ) as
     & { groups?: Array<{ symbols: Array<{ signature: string; name: string }> }> }
     & Record<string, unknown>;

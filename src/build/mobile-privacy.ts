@@ -185,6 +185,8 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   browser: [],
   "deep-links": [],
   "auth-session": [],
+  // The secure-storage plugin (Keychain) and denext's DenextAuthSession: no required-reason APIs.
+  clerk: [],
   push: [],
   filesystem: [{
     bundle: "app",
@@ -259,6 +261,9 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
     source: "@sentry/capacitor sends crash reports, performance data and diagnostics",
   }],
   "offline-screen": [],
+  "export-routes": [],
+  // fastlane is release tooling: nothing of it ships in the app.
+  fastlane: [],
   "app-review": [],
   "app-update": [],
   "screen-orientation": [],

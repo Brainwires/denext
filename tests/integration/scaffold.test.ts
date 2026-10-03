@@ -4,6 +4,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { type ScaffoldFile, scaffoldFiles, scaffoldProject } from "../../src/build/scaffold.ts";
+import { FALLOW_VERSION } from "../../src/build/fallow-template.ts";
 import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
@@ -105,6 +106,11 @@ const MACOS_PACKAGING_KEYWORDS = [
   "notarytool",
   "DENEXT_CODESIGN_IDENTITY",
   "--include",
+  // Installers: the --format / desktop.installers plan, the .dmg default and the signed .pkg.
+  "desktopInstallerPlan",
+  "hdiutil",
+  "productbuild",
+  "DENEXT_INSTALLER_IDENTITY",
 ];
 // Linux: builds via `deno desktop --target`, tars the bundle, and uses
 // underscore-free arch labels (x64) so the .desktop survives.
@@ -114,7 +120,12 @@ const LINUX_PACKAGING_KEYWORDS = [
   "tar",
   "appimagetool",
   '"x64"',
-  "--target",
+  "buildDesktopBundle",
+  // Installers: the .deb (built by denext) by default, the .rpm through rpmbuild on request.
+  "prepareDesktopPackage",
+  "buildDesktopDeb",
+  "buildDesktopRpm",
+  "rpmbuild",
 ];
 // Windows: builds the .exe via `deno desktop --target`, zips it, and
 // Authenticode-signs when a cert is configured.
@@ -124,11 +135,19 @@ const WINDOWS_PACKAGING_KEYWORDS = [
   "signtool",
   "DENEXT_WINDOWS_CERT",
   "WebView2",
-  "--target",
+  "buildDesktopBundle",
   // Ships the VC++ runtime app-local so the packaged app needs no redistributable installed
   // (else it dies at launch with a silent 0xC0000135). Verified end-to-end on a real Windows box.
   "bundleVcRuntime",
   "vcruntime140.dll",
+  // The closing note says the VC++ runtime was not bundled when it wasn't (a cross-build).
+  "noVcRuntime",
+  "the VC++ runtime was not bundled",
+  // Installers: the signed .msi (WiX 5) by default, per-user or per-machine; the zip on request.
+  "prepareDesktopPackage",
+  "buildDesktopMsi",
+  "ALLUSERS=1",
+  "--version 5.0.2",
 ];
 
 /** Asserts the desktop scaffold emits `script` and that it mentions every keyword. */
@@ -157,7 +176,7 @@ Deno.test("scaffoldFiles: desktop wires the deno-desktop entry, config block, an
   assert(paths.includes("denext.config.ts"), "desktop scaffold emits denext.config.ts");
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
   assertStringIncludes(dj.tasks.export, "export .");
-  assertStringIncludes(dj.tasks.desktop, "deno desktop desktop.ts");
+  assertStringIncludes(dj.tasks.desktop, "desktop run .");
   // `desktop:package` runs the packaging script (which exports, builds with `out/`
   // embedded, code-signs, and can do multi-arch + notarization).
   assertStringIncludes(dj.tasks["desktop:package"], "scripts/package-macos.ts");
@@ -400,6 +419,31 @@ Deno.test("init merges into an existing .vscode/settings.json instead of refusin
   }
 });
 
+Deno.test({
+  name: "init refuses a dangling symlink where it would write (the write would create its target)",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_init_link_" });
+    const outside = await Deno.makeTempDir({ prefix: "denext_init_outside_" });
+    try {
+      await Deno.symlink(join(outside, "planted.json"), join(dir, "deno.json"));
+      let err: unknown;
+      try {
+        await scaffoldProject({ dir, allowExisting: true });
+      } catch (e) {
+        err = e;
+      }
+      assert(err instanceof Error && err.message.includes("deno.json already exists"), String(err));
+      const created: string[] = [];
+      for await (const e of Deno.readDir(outside)) created.push(e.name);
+      assertEquals(created, [], "nothing was written through the link");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
+});
+
 Deno.test("init scaffolds into an existing dir but won't overwrite existing files", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_init_" });
   try {
@@ -417,6 +461,94 @@ Deno.test("init scaffolds into an existing dir but won't overwrite existing file
       threw = true;
     }
     assert(threw, "init must refuse to overwrite an existing generated file");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("scaffoldFiles: fallow writes the gate, its tasks and the agent guide", () => {
+  const files = scaffoldFiles({ dir: "/x", fallow: true });
+  const paths = files.map((f) => f.path);
+  for (
+    const p of [
+      "fallow.toml",
+      ".githooks/pre-commit",
+      "scripts/coverage-to-istanbul.ts",
+      "AGENTS.md",
+      "CLAUDE.md",
+    ]
+  ) {
+    assert(paths.includes(p), `missing ${p}`);
+  }
+  const tasks = JSON.parse(files.find((f) => f.path === "deno.json")!.content).tasks;
+  assertEquals(tasks.fallow, `deno run -A npm:fallow@${FALLOW_VERSION}`);
+  assertStringIncludes(tasks["fallow:audit"], `npm:fallow@${FALLOW_VERSION} audit`);
+  assertStringIncludes(tasks["coverage:fallow"], "deno test -A --coverage=coverage/profile");
+  assertStringIncludes(tasks["coverage:fallow"], "scripts/coverage-to-istanbul.ts");
+  // Enabling the hook is the developer's step: the task only points git at .githooks/.
+  assertEquals(tasks["hooks:install"], "git config core.hooksPath .githooks");
+  const gitignore = files.find((f) => f.path === ".gitignore")!.content;
+  assertStringIncludes(gitignore, "coverage/\n.fallow/\n");
+  // The hook is written executable and runs the gate through the pinned task.
+  const hook = files.find((f) => f.path === ".githooks/pre-commit")!;
+  assertEquals(hook.mode, 0o755);
+  assert(hook.content.startsWith("#!/bin/sh"));
+  assertStringIncludes(hook.content, "task fallow:audit $BASE $COV");
+  // fallow.toml declares denext's path-loaded conventions as entry points.
+  const toml = files.find((f) => f.path === "fallow.toml")!.content;
+  for (const e of ["**/app/**/page.tsx", "denext.config.ts", "middleware.ts", "tasks/*.ts"]) {
+    assertStringIncludes(toml, `"${e}"`);
+  }
+  assertStringIncludes(toml, '".denext/**"');
+  assertStringIncludes(files.find((f) => f.path === "AGENTS.md")!.content, "## Fallow task map");
+  assertStringIncludes(files.find((f) => f.path === "README.md")!.content, "hooks:install");
+});
+
+Deno.test("scaffoldFiles: without fallow nothing of it is written", () => {
+  for (const opts of [{ dir: "/x" }, { dir: "/x", fallow: false }]) {
+    const files = scaffoldFiles(opts);
+    const paths = files.map((f) => f.path);
+    for (const p of ["fallow.toml", ".githooks/pre-commit", "AGENTS.md", "CLAUDE.md"]) {
+      assert(!paths.includes(p), `unexpected ${p}`);
+    }
+    assert(!paths.some((p) => p.startsWith("scripts/")));
+    const denoJson = files.find((f) => f.path === "deno.json")!.content;
+    assert(!denoJson.includes("fallow"), denoJson);
+    assert(!denoJson.includes("hooks:install"), denoJson);
+    assert(!files.find((f) => f.path === ".gitignore")!.content.includes("coverage/"));
+    assert(!files.find((f) => f.path === "README.md")!.content.includes("fallow"));
+  }
+});
+
+Deno.test("scaffoldFiles: the scaffolded coverage converter matches denext's own script", async () => {
+  // One source of truth: the converter `coverage:fallow` runs in an app is denext's own
+  // scripts/coverage-to-istanbul.ts (tested by tests/coverage-to-istanbul.test.ts).
+  const scaffolded = scaffoldFiles({ dir: "/x", fallow: true })
+    .find((f) => f.path === "scripts/coverage-to-istanbul.ts")!.content;
+  const repo = await Deno.readTextFile(
+    new URL("../../scripts/coverage-to-istanbul.ts", import.meta.url),
+  );
+  assertEquals(scaffolded, repo);
+});
+
+Deno.test("scaffoldProject writes the fallow hook executable and init keeps an existing AGENTS.md", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_fallow_" });
+  try {
+    await Deno.writeTextFile(join(dir, "AGENTS.md"), "# ours\n");
+    const written = await scaffoldProject({
+      dir,
+      fallow: true,
+      vscode: false,
+      allowExisting: true,
+    });
+    assert(written.includes("fallow.toml"));
+    assert(!written.includes("AGENTS.md"), "init keeps the project's own AGENTS.md");
+    assertEquals(await Deno.readTextFile(join(dir, "AGENTS.md")), "# ours\n");
+    assertEquals(await Deno.readTextFile(join(dir, "CLAUDE.md")), "@AGENTS.md\n");
+    if (Deno.build.os !== "windows") {
+      const mode = (await Deno.stat(join(dir, ".githooks", "pre-commit"))).mode!;
+      assertEquals(mode & 0o111, 0o111, "the hook must be executable for git to run it");
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

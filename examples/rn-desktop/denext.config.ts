@@ -11,6 +11,9 @@ export default {
   reactNative: true,
   spa: { entry: "./src/main.tsx", title: "RN on desktop" },
   desktop: {
+    // Unique per app: keys the OS storage dirs and the secureStore keychain service (secureStore
+    // refuses to start without it). Kept equal to deno.json's desktop.app.identifier.
+    app: { identifier: "dev.denext.rn-desktop" },
     capabilities: {
       secureStore: true,
       contextMenu: true,

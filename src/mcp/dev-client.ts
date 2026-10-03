@@ -5,6 +5,15 @@
 // black box — recent server errors + browser console/errors. A stale file (the server died
 // without cleanup) just makes the fetch fail, which the caller reports as "not running".
 //
+// "Running" is decided by that probe, never by the file's `pid`: the pid is the process that
+// LISTENS (a re-exec'd `deno run` child of the CLI, not the `denext dev` process the user
+// started), and it is what the server's own `/_denext/dev-state` answers with — so an
+// identity check compares the two, and nothing here asks the OS whether a pid is alive.
+//
+// A loopback or wildcard bind is reachable at more than one address (`localhost` may resolve
+// to `::1` only; a `::` listener may refuse IPv4), so a reader tries each loopback spelling
+// of the published port ({@linkcode DevInfo.origins}) until one answers.
+//
 // The same discovery backs the DevTools bridge: `/_denext/dev-inspect` returns the latest
 // component tree the in-page inspector pushed, which is what the component-tree/
 // why-render/hook-state tools render.
@@ -27,6 +36,12 @@ const DEV_INSPECT_PATH = "/_denext/dev-inspect";
 export interface DevInfo {
   /** The origin to reach the dev server at, e.g. `http://127.0.0.1:3000`. */
   origin: string;
+  /**
+   * Every loopback origin the server may answer at, {@linkcode DevInfo.origin} first, then
+   * the other loopback spellings of the same scheme and port (`127.0.0.1`, `[::1]`,
+   * `localhost`).
+   */
+  origins: string[];
   port: number;
   hostname: string;
   pid: number;
@@ -57,8 +72,10 @@ export interface DevStateResponse {
 export async function readDevInfo(dir: string): Promise<DevInfo | null> {
   try {
     const info = JSON.parse(await Deno.readTextFile(join(dir, ".denext", "dev.json")));
-    const origin = loopbackOrigin(info?.origin);
-    return origin && processId(info?.pid) ? { ...info, origin } as DevInfo : null;
+    const origins = loopbackOrigins(info?.origin);
+    return origins && processId(info?.pid)
+      ? { ...info, origin: origins[0], origins } as DevInfo
+      : null;
   } catch {
     return null;
   }
@@ -74,29 +91,76 @@ function processId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 1;
 }
 
-/** The hosts a dev server's published origin can name (it rewrites `0.0.0.0` to loopback). */
-const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+/** The loopback spellings a reader tries, in order, after the published one. */
+const LOOPBACK_HOSTS = ["127.0.0.1", "[::1]", "localhost"];
+
+/** A wildcard bind as a published origin names it, mapped to its family's loopback. */
+const WILDCARD_HOSTS: ReadonlyMap<string, string> = new Map([
+  ["0.0.0.0", "127.0.0.1"],
+  ["[::]", "[::1]"],
+]);
 
 /**
- * The origin a `dev.json` names, only when it is a loopback http(s) address — rebuilt from its
- * parts, so no path, query or fragment rides along. A dev server only ever writes one of those;
- * anything else is a committed or planted file pointing the MCP tools at another host.
+ * The origins a `dev.json`'s `origin` lets a reader try, only when it names a loopback (or
+ * wildcard) http(s) address — rebuilt from its parts, so no path, query or fragment rides
+ * along. A dev server only ever writes one of those; anything else is a committed or planted
+ * file pointing the MCP tools at another host. The published origin comes first (a wildcard
+ * as its family's loopback), then the other loopback spellings of the same scheme and port.
+ *
+ * Accepts the unbracketed IPv6 origin (`http://::1:5199`) an older dev server wrote for a
+ * `localhost` bind that resolved to `::1`.
  */
-function loopbackOrigin(value: unknown): string | null {
-  if (typeof value !== "string" || !URL.canParse(value)) return null;
-  const url = new URL(value);
-  const web = url.protocol === "http:" || url.protocol === "https:";
-  return web && LOOPBACK_HOSTS.has(url.hostname) ? url.origin : null;
+function loopbackOrigins(value: unknown): string[] | null {
+  if (typeof value !== "string") return null;
+  const url = parseOrigin(value);
+  if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return null;
+  const host = WILDCARD_HOSTS.get(url.hostname) ?? url.hostname;
+  if (!LOOPBACK_HOSTS.includes(host)) return null;
+  const port = url.port ? `:${url.port}` : "";
+  const first = `${url.protocol}//${host}${port}`;
+  const rest = LOOPBACK_HOSTS.filter((h) => h !== host).map((h) => `${url.protocol}//${h}${port}`);
+  return [first, ...rest];
+}
+
+/** `value` as a URL, or — the legacy unbracketed IPv6 form — with its host bracketed. */
+function parseOrigin(value: string): URL | null {
+  if (URL.canParse(value)) return new URL(value);
+  const legacy = /^(https?):\/\/([0-9a-f]*:[0-9a-f:.]*):(\d+)\/?$/i.exec(value);
+  const fixed = legacy ? `${legacy[1]}://[${legacy[2]}]:${legacy[3]}` : "";
+  return legacy && URL.canParse(fixed) ? new URL(fixed) : null;
 }
 
 /**
- * How every request to the dev server is made: with a deadline (a wedged dev server must not
- * hang the tool — the MCP loop dispatches serially) and with redirects REFUSED. The origin was
- * checked to be loopback, and `fetch` following a `Location` would undo that check: a planted
- * loopback listener answering `302` to another host would carry the tool off the machine.
+ * Request `path` from the dev server `info` describes, trying each of its
+ * {@linkcode DevInfo.origins} until one answers (any HTTP status counts as an answer; a
+ * refused connection, a timeout or a refused redirect moves on to the next).
+ *
+ * Every attempt has a deadline (a wedged dev server must not hang the tool — the MCP loop
+ * dispatches serially) and REFUSES redirects. The origins were checked to be loopback, and
+ * `fetch` following a `Location` would undo that check: a planted loopback listener answering
+ * `302` to another host would carry the tool off the machine.
+ *
+ * @param info The published dev-server info.
+ * @param path The path (and query) to request, e.g. `/_denext/dev-state?limit=1`.
+ * @param timeoutMs The per-attempt deadline.
+ * @returns The first response and the origin that gave it, or null when none answered.
  */
-function devRequest(): RequestInit {
-  return { signal: AbortSignal.timeout(5000), redirect: "error" };
+export async function devFetch(
+  info: Pick<DevInfo, "origin" | "origins">,
+  path: string,
+  timeoutMs = 5000,
+): Promise<{ response: Response; origin: string } | null> {
+  const origins = info.origins?.length ? info.origins : [info.origin];
+  for (const origin of origins) {
+    try {
+      const response = await fetch(`${origin}${path}`, {
+        signal: AbortSignal.timeout(timeoutMs),
+        redirect: "error",
+      });
+      return { response, origin };
+    } catch { /* not answering at this spelling — try the next */ }
+  }
+  return null;
 }
 
 /**
@@ -116,8 +180,10 @@ export async function fetchDevState(
   if (opts.kind) params.set("kind", opts.kind);
   if (opts.limit) params.set("limit", String(opts.limit));
   const qs = params.toString();
+  const answer = await devFetch(info, `/_denext/dev-state${qs ? `?${qs}` : ""}`);
+  if (!answer) return null;
+  const res = answer.response;
   try {
-    const res = await fetch(`${info.origin}/_denext/dev-state${qs ? `?${qs}` : ""}`, devRequest());
     if (!res.ok) {
       await res.body?.cancel();
       return null;
@@ -158,8 +224,10 @@ export async function fetchDevInspect(dir: string, url?: string): Promise<DevIns
   const info = await readDevInfo(dir);
   if (!info) return { ok: false, reason: "no-dev-server" };
   const qs = url ? `?url=${encodeURIComponent(url)}` : "";
+  const answer = await devFetch(info, `${DEV_INSPECT_PATH}${qs}`);
+  if (!answer) return { ok: false, reason: "no-dev-server" };
+  const res = answer.response;
   try {
-    const res = await fetch(`${info.origin}${DEV_INSPECT_PATH}${qs}`, devRequest());
     if (!res.ok) {
       await res.body?.cancel();
       return { ok: false, reason: res.status === 404 ? "no-snapshot" : "no-dev-server" };

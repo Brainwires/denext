@@ -20,6 +20,7 @@ import {
   watchMedia,
 } from "./internal.ts";
 import { DynamicColorIOS, type DynamicColorIOSTuple } from "./platform-color.ts";
+import { runtimePlatform } from "../mobile/bridge.ts";
 
 /** Which desktop package a {@linkcode createDesktopView} stands in for (their key semantics differ). */
 export type DesktopFlavor = "windows" | "macos";
@@ -62,14 +63,30 @@ export interface DesktopViewProps {
   readonly validKeysUp?: readonly (HandledKeyEvent | string)[];
   /** `false` hides the keyboard focus ring (the browser's `:focus-visible` outline). */
   readonly enableFocusRing?: boolean;
-  /** macOS: accepted; a web view has no first-mouse behaviour (dev warning). */
+  /** macOS: accepted; the web view decides first-mouse clicks itself (dev warning). */
   readonly acceptsFirstMouse?: boolean;
-  /** macOS: accepted; the page cannot move the window (dev warning). */
+  /**
+   * `true`: pressing and dragging the view moves the window (a drag region, for a hidden title
+   * bar) in a Deno Desktop window; elsewhere accepted with a dev warning.
+   */
   readonly mouseDownCanMoveWindow?: boolean;
-  /** macOS: accepted; no vibrancy in a web view (dev warning). */
+  /**
+   * `true`: turns on the window's macOS vibrancy in a Deno Desktop window (it shows where the
+   * view's background is transparent); elsewhere accepted with a dev warning.
+   */
   readonly allowsVibrancy?: boolean;
-  /** macOS: accepted; drag and drop of files into a view is not mapped (dev warning). */
-  readonly draggedTypes?: unknown;
+  /**
+   * The drag types the view accepts: with `"fileUrl"` (or `"image"`), files dragged onto it call
+   * `onDragEnter` / `onDragLeave` / `onDrop`, whose `nativeEvent.dataTransfer.files` are
+   * `{ name, type, size, uri }` — plus, in a Deno Desktop window, a read-only `handle` and `path`.
+   */
+  readonly draggedTypes?: string | readonly string[];
+  /** Files are dragged over the view (needs `draggedTypes`). */
+  readonly onDragEnter?: (event: DesktopDragEvent) => void;
+  /** The drag left the view (needs `draggedTypes`). */
+  readonly onDragLeave?: (event: DesktopDragEvent) => void;
+  /** Files were dropped on the view (needs `draggedTypes`). */
+  readonly onDrop?: (event: DesktopDragEvent) => void;
   /** The view's style. */
   readonly style?: unknown;
   /** A ref to the view. */
@@ -80,28 +97,216 @@ export interface DesktopViewProps {
   readonly [prop: string]: unknown;
 }
 
-/** The desktop props a web view cannot honour, warned about once each in dev. */
-const NO_OP_PROPS = [
-  "acceptsFirstMouse",
-  "mouseDownCanMoveWindow",
-  "allowsVibrancy",
-  "draggedTypes",
-];
+/** One file of a {@linkcode DesktopDragEvent} (react-native-macos' `DataTransfer` file shape). */
+export interface DesktopDraggedFile {
+  /** The file name. */
+  readonly name: string;
+  /** The MIME type (`""` when unknown). */
+  readonly type: string;
+  /** The size in bytes. */
+  readonly size: number;
+  /** A `file://` URI (Deno Desktop), or a `blob:` URL of the dropped `File` (the web, on drop). */
+  readonly uri: string;
+  /** Deno Desktop: the read-only handle (`{ directory: { picked: handle } }`). */
+  readonly handle?: string;
+  /** Deno Desktop: the absolute path, for display only. */
+  readonly path?: string;
+  /** The web: the dropped `File`. */
+  readonly file?: unknown;
+}
 
-/** No-op props already warned about. */
+/** The event `onDragEnter` / `onDragLeave` / `onDrop` receive. */
+export interface DesktopDragEvent {
+  readonly nativeEvent: {
+    readonly dataTransfer: {
+      readonly files: readonly DesktopDraggedFile[];
+      readonly types: readonly string[];
+    };
+  };
+}
+
+/** Whether the page runs in a Deno Desktop window (with the bridge token). */
+function inDesktopWindow(): boolean {
+  return runtimePlatform() === "desktop";
+}
+
+/** Props already warned about. */
 let warnedProps: Set<string> | undefined;
 
-/** Warn (once per prop, in dev) about desktop props that do nothing here. */
-function warnNoOps(props: Readonly<Record<string, unknown>>): void {
+/** Warn (once per prop, in dev) about a desktop prop that does nothing here. */
+function warnOnce(name: string, why: string): void {
   const g = globalThis as { __DEV__?: boolean };
-  if (g.__DEV__ === false) return;
-  for (const name of NO_OP_PROPS) {
-    if (props[name] === undefined || (warnedProps ??= new Set()).has(name)) continue;
-    warnedProps.add(name);
-    console.warn(
-      `denext reactNative: the desktop View prop \`${name}\` has no web equivalent; ignored.`,
-    );
+  if (g.__DEV__ === false || (warnedProps ??= new Set()).has(name)) return;
+  warnedProps.add(name);
+  console.warn(`denext reactNative: the desktop View prop \`${name}\` ${why}; ignored.`);
+}
+
+/** Warn (once per prop, in dev) about the desktop props that do nothing where the page runs. */
+function warnNoOps(props: Readonly<Record<string, unknown>>): void {
+  if (props.acceptsFirstMouse !== undefined) {
+    warnOnce("acceptsFirstMouse", "has no web view equivalent (the web view decides)");
   }
+  if (props.mouseDownCanMoveWindow === true && !inDesktopWindow()) {
+    warnOnce("mouseDownCanMoveWindow", "moves a window only in a Deno Desktop window");
+  }
+  if (props.allowsVibrancy === true && !inDesktopWindow()) {
+    warnOnce("allowsVibrancy", "shows vibrancy only in a Deno Desktop window on macOS");
+  }
+}
+
+/** Whether `draggedTypes` accepts files. */
+function acceptsFiles(draggedTypes: DesktopViewProps["draggedTypes"]): boolean {
+  const types = typeof draggedTypes === "string" ? [draggedTypes] : draggedTypes ?? [];
+  return types.some((t) => t === "fileUrl" || t === "image" || t === "public.file-url");
+}
+
+/** A drag event over `files`. */
+function dragEvent(files: readonly DesktopDraggedFile[]): DesktopDragEvent {
+  return { nativeEvent: { dataTransfer: { files, types: files.length > 0 ? ["fileUrl"] : [] } } };
+}
+
+/**
+ * The `File`s of a DOM drag event as dragged files. Only a drop gets a `blob:` URL for each file
+ * (enter / leave would create one per event).
+ */
+function domFiles(event: Event, withUri = false): DesktopDraggedFile[] {
+  const list = (event as { dataTransfer?: { files?: ArrayLike<File> } }).dataTransfer?.files;
+  if (!list) return [];
+  const uriOf = (file: File): string => {
+    if (!withUri || typeof Blob === "undefined" || !(file instanceof Blob)) return "";
+    try {
+      return URL.createObjectURL(file);
+    } catch {
+      return "";
+    }
+  };
+  return Array.from(list).map((file) => ({
+    name: file.name,
+    type: file.type ?? "",
+    size: file.size ?? 0,
+    uri: uriOf(file),
+    file,
+  }));
+}
+
+/** The window module, loaded only in a Deno Desktop window. */
+function desktopWindow(): Promise<typeof import("../desktop/window.ts")> {
+  return import("../desktop/window.ts");
+}
+
+/** Whether the window delivers native drops (cached for the page). */
+let nativeDrops: Promise<boolean> | undefined;
+
+/** The window's vibrancy was requested (once per page). */
+let vibrancyRequested = false;
+
+/**
+ * `mouseDownCanMoveWindow`: a window drag region; `allowsVibrancy`: the window's macOS vibrancy —
+ * both in a Deno Desktop window only.
+ */
+function useWindowProps(
+  node: { current: HostElement | null },
+  moveWindow: boolean,
+  vibrancy: boolean,
+): void {
+  useEffect(() => {
+    const el = node.current;
+    if (!moveWindow || !el || !inDesktopWindow()) return;
+    let stop: (() => void) | undefined;
+    let live = true;
+    desktopWindow().then((w) => {
+      if (live) {
+        stop = w.makeWindowDraggable(el as unknown as Parameters<typeof w.makeWindowDraggable>[0]);
+      }
+    });
+    return () => {
+      live = false;
+      stop?.();
+    };
+  }, [moveWindow]);
+  useEffect(() => {
+    if (!vibrancy || vibrancyRequested || !inDesktopWindow()) return;
+    vibrancyRequested = true;
+    desktopWindow().then((w) => w.setWindowBackdrop("vibrancy")).catch(() => {});
+  }, [vibrancy]);
+}
+
+/** The view's drag handlers, as refs (so the listeners never go stale). */
+interface DragHandlers {
+  enter?: (event: DesktopDragEvent) => void;
+  leave?: (event: DesktopDragEvent) => void;
+  drop?: (event: DesktopDragEvent) => void;
+}
+
+/** Whether a native drop at `(x, y)` (client CSS pixels) landed on `el`. */
+function droppedOn(el: HostElement, x: number, y: number): boolean {
+  const rect = (el as { getBoundingClientRect?: () => DOMRectReadOnly }).getBoundingClientRect?.();
+  return !!rect && x >= rect.left && x <= rect.left + rect.width && y >= rect.top &&
+    y <= rect.top + rect.height;
+}
+
+/**
+ * `draggedTypes` with files: DOM drag events for enter / leave (and the drop on the web); in a
+ * Deno Desktop window whose runtime reports native drops, the drop comes from `onFileDrop` (read-only
+ * handles), hit-tested against the view.
+ */
+function useFileDrops(
+  node: { current: HostElement | null },
+  enabled: boolean,
+  handlers: { current: DragHandlers },
+): void {
+  useEffect(() => {
+    const el = node.current;
+    if (!enabled || typeof el?.addEventListener !== "function") return;
+    let native = false;
+    let stopNative: (() => void) | undefined;
+    let live = true;
+    if (inDesktopWindow()) {
+      nativeDrops ??= desktopWindow().then((w) => w.windowCapabilities()).then(
+        (c) => c.fileDrop === true,
+        () => false,
+      );
+      void nativeDrops.then(async (yes) => {
+        if (!yes || !live) return;
+        native = true;
+        const w = await desktopWindow();
+        if (!live) return;
+        stopNative = w.onFileDrop(({ x, y, files }) => {
+          if (!droppedOn(el, x, y)) return;
+          handlers.current.drop?.(dragEvent(files.map((f) => ({
+            name: f.name,
+            type: "",
+            size: f.size,
+            uri: `file://${f.path}`,
+            handle: f.handle,
+            path: f.path,
+          }))));
+        });
+      });
+    }
+    const over = (e: Event) => e.preventDefault(); // accept the drop
+    const enter = (e: Event) => {
+      e.preventDefault();
+      handlers.current.enter?.(dragEvent(domFiles(e)));
+    };
+    const leave = (e: Event) => handlers.current.leave?.(dragEvent(domFiles(e)));
+    const drop = (e: Event) => {
+      e.preventDefault();
+      if (!native) handlers.current.drop?.(dragEvent(domFiles(e, true)));
+    };
+    el.addEventListener("dragover", over);
+    el.addEventListener("dragenter", enter);
+    el.addEventListener("dragleave", leave);
+    el.addEventListener("drop", drop);
+    return () => {
+      live = false;
+      stopNative?.();
+      el.removeEventListener("dragover", over);
+      el.removeEventListener("dragenter", enter);
+      el.removeEventListener("dragleave", leave);
+      el.removeEventListener("drop", drop);
+    };
+  }, [enabled]);
 }
 
 /** The key fields of a DOM keyboard event (or its `nativeEvent`). */
@@ -198,8 +403,14 @@ function useHostProps(
  *   Windows, with its modifiers) has its default action prevented; macOS passes only listed
  *   keys to the handler, Windows passes every key;
  * - `enableFocusRing={false}` → no focus outline (otherwise the browser's `:focus-visible` ring);
- * - `acceptsFirstMouse`, `mouseDownCanMoveWindow`, `allowsVibrancy`, `draggedTypes` → accepted,
- *   with a dev warning once each (a web view has no equivalent).
+ * - `mouseDownCanMoveWindow` → in a Deno Desktop window, a window drag region (pressing and
+ *   dragging the view moves the window; `makeWindowDraggable` from `denext/desktop/window`);
+ * - `allowsVibrancy` → in a Deno Desktop window on macOS, the window's vibrancy (showing where the
+ *   view's background is transparent);
+ * - `draggedTypes` (`"fileUrl"` / `"image"`) → `onDragEnter` / `onDragLeave` / `onDrop` for files
+ *   dragged onto the view (in a Deno Desktop window with read-only `handle`s, from `onFileDrop`);
+ * - `acceptsFirstMouse` → accepted, with a dev warning once (the web view decides first-mouse
+ *   clicks); the two window props warn likewise outside a Deno Desktop window.
  *
  * @param View react-native-web's `View` (React Native mode passes it in).
  * @param flavor Which package's key semantics to follow.
@@ -221,9 +432,12 @@ export function createDesktopView(
       validKeysUp,
       enableFocusRing,
       acceptsFirstMouse: _acceptsFirstMouse,
-      mouseDownCanMoveWindow: _mouseDownCanMoveWindow,
-      allowsVibrancy: _allowsVibrancy,
-      draggedTypes: _draggedTypes,
+      mouseDownCanMoveWindow,
+      allowsVibrancy,
+      draggedTypes,
+      onDragEnter,
+      onDragLeave,
+      onDrop,
       ref,
       style,
       ...rest
@@ -231,6 +445,10 @@ export function createDesktopView(
     warnNoOps(props);
     const node = useRef<HostElement | null>(null);
     useHostProps(node, tooltip, onDoubleClick);
+    useWindowProps(node, mouseDownCanMoveWindow === true, allowsVibrancy === true);
+    const drag = useRef<DragHandlers>({});
+    drag.current = { enter: onDragEnter, leave: onDragLeave, drop: onDrop };
+    useFileDrops(node, acceptsFiles(draggedTypes), drag);
     const down = keyHandler(onKeyDown, keyDownEvents ?? validKeysDown, flavor);
     const up = keyHandler(onKeyUp, keyUpEvents ?? validKeysUp, flavor);
     return h(View, {

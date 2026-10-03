@@ -67,6 +67,8 @@ import { detectFumadocsMdx, fumadocsMdxPlugin } from "./fumadocs-mdx.ts";
 import { googleFontsPlugin } from "./google-fonts-plugin.ts";
 import { hiddenSourceMapsEnabled } from "./hidden-sourcemaps.ts";
 import { inNodeModules } from "./path-segments.ts";
+import { readDirective } from "./directives.ts";
+import { staticExportNames } from "./module-graph.ts";
 
 /** The esbuild namespace all prebuilt denext-runtime modules are funneled into. */
 const DENEXT_NS = "denext-runtime";
@@ -130,6 +132,10 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/script": "next-script.js",
   "next/dynamic": "next-dynamic.js",
   "next/navigation": "next-navigation.js",
+  // A library supporting both routers (`@clerk/nextjs`) imports the Pages Router API too; the
+  // real modules pull in Next's whole Pages Router client.
+  "next/compat/router": "next-compat-router.js",
+  "next/router": "next-router.js",
   "next/form": "next-form.js",
   "next/font/google": "next-font-google.js",
   "next/font/local": "next-font-local.js",
@@ -143,6 +149,9 @@ export const NEXT_ALIASES: Record<string, string> = {
   "next/cache": "next-cache.js",
   "next/server": "next-server.js",
 };
+
+/** {@link NEXT_ALIASES} entries applied to imports from `node_modules` only. */
+const LIBRARY_ONLY_NEXT: ReadonlySet<string> = new Set(["next/router", "next/compat/router"]);
 
 /**
  * The `next/*` alias key for an import specifier as libraries actually write it. Packages
@@ -202,11 +211,17 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "feature": u("src/feature.ts"),
     // `denext/mobile` — the Capacitor-shell client runtime; shares the one hooks instance.
     "mobile": u("src/mobile/mod.ts"),
+    "mobile-clerk": u("src/mobile/clerk.ts"),
     // `denext/navigation` — StackLayout / TabsLayout / Sheet; client components whose hooks
     // must share the one instance (React Native mode's navigator adapters import it too).
     "navigation": u("src/navigation/mod.ts"),
     // `denext/virtual-masonry` — VirtualMasonry; shares the one hooks instance.
     "virtual-masonry": u("src/virtual-masonry.ts"),
+    // `denext/desktop/{client,window,app}` — the Deno Desktop page APIs (no hooks; prebuilt so
+    // the unbundled dev loop can serve them like the other `denext/*` client modules).
+    "desktop-client": u("src/desktop/client.ts"),
+    "desktop-window": u("src/desktop/window.ts"),
+    "desktop-app": u("src/desktop/app.ts"),
     // next/* compat modules (see NEXT_ALIASES) — prebuilt into the same graph so
     // they share the one denext instance.
     "next-index": u("src/compat/next/index.ts"),
@@ -214,6 +229,8 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "next-script": u("src/compat/next/script.ts"),
     "next-dynamic": u("src/compat/next/dynamic.ts"),
     "next-navigation": u("src/compat/next/navigation.ts"),
+    "next-compat-router": u("src/compat/next/compat/router.ts"),
+    "next-router": u("src/compat/next/router.ts"),
     "next-form": u("src/compat/next/form.ts"),
     "next-font-google": u("src/compat/next/font/google.ts"),
     "next-font-local": u("src/compat/next/font/local.ts"),
@@ -624,8 +641,14 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
   "denext/mobile": "mobile.js",
+  // `denext/mobile/clerk` shares the one `denext/mobile` instance (its auth-session state).
+  "denext/mobile/clerk": "mobile-clerk.js",
   "denext/navigation": "navigation.js",
   "denext/virtual-masonry": "virtual-masonry.js",
+  // The Deno Desktop page APIs (deep-link scheme ownership, the window, the app menu / tray).
+  "denext/desktop/client": "desktop-client.js",
+  "denext/desktop/window": "desktop-window.js",
+  "denext/desktop/app": "desktop-app.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
@@ -699,7 +722,11 @@ function denextRuntimePlugin(runtimeDir: string): esbuild.Plugin {
       // next/* → denext compat modules (font/link/navigation/… — see NEXT_ALIASES),
       // so app code resolves them to denext instead of the real `next` npm package.
       build.onResolve({ filter: /^next$|^next\// }, (args) => {
-        const file = NEXT_ALIASES[normalizeNextSpecifier(args.path)];
+        const spec = normalizeNextSpecifier(args.path);
+        // The Pages Router API stand-ins are for LIBRARIES only: a Pages Router app's own
+        // `next/router` is the @denext/pages-router plugin's (its import map, resolved below).
+        if (LIBRARY_ONLY_NEXT.has(spec) && !inNodeModules(args.importer)) return null;
+        const file = NEXT_ALIASES[spec];
         return file ? runtimeFile(file) : null;
       });
       build.onResolve(
@@ -1489,38 +1516,147 @@ export async function resolveInPackageDir(
   conditions: string[] = BROWSER_CONDITIONS,
   platformExtensions?: readonly string[],
 ): Promise<string | null> {
-  let pkg: { exports?: unknown; module?: string; main?: string };
+  return orNull(await resolveInPackageDirBrowser(pkgDir, subpath, conditions, platformExtensions));
+}
+
+/** A browser-field `false` (an empty module) as "unresolved", for callers that can't express it. */
+function orNull(r: string | false | null): string | null {
+  return r === false ? null : r;
+}
+
+/** A package's `browser` field: a main replacement, a map of files/specifiers, or nothing. */
+type BrowserField = string | Record<string, string | false> | undefined;
+
+/** The object form of a `browser` field (`{ "./lib/node.js": "./lib/web.js", "fs": false }`), or null. */
+function browserMap(browser: BrowserField): Record<string, string | false> | null {
+  return browser && typeof browser === "object" && !Array.isArray(browser) ? browser : null;
+}
+
+/** Strip a leading `./` and a JS extension: the form `browser` keys are compared in. */
+function browserKey(p: string): string {
+  return p.replace(/^\.\//, "").replace(/\.(?:m?js|cjs|json)$/, "");
+}
+
+/**
+ * What a package's `browser` map says about one of its own files (`file` absolute): the
+ * replacement file, `false` (an empty module), or null when the map does not mention it.
+ * Keys match with or without `./` and the extension (`"./lib/index"` names `lib/index.js`),
+ * and a directory key names its `index` file — the forms esbuild accepts.
+ */
+async function browserFileRemap(
+  pkgDir: string,
+  map: Record<string, string | false>,
+  file: string,
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
+  const rel = relative(pkgDir, file).replaceAll("\\", "/");
+  const want = new Set([browserKey(rel)]);
+  if (/(^|\/)index$/.test(browserKey(rel))) want.add(browserKey(rel).replace(/\/?index$/, ""));
+  for (const [key, target] of Object.entries(map)) {
+    if (!key.startsWith(".") && !key.includes("/")) continue; // a bare specifier, not a file
+    if (!want.has(browserKey(key))) continue;
+    if (target === false) return false;
+    return await probePackageFile(join(pkgDir, target.replace(/^\.\//, "")), platformExtensions);
+  }
+  return null;
+}
+
+/**
+ * What the `browser` map of the package owning `importer` says about the bare specifier
+ * `spec` (`"readable-stream": "./lib/readable-stream-browser.js"`, `"fs": false`): the
+ * replacement file, `false` (an empty module), or null when the map does not remap it.
+ * Exported for testing.
+ */
+export async function resolveBrowserSpecifier(
+  importer: string,
+  spec: string,
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
+  const pkgDir = await ownerPackageDir(importer);
+  if (!pkgDir) return null;
+  let pkg: { browser?: BrowserField };
   try {
     pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
   } catch {
     return null;
   }
-  let rel = pkg.exports ? resolveExportsField(pkg.exports, subpath, conditions) : null;
-  // No `exports` field: fall back to the legacy fields. The SSR bundle (no `browser`
-  // condition) prefers `main` (the Node/CJS build) over `module` so an isomorphic-but-
-  // browser-leaning ESM build doesn't reach server render; the browser bundle keeps
-  // `module` first for tree-shakeable ESM.
-  const prefersNode = conditions === SSR_CONDITIONS;
-  if (!rel) {
-    rel = subpath === ""
-      ? (prefersNode
-        ? (pkg.main ?? pkg.module ?? "index.js")
-        : (pkg.module ?? pkg.main ?? "index.js"))
-      : "." + subpath;
+  const map = browserMap(pkg.browser);
+  if (!map || !(spec in map)) return null;
+  const target = map[spec];
+  if (target === false) return false;
+  // A remap to another package (`"lodash": "lodash-es"`) is a bare specifier again.
+  if (!target.startsWith(".")) {
+    return await resolveNodeFromBrowser(pkgDir, target, BROWSER_CONDITIONS, platformExtensions);
   }
   const file = await probePackageFile(
-    join(pkgDir, rel.replace(/^\.\//, "")),
+    join(pkgDir, target.replace(/^\.\//, "")),
     platformExtensions,
   );
-  if (!file) return null;
-  // Realpath through pnpm's symlink: a package's private deps live next to its REAL
-  // location (`.pnpm/<parent>/node_modules/<dep>`), so the next importer-relative walk
-  // must start from the real dir — exactly what Node's resolver does (and why pnpm works).
+  return file ? await realPathOr(file) : null;
+}
+
+/** `file` through its symlinks (pnpm's layout), or `file` itself when that fails. */
+async function realPathOr(file: string): Promise<string> {
   try {
     return await Deno.realPath(file);
   } catch {
     return file;
   }
+}
+
+/**
+ * The package-relative target of `subpath`: the `exports` map, else (for the root) a string
+ * `browser` field, else the legacy fields. The SSR bundle (no `browser` condition) prefers
+ * `main` (the Node/CJS build) over `module` so an isomorphic-but-browser-leaning ESM build
+ * doesn't reach server render; the browser bundle keeps `module` first for tree-shakeable ESM.
+ */
+function packageEntryRel(
+  pkg: { exports?: unknown; module?: string; main?: string },
+  subpath: string,
+  conditions: string[],
+  browser: BrowserField,
+): string {
+  const rel = pkg.exports ? resolveExportsField(pkg.exports, subpath, conditions) : null;
+  if (rel) return rel;
+  if (subpath !== "") return "." + subpath;
+  if (typeof browser === "string") return browser;
+  return conditions === SSR_CONDITIONS
+    ? (pkg.main ?? pkg.module ?? "index.js")
+    : (pkg.module ?? pkg.main ?? "index.js");
+}
+
+/**
+ * {@link resolveInPackageDir}, honoring the package's `browser` field when `conditions` are
+ * a browser build's (as esbuild does for `platform: "browser"`): a string replaces the main
+ * entry, and the object form remaps the resolved file — to another file, or to `false` (an
+ * empty module, returned as `false`).
+ */
+async function resolveInPackageDirBrowser(
+  pkgDir: string,
+  subpath: string,
+  conditions: string[],
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
+  let pkg: { exports?: unknown; module?: string; main?: string; browser?: BrowserField };
+  try {
+    pkg = JSON.parse(await Deno.readTextFile(join(pkgDir, "package.json")));
+  } catch {
+    return null;
+  }
+  const browser = conditions.includes("browser") ? pkg.browser : undefined;
+  const rel = packageEntryRel(pkg, subpath, conditions, browser);
+  let file: string | false | null = await probePackageFile(
+    join(pkgDir, rel.replace(/^\.\//, "")),
+    platformExtensions,
+  );
+  if (!file) return null;
+  const map = browserMap(browser);
+  if (map) file = (await browserFileRemap(pkgDir, map, file, platformExtensions)) ?? file;
+  if (file === false) return false;
+  // Realpath through pnpm's symlink: a package's private deps live next to its REAL
+  // location (`.pnpm/<parent>/node_modules/<dep>`), so the next importer-relative walk
+  // must start from the real dir — exactly what Node's resolver does (and why pnpm works).
+  return await realPathOr(file);
 }
 
 /**
@@ -1541,18 +1677,33 @@ export async function resolveNodeFrom(
   conditions: string[] = BROWSER_CONDITIONS,
   platformExtensions?: readonly string[],
 ): Promise<string | null> {
+  return orNull(await resolveNodeFromBrowser(fromDir, spec, conditions, platformExtensions));
+}
+
+/**
+ * {@link resolveNodeFrom}, with a `browser`-field `false` (an empty module) kept as `false`
+ * instead of folded into "unresolved".
+ */
+async function resolveNodeFromBrowser(
+  fromDir: string,
+  spec: string,
+  conditions: string[],
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
   const [name, subpath] = splitPackageSpecifier(spec);
   let dir = fromDir;
   for (;;) {
     const pkgDir = join(dir, "node_modules", name);
-    const r = await resolveInPackageDir(pkgDir, subpath, conditions, platformExtensions);
-    if (r) return r;
+    const r = await resolveInPackageDirBrowser(pkgDir, subpath, conditions, platformExtensions);
+    if (r !== null) return r;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
   const self = await selfPackageDir(fromDir, name);
-  return self ? await resolveInPackageDir(self, subpath, conditions, platformExtensions) : null;
+  return self
+    ? await resolveInPackageDirBrowser(self, subpath, conditions, platformExtensions)
+    : null;
 }
 
 /**
@@ -1658,6 +1809,24 @@ export async function withPackageSideEffects(
     : { path };
 }
 
+/**
+ * Resolve the bare `spec` for the resolver plugin. A browser build honors the importing
+ * package's `browser` map first (jszip's `"readable-stream": "./lib/readable-stream-browser.js"`),
+ * as esbuild does; `false` is an empty module.
+ */
+async function resolveBareForBuild(
+  importer: string,
+  fromDir: string,
+  spec: string,
+  conditions: string[],
+  platformExtensions?: readonly string[],
+): Promise<string | false | null> {
+  const remapped = conditions.includes("browser") && importer
+    ? await resolveBrowserSpecifier(importer, spec, platformExtensions)
+    : null;
+  return remapped ?? await resolveNodeFromBrowser(fromDir, spec, conditions, platformExtensions);
+}
+
 export function catalogResolverPlugin(
   projectDir: string,
   packages: Set<string> | "all",
@@ -1686,16 +1855,31 @@ export function catalogResolverPlugin(
           : (packages.has(name) && !importerInNodeModules) || !args.importer
           ? projectDir
           : dirname(args.importer);
-        const resolved = await resolveNodeFrom(fromDir, args.path, conditions, platformExtensions);
+        const resolved = await resolveBareForBuild(
+          args.importer,
+          fromDir,
+          args.path,
+          conditions,
+          platformExtensions,
+        );
+        if (resolved === false) return { path: args.path, namespace: BROWSER_EMPTY_NS };
         if (!resolved) return null;
         // Mark modules of a `"sideEffects": false` package so esbuild can tree-shake unused
         // barrel re-exports (denext's own resolver otherwise hands esbuild a bare path, which
         // it must treat as side-effectful).
         return await withPackageSideEffects(resolved);
       });
+      // A `browser`-field `false`: an empty CommonJS module (named imports read `undefined`).
+      build.onLoad({ filter: /.*/, namespace: BROWSER_EMPTY_NS }, () => ({
+        contents: "module.exports = {};",
+        loader: "js",
+      }));
     },
   };
 }
+
+/** The esbuild namespace of a module a package's `browser` field maps to `false`. */
+const BROWSER_EMPTY_NS = "denext-browser-empty";
 
 /** Deterministic short hash of a string (FNV-1a, base36) — for worker asset names. */
 function assetHash(s: string): string {
@@ -2149,10 +2333,27 @@ export function serverStubPlugin(
   return {
     name: "denext-server-stub",
     setup(build) {
-      build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, (args) => {
+      build.onLoad({ filter: /\.(tsx?|jsx?|mjs|cjs)$/, namespace: "file" }, async (args) => {
         const s = byPath.get(args.path);
-        if (!s) return null;
-        return { contents: stubOf(s.id, s.exports), loader: "ts", resolveDir: dirname(args.path) };
+        if (s) {
+          return {
+            contents: stubOf(s.id, s.exports),
+            loader: "ts",
+            resolveDir: dirname(args.path),
+          };
+        }
+        // A `"use server"` file inside an npm package that is not in the boundary — the other
+        // build (ESM vs CJS) of a package whose action module the boundary holds: an app's
+        // client code imports the package's ESM build while its islands are the server
+        // bundle's CJS files. Its code must not ship either; nothing registers it on the
+        // server, so calling it fails there (no island renders it).
+        if (!inNodeModules(args.path) || (await readDirective(args.path)) !== "server") return null;
+        const exports = await staticExportNames(args.path);
+        return {
+          contents: stubOf(`unregistered:${args.path.split(/[\\/]/).slice(-3).join("/")}`, exports),
+          loader: "ts",
+          resolveDir: dirname(args.path),
+        };
       });
     },
   };

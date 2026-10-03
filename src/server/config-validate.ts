@@ -14,6 +14,13 @@ import { resolveCors } from "./cors.ts";
 import { ROUTE_CSP_KEYS } from "./segment-config.ts";
 import { validateAppLinks } from "./app-links.ts";
 import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
+import {
+  desktopAppIdentifierError,
+  desktopSchemeError,
+  originWithoutIdentifierMessage,
+  parseDesktopAppOrigin,
+} from "../desktop/app-origin.ts";
+import { desktopDenoFlagError } from "../desktop/deno-flags.ts";
 
 /**
  * The recognized top-level {@link DenextConfig} keys — the generated
@@ -194,12 +201,230 @@ function validateExtraPermissions(extra: unknown, fail: Fail): void {
   }
 }
 
+/** Whether `v` is a plain (non-array, non-null) object. */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** `desktop.app.origin`: the runtime's origin rules, and the identifier it then requires. */
+function validateDesktopOrigin(app: Record<string, unknown>, fail: Fail): void {
+  const origin = app.origin;
+  if (origin === undefined) return;
+  if (typeof origin !== "string") fail("desktop.app.origin", 'must be a string like "myapp://app"');
+  const parsed = parseDesktopAppOrigin(origin as string);
+  if (!parsed.ok) fail("desktop.app.origin", `is invalid: ${parsed.error}`);
+  const id = app.identifier;
+  if (id === undefined) fail("desktop.app.identifier", originWithoutIdentifierMessage(`${origin}`));
+  const idError = typeof id === "string" ? desktopAppIdentifierError(id) : "must be a string";
+  if (idError) fail("desktop.app.identifier", `is invalid: ${idError}`);
+}
+
+/**
+ * `desktop.capabilities.passkeys`: `false`, or `{ rpIds: string[] }`. The pin is mandatory — the
+ * native path skips the browser's origin check, and on Windows nothing else ties the RP ID to the
+ * app — so a bare `true` (which once meant "any RP") is an error, not a default.
+ */
+function validatePasskeys(passkeys: unknown, fail: Fail): void {
+  if (passkeys === undefined || passkeys === false) return;
+  if (!isPlainObject(passkeys) || passkeys.rpIds === undefined) {
+    fail(
+      "desktop.capabilities.passkeys",
+      'must pin its relying parties: { rpIds: ["example.com"] } (a bare `true` allowed any RP ID)',
+    );
+  }
+  const rpIds = (passkeys as Record<string, unknown>).rpIds;
+  if (!Array.isArray(rpIds) || !rpIds.every((id) => typeof id === "string" && id !== "")) {
+    fail("desktop.capabilities.passkeys.rpIds", "must be an array of RP ID strings");
+  }
+}
+
+/** `desktop.app.deepLinks`: bare custom URL schemes. */
+function validateDeepLinks(deepLinks: unknown, fail: Fail): void {
+  if (deepLinks === undefined) return;
+  if (!Array.isArray(deepLinks)) fail("desktop.app.deepLinks", "must be an array of URL schemes");
+  (deepLinks as unknown[]).forEach((scheme, i) => {
+    const err = typeof scheme === "string"
+      ? desktopSchemeError(scheme)
+      : 'must be a bare URL scheme string (e.g. "myapp")';
+    if (err) fail(`desktop.app.deepLinks[${i}]`, err);
+  });
+}
+
+/** `desktop.app`: origin + identifier, deep-link schemes, singleInstance. */
+function validateDesktopApp(app: unknown, fail: Fail): void {
+  if (app === undefined) return;
+  if (!isPlainObject(app)) fail("desktop.app", "must be an object");
+  const a = app as Record<string, unknown>;
+  validateDesktopOrigin(a, fail);
+  validateDeepLinks(a.deepLinks, fail);
+  if (a.singleInstance !== undefined && typeof a.singleInstance !== "boolean") {
+    fail("desktop.app.singleInstance", "must be a boolean");
+  }
+  if (a.name !== undefined && (typeof a.name !== "string" || a.name.trim() === "")) {
+    fail("desktop.app.name", "must be a non-empty string");
+  }
+  validateDesktopIcons(a.icons, fail);
+}
+
+/** `desktop.app.icons`: `{ macos?, windows?, linux? }` file paths. */
+function validateDesktopIcons(icons: unknown, fail: Fail): void {
+  if (icons === undefined) return;
+  if (!isPlainObject(icons)) fail("desktop.app.icons", "must be { macos?, windows?, linux? }");
+  for (const [os, path] of Object.entries(icons as Record<string, unknown>)) {
+    if (!["macos", "windows", "linux"].includes(os)) {
+      fail(`desktop.app.icons.${os}`, "is not an OS (macos, windows or linux)");
+    }
+    if (typeof path !== "string" || path.trim() === "") {
+      fail(`desktop.app.icons.${os}`, "must be a file path");
+    }
+  }
+}
+
+/** `desktop.denoFlags`: an allow-list of `deno desktop` flags, never a permission flag. */
+function validateDenoFlags(flags: unknown, fail: Fail): void {
+  if (flags === undefined) return;
+  if (!Array.isArray(flags)) {
+    fail("desktop.denoFlags", 'must be an array of flags, e.g. ["--node-modules-dir=none"]');
+  }
+  (flags as unknown[]).forEach((flag, i) => {
+    const err = desktopDenoFlagError(flag);
+    if (err) fail(`desktop.denoFlags[${i}]`, err);
+  });
+}
+
+/** A `{ width, height }` size (each ≥ 1). */
+function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
+  if (v === undefined) return;
+  if (!isPlainObject(v)) fail(field, "must be { width, height }");
+  const size = v as Record<string, unknown>;
+  num(fail, `${field}.width`, size.width, { min: 1 });
+  num(fail, `${field}.height`, size.height, { min: 1 });
+}
+
+/** `desktop.window`: optional width/height (≥ 1), title, resizable. */
+function validateDesktopWindow(win: unknown, fail: Fail): void {
+  if (win === undefined) return;
+  if (!isPlainObject(win)) fail("desktop.window", "must be an object");
+  const w = win as Record<string, unknown>;
+  if (w.width !== undefined) num(fail, "desktop.window.width", w.width, { min: 1 });
+  if (w.height !== undefined) num(fail, "desktop.window.height", w.height, { min: 1 });
+  if (w.title !== undefined && typeof w.title !== "string") {
+    fail("desktop.window.title", "must be a string");
+  }
+  if (w.resizable !== undefined && typeof w.resizable !== "boolean") {
+    fail("desktop.window.resizable", "must be a boolean");
+  }
+}
+
+/** A value that must be one of `allowed` when set. */
+function oneOf(v: unknown, allowed: readonly string[], field: string, fail: Fail): void {
+  if (v !== undefined && !allowed.includes(v as string)) {
+    fail(field, `must be one of ${allowed.map((a) => `"${a}"`).join(", ")}`);
+  }
+}
+
+/** The window-shape keys: window, titleBar, backdrop, minSize ≤ maxSize, inspectable, preload. */
+function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void {
+  validateDesktopWindow(d.window, fail);
+  oneOf(d.titleBar, ["default", "hidden", "hiddenInset"], "desktop.titleBar", fail);
+  oneOf(d.backdrop, ["none", "mica", "acrylic", "vibrancy"], "desktop.backdrop", fail);
+  validateDesktopSize(d.minSize, "desktop.minSize", fail);
+  validateDesktopSize(d.maxSize, "desktop.maxSize", fail);
+  const min = d.minSize as { width: number; height: number } | undefined;
+  const max = d.maxSize as { width: number; height: number } | undefined;
+  if (min && max && (min.width > max.width || min.height > max.height)) {
+    fail("desktop.minSize", "must not exceed desktop.maxSize");
+  }
+  if (d.inspectable !== undefined && typeof d.inspectable !== "boolean") {
+    fail("desktop.inspectable", "must be a boolean");
+  }
+  if (d.preload !== undefined && (typeof d.preload !== "string" || d.preload === "")) {
+    fail("desktop.preload", "must be a module path");
+  }
+}
+
+/** `desktop.update.autoConfirm`: a boolean (the other `desktop.update` keys are checked at package). */
+function validateDesktopUpdate(update: unknown, fail: Fail): void {
+  const autoConfirm = (update as { autoConfirm?: unknown } | undefined)?.autoConfirm;
+  if (autoConfirm !== undefined && typeof autoConfirm !== "boolean") {
+    fail("desktop.update.autoConfirm", "must be a boolean");
+  }
+}
+
+/** The installer formats per OS `desktop.installers.<os>` accepts. */
+const DESKTOP_INSTALLER_KEYS: Record<string, readonly string[]> = {
+  macos: ["dmg", "pkg"],
+  linux: ["tar.gz", "deb", "rpm", "appimage"],
+  windows: ["msi", "zip"],
+};
+
+/** `desktop.installers`: per-OS format lists, and the publisher / description strings. */
+function validateDesktopInstallers(installers: unknown, fail: Fail): void {
+  if (installers === undefined) return;
+  if (!isPlainObject(installers)) fail("desktop.installers", "must be an object");
+  const i = installers as Record<string, unknown>;
+  for (const [os, formats] of Object.entries(DESKTOP_INSTALLER_KEYS)) {
+    const v = i[os];
+    if (v === undefined) continue;
+    if (!Array.isArray(v) || !v.every((f) => formats.includes(f as string))) {
+      fail(
+        `desktop.installers.${os}`,
+        `must be an array of ${formats.map((f) => `"${f}"`).join(", ")}`,
+      );
+    }
+  }
+  for (const key of ["publisher", "description"]) {
+    if (i[key] !== undefined && (typeof i[key] !== "string" || i[key] === "")) {
+      fail(`desktop.installers.${key}`, "must be a non-empty string");
+    }
+  }
+}
+
+/** Whether `v` is one entitlement value: a string, a finite number, a boolean or a string array. */
+function isEntitlementValue(v: unknown): boolean {
+  return typeof v === "string" || typeof v === "boolean" ||
+    (typeof v === "number" && Number.isFinite(v)) ||
+    (Array.isArray(v) && v.every((s) => typeof s === "string"));
+}
+
+/** `desktop.macos`: the provisioning profile path and the entitlements object. */
+function validateDesktopMacos(macos: unknown, fail: Fail): void {
+  if (macos === undefined) return;
+  if (!isPlainObject(macos)) {
+    fail("desktop.macos", "must be { provisioningProfile?, entitlements? }");
+  }
+  const m = macos as Record<string, unknown>;
+  const profile = m.provisioningProfile;
+  if (profile !== undefined && (typeof profile !== "string" || profile.trim() === "")) {
+    fail("desktop.macos.provisioningProfile", "must be a .provisionprofile file path");
+  }
+  const ents = m.entitlements;
+  if (ents === undefined) return;
+  if (!isPlainObject(ents)) {
+    fail("desktop.macos.entitlements", "must be an object of entitlement keys to values");
+  }
+  for (const [key, value] of Object.entries(ents as Record<string, unknown>)) {
+    if (!isEntitlementValue(value)) {
+      fail(
+        `desktop.macos.entitlements["${key}"]`,
+        "must be a string, a number, a boolean or an array of strings",
+      );
+    }
+  }
+}
+
 function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   if (desktop === undefined) return;
   if (typeof desktop !== "object" || Array.isArray(desktop)) {
     fail("desktop", "must be an object");
   }
   validateExtraPermissions((desktop as { extraPermissions?: unknown }).extraPermissions, fail);
+  validateDesktopApp((desktop as { app?: unknown }).app, fail);
+  validateDesktopWindowing(desktop as Record<string, unknown>, fail);
+  validateDesktopUpdate((desktop as { update?: unknown }).update, fail);
+  validateDesktopInstallers((desktop as { installers?: unknown }).installers, fail);
+  validateDesktopMacos((desktop as { macos?: unknown }).macos, fail);
+  validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {
@@ -211,7 +436,8 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
       c.extensions.every((p) => typeof p === "string" && p !== "");
     if (!ok) fail("desktop.capabilities.extensions", "must be an array of module paths");
   }
-  for (const key of ["fs", "shell"]) {
+  validatePasskeys(c.passkeys, fail);
+  for (const key of ["fs", "shell", "passkeys"]) {
     const v = c[key];
     const ok = v === undefined || typeof v === "boolean" ||
       (typeof v === "object" && v !== null && !Array.isArray(v));
@@ -558,8 +784,9 @@ function validateI18n(i18n: unknown, fail: Fail): void {
 
 /**
  * Why `entry` is not a usable `allowedDevOrigins` entry, or `null` when it is one: an origin
- * (`http(s)://host[:port]`, nothing after it) or a bare host (`host` or `host:port`, a raw
- * IPv6 address included). The dev origin gate matches entries exactly, so a wildcard is
+ * (`http(s)://host[:port]`, nothing after it), a custom-scheme app origin (`myapp://app`,
+ * validated as `desktop.app.origin` is — a Deno Desktop window's) or a bare host (`host` or
+ * `host:port`, a raw IPv6 address included). The dev origin gate matches entries exactly, so a wildcard is
  * refused rather than silently never matching. Shared by the config validator and
  * `denext dev --allowed-dev-origin`.
  *
@@ -573,8 +800,16 @@ export function devOriginError(entry: unknown): string | null {
   return entry.includes("://") ? originEntryError(entry) : hostEntryError(entry);
 }
 
-/** An `allowedDevOrigins` entry written as an origin: `http(s)://host[:port]`, exactly. */
+/**
+ * An `allowedDevOrigins` entry written as an origin: `http(s)://host[:port]` exactly, or a
+ * custom-scheme app origin (`myapp://app`) by `desktop.app.origin`'s rules.
+ */
 function originEntryError(entry: string): string | null {
+  if (!/^https?:\/\//i.test(entry)) {
+    const parsed = parseDesktopAppOrigin(entry);
+    return parsed.ok ? null : `must be an http(s) origin or a custom-scheme app origin like ` +
+      `myapp://app (${parsed.error})`;
+  }
   if (!URL.canParse(entry)) return "is not a valid origin";
   const url = new URL(entry);
   if (url.protocol !== "http:" && url.protocol !== "https:") return "must be an http(s) origin";

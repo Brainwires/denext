@@ -27,7 +27,7 @@
 // file says.
 
 import { join } from "@std/path";
-import { type DevInfo, type DevStateResponse, readDevInfo } from "../mcp/dev-client.ts";
+import { devFetch, type DevInfo, type DevStateResponse, readDevInfo } from "../mcp/dev-client.ts";
 
 /** How long a liveness probe waits before calling the published origin dead. */
 const PROBE_MS = 700;
@@ -144,10 +144,10 @@ export function treeKillCommand(
  * @returns What answered, or `null` when nothing did.
  */
 async function probeDevState(info: DevInfo): Promise<DevIdentity | null> {
+  const answer = await devFetch(info, `${DEV_STATE_PATH}?limit=1`, PROBE_MS);
+  if (answer === null) return null;
+  const response = answer.response;
   try {
-    const response = await fetch(`${info.origin}${DEV_STATE_PATH}?limit=1`, {
-      signal: AbortSignal.timeout(PROBE_MS),
-    });
     if (!response.ok) {
       // The body is not needed, but an unread body keeps the connection (and the op) alive.
       await response.body?.cancel();

@@ -10,6 +10,7 @@
 import { absoluteUrl } from "../absolute-url.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { originCandidate } from "../origin-check.ts";
+import { currentContext } from "../request-context.ts";
 import { getSession, type SessionOptions } from "../session.ts";
 import { cookieSessionOptions, type ResolvedAuthOptions } from "./options.ts";
 import type { AuthConfig, AuthProvider, AuthUser } from "./types.ts";
@@ -126,11 +127,14 @@ export function findProvider(config: AuthConfig, id: string): AuthProvider | und
  *
  * @param request The incoming request.
  * @param config The auth config (its `canonicalOrigin` is matched when set).
- * @returns `true` when the request's Origin/Referer is this app.
+ * @returns `true` when the request's Origin/Referer is this app, or its `Origin` is exactly the
+ *   app's own Deno Desktop origin (`desktop.app.origin`, which a browser page cannot claim).
  */
 export function isSameOrigin(request: Request, config: AuthConfig): boolean {
+  const desktopAppOrigin = currentContext()?.desktopAppOrigin;
+  if (desktopAppOrigin && request.headers.get("origin") === desktopAppOrigin) return true;
   const u = originCandidate(request);
-  if (!u) return false;
+  if (!u || (u.protocol !== "http:" && u.protocol !== "https:")) return false;
   // With a canonical origin configured, match it exactly (scheme-strict) — the Host
   // header is attacker-controllable and unnecessary here.
   if (config.canonicalOrigin) {

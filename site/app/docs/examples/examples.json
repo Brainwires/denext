@@ -1,0 +1,646 @@
+{
+  "categories": [
+    {
+      "id": "start",
+      "label": "Start here"
+    },
+    {
+      "id": "rendering",
+      "label": "Rendering & data"
+    },
+    {
+      "id": "apis",
+      "label": "APIs, auth & services"
+    },
+    {
+      "id": "databases",
+      "label": "Databases"
+    },
+    {
+      "id": "routers",
+      "label": "Routers & plugins"
+    },
+    {
+      "id": "compat",
+      "label": "npm React libraries & migration"
+    },
+    {
+      "id": "native",
+      "label": "Mobile & desktop"
+    }
+  ],
+  "examples": [
+    {
+      "name": "actions",
+      "title": "actions — denext Server Actions",
+      "blurb": "A guestbook demonstrating Server Actions (\"use server\") two ways.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/actions",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "animation",
+      "title": "denext × motion + react-spring",
+      "blurb": "Two real npm animation libraries — motion (motion.dev) and @react-spring/web — co-existing in one project, both running on denext's single React.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/animation",
+      "tags": [
+        "compat",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno task example:animation          # build once, serve\ndeno task example:animation --dev    # rebuild on each request",
+      "runFrom": "root"
+    },
+    {
+      "name": "auth",
+      "title": "examples/auth — a runnable denextAuth app",
+      "blurb": "The production shape of denext's first-party auth in one small app, zero npm: Deno's built-in node:sqlite holds everything, and every screen works with JavaScript disabled (tests/auth-example.test.ts…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/auth",
+      "tags": [
+        "plugin:denextAuth",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev      # http://localhost:3000\n# or, production:\nAUTH_SECRET=$(openssl rand -base64 32) CANONICAL_ORIGIN=https://app.example.com \\\n  deno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "cache-components",
+      "title": "Cache Components (use cache + PPR)",
+      "blurb": "A minimal demo of Next.js 16 Cache Components on denext, a stable opt-in enabled by top-level cacheComponents: true in denext.config.ts (Next.js's experimental: { cacheComponents: true } spelling…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/cache-components",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task dev      # http://localhost:3000\n# or\ndeno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "caching",
+      "title": "caching — denext data cache & ISR",
+      "blurb": "Demonstrates denext's Next.js-compatible caching primitives, none of which had an example before.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/caching",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000  (dev always renders fresh)\ndeno task build && deno task start   # ISR + data cache active",
+      "runFrom": "example"
+    },
+    {
+      "name": "capacitor-ci",
+      "title": "examples/capacitor-ci",
+      "blurb": "A GitHub Actions recipe for a denext app wrapped in Capacitor: every push is fingerprinted with denext mobile fingerprint, and ships over the air when the native layer is unchanged, or as signed…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/capacitor-ci",
+      "tags": [],
+      "hasReadme": true,
+      "category": "native",
+      "run": "denext mobile fingerprint                       # the fingerprint alone\ndenext mobile fingerprint --json > before.json  # every input, hashed\n# …edit a native file, add a plugin…\ndenext mobile fingerprint --diff before.json    # what changed, and the verdict\ndenext mobile fingerprint --write               # embed it (idempotent)\ndenext ota manifest out --native-fingerprint auto --dir . --sign ota.key",
+      "runFrom": "example"
+    },
+    {
+      "name": "clerk",
+      "title": "examples/clerk — Clerk on denext: the web and Deno Desktop, written once",
+      "blurb": "One Next.js-style app, written the way Clerk's Next.js quickstart writes it, that signs in with Clerk on the web and in a Deno Desktop window, with tests against a Clerk development instance in test…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/clerk",
+      "tags": [
+        "compat",
+        "desktop",
+        "mobile",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "apis",
+      "run": "cd examples/clerk && deno install\ndeno task dev\ndeno task build && deno task start",
+      "runFrom": "root"
+    },
+    {
+      "name": "concurrency",
+      "title": "denext × concurrent rendering",
+      "blurb": "A runnable demo of denext's fiber concurrency — the things the earlier cooperative scheduler could not do: time-slicing and mid-flight interruption.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/concurrency",
+      "tags": [
+        "compat",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task example:concurrency          # build once, serve\ndeno task example:concurrency --dev    # rebuild on each request",
+      "runFrom": "root"
+    },
+    {
+      "name": "content-collections",
+      "title": "Content collections",
+      "blurb": "@denext/content-collections in one app: a small blog whose posts are typed Markdown and MDX files on disk.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/content-collections",
+      "tags": [
+        "plugin:contentCollections",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task dev          # http://localhost:3000 — the post list; /blog/<slug> for an entry",
+      "runFrom": "example"
+    },
+    {
+      "name": "desktop-kitchen-sink",
+      "title": "Desktop kitchen sink (every Deno Desktop capability, window-tested)",
+      "blurb": "A denext desktop app that turns on every shipped Deno Desktop capability and calls each one from the page, plus an automated window test that packages the app, launches it and asserts every result:…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/desktop-kitchen-sink",
+      "tags": [
+        "desktop",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "deno task desktop            # export + open the window (denext's pinned runtime, Deno 2.9.7)\ndeno task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndeno task test:window        # package, launch and assert every check (exits 1 on a failure)\ndeno task test:window --no-package   # reuse the last builds in dist/ (and their update key)\ndeno task test:window --no-update    # skip the full-app update install / rollback launches",
+      "runFrom": "example"
+    },
+    {
+      "name": "drizzle",
+      "title": "Drizzle ORM on denext",
+      "blurb": "Typed SQL with Drizzle ORM over Deno's built-in node:sqlite — no native addon, no query engine.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/drizzle",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "databases",
+      "run": "deno task install   # deno install — resolves drizzle-orm + the better-sqlite3 shim\ndeno task dev        # http://localhost:3000   (or: deno task build && deno task start)",
+      "runFrom": "example"
+    },
+    {
+      "name": "effect",
+      "title": "denext migrate — Effect (Next app) fixture",
+      "blurb": "An actual Next.js App Router app that depends on Effect, used as the golden fixture for denext migrate's Effect support.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/effect",
+      "tags": [
+        "compat",
+        "plugin:effect",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno run -A cli.ts migrate examples/effect",
+      "runFrom": "root"
+    },
+    {
+      "name": "effect-runtime",
+      "title": "denext + Effect — runnable bridge demo",
+      "blurb": "A minimal, runnable native-denext App Router app that runs Effect inside a Server Component via @denext/effect, showing:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/effect-runtime",
+      "tags": [
+        "plugin:effect",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev     # http://localhost:3000",
+      "runFrom": "example"
+    },
+    {
+      "name": "expo-app",
+      "title": "Expo app in React Native mode (Capacitor)",
+      "blurb": "Expo's own starter, expo-template-default@57.0.27 (Expo SDK 57, the npm tarball sha512-E8P3+6k/6QNGKBZGw02/DachMMRUIT8MG0rXq8+N/J7EYZLO+rNH/0DZmDirU/Qwnj1zz6H40ySyS0AJmtZVBw==, 0BSD, see LICENSE),…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/expo-app",
+      "tags": [
+        "spa",
+        "compat",
+        "mobile"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "npm install --legacy-peer-deps   # the app's packages and the Capacitor shell's\ndeno task dev                    # the app in a browser: http://localhost:3000\ndeno task export                 # static export → out/ (Capacitor's webDir)\ndeno task cap:sync               # export + `cap sync ios`\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Debug build (xcodebuild)\ndeno task ios:check              # an unsigned compile check\ndeno task mobile:dev             # live reload on a phone: the shell loads `denext dev`",
+      "runFrom": "example"
+    },
+    {
+      "name": "fonts",
+      "title": "fonts — self-hosted Google fonts (next/font/google)",
+      "blurb": "A one-page app that loads a Google font through the next/font/google compat module and self-hosts it at build time — no runtime request to Google.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/fonts",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "start",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000  (runtime <link> fallback)\ndeno task build && deno task start   # fonts self-hosted from /_denext/fonts",
+      "runFrom": "example"
+    },
+    {
+      "name": "game",
+      "title": "denext × Three.js — \"Rivet Rumble\"",
+      "blurb": "A small 3D game built on Three.js (WebGL — plain JavaScript, not WASM) running on denext, bundled through the same next-compat esbuild path that handles motion / recharts.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/game",
+      "tags": [
+        "compat",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno task example:game          # build once, serve → http://localhost:3005\ndeno task example:game --dev    # rebuild on each request",
+      "runFrom": "root"
+    },
+    {
+      "name": "graphql",
+      "title": "examples/graphql",
+      "blurb": "@denext/graphql in one app: a Pothos (code-first, no decorators) schema served by GraphQL Yoga at /graphql, with a subscription that rides a denext channel — a post mutation publishes to…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/graphql",
+      "tags": [
+        "plugin:graphql",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev          # http://localhost:3000 — GraphiQL at /graphql",
+      "runFrom": "example"
+    },
+    {
+      "name": "hello",
+      "title": "hello — the denext starter tour",
+      "blurb": "The smallest end-to-end denext app, and the one the docs and benchmarks lean on.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/hello",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "start",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "htmx",
+      "title": "denext + htmx example",
+      "blurb": "An htmx app on denext via @denext/htmx. The home page uses only hx-* attributes, so denext classifies it static and ships 0 KB of denext client JS — htmx (served from this origin by the plugin) does…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/htmx",
+      "tags": [
+        "plugin:htmx",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev      # http://localhost:3000\ndeno task build    # static/prod build (emits the runtime into the output)\ndeno task start    # serve the build",
+      "runFrom": "example"
+    },
+    {
+      "name": "image",
+      "title": "image — denext image optimization",
+      "blurb": "Demonstrates the <Image> component (next/image ergonomics) driving denext's built-in image optimizer at /_denext/image, plus a dynamic Open Graph image.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/image",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "start",
+      "run": "# from this directory\ndeno task dev      # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "instrumentation",
+      "title": "Instrumentation on denext",
+      "blurb": "A Next.js-style instrumentation.ts at the project root. denext auto-discovers it and, in both dev and start:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/instrumentation",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "start",
+      "run": "deno task dev        # http://localhost:3000   (or: deno task build && deno task start)",
+      "runFrom": "example"
+    },
+    {
+      "name": "islands",
+      "title": "Islands demo — the six client:* hydration directives",
+      "blurb": "Each card on the page is the same \"use client\" component, carved out with a different directive.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/islands",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "cd examples/islands\ndeno task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndeno task build && deno task start",
+      "runFrom": "root"
+    },
+    {
+      "name": "live",
+      "title": "Live data & presence (secured)",
+      "blurb": "A runnable demo of the four gated Live hooks over a single WebSocket:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/live",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task dev     # or: deno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "mobile",
+      "title": "Mobile kitchen sink (Capacitor)",
+      "blurb": "A denext SPA in a Capacitor 8 shell that exercises every denext/mobile capability on one scrollable page: haptics, clipboard, share, device info, network, keep-awake, the splash screen, the secure…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/mobile",
+      "tags": [
+        "spa",
+        "mobile"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "npm install            # the Capacitor packages and plugins (package.json)\ndeno task dev          # the UI in a browser: http://localhost:3000\ndeno task build        # production build → .denext/\ndeno task export       # static export → out/ (Capacitor's webDir), stamped for OTA\ndeno task cap:sync     # export + `cap sync` into ios/ and android/\ndeno task mobile:dev   # live reload on a phone on the same Wi-Fi (denext mobile dev --lan)\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Release build (xcodebuild)",
+      "runFrom": "example"
+    },
+    {
+      "name": "native",
+      "title": "denext native example — desktop + mobile",
+      "blurb": "One denext app packaged three ways: the web, a native desktop app via deno desktop, and iOS / Android via Capacitor. All three serve the same static export (deno task export → out/).",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/native",
+      "tags": [
+        "desktop",
+        "mobile",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "deno task dev      # → http://localhost:3000\ndeno task start    # serve the production build",
+      "runFrom": "example"
+    },
+    {
+      "name": "native-views",
+      "title": "Native views in the layout (Capacitor)",
+      "blurb": "A denext SPA in a Capacitor 8 shell that puts native views inside a scrolling VirtualList: a map of London (row 3, placement=\"auto\": embedded on iOS, drawn over the WebView on Android), a video…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/native-views",
+      "tags": [
+        "spa",
+        "mobile"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "npm install            # the Capacitor packages (package.json)\ndeno task dev          # the UI in a browser: http://localhost:3000\ndeno task cap:sync     # export + `cap sync` into ios/ and android/\nDENEXT_IOS_TEAM=ABCDE12345 deno task ios   # a signed Debug build (xcodebuild)\ndeno task ios:check    # an unsigned compile check\ndeno task android      # android/app/build/outputs/apk/debug/app-debug.apk",
+      "runFrom": "example"
+    },
+    {
+      "name": "next-compat",
+      "title": "next-compat example — real npm React libraries on denext",
+      "blurb": "This app renders the actual @radix-ui/react-collapsible npm package on denext's own React — server-rendered, then hydrated.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat",
+      "tags": [
+        "compat",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno task example:next-compat          # build once, serve (production-like)\ndeno task example:next-compat --dev    # rebuild on each request",
+      "runFrom": "root"
+    },
+    {
+      "name": "next-compat-feasibility",
+      "title": "denext conversion feasibility — dependency validation",
+      "blurb": "Two probes that answer one question for a real Next.js app: would its dependency tree run on denext? They validate dependencies only — they do not convert the app.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat-feasibility",
+      "tags": [],
+      "hasReadme": true,
+      "category": "compat",
+      "run": "# server deps (edit PACKAGES in the file to match the app)\ndeno run -A --node-modules-dir=auto examples/next-compat-feasibility/probe-server.ts\n\n# client deps (run from the denext repo root; pass the app's root dir)\ndeno run -A --config deno.json examples/next-compat-feasibility/probe-client.ts /path/to/app",
+      "runFrom": "root"
+    },
+    {
+      "name": "next-compat-recharts",
+      "title": "next-compat: real recharts on denext (class components)",
+      "blurb": "This example runs the actual recharts npm package — a charting library built on React class components — on denext's single React, server-rendered to SVG and hydrated on the client.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/next-compat-recharts",
+      "tags": [
+        "compat",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "compat",
+      "run": "deno task example:next-compat-recharts          # build once, serve (prod-like)\ndeno task example:next-compat-recharts --dev    # rebuild on each request",
+      "runFrom": "root"
+    },
+    {
+      "name": "notes",
+      "title": "examples/notes — a real, small denext app",
+      "blurb": "A notes app that answers \"is this a toy?\" in one read. It uses the pieces a real app needs, and every flow works with JavaScript disabled:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/notes",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "start",
+      "run": "deno task dev      # http://localhost:3000\n# or, production:\ndeno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "openapi",
+      "title": "examples/openapi",
+      "blurb": "@denext/openapi in one app: a tiny pet store defined with defineApi + Zod, which the plugin turns — with no extra annotation — into an OpenAPI 3.1 document at /openapi.json, an interactive Swagger UI…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/openapi",
+      "tags": [
+        "plugin:denextAuth",
+        "plugin:openapi",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev          # http://localhost:3000 — Swagger UI at /docs, spec at /openapi.json",
+      "runFrom": "example"
+    },
+    {
+      "name": "pages-router",
+      "title": "pages-router — the @denext/pages-router plugin",
+      "blurb": "The reference app for the legacy Pages Router, which ships as an opt-in plugin (@denext/pages-router) rather than in the core. It also shows the Pages Router coexisting with the App Router in one app.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/pages-router",
+      "tags": [
+        "plugin:pagesRouter",
+        "pages-router",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "routers",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "plugin-aliases",
+      "title": "denext plugin example: path aliases",
+      "blurb": "A ~40-line denext plugin — the smallest real one, and the first to use the route-synthesizer seam (@denext/pages-router uses the request-handler + build-step seams). See the plugin authoring guide.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases",
+      "tags": [
+        "plugin:aliasesPlugin",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "routers",
+      "run": "cd examples/plugin-aliases\ndeno task dev            # http://localhost:3006",
+      "runFrom": "root"
+    },
+    {
+      "name": "postgres-load",
+      "title": "denext × Postgres under load",
+      "blurb": "The database guide says of networked databases: \"these drivers are not part of denext's CI — validate your driver + pooling under your load.\" This example is that validation, made runnable.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/postgres-load",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "databases",
+      "run": "cd examples/postgres-load\ncp .env.example .env         # DATABASE_URL + POOL_SIZE\n\ndeno task db:up              # start Postgres in Docker (or point .env anywhere)\n                             # it publishes 127.0.0.1:5432 — this machine only\ndeno task build              # build the app\ndeno task start              # serve on http://localhost:3005",
+      "runFrom": "root"
+    },
+    {
+      "name": "prisma",
+      "title": "Prisma ORM on denext",
+      "blurb": "The app is a tiny notes list: a Server Component awaits the Prisma query and renders the rows, and a native <form> posts a Server Action that inserts through the same Prisma client — no client…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/prisma",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "databases",
+      "run": "deno task setup   # one-time: bundle the shim, install, prisma generate + db push\ndeno task dev      # http://localhost:3000   (or: deno task build && deno task start)",
+      "runFrom": "example"
+    },
+    {
+      "name": "react-router",
+      "title": "examples/react-router",
+      "blurb": "A React Router v7 framework-mode app running on denext through @denext/react-router, with the route components left unmodified — they still import { Outlet, Form, useLoaderData } from \"react-router\".",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/react-router",
+      "tags": [
+        "plugin:reactRouter",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "routers",
+      "run": "deno task dev          # http://localhost:3000",
+      "runFrom": "example"
+    },
+    {
+      "name": "resumability",
+      "title": "Resumability demo",
+      "blurb": "A route rendered with export const resumable = true: interactive with no up-front hydration. Islands resume on demand — click one counter and only that island hydrates.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/resumability",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "cd examples/resumability\ndeno task dev          # the CLI prints the local URL (e.g. http://localhost:3000)\n# or a production build:\ndeno task build && deno task start",
+      "runFrom": "root"
+    },
+    {
+      "name": "rn-desktop",
+      "title": "React Native on the desktop (reactNative + Deno Desktop)",
+      "blurb": "A React Native component tree (react-native-web) running in a Deno Desktop window, with native desktop capabilities: the counter persists in the OS keychain, right-click opens the native context…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/rn-desktop",
+      "tags": [
+        "spa",
+        "compat",
+        "desktop"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "npm install          # react-native-web (the app's own dependency; denext ships none)\ndeno task dev        # in the browser\ndeno task desktop    # export + open in a native window (Deno 2.9+)\ndeno task desktop:dev    # live reload inside the window",
+      "runFrom": "example"
+    },
+    {
+      "name": "scroll-bench",
+      "title": "scroll-bench",
+      "blurb": "A scroll benchmark with two apps that draw the same data with the same row designs: a denext app in a Capacitor WebView (web/) and a bare React Native app (native/).",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/scroll-bench",
+      "tags": [],
+      "hasReadme": true,
+      "category": "native",
+      "run": "(cd web && deno task dev)",
+      "runFrom": "example"
+    },
+    {
+      "name": "spa",
+      "title": "SPA example (mode: \"spa\")",
+      "blurb": "A client-only React SPA on denext — \"React but not Next.\" There is no app/ directory: denext bundles a single entry (src/main.tsx), wraps it in an HTML shell, and serves that shell for every…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/spa",
+      "tags": [
+        "spa"
+      ],
+      "hasReadme": true,
+      "category": "start",
+      "run": "deno task dev      # dev server + live reload\ndeno task build    # production build → .denext/\ndeno task start    # serve the production build\ndeno task export   # static export → out/  (what deno desktop packages)",
+      "runFrom": "example"
+    },
+    {
+      "name": "streaming",
+      "title": "streaming — denext Suspense & streaming SSR",
+      "blurb": "Demonstrates asynchronous rendering three ways: async Server Components inside Suspense, a loading.tsx route fallback, and true out-of-order streaming SSR.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/streaming",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "# from this directory\ndeno task dev             # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "tailwind",
+      "title": "denext + Tailwind example",
+      "blurb": "A minimal denext app styled with Tailwind CSS v4 — no npm, no PostCSS config.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/tailwind",
+      "tags": [
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "start",
+      "run": "deno task dev      # → http://localhost:3000  (Tailwind recompiles on change)\ndeno task build    # compile Tailwind + bundle\ndeno task start    # serve the production build",
+      "runFrom": "example"
+    },
+    {
+      "name": "tanstack-router",
+      "title": "TanStack Router on denext (library mode)",
+      "blurb": "A stock file-based TanStack Router app running in denext SPA mode — no plugin, no server rendering.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/tanstack-router",
+      "tags": [
+        "spa",
+        "compat"
+      ],
+      "hasReadme": true,
+      "category": "routers",
+      "run": "deno task install   # installs @tanstack/react-router into node_modules (once)\ndeno task dev       # http://localhost:3000\ndeno task build && deno task start",
+      "runFrom": "example"
+    },
+    {
+      "name": "transitions",
+      "title": "denext × useTransition",
+      "blurb": "A runnable demo of denext's fiber concurrency on the classic typeahead.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/transitions",
+      "tags": [
+        "compat",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "rendering",
+      "run": "deno task example:transitions          # build once, serve\ndeno task example:transitions --dev    # rebuild on each request",
+      "runFrom": "root"
+    },
+    {
+      "name": "typed-api",
+      "title": "Typed API, end to end — no tRPC",
+      "blurb": "Everything the typed-API surface ships, in one small app:",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/typed-api",
+      "tags": [
+        "plugin:openapi",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "apis",
+      "run": "deno task dev     # or: deno task build && deno task start",
+      "runFrom": "example"
+    }
+  ]
+}

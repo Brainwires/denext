@@ -1,17 +1,21 @@
-// Drift check for the generated examples index (apps/web/app/docs/examples/examples.json)
+// Drift check for the generated examples index (site/app/docs/examples/examples.json)
 // against the `examples/` directories themselves, plus unit tests of the README/config
 // readers in scripts/gen-examples-index.ts.
 
 import { assert, assertEquals } from "@std/assert";
 import {
   arrayBody,
+  CATEGORIES,
   configTags,
+  EXAMPLE_CATEGORY,
   type ExampleEntry,
   generateExamplesIndex,
   isCompatEntry,
   OUT,
   plainText,
   readmeSummary,
+  runCommands,
+  runsFromRoot,
   stripComments,
   topLevelCalls,
   truncate,
@@ -25,6 +29,75 @@ Deno.test("docs: examples.json is regenerated from examples/*", async () => {
     generateExamplesIndex(),
     "examples.json is stale — run `deno task docs:examples` and commit",
   );
+});
+
+Deno.test("examples.json lists exactly the example directories that have a README", async () => {
+  // Stated directly (the regeneration check above implies it): an example directory with a
+  // README and no entry fails, and so does an entry whose directory or README is gone.
+  const { examples } = JSON.parse(await Deno.readTextFile(OUT)) as { examples: ExampleEntry[] };
+  const root = new URL("../examples/", import.meta.url);
+  const withReadme: string[] = [];
+  for (const e of Deno.readDirSync(root)) {
+    if (!e.isDirectory || e.name.startsWith("_") || e.name.startsWith(".")) continue;
+    try {
+      if (Deno.statSync(new URL(`${e.name}/README.md`, root)).isFile) withReadme.push(e.name);
+    } catch { /* no README */ }
+  }
+  assertEquals(
+    examples.filter((e) => e.hasReadme).map((e) => e.name),
+    withReadme.sort(),
+  );
+});
+
+Deno.test("every example has a docs category, and every category is used", async () => {
+  const { examples } = JSON.parse(await Deno.readTextFile(OUT)) as { examples: ExampleEntry[] };
+  const ids = new Set(CATEGORIES.map((c) => c.id));
+  for (const e of examples) assert(ids.has(e.category), `${e.name}: unknown category`);
+  for (const id of ids) assert(examples.some((e) => e.category === id), `category ${id} is empty`);
+  // A category line for an example that no longer exists is dead weight.
+  const names = new Set(examples.map((e) => e.name));
+  for (const name of Object.keys(EXAMPLE_CATEGORY)) {
+    assert(names.has(name), `EXAMPLE_CATEGORY lists ${name}, which is not an example`);
+  }
+});
+
+Deno.test("runCommands: the run section's shell block, its inline steps, else the first runnable block", () => {
+  // A fenced block under a run heading wins over an earlier runnable block elsewhere.
+  assertEquals(
+    runCommands(
+      "# x\n\n```sh\ndeno task build\n```\n\n## Run it\n\n```sh\ndeno task dev\n```\n",
+    ),
+    "deno task dev",
+  );
+  // A non-shell fence (a code sample) is never a run block.
+  assertEquals(runCommands("## Run\n\n```ts\ndeno task dev\n```\n"), null);
+  // A run section written as prose: its inline commands, in order (only the FIRST run section).
+  assertEquals(
+    runCommands(
+      "## Setup\n\n1. `cd examples/x && deno install`\n2. `deno task dev` → open it.\n\n" +
+        "## Try it\n\n`deno task other`\n",
+    ),
+    "cd examples/x && deno install\ndeno task dev",
+  );
+  // No run heading: the first block that starts something.
+  assertEquals(
+    runCommands("# x\n\n```sh\nls\n```\n\n```bash\ndeno task example:x\n```\n"),
+    "deno task example:x",
+  );
+  // A run heading with nothing runnable under it: no commands (the generator uses `deno task dev`),
+  // even when a later section has a runnable block.
+  assertEquals(
+    runCommands("## Run\n\nOpen the page.\n\n## Other\n\n```sh\ndeno task dev\n```\n"),
+    null,
+  );
+  assertEquals(runCommands(""), null);
+});
+
+Deno.test("runsFromRoot: root tasks and repo paths run from the repo root", () => {
+  assert(runsFromRoot("deno task example:game --dev"));
+  assert(runsFromRoot("deno run -A cli.ts migrate examples/effect"));
+  assert(runsFromRoot("cd examples/islands\ndeno task dev"));
+  assert(!runsFromRoot("deno task dev\ndeno task build && deno task start"));
 });
 
 Deno.test("every indexed example points at the repo and carries a title", async () => {

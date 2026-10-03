@@ -45,6 +45,15 @@ export function createContentCommand(io: ContentCommandIo = defaultIo): CommandS
     loadsModules: true,
     // The positional is the action, not the project dir — derive it from --cwd like `denext task`.
     moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
+    // Every action (re)builds the store into `.denext/`: hold the build-dir lock, Cargo-style.
+    // Spread through a cast so the spec still type-checks against a denext without `locks`
+    // (an older CLI ignores the field).
+    ...({
+      locks: (ctx: CommandContext) => ({
+        projectDir: resolve(ctx.global.cwd ?? "."),
+        buildDir: "exclusive",
+      }),
+    } as Partial<CommandSpec>),
     run: (ctx) => runContent(ctx, io),
   };
 }

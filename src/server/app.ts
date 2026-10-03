@@ -100,6 +100,7 @@ function dispatch(
   });
   requestCtx.routes = { manifest: config.getManifest, load: config.load };
   requestCtx.cors = app.cors ?? null;
+  requestCtx.desktopAppOrigin = config.desktopAppOrigin;
   const startedAt = performance.now();
   // Per-request abort signal — fires on client disconnect or (when configured)
   // request timeout. Exposed on the context so handlers/components can thread it

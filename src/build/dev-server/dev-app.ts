@@ -5,6 +5,7 @@
 import { join } from "@std/path";
 import { type AppConfig, createApp, type RequestHandler } from "../../server/app.ts";
 import { applyPlugins, getPluginRequestHandler, runPluginPrepareSteps } from "../../plugin/mod.ts";
+import { withBuildDirLock } from "../project-locks.ts";
 import { resolveDefaultCacheStore } from "../../server/cache.ts";
 import { installLiveHub } from "../../server/live.ts";
 import {
@@ -73,12 +74,14 @@ function startInstrumentation(st: DevState, onLoaded: () => void): void {
         mode: "dev",
         load: st.load,
       });
-      await runPluginPrepareSteps({
-        projectRoot: st.paths.projectDir,
-        appDir: st.paths.appDir,
-        outDir: st.paths.outDir,
-        config: st.paths.config ?? {},
-      });
+      // The startup rebuild's codegen, under the build-dir lock (held per rebuild, not per session).
+      await withBuildDirLock(st.paths.projectDir, () =>
+        runPluginPrepareSteps({
+          projectRoot: st.paths.projectDir,
+          appDir: st.paths.appDir,
+          outDir: st.paths.outDir,
+          config: st.paths.config ?? {},
+        }));
     }
   })();
 }

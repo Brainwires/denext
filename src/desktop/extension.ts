@@ -62,9 +62,46 @@ export interface DesktopCapCtx {
    * the ambient lib; a window capability narrows it.
    */
   readonly window?: unknown;
-  /** Aborts when the handler exceeds its timeout, so a long native call can cooperate. */
+  /**
+   * Aborts when the handler exceeds its timeout, so a long native call can cooperate. For a
+   * method with `timeoutMs: false` it also aborts when the calling page's request goes away (that
+   * page reloaded, navigated or closed).
+   */
   readonly signal: AbortSignal;
+  /**
+   * Call a native function on the app's UI thread (the thread AppKit, Win32 windows and GTK objects
+   * belong to) and resolve with its pointer-sized return value as an unsigned `bigint`
+   * (meaningless for a `void` function). `fn` is a C function `void* fn(void* context)`: a
+   * `Deno.UnsafeFnPointer`, a `Deno.UnsafeCallback`, or a pointer (from `Deno.dlopen(...)` through
+   * `Deno.UnsafePointer.of`); it is called with `context` (default `null`). The call is queued
+   * behind the UI work already posted and never runs on the calling thread.
+   *
+   * **Full trust**: this is FFI. The app needs `--allow-ffi` (grant it in
+   * `desktop.extraPermissions`), and a wrong pointer or signature crashes the app. A
+   * `Deno.UnsafeCallback` runs on the JavaScript thread while the UI thread waits for it, so it must
+   * not wait for the UI thread itself.
+   *
+   * Over `Deno.desktop.runOnMainThread`, so it needs denext's pinned Deno Desktop runtime
+   * (2.9.7-denext.6 or later): elsewhere it rejects with a {@linkcode DesktopCapError} whose code is
+   * `unsupported`. It also rejects, without calling `fn`, once the app is quitting.
+   *
+   * @param fn The native function to call on the UI thread.
+   * @param context The pointer passed to `fn` (default `null`).
+   * @returns `fn`'s return value as an unsigned `bigint`.
+   */
+  runOnMainThread(fn: DesktopMainThreadFn, context?: Deno.PointerValue): Promise<bigint>;
 }
+
+/**
+ * A C function `void* fn(void* context)` that {@linkcode DesktopCapCtx.runOnMainThread} calls on the
+ * UI thread: a `Deno.UnsafeFnPointer`, a `Deno.UnsafeCallback`, or a function pointer.
+ */
+export type DesktopMainThreadFn =
+  // deno-lint-ignore no-explicit-any
+  | Deno.UnsafeFnPointer<any>
+  // deno-lint-ignore no-explicit-any
+  | Deno.UnsafeCallback<any>
+  | Deno.PointerObject;
 
 /**
  * One capability method: an optional input schema (validated before the handler), an optional

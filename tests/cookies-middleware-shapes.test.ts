@@ -141,6 +141,34 @@ Deno.test("middleware: NextResponse.next({ request: { headers } }) works on a re
   assertEquals(body, "payload");
 });
 
+Deno.test("middleware: headers() read IN middleware does not hide its overrides from the route", async () => {
+  // A library's middleware (`@clerk/nextjs`'s) reads headers() and then overrides request
+  // headers; the route's headers() must see the overridden request, not the memoized view.
+  let inMiddleware: string | null = "unset";
+  let inRoute: string | null = null;
+  const app = createApp({
+    getManifest: manifest,
+    load,
+    getMiddleware: () =>
+      Promise.resolve(createMiddlewareRunner({
+        middleware: async (req: Request) => {
+          inMiddleware = (await headers()).get("x-auth-status");
+          const hd = new Headers(req.headers);
+          hd.set("x-auth-status", "signed-in");
+          return NextResponse.next({ request: { headers: hd } });
+        },
+      })),
+    matchExternal: async () => {
+      inRoute = (await headers()).get("x-auth-status");
+      return new Response("ok");
+    },
+  });
+  const res = await app(new Request("http://localhost/anything"));
+  assertEquals(res.status, 200);
+  assertEquals(inMiddleware, null);
+  assertEquals(inRoute, "signed-in");
+});
+
 Deno.test("middleware: cookies().set() before a short-circuit redirect reaches the client", async () => {
   const app = createApp({
     getManifest: manifest,

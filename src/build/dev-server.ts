@@ -5,14 +5,15 @@
 // boundary, the client bundles, the live-reload channel, the dev-only endpoints, the file
 // watcher, and the request handler over the `createApp` handler.
 
-import { join } from "@std/path";
 import { runPluginTeardown } from "../plugin/mod.ts";
+import { configuredDesktopAppOrigin } from "../server/config.ts";
 import { setImageRuntimeConfig } from "../runtime/image.ts";
 import { displayHost, serveWithPortFallback } from "../server/serve-utils.ts";
 import { captureConsole } from "./dev-events.ts";
 import { startSpaDevServer } from "./spa.ts";
 import { isCompat } from "./dev-server/compat.ts";
 import { createDevApp } from "./dev-server/dev-app.ts";
+import { removeDevInfo, writeDevInfo } from "./dev-server/dev-info.ts";
 import { createDevHandler } from "./dev-server/handler.ts";
 import { createDevLoader } from "./dev-server/loaders.ts";
 import { getManifest } from "./dev-server/manifest.ts";
@@ -23,35 +24,6 @@ import { effectiveDevOrigins } from "./dev-server/lan.ts";
 export type { DevServerOptions } from "./dev-server/state.ts";
 export { DEV_RELOAD_SCRIPT } from "./dev-server/reload-script.ts";
 export { devOriginAllowed, editorCommand } from "./dev-server/dev-endpoints.ts";
-
-/**
- * Publish the running dev server's address to `.denext/dev.json` so the MCP live tools
- * (and any localhost reader) can discover it and read /_denext/dev-state. Removed on drain.
- *
- * `origin` is the address a reader on THIS machine uses: a wildcard bind (`0.0.0.0`, `::`)
- * listens on loopback too, so it is published as `127.0.0.1` — the MCP tools and `denext ui`
- * accept only a loopback origin from this file. `hostname` is the bind exactly as given, so a
- * deliberate `--host 0.0.0.0` is not reported as a loopback-only server, and `devOrigins`
- * lists the other hosts the origin gate lets in (what a device on the LAN can use).
- */
-function writeDevInfo(st: DevState, info: { hostname: string; port: number }): void {
-  const wildcard = info.hostname === "0.0.0.0" || info.hostname === "::";
-  const host = wildcard ? "127.0.0.1" : info.hostname;
-  try {
-    Deno.mkdirSync(st.paths.outDir, { recursive: true });
-    Deno.writeTextFileSync(
-      join(st.paths.outDir, "dev.json"),
-      JSON.stringify({
-        origin: `http://${host}:${info.port}`,
-        port: info.port,
-        hostname: info.hostname,
-        devOrigins: st.allowedDevOrigins,
-        pid: Deno.pid,
-        startedAt: Date.now(),
-      }),
-    );
-  } catch { /* best-effort — a read-only FS just means no MCP discovery */ }
-}
 
 /** Serve the dev app, publishing the address on listen and cleaning up on stop. */
 function serveDev(st: DevState, handler: (request: Request) => Promise<Response>): Deno.HttpServer {
@@ -67,7 +39,7 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
     signal: options.signal,
     strict: options.strictPort,
     onListen: (info) => {
-      writeDevInfo(st, info);
+      writeDevInfo(paths.outDir, st.allowedDevOrigins, info);
       if (options.onListen) options.onListen(info);
       else {
         console.log(
@@ -82,9 +54,7 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
   // doesn't linger pointing at a dead server. Idempotent — safe to run on both paths.
   const cleanup = () => {
     restoreConsole?.();
-    try {
-      Deno.removeSync(join(paths.outDir, "dev.json"));
-    } catch { /* already gone */ }
+    removeDevInfo(paths.outDir);
   };
   options.signal?.addEventListener("abort", cleanup, { once: true });
   server.finished.then(() => {
@@ -97,12 +67,18 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
 /** Start the development server for the project described by `options.paths`. */
 export function startDevServer(given: DevServerOptions): Deno.HttpServer {
   const { paths } = given;
-  // The config's `allowedDevOrigins`, the programmatic / `--allowed-dev-origin` ones, and the
-  // host an explicit `--host` / `--lan` bind names: one list both dev servers gate on.
+  // The config's `allowedDevOrigins`, the programmatic / `--allowed-dev-origin` ones, the app's
+  // own `desktop.app.origin` (a Deno Desktop window under `denext desktop dev`), and the host an
+  // explicit `--host` / `--lan` bind names: one list both dev servers gate on.
+  const desktopAppOrigin = configuredDesktopAppOrigin(paths.config);
   const options: DevServerOptions = {
     ...given,
     allowedDevOrigins: effectiveDevOrigins(
-      [paths.config?.allowedDevOrigins, given.allowedDevOrigins],
+      [
+        paths.config?.allowedDevOrigins,
+        given.allowedDevOrigins,
+        desktopAppOrigin ? [desktopAppOrigin] : undefined,
+      ],
       given.hostname,
     ),
   };

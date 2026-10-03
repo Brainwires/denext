@@ -6,6 +6,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import { findSpaTailwindInput, migrateProject } from "../src/build/migrate.ts";
+import { validateDenextConfig } from "../src/server/config-validate.ts";
 
 async function writeViteApp(dir: string, opts: { pnpm?: boolean } = {}): Promise<void> {
   await Deno.writeTextFile(
@@ -104,6 +105,20 @@ function assertDesktopTask(task: string): void {
   assert(/ -o "[^"]+" desktop\.ts$/.test(task), `desktop task names the bundle (-o): ${task}`);
 }
 
+/**
+ * A `--desktop` migration writes the `deno desktop` resolution flags its `desktop` task bakes to
+ * the config's `desktop.denoFlags` (what `denext desktop run | dev | package` read), and they pass
+ * the config validator's allow-list.
+ */
+async function assertDesktopDenoFlags(dir: string): Promise<void> {
+  const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+  const m = config.match(/^ {2}desktop: \{ denoFlags: (\[[^\]]*\]) \},$/m);
+  assert(m, `denext.config.ts has a top-level desktop.denoFlags:\n${config}`);
+  const denoFlags = JSON.parse(m[1]);
+  assertEquals(denoFlags, ["--node-modules-dir=none", "--exclude-unused-npm"]);
+  validateDenextConfig({ desktop: { denoFlags } });
+}
+
 Deno.test("desktopAppName: the SPA title minus parentheticals/odd characters, else 'app'", async () => {
   const { desktopAppName } = await import("../src/build/migrate.ts");
   assertEquals(desktopAppName("T3 Code (Alpha)"), "T3 Code");
@@ -152,6 +167,7 @@ Deno.test("migrate SPA (pnpm + --desktop): config, aliases, env union, tailwind,
 
     await assertPnpmDesktopDenoJson(dir);
     await assertSpaConfig(dir);
+    await assertDesktopDenoFlags(dir);
     // desktop.ts
     const desktop = await Deno.readTextFile(join(dir, "desktop.ts"));
     assert(desktop.includes("runDesktop"));
@@ -189,6 +205,8 @@ Deno.test("migrate SPA (no pnpm, no --desktop): nodeModulesDir auto + npm passth
     );
     assert(!("denext/desktop" in cfg.imports), "no desktop import without --desktop");
     assert(!cfg.tasks.desktop, "no desktop task");
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    assert(!config.includes("denoFlags"), "no desktop.denoFlags without --desktop");
 
     assertEquals(await exists(join(dir, "desktop.ts")), false);
   } finally {

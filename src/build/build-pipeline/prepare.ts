@@ -16,6 +16,7 @@ import type { ProjectPaths } from "../paths.ts";
 import { dirExists, setupPlugins } from "../pipeline-shared.ts";
 import { buildSpa } from "../spa.ts";
 import { type BuildContext, type BuildResult, log } from "./context.ts";
+import { npmBoundaryByImporter } from "../npm-boundary.ts";
 
 /** Plugin build steps (e.g. a Pages Router bundling its own client entries). */
 export function pluginBuildSteps(paths: ProjectPaths): Promise<void> {
@@ -80,7 +81,10 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
   // server-side and hydrates only the islands via the compat flight bundle.
   const compat = await detectNextCompat(paths);
   if (compat) log("next-compat mode: building react→denext SSR + client bundles");
-  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages);
+  // In compat mode the boundary includes `"use client"` files inside npm packages too.
+  const flightRoutes = await computeBoundaryRoutes(paths.appDir, manifest.pages, {
+    npm: compat ? npmBoundaryByImporter : undefined,
+  });
   const boundaryRoutes = manifest.pages.filter((p) => flightRoutes.has(p.routePath));
   // The build-time feature scans also read the local modules the routes import from OUTSIDE
   // the project (a sibling workspace package), so a class component / `<Activity>` /

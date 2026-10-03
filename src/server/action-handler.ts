@@ -54,6 +54,11 @@ export interface ActionHandlerOptions {
    */
   trustForwardedHeaders?: boolean;
   /**
+   * The app's own Deno Desktop origin (`desktop.app.origin`, normalized). An `Origin` header
+   * exactly equal to it is accepted.
+   */
+  desktopAppOrigin?: string;
+  /**
    * Max request body size in bytes (default {@linkcode DEFAULT_MAX_ACTION_BODY}).
    * An over-limit body is rejected before the handler runs.
    */

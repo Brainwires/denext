@@ -16,6 +16,7 @@ import {
   desktopPermissionFlags,
 } from "../src/build/desktop-capabilities.ts";
 import { deviceCapability } from "../src/desktop/caps/device.ts";
+import { echoCapability } from "../src/desktop/caps/echo.ts";
 import { checkDownloadUrl, fsCapability, isRefusedDownloadHost } from "../src/desktop/caps/fs.ts";
 import { sqliteCapability } from "../src/desktop/caps/sqlite.ts";
 import {
@@ -34,7 +35,14 @@ import {
   secureStoreCapability,
   secureStoreCommand,
 } from "../src/desktop/caps/secure-store.ts";
+import { passkeysCapability } from "../src/desktop/caps/passkeys.ts";
+import { clipboardCapability } from "../src/desktop/caps/clipboard.ts";
+import { notificationsCapability } from "../src/desktop/caps/notifications.ts";
+import { contextMenuCapability } from "../src/desktop/caps/context-menu.ts";
+import { shortcutsCapability } from "../src/desktop/caps/shortcuts.ts";
+import { launchAtLoginCapability } from "../src/desktop/caps/launch-at-login.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
+import { isReservedDataName, refuseReservedDataPath } from "../src/desktop/path-scope.ts";
 import {
   DIALOG_NAME_ENV,
   dialogsCapability,
@@ -42,6 +50,7 @@ import {
 } from "../src/desktop/caps/dialogs.ts";
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import type { DesktopAppDirs } from "../src/desktop/app-dirs.ts";
+import { withDenoProps } from "./helpers/deno-stub.ts";
 
 const OS = Deno.build.os as "darwin" | "windows" | "linux";
 
@@ -49,6 +58,7 @@ function ctx(overrides: Partial<DesktopCapCtx> = {}): DesktopCapCtx {
   return {
     emit: () => {},
     appSupportDir: "",
+    runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
     os: OS,
     signal: new AbortController().signal,
     ...overrides,
@@ -379,10 +389,10 @@ Deno.test("fs/shell SECURITY: the updater overlay dir (data/ui-updates) is never
       () => call(cap, "deleteFile", { path: "ui-updates/current.json", directory: "data" }),
       DesktopCapError,
     );
-    // Reading is fine, and so is a sibling whose name merely starts the same way.
-    assertEquals(
-      await call(cap, "readFile", { path: "ui-updates/current.json", directory: "data" }),
-      "{}",
+    // Reading is refused too; a sibling whose name merely starts the same way is fine.
+    await assertRejects(
+      () => call(cap, "readFile", { path: "ui-updates/current.json", directory: "data" }),
+      DesktopCapError,
     );
     await call(cap, "writeFile", { path: "ui-updates-notes.txt", data: "ok", directory: "data" });
     const trashed: string[][] = [];
@@ -402,6 +412,97 @@ Deno.test("fs/shell SECURITY: the updater overlay dir (data/ui-updates) is never
     assertEquals(await Deno.readTextFile(join(root, "ui-updates", "current.json")), "{}");
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("fs/shell/drag SECURITY: the engine profile dirs are unreachable for every operation", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-fs-profile-" });
+  try {
+    for (const dir of ["CEF", "WebKitGTK", "WebView2", "ui-updates"]) {
+      await Deno.mkdir(join(root, dir, "Default"), { recursive: true });
+      await Deno.writeTextFile(join(root, dir, "Default", "Cookies"), "secret");
+    }
+    await Deno.writeTextFile(join(root, "notes.txt"), "mine");
+    const dirs = { data: root, cache: join(root, "c"), documents: join(root, "d") };
+    const cap = fsCapability({
+      dirs,
+      read: new Set(["$APPDATA"]),
+      write: new Set(["$APPDATA"]),
+    });
+    // Every spelling: the case-folded names (macOS / Windows filesystems ignore case), Windows'
+    // trailing dots and spaces, an NTFS stream suffix, and a `..` detour.
+    const paths = [
+      "CEF/Default/Cookies",
+      "cef/Default/Cookies",
+      "WEBKITGTK/Default/Cookies",
+      "webview2/Default/Cookies",
+      "WebView2./Default/Cookies",
+      "CEF ./Default/Cookies",
+      "CEF::$INDEX_ALLOCATION/Default/Cookies",
+      "notes/../CEF/Default/Cookies",
+      "UI-UPDATES/Default/Cookies",
+    ];
+    const refused = async (method: string, args: Record<string, unknown>) => {
+      const err = await assertRejects(() => call(cap, method, args), DesktopCapError);
+      assertEquals(err.code, "forbidden", `${method} ${JSON.stringify(args)}`);
+    };
+    for (const path of paths) {
+      await refused("readFile", { path, directory: "data" });
+      await refused("readFile", { path, directory: "data", encoding: "base64" });
+      await refused("writeFile", { path, data: "x", directory: "data", recursive: true });
+      await refused("deleteFile", { path, directory: "data" });
+    }
+    for (const path of ["CEF", "cef/Default", "WebKitGTK", "WEBVIEW2"]) {
+      await refused("listDir", { path, directory: "data" });
+    }
+    // The data root's listing leaves them out; the app's own files stay visible.
+    const listed = (await call(cap, "listDir", { path: "", directory: "data" })) as {
+      name: string;
+    }[];
+    assertEquals(listed.map((e) => e.name).sort(), ["notes.txt"]);
+    assertEquals(await call(cap, "readFile", { path: "notes.txt", directory: "data" }), "mine");
+    assertEquals(await Deno.readTextFile(join(root, "CEF", "Default", "Cookies")), "secret");
+
+    // shell: open / reveal / trash of an absolute path in the profile.
+    const spawned: string[][] = [];
+    const shell = shellCapability({
+      dirs,
+      config: { openExternal: [], openPath: true, reveal: true, trash: true },
+      spawn: (_c, args) => {
+        spawned.push(args);
+        return Promise.resolve();
+      },
+    });
+    for (const method of ["openPath", "reveal", "trash"]) {
+      for (const p of [join(root, "CEF"), join(root, "webview2", "Default", "Cookies")]) {
+        await assertRejects(() => call(shell, method, { path: p }), DesktopCapError);
+      }
+    }
+    assertEquals(spawned.length, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("path-scope: a reserved dir reached through another spelling of the data dir is refused", async () => {
+  if (Deno.build.os === "windows") return;
+  const real = await Deno.makeTempDir({ prefix: "denext-reserved-real-" });
+  const alias = `${real}-alias`;
+  try {
+    await Deno.mkdir(join(real, "CEF"));
+    await Deno.symlink(real, alias);
+    // The data dir as configured is the alias; the page names the real spelling.
+    await assertRejects(
+      () => refuseReservedDataPath(alias, join(real, "CEF", "Cookies")),
+      DesktopCapError,
+    );
+    await assertRejects(() => refuseReservedDataPath(real, join(alias, "cef")), DesktopCapError);
+    await refuseReservedDataPath(alias, join(real, "notes.txt"));
+    assert(isReservedDataName("WebView2"));
+    assert(!isReservedDataName("cef-notes"));
+  } finally {
+    await Deno.remove(alias);
+    await Deno.remove(real, { recursive: true });
   }
 });
 
@@ -893,6 +994,34 @@ Deno.test("keepAwake: a new page load releases the previous page's holds", async
   // A page load with nothing held is a no-op.
   await cap.onPageLoad?.();
   assertEquals(stops, 2);
+});
+
+Deno.test("keepAwake: the Windows driver passes SetThreadExecutionState a valid u32", async () => {
+  const calls: number[] = [];
+  // deno-lint-ignore no-explicit-any
+  const d = Deno as any;
+  const original = d.dlopen;
+  d.dlopen = () => ({
+    symbols: {
+      SetThreadExecutionState: (flags: number) => {
+        // Deno FFI rejects anything outside [0, 2^32) for a u32 parameter.
+        if (!Number.isInteger(flags) || flags < 0 || flags > 0xffffffff) {
+          throw new TypeError("Invalid FFI u32 type, expected unsigned integer");
+        }
+        calls.push(flags);
+        return 0;
+      },
+    },
+    close: () => {},
+  });
+  try {
+    const cap = keepAwakeCapability({ os: "windows" });
+    const hold = await call(cap, "acquire", {}) as { id: string };
+    await call(cap, "release", { id: hold.id });
+  } finally {
+    d.dlopen = original;
+  }
+  assertEquals(calls, [0x80000003, 0x80000000]);
 });
 
 // --- secureStore -------------------------------------------------------------
@@ -1432,11 +1561,21 @@ Deno.test("resolver: maps enabled built-ins; echo off unless explicitly true", a
         keepAwake: true,
         secureStore: true,
         dialogs: true,
+        clipboard: true,
       },
     },
   });
   const names = r.capabilities.map((c) => c.name).sort();
-  assertEquals(names, ["device", "dialogs", "fs", "keepAwake", "secureStore", "shell", "sqlite"]);
+  assertEquals(names, [
+    "clipboard",
+    "device",
+    "dialogs",
+    "fs",
+    "keepAwake",
+    "secureStore",
+    "shell",
+    "sqlite",
+  ]);
   // echo is a diagnostic — only when capabilities.echo === true.
   const withEcho = await resolveDesktopCapabilities({ desktop: { capabilities: { echo: true } } });
   assertEquals(withEcho.capabilities.map((c) => c.name), ["echo"]);
@@ -1523,10 +1662,9 @@ Deno.test("resolver: a bad extension path fails fast", async () => {
 // and asserts the union of its method permissions equals what `desktopPermissionFlags` derives.
 
 /** Catalog caps with NO bridge-cap object, so there are no runtime method permissions to compare
- * against: the WebView-backed ones (clipboard/context-menu/notifications) and `auth-session` (a
- * runtime loopback ENDPOINT, not a bridge cap — its opener `--allow-run` is exercised by
+ * against: `auth-session` (a runtime loopback ENDPOINT, not a bridge cap — its opener `--allow-run` is exercised by
  * `handleDesktopAuthSession`, gated by the capability, and covered by the auth-session tests). */
-const WEBVIEW_ONLY = new Set(["clipboard", "context-menu", "notifications", "auth-session"]);
+const WEBVIEW_ONLY = new Set(["auth-session"]);
 
 /** A dummy DesktopAppDirs — only the permission DECLARATIONS matter here, no I/O runs. */
 const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
@@ -1534,6 +1672,12 @@ const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
 /** Build each catalog cap's runtime twin for `os` (injected no-op backends; nothing spawns). */
 const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
   device: () => deviceCapability,
+  passkeys: (os) => passkeysCapability({ os }),
+  clipboard: () => clipboardCapability({ api: {} }),
+  notifications: () => notificationsCapability({ api: {}, autoTopUp: false }),
+  "context-menu": () => contextMenuCapability({ api: {} }),
+  "global-shortcuts": () => shortcutsCapability({ api: {} }),
+  "launch-at-login": () => launchAtLoginCapability({ api: {} }),
   fs: () => {
     const all = DESKTOP_CAPABILITIES.fs.all!;
     return fsCapability({ dirs: DRIFT_DIRS, read: new Set(all.read), write: new Set(all.write) });
@@ -1610,4 +1754,414 @@ Deno.test("catalog per-OS permissions == the runtime caps' declared method permi
       );
     }
   }
+});
+
+// --- device / echo: the remaining branches -----------------------------------
+
+Deno.test("device.info: osVersion is the OS release, omitted when empty or refused; an unknown OS names itself", async () => {
+  const model = { darwin: "Macintosh", windows: "Windows", linux: "Linux" }[OS];
+  await withDenoProps({ osRelease: () => "24.6.0" }, async () => {
+    assertEquals(await call(deviceCapability, "info", {}), { os: OS, model, osVersion: "24.6.0" });
+  });
+  const refused = () => {
+    throw new Deno.errors.NotCapable('Requires sys access to "osRelease"');
+  };
+  for (const osRelease of [() => "", refused]) {
+    await withDenoProps({ osRelease }, async () => {
+      // No `--allow-sys=osRelease` (or an empty answer): the field is left out, never `""`.
+      assertEquals(await call(deviceCapability, "info", {}), { os: OS, model });
+    });
+  }
+  // An OS without a coarse model name reports the OS itself (still nothing identifying).
+  const other = await call(deviceCapability, "info", {}, ctx({ os: "freebsd" as never })) as {
+    model: string;
+  };
+  assertEquals(other.model, "freebsd");
+});
+
+Deno.test("echo: ping echoes its args (null when absent); emitPong pushes a pong event", async () => {
+  const emitted: Array<[string, unknown]> = [];
+  const c = ctx({ emit: (event, data) => void emitted.push([event, data]) });
+  const ping = await call(echoCapability, "ping", { n: 1 }, c) as Record<string, unknown>;
+  assertEquals([ping.echo, ping.os, typeof ping.at], [{ n: 1 }, OS, "number"]);
+  assertEquals((await call(echoCapability, "ping", undefined, c) as { echo: unknown }).echo, null);
+  assertEquals(await call(echoCapability, "emitPong", { hi: true }, c), { emitted: true });
+  assertEquals(await call(echoCapability, "emitPong", undefined, c), { emitted: true });
+  assertEquals(emitted, [["pong", { hi: true }], ["pong", null]]);
+});
+
+// --- sqlite: argument checks and bind/encode edges ---------------------------
+
+/** The error code a call rejects with. */
+async function rejectCode(p: Promise<unknown>): Promise<string> {
+  const err = await assertRejects(() => p, DesktopCapError);
+  return err.code;
+}
+
+Deno.test("sqlite: booleans bind as 1/0, unknown bind values as NULL; bigint params pass through", async () => {
+  const { sqlite, cleanup } = await sqliteFixture();
+  try {
+    const { handle } = await call(sqlite, "open", { name: "binds.db" }) as { handle: string };
+    await call(sqlite, "exec", { handle, sql: "CREATE TABLE t(a, b, c, d)" });
+    await call(sqlite, "run", {
+      handle,
+      sql: "INSERT INTO t VALUES(?, ?, ?, ?)",
+      params: [true, false, { not: "bytes" }, 9007199254740991n],
+    });
+    // `params: null` binds nothing.
+    const q = await call(sqlite, "query", {
+      handle,
+      sql: "SELECT a, b, c, d, typeof(c) AS tc FROM t",
+      params: null,
+    }) as { columns: string[]; rows: unknown[][] };
+    assertEquals(q.columns, ["a", "b", "c", "d", "tc"]);
+    assertEquals(q.rows, [[1, 0, null, 9007199254740991, "null"]]);
+    await call(sqlite, "close", { handle });
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("sqlite: malformed arguments are `validation`; SQL errors other than ATTACH pass through", async () => {
+  const { sqlite, cleanup } = await sqliteFixture();
+  try {
+    const { handle } = await call(sqlite, "open", { name: "args.db" }) as { handle: string };
+    assertEquals(await rejectCode(call(sqlite, "exec", undefined)), "validation");
+    assertEquals(await rejectCode(call(sqlite, "run", { handle, sql: 42 })), "validation");
+    assertEquals(await rejectCode(call(sqlite, "query", undefined)), "validation");
+    assertEquals(
+      await rejectCode(call(sqlite, "query", { handle, sql: "SELECT ?", params: "1" })),
+      "validation",
+    );
+    assertEquals(await rejectCode(call(sqlite, "inTransaction", undefined)), "closed");
+    assertEquals(await rejectCode(call(sqlite, "open", { name: "a\0b" })), "validation");
+    // A plain SQL error is not mistaken for the ATTACH refusal: it surfaces as-is.
+    const err = await assertRejects(() => call(sqlite, "exec", { handle, sql: "SELEC 1" }));
+    assert(!(err instanceof DesktopCapError), "a syntax error is not a mapped cap error");
+    // A transaction is visible through inTransaction.
+    await call(sqlite, "exec", { handle, sql: "BEGIN" });
+    assertEquals(await call(sqlite, "inTransaction", { handle }), true);
+    await call(sqlite, "exec", { handle, sql: "COMMIT" });
+    // Closing an unknown or non-string handle is a no-op; the real handle still works after.
+    assertEquals(await call(sqlite, "close", { handle: 7 }), { ok: true });
+    assertEquals(await call(sqlite, "close", undefined), { ok: true });
+    assertEquals(await call(sqlite, "query", { handle, sql: "SELECT 2 AS two" }), {
+      columns: ["two"],
+      rows: [[2]],
+    });
+    await call(sqlite, "close", { handle });
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("sqlite: deleting a database that was never created is ok; an unusable app dir fails open", async () => {
+  const { dir, sqlite, cleanup } = await sqliteFixture();
+  try {
+    assertEquals(await call(sqlite, "delete", { name: "never.db" }), { ok: true });
+    // The app-support "directory" is a file: open cannot create it and says so.
+    const file = join(dir, "not-a-dir");
+    await Deno.writeTextFile(file, "x");
+    await assertRejects(() => call(sqliteCapability(join(file, "sub")), "open", { name: "x.db" }));
+  } finally {
+    await cleanup();
+  }
+});
+
+// --- fs: argument checks, listing and download edges -------------------------
+
+Deno.test("fs: bad directory / encoding / path / data / url arguments are `validation`", async () => {
+  const { dirs, cleanup } = await fsFixture();
+  try {
+    const fs = fsCapability({ dirs, read: new Set(["$APPDATA"]), write: new Set(["$APPDATA"]) });
+    const cases: Array<[string, unknown]> = [
+      ["readFile", { path: "a.txt", directory: "desktop" }],
+      ["readFile", { path: "a.txt", directory: "data", encoding: "latin1" }],
+      ["readFile", { path: "", directory: "data" }],
+      ["readFile", undefined],
+      ["writeFile", { path: "a.txt", directory: "data", data: 42 }],
+      ["download", { url: 42, path: "a", directory: "data" }],
+      // A picked handle with no picked-path set wired in.
+      ["listDir", { path: "", directory: { picked: "h1" } }],
+    ];
+    for (const [method, args] of cases) {
+      assertEquals(await rejectCode(call(fs, method, args)), "validation", JSON.stringify(args));
+    }
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("fs: listDir of a missing dir is empty, of a file errors; a dangling entry still lists", async () => {
+  const { dirs, cleanup } = await fsFixture();
+  try {
+    const fs = fsCapability({ dirs, read: new Set(["$APPDATA"]), write: new Set(["$APPDATA"]) });
+    assertEquals(await call(fs, "listDir", { path: "nope", directory: "data" }), []);
+    await call(fs, "writeFile", { path: "f.txt", directory: "data", data: "x" });
+    await assertRejects(() => call(fs, "listDir", { path: "f.txt", directory: "data" }));
+    // Deleting a non-empty directory is a real error (not swallowed like NotFound).
+    await call(fs, "writeFile", { path: "d/x", directory: "data", data: "x", recursive: true });
+    await assertRejects(() => call(fs, "deleteFile", { path: "d", directory: "data" }));
+    if (OS !== "windows") {
+      // A symlink to nothing cannot be stat'ed: it is listed with no size/mtime.
+      await Deno.symlink(join(dirs.data, "gone"), join(dirs.data, "d", "dangling"));
+      const listing = await call(fs, "listDir", { path: "d", directory: "data" }) as Array<
+        Record<string, unknown>
+      >;
+      const dangling = listing.find((e) => e.name === "dangling");
+      assertEquals(dangling, { name: "dangling", type: "file", size: 0 });
+    }
+  } finally {
+    await cleanup();
+  }
+});
+
+Deno.test("fs.download: a non-2xx answer, a declared oversize body and a redirect loop all fail cleanly", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-fs-dl-edges-" });
+  try {
+    let hops = 0;
+    const fakeFetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/missing")) return Promise.resolve(new Response("no", { status: 404 }));
+      if (url.endsWith("/huge")) {
+        return Promise.resolve(new Response("x", { headers: { "content-length": "999999" } }));
+      }
+      hops++;
+      return Promise.resolve(
+        new Response(null, { status: 302, headers: { location: `/loop?${hops}` } }),
+      );
+    }) as typeof fetch;
+    const resolved: string[] = [];
+    const cap = fsCapability({
+      dirs: { data: root, cache: root, documents: root },
+      read: new Set(["$APPDATA"]),
+      write: new Set(["$APPDATA"]),
+      downloadMaxBytes: 1024,
+      downloadTimeoutMs: 5_000,
+      resolveHost: (host) => {
+        resolved.push(host);
+        return Promise.resolve(["93.184.216.34"]);
+      },
+      fetch: fakeFetch,
+    });
+    const dl = (url: string) => call(cap, "download", { url, path: "out.bin", directory: "data" });
+    assertEquals(await rejectCode(dl("https://files.test/missing")), "download_failed");
+    assertEquals(await rejectCode(dl("https://files.test/huge")), "too_large");
+    assertEquals(await rejectCode(dl("https://files.test/loop")), "download_failed");
+    assertEquals(hops, 6, "the first request plus five followed redirects");
+    // An IP-literal host is not looked up in DNS.
+    resolved.length = 0;
+    assertEquals(await rejectCode(dl("https://93.184.216.34/missing")), "download_failed");
+    assertEquals(resolved, []);
+    assertEquals([...Deno.readDirSync(root)], [], "no file and no .part left behind");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("checkDownloadUrl: the default resolver checks A/AAAA answers; no DNS permission defers to --allow-net", async () => {
+  const asked: string[] = [];
+  const answers = (records: Record<string, string[] | Error>) => (host: string, type: string) => {
+    asked.push(`${host}/${type}`);
+    const r = records[type];
+    return r instanceof Error ? Promise.reject(r) : Promise.resolve(r ?? []);
+  };
+  // An AAAA answer of loopback is refused even when the A answer is public.
+  await withDenoProps(
+    { resolveDns: answers({ A: ["93.184.216.34"], AAAA: ["::1"] }) },
+    () => assertRejects(() => checkDownloadUrl("https://rebind.test/x"), DesktopCapError),
+  );
+  assertEquals(asked, ["rebind.test/A", "rebind.test/AAAA"]);
+  // NXDOMAIN / no AAAA: nothing to refuse (the fetch itself fails or uses the other family).
+  await withDenoProps(
+    { resolveDns: answers({ A: new Deno.errors.NotFound("NXDOMAIN"), AAAA: ["2001:db8::1"] }) },
+    () => checkDownloadUrl("https://ok.test/x"),
+  );
+  // No DNS permission: stop resolving at once (the per-host net permission is the gate).
+  asked.length = 0;
+  await withDenoProps(
+    { resolveDns: answers({ A: new Deno.errors.NotCapable("Requires net access") }) },
+    () => checkDownloadUrl("https://packaged.test/x"),
+  );
+  assertEquals(asked, ["packaged.test/A"]);
+});
+
+Deno.test("isRefusedDownloadHost: malformed IPv4 and mapped forms are not mistaken for loopback", () => {
+  for (const h of ["999.0.0.1", "::ffff:abcd", "::ffff:zz:1", "::ffff:c0a8:1"]) {
+    assert(!isRefusedDownloadHost(h), h);
+  }
+});
+
+// --- secureStore: argv, read-back and the real runner ------------------------
+
+Deno.test("secureStoreCommand: Linux delete is `secret-tool clear`; a missing secret is empty stdin", () => {
+  assertEquals(secureStoreCommand("linux", "delete", "svc", "tok"), {
+    cmd: "secret-tool",
+    args: ["clear", "service", "svc", "account", "tok"],
+  });
+  assertEquals(secureStoreCommand("linux", "set", "svc", "tok").stdin, "");
+  assertEquals(
+    secureStoreCommand("darwin", "set", "svc", "tok").stdin,
+    'add-generic-password -U -a "tok" -s "svc" -w ""\n',
+  );
+  assertEquals(secureStoreCommand("darwin", "delete", "svc", "tok").args, [
+    "delete-generic-password",
+    "-a",
+    "tok",
+    "-s",
+    "svc",
+  ]);
+});
+
+Deno.test("secureStore: an empty or foreign value reads as absent; a non-string value or failed write is refused", async () => {
+  let stdout = "";
+  let code = 0;
+  const cap = secureStoreCapability({
+    service: "svc",
+    os: "linux",
+    run: () => Promise.resolve({ code, stdout }),
+  });
+  assertEquals(await call(cap, "get", { key: "k" }), null, "empty stdout");
+  stdout = "%%% not base64 %%%";
+  assertEquals(await call(cap, "get", { key: "k" }), null, "not written by this cap");
+  stdout = `${btoa("v")}\n`;
+  assertEquals(await call(cap, "get", { key: "k" }), "v");
+  assertEquals(await rejectCode(call(cap, "set", { key: "k", value: 1 })), "validation");
+  assertEquals(await rejectCode(call(cap, "get", { key: 1 })), "validation");
+  assertEquals(await rejectCode(call(cap, "get", undefined)), "validation");
+  // Off macOS the exit code alone decides whether the write landed.
+  assertEquals(await call(cap, "set", { key: "k", value: "v" }), { ok: true });
+  code = 1;
+  assertEquals(await rejectCode(call(cap, "set", { key: "k", value: "v" })), "store_failed");
+  assertEquals(await call(cap, "delete", { key: "k" }), { ok: true }, "delete is idempotent");
+});
+
+Deno.test({
+  name: "runSecureCli: feeds stdin, captures stdout; a missing backend is `backend_unavailable`",
+  ignore: OS === "windows",
+  fn: async () => {
+    // `cat` stands in for the credential CLI: no keychain is touched.
+    assertEquals(await realSecureRun("cat", [], "secret on stdin"), {
+      code: 0,
+      stdout: "secret on stdin",
+    });
+    assertEquals(await realSecureRun("cat", []), { code: 0, stdout: "" });
+    assertEquals(
+      await rejectCode(realSecureRun("denext-no-such-credential-cli", ["get"])),
+      "backend_unavailable",
+    );
+  },
+});
+
+// --- resolver: config shapes -------------------------------------------------
+
+Deno.test("resolver: an fs scope object narrows read/write; unset lists keep the defaults", async () => {
+  const resolve = (fs: unknown) =>
+    resolveDesktopCapabilities({
+      desktop: { app: { identifier: "com.example.fs-scope" }, capabilities: { fs } },
+    } as never);
+  const [narrow] = (await resolve({ read: ["$APPDATA"], write: [] })).capabilities;
+  assertEquals(narrow.methods.readFile.permissions?.read, ["$APPDATA"]);
+  assertEquals(narrow.methods.writeFile.permissions?.write, []);
+  // Refused by scope before anything touches the disk.
+  assertEquals(
+    await rejectCode(call(narrow, "writeFile", { path: "x", directory: "data", data: "x" })),
+    "forbidden",
+  );
+  assertEquals(
+    await rejectCode(call(narrow, "readFile", { path: "x", directory: "cache" })),
+    "forbidden",
+  );
+  const [defaults] = (await resolve({})).capabilities;
+  assertEquals(defaults.methods.readFile.permissions?.read, ["$APPDATA", "$CACHE"]);
+  assertEquals(defaults.methods.writeFile.permissions?.write, ["$APPDATA", "$CACHE"]);
+});
+
+Deno.test("resolver: a shell object enables only what it names (least privilege)", async () => {
+  const r = await resolveDesktopCapabilities({
+    desktop: { capabilities: { shell: { openExternal: ["https:"] } } },
+  } as never);
+  const [shell] = r.capabilities;
+  assertEquals(shell.name, "shell");
+  // mailto: is a default of `shell: true`, not of an explicit list.
+  assertEquals(
+    await rejectCode(call(shell, "openExternal", { url: "mailto:a@example.com" })),
+    "forbidden",
+  );
+  for (const method of ["openPath", "reveal", "trash"]) {
+    assertEquals(
+      await rejectCode(call(shell, method, { path: join(r.appDirs.data, "f.txt") })),
+      "forbidden",
+      method,
+    );
+  }
+});
+
+Deno.test("resolver: the pinned-runtime caps map by name; passkeys without rpIds refuses every RP", async () => {
+  const r = await resolveDesktopCapabilities({
+    desktop: {
+      capabilities: {
+        notifications: true,
+        contextMenu: true,
+        globalShortcuts: true,
+        launchAtLogin: true,
+        passkeys: true,
+      },
+    },
+  } as never);
+  assertEquals(r.capabilities.map((c) => c.name), [
+    "passkeys",
+    "notifications",
+    "contextMenu",
+    "globalShortcuts",
+    "launchAtLogin",
+  ]);
+  // No RP allowlist (a bare `true` the config validation rejects) fails closed: `invalid_rp`
+  // before the runtime is even asked.
+  const passkeys = r.capabilities[0];
+  for (const rp of ["anything.example", ""]) {
+    const out = await call(passkeys, "create", {
+      optionsJson: JSON.stringify({ rp: { id: rp } }),
+    }) as { ok: boolean; error?: { code: string } };
+    assertEquals(out.error?.code, "invalid_rp", rp);
+  }
+});
+
+Deno.test("resolver: a relative extension resolves against `base`; a module without a default cap is refused", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-ext-rel-" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "ok.ts"),
+      `export default { name: "relative", methods: { ping: { handler: () => "pong" } } };\n`,
+    );
+    await Deno.writeTextFile(join(dir, "bad.ts"), `export const notDefault = 1;\n`);
+    const base = new URL(`file://${join(dir, "desktop.ts")}`).href;
+    const ok = await resolveDesktopCapabilities(
+      { desktop: { capabilities: { extensions: ["./ok.ts"] } } },
+      { base },
+    );
+    assertEquals(ok.capabilities.map((c) => c.name), ["relative"]);
+    await assertRejects(
+      () =>
+        resolveDesktopCapabilities(
+          { desktop: { capabilities: { extensions: ["./bad.ts"] } } },
+          { base },
+        ),
+      Error,
+      "must `export default defineDesktopExtension(...)`",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("resolver: a non-string desktop.app.origin fails fast", async () => {
+  await assertRejects(
+    () =>
+      resolveDesktopCapabilities({
+        desktop: { app: { identifier: "com.example.o", origin: 42 } },
+      } as never),
+    Error,
+    "must be a string",
+  );
 });

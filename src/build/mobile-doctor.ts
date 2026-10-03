@@ -26,6 +26,7 @@ import {
 } from "./mobile-privacy.ts";
 import { dictGet, parsePlist, type PlistDict, type PlistNode } from "./plist-value.ts";
 import { leakedCssShimKeys } from "./css-config-guard.ts";
+import { fastlaneFindings } from "./mobile-fastlane.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -163,6 +164,8 @@ async function readMobileProject(root: string, appDir = root): Promise<MobilePro
 interface Check {
   readonly id: string;
   readonly profiles: readonly MobileDoctorProfile[];
+  /** Whether the project has what the check looks at (default: always); listed only then. */
+  readonly applies?: (p: MobileProject) => Promise<boolean>;
   readonly run: (
     p: MobileProject,
     profile: MobileDoctorProfile,
@@ -266,6 +269,71 @@ const bridgeFrameGuard: Check = {
         "it: an unedited file is upgraded, an edited one is kept (`--force` replaces it, or copy " +
         `${FRAME_GUARD_CLASS} from the current template and call its install(on: bridge) ` +
         "after super.capacitorDidLoad()); then ship a new binary",
+    }];
+  },
+};
+
+/** The single-page names a static export may hold beside its pages (not routes of their own). */
+const NON_ROUTE_HTML = new Set(["index.html", "404.html", "500.html", "200.html", "offline.html"]);
+
+/**
+ * The export's first page beyond the root one (`protected/index.html`, `about.html`), as a
+ * webDir-relative path, or null for a single-page export. Folders starting with `_` or `.`
+ * (`_denext/`, `_next/`) hold assets, not pages.
+ */
+async function nestedPage(webDir: string): Promise<string | null> {
+  for await (const e of walk(webDir, { includeDirs: false, exts: [".html"] })) {
+    const rel = posixRelative(webDir, e.path);
+    if (/(?:^|\/)[_.][^/]*\//.test(rel)) continue;
+    const name = rel.slice(rel.lastIndexOf("/") + 1);
+    if (rel.includes("/") ? name === "index.html" : !NON_ROUTE_HTML.has(name)) return rel;
+  }
+  return null;
+}
+
+/** Every `MainActivity.java`/`.kt` of the Android app, as text. */
+async function mainActivities(root: string): Promise<string[]> {
+  const dir = join(root, "android/app/src/main/java");
+  if (!(await isDir(dir))) return [];
+  const out: string[] = [];
+  for await (
+    const e of walk(dir, { includeDirs: false, match: [/[\\/]MainActivity\.(?:java|kt)$/] })
+  ) {
+    out.push(await Deno.readTextFile(e.path));
+  }
+  return out;
+}
+
+/** What marks a shell that routes an exported page to its own HTML, per platform. */
+const IOS_EXPORT_ROUTER = "DenextExportRouter";
+const ANDROID_EXPORT_ROUTES = "DenextExportRoutes";
+
+const exportRoutes: Check = {
+  id: "export-routes",
+  profiles: ["store", "release"],
+  applies: (p) => Promise.resolve(p.webDir !== null && (p.hasIos || p.hasAndroid)),
+  run: async (p) => {
+    const page = p.webDir === null ? null : await nestedPage(p.webDir);
+    if (page === null) return [];
+    const missing: string[] = [];
+    if (p.hasIos) {
+      const bridge = await readText(join(p.root, BRIDGE_VIEW_CONTROLLER));
+      if (bridge === null || !bridge.includes(IOS_EXPORT_ROUTER)) missing.push("iOS");
+    }
+    if (p.hasAndroid) {
+      const activities = await mainActivities(p.root);
+      if (!activities.some((t) => t.includes(ANDROID_EXPORT_ROUTES))) missing.push("Android");
+    }
+    if (missing.length === 0) return [];
+    return [{
+      check: "export-routes",
+      level: "error",
+      message: `${p.webDirName}/ is a multi-page export (${p.webDirName}/${page}), but the ` +
+        `${missing.join(" and ")} shell answers every path without an extension with the ` +
+        "root index.html: a link to another page loads the home page",
+      fix: "run `denext mobile add export-routes` (or re-run the `denext mobile add` / " +
+        "`add-ota` that wrote the native files: an unedited one is upgraded); then ship a new " +
+        "binary",
     }];
   },
 };
@@ -814,6 +882,28 @@ const cssShimLeak: Check = {
   },
 };
 
+/** The source capacitor.config's `appId` (the first config read), when it is a string. */
+function sourceAppId(p: MobileProject): string | undefined {
+  const id = p.configs[0]?.config.appId;
+  return typeof id === "string" ? id : undefined;
+}
+
+/**
+ * fastlane (`denext mobile add fastlane`, or a team's own): only when `fastlane/` exists. The
+ * Appfile's ids against capacitor.config, the Gemfile and its lock, a Fastfile that bypasses
+ * `denext export` + `cap sync`, and secrets kept in or written into `fastlane/`.
+ */
+const fastlane: Check = {
+  id: "fastlane",
+  profiles: ["release"],
+  applies: (p) => isDir(join(p.root, "fastlane")),
+  run: async (p) =>
+    ((await fastlaneFindings(p.root, sourceAppId(p))) ?? []).map((f) => ({
+      check: "fastlane",
+      ...f,
+    })),
+};
+
 /** Every check, in report order. */
 const CHECKS: readonly Check[] = [
   serverUrl,
@@ -823,6 +913,7 @@ const CHECKS: readonly Check[] = [
   legacyBridge,
   allowNavigation,
   bridgeFrameGuard,
+  exportRoutes,
   androidDebuggable,
   productionLogging,
   csp,
@@ -835,6 +926,7 @@ const CHECKS: readonly Check[] = [
   accountDeletion,
   webStorage,
   cssShimLeak,
+  fastlane,
 ];
 
 /** The ids of the checks a profile runs (for docs and `--json`). */
@@ -854,7 +946,11 @@ export async function runMobileDoctor(opts: MobileDoctorOptions): Promise<Mobile
     throw new Error(`no Capacitor project (capacitor.config.*) in ${opts.root}`);
   }
   const project = await readMobileProject(opts.root, opts.appDir ?? opts.root);
-  const checks = CHECKS.filter((c) => c.profiles.includes(opts.profile));
+  const checks: Check[] = [];
+  for (const check of CHECKS) {
+    if (!check.profiles.includes(opts.profile)) continue;
+    if (!check.applies || await check.applies(project)) checks.push(check);
+  }
   const findings: MobileDoctorFinding[] = [];
   for (const check of checks) findings.push(...await check.run(project, opts.profile));
   return { root: opts.root, profile: opts.profile, checks: checks.map((c) => c.id), findings };

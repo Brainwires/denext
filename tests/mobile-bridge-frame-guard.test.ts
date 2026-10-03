@@ -14,6 +14,7 @@ import {
   FRAME_GUARD_SWIFT,
   withFrameGuard,
 } from "../src/build/bridge-frame-guard-native-template.ts";
+import { EXPORT_ROUTER_SWIFT } from "../src/build/bridge-export-router-native-template.ts";
 import {
   bridgeViewControllerSource,
   type NativeFeature,
@@ -55,7 +56,8 @@ Deno.test("frame guard: every bridge variant installs it first and carries it on
     assertStringIncludes(text, "import UIKit\n" + FRAME_GUARD_IMPORT, label);
     assertStringIncludes(text, SUPER + FRAME_GUARD_INSTALL, label);
     assertEquals(text.split(GUARD_CLASS).length, 2, label);
-    assert(text.endsWith(FRAME_GUARD_SWIFT), label);
+    // The guard class, then the export router (bridge-export-router-native-template.ts).
+    assert(text.endsWith(FRAME_GUARD_SWIFT + EXPORT_ROUTER_SWIFT), label);
     // Installed before any plugin registration (none is callable before the guard is in place).
     const install = text.indexOf(FRAME_GUARD_INSTALL);
     const firstRegistration = text.search(/registerPluginInstance|DenextNativeModules\.register/);

@@ -11,10 +11,11 @@
 // `desktop.capabilities.<key>` value is written; everything else keeps its bytes. A key already
 // present is left as the user wrote it.
 
-import { basename, join } from "@std/path";
+import { basename, fromFileUrl, join } from "@std/path";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
+import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 
 /** The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling). */
 export type DesktopOs = "darwin" | "windows" | "linux";
@@ -131,11 +132,12 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
   "context-menu": {
     key: "contextMenu",
     value: true,
-    api: ["showContextMenu"],
+    api: ["showContextMenu", "useContextMenu"],
+    // A runtime API (BrowserWindow.showContextMenu with the dismissed event of denext's pinned
+    // runtime), no --allow-* of its own. Under the stock runtime the page keeps its in-page menu.
     trust: "none",
-    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission. A native OS menu
-    // would need an upstream dismiss event that Deno Desktop does not yet emit.
-    notes: "WebView in-page menu (no runtime cap; native OS menus await an upstream dismiss event)",
+    notes:
+      "native OS context menu with submenus and dismissal (pinned runtime; in-page menu otherwise)",
   },
   shell: {
     key: "shell",
@@ -166,7 +168,8 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       linux: { run: ["xdg-open"] },
     },
     trust: "full",
-    notes: "system-browser OAuth via a loopback redirect (openAuthSession)",
+    notes:
+      "OAuth sign-in (openAuthSession): the OS auth session on macOS for a custom-scheme callback, else the system browser with a Cancel overlay",
     manual: [
       "auth-session: --allow-run of the system browser opener (open / rundll32 / xdg-open) can start any app the user can; the runtime only hands it the provider auth URL you pass, and the loopback endpoint is default-deny unless this capability is enabled.",
     ],
@@ -200,15 +203,20 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "scheduleNotification",
       "cancelNotification",
       "pendingNotifications",
+      "setNotificationCategories",
       "onLocalNotificationTapped",
+      'requestPermission("notifications")',
+      "requestPushPermission",
     ],
+    // A runtime API (Deno.desktop.notifications of denext's pinned runtime), no --allow-* of its
+    // own. Under the stock runtime the page keeps the WebView's Notification API (immediate only).
     trust: "none",
-    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission. The webview's
-    // Notification API shows an IMMEDIATE notification; a scheduled trigger rejects, exactly as on
-    // the web (Deno Desktop has no scheduler).
-    notes: "WebView Notification API, immediate only (no runtime cap; a scheduled trigger rejects)",
+    notes:
+      "OS notifications: scheduled, repeating, actions, click routing (pinned runtime; WebView otherwise)",
     manual: [
-      "notifications: on Deno Desktop these use the WebView Notification API — grant it in the page. Only immediate notifications show; a scheduled trigger rejects (needs a plugin), the same as on the web. No --allow-* is added and no scheduled/tap routing is provided.",
+      'notifications: ask first with requestPermission("notifications"): macOS shows its prompt once (only from an app bundle, not an unbundled process), and a refusal can be changed only in System Settings › Notifications.',
+      "notifications: Linux has no OS scheduler — a scheduled notification is delivered by the app while it runs and re-armed at its next launch (one whose time passed meanwhile shows then); a click on a notification of a closed app does not start it there.",
+      "notifications: a repeating notification is scheduled for its next 16 occurrences; each launch tops the series up, so an app not opened for longer than that stops showing it until it runs again.",
     ],
   },
   "keep-awake": {
@@ -227,11 +235,13 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
   clipboard: {
     key: "clipboard",
     value: true,
-    api: ["readClipboard", "writeClipboard"],
+    api: ["readClipboard", "writeClipboard", "clipboardFormats"],
+    // A runtime API (Deno.desktop.clipboard in denext's pinned runtime), no --allow-* of its own.
+    // Under the stock runtime the cap answers `unavailable` and the page keeps the WebView's
+    // navigator.clipboard.
     trust: "none",
-    // WebView-backed on Deno Desktop: no runtime cap, no OS-level permission — the page uses the
-    // WebView's own clipboard.
-    notes: "WebView clipboard via navigator.clipboard (no runtime cap)",
+    notes:
+      "native clipboard: text, HTML and PNG images (pinned runtime; WebView navigator.clipboard otherwise)",
   },
   device: {
     key: "device",
@@ -240,6 +250,45 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     all: { sys: ["osRelease"] },
     trust: "scoped",
     notes: "OS name and release",
+  },
+  "global-shortcuts": {
+    key: "globalShortcuts",
+    value: true,
+    api: ["registerShortcut (denext/desktop/app)", "unregisterShortcut", "listShortcuts"],
+    // A runtime API (Deno.desktop.shortcuts), no --allow-* of its own. It still adds trust beyond
+    // the window: the app reacts to the registered key combinations while any app has the focus.
+    trust: "none",
+    notes: "system-wide keyboard shortcuts (pinned runtime)",
+    manual: [
+      "global-shortcuts: a registered combination reaches the app while ANY app has the keyboard focus, and the other app no longer sees it — register only the shortcuts the user asked for, and let them change or turn them off.",
+      "global-shortcuts: on Wayland the XDG GlobalShortcuts portal asks the user to approve each shortcut (and may bind another trigger); without the portal registration rejects `unsupported`.",
+    ],
+  },
+  "launch-at-login": {
+    key: "launchAtLogin",
+    value: true,
+    api: ["getLaunchAtLogin (denext/desktop/app)", "setLaunchAtLogin"],
+    // A runtime API (Deno.desktop.launchAtLogin), no --allow-* of its own; it writes an OS login
+    // entry named after desktop.app.identifier.
+    trust: "none",
+    notes:
+      "start the app at login: macOS login item / Windows Run value / Linux autostart (pinned runtime)",
+    manual: [
+      "launch-at-login: turn it on only when the user asks (a settings toggle): it makes the app start with every login. macOS 13+ may answer `requires-approval` until the user allows it in System Settings › Login Items; it needs a signed app bundle.",
+    ],
+  },
+  passkeys: {
+    key: "passkeys",
+    // Fail closed: an empty pin allows no relying party until the project lists its own.
+    value: { rpIds: [] },
+    api: ["installClerkDesktopBridge (denext/desktop/clerk)"],
+    // A runtime API (Deno.desktop.passkeys), no --allow-* of its own.
+    trust: "none",
+    notes: "native passkeys: macOS Touch ID / iCloud Keychain, Windows Hello (pinned runtime)",
+    manual: [
+      "passkeys: macOS needs the associated-domains entitlement (webcredentials:<rp-id>) with a provisioning profile — set desktop.macos = { provisioningProfile, entitlements } — and the RP's apple-app-site-association must list <TeamID>.<bundle id>; otherwise every request is invalid_rp.",
+      "passkeys: list your relying parties in desktop.capabilities.passkeys = { rpIds: [...] } — it is written empty, and until it names one every request is invalid_rp (on Windows nothing else ties the RP ID to the app). Linux has no native passkeys.",
+    ],
   },
 };
 
@@ -316,6 +365,8 @@ interface DesktopFlagConfig {
      * extension's own permissions, or any need the catalog can't see); `--regenerate-scripts`
      * preserves it because it lives in the config. */
     readonly extraPermissions?: DesktopPermissionSet;
+    /** Full-app self-update: its manifest host and extra hosts need `--allow-net`. */
+    readonly update?: { readonly manifestUrl?: unknown; readonly hosts?: unknown };
   };
   readonly spa?: {
     readonly proxy?: { readonly target?: unknown; readonly allowNonLoopback?: unknown };
@@ -335,6 +386,23 @@ function proxyNetHost(
   } catch {
     return undefined;
   }
+}
+
+/** The hosts full-app self-update fetches from: the manifest URL's host plus `update.hosts`. */
+function updateNetHosts(
+  update: { manifestUrl?: unknown; hosts?: unknown } | undefined,
+): string[] {
+  const hosts: string[] = [];
+  if (typeof update?.manifestUrl === "string") {
+    try {
+      const host = new URL(update.manifestUrl).hostname;
+      if (host) hosts.push(host);
+    } catch { /* an invalid URL is the config validator's to report */ }
+  }
+  if (Array.isArray(update?.hosts)) {
+    for (const h of update.hosts) if (typeof h === "string" && h) hosts.push(h);
+  }
+  return hosts;
 }
 
 const kindOfFlag = (flag: string): string => flag.split("=", 1)[0];
@@ -373,7 +441,8 @@ function bakeableSets(
  *   single broad `--allow-write` when any capability writes (a per-user path can't be baked; the
  *   runtime cap layer confines it);
  * - a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only
- *   the last `--allow-net`, so every host is one flag);
+ *   the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts
+ *   (`desktop.update.manifestUrl`'s and `desktop.update.hosts`);
  * - `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's
  *   feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED
  *   in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.
@@ -394,13 +463,20 @@ export function desktopBuildFlags(config: unknown, os: DesktopOs): string[] {
   const net = new Set<string>(["127.0.0.1", "localhost", ...(extra.net ?? [])]);
   const proxyHost = proxyNetHost(cfg.spa?.proxy);
   if (proxyHost) net.add(proxyHost);
+  for (const host of updateNetHosts(cfg.desktop?.update)) net.add(host);
 
   const { run, ffi, sys } = bakeableSets(capFlags, extra);
   // write: broad when a capability writes or extraPermissions asks (per-user paths can't be baked).
   const needsWrite = capFlags.some((f) => kindOfFlag(f) === "--allow-write") ||
     (extra.write?.length ?? 0) > 0;
+  // `"*"` grants the whole kind (an unscoped `--allow-ffi`): a Node-API addon extracted from the
+  // compiled app's virtual file system has no path that can be named at package time.
   const listFlag = (kind: string, set: Set<string>): string[] =>
-    set.size > 0 ? [`--allow-${kind}=${[...set].sort().join(",")}`] : [];
+    set.has("*")
+      ? [`--allow-${kind}`]
+      : set.size > 0
+      ? [`--allow-${kind}=${[...set].sort().join(",")}`]
+      : [];
 
   return [
     `--allow-net=${[...net].sort().join(",")}`,
@@ -448,14 +524,23 @@ function configExtensionPaths(config: unknown): string[] {
 }
 
 /**
- * The extra `--include <path>` args a scaffolded packaging script must add so the packaged binary
- * embeds each `desktop.capabilities.extensions` module — otherwise the app launches but the runtime
- * fails to load the extension ("Module not found"), since `--include out` only bundles the export.
- * Reads the project's `denext.config.ts` next to `entryUrl` (a `scripts/` script → `../`), like
- * {@linkcode desktopPackageFlags}; a project with no extensions gets `[]`.
+ * The extra args a scaffolded packaging script must add so the packaged binary embeds every module
+ * the app loads at runtime, and loads each one from the binary, never from the build machine's
+ * disk:
+ *
+ * - `--include <path>` per `desktop.capabilities.extensions` module — otherwise the app launches
+ *   but the runtime fails to load the extension ("Module not found"), since `--include out` only
+ *   bundles the export;
+ * - `--import-map <.deno-desktop/import-map.json>` when deno.json's import map has an absolute
+ *   local target (`"denext/desktop": "file:///…"`): a compiled binary resolves such a target to the
+ *   build machine's path, so a relocatable copy of the map is written and used instead.
+ *
+ * Reads the project's `denext.config.ts` and deno.json next to `entryUrl` (a `scripts/` script →
+ * `../`), like {@linkcode desktopPackageFlags}; a project with neither gets `[]`.
  *
  * @param entryUrl The packaging script's `import.meta.url`.
- * @returns `["--include", path, "--include", path, …]`, ready to splice into the `deno desktop` argv.
+ * @returns `["--include", path, …, "--import-map", file]`, ready to splice into the `deno desktop`
+ * argv.
  */
 export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
   let config: unknown;
@@ -465,7 +550,43 @@ export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
   } catch {
     // no denext.config.ts (or it exports no config) → no extensions to embed
   }
-  return configExtensionPaths(config).flatMap((p) => ["--include", p]);
+  const includes = configExtensionPaths(config).flatMap((p) => ["--include", p]);
+  const projectUrl = new URL("../", entryUrl);
+  const importMap = projectUrl.protocol === "file:"
+    ? await desktopImportMapArgsFor(fromFileUrl(projectUrl))
+    : [];
+  return [...includes, ...importMap];
+}
+
+/**
+ * `deno desktop` args for a project with a `node_modules` directory (a next-compat app, whose npm
+ * packages live there): resolve npm packages from Deno's cache and embed only those the desktop
+ * entry's module graph reaches. Without them `deno desktop` — a compile — embeds the WHOLE
+ * `node_modules` (hundreds of MB for `next` and its peers) that the window, serving a static
+ * export, never loads. A project with a `package.json` but no `node_modules` yet (a fresh clone
+ * before `deno install`) gets them too: the `package.json` puts Deno in manual `node_modules`
+ * mode, where the type check fails on `npm:@types/node` ("Could not find a matching package … in
+ * the node_modules directory"); from the cache it resolves. A project with neither gets `[]`.
+ *
+ * @param projectDir The project directory.
+ * @returns `["--node-modules-dir=none", "--exclude-unused-npm"]`, or `[]`.
+ */
+export async function desktopNpmArgsFor(projectDir: string): Promise<string[]> {
+  const has = (name: string, dir: boolean) =>
+    Deno.stat(join(projectDir, name)).then((s) => dir ? s.isDirectory : s.isFile, () => false);
+  const npm = await has("node_modules", true) || await has("package.json", false);
+  return npm ? ["--node-modules-dir=none", "--exclude-unused-npm"] : [];
+}
+
+/**
+ * {@linkcode desktopNpmArgsFor} for a packaging script: the project is the script's parent
+ * directory (`scripts/package-*.ts` → `../`), as {@linkcode desktopIncludeArgs} reads it.
+ *
+ * @param entryUrl The packaging script's `import.meta.url`.
+ * @returns The args to splice into the `deno desktop` argv.
+ */
+export function desktopNpmArgs(entryUrl: string): Promise<string[]> {
+  return desktopNpmArgsFor(fromFileUrl(new URL("../", entryUrl)));
 }
 
 /**

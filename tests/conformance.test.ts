@@ -7,10 +7,10 @@ import { assert, assertEquals } from "@std/assert";
 import { formatReport, probeApp } from "denext/testing";
 import { fromFileUrl } from "@std/path";
 
-const DOCS = fromFileUrl(new URL("../apps/web", import.meta.url));
+const DOCS = fromFileUrl(new URL("../site", import.meta.url));
 const NOTES = fromFileUrl(new URL("../examples/notes", import.meta.url));
 
-Deno.test("conformance: apps/web (denext.dev) renders every docs route as static 0-JS HTML", async () => {
+Deno.test("conformance: site (denext.dev) renders every docs route as static 0-JS HTML", async () => {
   const report = await probeApp(DOCS);
 
   assert(report.ok, "docs must conform:\n" + formatReport(report));

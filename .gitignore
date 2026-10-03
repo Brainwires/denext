@@ -37,3 +37,7 @@ coverage/
 
 # in-repo scratch dirs for tests that need the workspace import map
 tests/.tmp/
+
+# Local secrets for examples (e.g. examples/clerk/.env.local); .env.example stays tracked
+examples/*/.env
+examples/*/.env.local

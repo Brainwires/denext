@@ -1,7 +1,8 @@
 /**
  * The page side of Deno Desktop extensions (`denext/desktop/client`): a typed proxy for a
- * user extension's methods ({@linkcode desktopExtension}) and a subscription to the runtime's
- * event stream ({@linkcode onDesktopEvent}).
+ * user extension's methods ({@linkcode desktopExtension}), a subscription to the runtime's
+ * event stream ({@linkcode onDesktopEvent}), and the URL for a WebSocket to the app's own server
+ * ({@linkcode desktopWebSocketUrl}).
  *
  * An extension is TypeScript that runs in the desktop app's Deno process
  * (`defineDesktopExtension` from `denext/desktop`) and is enabled in
@@ -30,7 +31,12 @@
  * @module
  */
 
-import { desktopRpc, type DesktopRpcOptions, subscribeDesktopEvent } from "./bridge-client.ts";
+import {
+  desktopError,
+  desktopRpc,
+  type DesktopRpcOptions,
+  subscribeDesktopEvent,
+} from "./bridge-client.ts";
 
 export {
   type DesktopBridgeError,
@@ -38,6 +44,8 @@ export {
   type DesktopRpcOptions,
   isDesktopBridgeError,
 } from "./bridge-client.ts";
+// Where the page's own WebSockets go: the runtime's loopback relay under denext's pinned runtime.
+export { desktopWebSocketUrl, desktopWsOrigin } from "./ws-origin.ts";
 
 /**
  * The slice of a Standard Schema (https://standardschema.dev) the extension typing reads: its
@@ -170,4 +178,64 @@ export function onDesktopEvent<T = unknown>(
   handler: (data: T) => void,
 ): () => void {
   return subscribeDesktopEvent(cap, event, handler as (data: unknown) => void);
+}
+
+/** Who handles one of the app's deep-link schemes ({@linkcode deepLinkSchemeOwner}). */
+export interface DeepLinkSchemeOwner {
+  /** `self` (this app), `other` (another app gets links with the scheme), `none` (no app). */
+  readonly owner: "self" | "other" | "none";
+  /**
+   * What the OS names as the handler (a bundle id, an executable path, a `.desktop` id), for
+   * display only: any program of the user can write it.
+   */
+  readonly handler?: string;
+}
+
+/** What {@linkcode claimDeepLinkScheme} reports. */
+export interface ClaimDeepLinkSchemeResult extends DeepLinkSchemeOwner {
+  /** Whether this app handles the scheme now. */
+  readonly registered: boolean;
+  /** Why not, when it doesn't (a Windows "UserChoice", no `xdg-mime`, an unpackaged run, …). */
+  readonly reason?: string;
+}
+
+/**
+ * Which app handles `scheme`, one of the app's `desktop.app.deepLinks` (denext's pinned Deno
+ * Desktop runtime). A snapshot, and advisory: any program of the same user can register itself for
+ * a scheme at any time, so keep PKCE and `state` on every sign-in.
+ *
+ * @param scheme A scheme from `desktop.app.deepLinks` (`"myapp"`).
+ * @returns The owner. Rejects `scheme_not_declared` for another scheme, `unsupported` on a runtime
+ * without scheme registration, and `unavailable` off desktop.
+ */
+export async function deepLinkSchemeOwner(scheme: string): Promise<DeepLinkSchemeOwner> {
+  return await desktopRpc<DeepLinkSchemeOwner>("deepLinks", "owner", { scheme });
+}
+
+/**
+ * Make this app the handler of `scheme` (one of its `desktop.app.deepLinks`), taking it over from
+ * another app. **Only on an explicit user action** — a "Make this app the handler of myapp: links"
+ * button after `openAuthSession` rejected `scheme_owned_by_other_app` — because the other app loses
+ * the scheme. On macOS the OS may confirm it with the user; a Windows "UserChoice" cannot be
+ * overridden (`registered: false`). It must run inside that click: where the webview reports user
+ * activation (`navigator.userActivation`) and there is none, it rejects `user_activation_required`
+ * without calling the runtime. The runtime also takes a scheme over only from ANOTHER app (this
+ * app's own or an unclaimed scheme is registered without force), and only once per scheme per
+ * launch.
+ *
+ * @param scheme A scheme from `desktop.app.deepLinks`.
+ * @returns The registration after the call.
+ */
+export async function claimDeepLinkScheme(scheme: string): Promise<ClaimDeepLinkSchemeResult> {
+  const activation = (globalThis as { navigator?: { userActivation?: { isActive?: unknown } } })
+    .navigator?.userActivation;
+  if (activation !== undefined && activation.isActive !== true) {
+    throw desktopError(
+      "deepLinks",
+      "claim",
+      "user_activation_required",
+      "call claimDeepLinkScheme from the user's click on your confirmation button",
+    );
+  }
+  return await desktopRpc<ClaimDeepLinkSchemeResult>("deepLinks", "claim", { scheme });
 }

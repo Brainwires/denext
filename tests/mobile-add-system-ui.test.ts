@@ -187,7 +187,8 @@ Deno.test("mobile add system-bars: no package; Info.plist key and EdgeToEdge in 
     assertStringIncludes(plist, "<key>UIViewControllerBasedStatusBarAppearance</key>\n\t<true/>");
     const activity = await read(dir, ACTIVITY_PATH);
     assertEquals(activity, await mainActivitySource("com.example.app", new Set(["edge-to-edge"])));
-    assertStringIncludes(activity, "EdgeToEdge.enable(this);\n        super.onCreate(");
+    const edge = activity.indexOf("        EdgeToEdge.enable(this);\n");
+    assert(edge >= 0 && edge < activity.indexOf("super.onCreate("), "before super.onCreate");
   });
 });
 

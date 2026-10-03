@@ -33,8 +33,8 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   _estimates_ coverage and can block a commit on framework internals that tests
   reach only transitively. Details under _The Fallow gate_ below.
 - **Formatting is `deno fmt`** (no Prettier, no npm), configured under `fmt` in
-  `deno.json`; format files under `apps/web` **from the repo root**
-  (`deno fmt --config deno.json <paths>`), never from inside `apps/web`.
+  `deno.json`; format files under `site` **from the repo root**
+  (`deno fmt --config deno.json <paths>`), never from inside `site`.
 - **`deno task test:e2e`** and **`deno task test:migration-bed`** are the two
   network-bound suites `check` never runs; the nightly workflow
   (`.github/workflows/e2e.yml`) does. The e2e suite drives the examples in a real
@@ -93,6 +93,18 @@ removes it; that only matters when a commit touches a function with cyclomatic �
 in a transitively-tested module — regenerate then. Re-run the task after large edits — coverage is pinned
 to source lines, and a function whose lines drifted falls back to the estimate. The full task map (trace an "unused" export, prove a symbol's
 consumers, etc.) lives in [`AGENTS.md`](./AGENTS.md).
+
+**Concurrent runs (agents, hooks, people).** `coverage:fallow` and `test:coverage` hold
+denext's Cargo-style lock on `coverage/` (`scripts/locked.ts`, an OS lock in
+`.denext/.denext-lock-coverage`): a second run prints
+`Blocking waiting for file lock on output directory coverage` and waits for the first
+instead of deleting its output. Seeing that line means another run is in progress — let it
+finish; do not kill it or delete the lock file (the OS releases the lock when the holder
+exits, so there is never a stale lock to clear). The same applies to `denext build` /
+`export` / `dev` / packaging on one project; the lock map is in
+[the CLI reference](https://denext.dev/docs/cli#build-locks) and
+`src/build/project-locks.ts`. Call the `*:run` tasks directly only when you know nothing
+else writes `coverage/`.
 
 If a report is a **genuine false positive**, scope the suppression as narrowly
 as possible — prefer a per-line/file marker over widening config:
@@ -230,10 +242,7 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    publish.
 3. **Before running it for a stable major/minor**, hand-edit the prose the bump
    does not: `ROADMAP.md`'s status paragraph, any `README.md` stage language, and
-   any stage language on the docs-site pages (`apps/web/app/docs/*/content.md`).
-   A `### Breaking` changelog entry also gets a row on `/docs/upgrading`
-   (`apps/web/app/docs/upgrading/content.md`): one bullet, a one-line action,
-   linked to that release's changelog anchor.
+   any stage language on the docs-site pages (`site/app/docs/*/content.md`).
 4. **Watch the publish and verify it went live:**
    `gh run watch "$(gh run list --workflow=publish.yml --limit 1 --json databaseId -q '.[0].databaseId')" --exit-status`,
    then `deno eval --min-dep-age=0 "console.log((await import('jsr:@denext/denext@X.Y.Z')).VERSION)"`.
@@ -241,11 +250,47 @@ will publish. `publish.yml` is on `main` with `permissions: id-token: write`.
    release: `gh pr create --base main --head development` then
    `gh pr merge <n> --merge`. A tag without this merge is an incomplete release.
 6. **Deploy the docs site** (`deno task docs:build` + the rsync in
-   [the docs-site notes](./apps/web/README.md)); it is not part of the script.
+   [the docs-site notes](./site/README.md)); it is not part of the script.
+
+7. **Package managers (stable releases, by hand).** The `release` job attaches
+   generated manifests to the GitHub release (`scripts/gen-package-manifests.ts`,
+   from its `SHA256SUMS`): `denext.rb` (Homebrew), `denext.json` (Scoop) and
+   `Brainwires.denext.yaml` + `.installer.yaml` + `.locale.en-US.yaml` (winget).
+   Publishing them is an outward step nothing automates: commit `denext.rb` to
+   the Homebrew tap repo (`Formula/denext.rb`), `denext.json` to the Scoop bucket
+   (`bucket/denext.json`), and open a PR to `microsoft/winget-pkgs` with the
+   three YAML files under `manifests/b/Brainwires/denext/<version>/` (validate
+   with `winget validate` first). Skip release candidates. `install.sh` and
+   `install.ps1` need nothing: they resolve the latest release themselves (the
+   served copies under `site/public/` go live with the docs deploy).
 
 If the script aborts (a failed gate), fix, **commit the fix**, and rerun — after
 `git checkout -- .` of the half-prepared bump/changelog, or the rerun double-rolls
 the changelog.
+
+### Manual desktop checks before a final release
+
+CI covers the desktop surface on every push to `development` (`desktop-ci.yml`, with the
+per-file coverage floor, and the kitchen sink's real-window test in `desktop-window.yml`).
+Before tagging, run `deno task coverage:desktop` once locally as well. What no hosted runner
+can prove — a person at a fingerprint reader, a paid signing identity, a real display — is
+checked by hand before a **final** (not an rc) version, and its result recorded in this table
+before the tag. Each row is the user's (owner **user**); a row that has not passed is either
+fixed or named in the release notes, never silently skipped.
+
+| Check                                                                                                                                                                                                                                                                                                                                                                             | Owner | Result (3.1.0)                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Security — Clerk `rotating_token_nonce`:** a real Clerk sign-in through the desktop OAuth flow settles whether the nonce is bound to the initiating client. If an intercepted nonce alone completes a sign-in (a custom-scheme hijack), the Clerk bridge moves to hosted auth with PKCE / a loopback redirect **before** the final release.                                     | user  | open                                                                                                                                                                                                                                                                                                                                                                |
+| examples/clerk with real accounts (its README → _Manual checks_): Google and GitHub sign-in on the web and in the packaged desktop app (macOS sheet; Windows / Linux browser + Cancel overlay + the "Make this app the handler" path), a passkey created and used on the `*.ts.net` HTTPS host, and `deno task test:desktop` against an instance that allows `denextclerk://app`. | user  | open                                                                                                                                                                                                                                                                                                                                                                |
+| Passkey **success** on macOS with Touch ID: an entitled app (`desktop.macos.provisioningProfile` + `webcredentials:<rp-id>`, the RP serving `/.well-known/apple-app-site-association`) creates and then uses a passkey through the kitchen sink's Manual checks panel.                                                                                                            | user  | pass (2026-10-03): Developer ID–signed test app `dev.denext.passkeytest`, RP brainwires.net, Touch ID create + sign-in both SUCCESS with the same credential id.                                                                                                                                                                                                    |
+| Passkey **success** on Windows with Windows Hello: create, then sign in (kitchen sink › _Manual release checks_ › Passkey).                                                                                                                                                                                                                                                       | user  | skipped for 3.1.0 (2026-10-03): the only Windows test machine is a Windows Server 2025 VM with no TPM, so no Windows Hello and no platform authenticator. The WebAuthn path is unit-tested; the live ceremony waits for a Windows 11 machine or a vTPM VM (ROADMAP).                                                                                                |
+| macOS notifications from a **signed** app (an ad-hoc signature gets `UNErrorDomain` 1): shown, and a click reaches the app.                                                                                                                                                                                                                                                       | user  | open                                                                                                                                                                                                                                                                                                                                                                |
+| Full-app update **signer match** with real identities: a Developer ID (macOS Team ID) and a real Authenticode certificate (Windows) — the same signer installs, a different signer is refused.                                                                                                                                                                                    | user  | macOS 2026-10-03, PARTIAL: a different signer (Apple Development, same Team ID) is refused, `os_signature` (Gatekeeper); a downgrade is refused; the same Developer ID is refused too while un-notarized (`os_signature`, Gatekeeper: unnotarized Developer ID), so the install path needs a notarized build (rerun with `DENEXT_NOTARY_PROFILE`). Windows not run. |
+| Windows 11 **Mica** / Acrylic backdrops look right on a real display (kitchen sink › _Manual release checks_ › Backdrop).                                                                                                                                                                                                                                                         | user  | partial (2026-10-03): on the Windows Server 2025 VM every backdrop applies (DWM reports Mica 2 / Acrylic 3 / Mica Alt 4, the page goes transparent), but the VM's Basic Display Adapter renders the materials as solid fallback colours (the taskbar is flat too), so translucency can only be judged on GPU-backed Windows 11 hardware.                            |
+| Real **HiDPI** displays (a Retina Mac, Windows at 150–200%): window size, position and placement restore (kitchen sink › _Manual release checks_ › HiDPI).                                                                                                                                                                                                                        | user  | pass (2026-10-03) on a Retina Mac (2×): the test pattern and text are sharp, Save / Restore placement matches. Windows 150–200% not run (the Windows VM has no scaled display).                                                                                                                                                                                     |
+| A real **MSI** install's deep links (admin account, with approval): a link clicked before the first launch, a scheme another app owns is left alone, uninstall removes the rows.                                                                                                                                                                                                  | user  | open                                                                                                                                                                                                                                                                                                                                                                |
+| macOS window **fullscreen** and **close-button** clicks through `Deno.BrowserWindow` (the window probe, with the Mac unlocked).                                                                                                                                                                                                                                                   | user  | open                                                                                                                                                                                                                                                                                                                                                                |
+| T3 Connect click-through: the passkey sign-in end to end in the T3 desktop app.                                                                                                                                                                                                                                                                                                   | user  | open                                                                                                                                                                                                                                                                                                                                                                |
 
 ### Releasing a workspace package
 
@@ -308,7 +353,7 @@ deployed.
 ## Where docs live
 
 One topic, one Markdown source. Guides live in
-`apps/web/app/docs/<slug>/content.md` with a 13-line `page.tsx` wrapper and
+`site/app/docs/<slug>/content.md` with a 13-line `page.tsx` wrapper and
 render at `https://denext.dev/docs/<slug>`. Taxonomy files stay at the repo root
 and are rendered from there by a wrapper:
 
@@ -326,7 +371,7 @@ Never write a fact in two files: put it in the owning file and link it. From a
 root file link the site (`https://denext.dev/docs/<slug>`); from a `content.md`
 link `/docs/<slug>` and use absolute
 `github.com/Brainwires/denext/blob/main/…` URLs for repo files. A new guide page
-needs a `NAV` entry in `apps/web/components/ui.tsx` or it gets no sidebar entry.
+needs a `NAV` entry in `site/components/ui.tsx` or it gets no sidebar entry.
 A root `docs/` folder is reserved for `deno doc --html` output (gitignored).
 
 Some docs are **generated** and must never be hand-edited — regenerate them
@@ -351,17 +396,37 @@ src/runtime   hooks, context, Suspense, error boundaries
 src/router    segment parsing/matching + the filesystem manifest scanner
 src/server    request handler, page pipeline, API dispatch, static, middleware
 src/client    virtual-DOM reconciler, hydration, soft navigation
-src/build     deno-bundle integration, dev server, prod server, CLI wiring
-src/compat    the React / Next / next-intl compat surface
+src/build     deno-bundle integration, dev server, prod server, desktop + mobile packaging
+src/cli       the command framework and every `denext` verb (src/cli/commands)
+src/compat    the React / Next / next-intl / Remix compat surface
+src/desktop   the Deno Desktop runtime: bridge, capabilities, window, app, updaters, Clerk
+src/mobile    denext/mobile: the Capacitor shell runtime and its desktop branches
+src/react-native, src/expo, src/navigation   React Native mode, the expo-* shims, native-feel nav
+src/mcp       the `denext mcp` server and its docs corpus
+src/ui        the `denext ui` project GUI
+src/plugin, src/lint, src/testing            plugin kit, lint plugin, denext/testing
 packages/*    first-party JSR packages
-apps/web      the docs site
+site/         the docs site (guides in site/app/docs/<slug>/)
 examples/*    runnable example apps
+scripts/      generators, release + install scripts, CI helpers
+tests/        the unit and integration suites (e2e under tests/e2e)
 cli.ts        the `denext` CLI entry
 mod.ts        the package entry
 ```
 
 `src/jsx` + `src/runtime` + `src/client` are the React-equivalent (there is no
 React in the tree) and `deno bundle` is the only bundler on the native path.
+
+## Trying a local checkout in an app
+
+Link the checkout with Deno's `links` rather than `file:` URLs: put
+`"links": ["../denext"]` in the app's `deno.json` and keep its imports on
+`jsr:@denext/denext@<this checkout's version>/…`, so denext's own bare imports
+(`@std/*`, `ws`) resolve through the checkout's `deno.json`. A `file:` URL
+import map works under `deno run`, but a compiled binary (`deno compile`, and so
+`deno desktop`) resolves only the app's import map and fails at launch with
+`Import "@std/path" not a dependency`; with `file:` URLs, add every denext bare
+import to the app's `imports` too.
 
 ## The build must run from a remote framework (JSR), not just a local checkout
 

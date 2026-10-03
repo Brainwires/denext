@@ -45,6 +45,7 @@ import type { ParsedModule } from "../swc-ast.ts";
 import { CODE_FILE, libraryDepUrl, runtimeDepUrl } from "./resolve.ts";
 import {
   addImporter,
+  crawlModuleGraph,
   depSlug,
   fsUrlPath,
   norm,
@@ -307,19 +308,7 @@ export async function crawlReactNativeGraph(
     ...(st.opts.spaEntry ? [st.opts.spaEntry] : []),
     ...await expoRouterRouteFiles(st.opts.projectDir),
   ];
-  const seen = new Set<string>();
-  let level = roots.map(norm).filter((abs) => CODE_FILE.test(abs));
-  while (level.length > 0) {
-    const next: string[] = [];
-    await Promise.all(level.map(async (abs) => {
-      if (seen.has(abs)) return;
-      seen.add(abs);
-      try {
-        for (const dep of (await transformModule(abs)).deps) next.push(dep.abs);
-      } catch { /* a module that does not transform fails again when the page loads it */ }
-    }));
-    level = next.filter((abs) => !seen.has(abs));
-  }
+  await crawlModuleGraph(roots.map(norm).filter((abs) => CODE_FILE.test(abs)), transformModule);
 }
 
 /** Whether `abs` is one of the app's own code modules (served per module, never bundled). */

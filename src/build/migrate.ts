@@ -1812,6 +1812,7 @@ function spaConfigSource(o: {
     // compiler so the migrated SPA keeps that memoization (else components re-render far more).
     (o.reactCompiler ? `  reactCompiler: true,\n` : "") +
     tailwindBlock +
+    (o.desktop ? desktopDenoFlagsLines() : "") +
     `  spa: {\n` +
     `    entry: ${JSON.stringify(o.entry)},\n` +
     `    title: ${JSON.stringify(o.title)},\n` +
@@ -1834,6 +1835,24 @@ function spaConfigSource(o: {
     `  },\n` +
     `} satisfies DenextConfig;\n`;
 }
+
+/**
+ * The generated config's `desktop.denoFlags` (a `--desktop` migration): the `deno desktop` flags
+ * the `desktop` task bakes, so `denext desktop run | dev | package` pass them too.
+ * `--node-modules-dir=none` resolves the desktop runtime's npm deps from Deno's cache (a manual
+ * or workspace `node_modules` does not carry them, and `deno desktop` would type-check against it
+ * and rewrite the root `package.json`); `--exclude-unused-npm` embeds only the npm packages
+ * `desktop.ts` reaches.
+ */
+function desktopDenoFlagsLines(): string {
+  const flags = MIGRATED_DESKTOP_DENO_FLAGS.map((f) => JSON.stringify(f)).join(", ");
+  return `  // \`deno desktop\` flags \`denext desktop run | dev | package\` pass before the entry: npm\n` +
+    `  // deps from Deno's cache (not node_modules), and only the npm packages desktop.ts reaches.\n` +
+    `  desktop: { denoFlags: [${flags}] },\n`;
+}
+
+/** The `desktop.denoFlags` a `--desktop` migration writes (and its `desktop` task bakes). */
+const MIGRATED_DESKTOP_DENO_FLAGS = ["--node-modules-dir=none", "--exclude-unused-npm"];
 
 /**
  * The `reactNative` line(s) of a generated config. A React Native macOS / Windows app imports
@@ -2085,9 +2104,13 @@ function spaTasks(
     const iconFlag = hasIcon ? ` --icon ${DESKTOP_ICON_FILE}` : "";
     // `-o <AppName>`: without it `deno desktop` names the bundle after the entry file
     // (`desktop.app`, CFBundleName "desktop"). The title becomes the bundle/Dock name.
+    //
+    // The same two resolution flags are written to the config's `desktop.denoFlags`, which
+    // `denext desktop run | dev | package` read; this raw `deno desktop` call reads no config,
+    // so it keeps them inline.
     tasks.desktop = `deno task export && deno desktop ` +
       `--allow-net=127.0.0.1,localhost --allow-read --allow-env ` +
-      `--node-modules-dir=none --exclude-unused-npm --include out${iconFlag} ` +
+      `${MIGRATED_DESKTOP_DENO_FLAGS.join(" ")} --include out${iconFlag} ` +
       `-o ${JSON.stringify(appName)} desktop.ts`;
   }
   return tasks;

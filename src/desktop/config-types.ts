@@ -28,4 +28,7 @@ export const DESKTOP_ADD_CAPABILITY_KEYS = [
   "keepAwake",
   "clipboard",
   "device",
+  "passkeys",
+  "globalShortcuts",
+  "launchAtLogin",
 ] as const;

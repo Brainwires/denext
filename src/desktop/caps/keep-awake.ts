@@ -70,8 +70,10 @@ function defaultDriver(os: Os): KeepAwakeDriver {
         const lib = (Deno as any).dlopen("kernel32.dll", {
           SetThreadExecutionState: { parameters: ["u32"], result: "u32" },
         });
+        // `>>> 0`: a JS bitwise OR with bit 31 set is a negative int32, which Deno FFI rejects for a
+        // `u32` parameter.
         lib.symbols.SetThreadExecutionState(
-          ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED,
+          (ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED) >>> 0,
         );
         return Promise.resolve(() => {
           lib.symbols.SetThreadExecutionState(ES_CONTINUOUS);

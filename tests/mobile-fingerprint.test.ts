@@ -214,6 +214,27 @@ Deno.test("fingerprint: build output, caches, machine-local files and cap-sync c
   assert(!isIgnoredNativePath("android/app/build.gradle"));
 });
 
+Deno.test("fingerprint: fastlane (`mobile add fastlane`, or a team's own in ios/ / android/) is not an input", async () => {
+  await withProject(async (dir) => {
+    const before = await fp(dir);
+    await writeFiles(dir, {
+      // What `denext mobile add fastlane` writes, at the project root (outside ios/ and android/).
+      "fastlane/Fastfile": "platform :ios do\nend\n",
+      "fastlane/Appfile": 'app_identifier("com.example.app")\n',
+      "fastlane/report.xml": "<testsuites/>",
+      "Gemfile": 'gem "fastlane"\n',
+      "Gemfile.lock": "GEM\n",
+      // The per-platform layout some teams use.
+      "ios/fastlane/Fastfile": "lane :beta do\nend\n",
+      "ios/App/fastlane/metadata/en-US/description.txt": "An app.",
+      "android/fastlane/metadata/android/en-US/title.txt": "App",
+    });
+    assertEquals(await fp(dir), before);
+  });
+  assert(isIgnoredNativePath("ios/fastlane"));
+  assert(isIgnoredNativePath("android/fastlane"));
+});
+
 Deno.test("fingerprint: plugin versions count; other dependencies do not", async () => {
   await withProject(async (dir) => {
     const before = await computeNativeFingerprint(dir);

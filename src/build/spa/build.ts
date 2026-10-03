@@ -23,6 +23,7 @@ import {
   STYLE_FILE,
 } from "./shared.ts";
 import { writeMobileExportExtras } from "../mobile-export-extras.ts";
+import { writeDesktopPreload } from "../desktop-preload.ts";
 
 /** Bundle the entry into `clientDir` and write the shell into `shellDir`. */
 async function bundleAndShell(
@@ -125,6 +126,8 @@ export async function exportSpa(
     await bundleAndShell(paths, entryPath, clientOut, staging);
     await copyPublic(paths.publicDir, staging);
     await writeMobileExportExtras(paths.projectDir, paths.config, staging);
+    // `desktop.preload`: one classic script the desktop runtime inlines first into every page.
+    await writeDesktopPreload(paths, staging);
     // `--sourcemaps hidden`: the maps leave the web root before anything hashes it.
     await stashSourceMapsIfHidden(staging, paths.outDir);
     // Last, once every file of the export is in place: the OTA manifest hashes the final

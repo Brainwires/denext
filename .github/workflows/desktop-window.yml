@@ -1,0 +1,135 @@
+# The desktop kitchen sink's window test (examples/desktop-kitchen-sink) on every desktop OS: package
+# the app with denext's pinned Deno Desktop runtime, open it in a real window and assert every check
+# the page runs (capabilities, the window API, deep links, the bridge gate, auth sessions, passkeys,
+# the Clerk bridge, and a full-app update installed, left unconfirmed and rolled back).
+#
+# A check that cannot run on a hosted runner reports `skip` with its reason; every skip is listed in
+# the job summary, and a skip without a reason fails the run. The last job puts every check of every
+# OS in one table.
+#
+# The nightly `schedule` runs from the DEFAULT branch's copy of this file (so it starts firing once
+# the workflow reaches `main` with a release merge) and would check out `main`; like e2e.yml, the
+# window test checks out `development` on a scheduled run so the nightly tests the active line. A
+# push or a manual dispatch tests its own ref.
+
+name: Desktop window test
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "17 5 * * *" # nightly, 05:17 UTC
+  push:
+    branches: [development]
+    paths:
+      - "src/desktop/**"
+      - "src/build/desktop*.ts"
+      - "src/build/desktop-runtime-pin.json"
+      - "src/build/app-update.ts"
+      - "src/build/ota-signing.ts"
+      - "src/build/safe-extract.ts"
+      - "src/build/file-lock.ts"
+      - "src/build/project-locks.ts"
+      - "src/cli/commands/desktop*.ts"
+      - "src/mobile/**"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - "examples/desktop-kitchen-sink/**"
+      - "scripts/ci/desktop-window-summary.ts"
+      - ".github/workflows/desktop-window.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-window-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  window-test:
+    name: window test (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, label: linux-x64 }
+          - { os: macos-latest, label: macos-arm64 }
+          - { os: macos-15-intel, label: macos-x64 }
+          - { os: windows-latest, label: windows-x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
+    defaults:
+      run:
+        working-directory: examples/desktop-kitchen-sink
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # A scheduled run tests `development` (the active line); push / dispatch test their ref.
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7" # exactly: denext's pinned Deno Desktop runtime is built for it
+      # The pinned runtime. A fresh download is checked against the pin's SHA-256; a cache hit is
+      # only size-checked by default, so the job sets DENEXT_DESKTOP_RUNTIME_VERIFY=1 (the job env) to
+      # re-hash every cached file against the pin before use — a poisoned cache entry fails.
+      - name: Cache the Deno Desktop runtime
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/deno/denext-desktop-runtime
+            ~/Library/Caches/deno/denext-desktop-runtime
+            ~/AppData/Local/deno/denext-desktop-runtime
+          key: desktop-runtime-${{ matrix.label }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
+      # Linux: a display (Xvfb), a window manager, a D-Bus session with a Secret Service
+      # (gnome-keyring + secret-tool), a notification server (dunst), the XDG scheme tools, and
+      # the WebKitGTK runtime the webview backend loads.
+      - name: Linux desktop session
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth xfwm4 dbus dbus-x11 gnome-keyring libsecret-tools dunst \
+            xdg-utils desktop-file-utils zenity \
+            libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0 libayatana-appindicator3-1
+      - name: Window test (Linux, headless session)
+        if: runner.os == 'Linux'
+        env:
+          KITCHEN_SINK_XDG: ${{ runner.temp }}/kitchen-sink-xdg
+        run: e2e/linux-session.sh deno task test:window
+      - name: Window test
+        if: runner.os != 'Linux'
+        run: deno task test:window
+      - name: Upload results and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-window-${{ matrix.label }}
+          if-no-files-found: warn
+          # e2e/.run is a dot folder: upload-artifact skips hidden paths unless told otherwise.
+          include-hidden-files: true
+          path: |
+            examples/desktop-kitchen-sink/e2e/.run/*.json
+            examples/desktop-kitchen-sink/e2e/.run/*.log
+            examples/desktop-kitchen-sink/e2e/.run/*.marker
+            examples/desktop-kitchen-sink/e2e/.run/bin/browser.log
+
+  summary:
+    name: results by OS
+    needs: window-test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'development' || github.ref }}
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: desktop-window-*
+          path: window-results
+      - name: Every check, every OS
+        run: deno run --allow-read scripts/ci/desktop-window-summary.ts window-results >> "$GITHUB_STEP_SUMMARY"

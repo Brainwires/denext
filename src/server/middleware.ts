@@ -34,11 +34,23 @@ export const MIDDLEWARE_OVERRIDE_HEADER = "x-middleware-override-headers";
 export const MIDDLEWARE_REQUEST_PREFIX = "x-middleware-request-";
 
 /**
+ * Where the request adapter lives: on globalThis under a global Symbol, not in this module, so
+ * the copy of `next/server` inside a next-compat bundle (a separate instance of this module, in
+ * the prebuilt runtime) registers the adapter the server's own runner applies — as the request
+ * context store does (see `request-context.ts`).
+ */
+const REQUEST_ADAPTER_KEY = Symbol.for("denext.middleware.requestAdapter");
+type AdapterHolder = { [REQUEST_ADAPTER_KEY]?: (request: Request) => Request };
+
+/**
  * Optional adapter applied to the request before each handler runs. The compat
  * layer registers one (via {@linkcode setRequestAdapter}) that wraps the
  * `Request` in a `NextRequest`; by default it is the identity.
  */
-let requestAdapter: (request: Request) => Request = (r) => r;
+function requestAdapter(request: Request): Request {
+  const adapter = (globalThis as AdapterHolder)[REQUEST_ADAPTER_KEY];
+  return adapter ? adapter(request) : request;
+}
 
 /**
  * Install a request adapter (e.g. to hand middleware a `NextRequest`). Importing
@@ -47,7 +59,7 @@ let requestAdapter: (request: Request) => Request = (r) => r;
  * @param adapter Wraps the request before it reaches a handler.
  */
 export function setRequestAdapter(adapter: (request: Request) => Request): void {
-  requestAdapter = adapter;
+  (globalThis as AdapterHolder)[REQUEST_ADAPTER_KEY] = adapter;
 }
 
 /** Apply the installed request adapter (identity unless `next/server` registered one). */

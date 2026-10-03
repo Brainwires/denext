@@ -58,7 +58,17 @@ function compatModules(st: DevState, m: RouteManifest): string[] {
     ? [...st.compatBoundary.server.values()].map((r) => fromFileUrl(r.url))
     : [];
   const api = m.api.map((r) => r.filePath);
-  return [...new Set([...m.pages.flatMap(routeServerModules), ...api, ...islands, ...servers])];
+  // middleware.ts too (see compatModuleList): its npm imports need the compat bundle.
+  const middleware = st.paths.middlewarePath ? [st.paths.middlewarePath] : [];
+  return [
+    ...new Set([
+      ...m.pages.flatMap(routeServerModules),
+      ...api,
+      ...islands,
+      ...servers,
+      ...middleware,
+    ]),
+  ];
 }
 
 /**

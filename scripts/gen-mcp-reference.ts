@@ -1,6 +1,6 @@
 // Generate the in-site MCP reference from the live tool registry.
 // Reads the SAME `TOOLS` / `RESOURCES` the `denext mcp` server serves, so the docs page
-// (apps/web /docs/mcp) can never drift from the tools the server actually exposes.
+// (site /docs/mcp) can never drift from the tools the server actually exposes.
 //
 //   deno task docs:mcp      # regenerate mcp.json
 //   deno task docs:build    # regenerate + export the site
@@ -10,7 +10,7 @@ import { RESOURCES } from "../src/mcp/server.ts";
 import { dirname, fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
-const OUT = `${ROOT}apps/web/app/docs/mcp/mcp.json`;
+const OUT = `${ROOT}site/app/docs/mcp/mcp.json`;
 
 interface Param {
   name: string;

@@ -3,8 +3,9 @@
 // The desktop app ships a static SPA export inside a code-signed `.app`/bundle. Modifying a
 // file inside that bundle invalidates the signature, so this updater NEVER touches `out/`.
 // Instead it maintains a VERIFIED UI OVERLAY in a writable app-support directory that the
-// desktop runtime prefers over the bundled export (see `resolveDesktopUiDir`). Full-binary
-// replacement is out of scope — only the UI assets are overlaid.
+// desktop runtime prefers over the bundled export (see `resolveDesktopUiDir`). Replacing the whole
+// signed app (the binary included) is the separate full-app path re-exported at the end of this
+// module (`app-updater.ts`).
 //
 // It mirrors the shapes and semantics of the mobile OTA state machine (`src/mobile/ota.ts`),
 // but where the native plugin verifies the ECDSA signature on the phone, HERE we verify it in
@@ -865,3 +866,24 @@ export async function desktopUpdateReset(config: DesktopUpdaterConfig): Promise<
     // No data dir yet.
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// FULL-APP updates: the whole signed bundle replaced by a newer signed build (the runtime's
+// `Deno.desktop.updater`), next to the UI overlay above. See `app-updater.ts`.
+
+export {
+  AppUpdateError,
+  appUpdateStatus,
+  checkForAppUpdate,
+  confirmAppUpdate,
+  downloadAppUpdate,
+  installAppUpdateAndRelaunch,
+} from "./app-updater.ts";
+export type {
+  AppUpdateCheck,
+  AppUpdateErrorCode,
+  AppUpdateProgress,
+  AppUpdaterConfig,
+  AppUpdateStaged,
+  AppUpdateStatus,
+} from "./app-updater.ts";

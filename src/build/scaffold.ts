@@ -8,6 +8,13 @@ import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
+import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
+import {
+  MCP_AGENTS_SECTION,
+  MCP_README_ROWS,
+  mcpTaskCommand,
+  writeMcpClientConfigs,
+} from "./mcp-template.ts";
 
 /** Options controlling what {@linkcode scaffoldProject} generates. */
 /** Named starter templates `denext create --template <name>` can choose. */
@@ -53,6 +60,21 @@ export interface ScaffoldOptions {
    */
   compatibilityMode?: boolean;
   /**
+   * Add the fallow code-health gate (dead code, duplication, complexity): a `fallow.toml`
+   * tuned for a denext app, `fallow` / `fallow:audit` / `coverage:fallow` / `hooks:install`
+   * tasks running the pinned `npm:fallow` through Deno, a `.githooks/pre-commit` gate (enabled
+   * only by `deno task hooks:install`), the coverage converter, and an `AGENTS.md` with the
+   * gate's instructions for coding agents.
+   */
+  fallow?: boolean;
+  /**
+   * Install denext's MCP server at the project level: a `mcp` task running the pinned denext
+   * CLI's `denext mcp`, registered as the `denext` server in `.mcp.json` (Claude Code),
+   * `.vscode/mcp.json` and `.cursor/mcp.json` (merged into files that already exist). With
+   * {@linkcode fallow}, the generated `AGENTS.md` also lists the MCP tools.
+   */
+  mcp?: boolean;
+  /**
    * Allow scaffolding into an existing, non-empty directory (`denext init` into
    * `.`). Existing files are never overwritten — a conflict is an error.
    */
@@ -64,7 +86,7 @@ function readme(opts: ScaffoldOptions, appBase: string): string {
   const name = basename(opts.dir) || "my-app";
   return `# ${name}
 
-A [denext](https://denext.dev) app — Next.js's App Router, running on Deno.
+A [denext](https://denext.dev) app — write it once, ship it to the web, iOS, Android and the desktop.
 
 ## Tasks
 
@@ -77,7 +99,7 @@ ${
     opts.desktop || opts.capacitor
       ? "| `deno task export` | Static export into `out/` (the native shells ship this) |\n"
       : ""
-  }
+  }${opts.fallow ? FALLOW_README_ROWS : ""}${opts.mcp ? MCP_README_ROWS : ""}
 The first \`dev\`/\`build\` downloads the framework from JSR (a few seconds); later runs
 are cached.
 
@@ -112,10 +134,17 @@ ${
 `;
 }
 
+/** The README task rows `--fallow` adds. */
+const FALLOW_README_ROWS =
+  "| `deno task fallow:audit` | fallow's changed-code gate (dead code, duplication, complexity) |\n" +
+  "| `deno task hooks:install` | Run that gate before every `git commit` (`.githooks/pre-commit`) |\n";
+
 /** A generated file: repo-relative path + contents. */
 export interface ScaffoldFile {
   path: string;
   content: string;
+  /** File mode on creation (e.g. `0o755` for the git hook); the default otherwise. */
+  mode?: number;
 }
 
 const dep = `jsr:@denext/denext@^${VERSION}`;
@@ -159,8 +188,9 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     tasks.export = `deno run -A ${cli} export .`;
   }
   if (opts.desktop) {
-    // `deno desktop` wraps the Deno.serve() in desktop.ts in a native window.
-    tasks.desktop = "deno task export && deno desktop desktop.ts";
+    // `denext desktop run` exports, then opens desktop.ts's Deno.serve() in a native `deno desktop`
+    // window on denext's pinned Deno Desktop runtime (a bare `deno desktop` uses the stock one).
+    tasks.desktop = `deno run -A ${cli} desktop run .`;
     // The packaging script exports, then builds (embedding `out/`) + code-signs, with
     // opt-in multi-arch (--arch universal|both) and notarization (env vars). See its
     // header + the macOS distribution docs.
@@ -186,6 +216,8 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     tasks["mobile:ios"] = `${cap} open ios`;
     tasks["mobile:android"] = `${cap} open android`;
   }
+  if (opts.fallow) Object.assign(tasks, fallowTasks());
+  if (opts.mcp) tasks.mcp = mcpTaskCommand(cli);
   return tasks;
 }
 
@@ -532,6 +564,7 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
   if (opts.tailwind) ignore.push(`${appBase}/globals.css`);
   if (opts.desktop) ignore.push("dist/"); // packaged desktop binaries
   if (opts.capacitor) ignore.push(...CAPACITOR_IGNORES);
+  if (opts.fallow) ignore.push(...FALLOW_GITIGNORE);
   const gitignore = ignore.join("\n") + "\n";
 
   const files: ScaffoldFile[] = [
@@ -577,6 +610,13 @@ export function scaffoldFiles(opts: ScaffoldOptions): ScaffoldFile[] {
     files.push({ path: "capacitor.config.ts", content: capacitorConfig() });
     files.push({ path: "package.json", content: packageJson() });
   }
+  if (opts.fallow) {
+    files.push(
+      ...fallowFiles().map((f) =>
+        opts.mcp && f.path === "AGENTS.md" ? { ...f, content: f.content + MCP_AGENTS_SECTION } : f
+      ),
+    );
+  }
   return files;
 }
 
@@ -598,7 +638,7 @@ export async function scaffoldProject(
   for (const f of files) {
     const abs = join(opts.dir, f.path);
     await Deno.mkdir(join(abs, ".."), { recursive: true });
-    await Deno.writeTextFile(abs, f.content);
+    await Deno.writeTextFile(abs, f.content, f.mode ? { mode: f.mode } : undefined);
   }
   const written = files.map((f) => f.path);
   if (opts.vscode !== false) {
@@ -607,15 +647,24 @@ export async function scaffoldProject(
     // `/`-separated like every other scaffolded path, on Windows too.
     written.push(...vscode.map((p) => relative(opts.dir, p).split(SEPARATOR).join("/")));
   }
+  if (opts.mcp) {
+    // Merged like the .vscode files: `init` may meet a client config that already lists servers.
+    const mcp = { written: [] as string[], skipped: [] as string[], errors: [] as string[] };
+    await writeMcpClientConfigs(opts.dir, {}, mcp);
+    written.push(...mcp.written);
+    if (mcp.errors.length > 0) {
+      throw new Error(`could not register the denext MCP server: ${mcp.errors.join("; ")}`);
+    }
+  }
   return written;
 }
 
 /** `init`: never clobber an existing file; `create`: the target must be empty or absent. */
 async function refuseToClobber(files: ScaffoldFile[], opts: ScaffoldOptions): Promise<void> {
   if (opts.allowExisting) {
-    // `init` into an existing dir: never clobber a file that already exists. A README is
-    // the one file a repo commonly already has — keep theirs and skip ours.
-    await dropExistingReadme(files, opts.dir);
+    // `init` into an existing dir: never clobber a file that already exists. A README (or
+    // an agent guide) is the file a repo commonly already has — keep theirs and skip ours.
+    await dropExistingDocs(files, opts.dir);
     for (const f of files) {
       if (await exists(join(opts.dir, f.path))) {
         throw new Error(
@@ -701,15 +750,22 @@ async function writeVscodeJson(
   written.push(path);
 }
 
-/** Remove the generated README from `files` when the target dir already has one. */
-async function dropExistingReadme(files: ScaffoldFile[], dir: string): Promise<void> {
-  const i = files.findIndex((f) => f.path === "README.md");
-  if (i !== -1 && await exists(join(dir, "README.md"))) files.splice(i, 1);
+/** The generated docs `init` leaves out when the target dir already has its own. */
+const KEEP_THEIRS = ["README.md", "AGENTS.md", "CLAUDE.md"];
+
+/** Remove the generated README / agent guide from `files` when the target dir has one. */
+async function dropExistingDocs(files: ScaffoldFile[], dir: string): Promise<void> {
+  for (const name of KEEP_THEIRS) {
+    const i = files.findIndex((f) => f.path === name);
+    if (i !== -1 && await exists(join(dir, name))) files.splice(i, 1);
+  }
 }
 
+/** Whether anything is at `path` — `lstat`, so a symlink counts even when it dangles (writing
+ * through a dangling link would create its target, possibly outside the project). */
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.stat(path);
+    await Deno.lstat(path);
     return true;
   } catch {
     return false;
@@ -722,9 +778,10 @@ async function exists(path: string): Promise<boolean> {
 const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for macOS distribution: build (for one or more
- * architectures), code-sign, and optionally notarize + staple. Run on a macOS host.
+ * architectures), code-sign, optionally notarize + staple, and wrap each .app in its installers.
+ * Run on a macOS host.
  *
- *   deno run -A scripts/package-macos.ts [--arch <mode>] [--no-export] [--dmg]
+ *   deno run -A scripts/package-macos.ts [--arch <mode>] [--no-export] [--format <list>]
  *
  * --arch  host | arm64 | x86_64 | both | universal   (default: host)
  *           host      the machine's own architecture
@@ -733,16 +790,43 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *           both      arm64 AND x86_64 as two separate .app bundles
  *           universal one .app whose binaries are lipo-merged (runs natively on both)
  * --no-export  skip \`deno task export\` and reuse the existing out/ (faster iteration)
- * --dmg        also wrap each .app in a .dmg
+ * --format     installers to build beside each .app, comma-separated: dmg, pkg. Default: the
+ *              denext.config.ts \`desktop.installers.macos\` list, else dmg.
+ *                dmg  a drag-to-Applications disk image (hdiutil)
+ *                pkg  an installer package for MDM / \`installer -pkg\` (productbuild)
+ * --dmg        add a .dmg to whatever --format / the config asks for
  *
  * Signing / notarization are driven by env vars (nothing secret is hard-coded):
  *   DENEXT_CODESIGN_IDENTITY  "Developer ID Application: Name (TEAMID)". REQUIRED to
  *                             distribute. Omit → an ad-hoc signature (dev/local only;
  *                             Gatekeeper will block it on other Macs).
  *   DENEXT_ENTITLEMENTS       path to an entitlements .plist (optional).
+ *   DENEXT_PROVISIONING_PROFILE  a .provisionprofile to embed (overrides
+ *                             \`desktop.macos.provisioningProfile\` in denext.config.ts).
  *   DENEXT_NOTARY_PROFILE     a \`xcrun notarytool store-credentials\` keychain profile.
- *                             Set (with a real identity) → notarize + staple each app.
- *   DENEXT_APP_NAME           output base name (default: the deno.json \`desktop.app.name\`).
+ *                             Set (with a real identity) → notarize + staple each app (and
+ *                             each signed .pkg).
+ *   DENEXT_INSTALLER_IDENTITY "Developer ID Installer: Name (TEAMID)" — signs the .pkg.
+ *                             Omit → an unsigned .pkg (MDM tools and Gatekeeper reject it).
+ *   DENEXT_APP_NAME           output base name (default: \`desktop.app.name\` in denext.config.ts,
+ *                             else deno.json's).
+ *
+ * The bundle's name and identifier are \`desktop.app.name\` / \`identifier\` in denext.config.ts
+ * (written into deno.json's \`desktop.app\`, which \`deno desktop\` reads), and its icon
+ * \`desktop.app.icons.macos\` (.icns or .png), else deno.json's, else icons/app.icns.
+ *
+ * \`desktop.macos\` in denext.config.ts adds a provisioning profile (embedded as
+ * Contents/embedded.provisionprofile) and entitlements (merged over DENEXT_ENTITLEMENTS's) — what a
+ * restricted entitlement such as associated domains (native passkeys) needs. The profile is checked
+ * against the app (App ID, team, expiry, the entitlements it grants) before anything is built.
+ *
+ * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
+ * Deno version it was built for (\`deno upgrade --version 2.9.7\`).
+ *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
+ *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
+ *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
  *
  * Outputs into ./dist/.
  *
@@ -750,67 +834,29 @@ const MACOS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * Developer ID Application certificate, storing notarytool credentials, Gatekeeper).
  */
 
-import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
+import {
+  desktopAppName as appName,
+  desktopDenoFlagArgs,
+  desktopIconArgs,
+  desktopIncludeArgs,
+  desktopInstallerPlan,
+  desktopMacosSigning,
+  desktopNpmArgs,
+  type DesktopPackageArgs,
+  desktopPackageFlags,
+  desktopRun as run,
+  desktopRuntimeEnv,
+  parseDesktopPackageArgs,
+  syncDesktopAppConfig,
+  writeLaufeyLaunchConfig,
+} from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
   x86_64: "x86_64-apple-darwin",
 };
 
-interface Opts {
-  arch: "host" | "arm64" | "x86_64" | "both" | "universal";
-  export: boolean;
-  dmg: boolean;
-}
-
-function parseOpts(argv: string[]): Opts {
-  const o: Opts = { arch: "host", export: true, dmg: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--arch") o.arch = argv[++i] as Opts["arch"];
-    else if (a.startsWith("--arch=")) o.arch = a.slice(7) as Opts["arch"];
-    else if (a === "--no-export") o.export = false;
-    else if (a === "--dmg") o.dmg = true;
-    else if (a === "-h" || a === "--help") {
-      console.log(
-        import.meta.filename ?? import.meta.url,
-        "\\nSee the header comment for usage.",
-      );
-      Deno.exit(0);
-    } else throw new Error(\`unknown argument: \${a}\`);
-  }
-  const valid = ["host", "arm64", "x86_64", "both", "universal"];
-  if (!valid.includes(o.arch)) {
-    throw new Error(\`--arch must be one of \${valid.join(", ")}\`);
-  }
-  return o;
-}
-
-async function run(
-  cmd: string[],
-  opts: { env?: Record<string, string> } = {},
-): Promise<void> {
-  const p = new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
-    env: opts.env,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const { code } = await p.output();
-  if (code !== 0) throw new Error(\`command failed (\${code}): \${cmd.join(" ")}\`);
-}
-
-/** Read the desktop app name from deno.json (falls back to "app"). */
-async function appName(): Promise<string> {
-  const env = Deno.env.get("DENEXT_APP_NAME");
-  if (env) return env;
-  try {
-    const cfg = JSON.parse(await Deno.readTextFile("deno.json"));
-    const n = cfg?.desktop?.app?.name;
-    if (typeof n === "string" && n.trim()) return n.trim();
-  } catch { /* no/invalid deno.json */ }
-  return "app";
-}
+type Opts = DesktopPackageArgs;
 
 /** Build a single .app for \`target\` (undefined = host arch). deno desktop signs it
  * ad-hoc; the caller re-signs with the real identity afterwards. */
@@ -823,16 +869,33 @@ async function buildApp(out: string, target?: string): Promise<void> {
     // prompt the packaged GUI has no TTY to answer.
     "--no-prompt",
     ...await desktopPackageFlags(import.meta.url, "darwin"),
+    // desktop.denoFlags in denext.config.ts (e.g. --node-modules-dir=none for a pnpm workspace).
+    ...await desktopDenoFlagArgs(import.meta.url),
     "--include",
     "out",
     ...await desktopIncludeArgs(import.meta.url),
+    // A project with node_modules: embed only the npm packages the entry reaches.
+    ...await desktopNpmArgs(import.meta.url),
   ];
   if (target) cmd.push("--target", target);
+  // The app icon: desktop.app.icons.macos in denext.config.ts, else deno.json's, else
+  // icons/app.icns, icons/app.png or desktop-icon.png.
+  cmd.push(...await desktopIconArgs(import.meta.url, "darwin"));
   // deno desktop appends ".app" to --output on macOS, so pass the base name (strip a trailing
   // ".app") to land exactly at \`out\` — else it writes \`out.app\` and sign/lipo/dmg miss it.
   cmd.push("--output", out.replace(/\\.app$/, ""), "desktop.ts");
-  await run(cmd);
+  // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
+  await run(cmd, await desktopRuntimeEnv(import.meta.url, target));
+  // The webview backend's launch settings (app id, the origin's custom scheme, single instance),
+  // read from Contents/Resources at launch. Writing into the bundle breaks deno desktop's ad-hoc
+  // seal, so a bundle that got one is always re-signed.
+  if (await writeLaufeyLaunchConfig(import.meta.url, "darwin", out)) {
+    resealNeeded = true;
+  }
 }
+
+/** Set when a bundle was modified after \`deno desktop\` signed it (see buildApp). */
+let resealNeeded = false;
 
 /** List the Mach-O files inside a .app bundle (executables + dylibs). */
 async function machOFiles(app: string): Promise<string[]> {
@@ -912,10 +975,15 @@ async function sign(
   app: string,
   identity: string | undefined,
   entitlements?: string,
+  provisioningProfile?: string,
 ): Promise<void> {
   const id = identity ?? "-";
   const ts = identity ? "--timestamp" : "--timestamp=none";
   const mainExe = await mainExecutable(app);
+  // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
+  if (identity && provisioningProfile) {
+    await Deno.copyFile(provisioningProfile, \`\${app}/Contents/embedded.provisionprofile\`);
+  }
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
   // executable and applies the entitlements.
   for (const file of await machOFiles(app)) {
@@ -967,7 +1035,7 @@ async function notarize(app: string, profile: string): Promise<void> {
   }
 }
 
-async function makeDmg(app: string): Promise<void> {
+async function makeDmg(app: string): Promise<string> {
   const dmg = app.replace(/\\.app$/, ".dmg");
   await Deno.remove(dmg).catch(() => {});
   await run([
@@ -982,16 +1050,54 @@ async function makeDmg(app: string): Promise<void> {
     "UDZO",
     dmg,
   ]);
+  return dmg;
+}
+
+/** Wrap a .app in an installer package (productbuild) that installs it into /Applications;
+ * signed with the Developer ID Installer identity, and notarized + stapled with a notary profile. */
+async function makePkg(app: string, s: Signing): Promise<string> {
+  const pkg = app.replace(/\\.app$/, ".pkg");
+  await Deno.remove(pkg).catch(() => {});
+  const sign = s.installerIdentity ? ["--sign", s.installerIdentity] : [];
+  await run([
+    "productbuild",
+    ...sign,
+    "--component",
+    app,
+    "/Applications",
+    pkg,
+  ]);
+  if (s.installerIdentity && s.notaryProfile) {
+    await run([
+      "xcrun",
+      "notarytool",
+      "submit",
+      pkg,
+      "--keychain-profile",
+      s.notaryProfile,
+      "--wait",
+    ]);
+    await run(["xcrun", "stapler", "staple", pkg]);
+  } else if (!s.installerIdentity) {
+    console.warn(
+      \`  \${pkg}: unsigned (set DENEXT_INSTALLER_IDENTITY to a "Developer ID Installer" identity).\`,
+    );
+  }
+  return pkg;
 }
 
 /** The signing setup, from env (nothing secret is hard-coded). */
 interface Signing {
   identity: string | undefined;
   entitlements: string | undefined;
+  /** desktop.macos.provisioningProfile (or DENEXT_PROVISIONING_PROFILE), checked. */
+  provisioningProfile: string | undefined;
   notaryProfile: string | undefined;
+  /** "Developer ID Installer: …" for the .pkg. */
+  installerIdentity: string | undefined;
 }
 
-function signingFromEnv(): Signing {
+async function signingFromEnv(): Promise<Signing> {
   const identity = Deno.env.get("DENEXT_CODESIGN_IDENTITY") || undefined;
   const notaryProfile = Deno.env.get("DENEXT_NOTARY_PROFILE") || undefined;
   if (!identity) {
@@ -1006,10 +1112,19 @@ function signingFromEnv(): Signing {
       "notarization needs DENEXT_CODESIGN_IDENTITY (a real Developer ID identity).",
     );
   }
-  return {
+  // desktop.macos: the profile (checked against the app now, before the build) and the
+  // entitlements merged over DENEXT_ENTITLEMENTS's.
+  const mac = await desktopMacosSigning(import.meta.url, {
     identity,
     entitlements: Deno.env.get("DENEXT_ENTITLEMENTS") || undefined,
+    provisioningProfile: Deno.env.get("DENEXT_PROVISIONING_PROFILE") || undefined,
+  });
+  return {
+    identity,
+    entitlements: mac.entitlements,
+    provisioningProfile: mac.provisioningProfile,
     notaryProfile,
+    installerIdentity: Deno.env.get("DENEXT_INSTALLER_IDENTITY") || undefined,
   };
 }
 
@@ -1049,22 +1164,26 @@ async function buildArtifacts(opts: Opts, name: string): Promise<string[]> {
 }
 
 /**
- * Sign, notarize and wrap each bundle. A lipo-merged (universal) bundle always needs
- * re-signing; for others we re-sign only when a real identity is provided (deno desktop
- * already applied ad-hoc).
+ * Sign, notarize and wrap each bundle in its installers; returns the installer paths. A
+ * lipo-merged (universal) bundle always needs re-signing; for others we re-sign only when a real
+ * identity is provided (deno desktop already applied ad-hoc).
  */
 async function finishArtifacts(
   artifacts: string[],
   opts: Opts,
+  formats: string[],
   s: Signing,
-): Promise<void> {
+): Promise<string[]> {
+  const installers: string[] = [];
   for (const app of artifacts) {
-    if (s.identity || opts.arch === "universal") {
-      await sign(app, s.identity, s.entitlements);
+    if (s.identity || opts.arch === "universal" || resealNeeded) {
+      await sign(app, s.identity, s.entitlements, s.provisioningProfile);
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
-    if (opts.dmg) await makeDmg(app);
+    if (formats.includes("dmg")) installers.push(await makeDmg(app));
+    if (formats.includes("pkg")) installers.push(await makePkg(app, s));
   }
+  return installers;
 }
 
 function distributionNote(s: Signing): string {
@@ -1084,15 +1203,33 @@ async function main(): Promise<void> {
     );
     Deno.exit(1);
   }
-  const opts = parseOpts(Deno.args);
-  const signing = signingFromEnv();
-  const name = await appName();
+  const opts = parseDesktopPackageArgs(Deno.args, {
+    arches: ["host", "arm64", "x86_64", "both", "universal"],
+    legacy: { "--dmg": "dmg" },
+  });
+  const signing = await signingFromEnv();
+  // DENEXT_APP_NAME, else desktop.app.name in denext.config.ts, else deno.json's.
+  const name = await appName(import.meta.url);
+  // --format, else desktop.installers.macos in denext.config.ts, else a .dmg.
+  const plan = await desktopInstallerPlan(
+    import.meta.url,
+    "darwin",
+    opts.formats,
+    opts.add,
+  );
+  // .deno-desktop/app.json (the app origin + identifier) and its deno.json compile.include.
+  await syncDesktopAppConfig(import.meta.url);
   if (opts.export) await run(["deno", "task", "export"]);
   await Deno.mkdir("dist", { recursive: true });
   const artifacts = await buildArtifacts(opts, name);
-  await finishArtifacts(artifacts, opts, signing);
+  const installers = await finishArtifacts(
+    artifacts,
+    opts,
+    plan.formats,
+    signing,
+  );
   console.log("\\n✓ Packaged:");
-  for (const a of artifacts) console.log("  " + a);
+  for (const a of [...artifacts, ...installers]) console.log("  " + a);
   console.log(distributionNote(signing));
 }
 
@@ -1101,16 +1238,15 @@ if (import.meta.main) await main();
 
 /** The scaffolded Linux packaging script (scripts/package-linux.ts). `deno desktop`
  * emits a complete Linux app bundle directory (executable + `.so` + `.desktop`), so
- * this builds one or both arches and wraps each as a distributable `.tar.gz` (and an
- * AppImage when `appimagetool` is on PATH). Cross-builds from any OS. */
+ * this builds one or both arches and wraps each in its installers: `.tar.gz` + `.deb` by
+ * default, `.rpm` (rpmbuild) and an AppImage (appimagetool) on request. */
 const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for Linux distribution. \`deno desktop\` produces a
  * complete bundle directory (the executable, its \`.so\`, and a freedesktop \`.desktop\`
- * launcher); this builds one or both arches and wraps each as a \`.tar.gz\` (and an
- * AppImage when \`appimagetool\` is available). Cross-builds from any OS.
+ * launcher); this builds one or both arches and wraps each in its installers.
  *
- *   deno run -A scripts/package-linux.ts [--arch <mode>] [--no-export] [--appimage]
+ *   deno run -A scripts/package-linux.ts [--arch <mode>] [--no-export] [--format <list>]
  *
  * --arch  host | x86_64 | arm64 | both   (default: host)
  *           host    the machine's own architecture (x86_64 when cross-building from macOS Intel)
@@ -1118,15 +1254,49 @@ const LINUX_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *           arm64   aarch64-unknown-linux-gnu
  *           both    x86_64 AND arm64 as two bundles
  * --no-export  skip \`deno task export\` and reuse the existing out/ (faster iteration)
- * --appimage   also build an AppImage per arch (needs \`appimagetool\` on PATH)
+ * --format     installers per arch, comma-separated: tar.gz, deb, rpm, appimage. Default: the
+ *              denext.config.ts \`desktop.installers.linux\` list, else tar.gz,deb.
+ *                tar.gz    the bundle directory
+ *                deb       Debian/Ubuntu package (built by denext; no tool needed)
+ *                rpm       Fedora/RHEL/openSUSE package (needs \`rpmbuild\`)
+ *                appimage  a single-file AppImage (needs \`appimagetool\`)
+ *              The .deb/.rpm install to /usr/lib/<app>, link /usr/bin/<app>, and register the
+ *              launcher, the icon and the deno.json \`desktop.app.deepLinks\` schemes. A default
+ *              format whose tool is missing is skipped with a warning; one you asked for fails.
+ * --appimage   add an AppImage to whatever --format / the config asks for
  *
- *   DENEXT_APP_NAME  output base name (default: the deno.json \`desktop.app.name\`).
+ *   DENEXT_APP_NAME  output base name (default: \`desktop.app.name\` in denext.config.ts, else
+ *                    deno.json's). The bundle's name, identifier and icon come from
+ *                    denext.config.ts \`desktop.app\` (\`icons.linux\`, a PNG), else deno.json.
+ *   deno.json \`version\` is the package version; denext.config.ts \`desktop.installers\`
+ *   \`publisher\` / \`description\` fill the package metadata.
+ *
+ * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
+ * Deno version it was built for (\`deno upgrade --version 2.9.7\`).
+ *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
+ *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
+ *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
  *
  * The end user's Linux desktop needs a WebKitGTK runtime (webkit2gtk) for the window;
  * that is a deploy-environment dependency, not baked into the bundle. Outputs into ./dist/.
  */
 
-import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
+import {
+  buildDesktopBundle,
+  buildDesktopDeb,
+  buildDesktopRpm,
+  buildDesktopTarball,
+  desktopPackageArches,
+  type DesktopPackageMeta,
+  desktopRequireTool,
+  desktopRun as run,
+  desktopToolGate,
+  desktopVersionProblem,
+  parseDesktopPackageArgs,
+  prepareDesktopPackage,
+} from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-unknown-linux-gnu",
@@ -1135,120 +1305,33 @@ const TARGETS: Record<string, string> = {
 // Underscore-free labels for output paths: \`deno desktop\` derives a reverse-DNS bundle id
 // from the output basename and rejects '_' (so a raw \`x86_64\` suffix drops the .desktop file).
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
-const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
+const OS = "linux";
 
-interface Opts {
-  arch: "host" | "x86_64" | "arm64" | "both";
-  export: boolean;
-  appimage: boolean;
-}
-
-function parseOpts(argv: string[]): Opts {
-  const o: Opts = { arch: "host", export: true, appimage: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--arch") o.arch = argv[++i] as Opts["arch"];
-    else if (a.startsWith("--arch=")) o.arch = a.slice(7) as Opts["arch"];
-    else if (a === "--no-export") o.export = false;
-    else if (a === "--appimage") o.appimage = true;
-    else if (a === "-h" || a === "--help") {
-      console.log(
-        import.meta.filename ?? import.meta.url,
-        "\\nSee the header comment for usage.",
-      );
-      Deno.exit(0);
-    } else throw new Error(\`unknown argument: \${a}\`);
-  }
-  const valid = ["host", "x86_64", "arm64", "both"];
-  if (!valid.includes(o.arch)) {
-    throw new Error(\`--arch must be one of \${valid.join(", ")}\`);
-  }
-  return o;
-}
-
-async function run(cmd: string[]): Promise<void> {
-  const p = new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
-    stdout: "inherit",
-    stderr: "inherit",
+/** Build a Linux bundle directory for \`arch\` at dist/<name>-<label> (PNG icon). */
+async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<string> {
+  return await buildDesktopBundle(import.meta.url, OS, {
+    target: TARGETS[arch],
+    out: \`dist/\${name}-\${LABELS[arch]}\`,
+    icons: ["icons/app.png", "desktop-icon.png"],
   });
-  const { code } = await p.output();
-  if (code !== 0) throw new Error(\`command failed (\${code}): \${cmd.join(" ")}\`);
 }
 
-/** Read the desktop app name from deno.json (falls back to "app"). */
-async function appName(): Promise<string> {
-  const env = Deno.env.get("DENEXT_APP_NAME");
-  if (env) return env;
-  try {
-    const cfg = JSON.parse(await Deno.readTextFile("deno.json"));
-    const n = cfg?.desktop?.app?.name;
-    if (typeof n === "string" && n.trim()) return n.trim();
-  } catch { /* no/invalid deno.json */ }
-  return "app";
-}
-
-/** Build a Linux bundle directory for \`arch\` at dist/<name>-<label>. */
-async function buildBundle(
-  name: string,
-  arch: "x86_64" | "arm64",
-): Promise<string> {
-  const out = \`dist/\${name}-\${LABELS[arch]}\`;
-  await Deno.remove(out, { recursive: true }).catch(() => {});
-  const cmd = [
-    "deno",
-    "desktop",
-    // Baked least-privilege flags mean an unbaked permission should fail fast, not block on a
-    // prompt the packaged GUI has no TTY to answer.
-    "--no-prompt",
-    ...await desktopPackageFlags(import.meta.url, "linux"),
-    "--include",
-    "out",
-    ...await desktopIncludeArgs(import.meta.url),
-    "--target",
-    TARGETS[arch],
-  ];
-  // Linux uses a PNG icon; deno desktop skips a non-PNG gracefully.
-  for (const icon of ["icons/app.png", "desktop-icon.png"]) {
-    try {
-      await Deno.stat(icon);
-      cmd.push("--icon", icon);
-      break;
-    } catch { /* no icon at this path */ }
-  }
-  cmd.push("--output", out, "desktop.ts");
-  await run(cmd);
-  return out;
-}
-
-/** tar.gz a bundle directory for distribution. */
+/** tar.gz a bundle directory for distribution (written by denext: modes kept on any host). */
 async function tarball(
   name: string,
   arch: "x86_64" | "arm64",
   dir: string,
 ): Promise<string> {
   const tgz = \`dist/\${name}-\${LABELS[arch]}-linux.tar.gz\`;
-  await run(["tar", "czf", tgz, "-C", "dist", dir.replace(/^dist\\//, "")]);
-  return tgz;
+  return await buildDesktopTarball({ bundleDir: dir, out: tgz });
 }
 
-/** Build an AppImage for a bundle if appimagetool is available; returns its path or null. */
+/** Build an AppImage for a bundle with appimagetool; returns its path. */
 async function appImage(
   name: string,
   arch: "x86_64" | "arm64",
   dir: string,
-): Promise<string | null> {
-  const tool = await new Deno.Command("sh", {
-    args: ["-c", "command -v appimagetool"],
-    stdout: "null",
-    stderr: "null",
-  }).output().then((r) => r.code === 0, () => false);
-  if (!tool) {
-    console.warn(
-      \`  appimagetool not found — skipping AppImage for \${arch} (tar.gz still built).\`,
-    );
-    return null;
-  }
+): Promise<string> {
   const appdir = \`\${dir}.AppDir\`;
   await Deno.remove(appdir, { recursive: true }).catch(() => {});
   await Deno.mkdir(appdir, { recursive: true });
@@ -1265,30 +1348,53 @@ async function appImage(
   return outFile;
 }
 
-/** Filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths. */
-function slugify(name: string): string {
-  return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") ||
-    "app";
+/** Wrap one finished bundle in each planned installer; returns their paths. */
+async function installers(
+  name: string,
+  arch: "x86_64" | "arm64",
+  dir: string,
+  plan: { formats: string[]; explicit: boolean },
+  meta: DesktopPackageMeta,
+): Promise<string[]> {
+  const out: string[] = [];
+  const base = \`dist/\${name}-\${LABELS[arch]}\`;
+  const pkg = { meta, bundleDir: dir, exe: \`\${name}-\${LABELS[arch]}\`, arch };
+  // A version Debian / RPM can't express skips a default .deb with a warning (an asked-for one fails).
+  const versionOk = (format: "deb" | "rpm") =>
+    desktopToolGate(desktopVersionProblem(format, meta.version), \`.\${format}\`, plan.explicit);
+  for (const format of plan.formats) {
+    if (format === "tar.gz") out.push(await tarball(name, arch, dir));
+    if (format === "deb" && versionOk("deb")) {
+      out.push(await buildDesktopDeb({ ...pkg, out: \`\${base}.deb\` }));
+    }
+    if (
+      format === "rpm" && versionOk("rpm") &&
+      await desktopRequireTool("rpmbuild", ".rpm", plan.explicit)
+    ) {
+      out.push(await buildDesktopRpm({ ...pkg, out: \`\${base}.rpm\` }));
+    }
+    if (
+      format === "appimage" && await desktopRequireTool("appimagetool", "AppImage", plan.explicit)
+    ) {
+      out.push(await appImage(name, arch, dir));
+    }
+  }
+  return out;
 }
 
 async function main(): Promise<void> {
-  const opts = parseOpts(Deno.args);
-  const name = slugify(await appName());
-  await Deno.mkdir("dist", { recursive: true });
-  if (opts.export) await run(["deno", "task", "export"]);
-
-  const arches: Array<"x86_64" | "arm64"> = opts.arch === "both"
-    ? ["x86_64", "arm64"]
-    : [opts.arch === "host" ? hostArch : opts.arch];
+  const opts = parseDesktopPackageArgs(Deno.args, {
+    arches: ["host", "x86_64", "arm64", "both"],
+    legacy: { "--appimage": "appimage" },
+  });
+  // --format, else desktop.installers.linux in denext.config.ts, else tar.gz + deb; the
+  // .deno-desktop/app.json sync, the package metadata (name, version, deep links), the export.
+  const { name, plan, meta } = await prepareDesktopPackage(import.meta.url, OS, opts);
 
   const artifacts: string[] = [];
-  for (const arch of arches) {
+  for (const arch of desktopPackageArches(opts.arch)) {
     const dir = await buildBundle(name, arch);
-    artifacts.push(await tarball(name, arch, dir));
-    if (opts.appimage) {
-      const img = await appImage(name, arch, dir);
-      if (img) artifacts.push(img);
-    }
+    artifacts.push(dir, ...await installers(name, arch, dir, plan, meta));
   }
 
   console.log("\\n  Built:");
@@ -1303,16 +1409,17 @@ if (import.meta.main) await main();
 
 /** Windows packaging script — kept byte-identical to
  * examples/native/scripts/package-windows.ts (asserted by scaffold.test.ts). Builds the
- * `.exe` via `deno desktop --target`, zips it, and Authenticode-signs when a cert is set. */
+ * `.exe` via `deno desktop --target`, Authenticode-signs it when a cert is set, and wraps the
+ * bundle in an `.msi` (WiX) and/or a `.zip`. */
 const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
 /**
  * Package this \`deno desktop\` app for Windows distribution. \`deno desktop\` produces a
  * complete bundle directory (the \`.exe\`, its \`.dll\`s, and resources); this builds one or
- * both arches and wraps each as a \`.zip\`, then Authenticode-signs the \`.exe\` when a code-
- * signing certificate is provided. The \`.exe\` cross-builds from any OS; signing only runs
- * where \`signtool\` is available (Windows) and a cert is configured.
+ * both arches, Authenticode-signs the \`.exe\` when a code-signing certificate is provided, and
+ * wraps each bundle in its installers (an \`.msi\` by default). Signing only runs where
+ * \`signtool\` is available (Windows) and a cert is configured.
  *
- *   deno run -A scripts/package-windows.ts [--arch <mode>] [--no-export] [--no-sign]
+ *   deno run -A scripts/package-windows.ts [--arch <mode>] [--no-export] [--no-sign] [--format <list>]
  *
  * --arch  host | x86_64 | arm64 | both   (default: host)
  *           host    the machine's own architecture
@@ -1321,19 +1428,54 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *           both    x86_64 AND arm64 as two bundles
  * --no-export  skip \`deno task export\` and reuse the existing out/ (faster iteration)
  * --no-sign    skip Authenticode signing even when a certificate is configured
+ * --format     installers per arch, comma-separated: msi, zip. Default: the denext.config.ts
+ *              \`desktop.installers.windows\` list, else msi.
+ *                msi  a Windows Installer package (WiX 5: \`dotnet tool install --global wix
+ *                     --version 5.0.2\`; builds on Windows). Installs per-user into
+ *                     %LOCALAPPDATA%\\Programs\\<App> with no admin rights, or per-machine into
+ *                     Program Files with \`msiexec /i <app>.msi ALLUSERS=1\`; adds a Start-menu
+ *                     shortcut and the deno.json \`desktop.app.deepLinks\` schemes; a newer
+ *                     version upgrades in place (the UpgradeCode follows \`desktop.app.identifier\`).
+ *                     Signed like the .exe. Without WiX a default .msi falls back to the .zip.
+ *                zip  the bundle directory
  *
- *   DENEXT_APP_NAME                output base name (default: the deno.json \`desktop.app.name\`).
+ *   DENEXT_APP_NAME                output base name (default: \`desktop.app.name\` in
+ *                                  denext.config.ts, else deno.json's). The bundle's name,
+ *                                  identifier and icon come from denext.config.ts \`desktop.app\`
+ *                                  (\`icons.windows\`, an .ico), else deno.json.
  *   DENEXT_WINDOWS_CERT            path to a code-signing certificate (.pfx) — signing is
  *                                  skipped when unset (no secrets are ever baked in).
  *   DENEXT_WINDOWS_CERT_PASSWORD   the .pfx password, if any.
  *   DENEXT_SIGN_TIMESTAMP_URL      RFC-3161 timestamp server (default: DigiCert's).
+ *   deno.json \`version\` is the MSI ProductVersion (numeric major.minor.build); denext.config.ts
+ *   \`desktop.installers.publisher\` its Manufacturer.
+ *
+ * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
+ * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
+ * Deno version it was built for (\`deno upgrade --version 2.9.7\`).
+ *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
+ *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
+ *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
  *
  * The end user's Windows machine needs the Microsoft Edge WebView2 runtime for the window
  * (preinstalled on current Windows 10/11); that is a deploy-environment dependency, not
  * baked into the bundle. Outputs into ./dist/.
  */
 
-import { desktopIncludeArgs, desktopPackageFlags } from "denext/desktop";
+import {
+  buildDesktopBundle,
+  buildDesktopMsi,
+  desktopHasTool as has,
+  desktopMsiProblem,
+  desktopOptionalInstaller,
+  desktopPackageArches,
+  type DesktopPackageMeta,
+  desktopRun as run,
+  desktopToolGate,
+  parseDesktopPackageArgs,
+  prepareDesktopPackage,
+} from "denext/desktop";
 
 const TARGETS: Record<string, string> = {
   x86_64: "x86_64-pc-windows-msvc",
@@ -1344,123 +1486,72 @@ const TARGETS: Record<string, string> = {
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
 const hostArch = Deno.build.arch === "aarch64" ? "arm64" : "x86_64";
 const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
+const OS = "windows";
 
-interface Opts {
-  arch: "host" | "x86_64" | "arm64" | "both";
-  export: boolean;
-  sign: boolean;
-}
-
-function parseOpts(argv: string[]): Opts {
-  const o: Opts = { arch: "host", export: true, sign: true };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--arch") o.arch = argv[++i] as Opts["arch"];
-    else if (a.startsWith("--arch=")) o.arch = a.slice(7) as Opts["arch"];
-    else if (a === "--no-export") o.export = false;
-    else if (a === "--no-sign") o.sign = false;
-    else if (a === "-h" || a === "--help") {
-      console.log(
-        import.meta.filename ?? import.meta.url,
-        "\\nSee the header comment for usage.",
-      );
-      Deno.exit(0);
-    } else throw new Error(\`unknown argument: \${a}\`);
-  }
-  const valid = ["host", "x86_64", "arm64", "both"];
-  if (!valid.includes(o.arch)) {
-    throw new Error(\`--arch must be one of \${valid.join(", ")}\`);
-  }
-  return o;
-}
-
-async function run(cmd: string[]): Promise<void> {
-  const p = new Deno.Command(cmd[0], {
-    args: cmd.slice(1),
-    stdout: "inherit",
-    stderr: "inherit",
+/** Build a Windows bundle directory for \`arch\` at dist/<name>-<label> (.ico icon). */
+async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<string> {
+  return await buildDesktopBundle(import.meta.url, OS, {
+    target: TARGETS[arch],
+    out: \`dist/\${name}-\${LABELS[arch]}\`,
+    icons: ["icons/app.ico", "desktop-icon.ico"],
   });
-  const { code } = await p.output();
-  if (code !== 0) throw new Error(\`command failed (\${code}): \${cmd.join(" ")}\`);
 }
 
-/** Whether a command exists on PATH. */
-async function has(cmd: string): Promise<boolean> {
-  const probe = Deno.build.os === "windows"
-    ? { args: ["/c", "where", cmd] }
-    : { args: ["-c", \`command -v \${cmd}\`] };
-  const bin = Deno.build.os === "windows" ? "cmd" : "sh";
-  return await new Deno.Command(bin, { ...probe, stdout: "null", stderr: "null" })
-    .output().then((r) => r.code === 0, () => false);
-}
-
-/** Read the desktop app name from deno.json (falls back to "app"). */
-async function appName(): Promise<string> {
-  const env = Deno.env.get("DENEXT_APP_NAME");
-  if (env) return env;
-  try {
-    const cfg = JSON.parse(await Deno.readTextFile("deno.json"));
-    const n = cfg?.desktop?.app?.name;
-    if (typeof n === "string" && n.trim()) return n.trim();
-  } catch { /* no/invalid deno.json */ }
-  return "app";
-}
-
-/** Build a Windows bundle directory for \`arch\` at dist/<name>-<label>. */
-async function buildBundle(
-  name: string,
-  arch: "x86_64" | "arm64",
-): Promise<string> {
-  const out = \`dist/\${name}-\${LABELS[arch]}\`;
-  await Deno.remove(out, { recursive: true }).catch(() => {});
-  const cmd = [
-    "deno",
-    "desktop",
-    // Baked least-privilege flags mean an unbaked permission should fail fast, not block on a
-    // prompt the packaged GUI has no TTY to answer.
-    "--no-prompt",
-    ...await desktopPackageFlags(import.meta.url, "windows"),
-    "--include",
-    "out",
-    ...await desktopIncludeArgs(import.meta.url),
-    "--target",
-    TARGETS[arch],
-  ];
-  // Windows uses an .ico icon; deno desktop skips a non-.ico gracefully.
-  for (const icon of ["icons/app.ico", "desktop-icon.ico"]) {
-    try {
-      await Deno.stat(icon);
-      cmd.push("--icon", icon);
-      break;
-    } catch { /* no icon at this path */ }
-  }
-  cmd.push("--output", out, "desktop.ts");
-  await run(cmd);
-  return out;
-}
-
-/** Authenticode-sign the bundle's .exe when a certificate is configured; else skip. */
-async function sign(name: string, arch: "x86_64" | "arm64", dir: string): Promise<void> {
+/** Authenticode-sign \`file\` (the bundle's .exe, or an .msi) when a certificate is configured;
+ * else skip with a warning. */
+async function sign(file: string): Promise<void> {
   const cert = Deno.env.get("DENEXT_WINDOWS_CERT");
   if (!cert) {
     console.warn(
-      \`  no DENEXT_WINDOWS_CERT set — skipping Authenticode signing for \${arch} (zip still built).\`,
+      \`  no DENEXT_WINDOWS_CERT set — \${file} is not Authenticode-signed.\`,
     );
     return;
   }
   if (!(await has("signtool"))) {
     console.warn(
-      \`  signtool not found (Windows SDK) — skipping signing for \${arch}; sign on a Windows host/CI.\`,
+      \`  signtool not found (Windows SDK) — \${file} is not signed; sign on a Windows host/CI.\`,
     );
     return;
   }
-  const exe = \`\${dir}/\${name}-\${LABELS[arch]}.exe\`;
-  const timestamp = Deno.env.get("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
-  const args = ["sign", "/f", cert, "/fd", "sha256", "/tr", timestamp, "/td", "sha256"];
+  const timestamp = Deno.env.get("DENEXT_SIGN_TIMESTAMP_URL") ??
+    DEFAULT_TIMESTAMP_URL;
+  const args = [
+    "sign",
+    "/f",
+    cert,
+    "/fd",
+    "sha256",
+    "/tr",
+    timestamp,
+    "/td",
+    "sha256",
+  ];
+  // signtool takes a .pfx password only as \`/p\` (no environment or file form), so it is
+  // redacted from the failure message; keep it out of logs by setting it as a CI secret.
   const pass = Deno.env.get("DENEXT_WINDOWS_CERT_PASSWORD");
   if (pass) args.push("/p", pass);
-  args.push(exe);
-  await run(["signtool", ...args]);
+  args.push(file);
+  await run(["signtool", ...args], undefined, { secrets: pass ? [pass] : [] });
+}
+
+/** Build the .msi for a finished bundle with WiX 5; null when it can't be built here (off
+ * Windows, no WiX 5, a version MSI can't express, a failed \`wix build\`) and the .msi was only a
+ * default — an asked-for .msi fails the run instead. */
+async function msi(
+  name: string,
+  arch: "x86_64" | "arm64",
+  dir: string,
+  meta: DesktopPackageMeta,
+  explicit: boolean,
+): Promise<string | null> {
+  const what = \`.msi for \${arch} (the .zip is built instead)\`;
+  if (!desktopToolGate(await desktopMsiProblem(meta.version), what, explicit)) return null;
+  const out = \`dist/\${name}-\${LABELS[arch]}.msi\`;
+  const exe = \`\${name}-\${LABELS[arch]}.exe\`;
+  return await desktopOptionalInstaller(what, explicit, async () => {
+    await buildDesktopMsi({ meta, bundleDir: dir, exe, arch, out });
+    return out;
+  });
 }
 
 /** Zip a bundle directory for distribution (prefers \`zip\`, falls back to bsdtar). */
@@ -1481,12 +1572,6 @@ async function zipBundle(
   return zip;
 }
 
-/** Filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths. */
-function slugify(name: string): string {
-  return name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") ||
-    "app";
-}
-
 /** Ship the VC++ 2015-2022 runtime DLLs the deno desktop binary imports (VCRUNTIME140,
  * VCRUNTIME140_1, MSVCP140) next to the .exe, so the packaged app runs with NO redistributable
  * installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found).
@@ -1494,15 +1579,17 @@ function slugify(name: string): string {
  * packaging on Windows; a DLL that can't be found (e.g. packaging off Windows) is skipped with a
  * warning, and the target then needs the VC++ redist. System32 holds the HOST's architecture, so
  * a bundle for the other architecture gets none (its target needs the redist). */
-async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
+async function bundleVcRuntime(dir: string, arch: string): Promise<boolean> {
   if (Deno.build.os !== "windows" || arch !== hostArch) {
     console.warn(
-      "  not bundling the VC++ runtime (" + arch + " packaged on " + Deno.build.os + "/" +
+      "  not bundling the VC++ runtime (" + arch + " packaged on " +
+        Deno.build.os + "/" +
         hostArch +
         ") — the target must install the VC++ 2015-2022 redistributable: " +
-        "https://aka.ms/vs/17/release/vc_redist." + (arch === "arm64" ? "arm64" : "x64") + ".exe",
+        "https://aka.ms/vs/17/release/vc_redist." +
+        (arch === "arm64" ? "arm64" : "x64") + ".exe",
     );
-    return;
+    return false;
   }
   const sys = \`\${Deno.env.get("SystemRoot") ?? "C:/Windows"}/System32\`;
   const dlls = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
@@ -1515,7 +1602,9 @@ async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
     }
   }
   if (missing.length === 0) {
-    console.log("  bundled the VC++ runtime app-local (the target needs no VC++ redistributable)");
+    console.log(
+      "  bundled the VC++ runtime app-local (the target needs no VC++ redistributable)",
+    );
   } else {
     console.warn(
       "  could not bundle the VC++ runtime (" + missing.join(", ") +
@@ -1523,31 +1612,56 @@ async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
         "must install it: https://aka.ms/vs/17/release/vc_redist.x64.exe",
     );
   }
+  return missing.length === 0;
+}
+
+/** Build, sign and wrap one arch's bundle; returns what it wrote and whether the VC++ runtime
+ * went in app-local. */
+async function packageArch(
+  name: string,
+  arch: "x86_64" | "arm64",
+  signing: boolean,
+  { plan, meta }: Awaited<ReturnType<typeof prepareDesktopPackage>>,
+): Promise<{ out: string[]; vcBundled: boolean }> {
+  const dir = await buildBundle(name, arch);
+  const vcBundled = await bundleVcRuntime(dir, arch);
+  if (signing) await sign(\`\${dir}/\${name}-\${LABELS[arch]}.exe\`);
+  const out = [dir];
+  const built = plan.formats.includes("msi")
+    ? await msi(name, arch, dir, meta, plan.explicit)
+    : null;
+  if (built && signing) await sign(built);
+  if (built) out.push(built);
+  // A default .msi that could not be built falls back to the .zip.
+  const msiSkipped = plan.formats.includes("msi") && !built;
+  if (plan.formats.includes("zip") || msiSkipped) out.push(await zipBundle(name, arch, dir));
+  return { out, vcBundled };
 }
 
 async function main(): Promise<void> {
-  const opts = parseOpts(Deno.args);
-  const name = slugify(await appName());
-  await Deno.mkdir("dist", { recursive: true });
-  if (opts.export) await run(["deno", "task", "export"]);
-
-  const arches: Array<"x86_64" | "arm64"> = opts.arch === "both"
-    ? ["x86_64", "arm64"]
-    : [opts.arch === "host" ? hostArch : opts.arch];
+  const opts = parseDesktopPackageArgs(Deno.args, { arches: ["host", "x86_64", "arm64", "both"] });
+  // --format, else desktop.installers.windows in denext.config.ts, else an .msi; the
+  // .deno-desktop/app.json sync, the package metadata (name, version, deep links), the export.
+  const prepared = await prepareDesktopPackage(import.meta.url, OS, opts);
+  const name = prepared.name;
 
   const artifacts: string[] = [];
-  for (const arch of arches) {
-    const dir = await buildBundle(name, arch);
-    await bundleVcRuntime(dir, arch);
-    if (opts.sign) await sign(name, arch, dir);
-    artifacts.push(await zipBundle(name, arch, dir));
+  const noVcRuntime: string[] = [];
+  for (const arch of desktopPackageArches(opts.arch)) {
+    const { out, vcBundled } = await packageArch(name, arch, opts.sign, prepared);
+    artifacts.push(...out);
+    if (!vcBundled) noVcRuntime.push(arch);
   }
 
   console.log("\\n  Built:");
   for (const a of artifacts) console.log("  " + a);
   console.log(
-    "\\n  (the target needs the Microsoft Edge WebView2 runtime; the VC++ runtime is bundled" +
-      " app-local, so no VC++ redistributable is required)",
+    noVcRuntime.length === 0
+      ? "\\n  (the target needs the Microsoft Edge WebView2 runtime; the VC++ runtime is bundled" +
+        " app-local, so no VC++ redistributable is required)"
+      : "\\n  (the target needs the Microsoft Edge WebView2 runtime and, for " +
+        noVcRuntime.join(", ") +
+        ", the VC++ 2015-2022 redistributable: the VC++ runtime was not bundled; see above)",
   );
 }
 

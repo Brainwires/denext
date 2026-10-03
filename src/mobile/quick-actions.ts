@@ -1,6 +1,7 @@
 /**
  * Home-screen quick actions (the long-press shortcuts on the app icon) for `denext/mobile`,
- * over the `AppShortcuts` plugin (`@capawesome/capacitor-app-shortcuts`) in the shell. On the
+ * over the `AppShortcuts` plugin (`@capawesome/capacitor-app-shortcuts`) in the shell. In a Deno
+ * Desktop window on macOS they are the Dock icon's menu (Windows and Linux have none). On the
  * web there are none: setting them is a no-op and no action ever arrives.
  *
  * @module
@@ -9,6 +10,7 @@
 import { useEffect, useRef } from "../runtime/hooks.ts";
 import { createFanout, type Fanout } from "./link-routing.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 
 /** One home-screen quick action. */
 export interface QuickAction {
@@ -74,8 +76,9 @@ function toShortcut(action: QuickAction) {
  *
  * Inside the native shell with `@capawesome/capacitor-app-shortcuts` installed (`denext mobile
  * add quick-actions`), the iOS Home Screen quick actions / Android app shortcuts; an empty list
- * removes them all. Outside the shell it does nothing. iOS shows at most four; Android's
- * launcher shows about four.
+ * removes them all. iOS shows at most four; Android's launcher shows about four. In a Deno
+ * Desktop window, the Dock icon's menu on macOS (titles only); nothing on Windows and Linux.
+ * Elsewhere it does nothing.
  *
  * @param actions The actions, in display order.
  * @returns A promise that settles once the OS has them. It rejects with a `TypeError` for an
@@ -94,9 +97,23 @@ export async function setQuickActions(actions: readonly QuickAction[]): Promise<
   const shortcuts = actions.map(toShortcut);
   const ids = new Set(shortcuts.map((s) => s.id));
   if (ids.size !== shortcuts.length) throw new TypeError("setQuickActions: ids must be unique");
+  if (onDesktop() && await viaDesktop("app", (d) => d.setDesktopDockMenu(shortcuts))) return;
   const plugin = shortcutsPlugin();
   if (!plugin) return;
   await (shortcuts.length === 0 ? plugin.clear() : plugin.set({ shortcuts }));
+}
+
+/** Dock-menu choices in a Deno Desktop window (the desktop module loads lazily). */
+function onDesktopDock(callback: (id: string) => void): () => void {
+  let stop: (() => void) | undefined;
+  let active = true;
+  import("../desktop/native.ts").then((d) => {
+    if (active) stop = d.onDesktopDockMenu(callback);
+  }, () => {});
+  return () => {
+    active = false;
+    stop?.();
+  };
 }
 
 /** The one native `click` listener every subscriber shares. */
@@ -109,7 +126,8 @@ let fanout: Fanout<string> | undefined;
  * Outside the native shell it does nothing.
  *
  * On iOS the action reaches the plugin through `SceneDelegate.swift` (or `AppDelegate.swift`
- * in an app without scenes), which `denext mobile add quick-actions` wires.
+ * in an app without scenes), which `denext mobile add quick-actions` wires. In a Deno Desktop
+ * window it reports the Dock-menu items chosen (macOS).
  *
  * @param callback Called with the chosen action's id.
  * @returns A function that unsubscribes.
@@ -123,6 +141,7 @@ let fanout: Fanout<string> | undefined;
  * ```
  */
 export function onQuickAction(callback: (id: string) => void): () => void {
+  if (onDesktop()) return onDesktopDock(callback);
   if (!shortcutsPlugin()) return () => {};
   fanout ??= createFanout<string>((emit) =>
     listenerDisposer(

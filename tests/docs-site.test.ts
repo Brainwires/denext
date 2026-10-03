@@ -8,8 +8,8 @@
 // Neither present is a failure, not a skip — a mapped route with no source is a broken page.
 
 import { assert, assertEquals } from "@std/assert";
-import { renderDoc } from "../apps/web/lib/markdown.ts";
-import { DOC_URLS } from "../apps/web/lib/docs-map.ts";
+import { renderDoc } from "../site/lib/markdown.ts";
+import { DOC_URLS } from "../site/lib/docs-map.ts";
 
 const REPO = new URL("../", import.meta.url);
 
@@ -21,8 +21,8 @@ function exists(url: URL): boolean {
   }
 }
 
-/** `/docs/migrating-remix` → `apps/web/app/docs/migrating-remix` (repo-relative). */
-const pageDirFor = (route: string): string => `apps/web/app${route}`;
+/** `/docs/migrating-remix` → `site/app/docs/migrating-remix` (repo-relative). */
+const pageDirFor = (route: string): string => `site/app${route}`;
 
 /** Where a published doc's Markdown actually lives: the repo root, else the route's content.md. */
 function sourceFor(path: string, route: string): string {

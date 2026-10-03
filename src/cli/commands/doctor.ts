@@ -22,6 +22,10 @@ import { checkPrivacyManifest } from "../../build/mobile-privacy.ts";
 import { MOBILE_CAPABILITIES } from "../../build/mobile-capabilities.ts";
 import { capacitorConfigFile } from "../../build/capacitor-config.ts";
 import { leakedCssShimKeys } from "../../build/css-config-guard.ts";
+import { DESKTOP_APP_CONFIG_FILE, desktopAppIdentity } from "../../build/desktop-app-config.ts";
+import { readJson } from "../../build/json-edit.ts";
+import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
+import { denoExecutable } from "../../build/bundle.ts";
 
 export const infoCommand: CommandSpec = {
   name: "info",
@@ -184,6 +188,104 @@ export async function cssShimLeakCheck(configPath: string, outDir: string): Prom
   };
 }
 
+/** The project's parsed `deno.json` (else `deno.jsonc`), or `null`. */
+async function readDenoJson(dir: string): Promise<Record<string, unknown> | null> {
+  for (const name of ["deno.json", "deno.jsonc"]) {
+    const text = await Deno.readTextFile(join(dir, name)).catch(() => null);
+    if (text === null) continue;
+    try {
+      return readJson(text) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * What is out of line for a configured `desktop.app.origin`: the embedded `.deno-desktop/app.json`
+ * (missing or stale), deno.json's `compile.include` (not listing it), and deno.json's own
+ * `desktop.app.identifier` (different from the config's). Empty when all is in line.
+ */
+async function desktopOriginProblems(
+  dir: string,
+  identity: { origin: string; identifier: string },
+): Promise<string[]> {
+  const problems: string[] = [];
+  const appJson = await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE)).catch(() => null);
+  let embedded: { origin?: unknown; identifier?: unknown } | null = null;
+  try {
+    embedded = appJson === null ? null : JSON.parse(appJson);
+  } catch { /* unparseable: reported as stale below */ }
+  if (embedded?.origin !== identity.origin || embedded?.identifier !== identity.identifier) {
+    problems.push(`${DESKTOP_APP_CONFIG_FILE} is ${appJson === null ? "missing" : "stale"}`);
+  }
+  const deno = await readDenoJson(dir);
+  const include = (deno?.compile as { include?: unknown } | undefined)?.include;
+  const listed = Array.isArray(include) &&
+    include.some((e) =>
+      typeof e === "string" && e.replace(/^\.\//, "") === DESKTOP_APP_CONFIG_FILE
+    );
+  if (!listed) problems.push(`deno.json compile.include does not list ${DESKTOP_APP_CONFIG_FILE}`);
+  const denoId = ((deno?.desktop as { app?: { identifier?: unknown } } | undefined)?.app)
+    ?.identifier;
+  if (denoId !== undefined && denoId !== identity.identifier) {
+    problems.push(`deno.json desktop.app.identifier "${denoId}" differs from the config's`);
+  }
+  return problems;
+}
+
+/**
+ * The desktop app-origin check, for a project that sets `desktop.app.origin` (advisory; null
+ * otherwise). The origin and identifier themselves are validated at config load; this checks the
+ * files the packager derives from them, which `denext desktop package` / `run` rewrite.
+ */
+export async function desktopOriginCheck(dir: string, config: unknown): Promise<Check | null> {
+  let identity;
+  try {
+    identity = desktopAppIdentity(config);
+  } catch (err) {
+    return {
+      name: "desktop app origin",
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+      critical: false,
+    };
+  }
+  if (!identity) return null;
+  const problems = await desktopOriginProblems(dir, identity);
+  return {
+    name: "desktop app origin",
+    ok: problems.length === 0,
+    detail: problems.length === 0
+      ? `${identity.origin} (${identity.identifier}); needs the denext-pinned Deno Desktop runtime`
+      : `${
+        problems.join("; ")
+      } — run \`denext desktop package\` or \`denext desktop run\` to rewrite`,
+    critical: false,
+  };
+}
+
+/**
+ * The pinned Deno Desktop runtime check, for a desktop project (a `desktop.ts` entry or a deno.json
+ * `desktop` block; null otherwise): the pinned runtime version, whether it is cached and verified
+ * for this host, and whether the `deno` that runs `deno desktop` is its exact Deno version.
+ * Advisory: a missing cache is fine (it downloads on first use). Never downloads.
+ */
+export async function desktopRuntimeCheck(
+  dir: string,
+  options: Partial<Parameters<typeof desktopRuntimeStatus>[0]> = {},
+): Promise<Check | null> {
+  const hasEntry = (await Deno.stat(join(dir, "desktop.ts")).catch(() => null))?.isFile === true;
+  if (!hasEntry && (await readDenoJson(dir))?.desktop === undefined) return null;
+  const status = await desktopRuntimeStatus({
+    projectDir: dir,
+    deno: denoExecutable(),
+    ...options,
+  });
+  return { name: "desktop runtime", ok: status.ok, detail: status.detail, critical: false };
+}
+
 /**
  * The last build's client chunks, or `null` when `outDir` holds no client build output.
  * Reads what `denext build` emitted; never builds.
@@ -249,6 +351,10 @@ export async function collectDoctorReport(dir: string): Promise<DoctorReport> {
   }
   const privacy = await privacyManifestCheck(dir);
   if (privacy) checks.push(privacy);
+  const desktopOrigin = await desktopOriginCheck(dir, paths.config);
+  if (desktopOrigin) checks.push(desktopOrigin);
+  const desktopRuntime = await desktopRuntimeCheck(dir);
+  if (desktopRuntime) checks.push(desktopRuntime);
 
   return { dir, checks, routes, bundle: await builtClientChunks(paths.outDir) };
 }
@@ -375,6 +481,9 @@ export const doctorCommand: CommandSpec = {
   summary: "Diagnose the project (supersedes probe)",
   aliases: ["probe"],
   loadsModules: true,
+  // Reads the last build in `.denext/` (and probes the routes in-process): a SHARED build-dir
+  // lock, so it runs beside other readers and waits out a build rather than reading it half-done.
+  locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "shared" }),
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [{
     name: "report",

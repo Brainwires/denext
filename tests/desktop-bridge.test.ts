@@ -238,6 +238,35 @@ Deno.test("body: an oversized content-length is rejected as too_large", async ()
   assertEquals(env.error?.code, "too_large");
 });
 
+Deno.test("body: a streamed body with no content-length is cut off at the cap", async () => {
+  const bridge = createDesktopBridge([echoCapability]);
+  const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+  let pulled = 0;
+  let cancelled = false;
+  // An endless body: the bridge must stop reading at 4 MiB, not buffer it whole.
+  const body = new ReadableStream<Uint8Array>({
+    pull: (c) => (pulled++, c.enqueue(chunk)),
+    cancel: () => void (cancelled = true),
+  });
+  const base = rpc(undefined);
+  const req = new Request(base.url, { method: "POST", headers: base.headers, body });
+  assert(!req.headers.has("content-length"));
+  const { status, env } = await call(bridge, req);
+  assertEquals([status, env.error?.code], [413, "too_large"]);
+  assert(pulled <= 6, `read ${pulled} MiB`);
+  assert(cancelled, "the rest of the body was cancelled");
+  // Under the cap a streamed body still works.
+  const ok = new Request(base.url, {
+    method: "POST",
+    headers: base.headers,
+    body: ReadableStream.from([
+      new TextEncoder().encode('{"cap":"echo",'),
+      new TextEncoder().encode('"method":"ping","args":"hi"}'),
+    ]),
+  });
+  assertEquals((await call(bridge, ok)).status, 200);
+});
+
 Deno.test("registry: a duplicate capability name is rejected at construction", () => {
   assertThrows(
     () => createDesktopBridge([echoCapability, { name: "echo", methods: {} }]),
@@ -359,4 +388,41 @@ Deno.test("events: ctx.emit rejects an undeclared event name", async () => {
   const res = await call(b2, rpc({ cap: "bad", method: "go" }));
   assertEquals(res.status, 500);
   assertEquals(res.env.error?.code, "internal");
+});
+
+Deno.test("bridge: a no-deadline method ends with its page's request; a deadline method does not", async () => {
+  const seen: Record<string, AbortSignal> = {};
+  const waiter: DesktopCapability = {
+    name: "waiter",
+    methods: {
+      // Waits on the page (a sign-in): its signal follows the calling request.
+      long: {
+        timeoutMs: false,
+        handler: (_a, ctx) =>
+          new Promise((resolve) => {
+            seen.long = ctx.signal;
+            ctx.signal.addEventListener("abort", () => resolve("ended with the page"));
+          }),
+      },
+      // A deadline method keeps the deadline signal only.
+      short: { handler: (_a, ctx) => (seen.short = ctx.signal, "ok") },
+    },
+  };
+  const bridge = createDesktopBridge([waiter]);
+  const page = new AbortController();
+  const base = rpc({ cap: "waiter", method: "long", args: null });
+  const req = new Request(base, { signal: page.signal });
+  const pending = bridge.handle(req, new URL(req.url), TOKEN);
+  await new Promise((r) => setTimeout(r, 5));
+  assert(seen.long && !seen.long.aborted);
+  page.abort(); // the page that called reloaded
+  const res = await pending;
+  assertEquals((await res!.json()).data, "ended with the page");
+  const other = new AbortController();
+  const shortReq = new Request(rpc({ cap: "waiter", method: "short", args: null }), {
+    signal: other.signal,
+  });
+  await bridge.handle(shortReq, new URL(shortReq.url), TOKEN);
+  other.abort();
+  assertEquals(seen.short.aborted, false);
 });

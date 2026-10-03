@@ -43,10 +43,12 @@ import { checkAppGroup } from "./mobile-app-group.ts";
 import { applicationTargetName, targetBuildSetting } from "./pbxproj.ts";
 import { CAPACITOR_CONFIGS, capacitorConfigFile, readCapacitorConfig } from "./capacitor-config.ts";
 import { addOfflineScreenToProject } from "./mobile-offline-screen.ts";
+import { EXPORT_ROUTES_INSTALL } from "./mobile-export-routes-install.ts";
 import { privacyEntriesFor, privacyLabels, writePrivacyManifests } from "./mobile-privacy.ts";
 import { PLATFORM_CAPABILITIES } from "./mobile-capabilities-platform.ts";
 import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
 import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
+import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
 
 /** The options on `denext mobile add`'s command line that a capability may take. */
 export interface CapabilityOptions {
@@ -60,6 +62,8 @@ export interface CapabilityOptions {
   readonly names: readonly string[];
   /** `--configurable`: a widget's enum parameters (`param:enum=a|b`). */
   readonly configurable: readonly string[];
+  /** `--ci`: also write a CI workflow (fastlane). */
+  readonly ci?: boolean;
 }
 
 /** One text edit to a native file, with the line the plan prints for it. */
@@ -105,6 +109,8 @@ export interface CapabilityConfig {
 export interface MobileCapability {
   /** The npm package that provides the native plugin (none: denext's own plugin). */
   readonly npm?: string;
+  /** What `--list` shows in the package column without `npm` (default: denext native plugin). */
+  readonly listing?: string;
   /**
    * The version range added (`<npm>@<version>`), pinned to the plugin's Capacitor major. A
    * project that pins its `@capacitor/*` packages exactly gets the range's minimum, exactly.
@@ -252,6 +258,39 @@ function configureAuthSession(options: CapabilityOptions): CapabilityConfig {
       "register the OAuth callback scheme unless the app already has it: re-run with " +
       "--scheme <scheme> (or `denext mobile add deep-links --scheme <scheme>`). Android hands " +
       "the redirect to the app only through that scheme's intent filter; iOS needs no registration",
+    ],
+  };
+}
+
+/**
+ * `clerk`: what `denext/mobile/clerk` needs — the `DenextAuthSession` plugin and the OAuth
+ * callback scheme's registration (as `auth-session --scheme`), plus the secure-storage plugin for
+ * the client JWT (the npm package below) — and the Clerk-side steps.
+ */
+function configureClerk(options: CapabilityOptions): CapabilityConfig {
+  const schemes = options.schemes.map(checkScheme);
+  if (schemes.length !== 1) {
+    throw new Error(
+      "clerk needs exactly one --scheme <scheme>: the custom URL scheme Clerk's OAuth redirects " +
+        "back to (<scheme>://app/)",
+    );
+  }
+  const [scheme] = schemes;
+  return {
+    ...schemeEdits(schemes),
+    install: {
+      label: "DenextAuthSession plugin (iOS ASWebAuthenticationSession, Android Custom Tab) " +
+        "+ its registration in DenextBridgeViewController / MainActivity",
+      run: addAuthSessionToProject,
+    },
+    manual: [
+      `call installClerkMobileBridge({ scheme: "${scheme}", nativeClerk: true }) from ` +
+      "denext/mobile/clerk before the page loads clerk-js (instrumentation-client.ts in an App " +
+      "Router app, the top of a SPA entry)",
+      `Clerk dashboard → Native applications → Allowlist for mobile SSO redirect: add ${scheme}://app/`,
+      "Clerk instance allowed origins (Backend API PATCH /v1/instance allowed_origins): add " +
+      "capacitor://localhost (iOS) and https://localhost (Android), the shell's page origins",
+      "passkeys sign in through Clerk's hosted page in the auth session; create them on the web",
     ],
   };
 }
@@ -643,6 +682,15 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     options: ["schemes"],
     configure: configureAuthSession,
   },
+  clerk: {
+    npm: "@aparajita/capacitor-secure-storage",
+    version: "^8.0.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "installClerkMobileBridge({ scheme, nativeClerk: true }) from denext/mobile/clerk " +
+      "(<ClerkProvider> signs in: Keychain / Keystore token cache, OAuth in the auth session)",
+    options: ["schemes"],
+    configure: configureClerk,
+  },
   push: {
     npm: "@capacitor/push-notifications",
     version: "^8.1.2",
@@ -831,15 +879,23 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
       "offline.html when the app cannot load)",
     configure: configureOfflineScreen,
   },
+  "export-routes": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "an exported multi-page app's links load their own pages (/route → route/index.html; " +
+      "every denext native feature includes it, this adds it to an app with none)",
+    configure: () => ({ install: EXPORT_ROUTES_INSTALL }),
+  },
   // app-review, app-update, screen-orientation, media-library, privacy-screen, tracking,
   // background, restore: ./mobile-capabilities-platform.ts.
   ...PLATFORM_CAPABILITIES,
   "native-module": NATIVE_MODULE_CAPABILITY,
   ...NATIVE_VIEW_CAPABILITIES,
+  // Release tooling, not a plugin: fastlane lanes over `denext mobile build`.
+  fastlane: FASTLANE_CAPABILITY,
 };
 
 /** A package manager `denext mobile add` can drive. */
-export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
+export type PackageManager = "npm" | "pnpm" | "yarn" | "bun" | "deno";
 
 /** A subprocess to run: `cmd args…` in `cwd`. */
 export interface PlannedCommand {
@@ -951,6 +1007,8 @@ export interface AddCapabilitiesOptions {
   readonly configurable?: readonly string[];
   /** `--force`: replace denext plugin templates that were edited (auth-session). */
   readonly force?: boolean;
+  /** `--ci`: also write a CI workflow (fastlane). */
+  readonly ci?: boolean;
 }
 
 const INFO_PLIST = "ios/App/App/Info.plist";
@@ -968,6 +1026,9 @@ const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
   ["bun.lock", "bun"],
   ["bun.lockb", "bun"],
   ["yarn.lock", "yarn"],
+  // A denext project (deno.json + package.json, `deno install`): last, so an npm-family lockfile
+  // beside it wins.
+  ["deno.lock", "deno"],
 ];
 
 async function exists(path: string): Promise<boolean> {
@@ -1093,14 +1154,19 @@ async function packageManagerFieldIn(dir: string): Promise<PackageManager | unde
  * The package manager, walking up from the Capacitor project `root` to the repository root
  * (the first folder holding `.git`) or the filesystem root, so a project inside a workspace
  * (pnpm, yarn, bun, npm) uses the workspace's manager. Precedence: the nearest lockfile
- * (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder); then the
- * nearest `package.json` `packageManager` field; then npm.
+ * (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder; a `deno.lock`
+ * only in `root` itself, for a denext project installed with `deno install`); then the nearest
+ * `package.json` `packageManager` field; then npm.
  */
 async function detectPackageManager(root: string): Promise<DetectedPackageManager> {
   const dirs = await workspaceAncestors(root);
   for (const dir of dirs) {
     const found = await lockfileIn(dir);
-    if (found) return { manager: found.manager, lockfile: posixRelative(root, found.path) };
+    // A deno.lock names the project's manager only in the project itself: an npm project nested
+    // in a Deno repository is still an npm project.
+    if (found && (found.manager !== "deno" || dir === root)) {
+      return { manager: found.manager, lockfile: posixRelative(root, found.path) };
+    }
   }
   for (const dir of dirs) {
     const manager = await packageManagerFieldIn(dir);
@@ -1118,6 +1184,15 @@ function addCommand(
   cwd: string,
   exact: boolean,
 ): PlannedCommand {
+  // `deno add` writes npm packages into package.json when there is one; the spec carries the
+  // version (pinned exactly when `exact`, see the caller), so there is no exact flag.
+  if (manager === "deno") {
+    return {
+      cmd: "deno",
+      args: ["add", ...specs.map((s) => `npm:${s}`)],
+      cwd,
+    };
+  }
   const verb = manager === "npm" ? "install" : "add";
   const flag = !exact
     ? []
@@ -1208,6 +1283,7 @@ function capabilityOptions(
     appGroups: [...new Set(opts.appGroups ?? [])],
     names: [...new Set(opts.names ?? [])],
     configurable: [...new Set(opts.configurable ?? [])],
+    ci: opts.ci === true,
   };
   const flags = [
     ["schemes", "--scheme"],
@@ -1220,6 +1296,9 @@ function capabilityOptions(
     if (options[key].length === 0) continue;
     if (names.some((n) => table[n].options?.includes(key))) continue;
     throw new Error(`${flag} is only for ${takersOf(table, key)}; add it or drop ${flag}.`);
+  }
+  if (options.ci && !names.some((n) => table[n].options?.includes("ci"))) {
+    throw new Error(`--ci is only for ${takersOf(table, "ci")}; add it or drop --ci.`);
   }
   return options;
 }
@@ -1534,7 +1613,7 @@ export function formatCapabilityTable(
   return Object.entries(table).map(([name, c]) =>
     // A name longer than the column (background-location) still gets one space.
     `  ${name.padEnd(16)} ${
-      (c.npm ? `${c.npm}@${c.version}` : "(denext native plugin)").padEnd(46)
+      (c.npm ? `${c.npm}@${c.version}` : c.listing ?? "(denext native plugin)").padEnd(46)
     }${c.notes ?? ""}`
   ).join("\n");
 }

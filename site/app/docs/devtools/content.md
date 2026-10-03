@@ -1,0 +1,623 @@
+---
+title: DevTools
+slug: devtools
+lead: A zero-install glass-box panel that mounts in every dev page — a component tree with named hooks and editor-linked source, render modes, a profiler, the request log, cache counters and the route map — plus an MCP bridge that lets an agent read the live page.
+---
+
+In dev, denext mounts its own DevTools panel. There is nothing to install and no
+browser extension to keep in step: a small launcher (the denext mascot) sits at
+the bottom-left of every dev page, `Ctrl+Shift+D` toggles the panel, and the
+browser console says `[denext] devtools ready` once it is installed.
+
+The panel reads everything from the live reconciler through a typed API and
+renders with plain DOM in its own tiny update loop — it never re-enters the tree
+it inspects, and it builds every node from DOM APIs (no `innerHTML`). It is
+**dev-only**: `installDevtools()` no-ops unless `globalThis.__denextDev` is set,
+only the dev route/Flight/SPA entries import it, and a production build contains
+no reference to the panel, the inspector or the metadata registry at all.
+
+> [!NOTE]
+> The panel is styled with inline CSSOM (`element.style`), never a
+> runtime-injected `<style>` sheet, so it works unchanged under denext's strict
+> `style-src 'self'` dev CSP. Its launcher image is an inlined `data:` URI, which
+> the default `img-src 'self' data:` allows.
+
+It mounts on **every** dev path — the native App Router, the Flight/streaming
+path, the Next.js drop-in and [SPA mode](/docs/spa). The three tabs that read the
+dev server (Network, Cache, Routes) are App-Router-only, and say so in place
+rather than showing an empty table.
+
+## The seven tabs
+
+The header is a scrollable `role="tablist"`: **Components**, **Render modes**,
+**Profiler**, **Network**, **Cache**, **Routes**, **Console**. `Alt+1`…`Alt+7`
+jump straight to one. The panel is `min(620px, 94vw)` wide and half the viewport
+tall; the `⤢` button at the right of the header (beside `×`, both 44 px touch
+targets) switches it to the full viewport, inside the safe-area insets, and `⤡`
+back. The size is remembered per tab in `localStorage`. Below 420 px the
+`denext · glass-box` title is dropped so the tabs keep the whole header row.
+
+### Components
+
+A live tree of your app, re-rendered on every commit (coalesced to a frame) and
+on every streamed-hole reveal.
+
+- **Element picker** — click `🎯`, then hover the page: the hovered element's
+  owning component is outlined with an overlay and a name tooltip; click to
+  select it, or press `Escape` to cancel. Hovering a tree row reverse-highlights
+  its DOM node.
+- **Searchable, collapsible tree** — the `filter…` box keeps every component
+  whose name matches plus their ancestors, any subtree collapses from its twisty,
+  and `{ }` adds host (DOM) and text nodes as their own rows.
+- **Badges** — `memo`, `forwardRef`, `StrictMode`, `Suspense` (+`fallback`),
+  `ErrorBoundary` (+`errored`), `Context.Provider`, next to the name in both the
+  tree and the detail pane.
+- **Live editing** — a `useState` cell holding a string, number, boolean or null
+  is an input (a checkbox for a boolean) that writes straight back into the
+  running component; a primitive prop is an override you can pin, and
+  `reset props` drops every override on that component at once.
+- **Deep values** — expand a nested object or array with `▶`, and each level is
+  read lazily from the _live_ value, not from a snapshot. Per value: `copy` (the
+  preview), `log` (the real value, to the console) and `$d`, which stashes the
+  live value on `window.$d`.
+- **Why did this render?** — while the panel is open it accrues render reasons,
+  so the props, hooks and contexts that changed on the last commit are marked in
+  the accent colour and the header carries a `rendered ×N` count. Tracking is
+  refcounted between the panel and the MCP sink, so closing and reopening the
+  panel no longer wipes the history `denext_why_render` is reading.
+- **Owner stack** — the component ancestors above the selection, nearest first,
+  joined with `←`.
+- **Effect annotations** — an effect/memo/callback/deferred cell shows its `deps`
+  (`[] (once)` when empty) and a `cleanup ƒ` row when it currently holds one.
+
+#### The Source row
+
+A selected component shows where it was declared:
+
+```text
+Source   app/page.tsx:42
+```
+
+The path is repo-relative when the module is served from the app root (an
+unbundled dev module URL is same-origin with the page); otherwise it is the
+URL's last two segments — the browser cannot honestly shorten a `file://` path it
+has no project view of. The link's tooltip is always the full
+`path:line:column`.
+
+Clicking it **opens your editor on that line**. The click goes to the dev
+server's `/_denext/open-in-editor?file=&line=&column=` endpoint, which resolves
+the path inside the project (symlinks resolved and containment re-checked, so an
+out-of-project path is a 400 and never opened) and spawns the editor with the
+right arguments for its family:
+
+| `DENEXT_EDITOR` / `VISUAL` / `EDITOR`                                                      | Arguments                  |
+| ------------------------------------------------------------------------------------------ | -------------------------- |
+| `code`, `code-insiders`, `codium`, `vscodium`, `cursor`, `windsurf`, `positron`            | `--goto file:line:column`  |
+| `subl`, `sublime_text`, `sublime`, `atom`                                                  | `file:line:column`         |
+| `webstorm`, `idea`, `pycharm`, `goland`, `rider`, `phpstorm`, `clion`, `rubymine`, `fleet` | `--line N --column N file` |
+| `vim`, `nvim`, `nano`, `hx`, `helix`, `kak`, `micro`, `emacs`, `emacsclient`               | `+line file` (best effort) |
+| anything else                                                                              | `file`                     |
+
+The first of `DENEXT_EDITOR`, `VISUAL`, `EDITOR` that is set wins; with none set
+the default is VS Code's `code`. When no editor can be launched the endpoint
+answers `501 no editor` and nothing else happens.
+
+SPA dev serves no `/_denext/*` endpoints. Once any dev read has come back
+unavailable, the source row becomes a plain `vscode://file/<path>:<line>:<col>`
+link the browser follows instead (only for a `file://` source).
+
+#### Named hooks
+
+A hook row reads as **the variable the call was bound to, plus the hook that
+produced the cell**:
+
+```text
+Hooks
+0 count · useState        3
+1 boxRef · useRef         { current: div }
+2 total · useMemo         42
+3 effect · useEffect      ƒ anonymous
+```
+
+The name comes from the build-time metadata pass, which records the binding
+pattern of every hook call in the module (see
+[below](#how-source-locations-and-hook-names-get-there)). How the label is
+chosen:
+
+| In the source                                      | The row reads                                                             |
+| -------------------------------------------------- | ------------------------------------------------------------------------- |
+| `const [count, setCount] = useState(0)`            | `count · useState`                                                        |
+| `const [, setOpen] = useState(false)`              | `setOpen · useState` — the first name the pattern binds                   |
+| `const { data } = useApi(…)`                       | `data · useApi`                                                           |
+| `const { data: rows } = useApi(…)`                 | `rows · useApi` — the local name                                          |
+| `const boxRef = useRef(null)`                      | `boxRef · useRef`                                                         |
+| `useEffect(() => {…}, [])`                         | `effect · useEffect` — nothing was bound, so the cell's kind stands in    |
+| a custom hook declared in the same module          | the hook's own cells, breadcrumbed: `useAuth › user · useAuth › useState` |
+| a custom hook imported by a relative path          | the same breadcrumb, read from the module that declares the hook          |
+| a composite (`useTransition`, `useActionState`, …) | its first cell is named; its internal extra cells carry the hook alone    |
+
+The join is lockstep and checked: a table of how many cells each hook consumes
+(and with which kind tags) is walked against the component's live cells, and
+**any** divergence abandons naming for that whole component rather than pairing a
+name with the wrong cell. The pane then shows kind labels and says so:
+
+```text
+names unavailable (conditional hooks?)
+```
+
+That is what you see for a conditionally-called hook, a chain of custom hooks
+nested more than three deep, or a custom hook whose declaring module registered no
+metadata — there is no way to know how many cells an unknown hook took, so every
+later name would be a guess.
+
+A custom hook does not have to live in the component's module. When a component
+calls a hook it bound through a **static relative import** — `import { useAuth }
+from "./auth"`, an aliased `{ useAuth as useA }`, or a default import — the
+metadata pass records the URL of the module the import names alongside the call
+(`HookDevMeta.from`, with the name that module exports the hook under), and the
+runtime expands the hook from _that_ module's metadata. It tries the URL as
+written, then the extensions and `index` files an extensionless import resolves
+to (`./auth` → `auth.tsx`, `auth.ts`, …; `./hooks` → `hooks/index.ts`). A
+default-imported hook breadcrumbs under its declared name (`useSession › user`),
+not `default`. A chain may cross modules and come back, under the same three-level
+cap, and each level resolves a same-module call in its own module. A module that
+declares only hooks (a `useCart.ts` with no component) still emits its metadata, so
+there is something to join against.
+
+In the default dev loop an import-map alias (`@/lib/auth`) resolves exactly as the dev server
+resolves the import, and a barrel that re-exports a hook by name
+(`export { useAuth } from "./auth"`) sends the lookup on to the declaring module — one hop; a
+barrel of a barrel stops. Naming still stops at a hook imported by a bare specifier (a package,
+`npm:`, `jsr:`), a URL, through a namespace import (`import * as auth`, then
+`auth.useAuth()`) or a barrel's `export *`, and at an import-map alias in SPA mode. An importee
+that has not registered yet — one behind a dynamic `import()` — is the same clean miss, never a
+wrong name.
+
+#### Debug values
+
+`useDebugValue` labels a custom hook's state for the inspector, the way React's
+does:
+
+```tsx
+import { useDebugValue, useState } from "denext";
+
+export function useOnline() {
+  const [online] = useState(true);
+  useDebugValue(online ? "Online" : "Offline");
+  return online;
+}
+```
+
+Every component that calls `useOnline()` then shows the label as a `debug` line
+under the hook row it follows:
+
+```text
+Hooks
+0 count · useState                          0
+1 useOnline › online · useOnline › useState true
+debug   "Online"
+2 label · useState                          "x"
+```
+
+- **It takes no hook cell.** The call is recorded on the rendering component,
+  outside its hook list, so adding or removing one never shifts hook state, never
+  trips the Fast Refresh signature check (an edit that adds a call keeps state),
+  and never throws hook naming off.
+- **`format` runs lazily.** In `useDebugValue(date, (d) => d.toISOString())` the
+  formatter is never called during render — the inspector applies it when it reads
+  the value, and one that throws reads `<format threw>`.
+- **The label rides the row of the cell before the call** — for the idiomatic
+  call at the end of a custom hook, that hook's last cell. A call before any cell
+  lands on the first row, a component with no hook cells has no row to carry one,
+  and several calls after the same cell read as an array (`[a, b]`).
+- **Dev-only.** Production and server rendering record nothing, and a call outside
+  a render is a silent no-op.
+
+The same label reaches the MCP snapshot and
+[`denext_hook_state`](#mcp-inspect-the-live-page), redacted like every hook value
+there — a string label travels as its length:
+
+```text
+[1] useOnline › online · useOnline › useState = true  debug=string(6)
+```
+
+### Render modes
+
+The glass-box view of how this page reached the browser — see
+[Rendering strategies](/docs/rendering).
+
+- **Page** — the server's verdict for the document: `static`, `dynamic` or
+  `streamed`, plus `· cache HIT` / `STALE` / `MISS` when the request was served
+  through the page cache. Read from a dev-only JSON island the document renderer
+  emits.
+- **Suspense boundaries (live waterfall)** — one row per streamed boundary: its
+  id, a bar proportional to its server resolve time, `Nms server`, and
+  `revealed @Nms` once the hole lands on the client. The swap runtime records
+  reveals in real time, so the timeline fills as the stream arrives rather than
+  only at end-of-stream, and settles onto the authoritative server times when the
+  stream's timing island lands.
+- **Client islands (hydration waterfall)** — one row per island: its `client:*`
+  strategy (with the parameter, e.g. `media(...)`), its id, and how many
+  milliseconds after page load it hydrated. See [Islands](/docs/islands).
+
+A page with neither reads `No client islands — this page is server-rendered
+HTML.`
+
+### Profiler
+
+Click **● Record**, interact, then **■ Stop** (**Clear** discards a recording).
+
+- A **commit strip** — one bar per commit, height proportional to its total
+  render time; the tooltip is `commit #n · phase · Xms · N rendered`, and
+  clicking a bar steps the view to that commit.
+- A **flamegraph** of the selected commit — each bar's width is its share of the
+  parent's total time, its fill is a warm scale over _self_ time (yellow-green
+  through red-orange at ≥ 8 ms), and a component that did not render in this
+  commit is dimmed. Clicking a bar jumps to that component in the Components tab.
+- A **ranked list** (top 25 by self time) with _why each rendered_ —
+  `props: a,b · hooks: 0 · ctx: Theme` — so the commit's most expensive
+  components and the reason they ran are one glance apart.
+
+For whole-app CPU and heap profiling outside the browser, see
+[`denext profile`](/docs/profile).
+
+### Network
+
+The dev server's completed-request log, read once a second from
+`/_denext/dev-state?kind=request&limit=200` while the tab is open.
+
+Each row is the method and path, a status pill coloured by response class
+(2xx/3xx/4xx/5xx, `—` when unknown), the duration with a bar scaled to the
+slowest visible request, and how long ago it completed. Newest first, capped at
+200 rows. Two filters sit in the toolbar: a case-insensitive path substring, and
+an **errors** toggle that keeps only responses of status 400 and above; the
+counter reads `12 of 200` when a filter is on.
+
+A poll that fails leaves the last good table on screen rather than blanking it.
+App Router dev only.
+
+### Cache
+
+The page/data cache's counters and its recent invalidations, read once a second
+from `/_denext/dev-cache` — which is `getCacheStats()` verbatim, the same public
+snapshot a monitoring hook would read, so polling it costs nothing but the JSON.
+
+The tiles are **hits**, **misses**, **sets**, **invalidations** and the derived
+**hit rate**. Below them, every recent `revalidateTag` / `revalidatePath` call is
+listed newest first, with a `tag` / `path` pill, the value that was invalidated,
+and how long ago it happened. See [Data & caching](/docs/data).
+
+App Router dev only — SPA mode runs no server cache.
+
+### Routes
+
+What actually renders at a path, from the dev server's already-cached route
+manifest (`/_denext/dev-routes?path=`). It opens on the page you are looking at
+and takes any other path in its box, so you can ask "what would render at
+`/blog/hello`?" without navigating there. It is read once per probe, not polled:
+the manifest only changes when a file is added or removed, which reloads the page
+anyway.
+
+The answer is the matched **Page** pattern, its **Params**, then the **Render
+tree** — every layout, then every template, then the page itself, indented by
+nesting depth and each carrying a green `server` or amber `client` badge (a
+module that declares `"use client"`) — then the **Boundaries** it would use
+(`loading`, `error`, `notFound`, `forbidden`, `unauthorized`) and its parallel
+**Slots** with how many pages each holds. An **API route** at the same path is
+listed too.
+
+Every file printed is a button that opens that file in your editor, through the
+same endpoint the Source row uses. A path that matches nothing answers
+`nothing renders at /x` — an answer, not an error.
+
+App Router dev only.
+
+### Console
+
+What the page logged, threw and failed to load — the one place to see it on a
+phone, where there is no browser console. The capture is the first thing the
+dev-reload script does, before the app's entry module runs, so it records boot
+failures too: every `console.log` / `info` / `warn` / `error` / `debug` call
+(the originals still run), uncaught errors, unhandled rejections, and resource
+loads that fail (a `<script type="module">` that cannot load fires `error` on the
+element, which the capture sees in the capture phase). The last 500 entries are
+kept; arguments are serialized safely (cycles, errors with their stack, DOM nodes
+as `<div#root.app>`, long strings cut at 2,000 characters). Rows are coloured by
+level and timestamped; the toolbar filters by level, clears, and copies every
+shown entry; tap a row to expand its stack. A red count beside the launcher says
+there are errors before you open the panel, and tapping it opens this tab.
+
+**Boot diagnosis.** A browser does not say which module broke the boot — Safari
+only says "Importing a module script failed". So when the entry module script
+fails to load, or an import error is seen — uncaught, unhandled, or logged with
+`console.error` by an app that catches its own `import("./main")` (the panel need
+not have mounted) — the console walks the module graph from the entry script, or
+first from the module the browser's message names when it names one (Chrome and
+Firefox do for a dynamic import). It fetches each same-origin module (6 at a
+time) along static imports, at most 400, and reports every one that answers
+non-2xx, is served as something other than JavaScript (HTML from a fallback
+page, say), imports a bare specifier no import map resolves, or does not parse
+(only where the page's CSP allows `eval`). When that static graph loads, a deep
+pass follows what it skipped — string-literal dynamic `import()`s, `new URL("./worker.ts",
+import.meta.url)` and `import.meta.resolve()` script modules, and static imports
+past the cap — up to 2000 modules, logging progress as it goes. It also catches
+link-time failures, which Safari reports only as "Importing a module script failed":
+each walked module is tokenized (strings, comments, templates and regex literals
+skipped) for the names it imports — named, default, and `export { a } from`
+re-exports — and the names it exports, `export { a as b }`, `export default` and
+`export *` chains included (cycle-safe). A name the target does not export is
+logged as `<importer> imports "<name>" from <target>, which does not export it`,
+with the closest export as a hint ("did you mean …?"). That covers a renamed
+export, a missing re-export and a default import of an npm bundle that has none
+(a CommonJS / ES module interop mismatch); a module it can't analyze confidently
+(CommonJS-looking, a destructuring export) is skipped rather than guessed at. When
+the browser names the failure itself (Chrome: "does not provide an export named
+'X'"), that is shown at once with the importer, and the walk starts there. Each
+other failure is logged with the module's URL, the reason and the module that
+imported it;
+progress shows at the top of the tab, and **diagnose boot** runs it on demand. If
+the panel itself never mounted, the dev-reload script shows the errors and the
+diagnosis in a plain list at the bottom of the page.
+
+**Reload loops.** Each reload the dev server orders is counted (in
+`sessionStorage`); more than 3 within 30 s is logged as a warning naming the
+loop, so a rebuild that keeps re-triggering itself is reported instead of
+leaving a page that never settles.
+
+Entries are also forwarded, batched, to the dev server's event log
+(`/_denext/dev-log`), so [`denext_dev_logs`](#mcp-inspect-the-live-page) reads
+the page's console — App Router and SPA dev alike.
+
+## Highlight updates
+
+The `✨` toolbar toggle flashes components **on the page itself** as they
+re-render, the way React DevTools' "highlight updates" does.
+
+It works off the inspector's per-component render counter (which the panel is
+already accruing while it is open), so a component only flashes when its count
+actually moved — a parent re-rendering does not light up children that bailed
+out. The outline colour is a streak ramp over consecutive updating commits: blue
+for a single update, through yellow, to red for a component that has re-rendered
+in five commits in a row. Each flash lasts 350 ms.
+
+Turning the toggle off clears the remembered counts, so switching it back on
+re-baselines instead of flashing the whole tree at once; a component's streak
+resets as soon as it skips a commit, and an unmounted component is forgotten.
+
+## Keyboard shortcuts
+
+| Chord                           | Does                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `Ctrl+Shift+D`                  | Toggle the panel — the only chord that works while it is closed                                  |
+| `Alt+1` … `Alt+7`               | Jump to a tab, in strip order (Components … Routes, Console)                                     |
+| `Ctrl+Shift+[` / `Ctrl+Shift+]` | Previous / next tab, wrapping at both ends (the shifted `{` / `}` a US layout produces work too) |
+| `Escape`                        | Cancel the element picker; with the picker off, close the panel                                  |
+
+Chords carrying the Meta key are ignored outright — `Cmd+…` belongs to the
+browser and the OS on macOS, which is also why the toggle is `Ctrl+Shift+D`
+rather than something Chrome has already claimed.
+
+## How source locations and hook names get there
+
+Fast Refresh already gives every component a stable family id
+(`<fileUrl>#<Export>`) — but that is a _name_, not a position. So the dev
+transforms — the unbundled loop's per-module transform, and SPA dev's esbuild
+plugin, which instruments `.ts` hook modules as well as `.tsx`/`.jsx` — record
+more while they are already parsing the module, and append it as a sidecar next
+to the refresh registration:
+
+- the **line and column** each component (and each `use*` custom hook) is
+  declared at — 1-based line, 1-based UTF-16 column, exact past multi-byte text,
+  emoji, CRLF line endings and a directive/licence prologue;
+- the **binding** each hook call's result was given, in source order — plus, for
+  a hook bound by a static relative import, the URL of the module that declares
+  it.
+
+A module of hooks alone gets the sidecar without any family registration. The
+bundled App Router dev path has no per-module transform, so its generated route
+entry carries the same records for the route-structural files — page, layouts,
+templates, `loading`, `error`, slot pages — keyed by the `<fileUrl>#default` id it
+registers them under (an anonymous `export default` included, its record named
+after the file stem). Each file's records are cached by mtime, so a rebuild
+re-parses only what changed.
+
+At runtime that lands in a dev-only registry the inspector joins against a live
+component type through its family id. Nothing else changes: `registerFamily` is
+untouched, and the metadata rides beside it as its own call.
+
+The pass is bounded and switchable:
+
+- at most **64 hooks** are recorded per component;
+- a module whose serialised metadata would exceed **16 KB** emits none at all;
+- `DENEXT_DEV_META=0` turns emission off entirely (the Fast Refresh
+  registrations are untouched — you keep HMR, you lose line numbers and hook
+  names);
+- a module the parser cannot handle is passed through unchanged.
+
+**Production bundles carry none of it.** The only emitters are the dev transforms
+and the bundled dev route entry, so nothing in a production build references the
+metadata registry and the whole module — whose only module-level work is creating
+an empty `Map` — is tree-shaken away. Tests hold that line:
+`tests/devtools-meta.test.ts` runs one module through the **production** plugin
+set, and generates production route entries (even when one is handed a metadata
+footer), asserting no metadata call comes out; `tests/spa-dev-integration.test.ts`
+greps a built entry for the dev-only symbols.
+
+## Stock React DevTools
+
+If you have the React DevTools browser extension installed, denext lights it up
+too: it registers as a renderer and reports a React-fiber-shaped tree, so the
+extension's **Components** panel shows your tree and props, and — routed back
+through denext's own reconciler — live prop/state editing and element selection
+work there as well.
+
+> [!WARNING]
+> The extension's _hooks view_ and its _Profiler_ rely on React-internal
+> introspection a non-React fiber tree cannot provide. Use denext's own panel for
+> hook fidelity and profiling — it is the full-fidelity surface.
+
+## MCP: inspect the live page
+
+An agent cannot reach into your browser, and denext deliberately has no pull
+channel from the dev server into the page. So the page **pushes**: after each
+settled commit the in-page sink serialises the component tree and POSTs it to the
+dev server, which keeps the latest snapshot per page URL. Three
+[MCP](/docs/mcp) tools read it back:
+
+| Tool                    | Answers                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `denext_component_tree` | The live tree — every component with its source location, badges and render count (`filter`, `depth`, `maxNodes`)                                |
+| `denext_why_render`     | Why a component last re-rendered: which props, hooks and contexts changed, and how many renders it has done                                      |
+| `denext_hook_state`     | A component's hook cells — each cell's name, the hook that produced it, its value, its deps and any `useDebugValue` label (`index` for one cell) |
+
+All three take `url` (which page's tree, default: the most recent) and `dir` (the
+project directory) — the bridge always passes `url` when you name a page, which is
+also how it reads a page other than the newest one. A call and its answer:
+
+```json
+{ "name": "denext_why_render", "arguments": { "component": "Counter" } }
+```
+
+```text
+snapshot 0.4s old · /
+Counter #2  app/counter.tsx:5 · rendered 4× while tracking
+  props changed: label
+  hook changed: [0] count · useState
+  contexts changed: Theme
+```
+
+`denext_component_tree` renders the same header over an indented tree, and
+`denext_hook_state` over the cells:
+
+```text
+snapshot 0.4s old · /
+Page  app/page.tsx:12
+  Counter key="a" [memo]  app/counter.tsx:5  ×4
+  Legacy
+```
+
+```text
+snapshot 0.4s old · /
+Counter #2  app/counter.tsx:5
+  [0] count · useState = 3
+  [1] useEffect = ƒ anonymous  deps [3]  (has cleanup)
+```
+
+**Every answer says how old it is.** The age is measured on the server clock, so
+a skewed page clock cannot make a stale tree look fresh, and past 5 seconds the
+header adds `— interact with the page or reload to refresh`. A tree the page
+capped when it posted it says so, and so does one the tool's own `depth` /
+`maxNodes` cut.
+
+Three things can be missing, and each gets its own answer rather than one vague
+error:
+
+| Situation                      | What the tool says                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------ |
+| No dev server                  | `no dev server running (deno task dev) for <dir>` — it looked for `.denext/dev.json` |
+| Dev server, but nothing pushed | `open the app in a browser — the DevTools sink has posted nothing yet`               |
+| A tree, but no such component  | `no component named "X" in this snapshot. Components present: …`                     |
+
+So both preconditions hold at once: the tools need **`deno task dev` running AND
+the app open in a browser**. You do not have to open the panel — an agent
+inspecting a page the developer never opened the panel on is the normal case.
+
+**The sink arms lazily.** A page that nobody is inspecting walks no fibers and
+posts nothing; the first `denext_component_tree` / `denext_why_render` /
+`denext_hook_state` call arms the dev server, and the page picks that up on its
+next settled commit. So the **first** call on a fresh session may answer
+`the DevTools sink has posted nothing yet` — call it again after the page's next
+commit, or start the server with `DENEXT_DEV_INSPECT=1` to arm it from the very
+beginning. Arming is sticky for the dev server's lifetime.
+
+What gets pushed is deliberately bounded and inert:
+
+- a **trailing throttle** of 1.5 s (a burst of commits produces one post), plus a
+  final post on `pagehide` — which is skipped above 60 KiB, because a browser
+  refuses a `sendBeacon` / `keepalive` body over 64 KiB unobservably, and the last
+  throttled post stands instead;
+- the tree is cut at depth 50, 2000 components or a 256 KB body, and flagged
+  `truncated` when a cap bit. A body still over the cap after the walk drops root
+  nodes until it fits rather than being abandoned, and every byte cap counts
+  **UTF-8** bytes, not UTF-16 code units;
+- host, text and fragment nodes are spliced out (their component children are
+  re-parented), the panel's per-prop override rows are dropped, and every raw
+  value is stripped — only previews travel. A **string never travels at all**: its
+  preview is `string(8)`, the length and nothing else, so a token or a password
+  held in a `useState` cell cannot reach an agent's context. Numbers, booleans and
+  object/array shapes survive as previews;
+- the endpoint is POST + exactly `application/json` (a `content-type` whose media
+  type merely _contains_ it is a 415), same-origin gated like every `/_denext/*`
+  endpoint, and refuses an oversized body with a 413. What it stores is **rebuilt
+  field by field** from coerced, length-clamped values — never the posted object —
+  so a forged tree can neither crash a formatter nor inject unbounded text; a body
+  that is not a well-formed snapshot is dropped silently;
+- at most one snapshot per page URL, across an 8-URL LRU, and every snapshot
+  **expires ten minutes** after it arrived;
+- **a page reads only its own snapshot.** A GET that carries a `Referer` — i.e. a
+  request from a dev page — is scoped to that page's own path, so a page at
+  `/blog/<untrusted>` cannot read `/login`'s hook state. The MCP bridge, which has
+  no `Referer`, selects a page with `?url=`.
+
+Every failure path in the page is swallowed: the app never notices the sink
+exists. `denext mcp --disable devtools` hides all three tools when you want the
+context back.
+
+## Using the inspector from your own code
+
+The same surface is a module — `denext/devtools` — and is installed on
+`window.__denextDevtools` in dev, for editor integrations, tests and tooling of
+your own.
+
+```ts
+import { installInspector } from "denext/devtools";
+
+const dt = installInspector(); // null in production / before dev is active
+if (dt) {
+  const tree = dt.getInspectorTree(); // props, hooks, contexts, badges, source
+  dt.setHookState(fiberId, hookIndex, next); // live-edit a useState cell
+  dt.dispatchReducer(fiberId, hookIndex, action); // …or dispatch to a reducer
+  dt.setRefValue(fiberId, hookIndex, node); // …or set a ref's `current`
+  dt.setPropOverride(fiberId, "title", "hi"); // pin a prop
+  dt.enableRenderReasons(); // then dt.getRenderReason(fiberId)
+  dt.startProfiling(); // then dt.getCommits() / dt.getCommitTree(i)
+  dt.getBoundaryTimings(); // the live Suspense-boundary waterfall
+}
+```
+
+`installDevtools()` — which mounts the panel — is called automatically by the dev
+entries; you only need `installInspector()` to read the data yourself. Every
+function and type is listed in the [API reference](/docs/api).
+
+## Limitations
+
+- **The owner stack is the render-parent chain**, not React's JSX-owner chain.
+  They coincide for the common case; a component passed as `children` through a
+  wrapper is reported under the wrapper that rendered it.
+- **Cross-module hook naming follows static relative imports only.** A hook
+  imported by a bare, `npm:`/`jsr:`, URL specifier (or, in SPA mode, an import-map
+  alias), through a namespace import, or through a barrel's `export *` still consumed an unknowable
+  number of cells, so the component falls back to kind labels. A `.js`-style
+  specifier also finds its TypeScript sibling (`./auth.js` naming `auth.ts`).
+  Expansion is capped at three levels, across modules
+  or within one.
+- **A conditional hook drops naming for that component** — the metadata and the
+  live cells stop lining up, and the panel prefers kind labels over a wrong name.
+- **The bundled App Router dev path names route files only.** With
+  `DENEXT_DEV_UNBUNDLED=0` (and for a route with an `.mdx`/`.md` page or layout,
+  which always takes that path) the route entry carries line, column and hook
+  names for the route-structural components — page, layouts, templates,
+  `loading`, `error`, slot pages — but not for the components those files render,
+  nor for a custom hook they import from another file: nothing instruments those
+  modules there. The bundled Flight entry (`"use client"` islands) carries none.
+  The unbundled dev loop, the default, covers every module.
+- **A `useDebugValue` label rides the row of the cell before the call.** It takes
+  no cell of its own, so a component with no hook cells shows none, and a call
+  placed between two hooks reads under the earlier one.
+- **Network, Cache, Routes and the MCP bridge need the App Router dev server.**
+  SPA dev serves only the dev log (`denext_dev_logs` works there): those tabs
+  render `… is not available in SPA dev (App Router only)`, and the Source row
+  falls back to a `vscode://` link. Components, Render modes, the Profiler and
+  the Console work everywhere.
+
+More in [Known limitations](/docs/limitations).

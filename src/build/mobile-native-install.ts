@@ -426,9 +426,11 @@ function registrationLines(features: ReadonlySet<NativeFeature>): string {
  * `DenextBridgeViewController.swift` for `features`, marker line included: OTA alone is the OTA
  * template exactly; OTA with other features is that template also registering their plugins;
  * auth sessions alone is the auth-session registering-only controller; any other set without
- * OTA is the app-extension registering-only controller.
+ * OTA (the empty one included: only the export router and the frame guard) is the app-extension
+ * registering-only controller. Every variant serves an exported multi-page app's routes
+ * (bridge-export-router-native-template.ts).
  *
- * @param features The installed features (at least one).
+ * @param features The installed features (none: a bridge that registers no plugin).
  * @returns The file content.
  */
 export async function bridgeViewControllerSource(
@@ -457,15 +459,18 @@ async function isPristineBridge(text: string): Promise<boolean> {
 
 /** Whether `text` is this release's bridge view controller for some feature combination. */
 async function isCurrentBridge(text: string): Promise<boolean> {
-  for (const set of featureSets(ALL_FEATURES)) {
+  for (const set of [[], ...featureSets(ALL_FEATURES)]) {
     if (text === await bridgeViewControllerSource(new Set(set))) return true;
   }
   return false;
 }
 
 /** The features installed on iOS (their plugin file is in the app folder), plus `including`. */
-async function iosFeatures(root: string, including: NativeFeature): Promise<Set<NativeFeature>> {
-  const features = new Set<NativeFeature>([including]);
+async function iosFeatures(
+  root: string,
+  including: NativeFeature | null,
+): Promise<Set<NativeFeature>> {
+  const features = new Set<NativeFeature>(including === null ? [] : [including]);
   for (const [feature, file] of Object.entries(IOS_FEATURE_FILES)) {
     if (await isFile(join(root, IOS_APP, file))) features.add(feature as NativeFeature);
   }
@@ -474,12 +479,13 @@ async function iosFeatures(root: string, including: NativeFeature): Promise<Set<
 
 /**
  * Write `DenextBridgeViewController.swift` registering every installed feature's plugin (see
- * {@linkcode bridgeViewControllerSource}). An edited controller is kept; when it does not
- * register `including`'s plugin, `registration` is reported as the manual step.
+ * {@linkcode bridgeViewControllerSource}); `including` is the feature being added (`null`: none,
+ * only what every bridge carries, such as the export router). An edited controller is kept; when
+ * it does not contain `registration.needle`, `registration.step` is reported as the manual step.
  */
 export async function installBridgeViewController(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
-  including: NativeFeature,
+  including: NativeFeature | null,
   registration: { needle: string; step: string },
 ): Promise<void> {
   const root = inst.opts.dir;
@@ -764,8 +770,10 @@ const MAIN_ACTIVITY_FAMILY = "main-activity";
  * Generation 3 added {@linkcode RENDERER_RECOVERY} to every combination (a dead WebView renderer
  * recreates the activity instead of ending the app); the bump keeps an older denext from
  * rewriting it away. The registrations above it are unchanged.
+ * Generation 4 added {@linkcode EXPORT_ROUTES} to every combination (an exported multi-page app's
+ * routes load their own pages); the bump keeps an older denext from rewriting it away.
  */
-const MAIN_ACTIVITY_TEMPLATE_VERSION = 3;
+const MAIN_ACTIVITY_TEMPLATE_VERSION = 4;
 
 /**
  * SHA-256 of every MainActivity denext wrote before the marker line existed, with the package
@@ -850,6 +858,150 @@ const RENDERER_RECOVERY = `        super.onCreate(savedInstanceState);
             return true;
         }
     }
+`;
+
+/**
+ * The line every composed MainActivity from generation 4 runs last before `super.onCreate`:
+ * it registers {@linkcode EXPORT_ROUTES}' plugin, whose `load()` runs while the bridge is built,
+ * before the first page.
+ */
+const EXPORT_ROUTES_REGISTRATION =
+  "        // denext: an exported page loads its own HTML (see DenextExportRoutes below).\n" +
+  "        registerPlugin(DenextExportRoutes.class);\n";
+
+/** The call that marks a MainActivity carrying {@linkcode EXPORT_ROUTES}. */
+const EXPORT_ROUTES_CALL = "DenextExportRoutes.class";
+
+/**
+ * The classes every composed MainActivity from generation 4 ends with: Android's counterpart of
+ * iOS's `DenextExportRouter` (bridge-export-router-native-template.ts).
+ *
+ * Capacitor 8's `WebViewLocalServer` answers every path without an extension with the root
+ * `index.html` (`server.html5mode`, a single-page-app assumption), so in an exported multi-page
+ * App Router site a link to `/protected` loads the home page. Its route hook
+ * (`Bridge.Builder.setRouteProcessor`) only ever sees `/index.html` for such a path, so it
+ * cannot help; the bridge's `WebViewClient` can. `DenextExportRoutes` is a plugin with no
+ * methods: its `load()` runs while the bridge is built (plugins load before the first page) and
+ * puts `ExportRoutesClient`, a `BridgeWebViewClient`, in front of the bridge. That client asks
+ * the local server for `/route/index.html` or `/route.html` instead of `/route` when the UI
+ * served has that page (the bundled `public/` assets, or the directory of an over-the-air UI,
+ * read from `Bridge.getServerBasePath()` per request), so the WebView keeps the URL the link
+ * named and the page gets Capacitor's script injection as before. Every other request keeps
+ * Capacitor's answer, so a single-page app's client routes still load `index.html`. Live reload
+ * (`server.url`) is left to the dev server, and an app that installed its own `WebViewClient`
+ * keeps it (logged). Fully qualified names, as above.
+ */
+const EXPORT_ROUTES = `
+    /**
+     * denext: an exported multi-page app's routes load their own pages. Capacitor's local server
+     * answers every path without an extension with the root index.html, so a link to /protected
+     * would load the home page. Loaded with the bridge, before the first page, this puts
+     * ExportRoutesClient in front of the bridge's WebViewClient.
+     */
+    @com.getcapacitor.annotation.CapacitorPlugin(name = "DenextExportRoutes")
+    public static final class DenextExportRoutes extends com.getcapacitor.Plugin {
+        @Override
+        public void load() {
+            com.getcapacitor.Bridge bridge = getBridge();
+            com.getcapacitor.BridgeWebViewClient current = bridge.getWebViewClient();
+            if (current != null && current.getClass() != com.getcapacitor.BridgeWebViewClient.class) {
+                android.util.Log.w("denext", "the app has its own WebViewClient; exported pages route as a single-page app");
+                return;
+            }
+            bridge.setWebViewClient(new ExportRoutesClient(bridge));
+        }
+    }
+
+    /**
+     * Asks the local server for /route/index.html or /route.html instead of /route when the UI
+     * served (the bundled public/ assets or an over-the-air UI directory) has that page. Every
+     * other request keeps Capacitor's answer.
+     */
+    private static final class ExportRoutesClient extends com.getcapacitor.BridgeWebViewClient {
+        private final com.getcapacitor.Bridge bridge;
+
+        ExportRoutesClient(com.getcapacitor.Bridge bridge) {
+            super(bridge);
+            this.bridge = bridge;
+        }
+
+        @Override
+        public android.webkit.WebResourceResponse shouldInterceptRequest(android.webkit.WebView view, android.webkit.WebResourceRequest request) {
+            String page = exportedPage(request.getUrl());
+            return super.shouldInterceptRequest(view, page == null ? request : new Rerouted(request, page));
+        }
+
+        /** The exported page behind an extensionless local path, or null to leave the request alone. */
+        private String exportedPage(android.net.Uri url) {
+            // Live reload (server.url): the dev server routes the pages itself.
+            if (bridge.getServerUrl() != null) return null;
+            String host = url.getHost();
+            String path = url.getPath();
+            if (host == null || path == null || !host.equalsIgnoreCase(bridge.getHost())) return null;
+            if (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+            String last = path.substring(path.lastIndexOf('/') + 1);
+            if (last.isEmpty() || last.contains(".") || path.contains("/..") || path.startsWith("/_capacitor_")) {
+                return null;
+            }
+            String base = bridge.getServerBasePath();
+            if (base == null) return null;
+            for (String page : new String[] { path + "/index.html", path + ".html" }) {
+                if (exists(base, page)) return page;
+            }
+            return null;
+        }
+
+        /** Whether the UI served has page: a file under an absolute base (an over-the-air UI), else an asset. */
+        private boolean exists(String base, String page) {
+            if (base.startsWith("/")) return new java.io.File(base + page).isFile();
+            try (java.io.InputStream in = bridge.getContext().getAssets().open(base + page)) {
+                return true;
+            } catch (java.io.IOException e) {
+                return false;
+            }
+        }
+    }
+
+    /** A request for another path of the same URL (the WebView still shows the URL it asked for). */
+    private static final class Rerouted implements android.webkit.WebResourceRequest {
+        private final android.webkit.WebResourceRequest request;
+        private final android.net.Uri url;
+
+        Rerouted(android.webkit.WebResourceRequest request, String path) {
+            this.request = request;
+            this.url = request.getUrl().buildUpon().path(path).build();
+        }
+
+        @Override
+        public android.net.Uri getUrl() {
+            return url;
+        }
+
+        @Override
+        public boolean isForMainFrame() {
+            return request.isForMainFrame();
+        }
+
+        @Override
+        public boolean isRedirect() {
+            return request.isRedirect();
+        }
+
+        @Override
+        public boolean hasGesture() {
+            return request.hasGesture();
+        }
+
+        @Override
+        public String getMethod() {
+            return request.getMethod();
+        }
+
+        @Override
+        public java.util.Map<String, String> getRequestHeaders() {
+            return request.getRequestHeaders();
+        }
+    }
 }
 `;
 
@@ -860,12 +1012,13 @@ function normalizedPackage(text: string): string {
 
 /**
  * A `MainActivity` that registers `features` before the bridge is built (OTA first in onCreate,
- * so its `prepare` still runs first thing) and recovers from a dead WebView renderer
+ * so its `prepare` still runs first thing), serves an exported multi-page app's routes
+ * ({@linkcode EXPORT_ROUTES}) and recovers from a dead WebView renderer
  * ({@linkcode RENDERER_RECOVERY}), under a `// denext-main-activity-template:` marker line, so a
  * later release still recognises it as unedited after the text changes.
  *
  * @param pkg The activity's Java package.
- * @param features The features to register (at least one).
+ * @param features The features to register (none: only the routes and the recovery).
  * @returns The Java source, marker line included.
  */
 export function mainActivitySource(
@@ -887,7 +1040,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-${lines}${RENDERER_RECOVERY}`,
+${lines}${EXPORT_ROUTES_REGISTRATION}${RENDERER_RECOVERY}${EXPORT_ROUTES}`,
   );
 }
 
@@ -904,6 +1057,7 @@ async function isPristineMainActivity(text: string): Promise<boolean> {
  */
 function registeredFeatures(text: string): AndroidFeature[] | undefined {
   const known = new Set(FEATURE_ORDER.map((f) => ANDROID_REGISTRATIONS[f].call));
+  known.add(EXPORT_ROUTES_CALL);
   for (const m of text.matchAll(/registerPlugin\(\s*(\w+)\.class\s*\)/g)) {
     if (!known.has(`${m[1]}.class`)) return undefined;
   }
@@ -943,19 +1097,28 @@ async function findMainActivities(dir: string): Promise<string[]> {
   return out;
 }
 
+/** What `registerInMainActivity(inst, null)` looks for, and the manual step without it. */
+const EXPORT_ROUTES_STEP = {
+  call: EXPORT_ROUTES_CALL,
+  step: "copy the DenextExportRoutes plugin (and its ExportRoutesClient and Rerouted classes) " +
+    "from denext's MainActivity template and call `registerPlugin(DenextExportRoutes.class);` " +
+    "in MainActivity.onCreate, before super.onCreate.",
+};
+
 /**
- * Make `MainActivity` register `feature`'s plugin. A stock activity, or an unedited one denext
- * wrote (this release or an earlier one), is rewritten to the current source registering them
- * all; an edited one that already registers `feature` is left alone, and any other becomes a
- * manual step.
+ * Make `MainActivity` register `feature`'s plugin (`null`: none, only what every composed
+ * activity carries, such as {@linkcode EXPORT_ROUTES}). A stock activity, or an unedited one
+ * denext wrote (this release or an earlier one), is rewritten to the current source registering
+ * them all; an edited one that already registers `feature` is left alone, and any other becomes
+ * a manual step.
  */
 export async function registerInMainActivity(
   inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
-  feature: AndroidFeature,
+  feature: AndroidFeature | null,
 ): Promise<void> {
   const root = inst.opts.dir;
   const activities = await findMainActivities(join(root, ANDROID_JAVA_ROOT));
-  const { call, step } = ANDROID_REGISTRATIONS[feature];
+  const { call, step } = feature === null ? EXPORT_ROUTES_STEP : ANDROID_REGISTRATIONS[feature];
   if (activities.length !== 1) {
     inst.report.manual.push(`Android: ${step}`);
     return;
@@ -979,7 +1142,10 @@ export async function registerInMainActivity(
   const current = await mainActivitySource(known.pkg, new Set(known.features));
   // An unedited activity from an earlier release (the text or the marker generation changed).
   if (known.features.length > 0 && text !== current) inst.report.upgraded.push(inst.rel(path));
-  const next = await mainActivitySource(known.pkg, new Set([...known.features, feature]));
+  const next = await mainActivitySource(
+    known.pkg,
+    new Set(feature === null ? known.features : [...known.features, feature]),
+  );
   await inst.edit(path, () => next);
 }
 

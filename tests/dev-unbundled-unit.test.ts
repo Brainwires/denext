@@ -16,6 +16,7 @@ import {
 import { compatDepUrl, rewriteSpecifier } from "../src/build/dev-unbundled/resolve.ts";
 import { onChange, propagate } from "../src/build/dev-unbundled/hmr.ts";
 import { NEXT_ALIASES, REACT_ALIASES } from "../src/build/next-compat.ts";
+import { cjsExternalWrapper, serverOnlyStub } from "../src/build/dev-unbundled/deps.ts";
 
 function state(compat: boolean): UnbundledState {
   return createUnbundledState({
@@ -126,4 +127,49 @@ Deno.test("unbundled @dep inventory: every denext specifier the client can impor
   for (const rel of Object.values(DEP_ENTRYPOINTS)) {
     await Deno.stat(new URL("../" + rel, import.meta.url));
   }
+});
+
+Deno.test("compat: an npm island named by path rides the npm bundle; unknown denext/* stays out", () => {
+  const st = state(true);
+  const e: TransformEntry = { mtimeMs: 0, code: "", deps: [], selfAccepting: false };
+  // The Flight entry imports an npm package's `"use client"` file by path: never served raw.
+  const island = "/proj/node_modules/.deno/ui@1/node_modules/ui/dist/cjs/provider.js";
+  assertEquals(rewriteSpecifier(st, island, island, e), `${NPM_PREFIX}${depSlug(island)}.js`);
+  assert(st.npmSpecs.has(island));
+  // The native loop keeps @fs (its npm code never takes this path).
+  assert(rewriteSpecifier(state(false), island, island, e).startsWith(FS_PREFIX));
+  // A denext module the prebuilt runtime lacks is not an npm package (it broke the whole bundle).
+  assertEquals(compatDepUrl(st, "denext/not-prebuilt"), null);
+  assertEquals(compatDepUrl(st, "denext/desktop/client"), `${DEP_PREFIX}desktop-client.js`);
+  assertEquals(compatDepUrl(st, "next/compat/router"), `${DEP_PREFIX}next-compat-router.js`);
+});
+
+Deno.test("compat: a CommonJS require of a runtime module gets a re-exporting wrapper", async () => {
+  const target = "data:text/javascript," +
+    encodeURIComponent("export default 1; export const x = 2;");
+  const wrapper = cjsExternalWrapper(target);
+  const mod = await import("data:text/javascript," + encodeURIComponent(wrapper));
+  assertEquals(mod.default, 1);
+  assertEquals(mod.x, 2);
+  // A target without a default export: the namespace stands in for it.
+  const bare = "data:text/javascript," + encodeURIComponent("export const y = 3;");
+  const mod2 = await import("data:text/javascript," + encodeURIComponent(cjsExternalWrapper(bare)));
+  assertEquals(mod2.default.y, 3);
+});
+
+Deno.test("compat: a CommonJS require of Next's server surface throws only when called", () => {
+  const module = { exports: {} as Record<string | symbol, unknown> };
+  new Function("module", serverOnlyStub("next/headers"))(module);
+  const exp = module.exports;
+  assertEquals(exp.__esModule, true);
+  assertEquals(exp[Symbol.toStringTag], undefined);
+  const headers = exp.headers as () => unknown;
+  assertEquals(typeof headers, "function"); // importing it is fine…
+  let message = "";
+  try {
+    headers(); // …calling it in the browser is not
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  assertEquals(message, "next/headers.headers() is server-only");
 });

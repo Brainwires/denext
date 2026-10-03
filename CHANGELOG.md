@@ -8,6 +8,765 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-03
+
+### Added
+
+- **`desktop.macos`: a provisioning profile and restricted entitlements for the macOS app.**
+  `desktop.macos: { provisioningProfile, entitlements }` (or `DENEXT_PROVISIONING_PROFILE`) has
+  `scripts/package-macos.ts` embed the profile as `Contents/embedded.provisionprofile` and sign
+  with the entitlements merged over `DENEXT_ENTITLEMENTS`'s, plus the App ID and team entitlements
+  macOS matches the profile by — what native passkeys need on macOS
+  (`com.apple.developer.associated-domains` = `webcredentials:<rp-id>`). The profile is checked
+  before the build (macOS, not expired, the App ID of `desktop.app.identifier`, the signing
+  identity's team, and a grant for every restricted entitlement), and a restricted entitlement
+  without a profile is refused, instead of an app that AMFI will not launch. Existing projects pick
+  it up with `denext desktop package --regenerate-scripts`. The desktop kitchen sink's manual
+  passkey check takes its relying party from a field that defaults to the first pinned RP.
+- **A Console in the DevTools panel, with a boot diagnosis.** The dev-reload script captures
+  `console.*`, uncaught errors, unhandled rejections and failed script/resource loads before
+  the app's entry runs (the last 500, safely serialized); the new **Console** tab shows them
+  with level filters, clear, copy-all and expandable stacks, and a red count beside the
+  launcher flags errors on a phone. When the entry module fails to load ("Importing a module
+  script failed"), it walks the module graph from the entry and names the module that answers
+  non-2xx, non-JavaScript (an HTML fallback page), an unresolvable bare specifier or a syntax
+  error, with its importer. The header gains a full-screen / half-screen toggle (44 px touch
+  targets, safe-area aware, remembered per tab). Entries reach the dev log, and SPA dev now
+  serves `/_denext/dev-log` + `/_denext/dev-state` and writes `.denext/dev.json`, so
+  `denext_dev_logs` works for SPA apps.
+- **`denext/mobile/clerk`: Clerk in the Capacitor shell.** `installClerkMobileBridge({ scheme,
+  nativeClerk: true })` (from `instrumentation-client.ts`) lets the app's own `<ClerkProvider>`
+  (`@clerk/nextjs`, `@clerk/react`) sign in inside the iOS / Android app, as
+  `denext/desktop/clerk` does in a Deno Desktop window: clerk-js in native mode with the client JWT
+  in the Keychain / Keystore (memory without the plugin, never IndexedDB), Google / GitHub through
+  `openAuthSession` back to `<scheme>://app/` (only that session's redirect; stray Clerk callbacks
+  never reach `onDeepLink`), and passkeys through Clerk's hosted page with `state` + S256 PKCE
+  (`startClerkMobileBrowserSignIn`). `denext mobile add clerk --scheme <scheme>` installs the
+  auth-session and secure-storage plugins, registers the scheme and prints the Clerk-side steps.
+  The shared native-mode and hosted-auth code moved to `src/runtime/clerk-native.ts`;
+  `denext/desktop/clerk`'s exports are unchanged. examples/clerk gains the mobile leg.
+- **A docs page for every example.** `/docs/examples/<name>` renders the example's own README
+  (the single source; relative links become GitHub URLs, a link to another example becomes its
+  page) under a "Run it" block, its category, tags and a GitHub source link, with related examples
+  and previous / next. `/docs/examples` groups all 45 by category, and the sidebar nests them under
+  Examples. `denext_read_docs` reads them as `examples/<name>`, and `llms.txt` links the index.
+- **`DENEXT_LOCK_TIMEOUT=<seconds>`** bounds the wait for a build lock another denext process
+  holds: past it the command fails, naming the lock file (unset: wait until it is free).
+- **A denext backend accepts its own Deno Desktop app origin.** With `desktop.app.origin` set
+  (e.g. `myapp://app`), an `Origin` exactly equal to it (normalized as the runtime does) passes
+  every same-origin check: Server Actions, the typed-API batch, the Live socket handshake,
+  `denextAuth`'s POSTs and the `denext dev` origin gate, so a desktop window's Live and Server
+  Actions reach a `denext start` or `denext dev` backend. Another scheme or host is refused, and
+  nothing changes while the option is unset. A browser page cannot produce a custom-scheme origin,
+  so this does not widen browser-borne CSRF.
+- **`denext migrate --desktop` writes `desktop.denoFlags`.** The generated `denext.config.ts`
+  carries `desktop: { denoFlags: ["--node-modules-dir=none", "--exclude-unused-npm"] }`, the
+  resolution flags the generated `desktop` task bakes, so `denext desktop run | dev | package`
+  pass them too (the raw `deno desktop` task reads no config and keeps them inline).
+- **`allowedDevOrigins` takes custom-scheme origins** (`"myapp://app"`, validated as
+  `desktop.app.origin` is), so a separate backend project can admit a desktop app's origin; so does
+  `createApp`'s `allowedOrigins`.
+- **`examples/clerk`: Clerk on the web and in Deno Desktop, written once.** The Clerk Next.js
+  quickstart's shape on denext — `clerkMiddleware()` + `createRouteMatcher`, `<ClerkProvider>`
+  in the root layout, `auth()` / `currentUser()` in a Server Component and a `defineApi` route —
+  plus the Deno Desktop shell (`nativeClerk`, the custom origin, deep links, the keychain token
+  cache, passkey RP pinning), a setup screen without keys, the Clerk dashboard steps and
+  Tailscale for other devices. Tests: key-less unit checks in CI, a key-less e2e of the session
+  check (missing / expired / tampered / foreign tokens refused, networklessly), a keyed e2e on a
+  Clerk development instance in test mode (`+clerk_test`, code 424242: email code, password, the
+  API, the protected page, sign-out, `denext start` and `denext dev`; CI runs it when the
+  `CLERK_TEST_*` secrets exist) and a desktop leg (`deno task test:desktop`: sign-in, relaunch,
+  sign-out in the packaged window).
+- **`denext/desktop/clerk`: `nativeClerk` — the app's own `<ClerkProvider>` signs in on desktop.**
+  `installClerkDesktopBridge({ nativeClerk: true })` switches the clerk-js instance any Clerk
+  React SDK loads from the Frontend API (`@clerk/nextjs`, `@clerk/react`: it lands on
+  `globalThis.Clerk`) into native mode, as `@clerk/electron/react` does with its bundled one: the
+  client JWT from the keychain token cache rides as `Authorization` (no cookies, `_is_native`),
+  the JWT the API returns is saved, and `load()` gets `standardBrowser: false` with the bridge's
+  OAuth transport. `{ passkeys }` attaches a WebAuthn adapter (`passkeys` from
+  `@clerk/electron/passkeys`). Off by default (with `@clerk/electron/react`, which does it
+  itself).
+- **next-compat: `"use client"` and `"use server"` inside npm packages.** A Server Component that
+  imports a library's client components straight from the package (`ClerkProvider`, `Show` and
+  `SignInButton` from `@clerk/nextjs`) now renders them as islands that hydrate, and their
+  package's `"use server"` action is a callable server reference — as Next does. The build finds
+  these files with one esbuild walk over `node_modules`, resolving packages as the server bundle
+  does (often their CommonJS build), so the islands are the very modules SSR renders; their
+  export names are read statically. `middleware.ts` is bundled through the compat pipeline too (a
+  middleware importing `@clerk/nextjs/server` needs it), a CommonJS island registers its exports
+  on the client, and a library's `next/router` / `next/compat/router` import resolves to denext
+  stand-ins (`null` under the App Router) instead of Next's Pages Router client. In `denext dev`,
+  the npm islands ride the npm dependency bundle (a CommonJS `require()` of the runtime gets an
+  ES wrapper, Next's server surface a stub that throws only when called, the islands' action
+  modules client stubs, `process.env` the browser shim), the page reloads when that bundle is
+  rebuilt under it, and `denext/desktop/{client,window,app}` are part of the compat runtime.
+- **Deno Desktop sign-in on macOS runs in the OS's own auth session.** Under the pinned runtime
+  (2.9.7-denext.6), `openAuthSession`'s custom-scheme flow (and so `denext/desktop/clerk`) uses
+  `ASWebAuthenticationSession` through `Deno.desktop.authSession`: a sheet on the app's window that
+  rejects a real `cancelled` when the user closes it, and is private with `preferEphemeral: true`.
+  The declared scheme, PKCE S256, owner check and the exact `redirect_uri` + `state` match still
+  apply (a sheet that ends elsewhere rejects `invalid`). Windows and Linux, which have no OS
+  session (`not_supported`), keep the system browser and the deep-link callback. On 2.9.7-denext.7
+  a page cancel, the timeout or the starting page going away also closes the sheet
+  (`Deno.desktop.authSession.cancel()`, feature-detected).
+- **A Cancel overlay for system-browser sign-ins on Deno Desktop.** While the system browser has
+  the sign-in (Windows and Linux, and the loopback flow everywhere), `openAuthSession` shows a
+  small modal with a Cancel button (Escape too) that ends the session with `cancelled`; the timeout
+  stays the backstop. `cancelOverlay: false` hides it, `{ message, cancelLabel }` translates it,
+  and `signal` now cancels the loopback flow too (a token-gated `{ cancel: true }` to its endpoint).
+- **`desktop.denoFlags`: extra `deno desktop` flags.** A project that needs them to build at all
+  (a pnpm workspace: `["--node-modules-dir=none", "--exclude-unused-npm"]`) lists them in
+  `denext.config.ts`; `denext desktop run` / `dev` and the package scripts pass them before the
+  entry (`denext/desktop` exports `desktopDenoFlagArgs` for the scripts; the macOS script picks it
+  up with `denext desktop package --regenerate-scripts`). Only an allow-list of resolution and
+  type-check flags is accepted, one `--flag` / `--flag=value` per entry; permission flags and the
+  flags denext sets itself are refused by config validation, the commands and the scripts. In a
+  pnpm workspace with `nodeModulesDir: "manual"` and no `--node-modules-dir`, the commands print
+  the line to add (denext does not add it: it moves npm resolution off the workspace's
+  `node_modules`).
+- **The web `Notification` API on Deno Desktop.** With the `notifications` capability on, denext's
+  pinned runtime injects a `Notification` into every top-level page, before the page's scripts,
+  backed by the OS notifications, so code written for a browser or Electron works:
+  `new Notification(title, { body, tag })`, `Notification.permission` /
+  `requestPermission()`, `show` / `error` / `close` events, `close()`, `tag` replacement, and a
+  click in the OS firing `onclick` / `click` on the object (never `onLocalNotificationTapped`).
+  Icons, buttons and `silent` are not shown; a dismissal fires nothing. The capability gains the
+  `webShow` / `webClose` / `webTake` methods and the `webtap` event behind it.
+- **A fixed loopback port for desktop sign-in.** `openAuthSession(url, { loopbackPort: 1455 })`
+  runs Deno Desktop's loopback flow on that port instead of an ephemeral one, for providers that
+  only accept their registered loopback redirect (`http://localhost:1455/auth/callback`). The
+  `redirect_uri` keeps its host as written and must name that port or none (else `invalid`); a
+  port another program holds rejects the new `port_in_use` code before the browser opens.
+- **`ctx.runOnMainThread(fn, context?)` for desktop extensions.** A `defineDesktopExtension`
+  handler can call a C function on the app's UI thread (AppKit, Win32, GTK) over
+  `Deno.desktop.runOnMainThread`, resolving with its return value as a `bigint`. It is FFI: full
+  trust, `--allow-ffi` (grant it in `desktop.extraPermissions`); on the stock runtime it rejects
+  `unsupported`. `DesktopMainThreadFn` is exported from `denext/desktop`.
+- **Desktop installers on every OS.** The package scripts now wrap the finished bundle in its
+  installers, chosen per OS by `desktop.installers` in `denext.config.ts` or `--format` for one
+  run (`denext desktop package --format msi,zip`): macOS `.dmg` (now the default beside the `.app`)
+  and a `productbuild` `.pkg` for MDM (`DENEXT_INSTALLER_IDENTITY` signs it, the notary profile
+  notarizes it); Linux `.tar.gz` + `.deb` by default (written by denext, no tool) and `.rpm`
+  (`rpmbuild`) / AppImage on request — installed to `/usr/lib/<app>` with a `/usr/bin` link, the
+  `.desktop` entry, the icon and the `desktop.app.deepLinks` schemes, the WebKitGTK dependency
+  declared; Windows `.msi` by default (WiX 5) and `.zip` — per-user with no admin rights or
+  per-machine with `ALLUSERS=1`, a Start-menu shortcut, the deep-link schemes, an in-place major
+  upgrade keyed on `desktop.app.identifier`, Authenticode-signed with the `.exe`.
+  `desktop.installers.publisher` / `description` fill the package metadata; deno.json `version`
+  is the package version. `denext/desktop` exports the builders (`buildDesktopMsi`,
+  `buildDesktopDeb`, `buildDesktopRpm`, `planDesktopInstallers`, …) and the scripts' shared
+  helpers; regenerate older scripts with `denext desktop package --regenerate-scripts`. The Project
+  UI Desktop panel lists `DENEXT_INSTALLER_IDENTITY`.
+- **A Windows installer for the `denext` CLI.** `irm https://denext.dev/install.ps1 | iex` mirrors
+  `install.sh`: the release's Windows archive, verified against `SHA256SUMS` (fatal when missing
+  unless `DENEXT_INSECURE=1`), installed per-user to `%USERPROFILE%\.denext\bin` and added to the
+  user `Path`; `-Uninstall` removes both. Each release now also attaches a Homebrew formula
+  (`denext.rb`), a Scoop manifest (`denext.json`) and a winget manifest set generated from its
+  `SHA256SUMS` (publishing them is a maintainer step; see CONTRIBUTING.md).
+- **fastlane, for teams that ship with it.** `denext mobile add fastlane` writes `fastlane/Appfile`
+  (the bundle id / package name from `capacitor.config` `appId`; the Apple team and the Play key
+  from the environment), `fastlane/Fastfile`, `fastlane/Matchfile`, `fastlane/.gitignore` and a
+  `Gemfile` pinning fastlane. The `ios` and `android` lanes `build`, `beta` (TestFlight / a Play
+  testing track) and `release` (App Store / Play production, staged rollouts, optional metadata)
+  build with `denext mobile build <platform> --release` and hand its artifact to match (read-only),
+  `upload_to_testflight`, `upload_to_app_store` and `upload_to_play_store`, so the binary carries
+  the current web UI and a flavor's own app id; `flavor:`, `build_number:`, `version_name:` and
+  `bump:` pass through, and store lanes take the store's next build number for that build only.
+  `--ci` adds `.github/workflows/mobile-release.yml` (ruby/setup-ruby, `bundle exec fastlane`,
+  every credential a repository secret). Edited files are kept on a re-run (`--force` replaces
+  them), `--dry-run` lists them. `denext mobile doctor --release` checks a `fastlane/` folder: an
+  Appfile id that is not `capacitor.config`'s, a Gemfile without its lock, a Fastfile that skips
+  `denext export` + `cap sync`, and credentials in or written into `fastlane/`. `denext mobile
+  build` / `submit` remain the zero-setup path; fastlane is never required, and nothing of it
+  reaches the app or its native fingerprint.
+- **The denext MCP server, installed per project.** `denext create --mcp` (pre-checked in the
+  interactive picker and on `denext ui`'s Setup page; `--yes` without the flag writes what it
+  always did) and `denext mcp init [dir]` for an existing app add a `mcp` task to `deno.json` that
+  runs `denext mcp` at the version the project pins, and register `deno task mcp` as the `denext`
+  server in `.mcp.json` (Claude Code), `.vscode/mcp.json` (VS Code) and `.cursor/mcp.json`
+  (Cursor) — `--clients gemini,codex` (or `all`) adds `.gemini/settings.json` and
+  `.codex/config.toml`. No client file names a version, so the server always matches the
+  framework and moves with a `deno.json` upgrade; `deno` runs directly on Windows too. Existing
+  files keep their other servers and comments, a re-run is a no-op, `--force` rewrites the
+  `denext` entry and task, `--dry-run` prints the plan, and `--disable <groups>` is baked into the
+  task. With `--fallow` too, the generated `AGENTS.md` lists the MCP tools.
+- **Cargo-style build locks.** Two denext commands writing the same output no longer interleave
+  or delete each other's work: a verb that writes build output holds a real OS file lock
+  (`flock` / `LockFileEx`, released by the OS when the process exits — no stale locks, nothing to
+  clean up after a crash) for the whole command, and a second invocation prints
+  `Blocking waiting for file lock on build directory .denext` once and waits. As in Cargo the
+  build directory (`.denext/`) and the output directories (`out/`, `dist/`, `dist/mobile/`,
+  `coverage/`) are separate locks, taken in one fixed order: `build`, `analyze` and
+  `content build` lock `.denext/`; `export` and `desktop build` lock `.denext/` + `out/`;
+  `desktop package` and `mobile build` lock their `dist` output (the `denext export` they run
+  takes the rest); `test --coverage[=dir]` locks the coverage dir; `dev` locks `.denext/` per
+  rebuild, not per session; `doctor` takes it shared; `start` never locks. The pinned Deno
+  Desktop runtime cache uses Cargo's package-cache modes (shared reads, exclusive downloads, a
+  mutate lock to replace a bad tree). A plugin verb declares its locks with the new
+  `CommandSpec.locks` field. denext's own `coverage:fallow` / `test:coverage` tasks hold the
+  `coverage/` lock, so two concurrent runs no longer delete each other's coverage.
+- **MCP: the whole docs site, offline.** `denext_search_docs` now searches every docs page
+  (split by h2/h3 section, deep-linked to `/docs/<slug>#<anchor>`), the root guides the site
+  renders (features, known limitations and differences, the latest changelog entries), the
+  authoring guide and the full API reference, ranked together; `kind: "guide" | "api" | "all"`
+  narrows it, and every hit carries a ref for the new **`denext_read_docs`** tool, which returns a
+  whole page (`desktop-runtime`, `/docs/deployment-targets`), one section
+  (`desktop#desktop-notifications`) or an API symbol's full docs (`api:denext/useApi`) as
+  Markdown, with did-you-mean suggestions for an unknown page. Both are in the `docs` tool group
+  (`denext mcp --disable docs`), and the pages are also MCP resources (`denext://docs`,
+  `denext://docs/<slug>`). The corpus ships in the package and is loaded only on the first docs
+  call, so `denext` CLI start-up does not pay for it; a test fails when it is stale against its
+  sources (`deno task docs:corpus`).
+- **Deno Desktop: native notifications.** With `denext desktop add notifications` and denext's
+  pinned runtime, `denext/mobile`'s local notifications are the OS's own (macOS
+  `UNUserNotificationCenter`, Windows toasts, Linux `org.freedesktop.Notifications`):
+  `scheduleNotification` with every trigger kind (a repeating one is scheduled for its next 16
+  occurrences and topped up while the app runs and at each launch), `cancelNotification`,
+  `pendingNotifications`, `setNotificationCategories` (action buttons), and clicks — on the
+  notification or a button, including the one that launched the app — routed to
+  `onLocalNotificationTapped` (pulled once, never replayed after a reload).
+  `checkPermission` / `requestPermission("notifications")` and `requestPushPermission()` report
+  the OS setting there. Under the stock runtime the WebView's Notification API stays the fallback.
+- **Deno Desktop: native context menus.** With `denext desktop add context-menu` and the pinned
+  runtime, `showContextMenu` / `useContextMenu` open the OS menu at the pointer with nested
+  submenus and resolve `null` when the user dismisses it; the in-page menu stays the fallback.
+- **Deno Desktop: `denext/desktop/app`.** The application menu (`setAppMenu` with keyboard
+  accelerators and standard roles, `onAppMenuItem`), tray icons (`createTray` → `update`,
+  `getBounds`, `onClick`, `onMenuItem`, `destroy`), the Dock / taskbar badge (`setBadge`) and
+  attention request (`bounce`), and `appCapabilities()`, through an `app` capability `runDesktop`
+  registers for every app. `setQuickActions` / `onQuickAction` set and report the macOS Dock
+  menu. Clicks are pulled once per signal; a page load removes the previous page's trays.
+- **Deno Desktop: global shortcuts and launch at login.** Two new capabilities,
+  `denext desktop add global-shortcuts` (`registerShortcut`, `unregisterShortcut`,
+  `unregisterAllShortcuts`, `listShortcuts`, `shortcutCapabilities`; errors keep the runtime's
+  `conflict` / `denied` / `unsupported` codes; a page load releases the previous page's shortcuts)
+  and `denext desktop add launch-at-login` (`getLaunchAtLogin` / `setLaunchAtLogin`: a macOS login
+  item, a Windows `Run` value, a Linux XDG autostart entry), both in `denext/desktop/app` and
+  both on the pinned runtime, with their trust notes in `denext desktop add --list`.
+- **Deno Desktop: full-app self-updates.** `denext/desktop/updater` gains `checkForAppUpdate`,
+  `downloadAppUpdate`, `installAppUpdateAndRelaunch`, `confirmAppUpdate` and `appUpdateStatus`
+  (with `AppUpdateError`), next to the UI-overlay updater: the whole signed app (`.app`, app
+  directory or AppImage) is replaced by a newer signed build through the pinned runtime's
+  `Deno.desktop.updater`, signed-only (what it refuses is under Security below), with
+  `desktop.update.publicKey` (the `denext ota keygen` key) baked into `.deno-desktop/app.json`.
+  The swap is atomic on macOS and Linux; an update not
+  confirmed by its next launch is rolled back. `denext desktop publish-update` packs and signs an
+  update (archive + `app-update.json`, one manifest for every platform of a release), and
+  `desktop.update.manifestUrl` / `hosts` join the packaged app's `--allow-net`.
+- **examples/desktop-kitchen-sink: every Deno Desktop capability, window-tested.** A desktop app
+  that enables every shipped capability (secureStore, fs, sqlite, device, keepAwake, clipboard
+  text/HTML/PNG, shell, dialogs, the window API, drag and drop, deep links and opened files with a
+  second instance, the preload, the stable app origin, a Node-API addon and the full-app updater)
+  and calls each from the page, plus `deno task test:window` (root: `deno task
+  e2e:desktop-kitchen-sink`): it writes the package scripts from the scaffold, packages the app on
+  denext's pinned runtime, launches it with a link and a file, starts a second instance, serves
+  signed update manifests on loopback and asserts the page's report, exiting non-zero on any
+  failure. Node-API addons (an npm package's prebuilt `.node`, imported in a desktop extension)
+  are documented as working on macOS, Windows and Linux.
+- **Deno Desktop: unscoped extra permissions.** `desktop.extraPermissions.ffi` / `run` / `sys`
+  accept `"*"`, which the package scripts bake as the unscoped flag (`--allow-ffi`). A Node-API
+  addon needs it: the packaged app loads the npm package's prebuilt `.node` from its embedded file
+  system, whose path cannot be named at package time.
+- **Deno Desktop: full-app updates confirm themselves.** `runDesktop` confirms a swapped-in
+  version's trial launch once its window has loaded (the token-gated boot beacon the page sends on
+  `load`), so an app that never calls `confirmAppUpdate()` no longer rolls every update back; a
+  version that crashes before its window renders still rolls back. `desktop.update.autoConfirm:
+  false` turns it off for apps that confirm after their own health check.
+- **Deno Desktop: denext's pinned runtime.** `denext desktop run` / `dev` / `package` and the
+  scaffolded `scripts/package-*.ts` now build on a prebuilt Deno Desktop runtime (`libdenort` +
+  laufey backend hosts) from the Brainwires/deno fork's releases, driven by the STOCK
+  `deno desktop` CLI through `DENORT_DESKTOP_BIN` and `LAUFEY_DEV_DIR`. The archive per target and
+  backend is pinned in `src/build/desktop-runtime-pin.json` (URL, size, SHA-256; regenerated by
+  `deno task desktop:pin-runtime <tag>`, which cross-checks the release's `manifest.json` against
+  its `SHA256SUMS`), downloaded once into `<Deno cache>/denext-desktop-runtime/`, refused unless
+  its size and SHA-256 match before anything is extracted, extracted without traversal, escaping
+  links or special files, and installed atomically with a per-file marker; a cached copy is reused
+  offline. It needs Deno 2.9.7 exactly (any other version stops with `deno upgrade --version
+  2.9.7`). `DENEXT_DESKTOP_RUNTIME=stock` opts out, `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` uses a local
+  runtime build, `--verify-runtime` re-hashes the cache and `--attest-runtime` adds
+  `gh attestation verify`. `denext doctor` reports the pinned version, the cache state and the
+  Deno version match. `denext/desktop` exports `desktopRuntimeEnv`; adopt it in an existing
+  project with `denext desktop package --regenerate-scripts`. A new project's `deno task desktop`
+  runs `denext desktop run` (a bare `deno desktop` would use the stock runtime).
+- **Deno Desktop: a stable app origin.** `desktop.app.origin` (e.g. `"myapp://app"`) gives the
+  window one origin on every launch and machine, so a server that checks `Origin` can allow-list
+  it and origin-keyed storage keeps its key. It is validated exactly as the runtime validates it
+  (a custom scheme, no port or path) and requires `desktop.app.identifier`. The packaging scripts
+  write `.deno-desktop/app.json`, add it to deno.json `compile.include` (keeping existing
+  entries), and put `laufey-launch.json` (app id, the origin's scheme, `singleInstance`) in the
+  packaged app; `denext desktop run` / `dev` write the same `app.json`, and `denext doctor`
+  reports files out of line with the config. The origin takes effect under the denext-pinned
+  Deno Desktop runtime (below); under `DENEXT_DESKTOP_RUNTIME=stock` the stock runtime keeps
+  serving the window on a loopback port. Run `denext desktop package --regenerate-scripts` to
+  adopt the new scripts.
+- **Deno Desktop: the initial-window config is applied.** `desktop.window` (`width`, `height`,
+  `title`, `resizable`), `desktop.titleBar` (`"hidden"` / `"hiddenInset"`, macOS),
+  `desktop.backdrop` (`"mica"` / `"acrylic"` on Windows 11, `"vibrancy"` on macOS) and
+  `desktop.minSize` / `maxSize` are applied by `runDesktop` to the window it adopts
+  (`resolveDesktopCapabilities` now returns them as `window`, failing fast on a bad value). The
+  size, title and resizability work on every runtime; the rest needs denext's pinned runtime and
+  is skipped with a warning under the stock one.
+- **Deno Desktop: `denext/desktop/window`.** The page's control over its own window, through a
+  `window` capability `runDesktop` registers for every app: `maximizeWindow` /
+  `unmaximizeWindow` / `minimizeWindow` / `restoreWindow` / `setFullScreen` with
+  `onWindowStateChange`, `getWindowState` (bounds, content and normal bounds, display, size
+  limits), `setWindowSize` / `setWindowPosition` / `setWindowBounds`,
+  `setMinimumWindowSize` / `setMaximumWindowSize`, `getScreens` with `onDisplayChanged`,
+  `setTitleBarStyle`, `setWindowButtonPosition`, `setWindowBackdrop` (Mica / Acrylic / tabbed,
+  macOS vibrancy materials), `setWindowTitle` / `setWindowResizable` / `setAlwaysOnTop` /
+  `showWindow` / `hideWindow` / `focusWindow`, and `windowCapabilities()`. `onCloseRequested`
+  makes the close cancelable: the runtime holds every close (the close button, Cmd+W / Alt+F4,
+  `quitApp()`), the page acknowledges and answers, and a page that never answers loses its hold
+  after 5 seconds; `closeWindow()` closes without asking and `quitApp()` is Electron's
+  `app.quit()`. `makeWindowDraggable(element)` turns a toolbar into a drag region for a hidden
+  title bar (`app-region: drag`, native on CEF; the window follows the pointer on the system
+  WebView backends). Basics work under the stock runtime; the rest needs the pinned runtime and
+  rejects `unsupported` elsewhere.
+- **Deno Desktop: file drag and drop.** `onFileDrop` (in `denext/desktop/window`) delivers files
+  and folders dropped on the window as READ-ONLY picked handles (a folder handle reads
+  recursively; a new `readFolder` picked mode), with the drop point; drops are pulled by the page,
+  so a reload never replays one. `startFileDrag(items)` drags picked handles or files in the app's
+  own folders out to another app or the desktop (never a raw path), resolving `"dropped"`,
+  `"cancelled"` or `"failed"`.
+- **Deno Desktop: native dialogs.** Under denext's pinned runtime the `dialogs` capability
+  (`pickDocument` / `saveFile` / `pickFolder`) shows the OS's own panels
+  (`Deno.desktop.dialog`: `NSOpenPanel` / `NSSavePanel` as a sheet on the window,
+  `IFileOpenDialog` / `IFileSaveDialog`, `GtkFileChooserNative`) with the page's MIME `types` as
+  file-type filters; a second dialog while one is open answers `busy`. Handles and scoping are
+  unchanged. The osascript / PowerShell / zenity programs remain the stock-runtime fallback.
+- **Deno Desktop: the `clipboard` capability.** `denext desktop add clipboard` now reaches the
+  OS clipboard through the pinned runtime's `Deno.desktop.clipboard`: `readClipboard` /
+  `writeClipboard` (no permission prompt or user gesture), plus rich formats everywhere:
+  `readClipboard({ format: "html" | "image" })`, `writeClipboard({ html, text? })` /
+  `writeClipboard({ image })` (base64 PNG) and `clipboardFormats()` in `denext/mobile` — the
+  WebView's `ClipboardItem` in a browser, `@capacitor/clipboard` for images in the shell. Under
+  the stock runtime the capability answers `unavailable` and the page keeps
+  `navigator.clipboard`; a backend without HTML or images falls back the same way.
+- **React Native desktop: the window `View` props work.** In a Deno Desktop window
+  `mouseDownCanMoveWindow` makes the view a window drag region, `allowsVibrancy` turns on the
+  window's macOS vibrancy, and `draggedTypes` (`"fileUrl"`) calls `onDragEnter` / `onDragLeave` /
+  `onDrop` with react-native-macos' `dataTransfer.files` shape (read-only handles on desktop, the
+  DOM's `File`s in a browser). `acceptsFirstMouse` stays accepted with a dev warning.
+- **Deno Desktop: `desktop.preload`.** Electron-preload parity: the export bundles the module into
+  one classic script (`out/_denext/desktop-preload.js`), and the runtime inlines it right after the
+  `__denext` global, before any page script, into every top-level document it serves over the
+  memory transport, with its own CSP hash (never into an iframe or the stock runtime's loopback
+  pages). It runs in the page's world with the page's privileges. `denext desktop dev` bundles it
+  per session.
+- **Deno Desktop: deep links and opened files.** `desktop.app.deepLinks` and
+  `desktop.app.singleInstance` are now applied: packaging writes the schemes to deno.json
+  `desktop.app.deepLinks` (the OS registration `deno desktop` performs) and both keys to
+  `.deno-desktop/app.json`. Under denext's pinned runtime a link with a declared scheme — cold
+  start, opened while running, or forwarded by a second launch — reaches `onDeepLink` /
+  `useDeepLink` (`denext/mobile`) with the same `accept` filter and once-only routing; each link is
+  delivered once (a cold-start link waits for the first subscriber, nothing replays after a
+  reload). Files opened with the app arrive through the new `onOpenFile` / `useOpenFile` as
+  read-only picked handles. `deepLinkSchemeOwner` / `claimDeepLinkScheme` (`denext/desktop/client`)
+  read and (on an explicit user action) take over a scheme.
+- **Deno Desktop: `openAuthSession` with a custom-scheme callback.** A `redirect_uri` with a scheme
+  from `desktop.app.deepLinks` (or `callbackPrefix`) takes the callback as a deep link instead of
+  the loopback listener: PKCE S256 is mandatory (`pkce_required`; `pkce: "not-applicable"` +
+  `reason` for a provider that binds the callback otherwise), the callback must match scheme, host
+  and path exactly and round-trip `state` (a forged one is dropped and the session keeps waiting),
+  the scheme's owner is checked first (`scheme_owned_by_other_app` with the handler, never forced),
+  one session at a time, a 10-minute default timeout and `signal` to cancel. The callback never
+  reaches `onDeepLink`. New error codes: `scheme_not_declared`, `pkce_required`,
+  `scheme_owned_by_other_app`, `scheme_not_registered`, `session_in_progress`.
+- **Deno Desktop: `denext/desktop/clerk` and the `passkeys` capability.**
+  `installClerkDesktopBridge()` (from the preload) fills `__clerk_internal_electron` and
+  `__clerk_internal_electron_passkeys` with `@clerk/electron`'s shapes, so `@clerk/electron/react`
+  and `@clerk/electron/passkeys` run unchanged: the client JWT in the OS keychain, OAuth over the
+  custom-scheme flow with `@clerk/electron`'s semantics, native passkeys over the new `passkeys`
+  capability (`denext desktop add passkeys`, `{ rpIds }` to pin relying parties). After an
+  `invalid_rp` (a build not signed by the RP's team) it hides native passkeys and continues the
+  sign-in in the browser through Clerk's hosted pages (`startClerkBrowserSignIn`, state + PKCE
+  bound).
+- **`runDesktop` resolves to `{ window, trust, emit }`**: the adopted window, the desktop world
+  the gates enforce, and a hook that pushes an event to the page's bridge stream (`onDesktopEvent`
+  in `denext/desktop/client`).
+- **`denext create --fallow`: the fallow code-health gate in a new app.** An opt-in entry in the
+  feature picker (and on `denext ui`'s Setup page) adds the dead-code, duplication and complexity
+  gate denext itself is built under: a `fallow.toml` declaring denext's path-loaded files (routes,
+  `denext.config.ts`, `middleware.ts`, `tasks/*.ts`, `desktop.ts`, …) as entry points; `fallow`,
+  `fallow:audit`, `coverage:fallow` (`deno test --coverage` → an Istanbul map for measured CRAP
+  scores) and `hooks:install` tasks running `npm:fallow@3.30.0` through Deno, so nothing is
+  installed globally; a `.githooks/pre-commit` gate that `deno task hooks:install` enables (the
+  scaffold never touches `.git`); and an `AGENTS.md` (plus a `CLAUDE.md` including it) telling
+  coding agents to run the gate before committing. **`denext fallow init`** adds the same setup
+  to an existing project, writing only missing files and splicing the tasks into `deno.json`.
+
+### Changed
+
+- **Docs: a macOS full-app update must be notarized.** The Desktop and Deno Desktop runtime
+  pages now state what the runtime checks before it installs a macOS update (`codesign --verify
+  --deep --strict`, the same Team ID, Gatekeeper's `spctl --assess --type execute`, the same
+  signing identifier): "same signer" means the same Team ID plus Gatekeeper acceptance, so any
+  notarized identity from the team passes while an unnotarized Developer ID build (`os_signature:
+  Gatekeeper rejects the staged app`) or an Apple Development build from the same team is
+  refused. `denext desktop publish-update` now warns when the `.app` it publishes is not accepted
+  as notarized (`spctl -a -vv -t exec`), and an `AppUpdateError` for a Gatekeeper refusal carries
+  a hint to sign with the Developer ID and notarize (`DENEXT_NOTARY_PROFILE` when packaging).
+- **The pinned Deno Desktop runtime is 2.9.7-denext.8; the custom origin requires 2.9.7-denext.7
+  or later.** denext.8 opens macOS windows in front at launch (the first window had opened behind
+  other apps' windows, so WebKit paused `requestAnimationFrame`), has WKWebView report
+  `outerWidth` / `outerHeight`, and fixes a DevTools lock-ordering deadlock (laufey `e1bfe17`,
+  API 43). denext.7 carries the 3.1 security and fork-code audit fixes (the WebSocket relay marks what it forwards
+  with `x-deno-desktop-relay` and forwards only an upgrade, `node:http` serves under the memory
+  transport, a cancelled scheme request aborts the app's `request.signal`, updater hardening),
+  `Deno.desktop.authSession.cancel()` and laufey `b993068` (API 43). The pin was regenerated with
+  every archive's SHA-256 and build provenance attestation verified. Because the relay-token fix
+  depends on the mark, an app served at its custom origin by an older runtime (through
+  `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`, `DENEXT_DESKTOP_RUNTIME_DIR` or an older build) now
+  starts with every desktop endpoint refused, no per-launch token and a message naming the fix;
+  denext detects the release by `Deno.desktop.authSession.cancel`. The stock runtime
+  (`DENEXT_DESKTOP_RUNTIME=stock`) has no relay and is unaffected.
+- **Docs: KNOWN-LIMITATIONS lists only what denext can't or won't do, and per-OS differences; ROADMAP was rewritten to the open work; REACT-NATIVE-EXPO.md is removed** (its open items are in ROADMAP and KNOWN-LIMITATIONS, its measurements in the [denext vs React Native](https://denext.dev/docs/vs-react-native) guide).
+- **The docs site moved from `apps/web/` to `site/`.** `apps/` held nothing else, so it is gone;
+  `deno task docs:build` exports to `site/out/`, and guides live in
+  `site/app/docs/<slug>/content.md`. Older entries below keep the paths of their day.
+- **Deno Desktop: DevTools are off in a packaged app.** `desktop.inspectable` is applied: the
+  package scripts always write `"inspectable"` to the app's `laufey-launch.json` (`false` unless
+  `desktop.inspectable: true`), `denext desktop dev` turns DevTools on and `denext desktop run`
+  turns them on unless `desktop.inspectable: false` (`LAUFEY_INSPECTABLE`). Needs the pinned
+  runtime; `writeLaufeyLaunchConfig` now always writes the file.
+- **Deno Desktop docs: an extension's permissions go in `desktop.extraPermissions`**, not in a
+  hand-edited `scripts/package-*.ts` (the scripts union it in, and `--regenerate-scripts` keeps
+  it).
+- **Docs: [Our Deno Desktop runtime: what we ship and why](https://denext.dev/docs/desktop-runtime).**
+  The runtime page now explains why denext ships its own Deno Desktop runtime (Clerk's
+  `origin_invalid` for the loopback origin, storage lost every launch, and the rest of what stock
+  Deno Desktop 2.9.7 couldn't do), catalogs every change it carries with the problem it solves,
+  its layer (laufey, the Deno runtime, denext) and its upstream status, and describes how each
+  layer is tested.
+- **Docs: the Deno Desktop limitations list only what still holds.** KNOWN-LIMITATIONS drops the
+  entries the pinned runtime fixed (UI-only self-updates, storage lost on relaunch, Node-API
+  addons, deep links to a running macOS app, passkeys, WebView-backed menus, clipboard and
+  notifications, capabilities without a window test) and gives each remaining limit its OS
+  reason and workaround, plus what the installers need and what `DENEXT_DESKTOP_RUNTIME=stock`
+  gives up; the desktop, mobile, README, FEATURES, ROADMAP and REACT-NATIVE-EXPO statements that
+  said otherwise are corrected.
+
+### Fixed
+
+- **The module-graph crawl survives a deleted working directory.** `deno info` (the boundary
+  manifest, conformance probes) failed with "could not read current working directory" when the
+  process's cwd had been removed; it now runs from the first entry's folder in that case.
+- **A packaged desktop app no longer reads modules from the build machine's disk.** An import map
+  target written as an absolute local path (`"denext/desktop": "file:///…/src/build/desktop.ts"`,
+  or `"/…"`) was embedded, but the compiled binary resolved it to the build machine's path: it
+  silently loaded those modules from that disk, and failed with `Module not found` once the
+  folder moved (or on any other machine). When deno.json's import map (or its `importMap` file)
+  has such a target, `desktopIncludeArgs` now writes a relocatable copy with every local target
+  relative (`.deno-desktop/import-map.json`, with deno.json's `jsr:` / `npm:` subpath entries
+  made explicit) and passes it as `--import-map`, so `denext desktop run` / `dev` and existing
+  package scripts build a self-contained app without regeneration. Relative and `jsr:` / `npm:` /
+  `https:` imports, including a JSR-installed denext, were not affected and build as before.
+  Desktop CI packages an app mapped this way, moves the sources away and launches it.
+- **An exported multi-page app's links work in the Capacitor shell.** Capacitor's iOS router
+  and Android local server answer every path without an extension with the root `index.html`
+  (a single-page-app assumption), so `<a href="/protected">` loaded the home page. Every
+  generated `DenextBridgeViewController` (OTA, auth-session and registering-only) now overrides
+  `router()` with `DenextExportRouter`, and every composed `MainActivity` registers
+  `DenextExportRoutes`, a `BridgeWebViewClient` in front of the bridge: `/route` loads
+  `route/index.html` or `route.html` when the UI served (bundled or over the air) has it, and
+  any other path is still `index.html`, so SPA client routes keep working. Re-running any
+  `denext mobile add` / `add-ota` upgrades an unedited file (template generations bumped:
+  OTA 6, auth-session 3, app-extension 3, MainActivity 4); `denext mobile add export-routes`
+  installs it in an app with no denext plugin, and `denext mobile doctor` flags a multi-page
+  export whose shell lacks it. Ship a new binary.
+- **`.denext/dev.json` names an IPv6 dev server with a valid origin.** A dev server whose
+  `localhost` bind resolved to `::1` published `http://::1:5199`, which no URL parser accepts,
+  so `denext_dev_logs`, the component-tree tools and `denext ui` reported "No running dev server
+  found" while it was answering. The origin is now bracketed (`http://[::1]:5199`; a `::` bind
+  publishes `[::1]`), and readers accept the old unbracketed form and try every loopback spelling
+  of the port (`127.0.0.1`, `[::1]`, `localhost`) until one answers. Whether a server is running
+  is still decided by asking it, and the pid the file names is the listening process (the
+  re-exec'd child), which is also the pid its `/_denext/dev-state` reports.
+- **The boot diagnosis reaches failures behind a dynamic import.** An app that boots through
+  `import("./main").catch(showError)` reported nothing: the caught failure only reached
+  `console.error`, which did not start the walk, and the 400-module walk stopped before a large
+  graph's failing module. A logged import error now starts it; the walk begins at the module the
+  browser's message names, when it names one (Chrome, Firefox); and when the static import graph
+  loads, a deep pass follows dynamic `import()`s, `new URL("./worker.ts", import.meta.url)` and
+  `import.meta.resolve()` script modules, and static edges past the cap, up to 2000 modules,
+  with progress in the Console. When the dev server orders more than 3 reloads in 30 s, the
+  Console says the page is in a reload loop.
+- **The boot diagnosis names link-time failures.** An imported name the target module does not
+  export (a renamed export, a missing re-export, a default import of an npm bundle without one)
+  fails at link time, which Safari reports only as "Importing a module script failed" and the
+  walk did not detect. Each walked module is now tokenized for the names it imports and exports
+  (`export *` chains resolved, cycle-safe; strings, comments, templates and regexes ignored), and
+  every missing name is reported as `<importer> imports "<name>" from <target>, which does not
+  export it`, with the closest export as a hint. Modules it can't analyze confidently are
+  skipped. Chrome's "does not provide an export named 'X'" is surfaced at once with its importer.
+- **The unbundled dev npm prebundle honours `package.json` `browser` fields**, as esbuild does
+  (a string replaces the main entry, the object form remaps files and bare specifiers, `false` is
+  an empty module), so a package such as jszip resolves to its browser build instead of its Node
+  build, whose `events` / `stream` imports failed every `/_denext/@npm/*` module.
+- **Unbundled dev crawls the app's graph before the npm bundle builds, so a large app does not
+  reload in a loop.** The first build holds every package the page imports, and a rebuild under
+  a live page waits 400 ms to batch new packages and reloads once (T3 Code: one load instead of
+  a reload every 5–20 s).
+- **One npm package that fails to bundle in dev fails only its own module.** The failing
+  specifiers are found by bisection, the rest bundle together as before, and each failing one is
+  served as a module that logs the package and esbuild's errors and throws, so only its importers
+  fail instead of every `/_denext/@npm/*` module answering 500.
+- **A desktop notification permission request settles when the OS never answers.** The
+  `notifications` capability's prompting `permission` request (behind `requestPermission("notifications")`
+  and `requestPushPermission()` in a Deno Desktop window) waited forever when macOS never answered
+  an ad-hoc signed app's authorization request (seen on CI runners). It now answers within 30 s
+  with the state known so far (`prompt` when nothing is), as the page's web `Notification` does at
+  20 s; the late OS answer is remembered for the next call, and requests made while one is open
+  share its single OS prompt.
+- **A Linux package cross-built on Windows installs and runs.** `denext desktop package
+  --target-os linux` on Windows failed at the `.deb` (Windows refused the `/usr/bin` link it could
+  not resolve from the working directory), and Windows has no POSIX mode bits, so the `.deb` and
+  the host `tar`'s `.tar.gz` packaged the launcher `0644` and the app could not start. The links
+  now name their kind; on Windows an ELF image or a `#!` script is packaged executable; and the
+  `.tar.gz` is written by denext (`buildDesktopTarball` from `denext/desktop`, which the
+  scaffolded `scripts/package-linux.ts` now calls — `denext desktop package --regenerate-scripts`
+  updates an existing one). Desktop CI now cross-packages on every host (Windows from Linux with
+  webview and CEF, and from macOS; Linux from macOS and Windows), checks each binary's PE / ELF
+  machine and the archives, and launches the Windows-built Linux app and the Linux-built Windows
+  app on their own OS.
+- **`denext desktop run` / `dev` / `package` type-check a project with a `package.json` before
+  `deno install`.** Its `package.json` puts Deno in manual `node_modules` mode, so the build failed
+  with "Could not find a matching package for 'npm:@types/node' in the node_modules directory"
+  (`examples/native` on a fresh clone). Such a project now builds with `--node-modules-dir=none
+  --exclude-unused-npm`, as one with a `node_modules` already did.
+- **An apostrophe in JSX text no longer misclassifies a route.** The source scan behind the
+  zero-JS route check and the server-only leak check read `<p>It's ready</p>` as opening a
+  string, flipping its literal/code state for the rest of the file: a hook or `onClick=` named
+  in a later code sample made a server page ship a client bundle, and a real hook could be
+  missed. The scan now tracks JSX text vs `{…}` expressions, template `${…}` nesting, regex
+  literals and comments (and reads a `.ts` module's `<T>x` as a type assertion, not JSX).
+- **CHANGELOG's `[Unreleased]` compare link** started at v2.4.3; it starts at the last release
+  (v3.0.2), and `deno task release` now moves it to each new tag.
+- **A Windows symlink the archive extractor may not create says how to allow it**: turn
+  Developer Mode on (Settings > System > For developers, `start ms-settings:developers`) or rerun
+  from an Administrator terminal.
+- **The build-lock Blocking line names the lock file and the way out**:
+  `Blocking waiting for file lock on build directory .denext (<path>) — held by another denext
+  process; Ctrl-C to abort`. A filesystem that answers `ENOSYS` or `EINVAL` to a lock now counts
+  as one that cannot lock (proceeding unlocked, as for `ENOLCK` / `ENOTSUP`), a shared lock whose
+  lock file can't be created (`EROFS`, `EACCES`: `denext doctor` on a read-only checkout)
+  proceeds unlocked instead of failing, and proceeding unlocked prints one warning per lock file
+  instead of nothing.
+- **A default `.msi` / `.deb` no longer aborts the package run.** A deno.json `version` the
+  format can't express (a CalVer `2026.10.2` overflows an MSI's 255 major; Debian / RPM need a
+  leading digit) skips that default installer with a warning that says so, and a failed
+  `wix build` of a default `.msi` falls back to the `.zip` with a warning; an installer asked for
+  (`--format`, `desktop.installers`) still fails the run, clearly. The WiX check now runs
+  `wix --version` and needs WiX 5, so an installed WiX 6 (Open Source Maintenance Fee EULA) is
+  named instead of failing mid-build. New in `denext/desktop`: `desktopVersionProblem`,
+  `desktopMsiProblem` and `desktopOptionalInstaller`, which the regenerated Linux and Windows
+  scripts call.
+- **Made-up installer metadata is warned about.** With no deno.json `version` the installers say
+  `1.0.0`, and with no `desktop.app.identifier` the app is `com.deno.desktop.<name>`, which also
+  derives the MSI UpgradeCode; each package run now says so, and that setting the identifier
+  after a release makes the next version install beside the old one.
+- **A missing packaging tool's warning says how to install it**: `rpmbuild` (dnf / apt / brew),
+  `appimagetool` (its releases page), WiX 5 (`dotnet tool install`).
+- **`denext desktop package` cross-builds again on denext's pinned runtime.** 3.1's runtime
+  refused a Windows target from macOS / Linux and a Linux target from Windows (3.0.2 cross-built
+  them), because Deno 2.9.7's `deno desktop` looks a `LAUFEY_DEV_DIR` backend up under the
+  host's executable name. denext now offers the backend under that name from a sibling of the
+  verified runtime (`<target>-<backend>.cross-host` in the cache: the backend's directory,
+  hard-linked, built once per runtime archive), so every Linux and Windows target packages from
+  any host. The `--target-os` help names `windows`.
+- **`denext desktop run` and `dev` no longer refuse a `deno` other than 2.9.7.** They warn and
+  build the window on the stock runtime; `package` stays strict. The mismatch message now also
+  names `DENO_BIN` (point it at a 2.9.7 binary to keep the pinned runtime for `run` / `dev`).
+- **Every Deno Desktop runtime download error ends with the same way out**
+  (`DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime>` or `DENEXT_DESKTOP_RUNTIME=stock`, with what
+  the stock runtime lacks): an HTTP error, an interrupted, oversized or truncated download and a
+  SHA-256 mismatch, not only the offline case. A truncated download is a
+  `DesktopRuntimeDownloadError`. The stock runtime's gaps are listed in full (stable origin and
+  storage, deep links, single instance, preload, full-app updates, the native clipboard,
+  notifications and context menu, the wider window API).
+- **Installing the runtime into the cache retries on Windows** while the rename fails with
+  `PermissionDenied` (os error 5: an antivirus scanner such as Defender still holds a fresh file),
+  with backoff for about 3 s; another error, OS or a destination that now exists fails at once.
+- **`denext desktop package` warns about a packaging script from before 3.1** (one without
+  `desktopRuntimeEnv`, so it builds on the stock runtime with none of the default installers) and
+  says to run `--regenerate-scripts`; `--format` is not passed to a script that cannot read it,
+  with a warning that it is ignored.
+- **`denext mobile add` in a denext project installs with Deno.** A project with its own
+  `deno.lock` (deno.json + package.json, `deno install`) got `npm install`, which fails on a
+  Deno-managed `node_modules`; it now runs `deno add npm:<package>` (written into package.json).
+  A `deno.lock` further up (a Deno repository holding an npm Capacitor project) does not count.
+- **Clerk in a native shell: an `@clerk/nextjs` sign-in no longer hangs.** Its provider runs a
+  server action before every `setActive` and waits for it; a Deno Desktop window or a Capacitor
+  shell serves a static export, where the action never answers. In native mode (`nativeClerk`)
+  that hook now resolves at once (there are no cookies to invalidate).
+- **`denext desktop run` and `dev` open a window again.** Deno 2.9.7's `deno desktop` only
+  compiles: the verbs left a `<name>.app` in the project folder, opened no window, and that build
+  had no permissions (`NotCapable: PORT`). Both now build into a temporary directory outside the
+  project with the packaging scripts' flags (`--no-prompt`, the least-privilege `--allow-*` from
+  `desktop.capabilities`, `desktop.denoFlags`, the extension modules, the npm args and the icon),
+  launch the built executable directly (on macOS the `.app`'s `Contents/MacOS/<executable>`, so
+  stdout and stderr reach the terminal), stream its output until it exits, and remove the build.
+  `desktop dev` builds from a generated `.denext/desktop-dev-entry.ts` that marks the build as a dev
+  build, which the runtime accepts in place of the `deno` CLI before honouring
+  `DENEXT_DESKTOP_DEV_URL` (a packaged app still ignores it, and the loopback rule is unchanged);
+  `--lan` now also sets `DENEXT_DESKTOP_DEV_LAN` and adds the dev server's address to
+  `--allow-net`. A failed build ends `desktop dev` with an error instead of exit 0.
+- **Deno Desktop packaging takes the app's name, identifier and icon from `denext.config.ts`.** The
+  package scripts read only deno.json's `desktop.app`, and the macOS script passed no `--icon`.
+  Now `desktop.app.name` / `identifier` in `denext.config.ts` come first (written into deno.json's
+  `desktop.app`, which `deno desktop` reads, like the deep links), and the new
+  `desktop.app.icons.{macos,windows,linux}` is passed as `--icon` on every OS, falling back to
+  deno.json's `icons`, then `icons/app.icns|.ico|.png`, then `desktop-icon.png`; a configured icon
+  that is missing fails the build. `denext/desktop` exports `desktopIconArgs`, and
+  `desktopAppName(entryUrl)` reads the config. Run `denext desktop package --regenerate-scripts`
+  to update the macOS script.
+- **Deno Desktop: WebSockets at a custom app origin.** Under the pinned runtime the page runs at
+  `desktop.app.origin` (`myapp://app`), which carries no WebSockets, and denext's Live client
+  dialed `ws://myapp-host/…`. The desktop runtime now injects the runtime's loopback relay
+  (`DENO_DESKTOP_WS_ORIGIN`) as `__denext.wsOrigin`, and the Live client (Live boundaries,
+  `useLive`, `usePresence`, channels and subscriptions) dials it. `denext/desktop/client` exports
+  `desktopWebSocketUrl(path)` for the app's own sockets (the relay in such a window,
+  `ws(s)://<host>` elsewhere) and `desktopWsOrigin()`.
+- **next-compat: `denext export` and Deno Desktop builds of an app with `node_modules`.** The
+  export bundled its Flight islands with `deno bundle` even in compat mode, so an island's bare
+  `react` (or an npm island's real `next/*` imports) failed the export; it now uses the compat
+  Flight bundle `denext build` uses. And `deno desktop` — a compile — embedded the project's whole
+  `node_modules` (650 MB for an app depending on `@clerk/nextjs` and its `next` peer) into the
+  window: the packaging scripts and `denext desktop run` / `dev` now pass
+  `--node-modules-dir=none --exclude-unused-npm` for such a project (`desktopNpmArgs` from
+  `denext/desktop`; regenerate older scripts with `denext desktop package
+  --regenerate-scripts`), and `run` / `dev` embed `desktop.capabilities.extensions` like the
+  packaging scripts do.
+- **CSP: `styleSrc: ["'unsafe-inline'"]` works.** A browser ignores `'unsafe-inline'` in a
+  directive that also lists a hash, so with any inline `<style>` on the page the opt-in silently
+  kept blocking the `<style>` elements a CSS-in-JS library inserts at run time (Clerk's
+  components). With the opt-in, `style-src` now leaves the style hashes out.
+- **next-compat: a library's Next.js control flow and middleware request headers.** denext's
+  `notFound()` / `forbidden()` / `unauthorized()` / `redirect()` errors now carry Next's `digest`
+  (`NEXT_HTTP_ERROR_FALLBACK;404`, `NEXT_REDIRECT;replace;<url>;307;`), which libraries built for
+  Next test for, and an error a library throws in Next's own format is recognized as the same
+  signal (`@clerk/nextjs`'s `auth.protect()` redirects and 404s). A `next/server` copy inside a
+  compat bundle now registers the `NextRequest` adapter the server's middleware runner applies
+  (it lived in a module-level variable of the other copy, so middleware got a plain `Request`
+  with no `nextUrl`). And `headers()` in a route now sees the request headers middleware
+  overrode even when middleware read `headers()` itself first (the memoized view hid them, so
+  `@clerk/nextjs`'s `auth()` in a route handler reported no middleware).
+- **Deno Desktop: Clerk sign-in on macOS works when another app handles the scheme.** The
+  custom-scheme flow refused with `scheme_owned_by_other_app` before the OS's auth session even
+  ran (an Electron build of the same app owning `myapp:` was enough to break Google/GitHub
+  sign-in), although `ASWebAuthenticationSession` catches its own callback whoever handles the
+  scheme's links. The owner check now guards only the system-browser path, where the callback
+  travels as a deep link (Windows, Linux, and a sheet answering `not_supported`). There,
+  `denext/desktop/clerk` rejects with a message naming the fix (`claimDeepLinkScheme` from the
+  user's click): Clerk has no fallback without the scheme, since its native redirect allowlist
+  takes no loopback URL.
+- **Deno Desktop: `useKeepAwake` works on Windows.** The `keep-awake` capability passed
+  `SetThreadExecutionState` a negative number (a JS bitwise OR with bit 31 set), which Deno's FFI
+  rejects for a `u32`, so holding the screen awake always failed on Windows.
+- **React Native mode: `LayoutAnimation.configureNext` animates again.** Since 3.0.0 a second
+  build hook for react-native-web's `UIManager` (the view-manager commands) shadowed the one that
+  routes `configureNextLayoutAnimation` to denext's LayoutAnimation, so layout changes jumped
+  instead of animating. One hook now applies both patches.
+- **Desktop capabilities now receive the window.** `runDesktop` passes the adopted
+  `Deno.BrowserWindow` to the bridge, so `ctx.window` is set (it was always `undefined`).
+- **`examples/rn-desktop` and `examples/native`** spread `resolveDesktopCapabilities` into
+  `runDesktop`, and rn-desktop sets the `desktop.app.identifier` its `secureStore` capability
+  requires.
+- **The installers survive GitHub's API rate limit.** `install.sh` and `install.ps1` send
+  `GITHUB_TOKEN` (else `GH_TOKEN`) on their one `api.github.com` call (never on a download, never
+  printed), and when the API gives no tag (rate-limited, offline) read the latest version from
+  where `https://github.com/<repo>/releases/latest` redirects. Hosted CI runners and users behind
+  a shared NAT hit the unauthenticated limit.
+- **`createOtaHandler` serves a manifest rewritten within its mtime's granularity.** It cached
+  `ota.json` (and `ota-channels.json`) keyed on the mtime alone, so a file rewritten in the same
+  millisecond (a second or two on FAT and some network file systems) kept serving the old
+  manifest. Contents are now reused only once the read happened well after the mtime.
+- **Archives with symlinks extract on Windows.** The safe extractor (the pinned Deno Desktop
+  runtime's download) now creates a symlink as a file or directory link from its target, resolved
+  from the link's own directory with the native separator; a standard user without Developer Mode
+  (os error 1314) gets a clear error instead of the raw one.
+
+### Security
+
+- **The desktop gates detect which runtime serves them.** Under the denext-pinned runtime
+  (detected from `DENO_DESKTOP_APP_ORIGIN`) a bridge call, the auth-session endpoint, the boot
+  beacon and the quit endpoint are trusted only when `Deno.serve` reports the in-process memory
+  transport (never from the request URL, which an absolute-form request target over TCP can
+  forge) and carry the token; an `Origin`, when present, must equal the app origin exactly. The
+  token is injected only into a top-level document served over that transport, and a WebSocket
+  upgrade must carry the app origin. Under the stock runtime the loopback rules are unchanged.
+- **Full-app desktop updates are signed-only and never downgrade.** The pinned runtime refuses a
+  manifest that does not verify against `desktop.update.publicKey`, is for another app, offers a
+  version that is not newer or was rolled back, an http URL, a download larger than declared or
+  with another SHA-256, an unsafe archive, and a staged app whose OS code signature differs from
+  the running app's (macOS Team ID + Gatekeeper, Windows Authenticode signer).
+- **The same-origin checks match `http(s)` origins only by host.** The Server Action / API-batch
+  gate, the Live handshake, `denextAuth`'s POST gate and the dev origin gate no longer treat an
+  `Origin` such as `other://<your host>` as same-origin, and a custom-scheme `allowedOrigins` entry
+  no longer admits every opaque origin (its URL origin serializes as `"null"`); custom-scheme
+  origins pass only by exact match. A `host:port` `allowedOrigins` entry now counts as a bare host.
+- **Windows deep links can no longer smuggle command-line switches.** The `.msi`'s scheme
+  registration is now `"<app>.exe" -- "%1"`: Windows splices the URL into `%1` verbatim, so a URL
+  carrying a `"` could close the argument and append switches; after `--` it is a positional.
+  Rebuild the `.msi` (the runtime rewrites its own registration on launch). The Linux `.desktop`
+  entry keeps `%u`, which the launcher always passes as one argument.
+- **Installer metadata is literal.** Project text in the `.wxs` no longer expands WiX's
+  `$(env.X)` / `!(loc.X)` or Windows Installer's `[Property]`, and in the `.rpm` spec no longer
+  expands `%macro` / `%(shell)`.
+- **The `.pfx` password is redacted** from a failed `signtool` run's error (signtool only takes it
+  as `/p`); `desktopRun` takes `{ secrets }`. `desktopHasTool` no longer runs a shell. Refresh the
+  scripts with `denext desktop package --regenerate-scripts`.
+- **The desktop WebSocket relay can no longer fetch the bridge token.** Any local process can dial
+  the pinned runtime's loopback relay, which forwards into the memory transport. On a request the
+  runtime marks as relayed (`x-deno-desktop-relay`), denext now serves only a WebSocket upgrade
+  with the exact app `Origin`: no `index.html` with the per-launch token (a missing `Origin` /
+  `Sec-Fetch-Dest` is no longer taken as the page's own document there), and no
+  `/_denext/desktop/*` endpoint, even with the token.
+- **The web engine's profile is out of the page's reach.** The `$APPDATA` folder the `fs`
+  capability defaults to also holds the engine profile (`CEF`, `WebKitGTK`, `WebView2`: cookies,
+  storage, saved credentials). Those folders and the updater's `ui-updates` are now refused for
+  every `fs` call (reads and `listDir` too — the data root's listing leaves them out), for
+  `shell` `openPath` / `reveal` / `trash`, and for `startDrag`, matched case-insensitively and
+  through any spelling of the data directory. Reading `ui-updates` was allowed before.
+- **Runtime provenance is pinned to the release build.** `DENEXT_DESKTOP_RUNTIME_ATTEST=1` now runs
+  `gh attestation verify` with `--signer-workflow <repo>/.github/workflows/denext_runtime.yml`,
+  `--source-ref refs/tags/<pinned tag>` and `--deny-self-hosted-runners`, so an artifact attested
+  by any other workflow or ref of the repository fails. `deno task desktop:pin-runtime` downloads
+  (or reads `--archives <dir>`), hashes and attests every archive before writing a pin. Every
+  GitHub Actions step in denext's own workflows is pinned to a commit SHA, and the desktop window
+  job re-hashes its cached runtime.
+- **Desktop passkeys fail closed (breaking for `passkeys: true`).** `desktop.capabilities.passkeys`
+  must now pin its relying parties: `{ rpIds: ["example.com"] }`. A bare `true` — which let the
+  page request a ceremony for any RP ID, with nothing on Windows tying the RP to the app — is a
+  config validation error, and the capability itself refuses every ceremony (`invalid_rp`) when no
+  RP ID is listed. `denext desktop add passkeys` writes `{ rpIds: [] }` for you to fill in. The
+  type is now `false | { rpIds: string[] }`.
+- **Custom-scheme sign-ins on Deno Desktop are bound tighter.** While the macOS OS sheet runs, a
+  matching callback the OS delivers as a deep link is dropped; only the sheet finishes the
+  session. A session belongs to the page that started it: it ends when that page reloads or
+  leaves, and a navigation in another window no longer cancels it, nor does a `cancel` from
+  another page. `pkce: "not-applicable"` now requires a `state`. PKCE parameters must appear once,
+  with a 43-character base64url challenge. A caller's `state` is kept (and must agree) when the
+  target comes from the URL's `redirect_uri`. `denext/desktop/clerk`'s OAuth transport runs only
+  in the OS sheet on macOS. On Windows and Linux it is bound by Clerk's client nonce, which only a
+  bridge installed synchronously from `desktop.preload` may claim (a per-launch preload key). A
+  Clerk nonce callback outside its session is dropped, never routed to `onDeepLink`.
+- **`claimDeepLinkScheme` needs the user's click.** It rejects `user_activation_required` outside
+  a user gesture. It force-registers only when another app holds the scheme, and at most once per
+  scheme per launch (`claim_limit`).
+- **Capability methods without a deadline end with their page.** For a `timeoutMs: false` method,
+  `ctx.signal` now also aborts when the calling page's request goes away.
+- **`denext mcp init` never points a client at a foreign task.** Every client config runs
+  `deno task mcp`. An existing `mcp` task that is not denext's own command is now refused, its
+  text shown, and no client file is written. `--force` replaces it with a warning that shows the
+  old task. A client file under a symlinked directory (`.vscode/`, `.codex/`, …) is refused.
+  `denext init` treats a dangling symlink where it would write as an existing file.
+- **Smaller hardening.** The desktop bridge enforces its 4 MiB RPC body cap while the body
+  streams, not only from `content-length`. `install.ps1 -Uninstall` removes only the files it
+  installed (listed in a manifest) and refuses a drive root, the home directory and other shared
+  roots. `denext mobile add fastlane` escapes Ruby's `#@` / `#$` interpolation, ignores `*.json`
+  (Play service-account keys) in `fastlane/`, and quotes the workflow's `working-directory`.
+
 ## [3.0.2] - 2026-09-30
 
 ### Fixed
@@ -9725,6 +10484,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.1.0...development
+[3.1.0]: https://jsr.io/@denext/denext@3.1.0
 [3.0.2]: https://jsr.io/@denext/denext@3.0.2
 [3.0.1]: https://jsr.io/@denext/denext@3.0.1
 [3.0.0]: https://jsr.io/@denext/denext@3.0.0
@@ -9790,7 +10551,6 @@ reconciler, the router, the middleware runner, **and** the linter together.
 [0.1.2]: https://jsr.io/@denext/denext@0.1.2
 [0.1.1]: https://jsr.io/@denext/denext@0.1.1
 [0.1.0]: https://jsr.io/@denext/denext@0.1.0
-[Unreleased]: https://github.com/Brainwires/denext/compare/v2.4.3...development
 [1.4.0]: https://jsr.io/@denext/denext@1.4.0
 [1.3.0]: https://jsr.io/@denext/denext@1.3.0
 [1.2.0]: https://jsr.io/@denext/denext@1.2.0

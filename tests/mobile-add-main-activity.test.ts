@@ -39,10 +39,14 @@ const unmarked = (text: string) => text.slice(text.indexOf("\n") + 1);
 
 /**
  * A current body as releases before generation 3 wrote it (and, unmarked, as releases before the
- * marker did): everything after `super.onCreate` (the renderer recovery) is generation 3's.
+ * marker did): everything after `super.onCreate` (the renderer recovery, and generation 4's
+ * export routes) is generation 3's or later, and so is the export routes' registration.
  */
 const beforeRecovery = (body: string) =>
   body.replace(
+    / {8}\/\/ denext: an exported page[^\n]*\n {8}registerPlugin\(DenextExportRoutes\.class\);\n/,
+    "",
+  ).replace(
     /( {8}super\.onCreate\(savedInstanceState\);\n)[\s\S]*$/,
     "$1    }\n}\n",
   );
@@ -99,7 +103,7 @@ async function assertUpgrades(
       label,
     );
     // Only a file already at this release's generation is not an upgrade.
-    const current = text.startsWith("// denext-main-activity-template: 3 ");
+    const current = text.startsWith("// denext-main-activity-template: 4 ");
     assertEquals(report.upgraded, current ? [] : [path], label);
   });
 }
@@ -107,7 +111,7 @@ async function assertUpgrades(
 Deno.test("MainActivity: written under an intact marker line, package on the next line", async () => {
   for (const set of combinations()) {
     const text = await mainActivitySource("com.example.app", new Set(set));
-    assert(text.startsWith("// denext-main-activity-template: 3 sha256="), set.join("+"));
+    assert(text.startsWith("// denext-main-activity-template: 4 sha256="), set.join("+"));
     assertEquals(await markedTemplateIntact("main-activity", text), true);
     assert(unmarked(text).startsWith("package com.example.app;\n"));
   }
@@ -205,7 +209,7 @@ Deno.test("MainActivity: back and edge-to-edge compose with every feature, befor
   );
 });
 
-Deno.test("MainActivity: generation 1 and 2 files upgrade to generation 3 (renderer recovery)", async () => {
+Deno.test("MainActivity: generation 1 and 2 files upgrade to the current one (renderer recovery)", async () => {
   const pkg = "com.example.app";
   for (const generation of [1, 2]) {
     for (const set of combinations()) {
@@ -215,8 +219,8 @@ Deno.test("MainActivity: generation 1 and 2 files upgrade to generation 3 (rende
       await assertUpgrades(pkg, old, "back", new Set([...set, "back"]), label);
     }
   }
-  // Re-adding a feature a generation-1 file has: brought up to generation 3, the registrations
-  // unchanged and the renderer recovery added.
+  // Re-adding a feature a generation-1 file has: brought up to the current generation, the
+  // registrations unchanged and the renderer recovery (and export routes) added.
   const current = unmarked(await mainActivitySource(pkg, new Set(["ota", "widgets"])));
   const body = beforeRecovery(current);
   assert(body !== current && !body.includes("RendererRecovery"));

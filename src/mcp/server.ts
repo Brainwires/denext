@@ -9,7 +9,8 @@
 // Tools (see `src/mcp/tools.ts`): `denext_check_snippet` (denext-correctness lint of a code
 // string), `denext_import_map` (Next.js→denext import lookup), `denext_generate` (scaffold),
 // `denext_doctor` (project health), `denext_codemod` (dry-run migration report). Resources
-// expose the AI-authoring guide (AGENTS.md) and the import map so a client can ground itself.
+// expose the AI-authoring guide (AGENTS.md), the import map and the offline docs
+// (`denext://docs`, `denext://docs/<slug>`) so a client can ground itself.
 //
 // The protocol dispatch is a pure `dispatch(message)` → response so it is unit-testable
 // without a real stdio pipe; `runStdioServer` is the thin I/O loop over it.
@@ -17,6 +18,8 @@
 import { publicGuide } from "./guide.ts";
 import { readPackageFile } from "./package-file.ts";
 import { IMPORT_RULES } from "./next-denext-map.ts";
+import { loadCorpus } from "./rag/corpus.ts";
+import { readDocs } from "./rag/read.ts";
 import { runTool, setToolRoot, type Tool, TOOLS } from "./tools.ts";
 
 /** The MCP protocol revision this server implements. */
@@ -54,7 +57,24 @@ export const RESOURCES = [
     description: "How each Next.js/React import maps to its denext equivalent.",
     mimeType: "text/markdown",
   },
+  {
+    uri: "denext://docs",
+    name: "denext docs index",
+    description: "Every denext docs page (offline). Read one as denext://docs/<slug> or " +
+      "denext://docs/<slug>#<anchor> — the same text denext_read_docs returns.",
+    mimeType: "text/markdown",
+  },
 ] as const;
+
+/** The `denext://docs` resource body: every page with its slug. */
+async function docsIndexMarkdown(): Promise<string> {
+  const { pages } = await loadCorpus();
+  const rows = pages.map((p) => `- \`denext://docs/${p.slug}\` — ${p.title}`);
+  return `# denext docs\n\nRead a page as \`denext://docs/<slug>\` (one section: ` +
+    `\`denext://docs/<slug>#<anchor>\`), or call denext_read_docs / denext_search_docs.\n\n${
+      rows.join("\n")
+    }\n`;
+}
 
 /** Render the import map as a Markdown table (the `denext://import-map` resource body). */
 function importMapMarkdown(): string {
@@ -74,6 +94,14 @@ async function readResource(uri: string): Promise<{ mimeType: string; text: stri
   }
   if (uri === "denext://import-map") {
     return { mimeType: "text/markdown", text: importMapMarkdown() };
+  }
+  if (uri === "denext://docs") {
+    return { mimeType: "text/markdown", text: await docsIndexMarkdown() };
+  }
+  if (uri.startsWith("denext://docs/")) {
+    const read = await readDocs(uri.slice("denext://docs/".length));
+    if (read.isError) throw new Error(`unknown docs page: ${uri}`);
+    return { mimeType: "text/markdown", text: read.text };
   }
   throw new Error(`unknown resource: ${uri}`);
 }

@@ -1,4 +1,13 @@
-# Desktop capabilities on Windows and Linux — the platforms the maintainer's Mac can't verify.
+# Desktop on Windows, macOS and Linux: the desktop unit suites on every OS, plus what the maintainer's
+# Mac can't verify.
+#
+#   0. The desktop test suites (`deno task test:desktop`: `tests/desktop-*`, `tests/safe-extract*`,
+#      the desktop CLI verbs, the notification trigger math, the Cargo-style project locks over real
+#      OS locks (`flock` / `LockFileEx`), install.sh, React Native's desktop additions and the
+#      per-file coverage floor script) on all three OSes, with Deno 2.9.7 exactly — the version
+#      denext's pinned Deno Desktop runtime is built against. On Linux the same run is measured and
+#      held to the per-file 85% floor (`deno task coverage:desktop` → `scripts/coverage-floor.ts`),
+#      so every push to `development` checks the floor before a release is cut from it.
 #
 # Two things only a real Windows / Linux runner can prove (the caps runtime is unit-tested on macOS):
 #   1. `secureStore` round-trips against the ACTUAL OS credential store (WinRT PasswordVault on
@@ -7,12 +16,30 @@
 #   2. `deno desktop` packaging lands the binary at the path the packaging scripts expect on Windows
 #      and Linux. The macOS `.app.app` bug is fixed + verified locally; the Win/Linux `--output`
 #      naming is build-only (no WebView deps needed), so it is cheap to pin here.
+#   3. The installers the package scripts build (`desktop.installers`, `--format`) install, register
+#      and uninstall for real: the .msi per-user and per-machine (hosted runners are admin) with an
+#      in-place upgrade, the .deb through apt, the .rpm through dnf (a Fedora container), the .dmg
+#      mounted and the .pkg through `installer`. And install.ps1 against a loopback release and the
+#      real latest one.
+#   4. `denext desktop run` builds outside the project, launches the app (Linux under Xvfb, and macOS)
+#      and quits cleanly (`scripts/ci/desktop-run-smoke.ts`); and a packaged app whose import map
+#      names local modules by absolute path still runs once those sources are moved away
+#      (`scripts/ci/desktop-relocation-smoke.ts`).
+#   5. Cross-OS packaging on the pinned runtime: `denext desktop package --target-os windows` from
+#      Linux (webview and CEF) and macOS, `--target-os linux` from macOS and Windows. Each bundle's
+#      launcher and every native binary in it are the target's (PE / ELF magic and machine), the
+#      archives hold an executable launcher (`scripts/ci/desktop-cross-package-check.ts`), and the
+#      Windows-built Linux app and the Linux-built Windows app launch on their own OS
+#      (`scripts/ci/desktop-launch-smoke.ts`).
+#   6. `denext create`'s scaffold (tests/integration/scaffold.test.ts), which holds the generated
+#      `scripts/package-*.ts` to the examples' copies — CI's integration job runs it on PRs and
+#      `main` only, so a template change pushed to `development` is checked here.
 #
 # workflow_dispatch is available once this workflow reaches the default branch; the `push` trigger
 # (paths-filtered to the desktop surface) runs it whenever the workflow or the desktop code changes,
 # so it self-verifies on landing. A keeper — the "Windows/Linux in CI" item.
 
-name: Desktop CI (Windows / Linux)
+name: Desktop CI (Windows / macOS / Linux)
 
 on:
   workflow_dispatch: {}
@@ -21,13 +48,76 @@ on:
     paths:
       - "src/desktop/**"
       - "src/build/desktop*.ts"
+      - "src/build/desktop-runtime-pin.json"
+      - "src/build/app-update.ts"
+      - "src/build/safe-extract.ts"
+      - "src/build/file-lock.ts"
+      - "src/build/project-locks.ts"
+      - "src/build/scaffold.ts"
+      - "src/build/fallow-template.ts"
+      - "src/cli/commands/desktop*.ts"
+      - "src/mobile/notification-trigger.ts"
+      - "src/mobile/desktop-queue.ts"
+      - "src/mobile/open-file.ts"
+      - "src/react-native/desktop.ts"
+      - "scripts/desktop-pin-runtime.ts"
+      - "scripts/coverage-floor.ts"
       - "scripts/ci/desktop-secure-store-roundtrip.ts"
+      - "scripts/ci/desktop-run-smoke.ts"
+      - "scripts/ci/desktop-relocation-smoke.ts"
+      - "scripts/ci/desktop-cross-package-check.ts"
+      - "scripts/ci/desktop-launch-smoke.ts"
+      - "scripts/coverage-to-istanbul.ts"
+      - "tests/desktop-*.test.ts"
+      - "tests/integration/scaffold.test.ts"
+      - "tests/safe-extract*.test.ts"
+      - "tests/cli-desktop-*.test.ts"
+      - "tests/notification-trigger.test.ts"
+      - "tests/coverage-floor.test.ts"
+      - "tests/project-locks.test.ts"
+      - "tests/install-sh.test.ts"
+      - "tests/react-native-core-desktop.test.ts"
+      - "tests/helpers/**"
+      - "scripts/install.sh"
+      - "deno.json"
+      - "tests/install-ps1.test.ts"
+      - "scripts/install.ps1"
+      - "scripts/ci/msi-roundtrip.ps1"
+      - "examples/native/**"
+      - "examples/rn-desktop/scripts/**"
       - ".github/workflows/desktop-ci.yml"
 
 permissions:
   contents: read
 
 jobs:
+  desktop-tests:
+    name: desktop tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7" # exactly: the pinned Deno Desktop runtime's Deno
+      - name: Deno is 2.9.7
+        shell: bash
+        run: deno --version | head -1 | grep -q '^deno 2\.9\.7 ' || { deno --version; exit 1; }
+      # The test list lives in deno.json (`test:desktop`); deno task expands its globs the same way
+      # on every OS.
+      - name: Desktop test suites
+        if: runner.os != 'Linux'
+        run: deno task test:desktop
+      # Linux: the same suites under --coverage, then every floored file (scripts/coverage-floor.ts
+      # FLOORED) held to 85% lines / branches / functions on its own.
+      - name: Desktop test suites + the per-file coverage floor
+        if: runner.os == 'Linux'
+        run: deno task coverage:desktop
+
   secure-store-roundtrip:
     name: secureStore round-trip (${{ matrix.os }})
     strategy:
@@ -36,8 +126,8 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.7" # `deno desktop` and the desktop runtime target 2.9.7+
       # Linux: the round-trip drives libsecret's `secret-tool`, which needs a Secret Service
@@ -76,8 +166,8 @@ jobs:
       run:
         working-directory: examples/native
     steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.7"
       # Build only (no launch), so no WebView runtime deps are needed. deno desktop appends `.app` on
@@ -96,3 +186,375 @@ jobs:
           else
             echo "✗ no dist/denext-app* artifact — deno desktop --output naming changed"; exit 1
           fi
+
+  # Cross-OS packaging on denext's pinned runtime (the `<target>-<backend>.cross-host` backend
+  # mirror in src/build/desktop-runtime.ts): package examples/native for ANOTHER OS through the verb,
+  # then check what was built is the target's — the launcher's name and PE / ELF machine, every
+  # native binary in the bundle, and the archives (an executable launcher in the .tar.gz and the
+  # .deb). The Windows bundles are x86_64 (the pin has no Windows arm64 build); macOS → Linux builds
+  # the host's arm64. Two legs upload their archive for `cross-launch`.
+  cross-package:
+    name: cross-package (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              os: ubuntu-latest,
+              label: linux-to-windows,
+              target: windows,
+              arch: x86_64,
+              out: x64,
+              backend: webview,
+              formats: zip,
+              smoke: denext-native-x64-windows.zip,
+            }
+          - {
+              os: ubuntu-latest,
+              label: linux-to-windows-cef,
+              target: windows,
+              arch: x86_64,
+              out: x64,
+              backend: cef,
+              formats: zip,
+            }
+          - {
+              os: macos-latest,
+              label: macos-to-windows,
+              target: windows,
+              arch: x86_64,
+              out: x64,
+              backend: webview,
+              formats: zip,
+            }
+          - {
+              os: macos-latest,
+              label: macos-to-linux,
+              target: linux,
+              arch: arm64,
+              out: arm64,
+              backend: webview,
+              formats: "tar.gz,deb",
+            }
+          - {
+              os: windows-latest,
+              label: windows-to-linux,
+              target: linux,
+              arch: x86_64,
+              out: x64,
+              backend: webview,
+              formats: "tar.gz,deb",
+              smoke: denext-native-x64-linux.tar.gz,
+            }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
+    defaults:
+      run:
+        shell: bash
+        working-directory: examples/native
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7" # exactly: the pinned runtime refuses another deno for `package`
+      # The TARGET's runtime archive (and its cross-host mirror) under the host's Deno cache; a cache
+      # hit is re-hashed against the pin (DENEXT_DESKTOP_RUNTIME_VERIFY=1).
+      - name: Cache the Deno Desktop runtime
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/deno/denext-desktop-runtime
+            ~/Library/Caches/deno/denext-desktop-runtime
+            ~/AppData/Local/deno/denext-desktop-runtime
+          key: desktop-runtime-cross-${{ matrix.label }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
+      - name: The ${{ matrix.backend }} backend
+        if: matrix.backend != 'webview'
+        run: |
+          BACKEND=${{ matrix.backend }} deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.desktop.backend = Deno.env.get("BACKEND"); Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
+          grep -q '"backend": "${{ matrix.backend }}"' deno.json
+      - name: Install examples/native's npm packages
+        run: deno install
+      - name: denext desktop package --target-os ${{ matrix.target }} (${{ matrix.arch }}, ${{ matrix.backend }})
+        run: deno run -A ../../cli.ts desktop package . --target-os ${{ matrix.target }} --format ${{ matrix.formats }} -- --arch ${{ matrix.arch }}
+      - name: The package is the target's
+        run: deno run -A ../../scripts/ci/desktop-cross-package-check.ts dist denext-native ${{ matrix.target }} ${{ matrix.out }} ${{ matrix.formats }}
+      - name: Upload the archive for the launch smoke
+        if: matrix.smoke
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cross-${{ matrix.label }}
+          path: examples/native/dist/${{ matrix.smoke }}
+          if-no-files-found: error
+          retention-days: 3
+
+  # The cross-built apps on their own OS: the Windows-built Linux .tar.gz unpacked and launched
+  # under Xvfb, the Linux-built Windows .zip unpacked and launched on Windows. Each must start its
+  # server and stay up (`scripts/ci/desktop-launch-smoke.ts`).
+  cross-launch:
+    name: cross-launch (${{ matrix.label }})
+    needs: cross-package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              os: ubuntu-22.04,
+              label: windows-to-linux,
+              archive: denext-native-x64-linux.tar.gz,
+              exe: denext-native-x64/denext-native-x64,
+            }
+          - {
+              os: windows-latest,
+              label: linux-to-windows,
+              archive: denext-native-x64-windows.zip,
+              exe: denext-native-x64/denext-native-x64.exe,
+            }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cross-${{ matrix.label }}
+          path: ${{ runner.temp }}/cross
+      - name: Linux — a display, a D-Bus session and the WebKitGTK runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth dbus dbus-x11 libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0
+      # tar keeps the archive's modes: a launcher packed without its executable bit fails here.
+      # Windows: the system bsdtar reads a .zip (Git Bash's GNU tar, first on PATH, does not).
+      - name: Unpack
+        working-directory: ${{ runner.temp }}/cross
+        run: |
+          TAR=tar; [ "$RUNNER_OS" = Windows ] && TAR=/c/Windows/System32/tar.exe
+          "$TAR" -xf ${{ matrix.archive }}
+          ls -la "$(dirname ${{ matrix.exe }})"
+      - name: Launch (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- deno run -A scripts/ci/desktop-launch-smoke.ts "${{ runner.temp }}/cross/${{ matrix.exe }}"
+      - name: Launch (Windows)
+        if: runner.os == 'Windows'
+        run: deno run -A scripts/ci/desktop-launch-smoke.ts "${{ runner.temp }}/cross/${{ matrix.exe }}"
+
+  # `denext create`'s scaffold: the generated files, the generated `scripts/package-*.ts` byte-equal
+  # to examples/native's and examples/rn-desktop's (the drift check), and a scaffolded app that
+  # serves and type-checks. CI's `integration` job runs the same file on PRs and `main` only.
+  scaffold:
+    name: scaffold + package-script drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - name: tests/integration/scaffold.test.ts
+        run: deno test -A --unstable-kv tests/integration/scaffold.test.ts
+
+  # `denext desktop run` end to end on examples/native: build into a temp dir with the app's
+  # least-privilege flags, launch the built executable (Linux under Xvfb), wait for its server, quit it
+  # as Ctrl-C does, and check nothing was left in the project. The kitchen sink's window test drives
+  # the PACKAGED app, so this is the only CI coverage of the verb itself.
+  desktop-run:
+    name: desktop run smoke (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - name: Cache the Deno Desktop runtime
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/deno/denext-desktop-runtime
+            ~/Library/Caches/deno/denext-desktop-runtime
+          key: desktop-runtime-run-${{ matrix.os }}-${{ hashFiles('src/build/desktop-runtime-pin.json') }}
+      - name: Linux — a display, a D-Bus session and the WebKitGTK runtime
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth dbus dbus-x11 libwebkit2gtk-4.1-0 libgtk-3-0 libsoup-3.0-0
+      - name: Install examples/native's npm packages
+        working-directory: examples/native
+        run: deno install
+      - name: denext desktop run (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        env:
+          DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
+        run: xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- deno run -A scripts/ci/desktop-run-smoke.ts examples/native
+      - name: denext desktop run (macOS)
+        if: runner.os == 'macOS'
+        env:
+          DENEXT_DESKTOP_RUNTIME_VERIFY: "1"
+        run: deno run -A scripts/ci/desktop-run-smoke.ts examples/native
+      # A packaged app whose import map points at denext (and a probe its extension imports) by
+      # ABSOLUTE `file:` path runs with those sources moved away: nothing loads from the build
+      # machine's disk.
+      - name: Packaged app with absolute import-map targets, sources moved (Linux, Xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1280x800x24" dbus-run-session -- deno run -A scripts/ci/desktop-relocation-smoke.ts
+      - name: Packaged app with absolute import-map targets, sources moved (macOS)
+        if: runner.os == 'macOS'
+        run: deno run -A scripts/ci/desktop-relocation-smoke.ts
+
+  # The installer jobs package examples/native with a deep-link scheme added (and, on Windows, two
+  # versions), so each installer has a scheme to register and the .msi an upgrade to perform.
+  installers-windows:
+    name: installers (windows-latest — .msi per-user + per-machine, upgrade, uninstall)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: examples/native
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      # WiX 5.0.2: the last release under MS-RL alone (WiX 6+ adds the OSMF EULA).
+      - name: WiX 5
+        run: dotnet tool install --global wix --version 5.0.2 && wix --version
+      - name: A deep link and version 1.0.0
+        run: |
+          sed -i 's/app: { identifier: "com.example.denext-native" }/app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }/' denext.config.ts
+          grep -q denextnative denext.config.ts
+          VERSION=1.0.0 deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.version = Deno.env.get("VERSION"); Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
+          deno install
+      - name: Package 1.0.0 (.msi + .zip, unsigned)
+        run: deno run -A scripts/package-windows.ts --format msi,zip && cp dist/denext-native-x64.msi dist/old.msi
+      - name: Package 1.0.1 (.msi)
+        run: |
+          VERSION=1.0.1 deno eval 'const j = JSON.parse(Deno.readTextFileSync("deno.json")); j.version = Deno.env.get("VERSION"); Deno.writeTextFileSync("deno.json", JSON.stringify(j, null, 2));'
+          deno run -A scripts/package-windows.ts --no-export --format msi
+          ls -la dist
+      - name: Per-user install, upgrade, uninstall
+        shell: pwsh
+        run: ../../scripts/ci/msi-roundtrip.ps1 -Msi dist/old.msi -AppName "denext native" -Exe denext-native-x64.exe -Scheme denextnative -Upgrade dist/denext-native-x64.msi -UpgradeVersion 1.0.1
+      - name: Per-machine install, upgrade, uninstall
+        shell: pwsh
+        run: ../../scripts/ci/msi-roundtrip.ps1 -PerMachine -Msi dist/old.msi -AppName "denext native" -Exe denext-native-x64.exe -Scheme denextnative -Upgrade dist/denext-native-x64.msi -UpgradeVersion 1.0.1
+
+  installers-linux:
+    name: installers (ubuntu-latest — .deb via apt, .rpm via dnf)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: examples/native
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - name: rpmbuild
+        run: sudo apt-get update && sudo apt-get install -y rpm desktop-file-utils
+      - name: A deep link
+        run: |
+          sed -i 's/app: { identifier: "com.example.denext-native" }/app: { identifier: "com.example.denext-native", deepLinks: ["denextnative"] }/' denext.config.ts
+          grep -q denextnative denext.config.ts
+          deno install
+      - name: Package (.tar.gz + .deb + .rpm)
+        run: deno run -A scripts/package-linux.ts --format tar.gz,deb,rpm && ls -la dist
+      - name: .deb — install through apt (dependencies resolved), check, remove
+        run: |
+          set -eux
+          dpkg-deb --info dist/denext-native-x64.deb
+          sudo apt-get install -y ./dist/denext-native-x64.deb
+          test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
+          desktop-file-validate /usr/share/applications/com.example.denext-native.desktop
+          grep -q 'MimeType=x-scheme-handler/denextnative;' /usr/share/applications/com.example.denext-native.desktop
+          grep -q '"inspectable": false' /usr/lib/denext-native/laufey-launch.json
+          ! ldd /usr/lib/denext-native/denext-native-x64 | grep 'not found'
+          sudo apt-get remove -y denext-native
+          test ! -e /usr/bin/denext-native && test ! -e /usr/lib/denext-native
+      - name: .rpm — install through dnf on Fedora, check, remove
+        run: |
+          docker run --rm -v "$PWD/dist:/dist" fedora:latest bash -euxc '
+            rpm -qpR /dist/denext-native-x64.rpm
+            dnf install -y /dist/denext-native-x64.rpm
+            test "$(readlink -f /usr/bin/denext-native)" = /usr/lib/denext-native/denext-native-x64
+            grep -q "MimeType=x-scheme-handler/denextnative;" /usr/share/applications/com.example.denext-native.desktop
+            ! ldd /usr/lib/denext-native/denext-native-x64 | grep "not found"
+            rpm -e denext-native
+            test ! -e /usr/lib/denext-native'
+
+  installers-macos:
+    name: installers (macos-latest — .dmg mounted, .pkg installed; unsigned)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: examples/native
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - run: deno install
+      # No signing secrets here: an ad-hoc .app, an unsigned .pkg.
+      - name: Package (.app + .dmg + .pkg)
+        run: deno run -A scripts/package-macos.ts --format dmg,pkg && ls -la dist
+      - name: .dmg — mount, find the app, detach
+        run: |
+          set -eux
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/denext-dmg "dist/denext native.dmg"
+          test -d "/tmp/denext-dmg/denext native.app"
+          codesign --verify --deep --strict "/tmp/denext-dmg/denext native.app"
+          hdiutil detach /tmp/denext-dmg
+      - name: .pkg — install into /Applications, check, remove
+        run: |
+          set -eux
+          pkgutil --check-signature "dist/denext native.pkg" || echo "unsigned .pkg (no DENEXT_INSTALLER_IDENTITY in CI)"
+          sudo installer -pkg "dist/denext native.pkg" -target /
+          test -d "/Applications/denext native.app"
+          codesign --verify --deep --strict "/Applications/denext native.app"
+          id="$(pkgutil --pkgs | grep -i denext-native | head -1)"
+          test -n "$id"
+          sudo rm -rf "/Applications/denext native.app"
+          sudo pkgutil --forget "$id"
+
+  install-ps1:
+    name: install.ps1 (windows-latest — loopback release + the real latest one)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: "2.9.7"
+      - name: The installer's own tests (Windows PowerShell 5.1 and pwsh)
+        shell: bash
+        run: deno test -A tests/install-ps1.test.ts
+      - name: Install the latest release for real, run it, uninstall
+        shell: powershell
+        env:
+          DENEXT_NO_PATH: "1"
+          # The latest-version lookup's API call is authenticated (hosted runners share an IP and
+          # the anonymous 60/hour limit); install.ps1 sends it to api.github.com only.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
+          & ./scripts/install.ps1
+          $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
+          if ($v -notmatch '^denext \d+\.\d+\.\d+.* \(binary\)$') { throw "unexpected: $v" }
+          & ./scripts/install.ps1 -Uninstall
+          if (Test-Path $env:DENEXT_INSTALL) { throw 'uninstall left files behind' }

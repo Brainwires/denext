@@ -175,9 +175,10 @@ export interface UnbundledDevOptions {
    */
   reactNative?: ReactNativeDevOptions;
   /**
-   * React Native mode: called when the dependency bundle is rebuilt under a live page (a new
-   * package or name was imported). A page holding the previous bundle's modules must reload
-   * rather than load a second copy of a package next to them.
+   * Called when the dependency bundle is rebuilt under a live page (React Native mode: a new
+   * package or name was imported; compat: a module discovered a package the first build lacked,
+   * which renames the bundle's shared chunks). The page must reload rather than load a second
+   * copy of a package next to them, or fetch chunks that are gone.
    */
   onDepsRebuilt?: () => void;
 }
@@ -219,8 +220,24 @@ export interface UnbundledState {
   readonly accepting: Set<string>;
   /** compat: npm bare specifiers the client graph imports (bundled together). */
   readonly npmSpecs: Set<string>;
+  /**
+   * compat: the `"use server"` modules inside npm packages (from the Flight boundary) — an npm
+   * island's action import, which the npm bundle replaces with a client action stub.
+   */
+  npmServerRefs: Map<string, { url: string; exports: string[] }>;
+  /** compat: whether the npm bundle has been built (a later build happens under a live page). */
+  npmBuiltOnce: boolean;
   npmBuilt: Set<string>;
   npmBuilding: Promise<void> | null;
+  /**
+   * compat: the crawl of the app's import graph in progress (see `prewarmNpmBundle`), which the
+   * npm bundle waits for so its first build already holds every package the page imports.
+   */
+  npmCrawl: Promise<void> | null;
+  /** compat: the graph roots already crawled (an entry is crawled once). */
+  readonly npmCrawledRoots: Set<string>;
+  /** compat: how many times the npm bundle has been built (diagnostics and tests). */
+  npmBuilds: number;
   depsBuilt: Promise<void> | null;
   runtimeBuilt: Promise<void> | null;
   mergedConfigPath: string | null;
@@ -255,8 +272,13 @@ export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState 
     known: new Set(),
     accepting: new Set(),
     npmSpecs: new Set(),
+    npmServerRefs: new Map(),
+    npmBuiltOnce: false,
     npmBuilt: new Set(),
     npmBuilding: null,
+    npmCrawl: null,
+    npmCrawledRoots: new Set(),
+    npmBuilds: 0,
     depsBuilt: null,
     runtimeBuilt: null,
     mergedConfigPath: null,
@@ -284,4 +306,29 @@ export function addImporter(st: UnbundledState, dep: string, importer: string): 
   let set = st.importers.get(dep);
   if (!set) st.importers.set(dep, set = new Set());
   set.add(importer);
+}
+
+/**
+ * Transform every module reachable from `roots` (breadth-first, each once): the transforms note
+ * the packages each module imports, so a dependency bundle built afterwards already holds every
+ * specifier the page will request. A module that fails to transform is skipped; it fails again,
+ * visibly, when the page loads it.
+ */
+export async function crawlModuleGraph(
+  roots: readonly string[],
+  transformModule: (abs: string) => Promise<{ deps: Array<{ abs: string }> }>,
+): Promise<void> {
+  const seen = new Set<string>();
+  let level = [...roots];
+  while (level.length > 0) {
+    const next: string[] = [];
+    await Promise.all(level.map(async (abs) => {
+      if (seen.has(abs)) return;
+      seen.add(abs);
+      try {
+        for (const dep of (await transformModule(abs)).deps) next.push(dep.abs);
+      } catch { /* a module that does not transform fails again when the page loads it */ }
+    }));
+    level = next.filter((abs) => !seen.has(abs));
+  }
 }

@@ -29,7 +29,12 @@ function compatOptions(ctx: BuildContext) {
  */
 async function compatServerBundles(ctx: BuildContext): Promise<void> {
   const { projectDir, paths } = ctx;
-  const modules = compatModuleList(ctx.manifest.pages, ctx.boundary, ctx.manifest.api);
+  const modules = compatModuleList(
+    ctx.manifest.pages,
+    ctx.boundary,
+    ctx.manifest.api,
+    paths.middlewarePath,
+  );
   log(`next-compat: bundling ${modules.length} server module(s) -> server/`);
   const moduleMap = await buildNextCompatModules({ ...compatOptions(ctx), modules });
   for (const [absSrc, absBundle] of moduleMap) {

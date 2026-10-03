@@ -3,13 +3,15 @@
 // permission flags each capability implies.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import {
   addDesktopCapabilities,
   DESKTOP_BASELINE_FLAGS,
   DESKTOP_CAPABILITIES,
   desktopBuildFlags,
   desktopIncludeArgs,
+  desktopNpmArgs,
+  desktopNpmArgsFor,
   desktopPackageFlags,
   desktopPermissionFlags,
   formatDesktopAddReport,
@@ -155,7 +157,7 @@ Deno.test("desktop permission flags: per OS, unioned, unscoped where a picked pa
 
 Deno.test("docs: the desktop page lists every capability `denext desktop add` knows", async () => {
   const page = await Deno.readTextFile(
-    new URL("../apps/web/app/docs/desktop/page.tsx", import.meta.url),
+    new URL("../site/app/docs/desktop/page.tsx", import.meta.url),
   );
   for (const name of Object.keys(DESKTOP_CAPABILITIES)) {
     assertStringIncludes(page, `<code>${name}</code>`, `docs/desktop is missing ${name}`);
@@ -216,9 +218,9 @@ Deno.test("desktopBuildFlags: the full capability set on Windows, least-privileg
     keepAwake: true,
     secureStore: true,
     dialogs: true,
-    clipboard: true, // WebView-backed: contributes no flags
-    contextMenu: true, // WebView-backed
-    notifications: true, // WebView-backed
+    clipboard: true, // a runtime API: contributes no flags
+    contextMenu: true, // a runtime API
+    notifications: true, // a runtime API
   });
   assertEquals(desktopBuildFlags(config, "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
@@ -289,6 +291,21 @@ Deno.test("desktopBuildFlags: extraPermissions is the escape hatch (updater net+
   assert(flags.includes("--allow-sys=osRelease"), "device's sys still baked");
 });
 
+Deno.test('desktopBuildFlags: an extraPermissions "*" bakes the unscoped flag (Node-API addons)', () => {
+  const flags = desktopBuildFlags(
+    { desktop: { capabilities: { device: true }, extraPermissions: { ffi: ["*"] } } },
+    "darwin",
+  );
+  assert(flags.includes("--allow-ffi"), flags.join(" "));
+  assert(!flags.some((f) => f.startsWith("--allow-ffi=")), "unscoped, not a list containing *");
+  assert(flags.includes("--allow-sys=osRelease"), "the other kinds keep their scopes");
+  const sys = desktopBuildFlags(
+    { desktop: { capabilities: { device: true }, extraPermissions: { sys: ["*"] } } },
+    "linux",
+  );
+  assert(sys.includes("--allow-sys") && !sys.some((f) => f.startsWith("--allow-sys=")));
+});
+
 Deno.test("desktopPackageFlags: reads denext.config.ts next to the script (missing → baseline)", async () => {
   // No config next to the script → baseline only (the examples/native case).
   const bare = await Deno.makeTempDir({ prefix: "denext-pkgflags-bare-" });
@@ -349,5 +366,39 @@ Deno.test("desktopIncludeArgs: one --include per desktop.capabilities.extensions
     await Deno.remove(bare, { recursive: true });
     await Deno.remove(noExt, { recursive: true });
     await Deno.remove(withExt, { recursive: true });
+  }
+});
+
+Deno.test("desktopNpmArgs: a project with node_modules embeds only the npm packages it reaches", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-desktop-npm-" });
+  try {
+    const script = toFileUrl(join(dir, "scripts", "package-macos.ts")).href;
+    // No node_modules (a native denext app): nothing to add.
+    assertEquals(await desktopNpmArgsFor(dir), []);
+    assertEquals(await desktopNpmArgs(script), []);
+    // A next-compat app: `deno desktop` would otherwise embed the whole directory.
+    await Deno.mkdir(join(dir, "node_modules"));
+    const flags = ["--node-modules-dir=none", "--exclude-unused-npm"];
+    assertEquals(await desktopNpmArgsFor(dir), flags);
+    assertEquals(await desktopNpmArgs(script), flags);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktopNpmArgs: a package.json without node_modules resolves npm from the cache", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-desktop-npm-" });
+  try {
+    // A fresh clone of an app with a package.json, before `deno install`: Deno's manual
+    // node_modules mode would fail the type check on npm:@types/node.
+    await Deno.writeTextFile(join(dir, "package.json"), '{"private":true}');
+    assertEquals(await desktopNpmArgsFor(dir), ["--node-modules-dir=none", "--exclude-unused-npm"]);
+    // A directory named package.json is not one.
+    const odd = await Deno.makeTempDir({ prefix: "denext-desktop-npm-" });
+    await Deno.mkdir(join(odd, "package.json"));
+    assertEquals(await desktopNpmArgsFor(odd), []);
+    await Deno.remove(odd, { recursive: true });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });

@@ -13,7 +13,7 @@
 // denext.config.* for `mobile.flavors` (the way `denext build` does).
 
 import { resolve } from "@std/path";
-import type { CommandContext, FlagSpec } from "../command.ts";
+import type { CommandContext, CommandLocks, FlagSpec } from "../command.ts";
 import type { MobileConfig } from "../../server/config.ts";
 import { resolveProject } from "../../build/paths.ts";
 import { denoExecutable } from "../../build/bundle.ts";
@@ -259,6 +259,20 @@ async function recoverFirst(root: string): Promise<void> {
   if (restored.length) {
     console.log(`  restored ${restored.length} file(s) an interrupted build left changed`);
   }
+}
+
+/**
+ * The locks `denext mobile build` holds: its output dir (`dist/mobile`, or `--out`) as a package
+ * output — rank 0, so the `denext export` child it spawns takes the build dir and out/ itself.
+ * A `--dry-run` or `--restore` writes no build and locks nothing.
+ *
+ * @param ctx The command context.
+ * @returns The locks, or undefined.
+ */
+export function mobileBuildLocks(ctx: CommandContext): CommandLocks | undefined {
+  if (ctx.flags["dry-run"] === true || ctx.flags.restore === true) return undefined;
+  const root = capRoot(ctx);
+  return { projectDir: root, packageDirs: [pathFlag(ctx, "out") ?? resolve(root, "dist/mobile")] };
 }
 
 /** Refuse, saying why, a build this host cannot run (iOS off macOS). */

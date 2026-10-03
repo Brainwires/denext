@@ -9,6 +9,7 @@
 
 import { useEffect, useRef } from "../runtime/hooks.ts";
 import { nativePlatform } from "./bridge.ts";
+import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 import {
   acceptsLink,
   createFanout,
@@ -136,7 +137,9 @@ function permission(state: string | undefined): PushPermission {
  * result: `"granted"`, `"denied"` (the user said no; only the system settings can change it)
  * or `"prompt"` (still undecided). A decided state comes back without prompting again.
  * Outside the native shell (or without `@capacitor/push-notifications`) it is
- * `"unsupported"`: there is no web-push fallback.
+ * `"unsupported"`: there is no web-push fallback. In a Deno Desktop window with the
+ * `notifications` capability it is the OS's notification permission (the app's own
+ * notifications; there is no push service on desktop).
  *
  * Android before 13 needs no permission and always reads `"granted"`.
  *
@@ -152,6 +155,13 @@ function permission(state: string | undefined): PushPermission {
  * ```
  */
 export async function requestPushPermission(): Promise<PushPermission> {
+  if (onDesktop()) {
+    const got = await viaDesktop("notifications", (d) => d.notifyPermission(true));
+    if (got) {
+      const s = got.value;
+      return s === "granted" || s === "denied" || s === "prompt" ? s : "unsupported";
+    }
+  }
   const plugin = pushPlugin();
   if (!plugin) return "unsupported";
   const current = permission((await plugin.checkPermissions())?.receive);

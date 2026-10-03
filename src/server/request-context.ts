@@ -172,6 +172,11 @@ export interface RequestContext {
    * endpoints read it to answer an app WebView's origin; `null`/absent means no CORS.
    */
   cors?: CorsPolicy | null;
+  /**
+   * The app's own Deno Desktop origin ({@linkcode AppConfig.desktopAppOrigin}), set by
+   * `createApp`. `denextAuth`'s same-origin gate accepts an `Origin` exactly equal to it.
+   */
+  desktopAppOrigin?: string;
   /** Headers accumulated to attach to the response (e.g. Set-Cookie, loader-set headers). */
   outgoingHeaders: Headers;
   /** Per-request render collectors (signal state, `useServerInsertedHTML`) — see `render-scope.ts`. */

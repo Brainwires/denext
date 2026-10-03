@@ -70,9 +70,24 @@ const CAPACITOR_ORIGINS: readonly string[] = [
   "http://localhost",
 ];
 
+/**
+ * How long after its mtime a file's cached contents are trusted on the mtime alone. A file
+ * rewritten within the mtime's granularity of the moment it was read (a millisecond here, a second
+ * or two on FAT / some network filesystems) keeps the same mtime, so a cache keyed on the mtime
+ * would serve the old contents forever ("racy git"). Until the read is this much later than the
+ * mtime, the file is read again on every request.
+ */
+const RACY_WINDOW_MS = 2_000;
+
+/** Whether contents read at `readAt` from a file with `mtime` can be reused while it keeps it. */
+function settled(mtime: number, readAt: number, current: number): boolean {
+  return mtime === current && readAt - mtime > RACY_WINDOW_MS;
+}
+
 /** The parsed manifest, re-read when the file's mtime changes. */
 interface Cached {
   mtime: number;
+  readAt: number;
   manifest: OtaManifest;
   paths: Set<string>;
 }
@@ -96,11 +111,13 @@ function releaseAt(dir: string): Release {
       } catch {
         return cached = null;
       }
-      if (cached && cached.mtime === mtime) return cached;
+      if (cached && settled(cached.mtime, cached.readAt, mtime)) return cached;
+      const readAt = Date.now();
       try {
         const manifest: unknown = JSON.parse(await Deno.readTextFile(manifestFile));
         if (!isOtaManifest(manifest)) return cached = null;
-        return cached = { mtime, manifest, paths: new Set(manifest.files.map((f) => f.path)) };
+        const paths = new Set(manifest.files.map((f) => f.path));
+        return cached = { mtime, readAt, manifest, paths };
       } catch {
         return cached = null;
       }
@@ -139,7 +156,7 @@ function releaseResolver(options: OtaHandlerOptions): (request: Request) => Prom
     return release;
   };
   const channels = options.channels!;
-  let fileCache: { mtime: number; doc: OtaChannelsFile | null } | null = null;
+  let fileCache: { mtime: number; readAt: number; doc: OtaChannelsFile | null } | null = null;
   const loadChannels = async (): Promise<{ doc: OtaChannelsFile; base: string } | null> => {
     if (typeof channels !== "string") {
       return otaChannelsProblem(channels) === null ? { doc: channels, base: Deno.cwd() } : null;
@@ -150,7 +167,8 @@ function releaseResolver(options: OtaHandlerOptions): (request: Request) => Prom
     } catch {
       return null;
     }
-    if (!fileCache || fileCache.mtime !== mtime) {
+    if (!fileCache || !settled(fileCache.mtime, fileCache.readAt, mtime)) {
+      const readAt = Date.now();
       let doc: OtaChannelsFile | null = null;
       try {
         const parsed: unknown = JSON.parse(await Deno.readTextFile(channels));
@@ -158,7 +176,7 @@ function releaseResolver(options: OtaHandlerOptions): (request: Request) => Prom
       } catch {
         doc = null;
       }
-      fileCache = { mtime, doc };
+      fileCache = { mtime, readAt, doc };
     }
     return fileCache.doc ? { doc: fileCache.doc, base: dirname(resolve(channels)) } : null;
   };

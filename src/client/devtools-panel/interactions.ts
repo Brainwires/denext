@@ -10,6 +10,8 @@ import type { PanelCtx, TabId } from "./ctx.ts";
 import type { HighlightUpdates } from "./highlight.ts";
 import { refreshTab } from "./render.ts";
 import { type Shell, TABS } from "./shell.ts";
+import { consoleStore } from "./console.ts";
+import { toggleSize } from "./size.ts";
 
 /** How often the open Network/Cache tab re-reads its dev endpoint. */
 const POLL_MS = 1000;
@@ -85,7 +87,7 @@ function chordOf(e: KeyboardEvent): string {
 }
 
 /**
- * The chords that only work while the panel is open: `Alt+1…6` pick a tab, `Ctrl+Shift+[`
+ * The chords that only work while the panel is open: `Alt+1…7` pick a tab, `Ctrl+Shift+[`
  * / `]` step through them (both the bracket and the shifted brace the key produces on a
  * US layout), and `Escape` cancels the element picker before it closes the panel.
  */
@@ -146,6 +148,11 @@ export function wireInteractions(ctx: PanelCtx, shell: Shell, deps: InteractionD
   const { doc, state } = ctx;
   shell.launch.addEventListener("click", () => deps.setOpen(true));
   shell.closeBtn.addEventListener("click", () => deps.setOpen(false));
+  shell.sizeBtn.addEventListener("click", () => toggleSize(ctx));
+  shell.badge.addEventListener("click", () => {
+    state.tab = "console";
+    deps.setOpen(true);
+  });
   for (const tab of TABS) {
     shell.tabs[tab.id].addEventListener("click", () => selectTab(ctx, deps, tab.id));
   }
@@ -186,4 +193,34 @@ export function wireLiveUpdates(ctx: PanelCtx): void {
   api.subscribeBoundaries(() => {
     if (state.tab === "render") queueRender();
   });
+}
+
+/**
+ * Show the page's error count beside the launcher (so a boot failure is noticed before
+ * the panel is opened), and keep an open Console tab live as entries arrive.
+ *
+ * @param ctx The mounted panel context.
+ * @param shell The panel's DOM shell.
+ * @returns A function that re-syncs the badge (called on open/close).
+ */
+export function wireConsole(ctx: PanelCtx, shell: Shell): () => void {
+  const store = consoleStore();
+  const syncBadge = (): void => {
+    const count = store?.errorCount ?? 0;
+    shell.badge.textContent = count > 99 ? "99+" : String(count);
+    shell.badge.style.display = count > 0 && !ctx.state.open ? "" : "none";
+  };
+  if (!store) return syncBadge;
+  let queued = false;
+  store.subscribe(() => {
+    syncBadge();
+    if (!ctx.state.open || ctx.state.tab !== "console" || queued) return;
+    queued = true;
+    setTimeout(() => {
+      queued = false;
+      if (ctx.state.open && ctx.state.tab === "console") ctx.render();
+    }, 50);
+  });
+  syncBadge();
+  return syncBadge;
 }

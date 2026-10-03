@@ -15,7 +15,7 @@
 import type { PageRoute } from "../router/manifest.ts";
 import { crawlLocalModules, isFrameworkSource } from "./module-graph.ts";
 import { routeSourceFiles } from "./bundle.ts";
-import { stripLiteralsAndComments } from "./server-only-scan.ts";
+import { sourceMayContainJsx, stripLiteralsAndComments } from "./server-only-scan.ts";
 
 /**
  * Source tokens that require the client runtime. Note `useMemo`/`useCallback`/
@@ -85,7 +85,7 @@ export async function routeNeedsHydration(
       // Exclude framework internals (`src/`, `packages/`, the root barrels): they DEFINE
       // the hooks, so scanning them would flag every route. Only the framework SOURCE is
       // excluded, not everything under the repo root — an app that lives inside the
-      // framework checkout (apps/web, examples/*) still has its own modules scanned.
+      // framework checkout (site, examples/*) still has its own modules scanned.
       graph = await crawlLocalModules(roots, { exclude: isFrameworkSource });
     }
   } catch {
@@ -100,8 +100,9 @@ export async function routeNeedsHydration(
       return true; // couldn't read a module → hydrate to be safe
     }
     // Scan code only — a token inside a string/comment (e.g. a `<Code>` sample on
-    // a docs page) is not real interactivity and must not force hydration.
-    if (INTERACTIVITY.test(stripLiteralsAndComments(src))) return true;
+    // a docs page), or in JSX prose, is not real interactivity and must not force hydration.
+    const code = stripLiteralsAndComments(src, { jsx: sourceMayContainJsx(file) });
+    if (INTERACTIVITY.test(code)) return true;
   }
   return false; // provably static
 }

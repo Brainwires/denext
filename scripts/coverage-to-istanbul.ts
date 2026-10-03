@@ -1,13 +1,13 @@
 // Convert Deno's lcov coverage into an Istanbul `coverage-final.json` for fallow.
 //
-//   deno task coverage:fallow      # unit suite → lcov → coverage/coverage-final.json
+//   deno task coverage:fallow      # tests → lcov → coverage/coverage-final.json
 //   deno run -A scripts/coverage-to-istanbul.ts <in.lcov> <out.json> [projectRoot]
 //
 // Why: fallow's CRAP score (complexity × untested-ness) needs per-function coverage.
 // Without a coverage file it ESTIMATES coverage from the import graph — a module that
-// tests reach only transitively (the fiber reconciler, driven through `createRoot()`)
-// is scored at a pessimistic 40% tier, which makes CRAP fire on any function with
-// cyclomatic ≥ 10 regardless of how well-tested it really is. fallow accepts only the
+// tests reach only transitively (driven through another module's API, never imported
+// by a test itself) is scored at a pessimistic 40% tier, which makes CRAP fire on any
+// function with cyclomatic ≥ 10 regardless of how well-tested it really is. fallow accepts only the
 // Istanbul JSON map (not lcov, not raw V8), so this script bridges the two.
 //
 // `deno coverage --lcov` is already source-mapped to TypeScript lines, so the line

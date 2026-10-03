@@ -1,13 +1,17 @@
-// `denext desktop <run|build|package>` — promotes the scaffold-generated desktop
-// `deno task`s to first-class verbs over the `denext/desktop` runtime.
+// `denext desktop <run|build|dev|package|add|publish-update>` — promotes the scaffold-generated
+// desktop `deno task`s to first-class verbs over the `denext/desktop` runtime.
 //
-//   run      export the SPA, then open it in a `deno desktop` native window
+//   run      export the SPA, build the app with `deno desktop` into a temp dir (the packaging
+//            scripts' least-privilege flags), launch it and stream its output until it exits
 //   build    export the SPA to out/ (what the desktop window serves)
-//   dev      live reload: start (or attach to) `denext dev`, then open a window whose runtime
-//            reverse-proxies EVERYTHING (HTTP + HMR) to it, so edits hot-reload in the window
-//   package  build a distributable app bundle — macOS (.app, signed/notarized), Linux
-//            (bundle → .tar.gz / AppImage) or Windows (.exe, Authenticode-signed when a
-//            cert is supplied); `--target-os` cross-builds everything but macOS.
+//   dev      live reload: start (or attach to) `denext dev`, then build and open a window whose
+//            runtime reverse-proxies EVERYTHING (HTTP + HMR) to it, so edits hot-reload in it
+//   package  build the app and its installers with scripts/package-<os>.ts — macOS (.app +
+//            .dmg / .pkg, signed and notarized), Linux (.tar.gz + .deb, .rpm / AppImage) or
+//            Windows (.msi / .zip, Authenticode-signed when a cert is supplied); `--target-os`
+//            cross-builds Linux and Windows from any OS, macOS packages on a Mac.
+//   add      enable Deno Desktop capabilities in desktop.capabilities (./desktop-add.ts)
+//   publish-update  pack a packaged app into a signed full-app update (archive + app-update.json)
 //
 // `run`/`build`/`package` serve a static export over loopback. `dev` is the desktop half of
 // dev-server attach (the Metro model): the window proxies to `denext dev` so the CSP and the dev
@@ -19,13 +23,33 @@
 import { dirname, join, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { runBuildStep, spawnDenoAndExit } from "../shared.ts";
-import { spawnDenoChild, startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
+import { startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
 import { staticExport } from "../../build/export.ts";
+import { withProjectLocks } from "../../build/project-locks.ts";
 import { desktopDevTarget, type DesktopWindow, runDesktopDev } from "../../build/desktop-dev.ts";
-import { DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
+import { DESKTOP_DEV_LAN_ENV, DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
+import type { DesktopOs } from "../../build/desktop-capabilities.ts";
+import {
+  desktopLaunchBuildPlan,
+  desktopLaunchExecutable,
+  desktopLaunchScratchDir,
+  writeDesktopDevEntry,
+} from "../../build/desktop-launch.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
+import { desktopPublishUpdate, PUBLISH_UPDATE_FLAGS } from "./desktop-publish-update.ts";
+import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
+import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
+import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
+import {
+  DESKTOP_RUNTIME_ATTEST_ENV,
+  DESKTOP_RUNTIME_VERIFY_ENV,
+  resolveDesktopRuntimeEnv,
+} from "../../build/desktop-runtime.ts";
+import { denoExecutable } from "../../build/bundle.ts";
+import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
+import { desktopPnpmWorkspaceHint } from "../../build/desktop-deno-flags.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -34,9 +58,16 @@ function desktopDir(ctx: CommandContext): string {
   );
 }
 
+/**
+ * Export the SPA to out/, holding the build-dir and out/ locks for the export only — `desktop
+ * run` then keeps its window open for as long as the user likes, and must not block builds.
+ */
 async function exportSpa(dir: string): Promise<void> {
   console.log(`\n  denext desktop — exporting SPA  ▸  ${dir}\n`);
-  const result = await runBuildStep(() => staticExport(dir), "desktop export");
+  const result = await withProjectLocks(
+    { projectDir: dir, buildDir: "exclusive", outputDirs: ["out"] },
+    () => runBuildStep(() => staticExport(dir), "desktop export"),
+  );
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }
 
@@ -45,15 +76,29 @@ export const desktopCommand: CommandSpec = {
   summary: "Build/run/package the app as a native desktop app",
   loadsModules: true,
   moduleDir: desktopDir,
-  usage: "  denext desktop run                     Export + open in a deno desktop window\n" +
+  // `package` writes dist/ and runs the packaging script, whose `deno task export` child takes
+  // the build dir and out/ itself — so the parent locks dist/ only (rank 0, below the child's).
+  locks: (ctx) =>
+    ctx.positionals[0] === "package" && ctx.flags["regenerate-scripts"] !== true
+      ? { projectDir: desktopDir(ctx), packageDirs: ["dist"] }
+      : undefined,
+  usage:
+    "  denext desktop run                     Export, build into a temp dir and open the window\n" +
     "  denext desktop build                   Export the SPA to out/\n" +
     "  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n" +
     "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
-    "  denext desktop package                 Build a distributable bundle (host OS: macOS or Linux)\n" +
-    "  denext desktop package --target-os linux   Cross-build the Linux bundle from any OS\n" +
-    "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template",
+    "  denext desktop package                 Build a distributable bundle for the host OS\n" +
+    "  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n" +
+    "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
+    "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
+    "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
+    "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
+    "                                         Sign a full-app update (archive + app-update.json)",
   positionals: [
-    { name: "action", help: "run | build | dev | package (default: run)" },
+    {
+      name: "action",
+      help: "run | build | dev | package | add | publish-update (default: run)",
+    },
     { name: "dir", help: "Project directory (default: .)" },
   ],
   flags: [
@@ -67,7 +112,8 @@ export const desktopCommand: CommandSpec = {
       name: "target-os",
       type: "string",
       valueName: "<os>",
-      help: "package for: macos | linux (default: the host OS; cross-builds where supported)",
+      help: "package for: macos | linux | windows (default: the host OS; Linux and Windows " +
+        "cross-build from any OS, macOS packages on a Mac)",
     },
     {
       name: "port",
@@ -88,16 +134,40 @@ export const desktopCommand: CommandSpec = {
       help: "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)",
     },
     {
+      name: "format",
+      type: "string",
+      valueName: "<list>",
+      help: "package: the installers to build, comma-separated — macOS dmg | pkg; Linux tar.gz | " +
+        "deb | rpm | appimage; Windows msi | zip (default: desktop.installers.<os>, else " +
+        "dmg / tar.gz,deb / msi)",
+    },
+    {
       name: "regenerate-scripts",
       type: "boolean",
       help:
         "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), " +
         "keeping a .bak of any file that differs; adopt the current scripts in an existing project",
     },
+    {
+      name: "verify-runtime",
+      type: "boolean",
+      help: "run | dev | package: re-hash the cached Deno Desktop runtime before use " +
+        "(DENEXT_DESKTOP_RUNTIME_VERIFY=1)",
+    },
+    {
+      name: "attest-runtime",
+      type: "boolean",
+      help: "run | dev | package: also check a downloaded runtime's build provenance with " +
+        "`gh attestation verify` (DENEXT_DESKTOP_RUNTIME_ATTEST=1; needs gh)",
+    },
     ...DESKTOP_ADD_FLAGS,
+    ...PUBLISH_UPDATE_FLAGS,
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0] ?? "run";
+    // Read by resolveDesktopRuntimeEnv here AND by a packaging script's own call (inherited env).
+    if (ctx.flags["verify-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_VERIFY_ENV, "1");
+    if (ctx.flags["attest-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_ATTEST_ENV, "1");
     const dir = desktopDir(ctx);
     const entry = (ctx.flags.entry as string | undefined) ?? "desktop.ts";
     if (action === "build") return await exportSpa(dir);
@@ -105,8 +175,10 @@ export const desktopCommand: CommandSpec = {
     if (action === "dev") return await runDesktopDevSession(ctx, dir, entry);
     if (action === "package") return await packageDesktop(ctx, dir);
     if (action === "add") return await desktopAdd(ctx);
+    if (action === "publish-update") return await desktopPublishUpdate(ctx, dir);
     console.error(
-      `denext desktop: unknown action "${action}" (expected run | build | dev | package).`,
+      `denext desktop: unknown action "${action}" (expected run | build | dev | package | add | ` +
+        `publish-update).`,
     );
     Deno.exit(1);
   },
@@ -118,25 +190,176 @@ function fail(message: string): never {
   Deno.exit(1);
 }
 
+/** What an unpackaged window is built and launched with. */
+interface DesktopWindowLaunch {
+  /** The loaded project config. */
+  readonly config: unknown;
+  /** The launched executable's env (`LAUFEY_*`, and in `dev` the preload). */
+  readonly env: Record<string, string>;
+  /** The build's env: denext's pinned runtime (`DENORT_DESKTOP_BIN` + `LAUFEY_DEV_DIR`). */
+  readonly buildEnv: Record<string, string>;
+  /** `desktop.denoFlags`. */
+  readonly denoFlags: string[];
+  /** The project's build directory (`.denext/`), where `dev` writes its generated entry. */
+  readonly buildDir: string;
+}
+
 /**
- * Spawn `deno desktop <entry>` with the dev-only env seam `DENEXT_DESKTOP_DEV_URL` set to the dev
- * server URL — the ONLY switch that puts the desktop runtime into proxy mode. The permission split
- * (invariant 4): the window needs net to the loopback dev port only, exactly what the baked
- * `--allow-net=127.0.0.1,localhost` already grants, so nothing is widened vs a packaged build.
+ * `desktop.denoFlags` of the project (refused flags throw), after printing the pnpm-workspace hint
+ * when it applies.
  */
-function spawnDesktopWindow(project: string, entry: string, devUrl: string): DesktopWindow {
-  const { finished, stop } = spawnDenoChild(["desktop", entry], {
-    cwd: project,
-    stdin: "inherit",
-    env: { [DESKTOP_DEV_URL_ENV]: devUrl },
+async function projectDenoFlags(dir: string, config: unknown): Promise<string[]> {
+  const flags = desktopDenoFlags(config);
+  const hint = await desktopPnpmWorkspaceHint(dir, flags);
+  if (hint) {
+    console.warn(`  ⚠ ${hint}
+`);
+  }
+  return flags;
+}
+
+/**
+ * Prepare an UNPACKAGED window (`desktop run` / `dev`): sync `.deno-desktop/app.json` (the
+ * configured origin + identifier, embedded through deno.json `compile.include`), resolve denext's
+ * pinned Deno Desktop runtime for the build (downloaded and verified on first use; nothing under
+ * `DENEXT_DESKTOP_RUNTIME=stock`), and the webview backend's launch settings as `LAUFEY_*` env for
+ * the launched executable (the scratch bundle has no `laufey-launch.json`; DevTools on in `dev`,
+ * and in `run` unless `desktop.inspectable: false`). Single instance is left out on purpose: a dev
+ * window must never hand itself to an installed copy of the same app and exit.
+ */
+async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWindowLaunch> {
+  const paths = await resolveProject(dir);
+  const { config } = paths;
+  const denoFlags = await projectDenoFlags(dir, config);
+  await syncDesktopAppConfigAt(dir, config);
+  // An unpackaged window falls back to the stock runtime (with a warning) for a `deno` that is not
+  // the runtime's exact version; packaging stays strict.
+  const runtime = await resolveDesktopRuntimeEnv({
+    projectDir: dir,
+    deno: denoExecutable(),
+    onDenoMismatch: "stock",
   });
-  return { finished, stop };
+  const env = {
+    ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),
+    ...(dev ? await devPreloadEnv(paths) : {}),
+  };
+  return { config, env, buildEnv: runtime.env, denoFlags, buildDir: paths.outDir };
+}
+
+/**
+ * `desktop dev` only: bundle `desktop.preload` (unminified) into `.denext/` and point the window's
+ * runtime at it — live-reload mode serves the dev server's pages, not the export, so the export's
+ * preload would be stale or missing. Rebuilt per session (edit the preload → restart the session).
+ */
+async function devPreloadEnv(paths: ProjectPaths): Promise<Record<string, string>> {
+  const preload = paths.config?.desktop?.preload;
+  if (!preload) return {};
+  const outFile = join(paths.outDir, "desktop-preload.dev.js");
+  await bundleDesktopPreload({
+    projectDir: paths.projectDir,
+    preload,
+    configPath: paths.configPath,
+    outFile,
+    minify: false,
+  });
+  return { [DESKTOP_PRELOAD_ENV]: outFile };
+}
+
+/** The host OS as `deno desktop` targets it, or a failure on an OS it does not build for. */
+function hostDesktopOs(): DesktopOs {
+  const os = Deno.build.os;
+  if (os === "darwin" || os === "linux" || os === "windows") return os;
+  throw new Error(`deno desktop does not build for ${os}.`);
+}
+
+/** A built scratch app: the executable to launch, and the scratch directory to remove after. */
+interface BuiltDesktopWindow {
+  readonly exe: string;
+  readonly scratch: string;
+}
+
+/**
+ * Build the app for an unpackaged window with `deno desktop` into a scratch directory outside the
+ * project (`deno desktop` only compiles: it opens no window, and the binary gets only the
+ * permissions it is built with). The flags are the packaging scripts' (see
+ * {@linkcode desktopLaunchBuildPlan}). The scratch directory is removed when the build fails.
+ */
+async function buildDesktopWindow(
+  dir: string,
+  entry: string,
+  launch: DesktopWindowLaunch,
+  opts: { dev: boolean; netHosts?: string[] },
+): Promise<BuiltDesktopWindow> {
+  const os = hostDesktopOs();
+  const scratch = await desktopLaunchScratchDir(dir);
+  try {
+    const plan = await desktopLaunchBuildPlan({
+      projectDir: dir,
+      config: launch.config,
+      os,
+      denoFlags: launch.denoFlags,
+      entry,
+      dev: opts.dev,
+      netHosts: opts.netHosts,
+      scratch,
+    });
+    console.log(`  Building the desktop app (deno desktop) into ${scratch}…\n`);
+    const { code } = await new Deno.Command(denoExecutable(), {
+      args: plan.args,
+      cwd: dir,
+      env: launch.buildEnv,
+      stdin: "null",
+      stdout: "inherit",
+      stderr: "inherit",
+    }).output();
+    if (code !== 0) throw new Error(`deno desktop exited with code ${code}`);
+    return { exe: await desktopLaunchExecutable(os, plan.bundle), scratch };
+  } catch (err) {
+    await removeScratch(scratch);
+    throw err;
+  }
+}
+
+/** Remove a scratch build directory (best effort). */
+async function removeScratch(scratch: string): Promise<void> {
+  await Deno.remove(scratch, { recursive: true }).catch(() => {});
+}
+
+/**
+ * Launch a built window's executable directly (so its stdout/stderr stream to this terminal), with
+ * the launch env on top of this process's. `stop` ends it; `finished` resolves to its exit code.
+ */
+function launchDesktopWindow(
+  built: BuiltDesktopWindow,
+  dir: string,
+  env: Record<string, string>,
+): DesktopWindow & { readonly code: Promise<number> } {
+  const child = new Deno.Command(built.exe, {
+    cwd: dir,
+    env,
+    stdin: "null",
+    stdout: "inherit",
+    stderr: "inherit",
+  }).spawn();
+  const code = child.status.then((s) => s.code);
+  return {
+    code,
+    finished: code.then(() => {}),
+    stop: async () => {
+      try {
+        child.kill("SIGTERM");
+      } catch { /* already gone */ }
+      await child.status;
+      await removeScratch(built.scratch);
+    },
+  };
 }
 
 /**
  * `denext desktop dev [dir]`: live reload against `denext dev`. Requires the desktop entry, then
- * starts (or attaches to) the dev server on a loopback target (a non-loopback one needs `--lan`)
- * and opens the window in proxy mode.
+ * starts (or attaches to) the dev server on a loopback target (a non-loopback one needs `--lan`),
+ * builds the app from a generated entry that marks it a dev build (see `desktop-launch.ts`) and
+ * opens the window in proxy mode.
  */
 async function runDesktopDevSession(
   ctx: CommandContext,
@@ -162,10 +385,29 @@ async function runDesktopDevSession(
   } catch (err) {
     fail(err instanceof Error ? err.message : String(err));
   }
+  let launch: DesktopWindowLaunch;
+  try {
+    launch = await prepareDesktopWindow(dir, true);
+  } catch (err) {
+    fail(`denext desktop dev: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  const lan = ctx.flags.lan === true;
   try {
     await runDesktopDev({
       startServer: () => startOrAttachDevServer(dir, target.host, target.url),
-      spawnWindow: (devUrl) => Promise.resolve(spawnDesktopWindow(dir, entry, devUrl)),
+      spawnWindow: async (devUrl) => {
+        const devEntry = await writeDesktopDevEntry(dir, launch.buildDir, entry);
+        const built = await buildDesktopWindow(dir, devEntry, launch, {
+          dev: true,
+          // The window's runtime reaches a LAN dev server over the network.
+          netHosts: lan ? [new URL(devUrl).hostname] : [],
+        });
+        return launchDesktopWindow(built, dir, {
+          ...launch.env,
+          [DESKTOP_DEV_URL_ENV]: devUrl,
+          ...(lan ? { [DESKTOP_DEV_LAN_ENV]: "1" } : {}),
+        });
+      },
       waitForStop: waitForShutdownSignal,
       log: (line) => console.log(line),
     });
@@ -174,7 +416,10 @@ async function runDesktopDevSession(
   }
 }
 
-/** `denext desktop run`: export the SPA, then open it in a native window. */
+/**
+ * `denext desktop run`: export the SPA, build the app into a scratch directory, open it, and stream
+ * its output until it exits (Ctrl-C quits it). Exits with the app's exit code.
+ */
 async function runDesktop(dir: string, entry: string): Promise<void> {
   const entryPath = join(dir, entry);
   try {
@@ -186,11 +431,26 @@ async function runDesktop(dir: string, entry: string): Promise<void> {
     );
     Deno.exit(1);
   }
+  let launch: DesktopWindowLaunch;
+  try {
+    launch = await prepareDesktopWindow(dir);
+  } catch (err) {
+    fail(`denext desktop run: ${err instanceof Error ? err.message : String(err)}`);
+  }
   await exportSpa(dir);
-  console.log("  Opening desktop window (deno desktop)…\n");
-  // `deno desktop <entry>` wraps the entry's Deno.serve() in a native window;
-  // needs Deno 2.9+. Replaces this process with the child.
-  await spawnDenoAndExit(["desktop", entry], dir);
+  let built: BuiltDesktopWindow;
+  try {
+    built = await buildDesktopWindow(dir, entry, launch, { dev: false });
+  } catch (err) {
+    fail(`denext desktop run: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  console.log(`  Opening the desktop window  ▸  ${built.exe}\n  Ctrl-C quits the app.\n`);
+  const stopped = waitForShutdownSignal();
+  const window = launchDesktopWindow(built, dir, launch.env);
+  const quit = await Promise.race([stopped.then(() => true), window.finished.then(() => false)]);
+  await window.stop();
+  // Quit from here (Ctrl-C) is a clean exit; otherwise the app's own exit code.
+  Deno.exit(quit ? 0 : await window.code);
 }
 
 /** `denext desktop package`: run the scaffolded packaging script for the target OS (or, with
@@ -199,8 +459,9 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   if (ctx.flags["regenerate-scripts"] === true) return await regeneratePackageScripts(dir);
   const targetOs = packageTargetOs(ctx);
   const script = join(dir, "scripts", PACKAGE_SCRIPTS[targetOs]);
+  let scriptText: string;
   try {
-    await Deno.stat(script);
+    scriptText = await Deno.readTextFile(script);
   } catch {
     console.error(
       `denext: no packaging script at ${script}\n` +
@@ -210,6 +471,12 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
     Deno.exit(1);
   }
   console.log(`\n  denext desktop — packaging (${targetOs})  ▸  ${dir}\n`);
+  // The script reads `desktop.denoFlags` itself; check them (and hint at a pnpm workspace) first.
+  try {
+    await projectDenoFlags(dir, (await resolveProject(dir)).config);
+  } catch (err) {
+    fail(`denext desktop package: ${err instanceof Error ? err.message : String(err)}`);
+  }
   // The `denext` CLI re-execs itself once to load lightningcss / the project config, setting
   // DENEXT_CSS_ACTIVE / DENEXT_MODULE_ACTIVE as a loop guard (cli.ts). Those must NOT leak into the
   // packaging script's own `deno task export` child: it would see the guard, skip its own CSS
@@ -218,7 +485,66 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   // so clear the guards here before spawning.
   Deno.env.delete("DENEXT_CSS_ACTIVE");
   Deno.env.delete("DENEXT_MODULE_ACTIVE");
-  await spawnDenoAndExit(["run", "-A", script, ...ctx.rest], dir);
+  const format = ctx.flags.format as string | undefined;
+  const age = packageScriptAge(scriptText);
+  for (const line of packageScriptWarnings(PACKAGE_SCRIPTS[targetOs], age, format)) {
+    console.error(line);
+  }
+  const formatArgs = format && age.formats ? ["--format", format] : [];
+  await spawnDenoAndExit(["run", "-A", script, ...formatArgs, ...ctx.rest], dir);
+}
+
+/** What a packaging script predating denext 3.1 lacks. */
+export interface PackageScriptAge {
+  /** It builds on denext's pinned runtime (calls `desktopRuntimeEnv` / `buildDesktopBundle`). */
+  readonly runtime: boolean;
+  /** It takes `--format` (parses its arguments with `parseDesktopPackageArgs`). */
+  readonly formats: boolean;
+}
+
+/**
+ * How current a `scripts/package-<os>.ts` is, read from its text (it is never imported here).
+ *
+ * @param text The script's source.
+ * @returns What it supports.
+ */
+export function packageScriptAge(text: string): PackageScriptAge {
+  return {
+    runtime: /\b(desktopRuntimeEnv|buildDesktopBundle)\b/.test(text),
+    formats: /\bparseDesktopPackageArgs\b/.test(text),
+  };
+}
+
+/**
+ * The warnings for a packaging script that predates denext 3.1: it builds on the stock runtime,
+ * and a `--format` is not passed to a script that cannot read it.
+ *
+ * @param name The script's file name (`package-linux.ts`).
+ * @param age What it supports.
+ * @param format The `--format` value, when given.
+ * @returns The lines to print (none for a current script).
+ */
+export function packageScriptWarnings(
+  name: string,
+  age: PackageScriptAge,
+  format: string | undefined,
+): string[] {
+  const out: string[] = [];
+  if (!age.runtime) {
+    out.push(
+      `  ⚠ scripts/${name} predates denext 3.1: it builds with the stock Deno Desktop runtime ` +
+        "and none of the default installers.\n" +
+        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
+  }
+  if (format && !age.formats) {
+    out.push(
+      `  ⚠ --format ${format} is ignored: scripts/${name} does not take --format. Regenerate it ` +
+        "with `denext desktop package --regenerate-scripts`.",
+    );
+  }
+  return out;
 }
 
 /** Whether `path` is itself a symbolic link (a missing path is not). */

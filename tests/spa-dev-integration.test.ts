@@ -92,6 +92,32 @@ async function stepMissingAsset404({ origin }: Ctx): Promise<void> {
   await res.body?.cancel();
 }
 
+async function stepDevLog({ origin }: Ctx): Promise<void> {
+  const post = await fetch(origin + "/_denext/dev-log", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify([
+      { level: "error", message: "[resource] failed to load module script /x.js", url: "/" },
+      { level: "log", message: "hello from the page", url: "/" },
+    ]),
+  });
+  assertEquals(post.status, 204);
+  await post.body?.cancel();
+  const res = await fetch(origin + "/_denext/dev-state?kind=console&limit=10");
+  assertEquals(res.status, 200);
+  const state = await res.json();
+  const messages = state.events.map((e: { message: string }) => e.message);
+  assert(messages.includes("[resource] failed to load module script /x.js"), messages.join("|"));
+  assert(messages.includes("hello from the page"), messages.join("|"));
+  assertEquals(state.projectDir, SPA);
+}
+
+async function stepDevJson({ origin }: Ctx): Promise<void> {
+  const info = JSON.parse(await Deno.readTextFile(join(SPA, ".denext", "dev.json")));
+  assertEquals(info.origin, origin);
+  assertEquals(info.pid, Deno.pid);
+}
+
 Deno.test({
   name: "SPA dev server serves the shell + unbundled client entry",
   sanitizeOps: false,
@@ -120,6 +146,11 @@ Deno.test({
       () => stepDeepRouteFallback(ctx),
     );
     await t.step("a missing file-extension asset is a genuine 404", () => stepMissingAsset404(ctx));
+    await t.step(
+      "the page's console reaches the dev log (denext_dev_logs) via dev-log / dev-state",
+      () => stepDevLog(ctx),
+    );
+    await t.step("SPA dev publishes .denext/dev.json for the MCP tools", () => stepDevJson(ctx));
   } finally {
     await server.close();
   }

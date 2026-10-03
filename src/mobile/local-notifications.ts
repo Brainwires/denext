@@ -8,9 +8,11 @@
  * On the web a notification scheduled for now shows through the Notifications API (when
  * permission is granted); nothing can be scheduled for later, so a trigger rejects there.
  *
- * A Deno Desktop window takes the web path: the desktop runtime has no notifications
- * capability, so a notification without a trigger shows through the WebView's Notification
- * API, a trigger rejects, and a click is not routed to `onLocalNotificationTapped`.
+ * In a Deno Desktop window with the `notifications` capability (`denext desktop add
+ * notifications`) and denext's pinned runtime, they are the OS's own notifications: scheduled
+ * (repeating triggers too), cancelled and listed, with category action buttons, and a click
+ * (including the one that launched the app) reaches `onLocalNotificationTapped`. Without the
+ * capability, or under the stock runtime, the window takes the web path.
  *
  * @module
  */
@@ -21,59 +23,20 @@ import { onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { createFanout, type Fanout } from "./link-routing.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 import { deliverTap, type PushTap, type PushTapOptions } from "./push.ts";
+import {
+  dateOf,
+  int,
+  type LocalNotificationTrigger,
+  nextMatch,
+  secondsOf,
+  triggerComponents,
+} from "./notification-trigger.ts";
 
-/**
- * When a local notification fires. Months are 1–12 and weekdays 1–7 with 1 = Sunday (the
- * plugin's and iOS's convention); times are the device's local time.
- *
- * - `date`: once, at that moment.
- * - `interval`: `seconds` from now; with `repeats`, every `seconds` after that (at least 60).
- * - `daily` / `weekly` / `monthly` / `yearly`: repeating at that local time.
- * - `calendar`: whenever the given components match (unset ones match anything); with
- *   `repeats: false` only the next match.
- */
-export type LocalNotificationTrigger =
-  | { readonly type: "date"; readonly date: Date | number }
-  | { readonly type: "interval"; readonly seconds: number; readonly repeats?: boolean }
-  | { readonly type: "daily"; readonly hour: number; readonly minute: number }
-  | {
-    readonly type: "weekly";
-    readonly weekday: number;
-    readonly hour: number;
-    readonly minute: number;
-  }
-  | {
-    readonly type: "monthly";
-    readonly day: number;
-    readonly hour: number;
-    readonly minute: number;
-  }
-  | {
-    readonly type: "yearly";
-    readonly month: number;
-    readonly day: number;
-    readonly hour: number;
-    readonly minute: number;
-  }
-  | ({ readonly type: "calendar"; readonly repeats?: boolean } & CalendarComponents);
-
-/** The date components a `calendar` trigger matches. */
-export interface CalendarComponents {
-  /** The year. */
-  readonly year?: number;
-  /** The month, 1–12. */
-  readonly month?: number;
-  /** The day of the month, 1–31. */
-  readonly day?: number;
-  /** The weekday, 1–7 with 1 = Sunday. */
-  readonly weekday?: number;
-  /** The hour, 0–23. */
-  readonly hour?: number;
-  /** The minute, 0–59. */
-  readonly minute?: number;
-  /** The second, 0–59 (default 0). */
-  readonly second?: number;
-}
+export {
+  type CalendarComponents,
+  type LocalNotificationTrigger,
+  nextTriggerDate,
+} from "./notification-trigger.ts";
 
 /** A local notification to schedule. */
 export interface LocalNotificationInput {
@@ -237,129 +200,6 @@ function needsPlugin(fn: string): Error {
   );
 }
 
-/** A whole number in [min, max], or a RangeError naming `what`. */
-function int(fn: string, what: string, value: unknown, min: number, max: number): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
-    throw new RangeError(`${fn}: ${what} must be a whole number from ${min} to ${max}`);
-  }
-  return value;
-}
-
-/** The optional calendar components, range-checked. */
-function components(fn: string, c: CalendarComponents): CalendarComponents {
-  const out: Record<string, number> = {};
-  const ranges: Array<[keyof CalendarComponents, number, number]> = [
-    ["year", 1970, 9999],
-    ["month", 1, 12],
-    ["day", 1, 31],
-    ["weekday", 1, 7],
-    ["hour", 0, 23],
-    ["minute", 0, 59],
-    ["second", 0, 59],
-  ];
-  for (const [key, min, max] of ranges) {
-    if (c[key] !== undefined) out[key] = int(fn, key, c[key], min, max);
-  }
-  return out;
-}
-
-/** A trigger's calendar components (for the repeating kinds), checked. */
-function triggerComponents(fn: string, t: LocalNotificationTrigger): CalendarComponents | null {
-  switch (t.type) {
-    case "daily":
-      return components(fn, { hour: t.hour, minute: t.minute });
-    case "weekly":
-      return components(fn, { weekday: t.weekday, hour: t.hour, minute: t.minute });
-    case "monthly":
-      return components(fn, { day: t.day, hour: t.hour, minute: t.minute });
-    case "yearly":
-      return components(fn, { month: t.month, day: t.day, hour: t.hour, minute: t.minute });
-    case "calendar":
-      return components(fn, t);
-    default:
-      return null;
-  }
-}
-
-/** Whether `date` matches `c` (unset components match anything). */
-function matches(date: Date, c: CalendarComponents): boolean {
-  return (c.year === undefined || date.getFullYear() === c.year) &&
-    (c.month === undefined || date.getMonth() + 1 === c.month) &&
-    (c.day === undefined || date.getDate() === c.day) &&
-    (c.weekday === undefined || date.getDay() + 1 === c.weekday);
-}
-
-/** The first local time on `day` at or after `after` whose time matches `c`, or null. */
-function timeOnDay(day: Date, after: number, c: CalendarComponents): Date | null {
-  const hours = c.hour === undefined ? [...Array(24).keys()] : [c.hour];
-  const minutes = c.minute === undefined ? [...Array(60).keys()] : [c.minute];
-  for (const h of hours) {
-    for (const m of minutes) {
-      const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m, c.second ?? 0);
-      if (at.getTime() > after) return at;
-    }
-  }
-  return null;
-}
-
-/** The next local time after `after` matching `c`, searching up to eight years ahead. */
-function nextMatch(c: CalendarComponents, after: number): Date | null {
-  const start = new Date(after);
-  for (let i = 0; i < 366 * 8; i++) {
-    const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    if (!matches(day, c)) continue;
-    const at = timeOnDay(day, after, c);
-    if (at) return at;
-  }
-  return null;
-}
-
-/** A `date` trigger's time, checked. */
-function dateOf(fn: string, date: Date | number): number {
-  const ms = date instanceof Date ? date.getTime() : date;
-  if (typeof ms !== "number" || !Number.isFinite(ms)) {
-    throw new TypeError(`${fn}: trigger.date must be a Date or a timestamp in milliseconds`);
-  }
-  return ms;
-}
-
-/** An `interval` trigger's seconds, checked (a repeating one needs at least 60). */
-function secondsOf(fn: string, t: { seconds: number; repeats?: boolean }): number {
-  const min = t.repeats ? 60 : 1;
-  if (typeof t.seconds !== "number" || !Number.isFinite(t.seconds) || t.seconds < min) {
-    throw new RangeError(
-      `${fn}: trigger.seconds must be at least ${min}${
-        t.repeats ? " for a repeating interval" : ""
-      }`,
-    );
-  }
-  return t.seconds;
-}
-
-/**
- * When `trigger` next fires after `from` (default now), or null when it never will (a date in
- * the past, a calendar match that does not exist). Internal to `denext/mobile` and the Expo
- * shim's `getNextTriggerDateAsync`.
- */
-export function nextTriggerDate(
-  trigger: LocalNotificationTrigger,
-  from: number = Date.now(),
-): Date | null {
-  const fn = "nextTriggerDate";
-  if (trigger.type === "date") {
-    const at = dateOf(fn, trigger.date);
-    return at > from ? new Date(at) : null;
-  }
-  if (trigger.type === "interval") return new Date(from + secondsOf(fn, trigger) * 1000);
-  const c = triggerComponents(fn, trigger);
-  if (!c) {
-    throw new TypeError(
-      `${fn}: unknown trigger type "${String((trigger as { type?: unknown }).type)}"`,
-    );
-  }
-  return nextMatch(c, from);
-}
-
 /** The plugin's `schedule` object for a trigger (none: deliver now). */
 function scheduleOf(
   fn: string,
@@ -425,6 +265,18 @@ function schemaOf(fn: string, n: LocalNotificationInput): Record<string, unknown
   return schema;
 }
 
+/** A notification as the Deno Desktop runtime takes it (the input's trigger, checked already). */
+function desktopWire(schema: Record<string, unknown>, n: LocalNotificationInput) {
+  return {
+    id: schema.id as number,
+    title: n.title,
+    body: n.body,
+    ...(n.data !== undefined ? { data: { ...n.data } } : {}),
+    ...(n.categoryId !== undefined ? { categoryId: n.categoryId } : {}),
+    ...(n.trigger ? { trigger: n.trigger } : {}),
+  };
+}
+
 /** A web Notification constructor with a granted permission, when the browser has one. */
 function webNotification(): WebNotificationCtor | undefined {
   const ctor = (globalThis as { Notification?: unknown }).Notification as
@@ -447,8 +299,10 @@ interface WebNotificationCtor {
  * the notification silently. Android 12+ may deliver an exact-time trigger a few minutes late
  * unless the user allowed exact alarms.
  *
- * On the web and on Deno Desktop there is no scheduler: a notification without a trigger shows
- * through the Notifications API (when permission is granted), and one with a trigger rejects.
+ * On the web there is no scheduler: a notification without a trigger shows through the
+ * Notifications API (when permission is granted), and one with a trigger rejects. On Deno Desktop
+ * with the `notifications` capability the OS schedules it (a repeating one for its next 16
+ * occurrences, topped up whenever the app runs; Linux delivers while the app runs).
  *
  * @param notification What to show, and when.
  * @returns Its id (for {@linkcode cancelNotification}).
@@ -469,7 +323,10 @@ interface WebNotificationCtor {
 export async function scheduleNotification(notification: LocalNotificationInput): Promise<number> {
   const fn = "scheduleNotification";
   const schema = schemaOf(fn, notification);
-  if (onDesktop() && await viaDesktop("notifications", (d) => d.notifySchedule(schema))) {
+  if (
+    onDesktop() &&
+    await viaDesktop("notifications", (d) => d.notifySchedule(desktopWire(schema, notification)))
+  ) {
     return schema.id as number;
   }
   const plugin = localPlugin();
@@ -640,8 +497,9 @@ function actionType(c: NotificationCategory): Record<string, unknown> {
  * On iOS the categories live in the app's one `UNUserNotificationCenter`, so they apply to
  * remote pushes too: a push whose `aps.category` names a category shows its buttons, and the
  * tapped button arrives through `onPushTapped` as `actionId`. On Android they apply to local
- * notifications only (FCM draws its own notification without buttons). Outside the shell it
- * does nothing.
+ * notifications only (FCM draws its own notification without buttons). On Deno Desktop with
+ * the `notifications` capability they are the notification's buttons (title only: no text input,
+ * destructive or authentication options there). Elsewhere it does nothing.
  *
  * @param categories Every category.
  * @returns A promise that settles once registered.
@@ -662,6 +520,10 @@ export async function setNotificationCategories(
   categories: readonly NotificationCategory[],
 ): Promise<void> {
   const types = categories.map(actionType);
+  if (
+    onDesktop() &&
+    await viaDesktop("notifications", (d) => d.notifySetCategories(categories))
+  ) return;
   await localPlugin()?.registerActionTypes({ types });
 }
 
@@ -694,13 +556,41 @@ function toLocalTap(raw: RawLocalTap | undefined): LocalNotificationTap {
   };
 }
 
+/** A desktop click as a tap. */
+function fromDesktopTap(t: {
+  id: number;
+  actionId: string;
+  title?: string;
+  body?: string;
+  data: Record<string, unknown>;
+}): LocalNotificationTap {
+  return {
+    notification: { id: t.id, title: t.title, body: t.body, data: t.data },
+    actionId: t.actionId,
+  };
+}
+
+/** The desktop runtime's clicks (loaded lazily, so web and mobile bundles never fetch it). */
+function desktopTapFanout(): Fanout<LocalNotificationTap> {
+  return createFanout<LocalNotificationTap>((emit) => {
+    let stop: (() => void) | undefined;
+    let active = true;
+    import("../desktop/native.ts").then((d) => {
+      if (active) stop = d.onDesktopNotificationTap((t) => emit(fromDesktopTap(t)));
+    }, () => {});
+    return () => {
+      active = false;
+      stop?.();
+    };
+  });
+}
+
 /**
- * Where taps come from here: the native plugin, or nowhere. A Deno Desktop window has no
- * notification click source (the runtime ships no notifications capability; notifications
- * show through the WebView's Notification API), so there it is nowhere and no event stream
- * is opened.
+ * Where taps come from here: the native plugin; in a Deno Desktop window the runtime's
+ * `notifications` capability (nothing arrives when it is not enabled); else nowhere.
  */
 function tapFanout(): Fanout<LocalNotificationTap> | undefined {
+  if (onDesktop()) return tappedFanout ??= desktopTapFanout();
   if (!localPlugin()) return undefined;
   return tappedFanout ??= pluginFanout<RawLocalTap, LocalNotificationTap>(
     "localNotificationActionPerformed",
@@ -742,8 +632,9 @@ export function onLocalNotificationReceived(
  * Call `callback` when the user taps a local notification (or one of its actions), and by
  * default navigate to its `data.path` (an in-app path) or `data.url` (under the deep-link
  * acceptance rules), exactly as `onPushTapped` does for a push. A tap that
- * cold-started the app is kept by the shell for the first listener, so subscribe early.
- * Outside the shell it does nothing.
+ * cold-started the app is kept by the shell (or the Deno Desktop runtime) for the first
+ * listener, so subscribe early. In a Deno Desktop window it needs the `notifications`
+ * capability. Elsewhere it does nothing.
  *
  * @param callback Called with each tap.
  * @param options Which links to accept, and how to navigate.

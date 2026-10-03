@@ -567,7 +567,7 @@ function flightRefreshBlock(
   return {
     refreshImport: `import { enableFastRefresh, registerFamily } from "denext/client-runtime";\n` +
       devtools,
-    regFamily: '    registerFamily(mod[k], clientId + "#" + k);\n',
+    regFamily: '    registerFamily(v, clientId + "#" + k);\n',
     enableRefresh: "enableFastRefresh();\ninstallDevtools();\n",
   };
 }
@@ -825,10 +825,14 @@ ${
     featureSeedBlock(features)
   }${classInstall}${activityInstall}${vtInstall}const registry = new Map();
 // Functions AND React's non-callable memo()/forwardRef() element objects — the server tags
-// both as client references (radix exports the latter), so both must resolve here.
+// both as client references (radix exports the latter), so both must resolve here. An island
+// from an npm package's CommonJS build (what the server bundle resolves) arrives as
+// { default: module.exports }: its exports are module.exports' own properties.
 function reg(mod, clientId) {
-  for (const k of Object.keys(mod)) {
-    const v = mod[k];
+  const cjs = mod.default && typeof mod.default === "object" && mod.default.__esModule
+    ? mod.default
+    : null;
+  for (const [k, v] of [...Object.entries(cjs ?? {}), ...Object.entries(mod)]) {
     if (typeof v === "function") {
       registry.set(clientId + "#" + k, v);
 ${regFamily}    } else if (v && typeof v === "object" && v.$$typeof) {

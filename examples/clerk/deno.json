@@ -1,0 +1,103 @@
+{
+  "workspace": [],
+  "tasks": {
+    "dev": "deno run -A --node-modules-dir=none ../../cli.ts dev .",
+    "dev:lan": "deno run -A --node-modules-dir=none ../../cli.ts dev . --lan",
+    "build": "deno run -A --node-modules-dir=none ../../cli.ts build .",
+    "start": "deno run -A --node-modules-dir=none ../../cli.ts start .",
+    "export": "deno run -A --node-modules-dir=none ../../cli.ts export .",
+    "desktop": "deno run -A --node-modules-dir=none ../../cli.ts desktop run .",
+    "desktop:package": "deno run -A --node-modules-dir=none ../../cli.ts desktop package --regenerate-scripts . && deno run -A --node-modules-dir=none ../../cli.ts desktop package .",
+    "test:desktop": "deno run -A --node-modules-dir=none e2e/desktop-test.ts",
+    "mobile:export": "deno run -A --node-modules-dir=none ../../cli.ts export . && ./node_modules/.bin/cap sync"
+  },
+  "nodeModulesDir": "auto",
+  "unstable": [
+    "sloppy-imports"
+  ],
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "lib": [
+      "deno.window",
+      "deno.unstable",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable"
+    ],
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "imports": {
+    "denext": "../../mod.ts",
+    "denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "denext/server": "../../src/server/mod.ts",
+    "denext/client": "../../src/client/mod.ts",
+    "denext/mobile": "../../src/mobile/mod.ts",
+    "denext/desktop": "../../src/build/desktop.ts",
+    "denext/desktop/client": "../../src/desktop/client.ts",
+    "denext/desktop/clerk": "../../src/desktop/clerk.ts",
+    "react": "../../src/compat/react.ts",
+    "react-dom": "../../src/compat/react-dom.ts",
+    "react-dom/client": "../../src/compat/react-dom-client.ts",
+    "react-dom/server": "../../src/compat/react-dom-server.ts",
+    "react/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "react/jsx-dev-runtime": "../../src/jsx/jsx-runtime.ts",
+    "react-is": "../../src/compat/react-is.ts",
+    "next": "../../src/compat/next/index.ts",
+    "next/cache": "../../src/compat/next/cache.ts",
+    "next/dynamic": "../../src/compat/next/dynamic.ts",
+    "next/font/google": "../../src/compat/next/font/google.ts",
+    "next/font/local": "../../src/compat/next/font/local.ts",
+    "next/form": "../../src/compat/next/form.ts",
+    "next/head": "../../src/compat/next/head.ts",
+    "next/headers": "../../src/compat/next/headers.ts",
+    "next/image": "../../src/compat/next/image.ts",
+    "next/link": "../../src/compat/next/link.ts",
+    "next/navigation": "../../src/compat/next/navigation.ts",
+    "next/og": "../../src/compat/next/og.ts",
+    "next/script": "../../src/compat/next/script.ts",
+    "next/server": "../../src/compat/next/server.ts",
+    "@std/http": "jsr:@std/http@^1.0.0",
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/fs": "jsr:@std/fs@^1.0.0",
+    "@std/media-types": "jsr:@std/media-types@^1.0.0",
+    "@std/async": "jsr:@std/async@^1.0.0",
+    "@std/encoding": "jsr:@std/encoding@^1.0.0",
+    "@std/jsonc": "jsr:@std/jsonc@^1.0.0",
+    "@std/yaml": "jsr:@std/yaml@^1.0.0",
+    "@std/assert": "jsr:@std/assert@^1.0.0",
+    "@denext/lightningcss": "jsr:@denext/lightningcss@^1.0.0-rc.72",
+    "@denext/swc": "jsr:@denext/swc@^76.0.0",
+    "esbuild": "npm:esbuild@^0.24.0",
+    "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11.0",
+    "@clerk/nextjs": "npm:@clerk/nextjs@^7.9.8",
+    "denext/desktop/window": "../../src/desktop/window.ts",
+    "denext/mobile/clerk": "../../src/mobile/clerk.ts"
+  },
+  "lint": {
+    "plugins": [
+      "../../src/lint/denext-plugin.ts"
+    ]
+  },
+  "desktop": {
+    "app": {
+      "name": "denext Clerk",
+      "identifier": "dev.denext.clerk-example",
+      "deepLinks": [
+        "denextclerk"
+      ]
+    }
+  },
+  "compile": {
+    "include": [
+      ".deno-desktop/app.json"
+    ]
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  }
+}

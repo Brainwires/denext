@@ -8,14 +8,14 @@
 //   deno task docs:llms     # regenerate both files
 //   deno task docs:build    # docs:api + docs:llms + export the site
 //
-// Output → apps/web/public/, which the static export copies to the site root.
+// Output → site/public/, which the static export copies to the site root.
 
 import { publicGuide } from "../src/mcp/guide.ts";
 import { TOOLS } from "../src/mcp/tools.ts";
 import { fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
-const OUT_DIR = `${ROOT}apps/web/public`;
+const OUT_DIR = `${ROOT}site/public`;
 const SITE = "https://denext.dev";
 const REPO = "https://github.com/Brainwires/denext";
 
@@ -34,9 +34,11 @@ interface RefGroup {
 export function llmsIndex(): string {
   return `# denext
 
-> denext is Next.js's App Router, reimplemented for Deno with its own small React. If you
-> know Next.js you already know denext — the same file conventions, hooks, and \`app/\`
-> router. This file helps AI tools emit correct denext instead of Next.js.
+> denext is a complete, lightweight framework for Deno: write an app once and ship it to the
+> web, iOS, Android and the desktop, on its own small React core. Its API is surface compatible
+> with React and the Next.js App Router, so if you know Next.js you already know denext — the
+> same file conventions, hooks, and \`app/\` router — and existing npm packages work. This file
+> helps AI tools emit correct denext instead of Next.js.
 
 ## What differs from Next.js (read first)
 
@@ -57,6 +59,8 @@ export function llmsIndex(): string {
 - [Full guide for AI tools](${SITE}/llms-full.txt): the complete rules, import map, common
   tasks, and an API-surface summary — load this to write denext.
 - [API reference](${SITE}/docs/api): every public symbol with signatures.
+- [Examples](${SITE}/docs/examples): every runnable example app, one page each
+  (\`/docs/examples/<name>\`) with its README and the commands that run it.
 - [Guide (source)](${REPO}/blob/main/AGENTS.md): AGENTS.md in the repo.
 - [GitHub](${REPO}): source, examples, and issues.
 
@@ -66,7 +70,8 @@ export function llmsIndex(): string {
   \`deno run -A jsr:@denext/denext/cli mcp\`). Tools (derived from the live
   registry so this never drifts): ${TOOLS.map((t) => `\`${t.name}\``).join(", ")}. It can lint a
   snippet for Next-isms, map imports, scaffold, run doctor/codemod, list an app's routes, read a
-  running dev server's errors + console, and render a route/component server-side.
+  running dev server's errors + console, render a route/component server-side, and search or
+  read every docs page and API symbol offline (\`denext_search_docs\` / \`denext_read_docs\`).
 - **Migrate** a Next.js / Remix / Pages-Router app in one pass: \`denext migrate\`.
 `;
 }
@@ -89,7 +94,7 @@ export async function llmsFull(): Promise<string> {
   let api = "";
   try {
     const ref = JSON.parse(
-      await Deno.readTextFile(`${ROOT}apps/web/app/docs/api/reference.json`),
+      await Deno.readTextFile(`${ROOT}site/app/docs/api/reference.json`),
     ) as { groups: RefGroup[] };
     api = `\n\n---\n\n# API reference (summary)\n\nEvery public symbol, grouped by module. ` +
       `Full signatures + docs at ${SITE}/docs/api.\n\n${apiSummary(ref.groups)}\n`;

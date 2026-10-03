@@ -1,6 +1,6 @@
 // Generate the in-site CLI reference from the live command registry.
 // Reads the SAME `buildRegistry()` + `GLOBAL_FLAGS` the `denext` binary dispatches on,
-// so the docs page (apps/web /docs/cli) can never drift from `denext --help`.
+// so the docs page (site /docs/cli) can never drift from `denext --help`.
 //
 //   deno task docs:cli      # regenerate cli.json
 //   deno task docs:build    # regenerate + export the site
@@ -26,7 +26,7 @@ import { dirname, fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 /** Where the generated reference is committed (the docs page imports it). */
-export const CLI_OUT = `${ROOT}apps/web/app/docs/cli/cli.json`;
+export const CLI_OUT = `${ROOT}site/app/docs/cli/cli.json`;
 
 /** A flag as the docs page renders it. */
 export interface RefFlag {

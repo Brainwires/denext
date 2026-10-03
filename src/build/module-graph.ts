@@ -10,7 +10,16 @@
 // build-time graph split (which modules the browser bundle may contain) and the
 // runtime registration of client-component and server references.
 
-import { fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
+import {
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  SEPARATOR,
+  toFileUrl,
+} from "@std/path";
 import { type Directive, readDirective } from "./directives.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./bundle.ts";
@@ -207,6 +216,7 @@ let graphSpawns = 0;
 export function resetModuleGraphCache(): void {
   graphCaches.clear();
   graphInFlight.clear();
+  npmBoundaryCache.clear();
 }
 
 /** How many `deno info` processes the graph layer has spawned (test/diagnostics seam). */
@@ -267,6 +277,16 @@ export function denoInfoGraph(
 }
 
 /** One `deno info` spawn over a barrel of `entryFiles`; no caching. */
+/** Whether this process's working directory still exists. */
+function liveCwd(): boolean {
+  try {
+    Deno.cwd();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function spawnDenoInfo(
   entryFiles: string[],
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
@@ -277,6 +297,9 @@ async function spawnDenoInfo(
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
     const command = new Deno.Command(denoExecutable(), {
+      // A process whose working directory was deleted (a test that removed its temp cwd) can't
+      // spawn `deno info` from it; run from the first entry's folder instead.
+      ...(liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
       // sloppy-imports so extensionless Next.js app imports resolve in the graph
       // crawl (permissive fallback; see runDenoBundle in bundle.ts).
       args: [
@@ -324,6 +347,52 @@ export interface BoundaryManifestOptions {
    * module and lists its keys.
    */
   exportsOf?: (filePath: string) => string[] | Promise<string[]>;
+  /**
+   * Also find the `"use client"` / `"use server"` files inside npm packages the app's modules
+   * import — the next-compat build, whose bundles render npm code, passes
+   * `npmBoundaryByImporter` (`./npm-boundary.ts`). Injected rather than imported here: it pulls
+   * in esbuild, and this module is part of the runtime (the production server never loads
+   * esbuild). Absent, npm packages are opaque (the native path loads them through Deno).
+   */
+  npm?: NpmBoundaryFinder;
+}
+
+/** What a local module reaches inside npm packages: islands and action modules (file paths). */
+export interface NpmBoundaryFound {
+  /** `"use client"` files. */
+  readonly client: readonly string[];
+  /** `"use server"` files. */
+  readonly server: readonly string[];
+}
+
+/** Finds, per local module, the npm boundary modules it reaches (`npmBoundaryByImporter`). */
+export type NpmBoundaryFinder = (
+  localFiles: readonly string[],
+) => Promise<Map<string, NpmBoundaryFound>>;
+
+/** The npm boundary modules per local file, from {@link npmBoundaryFor} (reset with the graph). */
+const npmBoundaryCache = new Map<string, NpmBoundaryFound>();
+
+/**
+ * The npm islands and action modules `locals` reach, answered from {@link npmBoundaryCache}; the
+ * files not cached yet go through ONE `find` call.
+ */
+async function npmBoundaryFor(
+  locals: string[],
+  find: NpmBoundaryFinder,
+): Promise<{ client: Set<string>; server: Set<string> }> {
+  const missing = locals.filter((f) => !npmBoundaryCache.has(f));
+  if (missing.length > 0) {
+    for (const [file, found] of await find(missing)) npmBoundaryCache.set(file, found);
+  }
+  const client = new Set<string>();
+  const server = new Set<string>();
+  for (const f of locals) {
+    const found = npmBoundaryCache.get(f);
+    found?.client.forEach((p) => client.add(p));
+    found?.server.forEach((p) => server.add(p));
+  }
+  return { client, server };
 }
 
 /**
@@ -362,7 +431,7 @@ export async function importFunctionExports(filePath: string): Promise<string[]>
  * includes `default` when a default export is present. Empty/parse-miss → `["default"]`
  * (route conventions always have one — the common boundary case).
  */
-async function staticExportNames(filePath: string): Promise<string[]> {
+export async function staticExportNames(filePath: string): Promise<string[]> {
   let src: string;
   try {
     src = await Deno.readTextFile(filePath);
@@ -381,6 +450,17 @@ async function staticExportNames(filePath: string): Promise<string[]> {
   for (let m; (m = listRe.exec(stripped)) !== null;) {
     for (const name of exportListNames(m[1])) names.add(name);
   }
+  // A bundler's CommonJS build (an npm package's `dist/cjs`, which the SSR bundle prefers):
+  // esbuild's `__export(target, { name: () => name, … })` and plain `exports.name = …`.
+  const cjsRe = /\b__export\(\s*[\w$]+\s*,\s*\{([^}]*)\}/g;
+  for (let m; (m = cjsRe.exec(stripped)) !== null;) {
+    for (const part of m[1].split(",")) {
+      const key = /^\s*([A-Za-z_$][\w$]*)\s*:/.exec(part);
+      if (key) names.add(key[1]);
+    }
+  }
+  const assignRe = /\b(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=(?!=)/g;
+  for (let m; (m = assignRe.exec(stripped)) !== null;) names.add(m[1]);
   return names.size > 0 ? [...names] : ["default"];
 }
 
@@ -458,6 +538,8 @@ export async function buildBoundaryManifest(
     exclude: (p) => isUnderFrameworkSrc(p, fwSrc),
   });
 
+  if (opts.npm) await addNpmBoundary(manifest, appDir, locals, opts.npm);
+
   await Promise.all(
     locals.map(async (filePath) => {
       const directive: Directive = await readDirective(filePath);
@@ -483,6 +565,36 @@ export async function buildBoundaryManifest(
   );
 
   return manifest;
+}
+
+/**
+ * Add the npm islands and action modules `locals` reach (see {@link npmBoundaryFor}) to
+ * `manifest`. Their export names are read statically: an npm file built for bundlers
+ * (extensionless relative imports) cannot be imported under Deno to list them.
+ */
+async function addNpmBoundary(
+  manifest: BoundaryManifest,
+  appDir: string,
+  locals: string[],
+  find: NpmBoundaryFinder,
+): Promise<void> {
+  const { client, server } = await npmBoundaryFor(locals, find);
+  await Promise.all([
+    ...[...client].map(async (filePath) => {
+      const url = toFileUrl(filePath).href;
+      manifest.client.set(clientIdFor(appDir, url), {
+        url,
+        exports: await staticExportNames(filePath),
+      });
+    }),
+    ...[...server].map(async (filePath) => {
+      const url = toFileUrl(filePath).href;
+      manifest.server.set(serverModuleIdFor(appDir, url), {
+        url,
+        exports: await staticExportNames(filePath),
+      });
+    }),
+  ]);
 }
 
 /**
@@ -595,15 +707,20 @@ export function routeEntryFiles(r: RouteEntrySource): string[] {
 export async function computeBoundaryRoutes(
   appDir: string,
   routes: Array<RouteEntrySource & { routePath: string }>,
+  opts: Pick<BoundaryManifestOptions, "npm"> = {},
 ): Promise<Set<string>> {
   const out = new Set<string>();
   // ONE crawl over every route's entries primes the graph cache; each route's classification
-  // below is then a BFS over it instead of its own `deno info` process.
+  // below is then a BFS over it instead of its own `deno info` process (and, with `npm`, one
+  // esbuild walk primes the npm boundary cache the same way).
   const union = [...new Set(routes.flatMap(routeEntryFiles))];
   if (union.length > 0) await denoInfoGraph(union).catch(() => {});
+  if (opts.npm && union.length > 0) {
+    await npmBoundaryFor(await crawlLocalModules(union).catch(() => []), opts.npm).catch(() => {});
+  }
   await Promise.all(
     routes.map(async (r) => {
-      const bm = await buildBoundaryManifest(appDir, routeEntryFiles(r));
+      const bm = await buildBoundaryManifest(appDir, routeEntryFiles(r), opts);
       if (bm.client.size > 0) out.add(r.routePath);
     }),
   );
