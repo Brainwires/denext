@@ -11,6 +11,10 @@
 
 ## Deno Desktop
 
+- **A Windows Hello passkey ceremony in the release checks:** the Windows test machine is a
+  Windows Server VM with no TPM, so the live create + sign-in with Windows Hello was skipped for
+  3.1.0. Add a vTPM Windows 11 VM (or a Windows 11 PC) and run the CONTRIBUTING manual check.
+
 - **Navigation guard:** keep foreign origins out of the window; a navigation away from the app
   origin opens in the system browser instead.
 - **Upstream the fork so stock Deno can be used.** Offer every runtime change to denoland/deno
