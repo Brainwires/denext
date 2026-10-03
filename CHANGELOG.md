@@ -419,6 +419,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A desktop notification permission request settles when the OS never answers.** The
+  `notifications` capability's prompting `permission` request (behind `requestPermission("notifications")`
+  and `requestPushPermission()` in a Deno Desktop window) waited forever when macOS never answered
+  an ad-hoc signed app's authorization request (seen on CI runners). It now answers within 30 s
+  with the state known so far (`prompt` when nothing is), as the page's web `Notification` does at
+  20 s; the late OS answer is remembered for the next call, and requests made while one is open
+  share its single OS prompt.
 - **A Linux package cross-built on Windows installs and runs.** `denext desktop package
   --target-os linux` on Windows failed at the `.deb` (Windows refused the `/usr/bin` link it could
   not resolve from the working directory), and Windows has no POSIX mode bits, so the `.deb` and

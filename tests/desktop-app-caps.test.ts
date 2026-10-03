@@ -329,9 +329,11 @@ Deno.test("notifications: where the runtime cannot schedule, now is a Deno Notif
 Deno.test("notifications: permission — query without a prompt, request through the runtime", async () => {
   const f = fakeNotifications();
   const cap = notificationsCapability({ api: f.api, autoTopUp: false });
-  assertEquals(await call(cap, "permission", { request: true }), { state: "granted" });
-  // Plain Deno has no notification permission: the query falls back to "prompt".
+  // Plain Deno has no notification permission: the query falls back to "prompt"…
   assertEquals(await call(cap, "permission", {}), { state: "prompt" });
+  assertEquals(await call(cap, "permission", { request: true }), { state: "granted" });
+  // …or, once the OS has answered a request, to that answer.
+  assertEquals(await call(cap, "permission", {}), { state: "granted" });
 });
 
 // --- menus -----------------------------------------------------------------------------------
@@ -883,23 +885,86 @@ Deno.test("notifications: permission — provisional requests and the no-prompt 
     state: "provisional",
   });
   assertEquals(asked, [{ provisional: true }]);
-  // The Permissions API answers when it knows `notifications`.
+  // The Permissions API answers when it knows `notifications` (over the OS's earlier answer).
   await withProps(
     navigator,
     { permissions: { query: () => Promise.resolve({ state: "denied" }) } },
     async () => assertEquals(await call(cap, "permission", {}), { state: "denied" }),
   );
-  // It does not (no state): the cached Notification.permission is used, "default" reads prompt.
+  // It does not (no state): the cached Notification.permission is used, "default" reads prompt
+  // (a capability that has not asked the OS yet).
+  const fresh = notificationsCapability({ api, autoTopUp: false });
   for (const [cached, state] of [["granted", "granted"], ["default", "prompt"]]) {
     await withProps(
       navigator,
       { permissions: { query: () => Promise.resolve({}) } },
       () =>
         withProps(globalThis, { Notification: { permission: cached } }, async () => {
-          assertEquals(await call(cap, "permission", {}), { state });
+          assertEquals(await call(fresh, "permission", {}), { state });
         }),
     );
   }
+});
+
+/** A runtime whose permission request answers only when the test says so, counting the prompts. */
+function promptingNotifications() {
+  const f = fakeNotifications();
+  const prompts: Array<(state: string) => void> = [];
+  const api: DesktopAppApi = {
+    notifications: {
+      ...f.api.notifications!,
+      requestPermission: () => new Promise<string>((resolve) => prompts.push(resolve)),
+    },
+  };
+  return { api, prompts };
+}
+
+Deno.test("notifications: permission — an OS that never answers settles at the bound with the current state", async () => {
+  const { api, prompts } = promptingNotifications();
+  const cap = notificationsCapability({ api, autoTopUp: false, permissionTimeoutMs: 20 });
+  // Nothing known: the no-prompt query answers ("prompt" in plain Deno).
+  assertEquals(await call(cap, "permission", { request: true }), { state: "prompt" });
+  // The Permissions API knows the state: that is the answer.
+  await withProps(
+    navigator,
+    { permissions: { query: () => Promise.resolve({ state: "denied" }) } },
+    async () => assertEquals(await call(cap, "permission", { request: true }), { state: "denied" }),
+  );
+  assertEquals(prompts.length, 1, "the still-open OS request is shared, never asked twice");
+  // The late OS answer is remembered: the next query and the next request see it at once.
+  prompts[0]("granted");
+  await Promise.resolve();
+  assertEquals(await call(cap, "permission", {}), { state: "granted" });
+  const again = call(cap, "permission", { request: true });
+  assertEquals(prompts.length, 2, "a settled request asks the OS again");
+  prompts[1]("granted");
+  assertEquals(await again, { state: "granted" });
+});
+
+Deno.test("notifications: permission — concurrent requests share one OS prompt", async () => {
+  const { api, prompts } = promptingNotifications();
+  const cap = notificationsCapability({ api, autoTopUp: false, permissionTimeoutMs: 60_000 });
+  const first = call(cap, "permission", { request: true });
+  const second = call(cap, "permission", { request: true, provisional: true });
+  await Promise.resolve();
+  assertEquals(prompts.length, 1);
+  prompts[0]("denied");
+  assertEquals(await Promise.all([first, second]), [{ state: "denied" }, { state: "denied" }]);
+  // A runtime that fails the request fails the callers, and the next request asks again.
+  let fail = true;
+  const failing = notificationsCapability({
+    api: {
+      notifications: {
+        ...api.notifications!,
+        requestPermission: () =>
+          fail ? Promise.reject(new Error("no service")) : Promise.resolve("granted"),
+      },
+    },
+    autoTopUp: false,
+  });
+  await assertRejects(() => call(failing, "permission", { request: true }), Error, "no service");
+  fail = false;
+  assertEquals(await call(failing, "permission", { request: true }), { state: "granted" });
 });
 
 Deno.test("notifications: no runtime scheduling and no Notification → unsupported; action clicks are queued", async () => {

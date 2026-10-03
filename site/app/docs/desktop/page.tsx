@@ -1626,7 +1626,11 @@ exportRow.addEventListener("dragstart", (e) => {
         routing as on a phone, including the click that launched the app (macOS, Windows).{" "}
         <code>requestPermission("notifications")</code> and <code>requestPushPermission()</code>
         {" "}
-        report the OS setting (a refusal reads <code>blocked</code>: the OS does not ask twice).
+        report the OS setting (a refusal reads{" "}
+        <code>blocked</code>: the OS does not ask twice). A request settles within 30 s: when the OS
+        has not answered by then (an ad-hoc signed app on some macOS machines), it answers with the
+        state known so far, and a later OS answer is what the next call reads; requests made while
+        one is open share its single OS prompt.
       </p>
       <Code lang="ts">
         {`import { onLocalNotificationTapped, requestPermission, scheduleNotification,

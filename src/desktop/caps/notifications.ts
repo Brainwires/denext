@@ -63,6 +63,12 @@ const MAX_DATA_BYTES = 4096;
 const MAX_TEXT = 4096;
 /** The tag prefix of this capability's notifications. */
 const TAG_PREFIX = "denext-";
+/**
+ * How long a prompting `permission` request waits for the OS before it answers with the state known
+ * so far. macOS never answers an ad-hoc signed app's authorization request on some machines (CI
+ * runners), and the page's web `Notification` shim bounds its own `requestPermission()` the same way.
+ */
+const PERMISSION_REQUEST_TIMEOUT_MS = 30_000;
 
 /** A repeating series as stored with each of its occurrences. */
 interface SeriesSpec {
@@ -117,6 +123,11 @@ export interface NotificationsCapabilityOptions {
   readonly autoTopUp?: boolean;
   /** Arms the next top-up (default an unref'd `setTimeout`); tests pass their own. */
   readonly timer?: (run: () => void, ms: number) => () => void;
+  /**
+   * How long a prompting permission request waits for the OS (default
+   * {@linkcode PERMISSION_REQUEST_TIMEOUT_MS}); tests pass less.
+   */
+  readonly permissionTimeoutMs?: number;
 }
 
 /** The default top-up timer: a `setTimeout` that does not keep the process alive. */
@@ -334,6 +345,51 @@ async function queryPermission(): Promise<string> {
   return cached === "granted" || cached === "denied" ? cached : "prompt";
 }
 
+/** The OS answer, or `undefined` once `ms` pass first (the timer is cleared either way). */
+function withinBound<T>(answer: Promise<T>, ms: number): Promise<T | undefined> {
+  let id: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<undefined>((resolve) => {
+    id = setTimeout(() => resolve(undefined), ms);
+  });
+  return Promise.race([answer, expiry]).finally(() => clearTimeout(id));
+}
+
+/**
+ * The notification permission requests of one capability: at most one OS prompt at a time (a
+ * request made while one is open shares it), each caller answered within `timeoutMs` — with the
+ * state known so far when the OS has not answered — and the OS answer, however late, remembered
+ * for the next caller.
+ */
+function permissionRequests(timeoutMs: number) {
+  let open: Promise<string> | undefined;
+  let answered: string | undefined;
+
+  /** The state without prompting: the OS's when it is decided, else the last OS answer. */
+  const query = async (): Promise<string> => {
+    const state = await queryPermission();
+    return state === "prompt" && answered !== undefined ? answered : state;
+  };
+
+  /** Ask the OS (once, however many callers), bounded. */
+  const request = async (ask: () => Promise<string>): Promise<string> => {
+    if (!open) {
+      const asked = ask().then((state) => {
+        answered = state;
+        return state;
+      });
+      open = asked;
+      // Settled either way: the next request asks again (the OS answers at once when decided).
+      const settle = () => {
+        if (open === asked) open = undefined;
+      };
+      asked.then(settle, settle);
+    }
+    return (await withinBound(open, timeoutMs)) ?? await query();
+  };
+
+  return { query, request };
+}
+
 /** One validated `schedule` call. */
 interface ScheduleRequest {
   readonly id: number;
@@ -375,6 +431,9 @@ export function notificationsCapability(
   let webQueue: PullQueue<WebTapWire> | undefined;
   let cancelTopUp: (() => void) | undefined;
   let chain: Promise<unknown> = Promise.resolve();
+  const permission = permissionRequests(
+    options.permissionTimeoutMs ?? PERMISSION_REQUEST_TIMEOUT_MS,
+  );
 
   /** Run `fn` after every earlier scheduling change (they read and write the same list). */
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
@@ -619,13 +678,17 @@ export function notificationsCapability(
         },
       },
       permission: {
+        // The handler bounds a prompting request itself (`permissionTimeoutMs`), then answers with
+        // the state known so far; the bridge's own timeout would answer `timeout` instead.
         timeoutMs: false,
         handler: async (args) => {
           const n = nativeApi(api());
           const a = record(args, "arguments");
           const state = a.request === true
-            ? await n.requestPermission(a.provisional === true ? { provisional: true } : undefined)
-            : await queryPermission();
+            ? await permission.request(() =>
+              n.requestPermission(a.provisional === true ? { provisional: true } : undefined)
+            )
+            : await permission.query();
           return { state };
         },
       },
