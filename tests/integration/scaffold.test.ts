@@ -140,6 +140,9 @@ const WINDOWS_PACKAGING_KEYWORDS = [
   // (else it dies at launch with a silent 0xC0000135). Verified end-to-end on a real Windows box.
   "bundleVcRuntime",
   "vcruntime140.dll",
+  // The closing note says the VC++ runtime was not bundled when it wasn't (a cross-build).
+  "noVcRuntime",
+  "the VC++ runtime was not bundled",
   // Installers: the signed .msi (WiX 5) by default, per-user or per-machine; the zip on request.
   "prepareDesktopPackage",
   "buildDesktopMsi",

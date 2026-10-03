@@ -1556,7 +1556,7 @@ async function zipBundle(
  * packaging on Windows; a DLL that can't be found (e.g. packaging off Windows) is skipped with a
  * warning, and the target then needs the VC++ redist. System32 holds the HOST's architecture, so
  * a bundle for the other architecture gets none (its target needs the redist). */
-async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
+async function bundleVcRuntime(dir: string, arch: string): Promise<boolean> {
   if (Deno.build.os !== "windows" || arch !== hostArch) {
     console.warn(
       "  not bundling the VC++ runtime (" + arch + " packaged on " +
@@ -1566,7 +1566,7 @@ async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
         "https://aka.ms/vs/17/release/vc_redist." +
         (arch === "arm64" ? "arm64" : "x64") + ".exe",
     );
-    return;
+    return false;
   }
   const sys = \`\${Deno.env.get("SystemRoot") ?? "C:/Windows"}/System32\`;
   const dlls = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
@@ -1589,17 +1589,19 @@ async function bundleVcRuntime(dir: string, arch: string): Promise<void> {
         "must install it: https://aka.ms/vs/17/release/vc_redist.x64.exe",
     );
   }
+  return missing.length === 0;
 }
 
-/** Build, sign and wrap one arch's bundle; returns what it wrote. */
+/** Build, sign and wrap one arch's bundle; returns what it wrote and whether the VC++ runtime
+ * went in app-local. */
 async function packageArch(
   name: string,
   arch: "x86_64" | "arm64",
   signing: boolean,
   { plan, meta }: Awaited<ReturnType<typeof prepareDesktopPackage>>,
-): Promise<string[]> {
+): Promise<{ out: string[]; vcBundled: boolean }> {
   const dir = await buildBundle(name, arch);
-  await bundleVcRuntime(dir, arch);
+  const vcBundled = await bundleVcRuntime(dir, arch);
   if (signing) await sign(\`\${dir}/\${name}-\${LABELS[arch]}.exe\`);
   const out = [dir];
   const built = plan.formats.includes("msi")
@@ -1610,7 +1612,7 @@ async function packageArch(
   // A default .msi that could not be built falls back to the .zip.
   const msiSkipped = plan.formats.includes("msi") && !built;
   if (plan.formats.includes("zip") || msiSkipped) out.push(await zipBundle(name, arch, dir));
-  return out;
+  return { out, vcBundled };
 }
 
 async function main(): Promise<void> {
@@ -1621,15 +1623,22 @@ async function main(): Promise<void> {
   const name = prepared.name;
 
   const artifacts: string[] = [];
+  const noVcRuntime: string[] = [];
   for (const arch of desktopPackageArches(opts.arch)) {
-    artifacts.push(...await packageArch(name, arch, opts.sign, prepared));
+    const { out, vcBundled } = await packageArch(name, arch, opts.sign, prepared);
+    artifacts.push(...out);
+    if (!vcBundled) noVcRuntime.push(arch);
   }
 
   console.log("\\n  Built:");
   for (const a of artifacts) console.log("  " + a);
   console.log(
-    "\\n  (the target needs the Microsoft Edge WebView2 runtime; the VC++ runtime is bundled" +
-      " app-local, so no VC++ redistributable is required)",
+    noVcRuntime.length === 0
+      ? "\\n  (the target needs the Microsoft Edge WebView2 runtime; the VC++ runtime is bundled" +
+        " app-local, so no VC++ redistributable is required)"
+      : "\\n  (the target needs the Microsoft Edge WebView2 runtime and, for " +
+        noVcRuntime.join(", ") +
+        ", the VC++ 2015-2022 redistributable: the VC++ runtime was not bundled; see above)",
   );
 }
 
