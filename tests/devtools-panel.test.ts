@@ -3,7 +3,7 @@
 // interactions added in Phase 2 — tree render + search, the element picker + highlight
 // overlay, "why did this render" marking, and lazy deep-value expansion.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { useState } from "../src/runtime/hooks.ts";
@@ -319,7 +319,7 @@ function findByName(
   return null;
 }
 
-// ---- Panel shell: the six-tab IA, the keyboard map, highlight-updates, dev-api --------
+// ---- Panel shell: the seven-tab IA, the keyboard map, highlight-updates, dev-api --------
 
 /** The panel frame (the fixed, column-flex chrome the launcher opens). */
 function panelEl(body: FakeElement): FakeElement {
@@ -344,16 +344,16 @@ function Tiny(): VNode {
   return h("div", null, "tiny");
 }
 
-Deno.test("panel: the header is a six-tab tablist with aria-selected tracking", () => {
+Deno.test("panel: the header is a seven-tab tablist with aria-selected tracking", () => {
   withPanel(Tiny, ({ body }) => {
     const tabs = tabButtons(body);
     assertEquals(
       tabs.map((t) => t.textContent),
-      ["Components", "Render modes", "Profiler", "Network", "Cache", "Routes"],
+      ["Components", "Render modes", "Profiler", "Network", "Cache", "Routes", "Console"],
     );
     assertEquals(
       tabs.map((t) => t.getAttribute("aria-selected")),
-      ["true", "false", "false", "false", "false", "false"],
+      ["true", "false", "false", "false", "false", "false", "false"],
     );
     // The strip itself scrolls rather than squeezing the buttons on a narrow panel.
     const strip = queryAll(body, (e) => e.getAttribute("role") === "tablist")[0];
@@ -601,4 +601,124 @@ Deno.test("dev-api: openInEditor asks the dev server for file:line:column", asyn
   );
   // No dev server (a relative URL with no document base) must not throw.
   openInEditor("/proj/app/page.tsx");
+});
+
+// ---- Console tab, error badge, full/half size toggle ------------------------------------
+
+/** A stand-in for the dev-reload script's `window.__denextConsole`. */
+function fakeConsoleStore() {
+  const subs: (() => void)[] = [];
+  const store = {
+    entries: [
+      { id: 1, ts: 0, level: "log", source: "console", message: "booting", stack: "", url: "" },
+      {
+        id: 2,
+        ts: 0,
+        level: "error",
+        source: "rejection",
+        message: "Unhandled rejection: TypeError: Importing a module script failed.",
+        stack: "at entry.js:1",
+        url: "",
+      },
+    ],
+    errorCount: 1,
+    importErrorSeen: true,
+    limit: 500,
+    diagnosis: {
+      state: "done",
+      checked: 4,
+      queued: 0,
+      failures: [{ url: "/_denext/b.js", from: "/_denext/a.js", reason: "served as text/html" }],
+      entry: "/_denext/entry.js",
+      note: "",
+    },
+    subscribe: (fn: () => void) => (subs.push(fn), () => {}),
+    clear: () => {
+      store.entries.length = 0;
+      store.errorCount = 0;
+      subs.forEach((fn) => fn());
+    },
+    diagnose: () => Promise.resolve(store.diagnosis),
+  };
+  return store;
+}
+
+function withConsoleStore(fn: (store: ReturnType<typeof fakeConsoleStore>) => void): void {
+  const prev = asAny(g).__denextConsole;
+  const store = fakeConsoleStore();
+  asAny(g).__denextConsole = store;
+  try {
+    fn(store);
+  } finally {
+    if (prev === undefined) delete asAny(g).__denextConsole;
+    else asAny(g).__denextConsole = prev;
+  }
+}
+
+Deno.test("panel: the Console tab lists entries, filters by level, expands stacks, clears", () => {
+  withConsoleStore((store) =>
+    withPanel(Tiny, ({ body }) => {
+      tabByLabel(body, "Console").dispatch("click");
+      const text = () => body.textContent;
+      assertStringIncludes(text(), "booting");
+      assertStringIncludes(text(), "Importing a module script failed");
+      assertStringIncludes(text(), "/_denext/b.js");
+      assertStringIncludes(text(), "served as text/html");
+      const btn = (label: string) =>
+        queryAll(body, (e) => e.tagName === "BUTTON" && e.textContent === label)[0];
+      btn("errors").dispatch("click");
+      assert(!text().includes("booting"), "the errors filter hides log lines");
+      assert(!text().includes("at entry.js:1"), "stacks start collapsed");
+      const row = queryAll(body, (e) => e.tagName === "DIV" && e.textContent.includes("▸ stack"))
+        .at(-1)!;
+      row.dispatch("click");
+      assertStringIncludes(text(), "at entry.js:1");
+      btn("clear").dispatch("click");
+      assertEquals(store.entries.length, 0);
+    })
+  );
+});
+
+Deno.test("panel: the error badge shows the count and opens the Console", () => {
+  withConsoleStore(() =>
+    withPanel(Tiny, ({ doc, body }) => {
+      // withPanel opened the panel: the badge hides while it is open.
+      const badge = queryAll(body, (e) => String(asAny(e).title ?? "").startsWith("Errors"))[0];
+      assertEquals(badge.textContent, "1");
+      assertEquals(asAny(badge.style).display, "none");
+      doc.dispatch("keydown", { ctrlKey: true, shiftKey: true, key: "d" }); // close
+      assertEquals(asAny(badge.style).display, "");
+      badge.dispatch("click");
+      assertEquals(tabByLabel(body, "Console").getAttribute("aria-selected"), "true");
+      assertEquals(asAny(badge.style).display, "none");
+    })
+  );
+});
+
+Deno.test("panel: the size toggle switches full/half and remembers it per tab", () => {
+  const KEY = "denext:devtools:size";
+  try {
+    localStorage.removeItem(KEY);
+  } catch { /* no storage: the toggle still works */ }
+  try {
+    withPanel(Tiny, ({ body }) => {
+      const toggle = queryAll(body, (e) => e.getAttribute("aria-label") === "Full screen")[0];
+      assert(toggle, "the header has a full-screen toggle");
+      assert(toggle.style.cssText.includes("width:44px"), toggle.style.cssText);
+      const panel = queryAll(body, (e) => e.getAttribute("role") === "complementary")[0];
+      toggle.dispatch("click");
+      assert(panel.style.cssText.includes("safe-area-inset-top"), panel.style.cssText);
+      assertEquals(toggle.getAttribute("aria-label"), "Half screen");
+      assertEquals(asAny(panel.style).display, "flex");
+      // Another tab keeps its own (default half) size.
+      tabByLabel(body, "Profiler").dispatch("click");
+      assert(panel.style.cssText.includes("height:50vh"), panel.style.cssText);
+      tabByLabel(body, "Components").dispatch("click");
+      assert(panel.style.cssText.includes("safe-area-inset-top"), "remembered per tab");
+    });
+  } finally {
+    try {
+      localStorage.removeItem(KEY);
+    } catch { /* ignore */ }
+  }
 });

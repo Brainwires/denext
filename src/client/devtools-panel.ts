@@ -22,6 +22,7 @@ import { installInspectSink } from "./devtools-inspect-sink.ts";
 import { emptyTabCache, type PanelCtx, type PanelState } from "./devtools-panel/ctx.ts";
 import {
   createDataPoller,
+  wireConsole,
   wireInteractions,
   wireLiveUpdates,
 } from "./devtools-panel/interactions.ts";
@@ -60,6 +61,8 @@ export function initialState(): PanelState {
     network: emptyTabCache(),
     cache: emptyTabCache(),
     routes: emptyTabCache(),
+    consoleLevel: "all",
+    consoleExpanded: new Set(),
   };
 }
 
@@ -108,10 +111,12 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
   const highlightUpdates = installHighlightUpdates(api, hl);
   const poller = createDataPoller(ctx);
   const reasons = reasonHold(api); // "why did this render", accrued while inspecting
+  const syncBadge = wireConsole(ctx, shell);
   const setOpen = (open: boolean): void => {
     state.open = open;
     shell.panel.style.display = open ? "flex" : "none";
     shell.launch.style.display = open ? "none" : "";
+    syncBadge();
     reasons(open);
     if (open) {
       highlightUpdates.setEnabled(state.highlight);
@@ -125,8 +130,16 @@ function mount(api: DenextDevtoolsApi, doc: Document): void {
   };
   wireInteractions(ctx, shell, { picker, setOpen, poller, highlightUpdates });
   wireLiveUpdates(ctx);
+  // The dev-reload script's boot-failure list stands down once the panel exists.
+  (globalThis as { __denextDevtoolsMounted?: boolean }).__denextDevtoolsMounted = true;
   const attach = () =>
-    (doc.body ?? doc.documentElement).append(shell.launch, shell.panel, hl.overlay, hl.tip);
+    (doc.body ?? doc.documentElement).append(
+      shell.launch,
+      shell.badge,
+      shell.panel,
+      hl.overlay,
+      hl.tip,
+    );
   if (doc.body) attach();
   else doc.addEventListener("DOMContentLoaded", attach, { once: true });
 }

@@ -7,6 +7,7 @@ import { displayHost, serveWithPortFallback } from "../../server/serve-utils.ts"
 import { createSpaDevHandler } from "./dev-handler.ts";
 import { createSpaDevState, type SpaDevServerOptions } from "./dev-state.ts";
 import { watch } from "./dev-watch.ts";
+import { removeDevInfo, writeDevInfo } from "../dev-server/dev-info.ts";
 
 /** Start the SPA dev server for `options.paths`. */
 export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer {
@@ -20,19 +21,30 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
   const serve = encodings.length === 0
     ? handler
     : async (request: Request) => compressOrPassThrough(request, await handler(request), encodings);
-  return serveWithPortFallback(
+  const outDir = options.paths.outDir;
+  const server = serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "localhost",
       signal: options.signal,
       strict: options.strictPort,
-      onListen: options.onListen ??
-        (({ hostname, port }) =>
+      onListen: (info) => {
+        // `.denext/dev.json`, as `denext dev` writes for the App Router: what lets
+        // `denext_dev_logs` find this server and read the page's console back.
+        writeDevInfo(outDir, options.allowedDevOrigins ?? [], info);
+        if (options.onListen) options.onListen(info);
+        else {
           console.log(
-            `\n  denext dev (SPA)  ▸  http://${displayHost(hostname)}:${port}\n` +
+            `\n  denext dev (SPA)  ▸  http://${displayHost(info.hostname)}:${info.port}\n` +
               `  entry ${st.spa.entry}\n`,
-          )),
+          );
+        }
+      },
     },
     serve,
   );
+  const cleanup = () => removeDevInfo(outDir);
+  options.signal?.addEventListener("abort", cleanup, { once: true });
+  server.finished.then(cleanup);
+  return server;
 }

@@ -1,7 +1,8 @@
 // SPA mode dev server: the request handler — live-reload SSE, the dev-reload module, the
 // unbundled module graph, the generation's client assets, `public/`, and the shell.
 
-import { devOriginAllowed } from "../dev-server/dev-endpoints.ts";
+import { devLogResponse, devOriginAllowed, devStateResponse } from "../dev-server/dev-endpoints.ts";
+import { DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
 import { reactNativeRootStyle } from "../../server/config.ts";
 import { serveStatic } from "../../server/static.ts";
 import { sseStream } from "../sse.ts";
@@ -125,6 +126,16 @@ export function createSpaDevHandler(st: SpaDevState): (request: Request) => Prom
     if (url.pathname === RELOAD_PATH) return sseStream(st.reloadClients);
     if (url.pathname === DEV_RELOAD_JS_PATH) {
       return new Response(SPA_DEV_RELOAD, { headers: jsHeaders });
+    }
+    // The dev black box, as on the App Router dev server: the page's console capture posts
+    // here, and `denext_dev_logs` reads it back.
+    if (url.pathname === DEV_LOG_PATH && request.method === "POST") {
+      return devLogResponse(st, request);
+    }
+    // SPA dev records no request log: `kind=request` stays unanswered, so the Network tab
+    // keeps saying it is App-Router-only instead of showing an empty table.
+    if (url.pathname === DEV_STATE_PATH && url.searchParams.get("kind") !== "request") {
+      return devStateResponse(st, url);
     }
     const unbundled = await serveUnbundled(st, request, url);
     if (unbundled) return unbundled;

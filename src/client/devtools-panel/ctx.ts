@@ -5,8 +5,18 @@ import type { DenextDevtoolsApi, InspectNode } from "../devtools-inspect.ts";
 import { devFetch, type DevFetchFailure } from "./dev-api.ts";
 import { el, type PanelStyles } from "./styles.ts";
 
-/** The panel's six tabs (see `TABS` in `./shell.ts` for their order and labels). */
-export type TabId = "components" | "render" | "profiler" | "network" | "cache" | "routes";
+/** The panel's seven tabs (see `TABS` in `./shell.ts` for their order and labels). */
+export type TabId =
+  | "components"
+  | "render"
+  | "profiler"
+  | "network"
+  | "cache"
+  | "routes"
+  | "console";
+
+/** Which console levels the Console tab shows. */
+export type ConsoleLevelFilter = "all" | "error" | "warn" | "info" | "log";
 
 /**
  * One data tab's last dev-endpoint read. The shared 1 s poller (Network/Cache) and the
@@ -80,6 +90,10 @@ export interface PanelState {
   cache: DevTabCache<unknown>;
   /** Last `/_denext/dev-routes` read (the Routes tab). */
   routes: DevTabCache<unknown>;
+  /** The Console tab's level filter. */
+  consoleLevel: ConsoleLevelFilter;
+  /** Console entry ids whose stack is expanded. */
+  consoleExpanded: Set<number>;
   /** The Network tab's toolbar + filter, created on its first render. */
   networkUi?: NetworkUi;
   /**

@@ -22,6 +22,7 @@ export function buildStyles() {
     ...treeStyles(ACCENT),
     ...detailStyles(CHANGED),
     ...profilerStyles(MONO, ACCENT),
+    ...consoleStyles(ACCENT),
   };
   // A capability badge (kept out of the literals above because it references ACCENT).
   const S_BADGE =
@@ -54,8 +55,6 @@ function chromeStyles(MONO: string, ACCENT: string) {
       `background:none;border:0;color:#8b94a7;cursor:pointer;padding:3px 7px;border-radius:6px;font:inherit`,
     tabOn:
       `background:#1d2330;color:#e6e9ef;border-radius:6px;padding:3px 7px;border:0;cursor:pointer;font:inherit`,
-    close:
-      `margin-left:auto;background:none;border:0;color:#8b94a7;cursor:pointer;font-size:15px;line-height:1`,
   };
 }
 
@@ -166,6 +165,49 @@ function detailStyles(CHANGED: string) {
     wfLi: `display:flex;gap:8px;padding:2px 10px;border-top:1px solid #1a202c;list-style:none`,
     at: `color:#8b94a7;margin-left:auto`,
     // Profiler: commit-bar strip, flamegraph rows/bars, ranked list.
+  };
+}
+
+/**
+ * The Console tab (one row per entry, coloured by level), the launcher's error-count badge,
+ * the header's full/half size toggle and the full-viewport panel frame. The toggle and the
+ * close button get a 44 px hit area (touch), and the full frame keeps clear of the notch /
+ * home indicator through the safe-area insets.
+ */
+function consoleStyles(ACCENT: string) {
+  const row = `padding:3px 8px;border-bottom:1px solid #1a202c;border-left:3px solid `;
+  const text = `white-space:pre-wrap;word-break:break-word;cursor:pointer`;
+  return {
+    cRowError: `${row}#ff6b6b;background:rgba(255,107,107,.08);color:#ffb3b3;${text}`,
+    cRowWarn: `${row}#f0b45b;background:rgba(240,180,91,.07);color:#ffe0a6;${text}`,
+    cRowInfo: `${row}${ACCENT};color:#d6ddff;${text}`,
+    cRowLog: `${row}#2a3140;color:#e6e9ef;${text}`,
+    cRowDebug: `${row}#2a3140;color:#8b94a7;${text}`,
+    cTime: `color:#5b647a;margin-right:6px;font-size:10px`,
+    cSource: `color:#8b94a7;margin-right:6px;font-size:10px`,
+    cStack: `margin:4px 0 2px;padding:4px 6px;background:#0c0e14;color:#b9c0cf;` +
+      `white-space:pre-wrap;word-break:break-all;font-size:11px;border-radius:4px`,
+    cDiag: `padding:6px 8px;border-bottom:1px solid #1a202c;color:${ACCENT};white-space:pre-wrap`,
+    cToolbar: `display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 8px;` +
+      `border-bottom:1px solid #1a202c;position:sticky;top:0;background:#12151c;z-index:1`,
+    cBtn: `background:none;border:1px solid #2a3140;color:#8b94a7;cursor:pointer;` +
+      `border-radius:5px;padding:6px 9px;font:inherit;min-height:32px`,
+    cBtnOn: `background:${ACCENT};border:1px solid ${ACCENT};color:#0c0e14;cursor:pointer;` +
+      `border-radius:5px;padding:6px 9px;font:inherit;min-height:32px`,
+    // A sibling of the launcher, not a child: the launcher clips to its circle.
+    launchBadge: `position:fixed;left:36px;bottom:36px;z-index:2147483003;min-width:18px;` +
+      `height:18px;padding:0 5px;box-sizing:border-box;border-radius:9px;background:#ff3b3b;` +
+      `color:#fff;font:700 10px/18px ui-monospace,Menlo,monospace;text-align:center;` +
+      `cursor:pointer;border:0;box-shadow:0 2px 8px rgba(0,0,0,.5)`,
+    // The header's size toggle + close: 26 px glyphs in 44 px square tap targets.
+    headBtns: `display:flex;align-items:center;gap:6px;flex:0 0 auto;margin:-6px -4px -6px auto`,
+    headBtn: `background:none;border:0;color:#aeb6c7;cursor:pointer;font-size:26px;line-height:1;` +
+      `width:44px;height:44px;padding:0;border-radius:8px;flex:0 0 auto;display:flex;` +
+      `align-items:center;justify-content:center;touch-action:manipulation`,
+    panelHalf: `height:50vh;bottom:max(12px,env(safe-area-inset-bottom,0px))`,
+    panelFull: `left:0;top:0;right:0;bottom:0;width:auto;height:auto;border-radius:0;border:0;` +
+      `padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) ` +
+      `env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px);box-sizing:border-box`,
   };
 }
 

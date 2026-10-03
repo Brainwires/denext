@@ -12,7 +12,7 @@ export interface TabSpec {
   readonly label: string;
 }
 
-/** The panel's tabs, in `Alt+1…6` / `Ctrl+Shift+[`,`]` order. */
+/** The panel's tabs, in `Alt+1…7` / `Ctrl+Shift+[`,`]` order. */
 export const TABS: readonly TabSpec[] = [
   { id: "components", label: "Components" },
   { id: "render", label: "Render modes" },
@@ -20,6 +20,7 @@ export const TABS: readonly TabSpec[] = [
   { id: "network", label: "Network" },
   { id: "cache", label: "Cache" },
   { id: "routes", label: "Routes" },
+  { id: "console", label: "Console" },
 ];
 
 /**
@@ -37,6 +38,10 @@ export interface Shell {
   /** The tab buttons by id (the render dispatch marks the active one). */
   tabs: Record<TabId, HTMLElement>;
   closeBtn: HTMLElement;
+  /** The header's full-screen / half-screen toggle. */
+  sizeBtn: HTMLElement;
+  /** The error-count badge beside the launcher (hidden while there are no errors). */
+  badge: HTMLElement;
   pickBtn: HTMLElement;
   searchBox: HTMLInputElement;
   hostBtn: HTMLElement;
@@ -129,17 +134,29 @@ export function buildShell(doc: Document, S: PanelStyles["S"]): Shell {
 
   const title = el(doc, "b", S.title, "denext · glass-box");
   const { strip, buttons } = buildTabStrip(doc, S, TABS);
-  const closeBtn = el(doc, "button", S.close, "×");
+  const sizeBtn = el(doc, "button", S.headBtn, "⤢");
+  sizeBtn.setAttribute("type", "button");
+  sizeBtn.title = "Full screen";
+  sizeBtn.setAttribute("aria-label", "Full screen");
+  const closeBtn = el(doc, "button", S.headBtn, "×");
+  closeBtn.setAttribute("type", "button");
   closeBtn.title = "close";
-  const head = el(doc, "div", S.head, title, strip, closeBtn);
+  closeBtn.setAttribute("aria-label", "Close devtools");
+  const head = el(doc, "div", S.head, title, strip, el(doc, "div", S.headBtns, sizeBtn, closeBtn));
 
   const { toolbar, pickBtn, searchBox, hostBtn, hlBtn } = buildToolbar(doc, S);
   const treePane = el(doc, "div", S.tree);
   const leftPane = el(doc, "div", S.left, toolbar, treePane);
   const detailPane = el(doc, "div", S.detail);
   panel.append(head, el(doc, "div", S.body, leftPane, detailPane));
+  const badge = el(doc, "button", S.launchBadge, "");
+  badge.setAttribute("type", "button");
+  badge.title = "Errors on this page — open the Console";
+  badge.style.display = "none";
   return {
     launch: buildLauncher(doc, S),
+    badge,
+    sizeBtn,
     panel,
     title,
     tabStrip: strip,

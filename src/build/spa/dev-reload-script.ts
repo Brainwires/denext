@@ -1,6 +1,8 @@
 // SPA mode: the dev live-reload client, served as an external same-origin module so the
 // strict CSP allows it (no inline script).
 
+import { consoleCaptureScript } from "../dev-server/console-capture-script.ts";
+import { DEV_LOG_PATH } from "../dev-server/state.ts";
 import { CLIENT_PREFIX, RELOAD_PATH } from "./shared.ts";
 
 /**
@@ -11,7 +13,7 @@ import { CLIENT_PREFIX, RELOAD_PATH } from "./shared.ts";
  * (entry/config edit, or any refresh failure) is a full reload. `css` re-links the
  * stylesheets; `update:<json>` is the per-module HMR frame (unbundled loop).
  */
-export const SPA_DEV_RELOAD = `(function(){
+export const SPA_DEV_RELOAD = consoleCaptureScript(DEV_LOG_PATH) + `(function(){
   // Belt and braces: the generated SPA dev entry sets this first (it must, so the
   // DevTools panel mounts before the app does), but this script runs on the plain shell
   // too — a page whose entry failed to load should still report itself as dev.

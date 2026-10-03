@@ -121,11 +121,24 @@ function spawnEditor(file: string, line: number, column: number): boolean {
   }
 }
 
-/** POST /_denext/dev-log — record a browser-reported console/error line in the black box. */
-export async function devLogResponse(st: DevState, request: Request): Promise<Response> {
+/** What the dev black-box endpoints read: the event log and the project (both dev servers). */
+export type DevLogHost = Pick<DevState, "devEvents" | "paths">;
+
+/** How many lines one dev-log POST may carry (the page batches its console). */
+const MAX_LOG_BATCH = 50;
+
+/**
+ * POST /_denext/dev-log — record browser-reported console/error lines in the black box. The
+ * body is one line or an array of lines (the dev page's console capture batches them).
+ */
+export async function devLogResponse(st: DevLogHost, request: Request): Promise<Response> {
   try {
-    const event = browserLogEvent(await request.json());
-    if (event) st.devEvents.record(event);
+    const body = await request.json();
+    const lines = Array.isArray(body) ? body.slice(0, MAX_LOG_BATCH) : [body];
+    for (const line of lines) {
+      const event = browserLogEvent(line);
+      if (event) st.devEvents.record(event);
+    }
   } catch { /* malformed body — ignore */ }
   return new Response(null, { status: 204 });
 }
@@ -138,7 +151,7 @@ const EVENT_KINDS: readonly DevEventKind[] = ["error", "console", "request", "hm
  * that found this origin through `.denext/dev.json` prove the server answering is the one that
  * file describes, before it signals the pid the file names (`src/ui/dev-stop.ts`).
  */
-export function devStateResponse(st: DevState, url: URL): Response {
+export function devStateResponse(st: DevLogHost, url: URL): Response {
   const kindParam = url.searchParams.get("kind") as DevEventKind | null;
   const kind = kindParam && EVENT_KINDS.includes(kindParam) ? kindParam : undefined;
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 500);

@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **A Console in the DevTools panel, with a boot diagnosis.** The dev-reload script captures
+  `console.*`, uncaught errors, unhandled rejections and failed script/resource loads before
+  the app's entry runs (the last 500, safely serialized); the new **Console** tab shows them
+  with level filters, clear, copy-all and expandable stacks, and a red count beside the
+  launcher flags errors on a phone. When the entry module fails to load ("Importing a module
+  script failed"), it walks the module graph from the entry and names the module that answers
+  non-2xx, non-JavaScript (an HTML fallback page), an unresolvable bare specifier or a syntax
+  error, with its importer. The header gains a full-screen / half-screen toggle (44 px touch
+  targets, safe-area aware, remembered per tab). Entries reach the dev log, and SPA dev now
+  serves `/_denext/dev-log` + `/_denext/dev-state` and writes `.denext/dev.json`, so
+  `denext_dev_logs` works for SPA apps.
 - **`denext/mobile/clerk`: Clerk in the Capacitor shell.** `installClerkMobileBridge({ scheme,
   nativeClerk: true })` (from `instrumentation-client.ts`) lets the app's own `<ClerkProvider>`
   (`@clerk/nextjs`, `@clerk/react`) sign in inside the iOS / Android app, as

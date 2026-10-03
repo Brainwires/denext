@@ -27,13 +27,15 @@ path, the Next.js drop-in and [SPA mode](/docs/spa). The three tabs that read th
 dev server (Network, Cache, Routes) are App-Router-only, and say so in place
 rather than showing an empty table.
 
-## The six tabs
+## The seven tabs
 
 The header is a scrollable `role="tablist"`: **Components**, **Render modes**,
-**Profiler**, **Network**, **Cache**, **Routes**. `Alt+1`…`Alt+6` jump straight
-to one. The panel is `min(620px, 94vw)` wide and `min(460px, 74vh)` tall; below
-420 px the `denext · glass-box` title is dropped so the tabs keep the whole
-header row.
+**Profiler**, **Network**, **Cache**, **Routes**, **Console**. `Alt+1`…`Alt+7`
+jump straight to one. The panel is `min(620px, 94vw)` wide and half the viewport
+tall; the `⤢` button at the right of the header (beside `×`, both 44 px touch
+targets) switches it to the full viewport, inside the safe-area insets, and `⤡`
+back. The size is remembered per tab in `localStorage`. Below 420 px the
+`denext · glass-box` title is dropped so the tabs keep the whole header row.
 
 ### Components
 
@@ -310,6 +312,38 @@ same endpoint the Source row uses. A path that matches nothing answers
 
 App Router dev only.
 
+### Console
+
+What the page logged, threw and failed to load — the one place to see it on a
+phone, where there is no browser console. The capture is the first thing the
+dev-reload script does, before the app's entry module runs, so it records boot
+failures too: every `console.log` / `info` / `warn` / `error` / `debug` call
+(the originals still run), uncaught errors, unhandled rejections, and resource
+loads that fail (a `<script type="module">` that cannot load fires `error` on the
+element, which the capture sees in the capture phase). The last 500 entries are
+kept; arguments are serialized safely (cycles, errors with their stack, DOM nodes
+as `<div#root.app>`, long strings cut at 2,000 characters). Rows are coloured by
+level and timestamped; the toolbar filters by level, clears, and copies every
+shown entry; tap a row to expand its stack. A red count beside the launcher says
+there are errors before you open the panel, and tapping it opens this tab.
+
+**Boot diagnosis.** A browser does not say which module broke the boot — Safari
+only says "Importing a module script failed". So when the entry module script
+fails to load, or an import error is seen (the panel need not have mounted), the
+console walks the module graph from the entry script: it fetches each
+same-origin module (6 at a time, at most 400), and reports every one that answers
+non-2xx, is served as something other than JavaScript (HTML from a fallback
+page, say), imports a bare specifier no import map resolves, or does not parse
+(only where the page's CSP allows `eval`). Each failure is logged with the
+module's URL, the reason and the module that imported it; progress shows at the
+top of the tab, and **diagnose boot** runs it on demand. If the panel itself
+never mounted, the dev-reload script shows the errors and the diagnosis in a
+plain list at the bottom of the page.
+
+Entries are also forwarded, batched, to the dev server's event log
+(`/_denext/dev-log`), so [`denext_dev_logs`](#mcp-inspect-the-live-page) reads
+the page's console — App Router and SPA dev alike.
+
 ## Highlight updates
 
 The `✨` toolbar toggle flashes components **on the page itself** as they
@@ -331,7 +365,7 @@ resets as soon as it skips a commit, and an unmounted component is forgotten.
 | Chord                           | Does                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `Ctrl+Shift+D`                  | Toggle the panel — the only chord that works while it is closed                                  |
-| `Alt+1` … `Alt+6`               | Jump to a tab, in strip order (Components, Render modes, Profiler, Network, Cache, Routes)       |
+| `Alt+1` … `Alt+7`               | Jump to a tab, in strip order (Components … Routes, Console)                                     |
 | `Ctrl+Shift+[` / `Ctrl+Shift+]` | Previous / next tab, wrapping at both ends (the shifted `{` / `}` a US layout produces work too) |
 | `Escape`                        | Cancel the element picker; with the picker off, close the panel                                  |
 
@@ -557,9 +591,9 @@ function and type is listed in the [API reference](/docs/api).
   no cell of its own, so a component with no hook cells shows none, and a call
   placed between two hooks reads under the earlier one.
 - **Network, Cache, Routes and the MCP bridge need the App Router dev server.**
-  SPA dev serves no `/_denext/*` endpoints: those tabs render
-  `… is not available in SPA dev (App Router only)`, and the Source row falls
-  back to a `vscode://` link. Components, Render modes and the Profiler work
-  everywhere.
+  SPA dev serves only the dev log (`denext_dev_logs` works there): those tabs
+  render `… is not available in SPA dev (App Router only)`, and the Source row
+  falls back to a `vscode://` link. Components, Render modes, the Profiler and
+  the Console work everywhere.
 
 More in [Known limitations](/docs/limitations).
