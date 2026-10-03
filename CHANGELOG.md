@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-03
+
 ### Added
 
 - **`desktop.macos`: a provisioning profile and restricted entitlements for the macOS app.**
@@ -64,7 +66,6 @@ and this project adheres to
 - **`allowedDevOrigins` takes custom-scheme origins** (`"myapp://app"`, validated as
   `desktop.app.origin` is), so a separate backend project can admit a desktop app's origin; so does
   `createApp`'s `allowedOrigins`.
-
 - **`examples/clerk`: Clerk on the web and in Deno Desktop, written once.** The Clerk Next.js
   quickstart's shape on denext — `clerkMiddleware()` + `createRouteMatcher`, `<ClerkProvider>`
   in the root layout, `auth()` / `currentUser()` in a Server Component and a `defineApi` route —
@@ -141,7 +142,6 @@ and this project adheres to
   `Deno.desktop.runOnMainThread`, resolving with its return value as a `bigint`. It is FFI: full
   trust, `--allow-ffi` (grant it in `desktop.extraPermissions`); on the stock runtime it rejects
   `unsupported`. `DesktopMainThreadFn` is exported from `denext/desktop`.
-
 - **Desktop installers on every OS.** The package scripts now wrap the finished bundle in its
   installers, chosen per OS by `desktop.installers` in `denext.config.ts` or `--format` for one
   run (`denext desktop package --format msi,zip`): macOS `.dmg` (now the default beside the `.app`)
@@ -163,7 +163,6 @@ and this project adheres to
   user `Path`; `-Uninstall` removes both. Each release now also attaches a Homebrew formula
   (`denext.rb`), a Scoop manifest (`denext.json`) and a winget manifest set generated from its
   `SHA256SUMS` (publishing them is a maintainer step; see CONTRIBUTING.md).
-
 - **fastlane, for teams that ship with it.** `denext mobile add fastlane` writes `fastlane/Appfile`
   (the bundle id / package name from `capacitor.config` `appId`; the Apple team and the Play key
   from the environment), `fastlane/Fastfile`, `fastlane/Matchfile`, `fastlane/.gitignore` and a
@@ -244,7 +243,6 @@ and this project adheres to
   and `denext desktop add launch-at-login` (`getLaunchAtLogin` / `setLaunchAtLogin`: a macOS login
   item, a Windows `Run` value, a Linux XDG autostart entry), both in `denext/desktop/app` and
   both on the pinned runtime, with their trust notes in `denext desktop add --list`.
-
 - **Deno Desktop: full-app self-updates.** `denext/desktop/updater` gains `checkForAppUpdate`,
   `downloadAppUpdate`, `installAppUpdateAndRelaunch`, `confirmAppUpdate` and `appUpdateStatus`
   (with `AppUpdateError`), next to the UI-overlay updater: the whole signed app (`.app`, app
@@ -408,7 +406,6 @@ and this project adheres to
   refused. `denext desktop publish-update` now warns when the `.app` it publishes is not accepted
   as notarized (`spctl -a -vv -t exec`), and an `AppUpdateError` for a Gatekeeper refusal carries
   a hint to sign with the Developer ID and notarize (`DENEXT_NOTARY_PROFILE` when packaging).
-
 - **The pinned Deno Desktop runtime is 2.9.7-denext.8; the custom origin requires 2.9.7-denext.7
   or later.** denext.8 opens macOS windows in front at launch (the first window had opened behind
   other apps' windows, so WebKit paused `requestAnimationFrame`), has WKWebView report
@@ -454,7 +451,6 @@ and this project adheres to
 - **The module-graph crawl survives a deleted working directory.** `deno info` (the boundary
   manifest, conformance probes) failed with "could not read current working directory" when the
   process's cwd had been removed; it now runs from the first entry's folder in that case.
-
 - **A packaged desktop app no longer reads modules from the build machine's disk.** An import map
   target written as an absolute local path (`"denext/desktop": "file:///…/src/build/desktop.ts"`,
   or `"/…"`) was embedded, but the compiled binary resolved it to the build machine's path: it
@@ -615,7 +611,6 @@ and this project adheres to
   `DENEXT_DESKTOP_DEV_URL` (a packaged app still ignores it, and the loopback rule is unchanged);
   `--lan` now also sets `DENEXT_DESKTOP_DEV_LAN` and adds the dev server's address to
   `--allow-net`. A failed build ends `desktop dev` with an error instead of exit 0.
-
 - **Deno Desktop packaging takes the app's name, identifier and icon from `denext.config.ts`.** The
   package scripts read only deno.json's `desktop.app`, and the macOS script passed no `--icon`.
   Now `desktop.app.name` / `identifier` in `denext.config.ts` come first (written into deno.json's
@@ -710,7 +705,6 @@ and this project adheres to
   `Origin` such as `other://<your host>` as same-origin, and a custom-scheme `allowedOrigins` entry
   no longer admits every opaque origin (its URL origin serializes as `"null"`); custom-scheme
   origins pass only by exact match. A `host:port` `allowedOrigins` entry now counts as a bare host.
-
 - **Windows deep links can no longer smuggle command-line switches.** The `.msi`'s scheme
   registration is now `"<app>.exe" -- "%1"`: Windows splices the URL into `%1` verbatim, so a URL
   carrying a `"` could close the argument and append switches; after `--` it is a positional.
@@ -10490,7 +10484,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v3.0.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.1.0...development
+[3.1.0]: https://jsr.io/@denext/denext@3.1.0
 [3.0.2]: https://jsr.io/@denext/denext@3.0.2
 [3.0.1]: https://jsr.io/@denext/denext@3.0.1
 [3.0.0]: https://jsr.io/@denext/denext@3.0.0
