@@ -23,26 +23,21 @@ Nothing here imports `next` itself.
 
 ## What each surface supports
 
-| Sign-in                        | Web                                         | Deno Desktop (pinned runtime)                                                                                      | Capacitor shell         |
-| ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------- |
-| Email + code                   | yes (keyed e2e)                             | yes                                                                                                                | not covered (see below) |
-| Email + password               | yes (keyed e2e)                             | yes                                                                                                                | not covered             |
-| Google / GitHub (OAuth)        | yes (manual check)                          | yes: macOS `ASWebAuthenticationSession`; Windows / Linux the system browser with a Cancel overlay (manual check)   | not covered             |
-| Passkey                        | yes, on HTTPS or `localhost` (manual check) | through Clerk's hosted pages in the browser sheet (a development instance); native with your own RP (manual check) | not covered             |
-| Sign-out                       | yes (keyed e2e)                             | yes                                                                                                                | not covered             |
-| Session kept across a relaunch | the cookie                                  | the client JWT in the OS keychain (`secure-store`)                                                                 | not covered             |
-| Protected page / API           | cookie session                              | `Authorization: Bearer` session token (the window's `/api/*` is proxied to the web server)                         | not covered             |
+| Sign-in                        | Web                                         | Deno Desktop (pinned runtime)                                                                                      | Capacitor shell                                                  |
+| ------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| Email + code                   | yes (keyed e2e)                             | yes                                                                                                                | yes (on-device check)                                            |
+| Email + password               | yes (keyed e2e)                             | yes                                                                                                                | yes                                                              |
+| Google / GitHub (OAuth)        | yes (manual check)                          | yes: macOS `ASWebAuthenticationSession`; Windows / Linux the system browser with a Cancel overlay (manual check)   | yes: iOS `ASWebAuthenticationSession`, Android Custom Tab        |
+| Passkey                        | yes, on HTTPS or `localhost` (manual check) | through Clerk's hosted pages in the browser sheet (a development instance); native with your own RP (manual check) | through Clerk's hosted page in the auth session                  |
+| Sign-out                       | yes (keyed e2e)                             | yes                                                                                                                | yes                                                              |
+| Session kept across a relaunch | the cookie                                  | the client JWT in the OS keychain (`secure-store`)                                                                 | the client JWT in the Keychain / Keystore                        |
+| Protected page / API           | cookie session                              | `Authorization: Bearer` session token (the window's `/api/*` is proxied to the web server)                         | `Authorization: Bearer` to `NEXT_PUBLIC_CLERK_API_ORIGIN` (CORS) |
 
 Every Deno Desktop row needs dashboard step 3 (allowed origins). `deno task test:desktop` automates
 email code, the relaunch and sign-out once it is set.
 
-**Capacitor.** denext ships no Clerk helper for the Capacitor shell yet: `nativeClerk`
-(`denext/desktop/clerk`) installs only in a Deno Desktop window, and this example has no `ios/` /
-`android/` project. Pointing a shell at the dev server (`denext mobile dev`) runs the app as a web
-page inside the WebView: email code and password then work like the web, but Google and GitHub
-refuse embedded WebViews and passkeys need an associated domain, so OAuth and passkeys need native
-glue (`openAuthSession` from `denext/mobile` plus a keychain token cache — the pattern T3 Code uses
-with `@clerk/electron/react`). Not tested on a device.
+The Capacitor column needs dashboard steps 2 and 3 (the redirect and the shell's origins) and has
+not been run on a device yet (README → Capacitor).
 
 ## Setup
 
@@ -66,16 +61,16 @@ For the web on `localhost` a new development instance needs nothing. For the res
    verification code_ and _Password_, the _Google_ and _GitHub_ social connections, and _Passkeys_.
 2. **Native redirect** (Configure → Native applications → _Allowlist for mobile SSO redirect_): add
    `denextclerk://app/` — where Google / GitHub return to the desktop app.
-3. **Allowed origins — required for the desktop app** (Backend API only, no dashboard field). In the
-   window clerk-js sends its client JWT as `Authorization` and the WebView adds `Origin`; the
-   Frontend API refuses a request carrying both ("Setting both the 'Origin' and 'Authorization'
-   headers is forbidden") unless the origin is allowed. Add `denextclerk://app` (and anything else
-   you need):
+3. **Allowed origins — required for the desktop and mobile apps** (Backend API only, no dashboard
+   field). In the window clerk-js sends its client JWT as `Authorization` and the WebView adds
+   `Origin`; the Frontend API refuses a request carrying both ("Setting both the 'Origin' and
+   'Authorization' headers is forbidden") unless the origin is allowed. Add `denextclerk://app` (and
+   anything else you need):
 
    ```sh
    curl -X PATCH https://api.clerk.com/v1/instance \
      -H "Authorization: Bearer $CLERK_SECRET_KEY" -H "Content-Type: application/json" \
-     -d '{"allowed_origins": ["denextclerk://app"]}'
+     -d '{"allowed_origins": ["denextclerk://app", "capacitor://localhost", "https://localhost"]}'
    ```
 
    (`allowed_origins` replaces the list: include every origin you need. Read it back with
@@ -115,10 +110,8 @@ on the tailnet:
 - **Deno Desktop on Windows / Linux:** package on that machine (`deno task desktop:package`) and
   launch it with `DENEXT_CLERK_API_ORIGIN=https://mac.tail1234.ts.net`: the window's `/api/*` goes
   to the Mac.
-- **Capacitor shell:** `denext mobile dev --host 0.0.0.0` points the shell at
-  `http://<lan-ip>:3000`; for the HTTPS tailnet URL set `server.url` in `capacitor.config` to
-  `https://mac.tail1234.ts.net` yourself (`mobile dev` writes an `http://` URL). See the Capacitor
-  note above for what signs in there.
+- **Capacitor shell:** build it with `NEXT_PUBLIC_CLERK_API_ORIGIN=https://mac.tail1234.ts.net`
+  (README → Capacitor): the app's pages are its own, its API calls go to the Mac.
 
 Without Tailscale, `deno task dev:lan` serves on the LAN (plain HTTP: email code and password work
 from other devices; passkeys and some Clerk features need HTTPS).
@@ -146,6 +139,32 @@ another machine, is allowed explicitly).
   signs in through its sheet; on Windows and Linux the sign-in is refused with a message, and the
   home page offers **Make this app the handler** (`claimDeepLinkScheme`, on your click).
 
+## Capacitor (iOS / Android)
+
+The same app in the Capacitor shell: `instrumentation-client.ts` calls
+`installClerkMobileBridge({ scheme: "denextclerk", nativeClerk: true })` from `denext/mobile/clerk`,
+so `<ClerkProvider>` signs in natively — the client JWT in the Keychain / Keystore, Google / GitHub
+in the OS's auth session back to `denextclerk://app/`, passkeys through Clerk's hosted page. The
+shell serves the static export itself (`capacitor://localhost` on iOS, `https://localhost` on
+Android), so `/api/*` calls go to `NEXT_PUBLIC_CLERK_API_ORIGIN` with a bearer token, and the
+server's `cors` lets those origins in.
+
+```sh
+deno install
+# The API the app calls: the Mac over Tailscale (tailscale serve --bg 3000 + deno task start).
+echo "NEXT_PUBLIC_CLERK_API_ORIGIN=https://mac.tail1234.ts.net" >> .env.local
+deno run -A --node-modules-dir=none ../../cli.ts export .
+./node_modules/.bin/cap add ios                                     # once (and/or android)
+deno run -A --node-modules-dir=none ../../cli.ts mobile add clerk --scheme denextclerk  # + cap sync
+cd ios/App && xcodebuild -scheme App -sdk iphoneos -configuration Debug \
+  -destination 'generic/platform=iOS' -derivedDataPath ../build \
+  DEVELOPMENT_TEAM=<your team id> -allowProvisioningUpdates build
+xcrun devicectl device install app --device <device id> ../build/Build/Products/Debug-iphoneos/App.app
+```
+
+`deno task mobile:export` repeats the export + `cap sync` after an edit. Clerk side: dashboard step
+2 (`denextclerk://app/`) and step 3 (`capacitor://localhost`, `https://localhost`).
+
 ## Tests
 
 - `tests/clerk-example.test.ts` (unit, every CI run, no keys): the config (CSP, desktop origin, deep
@@ -162,10 +181,13 @@ another machine, is allowed explicitly).
   ```
 - `e2e/desktop-test.ts` (keyed, desktop): packages the app, launches it, signs in with the code in
   the real window, calls `/api/me` through the proxy, relaunches and checks the session survived
-  (the keychain), signs out. Skipped until the instance allows `denextclerk://app` (step 3):
+  (the keychain), signs out. Skipped until the instance allows `denextclerk://app` (step 3). It
+  passes on Linux (WebKitGTK) and macOS:
 
   ```sh
   deno task test:desktop                        # from examples/clerk, in a logged-in session
+  # Linux, headless: a display and an unlocked Secret Service (needs secret-tool, libsecret-tools)
+  sh ../desktop-kitchen-sink/e2e/linux-session.sh deno task test:desktop
   ```
 
 ### Manual checks (no automation can do these)
@@ -182,3 +204,5 @@ Real Google / GitHub accounts and a person at the fingerprint reader:
    it.
 5. Desktop passkey: the sign-in continues in the browser sheet on Clerk's hosted page (development
    instance), or natively with a production RP set up as above.
+6. iPhone / Android app: email code, Google, a passkey (hosted page), quit and relaunch (still
+   signed in), `/api/me`, sign-out.

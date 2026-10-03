@@ -189,8 +189,12 @@ async function phase(name: "sign-in" | "relaunch", plan: object): Promise<Record
 }
 
 /** Throw unless `cond`. */
-function check(cond: unknown, what: string): void {
-  if (!cond) throw new Error(`desktop e2e: ${what}`);
+function check(cond: unknown, what: string, detail?: unknown): void {
+  if (!cond) {
+    throw new Error(
+      `desktop e2e: ${what}${detail === undefined ? "" : `: ${JSON.stringify(detail)}`}`,
+    );
+  }
   console.log(`  ok  ${what}`);
 }
 
@@ -212,11 +216,12 @@ let userId: string | undefined;
 let server: Deno.ChildProcess | undefined;
 try {
   console.log("desktop e2e: build + start the API server, package the app …");
-  await cli(["build", "."]);
   // The packaging scripts embed the e2e extension (DENEXT_CLERK_E2E=1 lists it) and bake the
-  // least-privilege flags; the runner then launches the bundle's executable directly.
+  // least-privilege flags; the runner then launches the bundle's executable directly. Package
+  // first: its export rewrites .denext/, which the production build below must own.
   await cli(["desktop", "package", "--regenerate-scripts", "."]);
   await cli(["desktop", "package", "."]);
+  await cli(["build", "."]);
   server = new Deno.Command(Deno.execPath(), {
     args: [
       "run",
@@ -235,14 +240,17 @@ try {
     stdout: "null",
     stderr: "null",
   }).spawn();
-  for (let i = 0; i < 120; i++) {
+  let up = false;
+  for (let i = 0; i < 180 && !up; i++) {
     try {
-      await (await fetch(`${childEnv.DENEXT_CLERK_API_ORIGIN}/api/me`)).body?.cancel();
-      break;
+      const res = await fetch(`${childEnv.DENEXT_CLERK_API_ORIGIN}/api/me`);
+      await res.body?.cancel();
+      up = res.status === 401; // the protected API answers, signed out
     } catch {
       await new Promise((r) => setTimeout(r, 500));
     }
   }
+  check(up, "the API server answers /api/me (401 signed out)");
   const tag = crypto.randomUUID().slice(0, 8);
   const email = `denext-desktop-${tag}+clerk_test@example.com`;
   userId = await createUser(tag, email);
@@ -258,6 +266,7 @@ try {
   check(
     api1.status === 200 && JSON.parse(api1.body).userId === userId,
     "/api/me verified the bearer",
+    api1,
   );
 
   console.log("desktop e2e: launch 2 — the session survives a relaunch …");
@@ -265,7 +274,11 @@ try {
   if (second.error) throw new Error(`relaunch: ${second.error}`);
   check(second.userId === userId, "the relaunched app is still signed in");
   const api2 = second.api as { status: number; body: string };
-  check(api2.status === 200 && JSON.parse(api2.body).userId === userId, "/api/me after relaunch");
+  check(
+    api2.status === 200 && JSON.parse(api2.body).userId === userId,
+    "/api/me after relaunch",
+    api2,
+  );
   check(second.signedOut === true, "sign-out");
   console.log("desktop e2e: passed");
 } finally {

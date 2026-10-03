@@ -47,14 +47,17 @@ async function callApi(clerk: ClerkJs): Promise<{ status: number; body: string }
 }
 
 /** Email code sign-in through clerk-js's sign-in resource. */
-async function signIn(clerk: ClerkJs, email: string): Promise<void> {
+async function signIn(clerk: ClerkJs, email: string, log: (l: string) => void): Promise<void> {
   const si = await clerk.client.signIn.create({ identifier: email });
+  log("sign-in created");
   const factor = si.supportedFirstFactors.find((f: { strategy: string }) =>
     f.strategy === "email_code"
   );
   await si.prepareFirstFactor({ strategy: "email_code", emailAddressId: factor.emailAddressId });
   const done = await si.attemptFirstFactor({ strategy: "email_code", code: "424242" });
+  log(`code accepted (${done.status})`);
   await clerk.setActive({ session: done.createdSessionId });
+  log("session active");
 }
 
 /** Run one phase of the plan. */
@@ -70,11 +73,15 @@ async function run(plan: Plan, log: (line: string) => void): Promise<Record<stri
     .__clerk_internal_electron;
   if (plan.phase === "sign-in") {
     if (clerk.user) await clerk.signOut(); // a session left by an earlier run
-    await signIn(clerk, plan.email);
+    await signIn(clerk, plan.email, log);
+    const api = await callApi(clerk);
+    log(`api ${api.status}`);
+    const savedClientJwt = !!(await bridge?.tokenCache.getToken("__clerk_client_jwt"));
+    log(`keychain read (${savedClientJwt})`);
     return {
       userId: clerk.user?.id ?? null,
-      api: await callApi(clerk),
-      savedClientJwt: !!(await bridge?.tokenCache.getToken("__clerk_client_jwt")),
+      api,
+      savedClientJwt,
       origin: location.origin,
     };
   }
@@ -102,7 +109,9 @@ async function drive(): Promise<void> {
   const log = (line: string) => void e2e.log({ line: `${plan!.phase}: ${line}` }).catch(() => {});
   log("driver started");
   const report = await run(plan, log).catch((err) => ({ error: String(err?.message ?? err) }));
+  log("reporting");
   await e2e.report({ phase: plan.phase, ...report });
+  log("reported");
   await quitApp();
 }
 

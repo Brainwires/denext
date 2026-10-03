@@ -24,6 +24,12 @@ export default {
   // Other devices on the tailnet: `denext dev --host 0.0.0.0` (deno task dev:lan) allows this
   // machine's own addresses; DENEXT_CLERK_DEV_HOST adds its MagicDNS name (README → Tailscale).
   allowedDevOrigins: list("DENEXT_CLERK_DEV_HOST"),
+  // The Capacitor shell's page origins call /api/* cross-origin with a bearer session token (no
+  // cookies): iOS serves the app at capacitor://localhost, Android at https://localhost.
+  cors: {
+    origins: ["capacitor://localhost", "https://localhost"],
+    headers: ["authorization", "content-type"],
+  },
   // The Deno Desktop build (deno task desktop / desktop:package), under denext's pinned runtime.
   desktop: {
     // The window test launches the bundle itself: no installers.
@@ -55,5 +61,8 @@ export default {
       // The desktop e2e harness (e2e/desktop-test.ts): only when the runner evaluates the config.
       ...(env("DENEXT_CLERK_E2E") === "1" ? { extensions: ["./desktop/e2e.ts"] } : {}),
     },
+    // The e2e extension writes its report into the app's data folder (a per-user path, so a
+    // broad --allow-write); a normal build writes nothing.
+    ...(env("DENEXT_CLERK_E2E") === "1" ? { extraPermissions: { write: ["*"] } } : {}),
   },
 } satisfies DenextConfig;

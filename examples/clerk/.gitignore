@@ -10,3 +10,5 @@ scripts/
 # `deno desktop` output when run without --output
 *.app/
 *.dylib.tmp-*
+ios/
+android/

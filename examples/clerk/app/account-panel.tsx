@@ -4,6 +4,7 @@
 // need (they have no cookie on the server's origin); on the web the cookie would do too.
 import { useAuth, useUser } from "@clerk/nextjs";
 import { useState } from "react";
+import { apiUrl } from "../lib/api.ts";
 
 /** Who is signed in, or how to sign in. */
 function Greeting({ signedIn }: { signedIn: boolean }) {
@@ -26,7 +27,7 @@ function ApiCall() {
   const [result, setResult] = useState("");
   async function callApi() {
     const token = await getToken();
-    const res = await fetch("/api/me", {
+    const res = await fetch(apiUrl("/api/me"), {
       headers: token ? { authorization: `Bearer ${token}` } : {},
     });
     setResult(`${res.status} ${await res.text()}`);

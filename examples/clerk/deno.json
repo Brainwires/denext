@@ -8,7 +8,8 @@
     "export": "deno run -A --node-modules-dir=none ../../cli.ts export .",
     "desktop": "deno run -A --node-modules-dir=none ../../cli.ts desktop run .",
     "desktop:package": "deno run -A --node-modules-dir=none ../../cli.ts desktop package --regenerate-scripts . && deno run -A --node-modules-dir=none ../../cli.ts desktop package .",
-    "test:desktop": "deno run -A --node-modules-dir=none e2e/desktop-test.ts"
+    "test:desktop": "deno run -A --node-modules-dir=none e2e/desktop-test.ts",
+    "mobile:export": "deno run -A --node-modules-dir=none ../../cli.ts export . && ./node_modules/.bin/cap sync"
   },
   "nodeModulesDir": "auto",
   "unstable": [
@@ -70,7 +71,10 @@
     "@denext/swc": "jsr:@denext/swc@^76.0.0",
     "esbuild": "npm:esbuild@^0.24.0",
     "@luca/esbuild-deno-loader": "jsr:@luca/esbuild-deno-loader@^0.11.0",
-    "@clerk/nextjs": "npm:@clerk/nextjs@^7.9.8"
+    "@clerk/nextjs": "npm:@clerk/nextjs@^7.9.8",
+    "denext/desktop/window": "../../src/desktop/window.ts",
+    "denext/mobile/clerk": "../../src/mobile/clerk.ts",
+    "file:///Users/nightness/Source/Brainwires/denext-wt-clerk3/examples/clerk/app/globals.css": "file:///Users/nightness/Source/Brainwires/denext-wt-clerk3/examples/clerk/.denext/css-shims/css_0.js"
   },
   "lint": {
     "plugins": [

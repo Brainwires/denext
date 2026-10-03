@@ -170,7 +170,6 @@ entry = [
   # examples/clerk: the Deno Desktop entry and its `desktop.preload` (loaded by path).
   "examples/clerk/desktop.ts",
   "examples/clerk/desktop/preload.ts",
-  "examples/clerk/capacitor.config.ts",
   "examples/clerk/desktop/e2e.ts",
   "examples/clerk/e2e/*.ts",
   "examples/rn-desktop/desktop.ts",

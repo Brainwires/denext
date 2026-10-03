@@ -68,7 +68,22 @@ Deno.test("clerk example: the config validates, with Clerk's CSP and the desktop
     // refused and a sign-in continues in the browser), never `true`.
     assertEquals(caps.passkeys, { rpIds: [] });
     assertEquals(config.allowedDevOrigins, []);
+    // The Capacitor shell's page origins call the API cross-origin with a bearer token.
+    assertEquals(config.cors?.origins, ["capacitor://localhost", "https://localhost"]);
+    assert(config.cors?.headers?.includes("authorization"));
+    assertEquals(config.cors?.credentials, undefined); // bearer only, never cookies
   });
+});
+
+Deno.test("clerk example: the shell installs Clerk's mobile bridge before clerk-js loads", async () => {
+  const src = await Deno.readTextFile(join(EXAMPLE, "instrumentation-client.ts"));
+  assertStringIncludes(src, 'from "denext/mobile/clerk"');
+  assertStringIncludes(
+    src,
+    'installClerkMobileBridge({ scheme: "denextclerk", nativeClerk: true })',
+  );
+  const capacitor = JSON.parse(await Deno.readTextFile(join(EXAMPLE, "capacitor.config.json")));
+  assertEquals(capacitor.webDir, "out");
 });
 
 Deno.test("clerk example: tailnet host and passkey RPs come from the environment", async () => {
