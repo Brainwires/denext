@@ -920,6 +920,29 @@ async function linkOrCopy(src: string, dest: string): Promise<void> {
 }
 
 /**
+ * Re-create the symlink `src` at `dest` (Windows needs to be told a file from a directory link);
+ * where the OS won't create it (Windows without the symlink privilege), a link to a file becomes a
+ * hard link or copy of that file — `deno desktop` copies the file it points at either way.
+ */
+async function mirrorLink(
+  src: string,
+  dest: string,
+  destRel: string,
+  files: Record<string, number>,
+): Promise<void> {
+  const info = await Deno.stat(src).catch(() => null);
+  try {
+    await Deno.symlink(await Deno.readLink(src), dest, {
+      type: info?.isDirectory ? "dir" : "file",
+    });
+  } catch (err) {
+    if (!info?.isFile) throw err;
+    await linkOrCopy(await Deno.realPath(src), dest);
+    files[destRel] = (await Deno.lstat(dest)).size;
+  }
+}
+
+/**
  * Mirror the backend directory `laufey/<rename.dir>` of the runtime at `runtimeDir` into `staged`
  * (hard links where the filesystem allows), with the binary renamed. Returns the stamp's file map.
  */
@@ -942,7 +965,7 @@ async function mirrorBackendDir(
       const destRel = `${rel}/${name}`;
       const dest = join(staged, ...destRel.split("/"));
       if (e.isDirectory) await walk(`${rel}/${e.name}`, false);
-      else if (e.isSymlink) await Deno.symlink(await Deno.readLink(src), dest);
+      else if (e.isSymlink) await mirrorLink(src, dest, destRel, files);
       else if (e.isFile) {
         await linkOrCopy(src, dest);
         files[destRel] = (await Deno.lstat(dest)).size;

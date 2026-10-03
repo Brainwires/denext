@@ -642,6 +642,43 @@ Deno.test("resolveDesktopRuntimeEnv: a Windows target from macOS gets a cross-ho
   }
 });
 
+Deno.test("resolveDesktopRuntimeEnv: a cross-host symlink the OS refuses becomes a copy of its file", async () => {
+  const win = "x86_64-pc-windows-msvc";
+  const f = await fixture(await windowsArchive());
+  const project = await Deno.makeTempDir();
+  const symlink = Deno.symlink;
+  try {
+    const pin: DesktopRuntimePin = {
+      ...f.pin,
+      targets: { [win]: { runtimeLib: "denort.dll", webview: f.pin.targets[TARGET].webview } },
+    };
+    const args = {
+      projectDir: project,
+      target: win,
+      pin,
+      cacheRoot: f.cacheRoot,
+      env: envOf({}),
+      denoVersion: () => Promise.resolve("9.9.9"),
+      log: quiet,
+    };
+    // Install the runtime first (its own extraction needs real symlinks), then refuse them.
+    await resolveDesktopRuntimeEnv({ ...args, hostOs: "windows" });
+    Object.defineProperty(Deno, "symlink", {
+      value: () => Promise.reject(new Deno.errors.PermissionDenied("os error 1314")),
+      configurable: true,
+      writable: true,
+    });
+    const r = await resolveDesktopRuntimeEnv({ ...args, hostOs: "linux" });
+    const current = join(r.env.LAUFEY_DEV_DIR, "webview", "build", "res", "current");
+    assert((await Deno.lstat(current)).isFile);
+    assertEquals(await Deno.readTextFile(current), "s");
+  } finally {
+    Object.defineProperty(Deno, "symlink", { value: symlink, configurable: true, writable: true });
+    await f.close();
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
 Deno.test("resolveDesktopRuntimeEnv: a Linux target from Windows offers the backend as .exe", async () => {
   const f = await fixture(await fixtureArchive());
   const project = await Deno.makeTempDir();
