@@ -20,11 +20,8 @@ import {
   type WindowState,
 } from "denext/desktop/window";
 
-/** The RP ID the passkey ceremony uses; pinned in `desktop.capabilities.passkeys.rpIds`. */
-const MANUAL_RP_ID = "denext.dev";
-
-/** Where the last created credential id and the saved window placement are kept (per viewer). */
-const CREDENTIAL_KEY = "kitchen-manual-credential";
+/** Where the last created credential id (per RP) and the saved window placement are kept. */
+const credentialKey = (rpId: string) => `kitchen-manual-credential:${rpId}`;
 const PLACEMENT_KEY = "kitchen-manual-placement";
 
 // deno-lint-ignore no-explicit-any
@@ -54,12 +51,25 @@ function Result({ outcome }: { outcome: Outcome }) {
   return <pre class="manual-result" data-ok={String(outcome.ok)}>{outcome.text}</pre>;
 }
 
-/** Passkey: create, then sign in, through the `passkeys` capability (webauthn.dll / ASAuthorization). */
-function PasskeyCheck() {
+/**
+ * Passkey: create, then sign in, through the `passkeys` capability (webauthn.dll / ASAuthorization),
+ * for an RP ID that defaults to the first one `desktop.capabilities.passkeys.rpIds` pins.
+ */
+function PasskeyCheck({ rpIds }: { rpIds: readonly string[] }) {
   const [caps, setCaps] = useState("…");
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>(null);
-  const [credential, setCredential] = useState<string | null>(() => store(CREDENTIAL_KEY));
+  const [rpId, setRpId] = useState(rpIds[0] ?? "");
+  const [credential, setCredential] = useState<string | null>(() =>
+    store(credentialKey(rpIds[0] ?? ""))
+  );
+
+  const chooseRp = (next: string) => {
+    const id = next.trim().toLowerCase();
+    setRpId(id);
+    setCredential(store(credentialKey(id)));
+    setOutcome(null);
+  };
 
   useEffect(() => {
     passkeys.capabilities({}).then(
@@ -79,7 +89,7 @@ function PasskeyCheck() {
     setOutcome({ ok: true, text: "Waiting for the OS dialog…" });
     const options = kind === "create"
       ? {
-        rp: { id: MANUAL_RP_ID, name: "denext manual check" },
+        rp: { id: rpId, name: "denext manual check" },
         user: {
           id: b64url(crypto.getRandomValues(new Uint8Array(16))),
           name: "denext-manual-check",
@@ -96,7 +106,7 @@ function PasskeyCheck() {
         timeout: 120_000,
       }
       : {
-        rpId: MANUAL_RP_ID,
+        rpId,
         challenge: challenge(),
         userVerification: "required",
         timeout: 120_000,
@@ -106,7 +116,7 @@ function PasskeyCheck() {
       const envelope = await passkeys[kind]({ optionsJson: JSON.stringify(options) });
       if (envelope?.ok) {
         const c = envelope.credential as { id?: string; type?: string };
-        if (kind === "create" && c.id) setCredential(store(CREDENTIAL_KEY, c.id) ?? c.id);
+        if (kind === "create" && c.id) setCredential(store(credentialKey(rpId), c.id) ?? c.id);
         setOutcome({
           ok: true,
           text: `SUCCESS (${kind === "create" ? "passkey created" : "signed in"})\n` +
@@ -133,20 +143,42 @@ function PasskeyCheck() {
     <section class="manual-card">
       <h3>1. Passkey (Windows Hello / Touch ID)</h3>
       <p>
-        Relying party <code>{MANUAL_RP_ID}</code>. Click{" "}
+        Pick the relying party (one of{" "}
+        <code>desktop.capabilities.passkeys.rpIds</code>; any other answers{" "}
+        <code>invalid_rp</code>). Click{" "}
         <b>Create passkey</b>, approve it in the OS dialog (PIN, face or fingerprint), then click
         {" "}
-        <b>Sign in with passkey</b> and approve again. Both must say SUCCESS.
+        <b>Sign in with passkey</b>{" "}
+        and approve again. Both must say SUCCESS, with the same credential id.
       </p>
+      <label class="manual-facts">
+        Relying party{" "}
+        <input
+          type="text"
+          list="manual-rp-ids"
+          value={rpId}
+          disabled={busy}
+          spellcheck={false}
+          onChange={(e) => chooseRp(e.currentTarget.value)}
+        />
+        <datalist id="manual-rp-ids">
+          {rpIds.map((id) => <option key={id} value={id} />)}
+        </datalist>
+      </label>
       <p class="manual-facts">{caps}</p>
       <p class="manual-facts">
         Last created credential: <code>{credential ?? "none yet"}</code>
       </p>
       <div class="manual-buttons">
-        <button type="button" class="big" disabled={busy} onClick={() => ceremony("create")}>
+        <button
+          type="button"
+          class="big"
+          disabled={busy || !rpId}
+          onClick={() => ceremony("create")}
+        >
           Create passkey
         </button>
-        <button type="button" class="big" disabled={busy} onClick={() => ceremony("get")}>
+        <button type="button" class="big" disabled={busy || !rpId} onClick={() => ceremony("get")}>
           Sign in with passkey
         </button>
       </div>
@@ -413,12 +445,16 @@ function HiDpiCheck() {
   );
 }
 
-/** The manual checks panel (rendered by the kitchen sink only when it was opened by hand). */
-export function ManualChecks() {
+/**
+ * The manual checks panel (rendered by the kitchen sink only when it was opened by hand).
+ *
+ * @param rpIds The RP IDs the `passkeys` capability pins (the passkey check defaults to the first).
+ */
+export function ManualChecks({ rpIds }: { rpIds: readonly string[] }) {
   return (
     <details class="manual" open>
       <summary>Manual release checks (passkey, backdrop, HiDPI)</summary>
-      <PasskeyCheck />
+      <PasskeyCheck rpIds={rpIds} />
       <BackdropCheck />
       <HiDpiCheck />
     </details>

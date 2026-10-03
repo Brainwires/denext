@@ -32,13 +32,19 @@ Opened by hand (never under the window test), the window also shows **Manual rel
 buttons for the rows of CONTRIBUTING.md › _Manual desktop checks before a final release_ that need a
 person at the screen. Nothing in the panel runs until you click.
 
-- **Passkey**: _Create passkey_, then _Sign in with passkey_, for the relying party `denext.dev`
-  (pinned in `desktop.capabilities.passkeys.rpIds`) through the `passkeys` capability. It shows
-  whether the platform authenticator is ready (`passkeys.capabilities()`), then the credential id or
-  the error code. Windows Hello needs no association between the app and the RP (set up a PIN in
-  Settings › Accounts › Sign-in options first); macOS also needs the associated-domains entitlement,
-  so an unentitled build answers `invalid_rp`. The passkey lands in the OS's passkey list (Windows:
-  Settings › Accounts › Passkeys); delete it there afterwards.
+- **Passkey**: _Create passkey_, then _Sign in with passkey_, through the `passkeys` capability, for
+  the relying party in the panel's field (it defaults to the first RP pinned in
+  `desktop.capabilities.passkeys.rpIds`, `denext.dev`; an RP not pinned answers `invalid_rp`). It
+  shows whether the platform authenticator is ready (`passkeys.capabilities()`), then the credential
+  id or the error code. Windows Hello needs no association between the app and the RP (set up a PIN
+  in Settings › Accounts › Sign-in options first); macOS also needs the associated-domains
+  entitlement, so an unentitled build answers `invalid_rp`. A macOS build for it sets
+  `desktop.app.identifier` to an App ID with Associated Domains, and `desktop.macos` to that App
+  ID's Developer ID provisioning profile plus
+  `entitlements: { "com.apple.developer.associated-domains": ["webcredentials:<rp>"] }`; the RP
+  serves `/.well-known/apple-app-site-association` listing `<TeamID>.<identifier>` under
+  `webcredentials`. The passkey lands in the OS's passkey list (Windows: Settings › Accounts ›
+  Passkeys); delete it there afterwards.
 - **Backdrop**: none / mica / acrylic / tabbed (and vibrancy on macOS), with what
   `windowCapabilities()` reports; the page turns transparent while one is applied, so the whole
   window background should change.

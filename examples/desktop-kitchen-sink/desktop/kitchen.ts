@@ -34,6 +34,7 @@ import {
   installAppUpdateAndRelaunch,
 } from "denext/desktop/updater";
 import { join, resolve, SEPARATOR } from "@std/path";
+import config from "../denext.config.ts";
 
 /** The file the runner writes into the app's data folder before each launch. */
 const RUNNER_FILE = "kitchen-sink-runner.json";
@@ -175,6 +176,8 @@ export default defineDesktopExtension({
           // The fs capability's "data" folder (`moveToTrash` takes an absolute path inside it).
           dataDir: ctx.appSupportDir,
           pid: Deno.pid,
+          // The RPs the passkeys capability pins (the manual passkey check offers them).
+          passkeyRpIds: config.desktop.capabilities.passkeys.rpIds,
         };
       },
     },

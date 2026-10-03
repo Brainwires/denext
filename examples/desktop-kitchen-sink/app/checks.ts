@@ -79,6 +79,8 @@ export interface KitchenSetup {
   readonly pinnedRuntime: boolean;
   readonly dataDir: string;
   readonly pid: number;
+  /** `desktop.capabilities.passkeys.rpIds`: the manual passkey check defaults to the first. */
+  readonly passkeyRpIds: readonly string[];
 }
 
 /** One check's outcome. */

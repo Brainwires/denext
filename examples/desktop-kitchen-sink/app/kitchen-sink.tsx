@@ -85,7 +85,9 @@ export function KitchenSink() {
       </p>
       {
         // Opened by hand only: the window test (autorun) never mounts the manual checks.
-        ctx.current && !ctx.current.setup.autorun && state !== "loading" && <ManualChecks />
+        ctx.current && !ctx.current.setup.autorun && state !== "loading" && (
+          <ManualChecks rpIds={ctx.current.setup.passkeyRpIds ?? []} />
+        )
       }
       <button
         type="button"

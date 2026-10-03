@@ -59,11 +59,12 @@ export default {
       authSession: true,
       // Native passkeys, pinned. The window test never reaches the OS: one RP the native parser
       // refuses (`bad_rp.invalid` is not a domain name) proves the runtime path without a
-      // ceremony; any RP not listed is refused by the capability itself. `denext.dev` is the
-      // manual checks' real ceremony (`app/manual-checks.tsx`, buttons only, never automated):
-      // Windows Hello needs no app ↔ RP association; macOS also needs the associated-domains
-      // entitlement, so an unentitled build answers `invalid_rp` there.
-      passkeys: { rpIds: ["bad_rp.invalid", "denext.dev"] },
+      // ceremony; any RP not listed is refused by the capability itself. The first RP is the
+      // manual checks' real ceremony (`app/manual-checks.tsx`, buttons only, never automated; its
+      // RP field defaults to it): Windows Hello needs no app ↔ RP association; macOS also needs the
+      // associated-domains entitlement (`desktop.macos`, with a provisioning profile), so an
+      // unentitled build answers `invalid_rp` there.
+      passkeys: { rpIds: ["denext.dev", "bad_rp.invalid"] },
       // Only https links, and the app-folder actions the test can run unattended.
       shell: {
         openExternal: ["https:"],
