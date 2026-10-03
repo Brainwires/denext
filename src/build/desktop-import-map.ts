@@ -16,6 +16,7 @@
 
 import { dirname, fromFileUrl, isAbsolute, join, relative, SEPARATOR, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
+import { isInjectedCssShimEntry } from "./css-config-guard.ts";
 
 /** Where the relocatable map is written, relative to the project. */
 export const DESKTOP_IMPORT_MAP_FILE = ".deno-desktop/import-map.json";
@@ -68,7 +69,9 @@ function relocateEntries(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(entries)) {
-    if (typeof value === "string") out[key] = relocate(value, baseUrl, outDir);
+    if (typeof value !== "string") continue;
+    // A css→shim redirect denext injects for the length of a build is kept as written.
+    out[key] = isInjectedCssShimEntry(key, value) ? value : relocate(value, baseUrl, outDir);
   }
   if (!expand) return out;
   for (const [key, value] of Object.entries(out)) {
@@ -77,6 +80,15 @@ function relocateEntries(
     out[`${key}/`] = `${pkg[1]}:/${pkg[2]}/`;
   }
   return out;
+}
+
+/** Whether an entry of `entries` targets an absolute local path. The css→shim redirects a denext
+ * build injects into deno.json while it runs (`denext desktop run` builds inside that window) do
+ * not count: they are transient, and the desktop entry's graph imports no stylesheet. */
+function hasAbsoluteTarget(entries: Record<string, unknown>): boolean {
+  return Object.entries(entries).some(([key, value]) =>
+    typeof value === "string" && isAbsoluteLocal(value) && !isInjectedCssShimEntry(key, value)
+  );
 }
 
 /** `value` when it is a plain object, else `undefined`. */
@@ -106,12 +118,8 @@ export function relocatableImportMap(
   const imports = record(record(map)?.imports) ?? {};
   const scopes = record(record(map)?.scopes) ?? {};
   const scopeEntries = Object.entries(scopes).map(([k, v]) => [k, record(v) ?? {}] as const);
-  const absolute =
-    Object.values(imports).some((v) => typeof v === "string" && isAbsoluteLocal(v)) ||
-    scopeEntries.some(([key, entries]) =>
-      isAbsoluteLocal(key) ||
-      Object.values(entries).some((v) => typeof v === "string" && isAbsoluteLocal(v))
-    );
+  const absolute = hasAbsoluteTarget(imports) ||
+    scopeEntries.some(([key, entries]) => isAbsoluteLocal(key) || hasAbsoluteTarget(entries));
   if (!absolute) return null;
   const out: { imports?: Record<string, string>; scopes?: Record<string, Record<string, string>> } =
     { imports: relocateEntries(imports, baseUrl, outDir, expand) };

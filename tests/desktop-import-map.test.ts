@@ -125,6 +125,24 @@ Deno.test("relocatableImportMap: a deno.json map's jsr:/npm: entries get Deno's 
   assertEquals(Object.hasOwn(relocatableImportMap(map, BASE, OUT)!.imports!, "@std/http/"), false);
 });
 
+Deno.test("relocatableImportMap: the css→shim redirects a running build injects are not a trigger", () => {
+  if (Deno.build.os === "windows") return;
+  const shim = {
+    "file:///work/app/public/styles.css": "file:///work/app/.denext/css-shims/css_0.js",
+  };
+  // Only the injected redirects are absolute → nothing to do (`denext desktop run` builds while
+  // they are in deno.json).
+  assertEquals(
+    relocatableImportMap({ imports: { "denext": "../../mod.ts", ...shim } }, BASE, OUT, true),
+    null,
+  );
+  // With a real absolute target the copy is written, and the redirect is kept as written.
+  assertEquals(
+    relocatableImportMap({ imports: { "x": "file:///work/x.ts", ...shim } }, BASE, OUT)?.imports,
+    { "x": "../../x.ts", ...shim },
+  );
+});
+
 /** A temp project with a deno.json (and optionally more files), plus its `scripts/` folder. */
 async function project(files: Record<string, string>): Promise<string> {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-import-map-" }));
