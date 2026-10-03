@@ -1018,7 +1018,10 @@ const securityChecks: Check[] = [
       const p = (globalThis as ClerkGlobals).__clerk_internal_electron_passkeys;
       assert(p, "the preload did not install window.__clerk_internal_electron_passkeys");
       const platform = setup.os === "windows" ? "win32" : setup.os;
-      eq(p.platform, platform, "platform before");
+      // The bridge turns native passkeys off for the rest of the page's life, so a second run in
+      // the same page starts from "none"; the first run must still see the platform.
+      if (!passkeysBridgeRan) eq(p.platform, platform, "platform before");
+      passkeysBridgeRan = true;
       const envelope = await p.get(passkeyOptions("get", "example.com"));
       eq(envelopeCode(envelope), "invalid_rp", "get() for an RP that is not pinned");
       eq(p.platform, "none", "platform after invalid_rp");
@@ -1027,6 +1030,9 @@ const securityChecks: Check[] = [
     },
   ],
 ];
+
+/** Whether the passkeys-bridge check already ran in this page (it switches passkeys off). */
+let passkeysBridgeRan = false;
 
 // --- the full-app update phases (window test only) -------------------------------------------
 
