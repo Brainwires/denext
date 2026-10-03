@@ -439,7 +439,12 @@ A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it
 packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
 `denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
-detect which one they run under. `runDesktop` resolves to `{ window, trust, emit }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
+detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
+package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
+`dev` warn and use the stock runtime when `deno` is not 2.9.7 (`DENO_BIN` points them at a 2.9.7
+binary); `package` refuses. A default installer that can't be built (missing tool, WiX other than 5,
+a version MSI/Debian can't express) is skipped with a warning; an asked-for one fails.
+`DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
