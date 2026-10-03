@@ -448,19 +448,51 @@ export async function walkBundle(root: string): Promise<BundleEntry[]> {
           kind: "symlink",
           mode: 0o777,
           size: 0,
-          target: await Deno.readLink(abs),
+          // A link written on Windows may read back with backslash separators; a package stores `/`.
+          target: (await Deno.readLink(abs)).replaceAll("\\", "/"),
         });
       } else if (st.isDirectory) {
         out.push({ path: rel, kind: "dir", mode: 0o755, size: 0 });
         await visit(abs);
       } else {
-        const exec = st.mode !== null ? (st.mode & 0o111) !== 0 : false;
-        out.push({ path: rel, kind: "file", mode: exec ? 0o755 : 0o644, size: st.size });
+        const head = st.mode === null ? await fileHead(abs) : new Uint8Array();
+        out.push({ path: rel, kind: "file", mode: bundleFileMode(st.mode, head), size: st.size });
       }
     }
   };
   await visit(root);
   return out;
+}
+
+/** The first bytes of `path` (enough for a magic number). */
+async function fileHead(path: string): Promise<Uint8Array> {
+  using f = await Deno.open(path);
+  const buf = new Uint8Array(4);
+  const n = await f.read(buf);
+  return buf.subarray(0, n ?? 0);
+}
+
+/**
+ * The POSIX mode a bundle file is packaged with: `0o755` when it is executable, else `0o644`.
+ * Where the platform reports a mode, its executable bits decide. Where it reports none (Windows,
+ * packaging a Linux bundle cross-OS), the file's content does: an ELF image (the launcher, its
+ * shared libraries) or a `#!` script is executable — else every file of a Windows-built `.deb`
+ * installs without its executable bit and the app cannot start.
+ *
+ * @param mode The platform's mode (`Deno.FileInfo.mode`), `null` where it reports none.
+ * @param head The file's first bytes (read only when `mode` is `null`).
+ * @returns `0o755` or `0o644`.
+ */
+export function bundleFileMode(mode: number | null, head: Uint8Array): number {
+  const exec = mode !== null
+    ? (mode & 0o111) !== 0
+    : isElf(head) || (head[0] === 0x23 && head[1] === 0x21);
+  return exec ? 0o755 : 0o644;
+}
+
+/** Whether `head` starts with the ELF magic. */
+function isElf(head: Uint8Array): boolean {
+  return head[0] === 0x7f && head[1] === 0x45 && head[2] === 0x4c && head[3] === 0x46;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -761,8 +793,12 @@ async function copyTree(src: string, dest: string): Promise<void> {
   for (const e of await walkBundle(src)) {
     const to = join(dest, ...e.path.split("/"));
     if (e.kind === "dir") await Deno.mkdir(to, { recursive: true });
-    else if (e.kind === "symlink") await Deno.symlink(e.target!, to);
-    else {
+    else if (e.kind === "symlink") {
+      // Windows needs the link's kind up front (its target is relative, not to the cwd).
+      const isDir = (await Deno.stat(join(src, ...e.path.split("/"))).catch(() => null))
+        ?.isDirectory;
+      await Deno.symlink(e.target!, to, { type: isDir ? "dir" : "file" });
+    } else {
       await Deno.copyFile(join(src, ...e.path.split("/")), to);
       await Deno.chmod(to, e.mode);
     }
@@ -790,7 +826,9 @@ export async function stageLinuxRoot(
   const pkg = debianPackageName(meta.name);
   await copyTree(bundleDir, join(root, "usr", "lib", pkg));
   await Deno.mkdir(join(root, "usr", "bin"), { recursive: true });
-  await Deno.symlink(`../lib/${pkg}/${exe}`, join(root, "usr", "bin", pkg));
+  // `type`: Windows refuses a link whose (relative) target it cannot resolve from the cwd unless
+  // told its kind — a Linux package built on Windows.
+  await Deno.symlink(`../lib/${pkg}/${exe}`, join(root, "usr", "bin", pkg), { type: "file" });
   const apps = join(root, "usr", "share", "applications");
   await Deno.mkdir(apps, { recursive: true });
   const entry = `${linuxDesktopEntry(meta).match(/^StartupWMClass=(.*)$/m)![1]}.desktop`;

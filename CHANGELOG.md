@@ -405,6 +405,14 @@ and this project adheres to
 
 ### Fixed
 
+- **A `.deb` cross-built on Windows installs and runs.** `denext desktop package --target-os linux`
+  on Windows failed at the `.deb` (Windows refused the `/usr/bin` link it could not resolve from
+  the working directory), and Windows reports no POSIX mode, so every file would have been
+  packaged `0644` and the launcher could not start. The links now name their kind, and where the
+  platform reports no mode an ELF image or a `#!` script is packaged executable. Desktop CI now
+  cross-packages on every host (Windows from Linux with webview and CEF, and from macOS; Linux
+  from macOS and Windows), checks each binary's PE / ELF machine and the archives, and launches
+  the Windows-built Linux app and the Linux-built Windows app on their own OS.
 - **An apostrophe in JSX text no longer misclassifies a route.** The source scan behind the
   zero-JS route check and the server-only leak check read `<p>It's ready</p>` as opening a
   string, flipping its literal/code state for the rest of the file: a hook or `onClick=` named

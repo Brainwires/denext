@@ -13,6 +13,7 @@ import { join, toFileUrl } from "@std/path";
 import {
   arArchive,
   buildDesktopDeb,
+  bundleFileMode,
   debControl,
   debianPackageName,
   DEFAULT_DESKTOP_INSTALLERS,
@@ -758,4 +759,18 @@ Deno.test('script app name: DENEXT_APP_NAME, else deno.json desktop.app.name, el
     if (prev !== undefined) Deno.env.set("DENEXT_APP_NAME", prev);
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("bundleFileMode: the platform's executable bits decide; without them, the content", () => {
+  const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46]);
+  const script = new TextEncoder().encode("#!/b");
+  const data = new TextEncoder().encode("{}");
+  assertEquals(bundleFileMode(0o100755, data), 0o755);
+  assertEquals(bundleFileMode(0o100644, elf), 0o644);
+  assertEquals(bundleFileMode(0o100700, data), 0o755);
+  // No mode (Windows packaging a Linux bundle): an ELF image or a script is executable.
+  assertEquals(bundleFileMode(null, elf), 0o755);
+  assertEquals(bundleFileMode(null, script), 0o755);
+  assertEquals(bundleFileMode(null, data), 0o644);
+  assertEquals(bundleFileMode(null, new Uint8Array()), 0o644);
 });
