@@ -377,8 +377,11 @@ and this project adheres to
 
 ### Changed
 
-- **The pinned Deno Desktop runtime is 2.9.7-denext.7, and the custom origin requires it.** It
-  carries the 3.1 security and fork-code audit fixes (the WebSocket relay marks what it forwards
+- **The pinned Deno Desktop runtime is 2.9.7-denext.8; the custom origin requires 2.9.7-denext.7
+  or later.** denext.8 opens macOS windows in front at launch (the first window had opened behind
+  other apps' windows, so WebKit paused `requestAnimationFrame`), has WKWebView report
+  `outerWidth` / `outerHeight`, and fixes a DevTools lock-ordering deadlock (laufey `e1bfe17`,
+  API 43). denext.7 carries the 3.1 security and fork-code audit fixes (the WebSocket relay marks what it forwards
   with `x-deno-desktop-relay` and forwards only an upgrade, `node:http` serves under the memory
   transport, a cancelled scheme request aborts the app's `request.signal`, updater hardening),
   `Deno.desktop.authSession.cancel()` and laufey `b993068` (API 43). The pin was regenerated with
