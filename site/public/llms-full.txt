@@ -462,7 +462,8 @@ custom-scheme callback (a declared scheme, PKCE S256 mandatory, exact redirect +
 your own wired to `signal`); `installClerkDesktopBridge()` from `denext/desktop/clerk`
 makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 (`denext desktop add secure-store auth-session passkeys`).
-Native passkeys are macOS (needs the associated-domains entitlement) and Windows only; Linux has no OS
+Native passkeys are macOS (needs the associated-domains entitlement: `desktop.macos: {
+provisioningProfile, entitlements }` signs it in with the profile) and Windows only; Linux has no OS
 passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
 only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
 Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay: denext's Live
@@ -1201,9 +1202,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopAppIcons` — DesktopConfig.app's icons: the app icon file per OS, relative to the project.
 - `interface DesktopCapabilitiesConfig` — desktop.capabilities: which native capabilities the page may reach, keyed by the name denext desktop add <name> writes. true enables a capability with its defaults; an object scopes it. Anything absent is denied. An unknown key is allowed (a newer desktop add) and the validator warns on it.
 - `interface DesktopConfig` — The desktop block of denext.config.ts: Deno Desktop native capabilities. The allowlist the desktop runtime's capability bridge serves (default deny), and the source the package scripts derive least-privilege --allow-* from. Written by denext desktop add <cap>. Distinct from SpaDesktopConfig (spa.desktop, packaging settings such as the icon); the two may be unified later. Docs: https://denext.dev/docs/desktop
+- `type DesktopEntitlementValue = string | number | boolean | string[]` — One entitlement's value in DesktopMacosConfig.entitlements.
 - `interface DesktopExtraPermissions` — Extra --allow-* for the desktop packaging scripts (see DesktopConfig.extraPermissions). Each field is a list of Deno permission values, unioned into the derived flags.
 - `interface DesktopFsConfig` — The fs desktop capability's scoped roots (path tokens $APPDATA / $CACHE / $DOCUMENTS, plus the per-session $PICKED set the user grows through native dialogs).
 - `interface DesktopInstallersConfig` — DesktopConfig.installers: the installer formats per OS, and what they say about the app.
+- `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
 - `interface DesktopSize` — A window size in CSS pixels (DesktopConfig.minSize / DesktopConfig.maxSize).
@@ -1898,6 +1901,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<string>` — Build a .deb for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written here), so it cross-builds from any OS. Installs into /usr/lib/<package> with a /usr/bin/<package> link, the .desktop entry (deep-link schemes as x-scheme-handler/*) and the icon; the desktop and icon databases are refreshed by their own dpkg triggers.
 - `buildDesktopMsi(o: BuildMsiOptions): Promise<string>` — Author and build the .msi for a finished Windows bundle with WiX 5 (wix build); the .wxs is kept beside the .msi for inspection. Windows-only (WiX builds on Windows).
 - `buildDesktopRpm(o: BuildLinuxPackageOptions): Promise<string>` — Build an .rpm for a finished Linux bundle with rpmbuild (Fedora/RHEL, apt install rpm on Debian/Ubuntu, brew install rpm on macOS). Same installed layout as the .deb.
+- `buildDesktopTarball(o: BuildDesktopTarballOptions): Promise<string>` — The .tar.gz of a finished Linux bundle, written here (ustar + gzip) rather than by the host's tar, so a bundle packaged on Windows keeps its executables' mode bits (see bundleFileMode) and the archive is the same from every host.
+- `interface BuildDesktopTarballOptions` — What buildDesktopTarball archives.
 - `interface BuildLinuxPackageOptions` — What buildDesktopDeb / buildDesktopRpm build.
 - `interface BuildMsiOptions` — What buildDesktopMsi builds.
 - `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsOrigin?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
@@ -1926,10 +1931,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class DesktopEventLog` — A bounded, replayable log of desktop bridge events. One instance per running app (created by the bridge); exported as a type so DesktopBridge["events"] is documentable.
 - `desktopHasTool(cmd: string): Promise<boolean>` — Whether a command is on PATH. No shell is involved: on Windows where.exe is run with the name as one argument; elsewhere each PATH directory is checked for an executable file of that name. A name that is not a plain command (a path separator, whitespace, a shell or wildcard character) is never found.
 - `desktopIconArgs(entryUrl: string, os: DesktopOs, candidates?: typeOperator): Promise<string[]>` — The --icon <file> args for deno desktop on os: desktop.app.icons.<macos|linux|windows> in denext.config.ts, else the same key in deno.json, else the first of candidates that exists (none: no icon, and deno desktop uses its default). Paths are relative to the project.
-- `desktopIncludeArgs(entryUrl: string): Promise<string[]>` — The extra --include <path> args a scaffolded packaging script must add so the packaged binary embeds each desktop.capabilities.extensions module — otherwise the app launches but the runtime fails to load the extension ("Module not found"), since --include out only bundles the export. Reads the project's denext.config.ts next to entryUrl (a scripts/ script → ../), like desktopPackageFlags; a project with no extensions gets [].
+- `desktopIncludeArgs(entryUrl: string): Promise<string[]>` — The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:
 - `type DesktopInstallerFormat = indexedAccess` — One installer format (desktop.installers.<os> entries, --format values).
 - `desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: typeOperator, add?: typeOperator): Promise<DesktopInstallerPlan>` — planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).
 - `interface DesktopInstallerPlan` — What a package script builds.
+- `desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>` — Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with. With neither a profile nor config entitlements, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged.
+- `interface DesktopMacosSigning` — What desktop.macos resolves to for one packaging run.
+- `interface DesktopMacosSigningOptions` — Options for desktopMacosSigning.
 - `type DesktopMainThreadFn = Deno.UnsafeFnPointer<any> | Deno.UnsafeCallback<any> | Deno.PointerObject` — A C function void* fn(void* context) that DesktopCapCtx.runOnMainThread calls on the UI thread: a Deno.UnsafeFnPointer, a Deno.UnsafeCallback, or a function pointer.
 - `interface DesktopMsiProbe` — Seams for desktopMsiProblem.
 - `desktopMsiProblem(version: string | undefined, probe?: DesktopMsiProbe): Promise<string | undefined>` — Why the .msi cannot be built here, or undefined when it can: WiX runs on Windows only, the app version must fit an MSI ProductVersion, and wix must be WiX 5 (not just present).
