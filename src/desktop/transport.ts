@@ -82,23 +82,59 @@ export interface DesktopTrustDecision {
 }
 
 /**
- * Decide the desktop world from the runtime-published origin (`DENO_DESKTOP_APP_ORIGIN`) and the
- * configured one (`desktop.app.origin`). Pure, so it is testable without a runtime.
+ * The first denext Deno Desktop runtime that marks what its WebSocket relay forwards
+ * ({@linkcode DESKTOP_RELAY_HEADER}); the memory world needs it or later.
+ */
+export const DESKTOP_RELAY_MARKING_RUNTIME = "2.9.7-denext.7";
+
+/**
+ * Whether the running desktop runtime marks relayed requests ({@linkcode DESKTOP_RELAY_HEADER}).
+ * Feature-detected, never version-sniffed: `Deno.desktop.authSession.cancel` shipped in the same
+ * runtime release as the marking ({@linkcode DESKTOP_RELAY_MARKING_RUNTIME}), and every runtime
+ * that has the memory transport since has both. The stock runtime has neither (and no relay).
  *
- * - No published origin → `loopback` (the stock runtime). A configured origin is then not in
- *   effect, which is worth a warning.
+ * @param desktop `Deno.desktop` (default: the running runtime's).
+ * @returns Whether relayed requests carry the mark.
+ */
+export function runtimeMarksRelay(
+  desktop: unknown = (Deno as unknown as { desktop?: unknown }).desktop,
+): boolean {
+  try {
+    const session = (desktop as { authSession?: { cancel?: unknown } } | null | undefined)
+      ?.authSession;
+    return typeof session?.cancel === "function";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide the desktop world from the runtime-published origin (`DENO_DESKTOP_APP_ORIGIN`) and the
+ * configured one (`desktop.app.origin`). Pure given `marksRelay`, so it is testable without a
+ * runtime.
+ *
+ * - No published origin → `loopback` (the stock runtime, which has no relay). A configured origin
+ *   is then not in effect, which is worth a warning.
  * - A published origin that does not parse → `refuse`.
+ * - A published origin from a runtime that does not mark relayed requests (a denext runtime
+ *   older than {@linkcode DESKTOP_RELAY_MARKING_RUNTIME}, however it was supplied:
+ *   `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`, `DENEXT_DESKTOP_RUNTIME_DIR` or an old packaged
+ *   build) → `refuse`: any local process could reach the app through its relay looking like the
+ *   page, so no token is injected and every desktop endpoint is refused.
  * - Otherwise `memory` at the PUBLISHED origin — the one the page really runs at and the one the
  *   runtime's WebSocket relay compares `Origin` against. A different configured origin (a stale
  *   `.deno-desktop/app.json`) is warned about.
  *
  * @param published The `DENO_DESKTOP_APP_ORIGIN` value, if any.
  * @param configured The configured `desktop.app.origin`, if any.
+ * @param marksRelay Whether the runtime marks relayed requests (default: detected from the
+ *   running runtime, {@linkcode runtimeMarksRelay}).
  * @returns The trust decision.
  */
 export function resolveDesktopTrust(
   published: string | undefined,
   configured?: string,
+  marksRelay: boolean = runtimeMarksRelay(),
 ): DesktopTrustDecision {
   if (published === undefined || published === "") {
     return {
@@ -118,6 +154,17 @@ export function resolveDesktopTrust(
       trust: {
         kind: "refuse",
         reason: `${DESKTOP_APP_ORIGIN_ENV} is not a valid app origin (${parsed.error})`,
+      },
+    };
+  }
+  if (!marksRelay) {
+    return {
+      trust: {
+        kind: "refuse",
+        reason: `this Deno Desktop runtime is older than ${DESKTOP_RELAY_MARKING_RUNTIME} (it ` +
+          "does not mark requests from its WebSocket relay, so they can't be told from the " +
+          "page's). Rebuild with the runtime denext pins (unset DENORT_DESKTOP_BIN, " +
+          "LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR), or set DENEXT_DESKTOP_RUNTIME=stock",
       },
     };
   }

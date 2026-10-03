@@ -17,6 +17,19 @@ export const TOKEN_HEADER = "x-denext-desktop-token";
 /** The bridge's RPC endpoint. */
 export const RPC = "/_denext/desktop/rpc";
 
+/**
+ * The slice of `Deno.desktop` that marks a runtime 2.9.7-denext.7 or later (`authSession.cancel`,
+ * shipped with the relay marking): without it a published app origin is refused.
+ */
+export const DENEXT7_DESKTOP = Object.freeze({
+  authSession: Object.freeze({
+    capabilities: () => ({ supported: false }),
+    start: () =>
+      Promise.reject(Object.assign(new Error("not_supported"), { code: "not_supported" })),
+    cancel: () => false,
+  }),
+});
+
 /** The serve call `runDesktop` made. */
 export interface Served {
   opts: { port?: number; hostname?: string; onError: (e: unknown) => Response };

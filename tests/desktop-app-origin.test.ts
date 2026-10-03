@@ -12,10 +12,12 @@ import {
   RESERVED_DESKTOP_SCHEMES,
 } from "../src/desktop/app-origin.ts";
 import {
+  DESKTOP_RELAY_MARKING_RUNTIME,
   isMemoryTransport,
   LOOPBACK_TRUST,
   memoryGate,
   resolveDesktopTrust,
+  runtimeMarksRelay,
 } from "../src/desktop/transport.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -191,20 +193,56 @@ Deno.test("trust: no published origin is the stock loopback world", () => {
 });
 
 Deno.test("trust: a published origin is the memory world at THAT origin", () => {
-  assertEquals(resolveDesktopTrust("t3code://app", "t3code://app"), {
+  assertEquals(resolveDesktopTrust("t3code://app", "t3code://app", true), {
     trust: { kind: "memory", origin: "t3code://app" },
   });
-  assertEquals(resolveDesktopTrust("app://localhost").trust, {
+  assertEquals(resolveDesktopTrust("app://localhost", undefined, true).trust, {
     kind: "memory",
     origin: "app://localhost",
   });
   // A stale package: trust what the page really runs at, and warn.
-  const stale = resolveDesktopTrust("old://app", "t3code://app");
+  const stale = resolveDesktopTrust("old://app", "t3code://app", true);
   assertEquals(stale.trust, { kind: "memory", origin: "old://app" });
   assertStringIncludes(stale.warning!, "stale");
   // Garbage in the env fails closed.
-  const bad = resolveDesktopTrust("http://127.0.0.1:1234");
+  const bad = resolveDesktopTrust("http://127.0.0.1:1234", undefined, true);
   assertEquals(bad.trust.kind, "refuse");
+});
+
+Deno.test("trust: a runtime older than denext.7 (no relay marking) is refused", () => {
+  // However it was supplied (DENORT_DESKTOP_BIN / LAUFEY_DEV_DIR, DENEXT_DESKTOP_RUNTIME_DIR, an
+  // old packaged build): it publishes an origin but doesn't mark relayed requests.
+  const old = resolveDesktopTrust("t3code://app", "t3code://app", false);
+  assertEquals(old.trust.kind, "refuse");
+  const reason = (old.trust as { reason: string }).reason;
+  assertStringIncludes(reason, DESKTOP_RELAY_MARKING_RUNTIME);
+  assertStringIncludes(reason, "DENEXT_DESKTOP_RUNTIME=stock");
+  assertStringIncludes(reason, "DENORT_DESKTOP_BIN");
+  // The stock runtime (no published origin, no relay) is unaffected.
+  assertEquals(resolveDesktopTrust(undefined, undefined, false), { trust: LOOPBACK_TRUST });
+  // Default: detected from the running runtime — plain `deno test` has no Deno.desktop.
+  assertEquals(resolveDesktopTrust("t3code://app").trust.kind, "refuse");
+  assertEquals(resolveDesktopTrust(undefined).trust, LOOPBACK_TRUST);
+});
+
+Deno.test("runtimeMarksRelay: feature-detects authSession.cancel (denext.7+), fails closed", () => {
+  assertEquals(DESKTOP_RELAY_MARKING_RUNTIME, "2.9.7-denext.7");
+  assert(runtimeMarksRelay({ authSession: { cancel: () => false, start() {} } }));
+  // denext.6: authSession without cancel; older: no authSession; stock: no Deno.desktop.
+  assert(!runtimeMarksRelay({ authSession: { start() {}, capabilities() {} } }));
+  assert(!runtimeMarksRelay({ shortcuts: {} }));
+  assert(!runtimeMarksRelay(undefined));
+  assert(!runtimeMarksRelay(null));
+  assert(!runtimeMarksRelay({ authSession: { cancel: true } }));
+  // A throwing getter fails closed.
+  const hostile = Object.defineProperty({}, "authSession", {
+    get() {
+      throw new Error("boom");
+    },
+  });
+  assert(!runtimeMarksRelay(hostile));
+  // Default: the running runtime (none under `deno test`).
+  assert(!runtimeMarksRelay());
 });
 
 Deno.test("isMemoryTransport: the serve info is required; the URL alone is not proof", () => {

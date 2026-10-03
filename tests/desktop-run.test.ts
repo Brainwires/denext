@@ -6,7 +6,15 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { injectedGlobal } from "./helpers/desktop-bridge-server.ts";
-import { boot, exportDir, get, pageRpc, RPC, TOKEN_HEADER } from "./helpers/desktop-run-boot.ts";
+import {
+  boot,
+  DENEXT7_DESKTOP,
+  exportDir,
+  get,
+  pageRpc,
+  RPC,
+  TOKEN_HEADER,
+} from "./helpers/desktop-run-boot.ts";
 
 Deno.test("runDesktop (stock runtime): serves the export on loopback; only a loopback document gets the token", async () => {
   const outDir = await exportDir();
@@ -86,6 +94,7 @@ Deno.test("runDesktop (pinned runtime): the memory world injects the token only 
   try {
     const { runtime, served } = await boot({ outDir, port: 1 }, {
       env: { DENO_DESKTOP_APP_ORIGIN: "myapp://app" },
+      deno: { desktop: DENEXT7_DESKTOP },
     });
     assertEquals(runtime.trust.kind, "memory");
     const memory = await served.handler(get("http+memory://app/"), {
@@ -97,6 +106,30 @@ Deno.test("runDesktop (pinned runtime): the memory world injects the token only 
       remoteAddr: { transport: "tcp" },
     });
     assertEquals(injectedGlobal(await tcp.text())?.token, undefined);
+  } finally {
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+Deno.test("runDesktop (pinned runtime): a runtime older than denext.7 is refused, the stock one is not", async () => {
+  const outDir = await exportDir();
+  try {
+    // denext.6: an app origin and authSession, but no cancel() — and no relay marking.
+    const { runtime, served, errors } = await boot({ outDir, port: 1 }, {
+      env: { DENO_DESKTOP_APP_ORIGIN: "myapp://app" },
+      deno: { desktop: { authSession: { start() {}, capabilities: () => ({}) } } },
+    });
+    assertEquals(runtime.trust.kind, "refuse");
+    assert(errors.some((e) => e.includes("older than 2.9.7-denext.7")));
+    assert(errors.some((e) => e.includes("every desktop endpoint is refused")));
+    // No token, even for the page's own document over the memory transport.
+    const res = await served.handler(get("http+memory://app/"), {
+      remoteAddr: { transport: "memory" },
+    });
+    assertEquals(injectedGlobal(await res.text())?.token, undefined);
+    // The stock runtime (no published origin, no relay) keeps its loopback world.
+    const stock = await boot({ outDir, port: 1 }, { deno: { desktop: undefined } });
+    assertEquals(stock.runtime.trust.kind, "loopback");
   } finally {
     await Deno.remove(outDir, { recursive: true });
   }
