@@ -116,6 +116,7 @@
       "tags": [
         "compat",
         "desktop",
+        "mobile",
         "app-router"
       ],
       "hasReadme": true,
