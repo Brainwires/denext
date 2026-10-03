@@ -38,6 +38,7 @@ ignoreDependencies = [
   "graphql-yoga", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql-yoga@^5.10.0
   "@pothos/core", # examples/graphql/deno.json: npm:@pothos/core@^4.6.0 (the recommended schema builder)
   "zod", # examples/openapi/deno.json: npm:zod@^4 (defineApi schemas → OpenAPI via Standard JSON Schema)
+  "@node-rs/crc32", # examples/desktop-kitchen-sink/deno.json: npm:@node-rs/crc32, the Node-API addon its extension loads
   "@clerk/nextjs", # examples/clerk/deno.json + package.json: npm:@clerk/nextjs (Clerk's Next.js SDK, run unchanged)
   "@clerk/electron", # examples/clerk/deno.json + package.json: @clerk/electron/passkeys in the desktop preload
   "react-router", # examples/react-router/app/*: bare RR runtime import, mapped to denext/remix in that example's deno.json

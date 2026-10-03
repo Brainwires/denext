@@ -81,6 +81,8 @@ export interface KitchenSetup {
   readonly pid: number;
   /** `desktop.capabilities.passkeys.rpIds`: the manual passkey check defaults to the first. */
   readonly passkeyRpIds: readonly string[];
+  /** `desktop.app.origin` (e.g. `kitchensink://app`). */
+  readonly appOrigin: string;
 }
 
 /** One check's outcome. */
@@ -222,8 +224,8 @@ const runtimeChecks: Check[] = [
     );
     return setup.target;
   }],
-  ["app origin: desktop.app.origin is the page's origin", () => {
-    eq(location.origin, "kitchensink://app", "location.origin");
+  ["app origin: desktop.app.origin is the page's origin", ({ setup }) => {
+    eq(location.origin, setup.appOrigin, "location.origin");
     return location.origin;
   }],
   ["bridge events: the runtime pushes an event to the page", async () => {
@@ -992,28 +994,31 @@ const securityChecks: Check[] = [
     eq(envelopeCode(envelope), want, "a pinned but malformed RP");
     return `${want} (${(envelope as { error?: { message?: string } }).error?.message ?? ""})`;
   }],
-  ["Clerk bridge: token cache in the keychain, redirect URL, OAuth URL check", async () => {
-    const g = globalThis as ClerkGlobals;
-    const bridge = g.__clerk_internal_electron;
-    assert(bridge, "the preload did not install window.__clerk_internal_electron");
-    const value = `jwt-${crypto.randomUUID()}`;
-    await bridge.tokenCache.saveToken("kitchen-probe", value);
-    try {
-      eq(await bridge.tokenCache.getToken("kitchen-probe"), value, "getToken");
-      eq(
-        await raw("secureStore").get({ key: "clerk.kitchen-probe" }),
-        value,
-        "the keychain entry",
-      );
-    } finally {
-      await bridge.tokenCache.clearToken("kitchen-probe");
-    }
-    eq(await bridge.tokenCache.getToken("kitchen-probe"), null, "getToken after clearToken");
-    eq(await bridge.oauthTransport.getRedirectUrl(), "kitchensink://app/", "getRedirectUrl()");
-    const refused = await rejection(bridge.oauthTransport.open("http://example.com/oauth"));
-    assert(/unsupported OAuth URL protocol/.test(refused), `open(http:) → ${refused}`);
-    return "keychain round trip; kitchensink://app/; http: refused";
-  }],
+  [
+    "Clerk bridge: token cache in the keychain, redirect URL, OAuth URL check",
+    async ({ setup }) => {
+      const g = globalThis as ClerkGlobals;
+      const bridge = g.__clerk_internal_electron;
+      assert(bridge, "the preload did not install window.__clerk_internal_electron");
+      const value = `jwt-${crypto.randomUUID()}`;
+      await bridge.tokenCache.saveToken("kitchen-probe", value);
+      try {
+        eq(await bridge.tokenCache.getToken("kitchen-probe"), value, "getToken");
+        eq(
+          await raw("secureStore").get({ key: "clerk.kitchen-probe" }),
+          value,
+          "the keychain entry",
+        );
+      } finally {
+        await bridge.tokenCache.clearToken("kitchen-probe");
+      }
+      eq(await bridge.tokenCache.getToken("kitchen-probe"), null, "getToken after clearToken");
+      eq(await bridge.oauthTransport.getRedirectUrl(), `${setup.appOrigin}/`, "getRedirectUrl()");
+      const refused = await rejection(bridge.oauthTransport.open("http://example.com/oauth"));
+      assert(/unsupported OAuth URL protocol/.test(refused), `open(http:) → ${refused}`);
+      return `keychain round trip; ${setup.appOrigin}/; http: refused`;
+    },
+  ],
   [
     "Clerk passkeys bridge: invalid_rp turns native passkeys off for the launch",
     async ({ setup }) => {

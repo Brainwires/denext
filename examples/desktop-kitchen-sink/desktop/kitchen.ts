@@ -178,6 +178,9 @@ export default defineDesktopExtension({
           pid: Deno.pid,
           // The RPs the passkeys capability pins (the manual passkey check offers them).
           passkeyRpIds: config.desktop.capabilities.passkeys.rpIds,
+          // `desktop.app.origin`: the checks compare the page against the configured origin, so a
+          // renamed copy of the kitchen sink (another identifier and scheme) passes too.
+          appOrigin: config.desktop.app.origin ?? "",
         };
       },
     },
