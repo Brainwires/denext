@@ -198,3 +198,18 @@ Deno.test("release: a stable version folds its rc sections into one grouped [X.Y
   assertStringIncludes(out, "- old.");
   assertStringIncludes(out, "[2.0.0]: https://jsr.io/@denext/denext@2.0.0\n[1.4.0]:");
 });
+
+Deno.test("withLinkRef: the [Unreleased] compare link follows the release just cut", () => {
+  const text = "# Changelog\n\n## [Unreleased]\n\n- x\n\n" +
+    "[Unreleased]: https://github.com/Brainwires/denext/compare/v3.0.2...development\n" +
+    "[3.0.2]: https://jsr.io/@denext/denext@3.0.2\n";
+  const out = withLinkRef(text, "3.1.0");
+  assertStringIncludes(
+    out,
+    "[Unreleased]: https://github.com/Brainwires/denext/compare/v3.1.0...development\n",
+  );
+  assertStringIncludes(out, "[3.1.0]: https://jsr.io/@denext/denext@3.1.0\n[3.0.2]:");
+  assertEquals(out.includes("v3.0.2...development"), false);
+  // Idempotent once cut.
+  assertEquals(withLinkRef(out, "3.1.0"), out);
+});

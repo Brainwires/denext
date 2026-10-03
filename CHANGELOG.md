@@ -392,6 +392,8 @@ and this project adheres to
 
 ### Fixed
 
+- **CHANGELOG's `[Unreleased]` compare link** started at v2.4.3; it starts at the last release
+  (v3.0.2), and `deno task release` now moves it to each new tag.
 - **A Windows symlink the archive extractor may not create says how to allow it**: turn
   Developer Mode on (Settings > System > For developers, `start ms-settings:developers`) or rerun
   from an Administrator terminal.
@@ -10328,6 +10330,7 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
+[Unreleased]: https://github.com/Brainwires/denext/compare/v3.0.2...development
 [3.0.2]: https://jsr.io/@denext/denext@3.0.2
 [3.0.1]: https://jsr.io/@denext/denext@3.0.1
 [3.0.0]: https://jsr.io/@denext/denext@3.0.0
@@ -10393,7 +10396,6 @@ reconciler, the router, the middleware runner, **and** the linter together.
 [0.1.2]: https://jsr.io/@denext/denext@0.1.2
 [0.1.1]: https://jsr.io/@denext/denext@0.1.1
 [0.1.0]: https://jsr.io/@denext/denext@0.1.0
-[Unreleased]: https://github.com/Brainwires/denext/compare/v2.4.3...development
 [1.4.0]: https://jsr.io/@denext/denext@1.4.0
 [1.3.0]: https://jsr.io/@denext/denext@1.3.0
 [1.2.0]: https://jsr.io/@denext/denext@1.2.0

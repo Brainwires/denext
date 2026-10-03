@@ -302,14 +302,21 @@ export async function relinkDocsPages(
   return changed.sort();
 }
 
-/** Append the `[<version>]: https://jsr.io/…` link-reference definition if absent. */
+/**
+ * Add the `[<version>]: https://jsr.io/…` link-reference definition if absent, and point the
+ * `[Unreleased]: …/compare/v<x>...<branch>` link at the new tag (it compares from the LAST release).
+ */
 export function withLinkRef(text: string, version: string): string {
+  const out = text.replace(
+    /^\[Unreleased\]: (\S+\/compare\/)v\S+?\.\.\.(\S+)$/m,
+    `[Unreleased]: $1v${version}...$2`,
+  );
   const ref = `[${version}]: https://jsr.io/@denext/denext@${version}`;
-  if (text.includes(ref)) return text;
-  const idx = text.search(/^\[[0-9][^\]]*\]: https:/m);
+  if (out.includes(ref)) return out;
+  const idx = out.search(/^\[[0-9][^\]]*\]: https:/m);
   return idx === -1
-    ? `${text.trimEnd()}\n\n${ref}\n`
-    : text.slice(0, idx) + ref + "\n" + text.slice(idx);
+    ? `${out.trimEnd()}\n\n${ref}\n`
+    : out.slice(0, idx) + ref + "\n" + out.slice(idx);
 }
 
 /** The `- ` entries under [Unreleased] (up to the next release header). */
