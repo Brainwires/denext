@@ -128,6 +128,48 @@ Deno.test("interactive: real interactivity beside a code sample still forces hyd
   assertEquals(need, true, "the real onClick outside the string still counts");
 });
 
+// Modelled on site/app/docs/desktop/page.tsx: prose with an odd number of apostrophes
+// used to open a phantom "string" in the stripper, flipping its literal/code state for the
+// rest of the file, so the hook names in the later code sample read as real code.
+const DOCS_PAGE_WITH_PROSE = `import { Code } from "./ui.tsx";
+export default function Page() {
+  return (
+    <article>
+      <p>
+        It resolves with the pointer's return value, and a wrong pointer crashes the app.
+      </p>
+      <Code lang="tsx">
+        {\`"use client";
+import { useEffect, useState } from "denext";
+const c = (s: string) => new TextEncoder().encode(\\\`\\\${s}\\\\0\\\`);
+export function SchemeCheck() {
+  // advisory: which app owns the scheme's links right now
+  const [owner, setOwner] = useState<string>();
+  useEffect(() => void check().then(setOwner), []);
+  return <button type="button" onClick={() => claim("myapp")}>Open myapp: links here</button>;
+}\`}
+      </Code>
+      <p>That is the whole shell, and it ships no JavaScript.</p>
+    </article>
+  );
+}
+`;
+
+Deno.test("static: apostrophes in JSX prose before a code sample keep the page static", async () => {
+  const need = await routeNeedsHydration(
+    route("page.tsx"),
+    withSources({ "page.tsx": DOCS_PAGE_WITH_PROSE }),
+  );
+  assertEquals(need, false, "useState/onClick only appear inside the sample's template literal");
+});
+
+Deno.test("interactive: a real hook after apostrophe-laden prose is still detected", async () => {
+  const src = DOCS_PAGE_WITH_PROSE +
+    `\nexport function Counter() {\n  const [n] = useState(0);\n  return <p>It's {n}</p>;\n}\n`;
+  const need = await routeNeedsHydration(route("page.tsx"), withSources({ "page.tsx": src }));
+  assertEquals(need, true, "the useState after the prose and the sample is real code");
+});
+
 Deno.test("static: interactivity tokens inside a regex literal don't force hydration", async () => {
   const need = await routeNeedsHydration(
     route("page.tsx"),

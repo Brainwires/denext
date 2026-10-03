@@ -392,6 +392,12 @@ and this project adheres to
 
 ### Fixed
 
+- **An apostrophe in JSX text no longer misclassifies a route.** The source scan behind the
+  zero-JS route check and the server-only leak check read `<p>It's ready</p>` as opening a
+  string, flipping its literal/code state for the rest of the file: a hook or `onClick=` named
+  in a later code sample made a server page ship a client bundle, and a real hook could be
+  missed. The scan now tracks JSX text vs `{…}` expressions, template `${…}` nesting, regex
+  literals and comments (and reads a `.ts` module's `<T>x` as a type assertion, not JSX).
 - **CHANGELOG's `[Unreleased]` compare link** started at v2.4.3; it starts at the last release
   (v3.0.2), and `deno task release` now moves it to each new tag.
 - **A Windows symlink the archive extractor may not create says how to allow it**: turn
