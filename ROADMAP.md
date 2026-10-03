@@ -113,6 +113,10 @@ Each is documented as a manual recipe today (the
 
 ## `denext ui` and DevTools
 
+- **Boot diagnosis, the last gaps:** follow import-map-resolved bare specifiers in the walk (so
+  their link edges are checked too), and flag a name two `export *` sources both provide (an
+  ambiguous export, a SyntaxError in browsers).
+
 - **Agent control of `denext ui`:** an MCP front end over the UI's operations (every panel
   already answers a JSON twin).
 - **Export the UI's form components** (`FormField`, `Control`, `Field`, `OpButton`, `Widget`)
