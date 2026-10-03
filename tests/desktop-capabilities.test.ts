@@ -385,3 +385,20 @@ Deno.test("desktopNpmArgs: a project with node_modules embeds only the npm packa
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("desktopNpmArgs: a package.json without node_modules resolves npm from the cache", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-desktop-npm-" });
+  try {
+    // A fresh clone of an app with a package.json, before `deno install`: Deno's manual
+    // node_modules mode would fail the type check on npm:@types/node.
+    await Deno.writeTextFile(join(dir, "package.json"), '{"private":true}');
+    assertEquals(await desktopNpmArgsFor(dir), ["--node-modules-dir=none", "--exclude-unused-npm"]);
+    // A directory named package.json is not one.
+    const odd = await Deno.makeTempDir({ prefix: "denext-desktop-npm-" });
+    await Deno.mkdir(join(odd, "package.json"));
+    assertEquals(await desktopNpmArgsFor(odd), []);
+    await Deno.remove(odd, { recursive: true });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

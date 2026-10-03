@@ -18,7 +18,7 @@
 // Open Source Maintenance Fee EULA); a format whose tool is missing is skipped with a warning when
 // it is a default, and fails the run when it was asked for (`--format`, `desktop.installers`).
 
-import { dirname, fromFileUrl, join, relative, SEPARATOR } from "@std/path";
+import { basename, dirname, fromFileUrl, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import { gzipBytes } from "./precompress.ts";
@@ -455,7 +455,7 @@ export async function walkBundle(root: string): Promise<BundleEntry[]> {
         out.push({ path: rel, kind: "dir", mode: 0o755, size: 0 });
         await visit(abs);
       } else {
-        const head = st.mode === null ? await fileHead(abs) : new Uint8Array();
+        const head = posixModes(st.mode) ? new Uint8Array() : await fileHead(abs);
         out.push({ path: rel, kind: "file", mode: bundleFileMode(st.mode, head), size: st.size });
       }
     }
@@ -472,19 +472,30 @@ async function fileHead(path: string): Promise<Uint8Array> {
   return buf.subarray(0, n ?? 0);
 }
 
+/** Whether the platform's file mode carries real POSIX permission bits (not on Windows). */
+function posixModes(mode: number | null, os: string = Deno.build.os): mode is number {
+  return mode !== null && os !== "windows";
+}
+
 /**
  * The POSIX mode a bundle file is packaged with: `0o755` when it is executable, else `0o644`.
- * Where the platform reports a mode, its executable bits decide. Where it reports none (Windows,
- * packaging a Linux bundle cross-OS), the file's content does: an ELF image (the launcher, its
- * shared libraries) or a `#!` script is executable — else every file of a Windows-built `.deb`
- * installs without its executable bit and the app cannot start.
+ * Where the platform keeps POSIX permissions, its executable bits decide. On Windows (packaging a
+ * Linux bundle cross-OS) they mean nothing — Deno reports `0o666` / `0o444` — so the file's
+ * content does: an ELF image (the launcher, its shared libraries) or a `#!` script is executable.
+ * Else every file of a Windows-built `.deb` / `.tar.gz` installs without its executable bit and
+ * the app cannot start.
  *
- * @param mode The platform's mode (`Deno.FileInfo.mode`), `null` where it reports none.
- * @param head The file's first bytes (read only when `mode` is `null`).
+ * @param mode The platform's mode (`Deno.FileInfo.mode`).
+ * @param head The file's first bytes (read where the mode does not decide).
+ * @param os The host OS (default `Deno.build.os`).
  * @returns `0o755` or `0o644`.
  */
-export function bundleFileMode(mode: number | null, head: Uint8Array): number {
-  const exec = mode !== null
+export function bundleFileMode(
+  mode: number | null,
+  head: Uint8Array,
+  os: string = Deno.build.os,
+): number {
+  const exec = posixModes(mode, os)
     ? (mode & 0o111) !== 0
     : isElf(head) || (head[0] === 0x23 && head[1] === 0x21);
   return exec ? 0o755 : 0o644;
@@ -1027,6 +1038,35 @@ export async function buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<stri
   } finally {
     await Deno.remove(top, { recursive: true }).catch(() => {});
   }
+  return o.out;
+}
+
+/** What {@linkcode buildDesktopTarball} archives. */
+export interface BuildDesktopTarballOptions {
+  /** The finished bundle directory; the archive holds it as its top-level directory. */
+  readonly bundleDir: string;
+  /** The `.tar.gz` to write. */
+  readonly out: string;
+}
+
+/**
+ * The `.tar.gz` of a finished Linux bundle, written here (ustar + gzip) rather than by the host's
+ * `tar`, so a bundle packaged on Windows keeps its executables' mode bits (see
+ * {@linkcode bundleFileMode}) and the archive is the same from every host.
+ *
+ * @param o The bundle directory and the archive path.
+ * @returns The archive path.
+ */
+export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promise<string> {
+  const top = basename(o.bundleDir);
+  const entries: BundleEntry[] = [
+    { path: top, kind: "dir", mode: 0o755, size: 0 },
+    ...(await walkBundle(o.bundleDir)).map((e) => ({ ...e, path: `${top}/${e.path}` })),
+  ];
+  await Deno.writeFile(
+    o.out,
+    await gzipBytes(await tarEntries(dirname(o.bundleDir), entries, buildTime())),
+  );
   return o.out;
 }
 

@@ -548,17 +548,19 @@ export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
  * packages live there): resolve npm packages from Deno's cache and embed only those the desktop
  * entry's module graph reaches. Without them `deno desktop` — a compile — embeds the WHOLE
  * `node_modules` (hundreds of MB for `next` and its peers) that the window, serving a static
- * export, never loads. A project without one gets `[]`.
+ * export, never loads. A project with a `package.json` but no `node_modules` yet (a fresh clone
+ * before `deno install`) gets them too: the `package.json` puts Deno in manual `node_modules`
+ * mode, where the type check fails on `npm:@types/node` ("Could not find a matching package … in
+ * the node_modules directory"); from the cache it resolves. A project with neither gets `[]`.
  *
  * @param projectDir The project directory.
  * @returns `["--node-modules-dir=none", "--exclude-unused-npm"]`, or `[]`.
  */
 export async function desktopNpmArgsFor(projectDir: string): Promise<string[]> {
-  const local = await Deno.stat(join(projectDir, "node_modules")).then(
-    (s) => s.isDirectory,
-    () => false,
-  );
-  return local ? ["--node-modules-dir=none", "--exclude-unused-npm"] : [];
+  const has = (name: string, dir: boolean) =>
+    Deno.stat(join(projectDir, name)).then((s) => dir ? s.isDirectory : s.isFile, () => false);
+  const npm = await has("node_modules", true) || await has("package.json", false);
+  return npm ? ["--node-modules-dir=none", "--exclude-unused-npm"] : [];
 }
 
 /**

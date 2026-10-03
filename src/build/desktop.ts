@@ -128,11 +128,13 @@ export { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
 export { desktopRuntimeEnv } from "./desktop-runtime.ts";
 
 // The installers the scaffolded package scripts build from a finished bundle (`desktop.installers`,
-// `--format`): the per-OS format plan, the package metadata, and the .msi / .deb / .rpm builders.
+// `--format`): the per-OS format plan, the package metadata, and the .msi / .deb / .rpm / .tar.gz builders.
 export {
   buildDesktopDeb,
   buildDesktopMsi,
   buildDesktopRpm,
+  buildDesktopTarball,
+  type BuildDesktopTarballOptions,
   type BuildLinuxPackageOptions,
   type BuildMsiOptions,
   DEFAULT_DESKTOP_INSTALLERS,

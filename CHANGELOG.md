@@ -405,14 +405,22 @@ and this project adheres to
 
 ### Fixed
 
-- **A `.deb` cross-built on Windows installs and runs.** `denext desktop package --target-os linux`
-  on Windows failed at the `.deb` (Windows refused the `/usr/bin` link it could not resolve from
-  the working directory), and Windows reports no POSIX mode, so every file would have been
-  packaged `0644` and the launcher could not start. The links now name their kind, and where the
-  platform reports no mode an ELF image or a `#!` script is packaged executable. Desktop CI now
-  cross-packages on every host (Windows from Linux with webview and CEF, and from macOS; Linux
-  from macOS and Windows), checks each binary's PE / ELF machine and the archives, and launches
-  the Windows-built Linux app and the Linux-built Windows app on their own OS.
+- **A Linux package cross-built on Windows installs and runs.** `denext desktop package
+  --target-os linux` on Windows failed at the `.deb` (Windows refused the `/usr/bin` link it could
+  not resolve from the working directory), and Windows has no POSIX mode bits, so the `.deb` and
+  the host `tar`'s `.tar.gz` packaged the launcher `0644` and the app could not start. The links
+  now name their kind; on Windows an ELF image or a `#!` script is packaged executable; and the
+  `.tar.gz` is written by denext (`buildDesktopTarball` from `denext/desktop`, which the
+  scaffolded `scripts/package-linux.ts` now calls — `denext desktop package --regenerate-scripts`
+  updates an existing one). Desktop CI now cross-packages on every host (Windows from Linux with
+  webview and CEF, and from macOS; Linux from macOS and Windows), checks each binary's PE / ELF
+  machine and the archives, and launches the Windows-built Linux app and the Linux-built Windows
+  app on their own OS.
+- **`denext desktop run` / `dev` / `package` type-check a project with a `package.json` before
+  `deno install`.** Its `package.json` puts Deno in manual `node_modules` mode, so the build failed
+  with "Could not find a matching package for 'npm:@types/node' in the node_modules directory"
+  (`examples/native` on a fresh clone). Such a project now builds with `--node-modules-dir=none
+  --exclude-unused-npm`, as one with a `node_modules` already did.
 - **An apostrophe in JSX text no longer misclassifies a route.** The source scan behind the
   zero-JS route check and the server-only leak check read `<p>It's ready</p>` as opening a
   string, flipping its literal/code state for the rest of the file: a hook or `onClick=` named

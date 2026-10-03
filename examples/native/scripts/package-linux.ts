@@ -45,6 +45,7 @@ import {
   buildDesktopBundle,
   buildDesktopDeb,
   buildDesktopRpm,
+  buildDesktopTarball,
   desktopPackageArches,
   type DesktopPackageMeta,
   desktopRequireTool,
@@ -73,15 +74,14 @@ async function buildBundle(name: string, arch: "x86_64" | "arm64"): Promise<stri
   });
 }
 
-/** tar.gz a bundle directory for distribution. */
+/** tar.gz a bundle directory for distribution (written by denext: modes kept on any host). */
 async function tarball(
   name: string,
   arch: "x86_64" | "arm64",
   dir: string,
 ): Promise<string> {
   const tgz = `dist/${name}-${LABELS[arch]}-linux.tar.gz`;
-  await run(["tar", "czf", tgz, "-C", "dist", dir.replace(/^dist\//, "")]);
-  return tgz;
+  return await buildDesktopTarball({ bundleDir: dir, out: tgz });
 }
 
 /** Build an AppImage for a bundle with appimagetool; returns its path. */

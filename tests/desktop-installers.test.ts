@@ -13,6 +13,7 @@ import { join, toFileUrl } from "@std/path";
 import {
   arArchive,
   buildDesktopDeb,
+  buildDesktopTarball,
   bundleFileMode,
   debControl,
   debianPackageName,
@@ -761,16 +762,35 @@ Deno.test('script app name: DENEXT_APP_NAME, else deno.json desktop.app.name, el
   }
 });
 
-Deno.test("bundleFileMode: the platform's executable bits decide; without them, the content", () => {
+Deno.test("bundleFileMode: POSIX executable bits decide; on Windows, the content", () => {
   const elf = new Uint8Array([0x7f, 0x45, 0x4c, 0x46]);
   const script = new TextEncoder().encode("#!/b");
   const data = new TextEncoder().encode("{}");
-  assertEquals(bundleFileMode(0o100755, data), 0o755);
-  assertEquals(bundleFileMode(0o100644, elf), 0o644);
-  assertEquals(bundleFileMode(0o100700, data), 0o755);
-  // No mode (Windows packaging a Linux bundle): an ELF image or a script is executable.
-  assertEquals(bundleFileMode(null, elf), 0o755);
-  assertEquals(bundleFileMode(null, script), 0o755);
-  assertEquals(bundleFileMode(null, data), 0o644);
-  assertEquals(bundleFileMode(null, new Uint8Array()), 0o644);
+  assertEquals(bundleFileMode(0o100755, data, "linux"), 0o755);
+  assertEquals(bundleFileMode(0o100644, elf, "darwin"), 0o644);
+  assertEquals(bundleFileMode(0o100700, data, "linux"), 0o755);
+  // Windows (a Linux bundle packaged cross-OS): Deno's 0o666 means nothing; an ELF image or a
+  // script is executable, anything else is not.
+  assertEquals(bundleFileMode(0o100666, elf, "windows"), 0o755);
+  assertEquals(bundleFileMode(0o100666, script, "windows"), 0o755);
+  assertEquals(bundleFileMode(0o100666, data, "windows"), 0o644);
+  assertEquals(bundleFileMode(null, elf, "linux"), 0o755);
+  assertEquals(bundleFileMode(null, new Uint8Array(), "windows"), 0o644);
+});
+
+Deno.test("buildDesktopTarball: the bundle as the top-level directory, modes kept", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "My-App-x64");
+    await fakeLinuxBundle(bundle);
+    const out = await buildDesktopTarball({ bundleDir: bundle, out: join(dir, "app.tar.gz") });
+    const entries = await readTarGz(await Deno.readFile(out));
+    // The launcher is a `#!` script here: executable on every host, Windows included.
+    assertEquals(entries.get("./My-App-x64/My-App-x64")?.slice(0, 2), ["0", 0o755]);
+    assertEquals(entries.get("./My-App-x64/laufey-launch.json")?.slice(0, 2), ["0", 0o644]);
+    assertEquals(entries.get("./My-App-x64/sub/data.txt")?.[2].length, 700);
+    assertEquals(entries.get("./My-App-x64/")?.[0], "5");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
