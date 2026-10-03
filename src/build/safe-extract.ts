@@ -110,14 +110,26 @@ async function createLink(target: string, dest: string): Promise<void> {
   try {
     await Deno.symlink(native, dest, { type: info?.isDirectory ? "dir" : "file" });
   } catch (err) {
-    // ERROR_PRIVILEGE_NOT_HELD: a standard user without Developer Mode cannot create symlinks.
-    if (!/os error 1314\b/.test(String(err))) throw err;
-    throw new Error(
-      `cannot create the symlink ${dest}: Windows allows symlinks only with Developer Mode on ` +
-        "or from an elevated process",
-      { cause: err },
-    );
+    throw windowsSymlinkError(err, dest);
   }
+}
+
+/**
+ * The error for a failed Windows symlink: ERROR_PRIVILEGE_NOT_HELD (os error 1314, a standard user
+ * without Developer Mode) becomes one that says how to allow it; anything else is returned as is.
+ *
+ * @param err What `Deno.symlink` threw.
+ * @param dest The link being created.
+ * @returns The error to throw.
+ */
+export function windowsSymlinkError(err: unknown, dest: string): unknown {
+  if (!/os error 1314\b/.test(String(err))) return err;
+  return new Error(
+    `cannot create the symlink ${dest}: Windows allows symlinks only with Developer Mode on or ` +
+      "from an elevated process. Turn Developer Mode on in Settings > System > For developers " +
+      "(`start ms-settings:developers`), or rerun from an Administrator terminal.",
+    { cause: err },
+  );
 }
 
 /** Bookkeeping shared by the tar and zip walkers. */

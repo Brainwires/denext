@@ -392,6 +392,9 @@ and this project adheres to
 
 ### Fixed
 
+- **A Windows symlink the archive extractor may not create says how to allow it**: turn
+  Developer Mode on (Settings > System > For developers, `start ms-settings:developers`) or rerun
+  from an Administrator terminal.
 - **The build-lock Blocking line names the lock file and the way out**:
   `Blocking waiting for file lock on build directory .denext (<path>) — held by another denext
   process; Ctrl-C to abort`. A filesystem that answers `ENOSYS` or `EINVAL` to a lock now counts

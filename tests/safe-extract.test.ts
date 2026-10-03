@@ -3,9 +3,14 @@
 // absolute paths, backslashes, escaping symlinks (lexically and through another link), writes
 // through a link, hard links, devices, FIFOs, duplicates, truncation and the size cap.
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { dirname, join } from "@std/path";
-import { extractArchive, safeEntryPath, UnsafeArchiveError } from "../src/build/safe-extract.ts";
+import {
+  extractArchive,
+  safeEntryPath,
+  UnsafeArchiveError,
+  windowsSymlinkError,
+} from "../src/build/safe-extract.ts";
 import { sha256Hex, type TarEntry, tarGz, zip, type ZipEntry } from "./_archive-fixtures.ts";
 
 const posix = Deno.build.os !== "windows";
@@ -292,4 +297,18 @@ Deno.test("extractArchive(zip) refuses a file that isn't a zip", async () => {
   } finally {
     await Deno.remove(base, { recursive: true });
   }
+});
+
+Deno.test("windowsSymlinkError: a missing symlink privilege says how to allow it", () => {
+  const denied = new Deno.errors.PermissionDenied(
+    "A required privilege is not held by the client. (os error 1314)",
+  );
+  const err = windowsSymlinkError(denied, "C:\\cache\\link") as Error;
+  assertStringIncludes(err.message, "cannot create the symlink C:\\cache\\link");
+  assertStringIncludes(err.message, "Settings > System > For developers");
+  assertStringIncludes(err.message, "Administrator terminal");
+  assertEquals(err.cause, denied);
+  // Any other failure is passed through untouched.
+  const other = new Error("disk full (os error 112)");
+  assertEquals(windowsSymlinkError(other, "x"), other);
 });
