@@ -459,6 +459,18 @@ and this project adheres to
   `import.meta.resolve()` script modules, and static edges past the cap, up to 2000 modules,
   with progress in the Console. When the dev server orders more than 3 reloads in 30 s, the
   Console says the page is in a reload loop.
+- **The unbundled dev npm prebundle honours `package.json` `browser` fields**, as esbuild does
+  (a string replaces the main entry, the object form remaps files and bare specifiers, `false` is
+  an empty module), so a package such as jszip resolves to its browser build instead of its Node
+  build, whose `events` / `stream` imports failed every `/_denext/@npm/*` module.
+- **Unbundled dev crawls the app's graph before the npm bundle builds, so a large app does not
+  reload in a loop.** The first build holds every package the page imports, and a rebuild under
+  a live page waits 400 ms to batch new packages and reloads once (T3 Code: one load instead of
+  a reload every 5–20 s).
+- **One npm package that fails to bundle in dev fails only its own module.** The failing
+  specifiers are found by bisection, the rest bundle together as before, and each failing one is
+  served as a module that logs the package and esbuild's errors and throws, so only its importers
+  fail instead of every `/_denext/@npm/*` module answering 500.
 - **A desktop notification permission request settles when the OS never answers.** The
   `notifications` capability's prompting `permission` request (behind `requestPermission("notifications")`
   and `requestPushPermission()` in a Deno Desktop window) waited forever when macOS never answered
