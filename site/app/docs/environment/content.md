@@ -212,6 +212,7 @@ ignored with one warning at boot rather than failing it (see
 | `DENO_BIN`, `TAILWIND_BIN`  | `build`, `dev`            | Path to the Deno binary the bundler shells out to, and to a local Tailwind standalone binary.                                                                                                                                  |
 | `DENEXT_TAILWIND_VERSION`   | `build`, `dev`            | The Tailwind standalone release to download when no binary is given.                                                                                                                                                           |
 | `DENEXT_OTA_SIGNING_KEY`    | `export`, `ota manifest`  | The PEM contents of the OTA signing key (a CI secret): `ota manifest` without `--sign`, and `export` with `spa.ota`, sign with it and stamp a `sequence`. See [Over-the-air UI updates](/docs/mobile#over-the-air-ui-updates). |
+| `DENEXT_LOCK_TIMEOUT`       | every locking verb        | Seconds to wait for a [build lock](/docs/cli#build-locks) another denext process holds before failing (unset: wait until it is free).                                                                                          |
 
 Development and diagnostics — all opt-in, none read in production paths:
 

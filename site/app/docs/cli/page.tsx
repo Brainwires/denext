@@ -153,7 +153,7 @@ export default function Cli() {
       </p>
       <Code lang="sh">
         {`$ denext build   # while another \`denext build\` runs here
-    Blocking waiting for file lock on build directory .denext`}
+    Blocking waiting for file lock on build directory .denext (/app/.denext/.denext-lock) — held by another denext process; Ctrl-C to abort`}
       </Code>
       <p>
         The locks are real advisory OS locks (<code>flock</code> on macOS/Linux,{" "}
@@ -240,6 +240,13 @@ export default function Cli() {
         directories, then the runtime cache (its mutate lock before its download lock) — so two
         invocations can never each hold what the other waits for. A plugin verb declares its locks
         the same way, with the <code>locks</code> field of its <code>CommandSpec</code>.
+      </p>
+      <p>
+        A wait has no limit unless <code>DENEXT_LOCK_TIMEOUT=&lt;seconds&gt;</code>{" "}
+        is set: then the command fails once that long has passed, naming the lock file (useful in
+        CI). A filesystem that cannot lock at all (some network mounts) proceeds unlocked with one
+        warning, as Cargo does; so does a shared lock — <code>doctor</code>{" "}
+        on a read-only checkout — whose lock file cannot be created.
       </p>
 
       <div class="mcp-tools">

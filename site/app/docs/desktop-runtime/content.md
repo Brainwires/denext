@@ -535,8 +535,16 @@ The Deno cache is `DENO_DIR` when it is set, otherwise the default Deno itself u
 backend comes from `desktop.backend` in `deno.json` (`webview` by default, or `cef`).
 
 **Deno 2.9.7 exactly.** `deno desktop` embeds the runtime, so the runtime and the CLI must be the
-same Deno version. Any other version stops before the build with the fix:
-`deno upgrade --version 2.9.7`.
+same Deno version. Packaging with any other version stops before the build with the fix:
+`deno upgrade --version 2.9.7`. `denext desktop run` and `dev` instead warn and build the window
+on the stock runtime (point `DENO_BIN` at a 2.9.7 binary to keep the pinned one).
+
+**Cross-OS packaging.** 2.9.7's CLI looks a `LAUFEY_DEV_DIR` backend up under the host's
+executable name (`laufey_webview.exe` on Windows, `laufey_webview` elsewhere), then copies the
+backend's directory into the app and renames the binary to the app's launcher. For a Windows app
+packaged on macOS or Linux, or a Linux app on Windows, denext offers the backend under the host's
+name from a sibling of the verified runtime (`<target>-<backend>.cross-host`, hard links into it),
+so every Linux and Windows target packages from any host. macOS apps package on a Mac.
 
 **`denext doctor`** reports the pinned runtime version, whether it is cached and verified on this
 machine, and whether `deno` is the version it needs.

@@ -1427,8 +1427,8 @@
           "slug": "isForbidden",
           "kind": "function",
           "signature": "isForbidden(value: unknown): value is ForbiddenError",
-          "doc": "True if value is a ForbiddenError raised by forbidden().",
-          "docFull": "True if `value` is a {@link ForbiddenError} raised by `forbidden()`.",
+          "doc": "True if value is a ForbiddenError raised by forbidden() (or Next's own).",
+          "docFull": "True if `value` is a {@link ForbiddenError} raised by `forbidden()` (or Next's own).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1439,8 +1439,8 @@
           "slug": "isNotFound",
           "kind": "function",
           "signature": "isNotFound(value: unknown): value is NotFoundError",
-          "doc": "True if value is a NotFoundError raised by notFound().",
-          "docFull": "True if `value` is a {@link NotFoundError} raised by `notFound()`.",
+          "doc": "True if value is a NotFoundError raised by notFound(), or (on the server) Next.js's own not-found error (digest NEXT_HTTP_ERROR_FALLBACK;404) thrown by a library built for Next.",
+          "docFull": "True if `value` is a {@link NotFoundError} raised by `notFound()`, or (on the server) Next.js's\nown not-found error (`digest` `NEXT_HTTP_ERROR_FALLBACK;404`) thrown by a library built for Next.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1463,8 +1463,8 @@
           "slug": "isRedirect",
           "kind": "function",
           "signature": "isRedirect(value: unknown): value is RedirectError",
-          "doc": "True if value is a RedirectError raised by redirect().",
-          "docFull": "True if `value` is a {@link RedirectError} raised by `redirect()`.",
+          "doc": "True if value is a RedirectError raised by redirect(), or (on the server) Next.js's own redirect error (a NEXT_REDIRECT;… digest) thrown by a library built for Next — which is then given the url / status / redirectType a RedirectError has.",
+          "docFull": "True if `value` is a {@link RedirectError} raised by `redirect()`, or (on the server) Next.js's\nown redirect error (a `NEXT_REDIRECT;…` digest) thrown by a library built for Next — which is\nthen given the `url` / `status` / `redirectType` a `RedirectError` has.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -1487,8 +1487,8 @@
           "slug": "isUnauthorized",
           "kind": "function",
           "signature": "isUnauthorized(value: unknown): value is UnauthorizedError",
-          "doc": "True if value is an UnauthorizedError raised by unauthorized().",
-          "docFull": "True if `value` is an {@link UnauthorizedError} raised by `unauthorized()`.",
+          "doc": "True if value is an UnauthorizedError raised by unauthorized() (or Next's own).",
+          "docFull": "True if `value` is an {@link UnauthorizedError} raised by `unauthorized()` (or Next's own).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7526,8 +7526,8 @@
           "slug": "isForbidden",
           "kind": "function",
           "signature": "isForbidden(value: unknown): value is ForbiddenError",
-          "doc": "True if value is a ForbiddenError raised by forbidden().",
-          "docFull": "True if `value` is a {@link ForbiddenError} raised by `forbidden()`.",
+          "doc": "True if value is a ForbiddenError raised by forbidden() (or Next's own).",
+          "docFull": "True if `value` is a {@link ForbiddenError} raised by `forbidden()` (or Next's own).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7550,8 +7550,8 @@
           "slug": "isNotFound",
           "kind": "function",
           "signature": "isNotFound(value: unknown): value is NotFoundError",
-          "doc": "True if value is a NotFoundError raised by notFound().",
-          "docFull": "True if `value` is a {@link NotFoundError} raised by `notFound()`.",
+          "doc": "True if value is a NotFoundError raised by notFound(), or (on the server) Next.js's own not-found error (digest NEXT_HTTP_ERROR_FALLBACK;404) thrown by a library built for Next.",
+          "docFull": "True if `value` is a {@link NotFoundError} raised by `notFound()`, or (on the server) Next.js's\nown not-found error (`digest` `NEXT_HTTP_ERROR_FALLBACK;404`) thrown by a library built for Next.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7574,8 +7574,8 @@
           "slug": "isRedirect",
           "kind": "function",
           "signature": "isRedirect(value: unknown): value is RedirectError",
-          "doc": "True if value is a RedirectError raised by redirect().",
-          "docFull": "True if `value` is a {@link RedirectError} raised by `redirect()`.",
+          "doc": "True if value is a RedirectError raised by redirect(), or (on the server) Next.js's own redirect error (a NEXT_REDIRECT;… digest) thrown by a library built for Next — which is then given the url / status / redirectType a RedirectError has.",
+          "docFull": "True if `value` is a {@link RedirectError} raised by `redirect()`, or (on the server) Next.js's\nown redirect error (a `NEXT_REDIRECT;…` digest) thrown by a library built for Next — which is\nthen given the `url` / `status` / `redirectType` a `RedirectError` has.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -7655,8 +7655,8 @@
           "slug": "isUnauthorized",
           "kind": "function",
           "signature": "isUnauthorized(value: unknown): value is UnauthorizedError",
-          "doc": "True if value is an UnauthorizedError raised by unauthorized().",
-          "docFull": "True if `value` is an {@link UnauthorizedError} raised by `unauthorized()`.",
+          "doc": "True if value is an UnauthorizedError raised by unauthorized() (or Next's own).",
+          "docFull": "True if `value` is an {@link UnauthorizedError} raised by `unauthorized()` (or Next's own).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15553,8 +15553,8 @@
           "slug": "DESKTOP_DEV_URL_ENV",
           "kind": "variable",
           "signature": "DESKTOP_DEV_URL_ENV: DENEXT_DESKTOP_DEV_URL",
-          "doc": "The env var denext desktop dev sets on the deno desktop child to put the runtime into live-reload PROXY mode: its value is the loopback denext dev URL to reverse-proxy to. It is the ONLY switch that turns proxy-all on — a release / run / package invocation never sets it, so those windows serve the static export exactly as before (see runDesktop).",
-          "docFull": "The env var `denext desktop dev` sets on the `deno desktop` child to put the runtime into\nlive-reload PROXY mode: its value is the loopback `denext dev` URL to reverse-proxy to. It is\nthe ONLY switch that turns proxy-all on — a release / `run` / `package` invocation never sets\nit, so those windows serve the static export exactly as before (see {@linkcode runDesktop}).",
+          "doc": "The env var denext desktop dev sets on the window process to put the runtime into live-reload PROXY mode: its value is the loopback denext dev URL to reverse-proxy to. It is the ONLY switch that turns proxy-all on — a release / run / package invocation never sets it, so those windows serve the static export exactly as before (see runDesktop).",
+          "docFull": "The env var `denext desktop dev` sets on the window process to put the runtime into\nlive-reload PROXY mode: its value is the loopback `denext dev` URL to reverse-proxy to. It is\nthe ONLY switch that turns proxy-all on — a release / `run` / `package` invocation never sets\nit, so those windows serve the static export exactly as before (see {@linkcode runDesktop}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15739,9 +15739,9 @@
           "name": "desktopDevProxyDecision",
           "slug": "desktopDevProxyDecision-fn",
           "kind": "function",
-          "signature": "desktopDevProxyDecision(devUrl: string | undefined, lan: boolean, execPath: string): DesktopDevProxyDecision",
-          "doc": "Decide whether runDesktop enters live-reload PROXY mode, enforcing the loopback rule at RUNTIME rather than trusting the env (invariant: a release build never proxies to a remote origin). Pure + testable. Proxy mode requires ALL of: - a devUrl (the DESKTOP_DEV_URL_ENV value); - execPath being the deno CLI (isDenoCliExecPath) — a packaged app IGNORES the env, so an inherited/hostile env cannot turn a shipped window into a proxy; - a parseable URL whose host is loopback — OR non-loopback WITH lan (the DESKTOP_DEV_LAN_ENV opt-in that only desktop dev --lan sets). allowNonLoopback is true only in that LAN case. A blocked case returns { proxy: false, refused } so the caller can log why and serve static.",
-          "docFull": "Decide whether `runDesktop` enters live-reload PROXY mode, enforcing the loopback rule at\nRUNTIME rather than trusting the env (invariant: a release build never proxies to a remote\norigin). Pure + testable. Proxy mode requires ALL of:\n- a `devUrl` (the {@linkcode DESKTOP_DEV_URL_ENV} value);\n- `execPath` being the `deno` CLI ({@linkcode isDenoCliExecPath}) — a packaged app IGNORES the\n  env, so an inherited/hostile env cannot turn a shipped window into a proxy;\n- a parseable URL whose host is loopback — OR non-loopback WITH `lan` (the\n  {@linkcode DESKTOP_DEV_LAN_ENV} opt-in that only `desktop dev --lan` sets). `allowNonLoopback`\n  is true only in that LAN case.\nA blocked case returns `{ proxy: false, refused }` so the caller can log why and serve static.",
+          "signature": "desktopDevProxyDecision(devUrl: string | undefined, lan: boolean, execPath: string, devBuild?: boolean): DesktopDevProxyDecision",
+          "doc": "Decide whether runDesktop enters live-reload PROXY mode, enforcing the loopback rule at RUNTIME rather than trusting the env (invariant: a release build never proxies to a remote origin). Pure + testable. Proxy mode requires ALL of: - a devUrl (the DESKTOP_DEV_URL_ENV value); - execPath being the deno CLI (isDenoCliExecPath), or devBuild (the mark only a denext desktop dev build compiles in) — a packaged app IGNORES the env, so an inherited/hostile env cannot turn a shipped window into a proxy; - a parseable URL whose host is loopback — OR non-loopback WITH lan (the DESKTOP_DEV_LAN_ENV opt-in that only desktop dev --lan sets). allowNonLoopback is true only in that LAN case. A blocked case returns { proxy: false, refused } so the caller can log why and serve static.",
+          "docFull": "Decide whether `runDesktop` enters live-reload PROXY mode, enforcing the loopback rule at\nRUNTIME rather than trusting the env (invariant: a release build never proxies to a remote\norigin). Pure + testable. Proxy mode requires ALL of:\n- a `devUrl` (the {@linkcode DESKTOP_DEV_URL_ENV} value);\n- `execPath` being the `deno` CLI ({@linkcode isDenoCliExecPath}), or `devBuild` (the mark only a\n  `denext desktop dev` build compiles in) — a packaged app IGNORES the env, so an\n  inherited/hostile env cannot turn a shipped window into a proxy;\n- a parseable URL whose host is loopback — OR non-loopback WITH `lan` (the\n  {@linkcode DESKTOP_DEV_LAN_ENV} opt-in that only `desktop dev --lan` sets). `allowNonLoopback`\n  is true only in that LAN case.\nA blocked case returns `{ proxy: false, refused }` so the caller can log why and serve static.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15896,6 +15896,81 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopMsiProbe",
+          "slug": "DesktopMsiProbe",
+          "kind": "interface",
+          "signature": "interface DesktopMsiProbe",
+          "doc": "Seams for desktopMsiProblem.",
+          "docFull": "Seams for {@linkcode desktopMsiProblem}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopMsiProblem",
+          "slug": "desktopMsiProblem",
+          "kind": "function",
+          "signature": "desktopMsiProblem(version: string | undefined, probe?: DesktopMsiProbe): Promise<string | undefined>",
+          "doc": "Why the .msi cannot be built here, or undefined when it can: WiX runs on Windows only, the app version must fit an MSI ProductVersion, and wix must be WiX 5 (not just present).",
+          "docFull": "Why the `.msi` cannot be built here, or `undefined` when it can: WiX runs on Windows only, the\napp version must fit an MSI ProductVersion, and `wix` must be WiX 5 (not just present).",
+          "params": [
+            {
+              "name": "version",
+              "doc": "deno.json version."
+            },
+            {
+              "name": "probe",
+              "doc": "Seams."
+            }
+          ],
+          "returns": "The reason, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopNpmArgs",
+          "slug": "desktopNpmArgs",
+          "kind": "function",
+          "signature": "desktopNpmArgs(entryUrl: string): Promise<string[]>",
+          "doc": "desktopNpmArgsFor for a packaging script: the project is the script's parent directory (scripts/package-*.ts → ../), as desktopIncludeArgs reads it.",
+          "docFull": "{@linkcode desktopNpmArgsFor} for a packaging script: the project is the script's parent\ndirectory (`scripts/package-*.ts` → `../`), as {@linkcode desktopIncludeArgs} reads it.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "The packaging script's import.meta.url."
+            }
+          ],
+          "returns": "The args to splice into the deno desktop argv.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopOptionalInstaller",
+          "slug": "desktopOptionalInstaller",
+          "kind": "function",
+          "signature": "desktopOptionalInstaller<T>(format: string, explicit: boolean, build: () => Promise<T>): Promise<T | null>",
+          "doc": "Build an installer whose failure must not sink the run when it is only a default: an asked-for one (explicit) rethrows, a default one warns and resolves null (the caller falls back).",
+          "docFull": "Build an installer whose failure must not sink the run when it is only a default: an asked-for\none (`explicit`) rethrows, a default one warns and resolves `null` (the caller falls back).",
+          "params": [
+            {
+              "name": "format",
+              "doc": "The installer, for the warning (.msi for x86_64)."
+            },
+            {
+              "name": "explicit",
+              "doc": "Whether it was asked for."
+            },
+            {
+              "name": "build",
+              "doc": "Builds it."
+            }
+          ],
+          "returns": "What build resolved, or null.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopOs",
           "slug": "DesktopOs",
           "kind": "typeAlias",
@@ -16043,8 +16118,8 @@
           "slug": "desktopRequireTool",
           "kind": "function",
           "signature": "desktopRequireTool(tool: string, format: string, explicit: boolean): Promise<boolean>",
-          "doc": "desktopToolGate for a tool that must be on PATH.",
-          "docFull": "{@linkcode desktopToolGate} for a tool that must be on PATH.",
+          "doc": "desktopToolGate for a tool that must be on PATH (the reason carries the install hint).",
+          "docFull": "{@linkcode desktopToolGate} for a tool that must be on PATH (the reason carries the install hint).",
           "params": [
             {
               "name": "tool",
@@ -16105,8 +16180,8 @@
           "slug": "DesktopRuntime",
           "kind": "interface",
           "signature": "interface DesktopRuntime",
-          "doc": "What runDesktop hands back once the server is up: the app window and a hook that pushes an event down the page's bridge stream (what subscribeDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.",
-          "docFull": "What {@linkcode runDesktop} hands back once the server is up: the app window and a hook that\npushes an event down the page's bridge stream (what `subscribeDesktopEvent(cap, event, …)` in\n`denext/desktop/client` receives) — the seam OS events (deep links, open-file, …) are emitted\nthrough.",
+          "doc": "What runDesktop hands back once the server is up: the app window, the desktop world the gates enforce, and a hook that pushes an event down the page's bridge stream (what onDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.",
+          "docFull": "What {@linkcode runDesktop} hands back once the server is up: the app window, the desktop world\nthe gates enforce, and a hook that pushes an event down the page's bridge stream (what\n`onDesktopEvent(cap, event, …)` in `denext/desktop/client` receives) — the seam OS events (deep\nlinks, open-file, …) are emitted through.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16200,6 +16275,27 @@
           "denextOnly": true
         },
         {
+          "name": "desktopVersionProblem",
+          "slug": "desktopVersionProblem",
+          "kind": "function",
+          "signature": "desktopVersionProblem(format: msi | deb | rpm, version: string | undefined): string | undefined",
+          "doc": "Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).",
+          "docFull": "Why `version` (deno.json `version`) cannot be the package version of `format` — MSI packs\n`major.minor.build` into 8/8/16 bits, Debian and RPM need a leading digit and a small character\nset — or `undefined` when it can (see `msiProductVersion` / `linuxPackageVersion`).",
+          "params": [
+            {
+              "name": "format",
+              "doc": "The installer."
+            },
+            {
+              "name": "version",
+              "doc": "The app version."
+            }
+          ],
+          "returns": "The reason, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopWindowSettings",
           "slug": "DesktopWindowSettings",
           "kind": "interface",
@@ -16265,8 +16361,8 @@
           "slug": "isDenoCliExecPath",
           "kind": "function",
           "signature": "isDenoCliExecPath(execPath: string): boolean",
-          "doc": "Whether execPath is the deno CLI (deno / deno.exe, case-insensitive) rather than a compiled/packaged app binary. Live-reload proxy mode runs under deno desktop <entry>, so its execPath is deno; a packaged app's is its own binary. Pure, so the packaged-vs-dev decision is testable without the real Deno.execPath.",
-          "docFull": "Whether `execPath` is the `deno` CLI (`deno` / `deno.exe`, case-insensitive) rather than a\ncompiled/packaged app binary. Live-reload proxy mode runs under `deno desktop <entry>`, so its\nexecPath is `deno`; a packaged app's is its own binary. Pure, so the packaged-vs-dev decision\nis testable without the real {@linkcode Deno.execPath}.",
+          "doc": "Whether execPath is the deno CLI (deno / deno.exe, case-insensitive) rather than a compiled/packaged app binary. A packaged app's execPath is its own binary; the window denext desktop dev builds is one too, and carries the dev-build mark instead (see desktopDevProxyDecision). Pure, so the packaged-vs-dev decision is testable without the real Deno.execPath.",
+          "docFull": "Whether `execPath` is the `deno` CLI (`deno` / `deno.exe`, case-insensitive) rather than a\ncompiled/packaged app binary. A packaged app's execPath is its own binary; the window\n`denext desktop dev` builds is one too, and carries the dev-build mark instead (see\n{@linkcode desktopDevProxyDecision}). Pure, so the packaged-vs-dev decision is testable without\nthe real {@linkcode Deno.execPath}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16387,8 +16483,8 @@
           "slug": "prepareDesktopPackage",
           "kind": "function",
           "signature": "prepareDesktopPackage(entryUrl: string, os: DesktopOs, args: Pick<DesktopPackageArgs, formats | add | export>): Promise<PreparedDesktopPackage>",
-          "doc": "A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), the .deno-desktop/app.json + compile.include sync, the package metadata (read after that sync wrote the deep links into deno.json), dist/, and — unless --no-export — the static export (deno task export).",
-          "docFull": "A package run's setup: the app name, the installer plan (`--format`, else\n`desktop.installers.<os>`, else the defaults), the `.deno-desktop/app.json` + `compile.include`\nsync, the package metadata (read after that sync wrote the deep links into deno.json), `dist/`,\nand — unless `--no-export` — the static export (`deno task export`).",
+          "doc": "A package run's setup: the app name, the installer plan (--format, else desktop.installers.<os>, else the defaults), the .deno-desktop/app.json + compile.include sync, the package metadata (read after that sync wrote the deep links into deno.json; a made-up version or identifier is warned about), dist/, and — unless --no-export — the static export (deno task export).",
+          "docFull": "A package run's setup: the app name, the installer plan (`--format`, else\n`desktop.installers.<os>`, else the defaults), the `.deno-desktop/app.json` + `compile.include`\nsync, the package metadata (read after that sync wrote the deep links into deno.json; a made-up\nversion or identifier is warned about), `dist/`,\nand — unless `--no-export` — the static export (`deno task export`).",
           "params": [
             {
               "name": "entryUrl",

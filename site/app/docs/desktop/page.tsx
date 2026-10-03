@@ -508,7 +508,9 @@ denext desktop package --target-os windows --format msi,zip`}
           <code>desktop.app.identifier</code>, the same one{" "}
           <code>deno desktop</code>'s own MSI uses), and uninstalling removes all of it. It is
           Authenticode-signed with the <code>.exe</code> when <code>DENEXT_WINDOWS_CERT</code>{" "}
-          is set. Without WiX the default <code>.msi</code> falls back to the <code>.zip</code>.
+          is set. Without WiX 5 (an installed WiX 6 does not count), or when <code>wix build</code>
+          {" "}
+          fails, the default <code>.msi</code> falls back to the <code>.zip</code> with a warning.
         </li>
       </ul>
       <p>
@@ -518,8 +520,21 @@ denext desktop package --target-os windows --format msi,zip`}
         </code>{" "}
         turn a <code>-rc.1</code> prerelease into{" "}
         <code>~rc.1</code>, which sorts before the release). A default installer whose tool is
-        missing is skipped with a warning; one you asked for — in <code>--format</code>{" "}
-        or the config — fails the run.
+        missing, or that cannot express the version (a CalVer <code>2026.10.2</code>{" "}
+        overflows an MSI&apos;s 255 major), is skipped with a warning that says how to fix it; one
+        you asked for — in <code>--format</code> or the config — fails the run.
+      </p>
+      <p>
+        Two metadata fallbacks are warned about on every run. With no deno.json <code>version</code>
+        {" "}
+        the installers say <code>1.0.0</code>, so no later build can upgrade them. With no{" "}
+        <code>desktop.app.identifier</code> the app is{" "}
+        <code>com.deno.desktop.&lt;name&gt;</code>, which also derives the MSI UpgradeCode: set your
+        own before the first release, because changing it later makes the next version install
+        beside the old one instead of upgrading it. A packaging script from before denext 3.1 (no
+        {" "}
+        <code>desktopRuntimeEnv</code>) is warned about too, and does not get <code>--format</code>
+        ; <code>denext desktop package --regenerate-scripts</code> updates it.
       </p>
       <Callout kind="note">
         The installers wrap the bundle the script <em>finished</em>, not a second{" "}
@@ -1992,9 +2007,14 @@ export default defineDesktopExtension({
       <ul>
         <li>
           <strong>Deno 2.9.7 exactly.</strong> The runtime is built from Deno 2.9.7, and{" "}
-          <code>deno desktop</code>{" "}
-          embeds it, so any other version fails before the build with the fix:{" "}
-          <code>deno upgrade --version 2.9.7</code>.
+          <code>deno desktop</code> embeds it, so for any other version{" "}
+          <code>denext desktop package</code> fails before the build with the fix:{" "}
+          <code>deno upgrade --version 2.9.7</code> (or <code>DENO_BIN</code>{" "}
+          pointing at a 2.9.7 binary for <code>run</code> / <code>dev</code>).{" "}
+          <code>denext desktop run</code> and <code>dev</code>{" "}
+          warn and open the window on the stock runtime instead. Every download error ends with the
+          two ways out: <code>DENEXT_DESKTOP_RUNTIME_DIR</code> or{" "}
+          <code>DENEXT_DESKTOP_RUNTIME=stock</code>.
         </li>
         <li>
           <strong>Downloaded once, verified before use.</strong>{" "}
@@ -2023,8 +2043,13 @@ export default defineDesktopExtension({
           <strong>Targets.</strong>{" "}
           macOS (arm64, x86_64), Linux (x86_64, arm64) and Windows (x86_64), each with the{" "}
           <code>webview</code> and <code>cef</code>{" "}
-          backends. The stock CLI finds a prebuilt backend with the host&apos;s executable suffix,
-          so a Windows app is packaged on Windows, and a Linux app on macOS or Linux.
+          backends. Linux and Windows apps package from any host: Deno 2.9.7&apos;s CLI looks a
+          prebuilt backend up under the host&apos;s executable name, so for a Windows app on macOS
+          or Linux (or a Linux app on Windows) denext hard-links the backend&apos;s directory beside
+          the verified runtime with the binary under that name (<code>
+            &lt;target&gt;-&lt;backend&gt;.cross-host
+          </code>
+          in the cache). macOS apps package on a Mac (codesign).
         </li>
         <li>
           <code>denext doctor</code>{" "}
@@ -2551,8 +2576,8 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         </code>). Windows packages from any OS with{" "}
         <code>denext desktop package --target-os windows</code> (the scaffolded{" "}
         <code>scripts/package-windows.ts</code> / <code>desktop:package:windows</code>{" "}
-        task): a zip per architecture, Authenticode-signed when <code>DENEXT_WINDOWS_CERT</code> (+
-        {" "}
+        task, on denext&apos;s pinned runtime from any host): a zip per architecture,
+        Authenticode-signed when <code>DENEXT_WINDOWS_CERT</code> (+{" "}
         <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
         <code>DENEXT_SIGN_TIMESTAMP_URL</code>) is set.
       </Callout>
