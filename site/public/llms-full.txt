@@ -241,7 +241,10 @@ export const GET = createApi().use(requireSession({ role: "admin" })).define(/* 
 `createRouteMatcher` in `middleware.ts`, `<ClerkProvider>` in the root layout, `auth()` /
 `currentUser()` from `@clerk/nextjs/server` in Server Components and route handlers. In a Deno Desktop
 window the same provider signs in via `installClerkDesktopBridge({ nativeClerk: true })` from
-`desktop.preload`; the Clerk instance's `allowed_origins` must include `desktop.app.origin`. See
+`desktop.preload`; the Clerk instance's `allowed_origins` must include `desktop.app.origin`. In the Capacitor shell:
+`installClerkMobileBridge({ scheme, nativeClerk: true })` from `denext/mobile/clerk` in
+`instrumentation-client.ts`; `denext mobile add clerk --scheme <s>` sets it up (add
+`capacitor://localhost` + `https://localhost` to `allowed_origins`). See
 [`examples/clerk`](https://github.com/Brainwires/denext/tree/main/examples/clerk).
 
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
