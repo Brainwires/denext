@@ -32,8 +32,30 @@ export interface Rabbit {
 
 // ── Simulation ─────────────────────────────────────────────────────────────────
 
-const vw = () => globalThis.innerWidth || 360;
-const vh = () => globalThis.innerHeight || 640;
+/**
+ * The live viewport, read on every call (never cached): `innerWidth`/`innerHeight`, else the root
+ * element's client box, else `0`. A freshly created window can report `0 × 0` (or its pre-resize
+ * size) to the first script run, before it is laid out — so nothing spawns until this is non-zero,
+ * and a `resize` re-fits everything ({@link fitToViewport}).
+ */
+function viewport(): { w: number; h: number } {
+  const root = (globalThis as {
+    document?: { documentElement?: { clientWidth?: number; clientHeight?: number } };
+  }).document?.documentElement;
+  return {
+    w: globalThis.innerWidth || root?.clientWidth || 0,
+    h: globalThis.innerHeight || root?.clientHeight || 0,
+  };
+}
+
+/** Has the window been laid out (a non-zero viewport)? */
+export function viewportReady(): boolean {
+  const { w, h } = viewport();
+  return w > 0 && h > 0;
+}
+
+const vw = () => viewport().w;
+const vh = () => viewport().h;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 /** The DOM surface the simulation writes: a transform, and (for the cat) run/nap classes. */
@@ -72,11 +94,13 @@ export interface CatWorld {
   scorePoint: () => void;
 }
 
+/** Rabbits at random spots inside the viewport; none while it is still `0 × 0` (see {@link spawn}). */
 export function seedRabbits(): Rabbit[] {
   const out: Rabbit[] = [];
+  if (!viewportReady()) return out;
   for (let i = 0; i < RABBIT_COUNT; i++) {
-    const x = 40 + Math.random() * (vw() - 80);
-    const y = 90 + Math.random() * (vh() - 180);
+    const x = clamp(40 + Math.random() * (vw() - 80), 24, vw() - 24);
+    const y = clamp(90 + Math.random() * (vh() - 180), 80, vh() - 32);
     out.push({
       x,
       y,
@@ -92,6 +116,46 @@ export function seedRabbits(): Rabbit[] {
     });
   }
   return out;
+}
+
+/** Has the cat been placed yet? It starts unplaced (`NaN`) until the viewport is known. */
+export function catPlaced(w: CatWorld): boolean {
+  return !Number.isNaN(w.pos.current.x);
+}
+
+/**
+ * Spawn whatever has not spawned yet — the cat mid-screen, then the rabbits — once the viewport is
+ * non-zero. Called every frame; returns whether the world is ready to step.
+ */
+export function spawn(w: CatWorld): boolean {
+  if (!viewportReady()) return false;
+  if (!catPlaced(w)) w.pos.current = { x: vw() * 0.5 - CAT_W / 2, y: vh() * 0.4 - CAT_H / 2 };
+  if (w.rabbits.current.length === 0) w.rabbits.current = seedRabbits();
+  return true;
+}
+
+/**
+ * The window resized: pull the cat and every rabbit (and any hop in flight) back inside the new
+ * bounds, so a shrink — or a first layout that arrives after spawning — never strands a sprite
+ * off-screen. A no-op while the viewport is `0 × 0`.
+ */
+export function fitToViewport(w: CatWorld): void {
+  if (!viewportReady()) return;
+  if (catPlaced(w)) {
+    const pos = w.pos.current;
+    pos.x = clamp(pos.x, -6, vw() - CAT_W + 6);
+    pos.y = clamp(pos.y, -6, vh() - CAT_H + 6);
+  }
+  const fx = (v: number) => clamp(v, 24, vw() - 24);
+  const fy = (v: number) => clamp(v, 80, vh() - 32);
+  for (const r of w.rabbits.current) {
+    r.x = fx(r.x);
+    r.y = fy(r.y);
+    r.fromX = fx(r.fromX);
+    r.fromY = fy(r.fromY);
+    r.toX = fx(r.toX);
+    r.toY = fy(r.toY);
+  }
 }
 
 function startHop(

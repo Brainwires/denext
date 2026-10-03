@@ -1,20 +1,24 @@
 // The native example's desk-cat simulation (examples/native/app/cat-sim.ts): rabbits hop
 // and rest, the cat chases the pointer with start/stop hysteresis, waits at the wall, naps,
 // hunts the nearest rabbit, and catches one that is cornered — driven with plain cells and
-// stub sprites, no DOM.
+// stub sprites, no DOM. Nothing spawns into a 0 × 0 viewport, and a resize re-fits every sprite.
 
 import { assert, assertEquals } from "@std/assert";
 import {
   CAT_H,
   CAT_W,
+  catPlaced,
   type CatWorld,
   type Cell,
+  fitToViewport,
   FOLLOW,
   RABBIT_COUNT,
   seedRabbits,
+  spawn,
   type SpriteEl,
   stepCat,
   stepRabbits,
+  viewportReady,
 } from "../examples/native/app/cat-sim.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -191,4 +195,69 @@ Deno.test("a cornered rabbit within capture range is caught, scored and respawne
   const r = w.rabbits.current[0];
   assert(r.x >= 110 && r.x <= 890 && r.y >= 110 && r.y <= 690, "respawned well inside the walls");
   assertEquals(w.retargetAt.current, 0, "re-picks a target next frame");
+});
+
+Deno.test("a 0 × 0 viewport defers spawning; the first real size spawns everything inside it", () => {
+  const w = world();
+  w.pos.current = { x: NaN, y: NaN };
+  w.rabbits.current = [];
+  try {
+    g.innerWidth = 0;
+    g.innerHeight = 0;
+    assertEquals(viewportReady(), false);
+    assertEquals(seedRabbits(), [], "no rabbits seeded into an unknown viewport");
+    assertEquals(spawn(w), false);
+    assert(!catPlaced(w), "the cat waits for a real size");
+    assertEquals(w.rabbits.current.length, 0);
+    g.innerWidth = 1280;
+    g.innerHeight = 900;
+    assertEquals(spawn(w), true);
+    assert(catPlaced(w));
+    assertEquals(w.pos.current, { x: 640 - CAT_W / 2, y: 360 - CAT_H / 2 });
+    assertEquals(w.rabbits.current.length, RABBIT_COUNT);
+    for (const r of w.rabbits.current) {
+      assert(r.x >= 24 && r.x <= 1256 && r.y >= 80 && r.y <= 868, `inside (${r.x}, ${r.y})`);
+    }
+    const placed = { ...w.pos.current };
+    spawn(w); // already spawned: a later frame changes nothing
+    assertEquals(w.pos.current, placed);
+  } finally {
+    g.innerWidth = 1000;
+    g.innerHeight = 800;
+  }
+});
+
+Deno.test("a resize pulls the cat and every rabbit (and a hop in flight) inside the new bounds", () => {
+  const w = world();
+  w.pos.current = { x: 950, y: 760 };
+  w.rabbits.current = w.rabbits.current.map((r) => ({
+    ...r,
+    x: 980,
+    y: 790,
+    fromX: 970,
+    fromY: 780,
+    toX: 990,
+    toY: 795,
+    hopping: true,
+  }));
+  try {
+    g.innerWidth = 400;
+    g.innerHeight = 300;
+    fitToViewport(w);
+    assertEquals(w.pos.current, { x: 400 - CAT_W + 6, y: 300 - CAT_H + 6 });
+    for (const r of w.rabbits.current) {
+      for (const [x, y] of [[r.x, r.y], [r.fromX, r.fromY], [r.toX, r.toY]]) {
+        assert(x >= 24 && x <= 376 && y >= 80 && y <= 268, `inside (${x}, ${y})`);
+      }
+    }
+    // A collapse to 0 × 0 (minimised, mid-layout) is ignored rather than clamping to nothing.
+    const before = { ...w.pos.current };
+    g.innerWidth = 0;
+    g.innerHeight = 0;
+    fitToViewport(w);
+    assertEquals(w.pos.current, before);
+  } finally {
+    g.innerWidth = 1000;
+    g.innerHeight = 800;
+  }
 });

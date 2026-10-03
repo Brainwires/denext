@@ -3,9 +3,9 @@
 // that hop around the screen — and the rabbits bolt when it gets close. Toggle
 // "nap" and it curls up with zzz's while the rabbits keep hopping.
 //
-// The whole simulation (cat + rabbits) runs in one requestAnimationFrame loop that
-// writes transforms straight to the DOM — never React state — so nothing here
-// re-renders the tree while it moves.
+// The whole simulation (cat + rabbits) runs in one requestAnimationFrame loop (with a
+// timer fallback while frames are held back) that writes transforms straight to the
+// DOM — never React state — so nothing here re-renders the tree while it moves.
 //
 // Hooks on show: useRef, useState, useEffect, useEffectEvent (stable pointer
 // handler that always sees the latest props), and useImperativeHandle (the page
@@ -17,10 +17,11 @@ import {
   CAT_H,
   CAT_W,
   type CatWorld,
+  fitToViewport,
   RAB_H,
   RAB_W,
   RABBIT_COUNT,
-  seedRabbits,
+  spawn,
   type SpriteEl,
   stepCat,
   stepRabbits,
@@ -81,29 +82,62 @@ export function Cat(
   );
 }
 
-/** Drive the simulation every animation frame; returns the stop function. */
+/** The running loop's stop function, on `globalThis` so it survives a hot-reloaded copy of this module. */
+const ACTIVE_LOOP = Symbol.for("denext.examples.native.catLoop");
+type LoopHost = { [ACTIVE_LOOP]?: () => void };
+
+/**
+ * If no animation frame arrives within this long, step on a timer instead. A WebView can hold
+ * `requestAnimationFrame` back for seconds (or indefinitely) while it decides the window is not
+ * visible — a freshly launched desktop window that has not been activated, say — and the sprites
+ * would sit at their off-screen CSS default until it does.
+ */
+const FRAME_FALLBACK_MS = 34;
+
+/**
+ * Drive the simulation every animation frame (or on a timer while frames are held back); returns
+ * the stop function. Nothing spawns until the window reports a real size ({@link spawn}), and a
+ * `resize` pulls every sprite back inside. Only one loop ever runs: starting one stops any previous
+ * loop, including one a hot reload orphaned.
+ */
 function runLoop(
   world: CatWorld,
   rootRef: { current: HTMLDivElement | null },
   flipRef: { current: HTMLDivElement | null },
 ): () => void {
+  const host = globalThis as LoopHost;
+  host[ACTIVE_LOOP]?.();
   let raf = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
   const tick = (now: number) => {
-    stepRabbits(world, now);
-    const root = rootRef.current;
-    if (root) stepCat(world, root, flipRef.current, now);
+    cancelAnimationFrame(raf);
+    clearTimeout(timer);
+    if (stopped) return;
+    if (spawn(world)) {
+      stepRabbits(world, now);
+      const root = rootRef.current;
+      if (root) stepCat(world, root, flipRef.current, now);
+    }
+    schedule();
+  };
+  // Whichever comes first — the next frame, or the fallback timer — steps once and re-arms both.
+  const schedule = () => {
     raf = requestAnimationFrame(tick);
+    timer = setTimeout(() => tick(performance.now()), FRAME_FALLBACK_MS);
   };
-  raf = requestAnimationFrame(tick);
-  return () => cancelAnimationFrame(raf);
-}
-
-/** Start mid-screen on first enable (before any pointer has been seen). */
-function initialCatPosition(): { x: number; y: number } {
-  return {
-    x: (globalThis.innerWidth || 360) * 0.5,
-    y: (globalThis.innerHeight || 640) * 0.4,
+  const onResize = () => fitToViewport(world);
+  globalThis.addEventListener("resize", onResize);
+  schedule();
+  const stop = () => {
+    stopped = true;
+    cancelAnimationFrame(raf);
+    clearTimeout(timer);
+    globalThis.removeEventListener("resize", onResize);
+    if (host[ACTIVE_LOOP] === stop) delete host[ACTIVE_LOOP];
   };
+  host[ACTIVE_LOOP] = stop;
+  return stop;
 }
 
 /**
@@ -188,7 +222,7 @@ function useCatWorld(
   const scorePoint = useEffectEvent(() => props.onCapture?.());
   const world = useRef<CatWorld | null>(null);
   world.current ??= {
-    pos: { current: { x: -100, y: -100 } },
+    pos: { current: { x: NaN, y: NaN } }, // unplaced until the viewport is known (see spawn)
     facing: { current: 1 },
     chasing: { current: false },
     pointer: { current: { x: -100, y: -100 } },
@@ -222,7 +256,7 @@ function summonCat(world: CatWorld, x: number, y: number): void {
   world.lastPointerMove.current = performance.now();
 }
 
-/** While enabled: seed the world, listen to the pointer, and run the frame loop. */
+/** While enabled: listen to the pointer and run the frame loop (which spawns the world). */
 function useCatLoop(
   enabled: boolean,
   world: CatWorld,
@@ -231,12 +265,8 @@ function useCatLoop(
 ): void {
   useEffect(() => {
     if (!enabled) return;
-    if (world.pos.current.x < 0) world.pos.current = initialCatPosition();
-    // Seed the rabbits once, at random spots (client-only — they're positioned by
-    // JS, so there's no SSR markup to mismatch).
-    if (world.rabbits.current.length === 0) {
-      world.rabbits.current = seedRabbits();
-    }
+    // The loop spawns the cat and rabbits on its first frame with a non-zero viewport
+    // (client-only — they're positioned by JS, so there's no SSR markup to mismatch).
     const detachPointer = installPointerListeners(
       (x, y) => pointTo(world, x, y),
       world.napping,
