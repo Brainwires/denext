@@ -6214,6 +6214,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopEntitlementValue",
+          "slug": "DesktopEntitlementValue",
+          "kind": "typeAlias",
+          "signature": "type DesktopEntitlementValue = string | number | boolean | string[]",
+          "doc": "One entitlement's value in DesktopMacosConfig.entitlements.",
+          "docFull": "One entitlement's value in {@link DesktopMacosConfig.entitlements}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopExtraPermissions",
           "slug": "DesktopExtraPermissions",
           "kind": "interface",
@@ -6244,6 +6256,18 @@
           "signature": "interface DesktopInstallersConfig",
           "doc": "DesktopConfig.installers: the installer formats per OS, and what they say about the app.",
           "docFull": "{@link DesktopConfig.installers}: the installer formats per OS, and what they say about the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosConfig",
+          "slug": "DesktopMacosConfig",
+          "kind": "interface",
+          "signature": "interface DesktopMacosConfig",
+          "doc": "DesktopConfig.macos: the macOS provisioning profile and entitlements.",
+          "docFull": "{@link DesktopConfig.macos}: the macOS provisioning profile and entitlements.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15434,6 +15458,35 @@
           "denextOnly": true
         },
         {
+          "name": "buildDesktopTarball",
+          "slug": "buildDesktopTarball",
+          "kind": "function",
+          "signature": "buildDesktopTarball(o: BuildDesktopTarballOptions): Promise<string>",
+          "doc": "The .tar.gz of a finished Linux bundle, written here (ustar + gzip) rather than by the host's tar, so a bundle packaged on Windows keeps its executables' mode bits (see bundleFileMode) and the archive is the same from every host.",
+          "docFull": "The `.tar.gz` of a finished Linux bundle, written here (ustar + gzip) rather than by the host's\n`tar`, so a bundle packaged on Windows keeps its executables' mode bits (see\n{@linkcode bundleFileMode}) and the archive is the same from every host.",
+          "params": [
+            {
+              "name": "o",
+              "doc": "The bundle directory and the archive path."
+            }
+          ],
+          "returns": "The archive path.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "BuildDesktopTarballOptions",
+          "slug": "BuildDesktopTarballOptions",
+          "kind": "interface",
+          "signature": "interface BuildDesktopTarballOptions",
+          "doc": "What buildDesktopTarball archives.",
+          "docFull": "What {@linkcode buildDesktopTarball} archives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "BuildLinuxPackageOptions",
           "slug": "BuildLinuxPackageOptions",
           "kind": "interface",
@@ -15818,15 +15871,15 @@
           "slug": "desktopIncludeArgs",
           "kind": "function",
           "signature": "desktopIncludeArgs(entryUrl: string): Promise<string[]>",
-          "doc": "The extra --include <path> args a scaffolded packaging script must add so the packaged binary embeds each desktop.capabilities.extensions module — otherwise the app launches but the runtime fails to load the extension (\"Module not found\"), since --include out only bundles the export. Reads the project's denext.config.ts next to entryUrl (a scripts/ script → ../), like desktopPackageFlags; a project with no extensions gets [].",
-          "docFull": "The extra `--include <path>` args a scaffolded packaging script must add so the packaged binary\nembeds each `desktop.capabilities.extensions` module — otherwise the app launches but the runtime\nfails to load the extension (\"Module not found\"), since `--include out` only bundles the export.\nReads the project's `denext.config.ts` next to `entryUrl` (a `scripts/` script → `../`), like\n{@linkcode desktopPackageFlags}; a project with no extensions gets `[]`.",
+          "doc": "The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:",
+          "docFull": "The extra args a scaffolded packaging script must add so the packaged binary embeds every module\nthe app loads at runtime, and loads each one from the binary, never from the build machine's\ndisk:\n\n- `--include <path>` per `desktop.capabilities.extensions` module — otherwise the app launches\n  but the runtime fails to load the extension (\"Module not found\"), since `--include out` only\n  bundles the export;\n- `--import-map <.deno-desktop/import-map.json>` when deno.json's import map has an absolute\n  local target (`\"denext/desktop\": \"file:///…\"`): a compiled binary resolves such a target to the\n  build machine's path, so a relocatable copy of the map is written and used instead.\n\nReads the project's `denext.config.ts` and deno.json next to `entryUrl` (a `scripts/` script →\n`../`), like {@linkcode desktopPackageFlags}; a project with neither gets `[]`.",
           "params": [
             {
               "name": "entryUrl",
               "doc": "The packaging script's import.meta.url."
             }
           ],
-          "returns": "[\"--include\", path, \"--include\", path, …], ready to splice into the deno desktop argv.",
+          "returns": "[\"--include\", path, …, \"--import-map\", file], ready to splice into the deno desktop argv.",
           "examples": [],
           "denextOnly": true
         },
@@ -15878,6 +15931,51 @@
           "signature": "interface DesktopInstallerPlan",
           "doc": "What a package script builds.",
           "docFull": "What a package script builds.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopMacosSigning",
+          "slug": "desktopMacosSigning-fn",
+          "kind": "function",
+          "signature": "desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>",
+          "doc": "Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with. With neither a profile nor config entitlements, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged.",
+          "docFull": "Resolve `desktop.macos` for a packaging run: check the provisioning profile against the app and\nwrite the entitlements to sign with. With neither a profile nor config entitlements, the\n`DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of scripts/package-macos.ts (the project is its parent)."
+            },
+            {
+              "name": "options",
+              "doc": "The signing identity, DENEXT_ENTITLEMENTS, DENEXT_PROVISIONING_PROFILE."
+            }
+          ],
+          "returns": "The entitlements plist and the profile for the signing step.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosSigning",
+          "slug": "DesktopMacosSigning-iface",
+          "kind": "interface",
+          "signature": "interface DesktopMacosSigning",
+          "doc": "What desktop.macos resolves to for one packaging run.",
+          "docFull": "What `desktop.macos` resolves to for one packaging run.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopMacosSigningOptions",
+          "slug": "DesktopMacosSigningOptions",
+          "kind": "interface",
+          "signature": "interface DesktopMacosSigningOptions",
+          "doc": "Options for desktopMacosSigning.",
+          "docFull": "Options for {@linkcode desktopMacosSigning}.",
           "params": [],
           "returns": "",
           "examples": [],

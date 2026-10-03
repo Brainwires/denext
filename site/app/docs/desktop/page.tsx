@@ -231,6 +231,21 @@ export default {
           print the line to add instead.
         </li>
       </ul>
+      <h3 id="desktop-absolute-imports">Local modules mapped by absolute path</h3>
+      <p>
+        A packaged app runs only from what it embeds. An import map target written as an absolute
+        local path (<code>"denext/desktop": "file:///Users/me/denext/src/build/desktop.ts"</code> or
+        {" "}
+        <code>"/Users/me/…"</code>) is embedded, but a compiled binary resolves it to the build
+        machine&apos;s path, so the app would read the module from that disk and fail with{" "}
+        <code>Module not found</code>{" "}
+        once it moves. When deno.json&apos;s import map (or the file its <code>importMap</code>{" "}
+        names) has such a target, <code>denext desktop run</code>, <code>dev</code>{" "}
+        and the package scripts build with a copy of the map whose local targets are relative (
+        <code>.deno-desktop/import-map.json</code>, passed as <code>--import-map</code> through{" "}
+        <code>desktopIncludeArgs</code>, so existing scripts need no regeneration). Relative targets
+        and <code>jsr:</code> / <code>npm:</code> / <code>https:</code> imports build as before.
+      </p>
 
       <h2 id="desktop-dev">Live reload (the Metro model)</h2>
       <p>

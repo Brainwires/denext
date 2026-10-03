@@ -15,6 +15,7 @@ import { basename, fromFileUrl, join } from "@std/path";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
+import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 
 /** The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling). */
 export type DesktopOs = "darwin" | "windows" | "linux";
@@ -523,14 +524,23 @@ function configExtensionPaths(config: unknown): string[] {
 }
 
 /**
- * The extra `--include <path>` args a scaffolded packaging script must add so the packaged binary
- * embeds each `desktop.capabilities.extensions` module — otherwise the app launches but the runtime
- * fails to load the extension ("Module not found"), since `--include out` only bundles the export.
- * Reads the project's `denext.config.ts` next to `entryUrl` (a `scripts/` script → `../`), like
- * {@linkcode desktopPackageFlags}; a project with no extensions gets `[]`.
+ * The extra args a scaffolded packaging script must add so the packaged binary embeds every module
+ * the app loads at runtime, and loads each one from the binary, never from the build machine's
+ * disk:
+ *
+ * - `--include <path>` per `desktop.capabilities.extensions` module — otherwise the app launches
+ *   but the runtime fails to load the extension ("Module not found"), since `--include out` only
+ *   bundles the export;
+ * - `--import-map <.deno-desktop/import-map.json>` when deno.json's import map has an absolute
+ *   local target (`"denext/desktop": "file:///…"`): a compiled binary resolves such a target to the
+ *   build machine's path, so a relocatable copy of the map is written and used instead.
+ *
+ * Reads the project's `denext.config.ts` and deno.json next to `entryUrl` (a `scripts/` script →
+ * `../`), like {@linkcode desktopPackageFlags}; a project with neither gets `[]`.
  *
  * @param entryUrl The packaging script's `import.meta.url`.
- * @returns `["--include", path, "--include", path, …]`, ready to splice into the `deno desktop` argv.
+ * @returns `["--include", path, …, "--import-map", file]`, ready to splice into the `deno desktop`
+ * argv.
  */
 export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
   let config: unknown;
@@ -540,7 +550,12 @@ export async function desktopIncludeArgs(entryUrl: string): Promise<string[]> {
   } catch {
     // no denext.config.ts (or it exports no config) → no extensions to embed
   }
-  return configExtensionPaths(config).flatMap((p) => ["--include", p]);
+  const includes = configExtensionPaths(config).flatMap((p) => ["--include", p]);
+  const projectUrl = new URL("../", entryUrl);
+  const importMap = projectUrl.protocol === "file:"
+    ? await desktopImportMapArgsFor(fromFileUrl(projectUrl))
+    : [];
+  return [...includes, ...importMap];
 }
 
 /**

@@ -451,6 +451,17 @@ and this project adheres to
 
 ### Fixed
 
+- **A packaged desktop app no longer reads modules from the build machine's disk.** An import map
+  target written as an absolute local path (`"denext/desktop": "file:///…/src/build/desktop.ts"`,
+  or `"/…"`) was embedded, but the compiled binary resolved it to the build machine's path: it
+  silently loaded those modules from that disk, and failed with `Module not found` once the
+  folder moved (or on any other machine). When deno.json's import map (or its `importMap` file)
+  has such a target, `desktopIncludeArgs` now writes a relocatable copy with every local target
+  relative (`.deno-desktop/import-map.json`, with deno.json's `jsr:` / `npm:` subpath entries
+  made explicit) and passes it as `--import-map`, so `denext desktop run` / `dev` and existing
+  package scripts build a self-contained app without regeneration. Relative and `jsr:` / `npm:` /
+  `https:` imports, including a JSR-installed denext, were not affected and build as before.
+  Desktop CI packages an app mapped this way, moves the sources away and launches it.
 - **An exported multi-page app's links work in the Capacitor shell.** Capacitor's iOS router
   and Android local server answer every path without an extension with the root `index.html`
   (a single-page-app assumption), so `<a href="/protected">` loaded the home page. Every
