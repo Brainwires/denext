@@ -192,6 +192,13 @@ export interface DesktopAuthSessionApi {
     callbackUrl?: string;
     ephemeral?: boolean;
   }): Promise<{ url: string }>;
+  /**
+   * End the running session (runtime 2.9.7-denext.7 and later): its sheet closes and its `start`
+   * rejects with `cancelled`, once. `false` when no session is running (always on Windows and
+   * Linux). Its presence also marks the first runtime that tags relayed requests
+   * (`x-deno-desktop-relay`).
+   */
+  cancel?(): boolean;
 }
 
 /**

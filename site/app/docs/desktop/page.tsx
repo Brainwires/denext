@@ -753,8 +753,8 @@ const { url } = await openAuthSession(authorize.href, {
           to cancel. The system browser on Windows and Linux reports no cancellation, so the Cancel
           overlay covers it there (<code>cancelOverlay</code>). The session belongs to the page that
           started it: reloading or leaving that page ends it, a navigation in another window does
-          not, and only that page can cancel it. The OS sheet on macOS cannot be closed from code: a
-          cancel or timeout settles your promise, and the sheet stays until the user closes it.
+          not, and only that page can cancel it. On macOS a cancel, the timeout or the page going
+          away also closes the OS sheet.
         </li>
         <li>
           On macOS the sheet's callback is held to the same exact <code>redirect_uri</code> and{" "}

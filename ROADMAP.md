@@ -13,9 +13,6 @@
 
 - **Navigation guard:** keep foreign origins out of the window; a navigation away from the app
   origin opens in the system browser instead.
-- **Close the macOS sign-in sheet from code:** a page cancel or a timeout settles
-  `openAuthSession`, but the `ASWebAuthenticationSession` sheet stays up until the user closes
-  it. Needs a runtime `Deno.desktop.authSession.cancel()` and denext calling it.
 - **Upstream the fork so stock Deno can be used.** Offer every runtime change to denoland/deno
   and littledivy/laufey and maintain the pull requests (status per change in
   [our Deno Desktop runtime](https://denext.dev/docs/desktop-runtime#what-it-adds-over-stock-deno-desktop)).

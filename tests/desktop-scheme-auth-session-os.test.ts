@@ -5,7 +5,8 @@
 // / `failed` map to the bridge's codes, `not_supported` (Windows, Linux) falls back to the system
 // browser + deep-link callback, the owner check guards only that browser path (the sheet catches
 // its own scheme whoever handles its links), and a page cancel or the timeout
-// while the sheet is up settles the session and drops the sheet's late answer.
+// while the sheet is up settles the session and drops the sheet's late answer — and, on a runtime
+// with `authSession.cancel()` (2.9.7-denext.7+), closes the sheet.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { createSchemeAuthSessions } from "../src/desktop/scheme-auth-session.ts";
@@ -278,4 +279,101 @@ Deno.test("OS auth session: osSessionOnly runs in the sheet; a runtime saying no
   os.reject("not_supported");
   await rejectsCode(run, "unsupported");
   assertEquals(opened, []); // never the system browser
+});
+
+/** A fake OS session with `cancel()` (runtime 2.9.7-denext.7+): it closes the running sheet. */
+function cancellableOsSession(cancelImpl?: () => boolean) {
+  const os = osSession();
+  let running = 0;
+  const cancels: boolean[] = [];
+  const start = os.api.start;
+  const api: DesktopAuthSessionApi = {
+    ...os.api,
+    start: (options) => {
+      running++;
+      return start(options).finally(() => running--);
+    },
+    cancel: cancelImpl ?? (() => {
+      const was = running > 0;
+      cancels.push(was);
+      if (was) os.reject("cancelled"); // the sheet closes; start rejects `cancelled`, once
+      return was;
+    }),
+  };
+  return { ...os, api, cancels };
+}
+
+Deno.test("OS auth session: a page cancel closes the sheet through authSession.cancel()", async () => {
+  const os = cancellableOsSession();
+  const { start, cancel } = sessions(os.api);
+  const run = start();
+  await started(os.starts);
+  assertEquals(cancel(), { cancelled: true });
+  await rejectsCode(run, "cancelled");
+  assertEquals(os.cancels, [true]); // the runtime was asked once, while the sheet was up
+  // The sheet is gone, so the next session gets its own sheet (no `busy`).
+  const second = start();
+  await started(os.starts, 2);
+  os.resolve("myapp://auth/cb?code=two&state=st-1");
+  assertEquals((await second).url, "myapp://auth/cb?code=two&state=st-1");
+  assertEquals(os.cancels, [true]); // a sheet that completes is never cancelled
+});
+
+Deno.test("OS auth session: the timeout closes the sheet through authSession.cancel()", async () => {
+  const os = cancellableOsSession();
+  const { start } = sessions(os.api);
+  const run = start({ timeoutMs: 5 });
+  await started(os.starts);
+  await rejectsCode(run, "timeout"); // the page sees the timeout, not the sheet's `cancelled`
+  assertEquals(os.cancels, [true]);
+});
+
+Deno.test("OS auth session: the starting page going away closes the sheet", async () => {
+  const os = cancellableOsSession();
+  const opened: string[] = [];
+  const s = createSchemeAuthSessions({
+    schemes: ["myapp"],
+    api: { getSchemeOwner: () => Promise.resolve({ owner: "self" }), authSession: os.api },
+    openBrowser: (url) => void opened.push(url),
+  });
+  const page = new AbortController();
+  const run = s.capability.methods.start.handler(
+    { callbackScheme: "myapp", url: AUTH_URL, session: KEY },
+    { ...ctx, signal: page.signal },
+  ) as Promise<{ url: string }>;
+  await started(os.starts);
+  page.abort(); // the page reloaded: its `start` request is gone
+  const err = await rejectsCode(run, "cancelled");
+  assertEquals(err.message.includes("gone"), true);
+  assertEquals(os.cancels, [true]);
+  assertEquals(opened, []);
+});
+
+Deno.test("OS auth session: no sheet up (browser fallback) → cancel() is never called", async () => {
+  const os = cancellableOsSession();
+  const { start, cancel, opened } = sessions(os.api);
+  const run = start();
+  await started(os.starts);
+  os.reject("not_supported"); // Windows / Linux: the system browser instead
+  for (let i = 0; i < 50 && opened.length === 0; i++) await tick();
+  assertEquals(opened.length, 1);
+  assertEquals(cancel(), { cancelled: true });
+  await rejectsCode(run, "cancelled");
+  assertEquals(os.cancels, []);
+});
+
+Deno.test("OS auth session: a throwing authSession.cancel() still settles the session", async () => {
+  let calls = 0;
+  const os = cancellableOsSession(() => {
+    calls++;
+    throw new Error("runtime error");
+  });
+  const { start, cancel } = sessions(os.api);
+  const run = start();
+  await started(os.starts);
+  assertEquals(cancel(), { cancelled: true });
+  await rejectsCode(run, "cancelled");
+  assertEquals(calls, 1);
+  os.reject("cancelled"); // the sheet's late answer is dropped
+  await tick();
 });

@@ -72,7 +72,9 @@ and this project adheres to
   rejects a real `cancelled` when the user closes it, and is private with `preferEphemeral: true`.
   The declared scheme, PKCE S256, owner check and the exact `redirect_uri` + `state` match still
   apply (a sheet that ends elsewhere rejects `invalid`). Windows and Linux, which have no OS
-  session (`not_supported`), keep the system browser and the deep-link callback.
+  session (`not_supported`), keep the system browser and the deep-link callback. On 2.9.7-denext.7
+  a page cancel, the timeout or the starting page going away also closes the sheet
+  (`Deno.desktop.authSession.cancel()`, feature-detected).
 - **A Cancel overlay for system-browser sign-ins on Deno Desktop.** While the system browser has
   the sign-in (Windows and Linux, and the loopback flow everywhere), `openAuthSession` shows a
   small modal with a Cancel button (Escape too) that ends the session with `cancelled`; the timeout
@@ -364,6 +366,17 @@ and this project adheres to
 
 ### Changed
 
+- **The pinned Deno Desktop runtime is 2.9.7-denext.7, and the custom origin requires it.** It
+  carries the 3.1 security and fork-code audit fixes (the WebSocket relay marks what it forwards
+  with `x-deno-desktop-relay` and forwards only an upgrade, `node:http` serves under the memory
+  transport, a cancelled scheme request aborts the app's `request.signal`, updater hardening),
+  `Deno.desktop.authSession.cancel()` and laufey `b993068` (API 43). The pin was regenerated with
+  every archive's SHA-256 and build provenance attestation verified. Because the relay-token fix
+  depends on the mark, an app served at its custom origin by an older runtime (through
+  `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`, `DENEXT_DESKTOP_RUNTIME_DIR` or an older build) now
+  starts with every desktop endpoint refused, no per-launch token and a message naming the fix;
+  denext detects the release by `Deno.desktop.authSession.cancel`. The stock runtime
+  (`DENEXT_DESKTOP_RUNTIME=stock`) has no relay and is unaffected.
 - **Docs: KNOWN-LIMITATIONS lists only what denext can't or won't do, and per-OS differences; ROADMAP was rewritten to the open work; REACT-NATIVE-EXPO.md is removed** (its open items are in ROADMAP and KNOWN-LIMITATIONS, its measurements in the [denext vs React Native](https://denext.dev/docs/vs-react-native) guide).
 - **The docs site moved from `apps/web/` to `site/`.** `apps/` held nothing else, so it is gone;
   `deno task docs:build` exports to `site/out/`, and guides live in

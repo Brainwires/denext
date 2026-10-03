@@ -49,9 +49,11 @@
  * The OS session runs after the same checks (1–4), and its callback URL is held to rule 3 and 4
  * too: a sheet that ends anywhere else, or with another `state`, rejects `invalid` (it cannot keep
  * waiting: the OS session is over). While the sheet is up, only the sheet can complete the
- * session: a matching link the OS delivers as a deep link meanwhile is swallowed, never resolving. The runtime cannot close an open sheet, so a page cancel or the
- * timeout settles the page's promise and the sheet stays until the user closes it; until then a
- * new session gets `session_in_progress`.
+ * session: a matching link the OS delivers as a deep link meanwhile is swallowed, never resolving.
+ * A page cancel, the timeout or the starting page going away settles the page's promise and closes
+ * the sheet through `Deno.desktop.authSession.cancel()` (runtime 2.9.7-denext.7 and later,
+ * feature-detected). A runtime without it leaves the sheet up until the user closes it; until then
+ * a new session gets `session_in_progress`.
  *
  * The callback URL is consumed here BEFORE the deep-link routing, so it never reaches `onDeepLink`
  * or the page's router. Nothing here logs a URL (they carry codes and states).
@@ -110,6 +112,8 @@ interface Pending {
   readonly reject: (err: DesktopCapError) => void;
   /** Set while the OS's auth session (the sheet) owns the session: deep links never resolve it. */
   viaOs: boolean;
+  /** The OS session whose sheet is up for this session (closed when the session ends early). */
+  os?: DesktopAuthSessionApi;
 }
 
 /** Options for {@linkcode createSchemeAuthSessions}. */
@@ -446,6 +450,21 @@ async function osAuthSession(
   }
 }
 
+/**
+ * Close the OS session's sheet the app gave up on (`Deno.desktop.authSession.cancel()`, runtime
+ * 2.9.7-denext.7 and later): its `start` then rejects `cancelled`, which the caller has already
+ * settled past. Feature-detected; a runtime without it (or one that throws) leaves the sheet up
+ * until the user closes it.
+ */
+function closeOsSheet(os: DesktopAuthSessionApi): void {
+  if (typeof os.cancel !== "function") return;
+  try {
+    os.cancel();
+  } catch {
+    // Best effort: the session is already settled for the page.
+  }
+}
+
 /** An OS auth-session rejection (`AuthSessionError.code`) as the bridge's code, message, status. */
 function osSessionError(err: unknown): [code: string, message: string, status: number] {
   switch ((err as { code?: unknown } | null)?.code) {
@@ -501,6 +520,7 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
     }
   };
 
+  /** End the open session early (page cancel, timeout, its page gone), closing its sheet if up. */
   const cancelPending = (code: string, message: string, status: number): boolean => {
     const open = pending;
     if (!open) {
@@ -508,6 +528,8 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
       return busy;
     }
     endIf(open, code, message, status);
+    if (open.os) closeOsSheet(open.os);
+    open.os = undefined;
     return true;
   };
 
@@ -519,6 +541,7 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
   ): Promise<void> => {
     let url: string;
     open.viaOs = true;
+    open.os = os;
     try {
       ({ url } = await os.start({
         url: req.url,
@@ -527,6 +550,7 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
       }));
     } catch (err) {
       open.viaOs = false;
+      open.os = undefined;
       if ((err as { code?: unknown } | null)?.code === "not_supported" && pending === open) {
         if (req.osSessionOnly) {
           endIf(open, "unsupported", "this sign-in needs the OS's auth session", 501);
@@ -539,6 +563,7 @@ export function createSchemeAuthSessions(options: SchemeAuthOptions): SchemeAuth
       endIf(open, ...osSessionError(err));
       return;
     }
+    open.os = undefined;
     if (pending !== open) return; // cancelled or timed out while the sheet was up
     if (typeof url !== "string" || matchCallback(open, url) !== "match") {
       endIf(

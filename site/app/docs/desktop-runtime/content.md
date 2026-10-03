@@ -269,7 +269,9 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
   `not_supported`, so denext's `openAuthSession` falls back to the system browser (RFC 8252).
   denext runs `openAuthSession`'s custom-scheme sign-in in it on macOS (`preferEphemeral` makes it
   ephemeral) and, where the system browser has the sign-in, shows the page a Cancel overlay, since
-  the browser reports no cancellation. `Deno.desktop.runOnMainThread` calls native code on the
+  the browser reports no cancellation. When the page cancels, the timeout passes or the starting
+  page goes away, denext closes the sheet with `Deno.desktop.authSession.cancel()`.
+  `Deno.desktop.runOnMainThread` calls native code on the
   app's UI thread, which a `defineDesktopExtension` reaches as `ctx.runOnMainThread` (full trust:
   it is FFI and needs `--allow-ffi`; `unsupported` on the stock runtime).
 - **Why:** sign-in should look and behave like the platform's, share its cookies and close itself
@@ -480,6 +482,28 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Layer:** the Deno CLI. This is not part of the runtime archive; denext's own CLI already has
   the same locks (see [Concurrency and build locks](/docs/cli#build-locks)).
 - **Upstream:** in progress for upstream Deno.
+
+## Runtime releases
+
+Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runtime-pin.json`).
+
+| Release          | What it adds                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `2.9.7-denext.1` | The stable app origin over the memory transport, per-app storage, the launch file, the app identifier, deep links and single instance.                                                                                                                                                                                                                                                                                 |
+| `2.9.7-denext.2` | Scheme registration with the OS (and the `.msi` registering it), native passkeys.                                                                                                                                                                                                                                                                                                                                      |
+| `2.9.7-denext.3` | The window API: state, size limits, screens, chrome, a cancelable close and quit, the initial window.                                                                                                                                                                                                                                                                                                                  |
+| `2.9.7-denext.4` | Drag and drop, native file dialogs, the rich clipboard, signed full-app self-updates, Node-API addons on Windows.                                                                                                                                                                                                                                                                                                      |
+| `2.9.7-denext.5` | Global shortcuts, launch at login, DevTools control, menu accelerators and close events, scheduled and actionable notifications.                                                                                                                                                                                                                                                                                       |
+| `2.9.7-denext.6` | OS sign-in sessions (`Deno.desktop.authSession`) and `runOnMainThread` (laufey API 42).                                                                                                                                                                                                                                                                                                                                |
+| `2.9.7-denext.7` | The 3.1 security and fork-code audit fixes: the WebSocket relay forwards one marked upgrade (`x-deno-desktop-relay`) and only a `101` back, `node:http` serves under the memory transport, cancelled scheme requests abort the app's `request.signal`, updater hardening. `Deno.desktop.authSession.cancel()`, which closes the macOS sheet from code. laufey `b993068` (crate 0.8.0, API 43). **denext requires it.** |
+
+denext needs `2.9.7-denext.7` or later wherever the app runs at its custom origin. The relay mark
+is how the app tells a request any local process sent through the relay from one its own page
+made, so a window on an older runtime (supplied through `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`,
+`DENEXT_DESKTOP_RUNTIME_DIR` or an older build) gets no per-launch token and every
+`/_denext/desktop/*` endpoint is refused, with a startup message naming the fix. denext detects
+the release by `Deno.desktop.authSession.cancel`, which shipped with the mark. The stock runtime
+has no relay and is unaffected.
 
 ## How it's tested
 
