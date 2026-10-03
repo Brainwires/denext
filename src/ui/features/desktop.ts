@@ -79,6 +79,12 @@ const VARS: Record<DesktopTab, readonly EnvVar[]> = {
       purpose: "Path to an entitlements .plist. Optional — Screen Recording and Accessibility " +
         "are TCC prompts, not entitlements.",
     },
+    {
+      name: "DENEXT_PROVISIONING_PROFILE",
+      purpose:
+        "Path to a .provisionprofile to embed, overriding desktop.macos.provisioningProfile " +
+        "(restricted entitlements such as associated domains need one).",
+    },
   ],
   windows: [
     {

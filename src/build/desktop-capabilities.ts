@@ -285,7 +285,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     trust: "none",
     notes: "native passkeys: macOS Touch ID / iCloud Keychain, Windows Hello (pinned runtime)",
     manual: [
-      "passkeys: macOS needs the associated-domains entitlement (webcredentials:<rp-id>) with a provisioning profile, and the RP's apple-app-site-association must list <TeamID>.<bundle id>; otherwise every request is invalid_rp.",
+      "passkeys: macOS needs the associated-domains entitlement (webcredentials:<rp-id>) with a provisioning profile — set desktop.macos = { provisioningProfile, entitlements } — and the RP's apple-app-site-association must list <TeamID>.<bundle id>; otherwise every request is invalid_rp.",
       "passkeys: list your relying parties in desktop.capabilities.passkeys = { rpIds: [...] } — it is written empty, and until it names one every request is invalid_rp (on Windows nothing else ties the RP ID to the app). Linux has no native passkeys.",
     ],
   },

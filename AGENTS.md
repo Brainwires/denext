@@ -458,7 +458,8 @@ custom-scheme callback (a declared scheme, PKCE S256 mandatory, exact redirect +
 your own wired to `signal`); `installClerkDesktopBridge()` from `denext/desktop/clerk`
 makes `@clerk/electron`'s React provider and `passkeys` run unchanged
 (`denext desktop add secure-store auth-session passkeys`).
-Native passkeys are macOS (needs the associated-domains entitlement) and Windows only; Linux has no OS
+Native passkeys are macOS (needs the associated-domains entitlement: `desktop.macos: {
+provisioningProfile, entitlements }` signs it in with the profile) and Windows only; Linux has no OS
 passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
 only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
 Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay: denext's Live

@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **`desktop.macos`: a provisioning profile and restricted entitlements for the macOS app.**
+  `desktop.macos: { provisioningProfile, entitlements }` (or `DENEXT_PROVISIONING_PROFILE`) has
+  `scripts/package-macos.ts` embed the profile as `Contents/embedded.provisionprofile` and sign
+  with the entitlements merged over `DENEXT_ENTITLEMENTS`'s, plus the App ID and team entitlements
+  macOS matches the profile by — what native passkeys need on macOS
+  (`com.apple.developer.associated-domains` = `webcredentials:<rp-id>`). The profile is checked
+  before the build (macOS, not expired, the App ID of `desktop.app.identifier`, the signing
+  identity's team, and a grant for every restricted entitlement), and a restricted entitlement
+  without a profile is refused, instead of an app that AMFI will not launch. Existing projects pick
+  it up with `denext desktop package --regenerate-scripts`. The desktop kitchen sink's manual
+  passkey check takes its relying party from a field that defaults to the first pinned RP.
 - **A Console in the DevTools panel, with a boot diagnosis.** The dev-reload script captures
   `console.*`, uncaught errors, unhandled rejections and failed script/resource loads before
   the app's entry runs (the last 500, safely serialized); the new **Console** tab shows them

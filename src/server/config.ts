@@ -881,6 +881,14 @@ export interface DesktopConfig {
    */
   installers?: DesktopInstallersConfig;
   /**
+   * macOS code-signing extras for `scripts/package-macos.ts`: a provisioning profile embedded as
+   * `Contents/embedded.provisionprofile`, and entitlements signed into the app. What an app needs
+   * for a restricted entitlement such as `com.apple.developer.associated-domains` (native passkeys,
+   * universal links), which macOS honours only with a profile that grants it. Applied when the
+   * bundle is signed with a real identity (`DENEXT_CODESIGN_IDENTITY`).
+   */
+  macos?: DesktopMacosConfig;
+  /**
    * Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the
    * package scripts: for a project that needs them to build at all. A pnpm workspace (deno.json
    * `nodeModulesDir: "manual"`) needs `["--node-modules-dir=none", "--exclude-unused-npm"]`, or
@@ -892,6 +900,32 @@ export interface DesktopConfig {
    * {@link capabilities} and {@link extraPermissions}.
    */
   denoFlags?: string[];
+}
+
+/** One entitlement's value in {@link DesktopMacosConfig.entitlements}. */
+export type DesktopEntitlementValue = string | number | boolean | string[];
+
+/** {@link DesktopConfig.macos}: the macOS provisioning profile and entitlements. */
+export interface DesktopMacosConfig {
+  /**
+   * The provisioning profile (`.provisionprofile`) to embed, relative to the project or absolute:
+   * a Developer ID profile for the App ID `<TeamID>.<desktop.app.identifier>` that grants every
+   * restricted entitlement in {@link entitlements}. `DENEXT_PROVISIONING_PROFILE` overrides it for
+   * one run (a profile is account-specific: keep it out of the repository). The package script
+   * checks it before building (its App ID, team, expiry, and that it grants each restricted
+   * entitlement), embeds it as `Contents/embedded.provisionprofile`, and adds the
+   * `com.apple.application-identifier` / `com.apple.developer.team-identifier` entitlements macOS
+   * matches it by. Needs a real signing identity (`DENEXT_CODESIGN_IDENTITY`) of the same team.
+   */
+  provisioningProfile?: string;
+  /**
+   * Entitlements signed into the app, e.g.
+   * `{ "com.apple.developer.associated-domains": ["webcredentials:example.com"] }`. Merged over
+   * the `DENEXT_ENTITLEMENTS` plist when both are set (these win). A restricted entitlement
+   * (`com.apple.developer.*`, `com.apple.application-identifier`, `keychain-access-groups`) needs
+   * {@link provisioningProfile}.
+   */
+  entitlements?: Record<string, DesktopEntitlementValue>;
 }
 
 /** {@link DesktopConfig.app}'s `icons`: the app icon file per OS, relative to the project. */

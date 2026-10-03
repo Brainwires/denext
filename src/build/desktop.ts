@@ -146,6 +146,13 @@ export {
   desktopPackageMeta,
   planDesktopInstallers,
 } from "./desktop-installers.ts";
+// `desktop.macos` for scripts/package-macos.ts: the provisioning profile it embeds and the
+// entitlements it signs with, checked against the app before the build.
+export {
+  type DesktopMacosSigning,
+  desktopMacosSigning,
+  type DesktopMacosSigningOptions,
+} from "./desktop-macos-signing.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {
   buildDesktopBundle,

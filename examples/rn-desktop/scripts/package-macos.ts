@@ -24,6 +24,8 @@
  *                             distribute. Omit → an ad-hoc signature (dev/local only;
  *                             Gatekeeper will block it on other Macs).
  *   DENEXT_ENTITLEMENTS       path to an entitlements .plist (optional).
+ *   DENEXT_PROVISIONING_PROFILE  a .provisionprofile to embed (overrides
+ *                             `desktop.macos.provisioningProfile` in denext.config.ts).
  *   DENEXT_NOTARY_PROFILE     a `xcrun notarytool store-credentials` keychain profile.
  *                             Set (with a real identity) → notarize + staple each app (and
  *                             each signed .pkg).
@@ -35,6 +37,11 @@
  * The bundle's name and identifier are `desktop.app.name` / `identifier` in denext.config.ts
  * (written into deno.json's `desktop.app`, which `deno desktop` reads), and its icon
  * `desktop.app.icons.macos` (.icns or .png), else deno.json's, else icons/app.icns.
+ *
+ * `desktop.macos` in denext.config.ts adds a provisioning profile (embedded as
+ * Contents/embedded.provisionprofile) and entitlements (merged over DENEXT_ENTITLEMENTS's) — what a
+ * restricted entitlement such as associated domains (native passkeys) needs. The profile is checked
+ * against the app (App ID, team, expiry, the entitlements it grants) before anything is built.
  *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
@@ -56,6 +63,7 @@ import {
   desktopIconArgs,
   desktopIncludeArgs,
   desktopInstallerPlan,
+  desktopMacosSigning,
   desktopNpmArgs,
   type DesktopPackageArgs,
   desktopPackageFlags,
@@ -190,10 +198,15 @@ async function sign(
   app: string,
   identity: string | undefined,
   entitlements?: string,
+  provisioningProfile?: string,
 ): Promise<void> {
   const id = identity ?? "-";
   const ts = identity ? "--timestamp" : "--timestamp=none";
   const mainExe = await mainExecutable(app);
+  // desktop.macos.provisioningProfile: sealed into the bundle by its signature below.
+  if (identity && provisioningProfile) {
+    await Deno.copyFile(provisioningProfile, `${app}/Contents/embedded.provisionprofile`);
+  }
   // Nested Mach-O (dylibs/helpers) first; then the bundle, which signs the main
   // executable and applies the entitlements.
   for (const file of await machOFiles(app)) {
@@ -300,12 +313,14 @@ async function makePkg(app: string, s: Signing): Promise<string> {
 interface Signing {
   identity: string | undefined;
   entitlements: string | undefined;
+  /** desktop.macos.provisioningProfile (or DENEXT_PROVISIONING_PROFILE), checked. */
+  provisioningProfile: string | undefined;
   notaryProfile: string | undefined;
   /** "Developer ID Installer: …" for the .pkg. */
   installerIdentity: string | undefined;
 }
 
-function signingFromEnv(): Signing {
+async function signingFromEnv(): Promise<Signing> {
   const identity = Deno.env.get("DENEXT_CODESIGN_IDENTITY") || undefined;
   const notaryProfile = Deno.env.get("DENEXT_NOTARY_PROFILE") || undefined;
   if (!identity) {
@@ -320,9 +335,17 @@ function signingFromEnv(): Signing {
       "notarization needs DENEXT_CODESIGN_IDENTITY (a real Developer ID identity).",
     );
   }
-  return {
+  // desktop.macos: the profile (checked against the app now, before the build) and the
+  // entitlements merged over DENEXT_ENTITLEMENTS's.
+  const mac = await desktopMacosSigning(import.meta.url, {
     identity,
     entitlements: Deno.env.get("DENEXT_ENTITLEMENTS") || undefined,
+    provisioningProfile: Deno.env.get("DENEXT_PROVISIONING_PROFILE") || undefined,
+  });
+  return {
+    identity,
+    entitlements: mac.entitlements,
+    provisioningProfile: mac.provisioningProfile,
     notaryProfile,
     installerIdentity: Deno.env.get("DENEXT_INSTALLER_IDENTITY") || undefined,
   };
@@ -377,7 +400,7 @@ async function finishArtifacts(
   const installers: string[] = [];
   for (const app of artifacts) {
     if (s.identity || opts.arch === "universal" || resealNeeded) {
-      await sign(app, s.identity, s.entitlements);
+      await sign(app, s.identity, s.entitlements, s.provisioningProfile);
     }
     if (s.notaryProfile && s.identity) await notarize(app, s.notaryProfile);
     if (formats.includes("dmg")) installers.push(await makeDmg(app));
@@ -407,7 +430,7 @@ async function main(): Promise<void> {
     arches: ["host", "arm64", "x86_64", "both", "universal"],
     legacy: { "--dmg": "dmg" },
   });
-  const signing = signingFromEnv();
+  const signing = await signingFromEnv();
   // DENEXT_APP_NAME, else desktop.app.name in denext.config.ts, else deno.json's.
   const name = await appName(import.meta.url);
   // --format, else desktop.installers.macos in denext.config.ts, else a .dmg.

@@ -233,6 +233,6 @@ Development and diagnostics — all opt-in, none read in production paths:
 | `DENEXT_UI_DISCOVERY_TIMEOUT_MS` | Deadline for `denext ui`'s project-verb discovery child (default 8 000).                  |
 
 The desktop packaging verbs read their signing inputs from `DENEXT_APP_NAME`,
-`DENEXT_CODESIGN_IDENTITY`, `DENEXT_ENTITLEMENTS`, `DENEXT_NOTARY_PROFILE`,
+`DENEXT_CODESIGN_IDENTITY`, `DENEXT_ENTITLEMENTS`, `DENEXT_PROVISIONING_PROFILE`, `DENEXT_NOTARY_PROFILE`,
 `DENEXT_SIGN_TIMESTAMP_URL`, `DENEXT_WINDOWS_CERT` and
 `DENEXT_WINDOWS_CERT_PASSWORD` — see [Desktop apps](/docs/desktop).

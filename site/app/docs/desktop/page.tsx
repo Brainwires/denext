@@ -371,6 +371,49 @@ deno task desktop:package --arch universal`}
         <code>DENEXT_ENTITLEMENTS=/path/to/entitlements.plist</code>{" "}
         if your app needs specific capabilities.
       </p>
+      <h3 id="desktop-macos-profile">A provisioning profile and restricted entitlements</h3>
+      <p>
+        Some entitlements are <em>restricted</em>: macOS honours{" "}
+        <code>com.apple.developer.associated-domains</code> (native passkeys, universal links),{" "}
+        <code>keychain-access-groups</code> and the other <code>com.apple.developer.*</code>{" "}
+        keys only when the app carries a provisioning profile that grants them, and refuses to
+        launch an app whose signature claims one its profile does not. Create an App ID with the
+        capability for <code>desktop.app.identifier</code> and a <strong>Developer ID</strong>{" "}
+        provisioning profile for it on developer.apple.com, then point <code>desktop.macos</code>
+        {" "}
+        at the profile and list the entitlements:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  app: { identifier: "com.example.myapp" },
+  macos: {
+    // Account-specific: keep it out of the repo (DENEXT_PROVISIONING_PROFILE overrides the path).
+    provisioningProfile: "../signing/myapp_Developer_ID.provisionprofile",
+    entitlements: {
+      "com.apple.developer.associated-domains": ["webcredentials:example.com"],
+    },
+  },
+},`}
+      </Code>
+      <p>
+        <code>scripts/package-macos.ts</code>{" "}
+        checks the profile before it builds anything (a macOS profile, not expired, for the App ID
+        {" "}
+        <code>&lt;TeamID&gt;.&lt;identifier&gt;</code>, of the signing identity's team, and granting
+        every restricted entitlement asked for) and names each mismatch. It signs with these
+        entitlements merged over <code>DENEXT_ENTITLEMENTS</code>'s, adds the{" "}
+        <code>com.apple.application-identifier</code> and{" "}
+        <code>com.apple.developer.team-identifier</code>{" "}
+        entitlements macOS matches the profile by, and embeds the profile as{" "}
+        <code>Contents/embedded.provisionprofile</code>. It needs a real identity (
+        <code>DENEXT_CODESIGN_IDENTITY</code>
+        ): an ad-hoc signature cannot carry a profile. Check the result with{" "}
+        <code>codesign -d --entitlements - MyApp.app</code>. For passkeys, the relying party also
+        serves <code>https://&lt;rp-id&gt;/.well-known/apple-app-site-association</code> with{" "}
+        <code>{`{"webcredentials":{"apps":["<TeamID>.<identifier>"]}}`}</code>{" "}
+        (macOS fetches it through Apple's CDN, which can take a while to pick up a change).
+      </p>
       <h3>
         Set up signing from <code>denext ui</code>
       </h3>
@@ -868,10 +911,12 @@ export default {
           (<code>webcredentials:&lt;rp-id&gt;</code>) with a provisioning profile, and the RP's{" "}
           <code>apple-app-site-association</code> must list{" "}
           <code>&lt;TeamID&gt;.&lt;bundle id&gt;</code>
-          ; otherwise every request is{" "}
-          <code>invalid_rp</code>. Then the bridge stops offering native passkeys for that launch
-          (Clerk hides them; a custom-scheme page cannot use the webview's WebAuthn either) and
-          continues a passkey sign-in in the system browser through Clerk's hosted pages (<code>
+          ; otherwise every request is <code>invalid_rp</code>{" "}
+          (<a href="#desktop-macos-profile">sign it with the profile and entitlement</a>
+          through{" "}
+          <code>desktop.macos</code>). Then the bridge stops offering native passkeys for that
+          launch (Clerk hides them; a custom-scheme page cannot use the webview's WebAuthn either)
+          and continues a passkey sign-in in the system browser through Clerk's hosted pages (<code>
             startClerkBrowserSignIn
           </code>: <code>@clerk/expo</code>'s hosted-auth protocol, with <code>state</code>{" "}
           and S256 PKCE bound to this page), where the RP's own domain makes passkeys work.{" "}
@@ -2550,6 +2595,11 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         </li>
         <li>
           <code>DENEXT_ENTITLEMENTS</code> — path to an entitlements <code>.plist</code> (optional).
+        </li>
+        <li>
+          <code>DENEXT_PROVISIONING_PROFILE</code> — a <code>.provisionprofile</code>{" "}
+          to embed, overriding <code>desktop.macos.provisioningProfile</code>{" "}
+          (<a href="#desktop-macos-profile">provisioning profile and restricted entitlements</a>).
         </li>
         <li>
           <code>DENEXT_INSTALLER_IDENTITY</code> — a{" "}

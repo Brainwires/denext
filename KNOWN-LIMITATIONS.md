@@ -203,7 +203,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `denext/desktop/clerk` refuses with `scheme_owned_by_other_app`; Clerk's native redirect
   allowlist takes no loopback URL to fall back to. Call `claimDeepLinkScheme` from the user's click
   and sign in again. macOS is unaffected (its sheet catches the callback).
-- **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement;
+- **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement
+  and its provisioning profile (`desktop.macos`);
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
 - **Notifications:** Linux has no scheduler (delivered while the app runs, late after a quit) and
   a click after quit can't start the app; macOS shows them only from a signed bundle; a repeat is

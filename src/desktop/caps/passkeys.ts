@@ -20,8 +20,8 @@
  * already limits the caller to the app's own top-level page.
  *
  * macOS: a request succeeds only when the app's code signature carries
- * `com.apple.developer.associated-domains` = `webcredentials:<rp-id>` (with a provisioning profile)
- * and `https://<rp-id>/.well-known/apple-app-site-association` lists `<TeamID>.<bundle id>`;
+ * `com.apple.developer.associated-domains` = `webcredentials:<rp-id>` (with a provisioning profile:
+ * `desktop.macos` in the config, which `scripts/package-macos.ts` signs in) and `https://<rp-id>/.well-known/apple-app-site-association` lists `<TeamID>.<bundle id>`;
  * otherwise every request is `invalid_rp`.
  *
  * Runtime-only (imported by the caps resolver, never a client bundle).

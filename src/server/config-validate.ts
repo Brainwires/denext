@@ -380,6 +380,39 @@ function validateDesktopInstallers(installers: unknown, fail: Fail): void {
   }
 }
 
+/** Whether `v` is one entitlement value: a string, a finite number, a boolean or a string array. */
+function isEntitlementValue(v: unknown): boolean {
+  return typeof v === "string" || typeof v === "boolean" ||
+    (typeof v === "number" && Number.isFinite(v)) ||
+    (Array.isArray(v) && v.every((s) => typeof s === "string"));
+}
+
+/** `desktop.macos`: the provisioning profile path and the entitlements object. */
+function validateDesktopMacos(macos: unknown, fail: Fail): void {
+  if (macos === undefined) return;
+  if (!isPlainObject(macos)) {
+    fail("desktop.macos", "must be { provisioningProfile?, entitlements? }");
+  }
+  const m = macos as Record<string, unknown>;
+  const profile = m.provisioningProfile;
+  if (profile !== undefined && (typeof profile !== "string" || profile.trim() === "")) {
+    fail("desktop.macos.provisioningProfile", "must be a .provisionprofile file path");
+  }
+  const ents = m.entitlements;
+  if (ents === undefined) return;
+  if (!isPlainObject(ents)) {
+    fail("desktop.macos.entitlements", "must be an object of entitlement keys to values");
+  }
+  for (const [key, value] of Object.entries(ents as Record<string, unknown>)) {
+    if (!isEntitlementValue(value)) {
+      fail(
+        `desktop.macos.entitlements["${key}"]`,
+        "must be a string, a number, a boolean or an array of strings",
+      );
+    }
+  }
+}
+
 function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   if (desktop === undefined) return;
   if (typeof desktop !== "object" || Array.isArray(desktop)) {
@@ -390,6 +423,7 @@ function validateDesktop(desktop: DenextConfig["desktop"], fail: Fail): void {
   validateDesktopWindowing(desktop as Record<string, unknown>, fail);
   validateDesktopUpdate((desktop as { update?: unknown }).update, fail);
   validateDesktopInstallers((desktop as { installers?: unknown }).installers, fail);
+  validateDesktopMacos((desktop as { macos?: unknown }).macos, fail);
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;

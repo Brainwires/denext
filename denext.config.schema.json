@@ -1537,6 +1537,39 @@
             }
           }
         },
+        "macos": {
+          "description": "macOS code-signing extras for `scripts/package-macos.ts`: a provisioning profile embedded as `Contents/embedded.provisionprofile`, and entitlements signed into the app. What an app needs for a restricted entitlement such as `com.apple.developer.associated-domains` (native passkeys, universal links), which macOS honours only with a profile that grants it. Applied when the bundle is signed with a real identity (`DENEXT_CODESIGN_IDENTITY`).",
+          "type": "object",
+          "properties": {
+            "provisioningProfile": {
+              "description": "The provisioning profile (`.provisionprofile`) to embed, relative to the project or absolute: a Developer ID profile for the App ID `<TeamID>.<desktop.app.identifier>` that grants every restricted entitlement in entitlements. `DENEXT_PROVISIONING_PROFILE` overrides it for one run (a profile is account-specific: keep it out of the repository). The package script checks it before building (its App ID, team, expiry, and that it grants each restricted entitlement), embeds it as `Contents/embedded.provisionprofile`, and adds the `com.apple.application-identifier` / `com.apple.developer.team-identifier` entitlements macOS matches it by. Needs a real signing identity (`DENEXT_CODESIGN_IDENTITY`) of the same team.",
+              "type": "string"
+            },
+            "entitlements": {
+              "description": "Entitlements signed into the app, e.g. `{ \"com.apple.developer.associated-domains\": [\"webcredentials:example.com\"] }`. Merged over the `DENEXT_ENTITLEMENTS` plist when both are set (these win). A restricted entitlement (`com.apple.developer.*`, `com.apple.application-identifier`, `keychain-access-groups`) needs provisioningProfile.",
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
         "denoFlags": {
           "description": "Extra `deno desktop` flags, passed before the entry by `denext desktop run` / `dev` and the package scripts: for a project that needs them to build at all. A pnpm workspace (deno.json `nodeModulesDir: \"manual\"`) needs `[\"--node-modules-dir=none\", \"--exclude-unused-npm\"]`, or `deno desktop` type-checks against its `node_modules` and rewrites the root `package.json`. One flag per entry, `--flag` or `--flag=value`, from an allow-list: `--node-modules-dir`, `--node-modules-linker`, `--exclude-unused-npm`, `--no-check`, `--check`, `--no-lock`, `--lock`, `--frozen-lockfile`, `--cached-only`, `--no-remote`, `--no-npm`, `--no-code-cache`, `--conditions` and `--unstable-*`. Permission flags are refused: they come from capabilities and extraPermissions.",
           "type": "array",

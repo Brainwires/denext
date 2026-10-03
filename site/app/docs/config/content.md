@@ -344,6 +344,9 @@ See [Writing a plugin](/docs/plugins).
   flags from it. Written by `denext desktop add <capability>`. Distinct from
   `spa.desktop` (packaging settings such as the icon). See
   [Desktop apps › Native capabilities](/docs/desktop#desktop-capabilities).
+  `desktop.macos` (`{ provisioningProfile, entitlements }`) signs the macOS app with a
+  provisioning profile and restricted entitlements such as associated domains; see
+  [Desktop apps › Code signing](/docs/desktop#desktop-macos-profile).
 - **`mobile`** — `MobileConfig`. Capacitor shell settings for
   `denext mobile build` and `denext mobile assets`, such as build `flavors`
   (per-flavor app id, name, server URL, icon and splash). See
