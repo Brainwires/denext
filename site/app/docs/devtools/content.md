@@ -329,16 +329,27 @@ there are errors before you open the panel, and tapping it opens this tab.
 
 **Boot diagnosis.** A browser does not say which module broke the boot — Safari
 only says "Importing a module script failed". So when the entry module script
-fails to load, or an import error is seen (the panel need not have mounted), the
-console walks the module graph from the entry script: it fetches each
-same-origin module (6 at a time, at most 400), and reports every one that answers
+fails to load, or an import error is seen — uncaught, unhandled, or logged with
+`console.error` by an app that catches its own `import("./main")` (the panel need
+not have mounted) — the console walks the module graph from the entry script, or
+first from the module the browser's message names when it names one (Chrome and
+Firefox do for a dynamic import). It fetches each same-origin module (6 at a
+time) along static imports, at most 400, and reports every one that answers
 non-2xx, is served as something other than JavaScript (HTML from a fallback
 page, say), imports a bare specifier no import map resolves, or does not parse
-(only where the page's CSP allows `eval`). Each failure is logged with the
-module's URL, the reason and the module that imported it; progress shows at the
-top of the tab, and **diagnose boot** runs it on demand. If the panel itself
-never mounted, the dev-reload script shows the errors and the diagnosis in a
-plain list at the bottom of the page.
+(only where the page's CSP allows `eval`). When that static graph loads, a deep
+pass follows what it skipped — string-literal dynamic `import()`s, `new URL("./worker.ts",
+import.meta.url)` and `import.meta.resolve()` script modules, and static imports
+past the cap — up to 2000 modules, logging progress as it goes. Each failure is
+logged with the module's URL, the reason and the module that imported it;
+progress shows at the top of the tab, and **diagnose boot** runs it on demand. If
+the panel itself never mounted, the dev-reload script shows the errors and the
+diagnosis in a plain list at the bottom of the page.
+
+**Reload loops.** Each reload the dev server orders is counted (in
+`sessionStorage`); more than 3 within 30 s is logged as a warning naming the
+loop, so a rebuild that keeps re-triggering itself is reported instead of
+leaving a page that never settles.
 
 Entries are also forwarded, batched, to the dev server's event log
 (`/_denext/dev-log`), so [`denext_dev_logs`](#mcp-inspect-the-live-page) reads

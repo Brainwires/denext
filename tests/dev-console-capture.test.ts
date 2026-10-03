@@ -7,6 +7,10 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   CONSOLE_BUFFER_LIMIT,
   consoleCaptureScript,
+  DEEP_DIAGNOSIS_MODULE_CAP,
+  DIAGNOSIS_MODULE_CAP,
+  RELOAD_LOOP_LIMIT,
+  RELOAD_LOOP_WINDOW_MS,
 } from "../src/build/dev-server/console-capture-script.ts";
 import { DEV_RELOAD_SCRIPT } from "../src/build/dev-server/reload-script.ts";
 import { SPA_DEV_RELOAD } from "../src/build/spa/dev-reload-script.ts";
@@ -32,7 +36,13 @@ function fakeScript(attrs: Record<string, string>): Any {
 }
 
 /** Evaluate the capture script against fakes; returns the handles a test drives. */
-function setup(opts: { modules?: Record<string, FakeModule>; scripts?: Any[] } = {}) {
+function setup(
+  opts: {
+    modules?: Record<string, FakeModule>;
+    scripts?: Any[];
+    session?: Map<string, string>;
+  } = {},
+) {
   const calls: { level: string; args: unknown[] }[] = [];
   const fakeConsole: Any = {};
   for (const lvl of ["log", "info", "warn", "error", "debug"]) {
@@ -43,8 +53,14 @@ function setup(opts: { modules?: Record<string, FakeModule>; scripts?: Any[] } =
   const fetched: string[] = [];
   const listeners: Record<string, ((e: Any) => void)[]> = {};
   const modules = opts.modules ?? {};
+  const session = opts.session;
   const win: Any = {
     console: fakeConsole,
+    sessionStorage: session && {
+      getItem: (k: string) => session.get(k) ?? null,
+      setItem: (k: string, v: string) => void session.set(k, String(v)),
+      removeItem: (k: string) => void session.delete(k),
+    },
     setTimeout: (fn: () => void) => (timers.push(fn), timers.length),
     addEventListener: (t: string, fn: (e: Any) => void) => (listeners[t] ??= []).push(fn),
     fetch: (url: string, init?: Any) => {
@@ -200,7 +216,9 @@ Deno.test("boot diagnosis: an HTML-instead-of-JS module is reported with its imp
   const d = await done;
   tick();
   assertEquals(d.state, "done");
-  assertEquals(d.checked, 5);
+  // The static pass found the failure, so the deep pass (lazy.js, a dynamic import) never ran.
+  assertEquals(d.checked, 4);
+  assertEquals(d.pass, "static");
   assertEquals(d.failures.length, 1, JSON.stringify(d.failures));
   assertEquals(d.failures[0].url, `${ORIGIN}/_denext/b.js`);
   assertEquals(d.failures[0].from, `${ORIGIN}/_denext/a.js`);
@@ -272,5 +290,223 @@ Deno.test("both dev-reload scripts start with the console capture", () => {
   for (const script of [DEV_RELOAD_SCRIPT, SPA_DEV_RELOAD]) {
     assertStringIncludes(script.slice(0, 400), "__denextConsole");
     assertStringIncludes(script, "/_denext/dev-log");
+  }
+});
+
+// ── The deep pass: graphs reachable only through a dynamic import ────────────────────────────
+
+const FS = `${ORIGIN}/_denext/@fs/app/src`;
+
+/**
+ * The SPA dev shape T3 Code boots through: the generated entry dynamically imports the app
+ * entry, whose `void import("./main").then(...).catch(showBootError)` the dev transform serves
+ * as `import("/_denext/@fs/…/main.tsx?v=1")`. The failure (an HTML fallback for a JS import)
+ * is two static hops below `main`, so a static-only walk never reaches it.
+ */
+function dynamicOnlyGraph(): Record<string, FakeModule> {
+  return {
+    [`${ORIGIN}/_denext/@entry`]: {
+      body: `import { installDevtools } from "/_denext/@dep/devtools.js";\n` +
+        `globalThis.__denextDev = true;\ninstallDevtools();\n` +
+        `await import("/_denext/@fs/app/src/bootstrap.ts?v=1");\n`,
+    },
+    [`${ORIGIN}/_denext/@dep/devtools.js`]: { body: `export function installDevtools() {}\n` },
+    [`${FS}/bootstrap.ts?v=1`]: {
+      body:
+        `// bootstrap.ts\nimport { showBootError } from "/_denext/@fs/app/src/lib/bootError.ts?v=1";\n` +
+        `void import("/_denext/@fs/app/src/main.tsx?v=1").then(({ startup }) => startup)` +
+        `.catch(showBootError);\n`,
+    },
+    [`${FS}/lib/bootError.ts?v=1`]: { body: `export function showBootError(e) {}\n` },
+    [`${FS}/main.tsx?v=1`]: {
+      body:
+        `import { App } from "/_denext/@fs/app/src/App.tsx?v=1";\nexport const startup = App;\n`,
+    },
+    [`${FS}/App.tsx?v=1`]: {
+      body:
+        `import { Router } from "/_denext/@fs/app/src/router.ts?v=1";\nexport const App = Router;\n`,
+    },
+    [`${FS}/router.ts?v=1`]: {
+      type: "text/html; charset=utf-8",
+      body: "<!doctype html><html><body><div id=root></div></body></html>",
+    },
+  };
+}
+
+const ENTRY_SCRIPT = () => fakeScript({ type: "module", src: "/_denext/@entry" });
+
+Deno.test("boot diagnosis: a failure reachable only through import('./main') is reported", async () => {
+  const { store, tick } = setup({ modules: dynamicOnlyGraph(), scripts: [ENTRY_SCRIPT()] });
+  const d = await store.diagnose("test");
+  tick();
+  assertEquals(d.pass, "deep");
+  assertEquals(d.staticChecked, 2, "the static pass: the entry and its static dep");
+  assertEquals(d.failures.length, 1, JSON.stringify(d.failures));
+  assertEquals(d.failures[0].url, `${FS}/router.ts?v=1`);
+  assertEquals(d.failures[0].from, `${FS}/App.tsx?v=1`);
+  const msgs = store.entries.map((e: Any) => e.message);
+  assert(msgs.some((m: string) => m.includes("following dynamic imports too")), msgs.join("\n"));
+});
+
+Deno.test("boot diagnosis: a caught boot import that is only console.error'd starts the walk", async () => {
+  // T3's `showBootError`: `console.error("T3 Code failed to start.", error)` — no unhandled
+  // rejection, no uncaught error. The logged import failure has to start the walk itself.
+  const { store, fakeConsole, tick } = setup({
+    modules: dynamicOnlyGraph(),
+    scripts: [ENTRY_SCRIPT()],
+  });
+  fakeConsole.error("T3 Code failed to start.", new TypeError("Importing a module script failed."));
+  assertEquals(store.importErrorSeen, true);
+  assertEquals(store.diagnosis.state, "idle", "scheduled, not yet started");
+  tick();
+  assertEquals(store.diagnosis.state, "running");
+  const d = await store.diagnose(); // joins the running walk
+  assertEquals(d.failures.map((f: Any) => f.url), [`${FS}/router.ts?v=1`]);
+});
+
+Deno.test("boot diagnosis: starts from the module the browser's import error names", async () => {
+  // Chrome names the dynamically imported module; here the entry's own graph never reaches it,
+  // so only the named URL can lead the walk to the failure.
+  const graph = dynamicOnlyGraph();
+  graph[`${ORIGIN}/_denext/@entry`] = { body: `export {};\n` };
+  const { store, fire, tick } = setup({ modules: graph, scripts: [ENTRY_SCRIPT()] });
+  const named = `${FS}/main.tsx?v=1`;
+  fire("unhandledrejection", {
+    reason: new TypeError(`Failed to fetch dynamically imported module: ${named}`),
+  });
+  assertEquals(store.importErrorUrl, named);
+  tick();
+  const d = await store.diagnose();
+  assertEquals(d.named, named);
+  assertEquals(d.pass, "static", "the named module's static graph holds the failure");
+  assertEquals(d.failures.map((f: Any) => [f.url, f.from]), [[
+    `${FS}/router.ts?v=1`,
+    `${FS}/App.tsx?v=1`,
+  ]]);
+  const started = store.entries.find((e: Any) => e.message.includes("walking the module graph"));
+  assertStringIncludes(started.message, named);
+});
+
+Deno.test("boot diagnosis: a cross-origin URL in the message is not walked", async () => {
+  const { store, fire, tick } = setup({ modules: brokenGraph(), scripts: [] });
+  fire("unhandledrejection", {
+    reason: new TypeError("Failed to fetch dynamically imported module: https://cdn.example/x.js"),
+  });
+  assertEquals(store.importErrorUrl, "");
+  tick();
+  const d = await store.diagnose();
+  assertEquals(d.checked, 0);
+  assertStringIncludes(d.note, "no same-origin module entry");
+});
+
+Deno.test("boot diagnosis: a worker module (new URL(…, import.meta.url)) is followed, an asset is not", async () => {
+  const { store, fetched } = setup({
+    modules: {
+      [`${ORIGIN}/_denext/entry.js`]: {
+        body:
+          `const w = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });\n` +
+          `const logo = new URL("./logo.png", import.meta.url);\n` +
+          `const r = import.meta.resolve("./resolved.js");\n`,
+      },
+      [`${ORIGIN}/_denext/worker.ts`]: { body: `export {};\n` },
+      [`${ORIGIN}/_denext/resolved.js`]: { body: `export const x = ;\n` },
+    },
+    scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })],
+  });
+  const d = await store.diagnose("test");
+  assert(fetched.includes(`${ORIGIN}/_denext/worker.ts`), fetched.join("\n"));
+  assert(!fetched.some((u) => u.endsWith("logo.png")), "an asset URL is not a module");
+  assertEquals(d.failures.map((f: Any) => f.url), [`${ORIGIN}/_denext/resolved.js`]);
+});
+
+/** An entry importing `n` leaf modules statically (`m<i>.js`); `bad` serves a 404. */
+function fanOut(n: number, bad = -1, dynamic = false): Record<string, FakeModule> {
+  const lines: string[] = [];
+  const graph: Record<string, FakeModule> = {};
+  for (let i = 0; i < n; i++) {
+    lines.push(dynamic ? `import("./m${i}.js");` : `import "./m${i}.js";`);
+    if (i !== bad) graph[`${ORIGIN}/_denext/m${i}.js`] = { body: `export const v${i} = ${i};\n` };
+  }
+  graph[`${ORIGIN}/_denext/entry.js`] = { body: lines.join("\n") + "\n" };
+  return graph;
+}
+
+Deno.test("boot diagnosis: static edges past the static cap are walked by the deep pass", async () => {
+  const n = DIAGNOSIS_MODULE_CAP + 50;
+  const { store } = setup({
+    modules: fanOut(n, n - 5),
+    scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })],
+  });
+  const d = await store.diagnose("test");
+  assertEquals(d.staticChecked, DIAGNOSIS_MODULE_CAP);
+  assertEquals(d.pass, "deep");
+  assertEquals(d.checked, n + 1);
+  assertEquals(d.failures.map((f: Any) => f.url), [`${ORIGIN}/_denext/m${n - 5}.js`]);
+  const progress = store.entries.filter((e: Any) => e.message.includes("pending (deep pass)"));
+  assert(progress.length >= 1, "the deep pass reports progress");
+});
+
+Deno.test("boot diagnosis: the deep pass stops at its cap and says so", async () => {
+  const { store } = setup({
+    modules: fanOut(DEEP_DIAGNOSIS_MODULE_CAP + 100, -1, true),
+    scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })],
+  });
+  const d = await store.diagnose("test");
+  assertEquals(d.checked, DEEP_DIAGNOSIS_MODULE_CAP);
+  assertEquals(d.capped, true);
+  assertEquals(d.failures, []);
+  assertStringIncludes(
+    store.entries.at(-1).message,
+    `stopped at ${DEEP_DIAGNOSIS_MODULE_CAP} modules`,
+  );
+});
+
+// ── The reload loop ──────────────────────────────────────────────────────────────────────────
+
+/** A sessionStorage holding `n` dev-ordered reloads `agoMs` back, plus this load's mark. */
+function reloadHistory(n: number, agoMs: number, marked = true): Map<string, string> {
+  const now = Date.now();
+  const log = Array.from({ length: n }, () => ({ t: now - agoMs, why: "rebuilt" }));
+  const session = new Map([["__denextDevReloads", JSON.stringify(log)]]);
+  if (marked) session.set("__denextDevReloadMark", "the dev server rebuilt and ordered a reload");
+  return session;
+}
+
+Deno.test("reload loop: more dev-ordered reloads than the limit in the window is reported", () => {
+  const session = reloadHistory(RELOAD_LOOP_LIMIT, 1000);
+  const { store } = setup({ session });
+  assertEquals(store.reloadLoop.count, RELOAD_LOOP_LIMIT + 1);
+  const warn = store.entries.find((e: Any) => e.source === "reload-loop");
+  assertEquals(warn.level, "warn");
+  assertStringIncludes(warn.message, `${RELOAD_LOOP_LIMIT + 1} times`);
+  assertStringIncludes(warn.message, "the dev server rebuilt and ordered a reload");
+  assertEquals(session.has("__denextDevReloadMark"), false, "the mark is consumed");
+});
+
+Deno.test("reload loop: at the limit, outside the window or unmarked, nothing is reported", () => {
+  for (
+    const session of [
+      reloadHistory(RELOAD_LOOP_LIMIT - 1, 1000), // this load makes it exactly the limit
+      reloadHistory(RELOAD_LOOP_LIMIT + 5, RELOAD_LOOP_WINDOW_MS + 1000), // old reloads
+      reloadHistory(RELOAD_LOOP_LIMIT + 5, 1000, false), // a load the dev server didn't order
+    ]
+  ) {
+    const { store } = setup({ session });
+    assertEquals(store.reloadLoop, null);
+    assertEquals(store.entries.filter((e: Any) => e.source === "reload-loop"), []);
+  }
+});
+
+Deno.test("reload loop: markReload records the mark the next load counts", () => {
+  const session = new Map<string, string>();
+  const { store } = setup({ session });
+  store.markReload("why");
+  assertEquals(session.get("__denextDevReloadMark"), "why");
+});
+
+Deno.test("both dev-reload scripts mark the reloads the dev server orders", () => {
+  for (const script of [DEV_RELOAD_SCRIPT, SPA_DEV_RELOAD]) {
+    assertStringIncludes(script, ".markReload(");
+    assertStringIncludes(script, '"the dev server rebuilt and ordered a reload"');
   }
 });

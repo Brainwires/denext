@@ -450,6 +450,15 @@ and this project adheres to
   of the port (`127.0.0.1`, `[::1]`, `localhost`) until one answers. Whether a server is running
   is still decided by asking it, and the pid the file names is the listening process (the
   re-exec'd child), which is also the pid its `/_denext/dev-state` reports.
+- **The boot diagnosis reaches failures behind a dynamic import.** An app that boots through
+  `import("./main").catch(showError)` reported nothing: the caught failure only reached
+  `console.error`, which did not start the walk, and the 400-module walk stopped before a large
+  graph's failing module. A logged import error now starts it; the walk begins at the module the
+  browser's message names, when it names one (Chrome, Firefox); and when the static import graph
+  loads, a deep pass follows dynamic `import()`s, `new URL("./worker.ts", import.meta.url)` and
+  `import.meta.resolve()` script modules, and static edges past the cap, up to 2000 modules,
+  with progress in the Console. When the dev server orders more than 3 reloads in 30 s, the
+  Console says the page is in a reload loop.
 - **A desktop notification permission request settles when the OS never answers.** The
   `notifications` capability's prompting `permission` request (behind `requestPermission("notifications")`
   and `requestPushPermission()` in a Deno Desktop window) waited forever when macOS never answered

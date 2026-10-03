@@ -9,6 +9,22 @@
 // fails to load, walks the module graph from the entry to name the module that broke it —
 // browsers don't (Safari: "Importing a module script failed").
 //
+// The walk is two passes. The static pass follows static imports only — the graph the
+// browser must link before a module runs — up to {@linkcode DIAGNOSIS_MODULE_CAP} modules.
+// When it finds nothing, the deep pass follows what it skipped: every string-literal dynamic
+// `import()` (after the dev transform, `import("./main")` is `import("/_denext/@fs/…")`),
+// `new URL("./worker.ts", import.meta.url)` and `import.meta.resolve("./x.js")` script modules,
+// and any static edge the cap cut — up to {@linkcode DEEP_DIAGNOSIS_MODULE_CAP}. An app that
+// boots through `import("./main").catch(showError)` fails only inside that dynamic graph, and
+// reports it with `console.error` rather than an unhandled rejection, so a console error
+// carrying an import-failure message starts the walk too. When the browser's message names
+// the module (Chrome: "Failed to fetch dynamically imported module: <url>"; Safari doesn't),
+// the walk starts there.
+//
+// It also notices a reload loop: when the dev server orders more than
+// {@linkcode RELOAD_LOOP_LIMIT} reloads within {@linkcode RELOAD_LOOP_WINDOW_MS} (a rebuild
+// that keeps re-triggering itself), it says so in the console instead of staying silent.
+//
 // Plain ES5-style JavaScript in a string (it ships as-is to every browser, before any
 // bundle). Every global it touches is reached through `window` or a guarded free name, so a
 // test can evaluate it against fakes without patching the test process's own console.
@@ -16,8 +32,17 @@
 /** How many entries the in-page buffer keeps (oldest dropped first). */
 export const CONSOLE_BUFFER_LIMIT = 500;
 
-/** How many modules one boot diagnosis fetches at most. */
-const DIAGNOSIS_MODULE_CAP = 400;
+/** How many modules the boot diagnosis's static pass fetches at most. */
+export const DIAGNOSIS_MODULE_CAP = 400;
+
+/** How many modules one boot diagnosis fetches at most, its deep pass included. */
+export const DEEP_DIAGNOSIS_MODULE_CAP = 2000;
+
+/** More dev-server-ordered reloads than this within the window is reported as a loop. */
+export const RELOAD_LOOP_LIMIT = 3;
+
+/** The window the reload-loop check counts dev-server-ordered reloads over. */
+export const RELOAD_LOOP_WINDOW_MS = 30_000;
 
 /**
  * The capture script, parameterized by the dev-log endpoint it forwards to.
@@ -31,6 +56,14 @@ export function consoleCaptureScript(devLogPath: string): string {
   if (window.__denextConsole) return;
   var LIMIT = ${CONSOLE_BUFFER_LIMIT};
   var MODULE_CAP = ${DIAGNOSIS_MODULE_CAP};
+  var DEEP_CAP = ${DEEP_DIAGNOSIS_MODULE_CAP};
+  var PROGRESS_EVERY = 200;
+  var RELOAD_LIMIT = ${RELOAD_LOOP_LIMIT};
+  var RELOAD_WINDOW = ${RELOAD_LOOP_WINDOW_MS};
+  var RELOAD_LOG = "__denextDevReloads";
+  var RELOAD_MARK = "__denextDevReloadMark";
+  var SCRIPT_EXT = /\\.(?:m?[jt]sx?|cjs)(?:[?#]|$)/i;
+  var URL_IN_MSG = /\\bhttps?:\\/\\/[^\\s'"<>()]+/;
   var CONCURRENCY = 6;
   var MAX_STR = 2000;
   var DEV_LOG = ${JSON.stringify(devLogPath)};
@@ -210,7 +243,13 @@ export function consoleCaptureScript(devLogPath: string): string {
       con[lvl] = function () {
         if (!busy) {
           busy = true;
-          try { push(lvl, "console", format(arguments), lvl === "error" || lvl === "warn" ? stackOf(arguments) : ""); } catch (_) {}
+          try {
+            var text = format(arguments);
+            push(lvl, "console", text, lvl === "error" || lvl === "warn" ? stackOf(arguments) : "");
+            // An app that catches its own boot import (import("./main").catch(show))
+            // only ever logs the failure — that has to start the walk too.
+            if (lvl === "error" || lvl === "warn") sawImportError(text);
+          } catch (_) {}
           busy = false;
         }
         return o.apply(this, arguments);
@@ -220,12 +259,23 @@ export function consoleCaptureScript(devLogPath: string): string {
 
   // ---- errors --------------------------------------------------------------------------
   function sawImportError(message) {
-    if (!IMPORT_ERR.test(String(message || ""))) return;
+    var text = String(message || "");
+    if (!IMPORT_ERR.test(text)) return;
     api.importErrorSeen = true;
+    var named = moduleUrlIn(text);
+    if (named && !api.importErrorUrl) api.importErrorUrl = named;
     if (!autoDiagnosed) {
       autoDiagnosed = true;
-      later(function () { diagnose("import error"); }, 1200);
+      later(function () { diagnose("import error", named); }, 1200);
     }
+  }
+  // The same-origin module URL an import error names, when the browser includes one
+  // (Chrome / Firefox for a dynamic import; Safari never does).
+  function moduleUrlIn(text) {
+    var m = URL_IN_MSG.exec(text);
+    if (!m) return "";
+    var u = m[0].replace(/[.,;:'"]+$/, "");
+    return sameOrigin(u) ? new URL(u, location.href).href : "";
   }
   function isModuleScript(t) {
     return t && String(t.tagName || "").toUpperCase() === "SCRIPT" &&
@@ -304,9 +354,11 @@ export function consoleCaptureScript(devLogPath: string): string {
   function isBare(spec) {
     return !/^(\\.{0,2}\\/|[a-zA-Z][a-zA-Z0-9+.-]*:)/.test(spec);
   }
-  // The specifiers a module imports: static import/export-from, side-effect imports, and
-  // string-literal dynamic imports. Statement starts only (line start or after ";"/"}"),
-  // and the clause before "from" can't contain a quote, so string contents aren't matched.
+  // The specifiers a module imports: static import/export-from, side-effect imports, and —
+  // marked dynamic — string-literal dynamic imports plus the script modules named by
+  // new URL("…", import.meta.url) (a worker) or import.meta.resolve("…"). Statement starts
+  // only (line start or after ";"/"}"), and the clause before "from" can't contain a quote,
+  // so string contents aren't matched.
   function importsOf(text) {
     var out = [];
     var re = /(?:^|[;}\\n])\\s*(?:import|export)\\s*([\\w$*{}\\s,]*?)\\s*from\\s*(["'])([^"'\\n]+)\\2/g;
@@ -316,6 +368,10 @@ export function consoleCaptureScript(devLogPath: string): string {
     while ((m = re.exec(text))) out.push({ spec: m[2], dynamic: false });
     re = /\\bimport\\s*\\(\\s*(["'])([^"'\\n]+)\\1\\s*\\)/g;
     while ((m = re.exec(text))) out.push({ spec: m[2], dynamic: true });
+    re = /\\bnew\\s+URL\\s*\\(\\s*(["'])([^"'\\n]+)\\1\\s*,\\s*import\\.meta\\.url\\s*\\)/g;
+    while ((m = re.exec(text))) if (SCRIPT_EXT.test(m[2])) out.push({ spec: m[2], dynamic: true });
+    re = /\\bimport\\.meta\\.resolve\\s*\\(\\s*(["'])([^"'\\n]+)\\1\\s*\\)/g;
+    while ((m = re.exec(text))) if (SCRIPT_EXT.test(m[2])) out.push({ spec: m[2], dynamic: true });
     return out;
   }
   var evalOk = null;
@@ -368,7 +424,7 @@ export function consoleCaptureScript(devLogPath: string): string {
           }
           var abs;
           try { abs = new URL(spec, url).href; } catch (_) { continue; }
-          if (sameOrigin(abs)) deps.push(abs);
+          if (sameOrigin(abs)) deps.push({ url: abs, dynamic: specs[i].dynamic });
         }
         var syn = syntaxError(text);
         if (syn) return { reason: "does not parse: " + syn, deps: deps };
@@ -382,21 +438,41 @@ export function consoleCaptureScript(devLogPath: string): string {
     return /^\\s*<(!doctype|html|head|body|pre|\\!--)/i.test(String(text).slice(0, 200));
   }
   var running = null;
-  function diagnose(why) {
+  // Two passes over one seen-set: static imports first (cap MODULE_CAP); if that finds
+  // nothing, the edges it skipped — dynamic ones, and static ones past the cap — up to DEEP_CAP.
+  function diagnose(why, named) {
     if (running) return running;
     var entry = findEntry();
-    if (!entry || typeof window.fetch !== "function") {
+    named = named && sameOrigin(named) ? named : "";
+    if ((!entry && !named) || typeof window.fetch !== "function") {
       diag = { state: "done", checked: 0, queued: 0, failures: [], entry: "", note: "no same-origin module entry script to walk" };
       notify();
       return Promise.resolve(diag);
     }
     var keys = importMapKeys();
-    diag = { state: "running", checked: 0, queued: 1, failures: [], entry: entry, note: why || "manual", capped: false };
-    push("info", "diagnosis", "boot diagnosis: walking the module graph from " + entry + " (" + (why || "manual") + ")", "", entry);
+    var roots = named && named !== entry ? [named] : [];
+    if (entry) roots.push(entry);
+    why = why || "manual";
+    diag = { state: "running", pass: "static", checked: 0, queued: roots.length, failures: [], entry: entry || named, named: named, note: why, capped: false };
+    push("info", "diagnosis", "boot diagnosis: walking the module graph from " + roots.join(" and ") + " (" + why + ")", "", diag.entry);
     var seen = {};
-    seen[entry] = true;
-    var queue = [{ url: entry, from: "" }];
+    var queue = [];
+    var skipped = []; // edges the static pass did not follow: dynamic, or past its cap
+    for (var r = 0; r < roots.length; r++) { seen[roots[r]] = true; queue.push({ url: roots[r], from: "" }); }
     var active = 0;
+    var cap = MODULE_CAP;
+    var progressAt = PROGRESS_EVERY;
+    function follow(dep, from) {
+      if (seen[dep.url]) return;
+      if (diag.pass === "static" && dep.dynamic) { skipped.push({ url: dep.url, from: from }); return; }
+      if (diag.checked + queue.length + active >= cap) {
+        diag.capped = true;
+        if (diag.pass === "static") skipped.push({ url: dep.url, from: from });
+        return;
+      }
+      seen[dep.url] = true;
+      queue.push({ url: dep.url, from: from });
+    }
     running = new Promise(function (resolve) {
       function finish() {
         diag.state = "done";
@@ -405,25 +481,42 @@ export function consoleCaptureScript(devLogPath: string): string {
         notify();
         resolve(diag);
       }
+      function deepen() {
+        diag.pass = "deep";
+        diag.staticChecked = diag.checked;
+        diag.capped = false;
+        cap = DEEP_CAP;
+        push("info", "diagnosis", "boot diagnosis: the static import graph (" + diag.checked +
+          " module(s)) loads — following dynamic imports too, up to " + DEEP_CAP + " modules", "", diag.entry);
+        for (var i = 0; i < skipped.length; i++) follow(skipped[i], skipped[i].from);
+        skipped = [];
+      }
+      function settled() {
+        if (queue.length || active) return pump();
+        if (diag.pass === "static" && !diag.failures.length && skipped.length) {
+          deepen();
+          if (queue.length) return pump();
+        }
+        finish();
+      }
       function pump() {
         while (active < CONCURRENCY && queue.length) {
           (function (item) {
             active++;
             checkModule(item, keys).then(function (r) {
+              active--; // counted in checked from here, so the cap check sees it once
               diag.checked++;
               if (r.reason) diag.failures.push({ url: item.url, from: item.from, reason: r.reason });
               var deps = r.deps || [];
-              for (var i = 0; i < deps.length; i++) {
-                if (seen[deps[i]]) continue;
-                if (diag.checked + queue.length + active >= MODULE_CAP) { diag.capped = true; break; }
-                seen[deps[i]] = true;
-                queue.push({ url: deps[i], from: item.url });
-              }
-            }, function () { diag.checked++; }).then(function () {
-              active--;
+              for (var i = 0; i < deps.length; i++) follow(deps[i], item.url);
+            }, function () { active--; diag.checked++; }).then(function () {
               diag.queued = queue.length + active;
+              if (diag.pass === "deep" && diag.checked >= progressAt) {
+                progressAt += PROGRESS_EVERY;
+                push("info", "diagnosis", "boot diagnosis: " + diag.checked + " module(s) checked, " + diag.queued + " pending (deep pass)", "", diag.entry);
+              }
               notify();
-              if (!queue.length && !active) finish(); else pump();
+              settled();
             });
           })(queue.shift());
         }
@@ -437,12 +530,14 @@ export function consoleCaptureScript(devLogPath: string): string {
     var f = diag.failures;
     for (var i = 0; i < f.length && i < 10; i++) {
       push("error", "diagnosis", "boot diagnosis: " + f[i].url + " — " + f[i].reason +
-        (f[i].from ? " (imported by " + f[i].from + ")" : " (the entry module)"), "", f[i].url);
+        (f[i].from ? " (imported by " + f[i].from + ")"
+          : f[i].url === diag.named ? " (the module the browser's import error names)" : " (the entry module)"), "", f[i].url);
     }
     if (!f.length) {
-      push("info", "diagnosis", "boot diagnosis: " + diag.checked + " module(s) checked, every one served as JavaScript" +
+      push("info", "diagnosis", "boot diagnosis: " + diag.checked + " module(s) checked" +
+        (diag.pass === "deep" ? " (static imports, then dynamic ones)" : "") + ", every one served as JavaScript" +
         (canEval() ? " and parsed" : " (the parse check is off: the page's CSP blocks eval)") +
-        (diag.capped ? "; stopped at " + MODULE_CAP + " modules" : "") +
+        (diag.capped ? "; stopped at " + (diag.pass === "deep" ? DEEP_CAP : MODULE_CAP) + " modules" : "") +
         ". The failure is likely a runtime error while a module evaluated — see the errors above.", "", diag.entry);
     }
     showFallback();
@@ -481,10 +576,49 @@ export function consoleCaptureScript(devLogPath: string): string {
     }, 1500);
   }
 
+  // ---- reload loop -----------------------------------------------------------------------
+  // The dev-reload script marks a reload it orders (markReload) in sessionStorage; the
+  // next page load counts it. More than RELOAD_LIMIT within RELOAD_WINDOW is a loop.
+  function sessionStore() {
+    try { return window.sessionStorage || null; } catch (_) { return null; }
+  }
+  function markReload(why) {
+    var store = sessionStore();
+    if (!store) return;
+    try { store.setItem(RELOAD_MARK, String(why || "dev reload")); } catch (_) {}
+  }
+  function checkReloadLoop() {
+    var store = sessionStore();
+    if (!store) return;
+    try {
+      var why = store.getItem(RELOAD_MARK);
+      if (why === null) return;
+      store.removeItem(RELOAD_MARK);
+      var now = Date.now();
+      var log;
+      try { log = JSON.parse(store.getItem(RELOAD_LOG) || "[]"); } catch (_) { log = []; }
+      if (!Array.isArray(log)) log = [];
+      log = log.filter(function (e) { return e && typeof e.t === "number" && now - e.t < RELOAD_WINDOW && e.t <= now; });
+      log.push({ t: now, why: why });
+      store.setItem(RELOAD_LOG, JSON.stringify(log.slice(-50)));
+      if (log.length <= RELOAD_LIMIT) return;
+      var reasons = [];
+      for (var i = 0; i < log.length; i++) if (reasons.indexOf(log[i].why) === -1) reasons.push(log[i].why);
+      api.reloadLoop = { count: log.length, windowMs: RELOAD_WINDOW, reasons: reasons };
+      push("warn", "reload-loop", "dev reload loop: the dev server reloaded this page " + log.length +
+        " times in the last " + Math.round(RELOAD_WINDOW / 1000) + " s (" + reasons.join("; ") + "). " +
+        "A rebuild that keeps re-triggering itself — an npm dependency re-bundled on every load, or a " +
+        "file the build writes inside the watched tree — reloads the page forever; the dev server's " +
+        "terminal (or denext_dev_logs) shows what rebuilt.", "", "");
+    } catch (_) {}
+  }
+
   var api = {
     entries: entries,
     errorCount: 0,
     importErrorSeen: false,
+    importErrorUrl: "",
+    reloadLoop: null,
     limit: LIMIT,
     get diagnosis() { return diag; },
     subscribe: function (fn) {
@@ -495,10 +629,12 @@ export function consoleCaptureScript(devLogPath: string): string {
     diagnose: diagnose,
     format: format,
     importsOf: importsOf,
+    markReload: markReload,
     push: push,
     flush: flush
   };
   window.__denextConsole = api;
+  checkReloadLoop();
 })();
 `;
 }

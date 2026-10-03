@@ -29,6 +29,8 @@ export interface ConsoleDiagnosis {
   entry: string;
   note: string;
   capped?: boolean;
+  /** `static` (static imports only) or `deep` (dynamic imports too, after a clean static pass). */
+  pass?: "static" | "deep";
 }
 
 /** `window.__denextConsole` — the capture script's buffer and controls. */
@@ -174,7 +176,8 @@ function diagnosisLine(ctx: PanelCtx, d: ConsoleDiagnosis): HTMLElement | null {
       ctx.doc,
       "div",
       ctx.S.cDiag,
-      `boot diagnosis running… ${d.checked} module(s) checked, ${d.queued} pending`,
+      `boot diagnosis running… ${d.checked} module(s) checked, ${d.queued} pending` +
+        (d.pass === "deep" ? " (deep pass: following dynamic imports)" : ""),
     );
   }
   if (d.failures.length === 0) {

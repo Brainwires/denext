@@ -160,7 +160,13 @@ export const DEV_RELOAD_SCRIPT = consoleCaptureScript(DEV_LOG_PATH) + `
     es.onmessage = function (e) {
       if (e.data === "refresh") { hideOverlay(); refresh(); }
       else if (e.data === "css") { hideOverlay(); swapCss(); }
-      else if (e.data === "reload") location.reload();
+      else if (e.data === "reload") {
+        // Marked first, so the console capture can tell a reload loop from a page someone
+        // reloaded (it counts the reloads the dev server ordered).
+        var c = window.__denextConsole;
+        if (c && c.markReload) c.markReload("the dev server rebuilt and ordered a reload");
+        location.reload();
+      }
       else if (e.data.indexOf("update:") === 0) { hideOverlay(); update(e.data.slice(7)); }
       else if (e.data.indexOf("error:") === 0) {
         try {
