@@ -451,6 +451,10 @@ and this project adheres to
 
 ### Fixed
 
+- **The module-graph crawl survives a deleted working directory.** `deno info` (the boundary
+  manifest, conformance probes) failed with "could not read current working directory" when the
+  process's cwd had been removed; it now runs from the first entry's folder in that case.
+
 - **A packaged desktop app no longer reads modules from the build machine's disk.** An import map
   target written as an absolute local path (`"denext/desktop": "file:///…/src/build/desktop.ts"`,
   or `"/…"`) was embedded, but the compiled binary resolved it to the build machine's path: it

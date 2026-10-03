@@ -10,7 +10,16 @@
 // build-time graph split (which modules the browser bundle may contain) and the
 // runtime registration of client-component and server references.
 
-import { fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
+import {
+  dirname,
+  fromFileUrl,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  SEPARATOR,
+  toFileUrl,
+} from "@std/path";
 import { type Directive, readDirective } from "./directives.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs } from "./bundle.ts";
@@ -268,6 +277,16 @@ export function denoInfoGraph(
 }
 
 /** One `deno info` spawn over a barrel of `entryFiles`; no caching. */
+/** Whether this process's working directory still exists. */
+function liveCwd(): boolean {
+  try {
+    Deno.cwd();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function spawnDenoInfo(
   entryFiles: string[],
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
@@ -278,6 +297,9 @@ async function spawnDenoInfo(
     const body = entryFiles.map((f) => `import ${JSON.stringify(toFileUrl(f).href)};`).join("\n");
     await Deno.writeTextFile(barrel, body + "\n");
     const command = new Deno.Command(denoExecutable(), {
+      // A process whose working directory was deleted (a test that removed its temp cwd) can't
+      // spawn `deno info` from it; run from the first entry's folder instead.
+      ...(liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
       // sloppy-imports so extensionless Next.js app imports resolve in the graph
       // crawl (permissive fallback; see runDenoBundle in bundle.ts).
       args: [
