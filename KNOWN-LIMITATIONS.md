@@ -136,10 +136,11 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **Android:** the WebView is whatever the device has installed, so features and bugs vary;
   widgets are static (no configure activity); push needs `google-services.json`; `mobile dev`
   relies on `usesCleartextTraffic`, which an app's own `networkSecurityConfig` overrides.
-- **No Clerk helper for the shell.** `denext/desktop/clerk`'s `nativeClerk` installs only in a Deno
-  Desktop window; in the shell `@clerk/nextjs` runs as a web page (email code and password work,
-  Google / GitHub refuse embedded WebViews), so OAuth needs app glue over `openAuthSession` and a
-  keychain token cache (examples/clerk → Capacitor).
+- **Clerk in the shell (`denext/mobile/clerk`):** passkeys sign in through Clerk's hosted page in
+  the auth session (a `capacitor://` / `https://localhost` page cannot use WebAuthn for Clerk's
+  relying party) and are created on the web; on Android the OAuth callback is a custom-scheme
+  intent, so another app registered for the scheme could receive it while a sign-in is pending
+  (the same exposure as Windows and Linux desktop).
 - **JavaScript doesn't run in the page in the background**, and a silent push reaches it only
   while the app runs; `defineBackgroundTask` runs in Capacitor's Background Runner (no DOM).
 - **WebView storage is evictable** (use `denext mobile add storage`); `secureStore` is a plain

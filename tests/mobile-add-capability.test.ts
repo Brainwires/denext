@@ -574,6 +574,7 @@ Deno.test("mobile add: the table pins every capability to Capacitor 8", () => {
     "browser",
     "deep-links",
     "auth-session",
+    "clerk",
     "push",
     "filesystem",
     "camera",

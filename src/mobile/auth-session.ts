@@ -529,12 +529,46 @@ export function isAuthSessionCallback(url: string): boolean {
   if (claimedScheme !== undefined && url.toLowerCase().startsWith(`${claimedScheme}:`)) {
     return true;
   }
+  if (isStrayClerkCallback(url)) return true;
   return url === claimedUrl && Date.now() < claimedUntil;
+}
+
+/** The Clerk redirect URLs (lower-cased) whose stray callbacks are dropped, never routed. */
+const clerkRedirects = new Set<string>();
+
+/**
+ * Drop Clerk callbacks to `redirectUrl` that arrive outside an auth session (a forgery or a
+ * replay of a link carrying `rotating_token_nonce`): `onDeepLink` never sees them. Internal:
+ * `denext/mobile/clerk` calls it; not re-exported from `denext/mobile`.
+ *
+ * @param redirectUrl The Clerk OAuth redirect URL (`myapp://app/`).
+ */
+export function dropStrayClerkCallbacks(redirectUrl: string): void {
+  clerkRedirects.add(callbackTarget(redirectUrl) ?? redirectUrl.toLowerCase());
+}
+
+/** `url`'s scheme, host and path, lower-cased, or undefined. */
+function callbackTarget(url: string): string | undefined {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname || "/"}`.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether `url` is a Clerk callback (a nonce) to a registered redirect. */
+function isStrayClerkCallback(url: string): boolean {
+  if (clerkRedirects.size === 0) return false;
+  const target = callbackTarget(url);
+  if (target === undefined || !clerkRedirects.has(target)) return false;
+  return new URL(url).searchParams.has("rotating_token_nonce");
 }
 
 /** Forget the module's session state (tests only). */
 export function resetAuthSessionForTesting(): void {
   active = false;
+  clerkRedirects.clear();
   claimedScheme = undefined;
   claimedUrl = undefined;
   claimedUntil = 0;

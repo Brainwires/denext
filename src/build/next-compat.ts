@@ -211,6 +211,7 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "feature": u("src/feature.ts"),
     // `denext/mobile` — the Capacitor-shell client runtime; shares the one hooks instance.
     "mobile": u("src/mobile/mod.ts"),
+    "mobile-clerk": u("src/mobile/clerk.ts"),
     // `denext/navigation` — StackLayout / TabsLayout / Sheet; client components whose hooks
     // must share the one instance (React Native mode's navigator adapters import it too).
     "navigation": u("src/navigation/mod.ts"),
@@ -640,6 +641,8 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/devtools": "devtools.js",
   "denext/feature": "feature.js",
   "denext/mobile": "mobile.js",
+  // `denext/mobile/clerk` shares the one `denext/mobile` instance (its auth-session state).
+  "denext/mobile/clerk": "mobile-clerk.js",
   "denext/navigation": "navigation.js",
   "denext/virtual-masonry": "virtual-masonry.js",
   // The Deno Desktop page APIs (deep-link scheme ownership, the window, the app menu / tray).

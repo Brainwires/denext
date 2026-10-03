@@ -1597,6 +1597,66 @@ const saved = await secureStore.get("refreshToken", { reason: "Sign in" }); // p
         maps to it.
       </Callout>
 
+      <h2 id="clerk">Clerk in the shell</h2>
+      <p>
+        <code>denext/mobile/clerk</code> lets the app's own Clerk provider —{" "}
+        <code>&lt;ClerkProvider&gt;</code> from <code>@clerk/nextjs</code> or{" "}
+        <code>@clerk/react</code>, the one the web build uses — sign in inside the iOS and Android
+        app, as <code>denext/desktop/clerk</code> does in a Deno Desktop window. Set it up once:
+      </p>
+      <Code lang="sh">
+        {`denext mobile add clerk --scheme myapp   # auth session + secure storage + the scheme`}
+      </Code>
+      <Code lang="ts">
+        {`// instrumentation-client.ts (an App Router app; the top of the entry in a SPA)
+import { installClerkMobileBridge } from "denext/mobile/clerk";
+installClerkMobileBridge({ scheme: "myapp", nativeClerk: true });`}
+      </Code>
+      <ul>
+        <li>
+          <code>nativeClerk</code>{" "}
+          switches the clerk-js instance the provider loads into native mode, as{" "}
+          <code>@clerk/electron/react</code>{" "}
+          does with its bundled one: no cookies (a WebView's cookies for Clerk's domain are
+          third-party), the client JWT in the Keychain / Keystore (<code>secureStore</code>), sent
+          as{" "}
+          <code>Authorization</code>; the session survives a relaunch. Without the secure-storage
+          plugin the token stays in memory, never in the WebView's IndexedDB.
+        </li>
+        <li>
+          Google / GitHub open in <code>openAuthSession</code>{" "}
+          (<code>ASWebAuthenticationSession</code> on iOS, a Custom Tab on Android) and come back to
+          {" "}
+          <code>myapp://app/</code>. Only this session's redirect (scheme, host and path) is
+          accepted, one flow at a time, and a Clerk callback outside a session never reaches{" "}
+          <code>onDeepLink</code>. On Android the callback travels through the app's intent filter,
+          so another app registered for the same scheme could receive it; see{" "}
+          <a href="/docs/limitations">Limitations</a>.
+        </li>
+        <li>
+          Passkeys: a page at <code>capacitor://localhost</code> / <code>https://localhost</code>
+          {" "}
+          cannot use WebAuthn for Clerk's relying party, so a passkey sign-in continues in the auth
+          session on Clerk's hosted page (its own domain), with <code>state</code>{" "}
+          and S256 PKCE bound to the page (<code>startClerkMobileBrowserSignIn</code>). Create
+          passkeys on the web. <code>passkeys: "none"</code> hides them.
+        </li>
+        <li>
+          Clerk side: add <code>myapp://app/</code>{" "}
+          to Native applications → Allowlist for mobile SSO redirect, and{" "}
+          <code>capacitor://localhost</code> and <code>https://localhost</code> to the instance's
+          {" "}
+          <code>allowed_origins</code> (Backend API{" "}
+          <code>PATCH /v1/instance</code>): native mode sends <code>Authorization</code>{" "}
+          and the WebView adds{" "}
+          <code>Origin</code>, which the Frontend API refuses together from an origin it does not
+          allow. The shell's API calls go to your server with a bearer session token: list those
+          origins in its <code>cors</code> too. <a href="/docs/examples/clerk">examples/clerk</a>
+          {" "}
+          has the whole setup.
+        </li>
+      </ul>
+
       <h2 id="native-sign-in">Sign in with Apple and Google</h2>
       <p>
         <code>social-login</code> installs <code>@capgo/capacitor-social-login</code>{" "}

@@ -637,3 +637,51 @@ Deno.test("denext mobile add auth-session --scheme t3code through the verb", asy
     );
   });
 });
+
+Deno.test("mobile add clerk --scheme: auth session + secure storage + the Clerk steps", async () => {
+  await inProject(async (dir) => {
+    const planned = await addMobileCapabilities({
+      capabilities: ["clerk"],
+      cwd: dir,
+      schemes: ["denextclerk"],
+      dryRun: true,
+    });
+    const text = formatCapabilityPlan(planned.plan);
+    assertStringIncludes(text, "@aparajita/capacitor-secure-storage");
+    assertStringIncludes(text, "DenextAuthSession plugin");
+    assertStringIncludes(text, "intent-filter denextclerk://");
+    const manual = planned.plan.manual.join("\n");
+    assertStringIncludes(manual, 'installClerkMobileBridge({ scheme: "denextclerk"');
+    assertStringIncludes(manual, "denextclerk://app/");
+    assertStringIncludes(manual, "capacitor://localhost");
+    assertStringIncludes(manual, "https://localhost");
+
+    const { run, calls } = fakeRunner();
+    const report = await addMobileCapabilities({
+      capabilities: ["clerk"],
+      cwd: dir,
+      schemes: ["denextclerk"],
+      run,
+    });
+    assert(calls.some((c) => c.args.join(" ").includes("@aparajita/capacitor-secure-storage")));
+    for (const path of [IOS_PLUGIN, ANDROID_PLUGIN, INFO_PLIST, MANIFEST]) {
+      assert(report.written.includes(path), path);
+    }
+    assertStringIncludes(await read(dir, MANIFEST), '<data android:scheme="denextclerk" />');
+    assertStringIncludes(await read(dir, INFO_PLIST), "<string>denextclerk</string>");
+  });
+});
+
+Deno.test("mobile add clerk needs exactly one --scheme", async () => {
+  await inProject(async (dir) => {
+    for (const schemes of [[], ["a", "b"]]) {
+      let error = "";
+      try {
+        await addMobileCapabilities({ capabilities: ["clerk"], cwd: dir, schemes, dryRun: true });
+      } catch (err) {
+        error = (err as Error).message;
+      }
+      assertStringIncludes(error, "exactly one --scheme");
+    }
+  });
+});

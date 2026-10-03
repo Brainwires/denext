@@ -185,6 +185,8 @@ export const CAPABILITY_PRIVACY: Readonly<Record<string, readonly PrivacyEntry[]
   browser: [],
   "deep-links": [],
   "auth-session": [],
+  // The secure-storage plugin (Keychain) and denext's DenextAuthSession: no required-reason APIs.
+  clerk: [],
   push: [],
   filesystem: [{
     bundle: "app",

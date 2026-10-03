@@ -261,6 +261,39 @@ function configureAuthSession(options: CapabilityOptions): CapabilityConfig {
   };
 }
 
+/**
+ * `clerk`: what `denext/mobile/clerk` needs — the `DenextAuthSession` plugin and the OAuth
+ * callback scheme's registration (as `auth-session --scheme`), plus the secure-storage plugin for
+ * the client JWT (the npm package below) — and the Clerk-side steps.
+ */
+function configureClerk(options: CapabilityOptions): CapabilityConfig {
+  const schemes = options.schemes.map(checkScheme);
+  if (schemes.length !== 1) {
+    throw new Error(
+      "clerk needs exactly one --scheme <scheme>: the custom URL scheme Clerk's OAuth redirects " +
+        "back to (<scheme>://app/)",
+    );
+  }
+  const [scheme] = schemes;
+  return {
+    ...schemeEdits(schemes),
+    install: {
+      label: "DenextAuthSession plugin (iOS ASWebAuthenticationSession, Android Custom Tab) " +
+        "+ its registration in DenextBridgeViewController / MainActivity",
+      run: addAuthSessionToProject,
+    },
+    manual: [
+      `call installClerkMobileBridge({ scheme: "${scheme}", nativeClerk: true }) from ` +
+      "denext/mobile/clerk before the page loads clerk-js (instrumentation-client.ts in an App " +
+      "Router app, the top of a SPA entry)",
+      `Clerk dashboard → Native applications → Allowlist for mobile SSO redirect: add ${scheme}://app/`,
+      "Clerk instance allowed origins (Backend API PATCH /v1/instance allowed_origins): add " +
+      "capacitor://localhost (iOS) and https://localhost (Android), the shell's page origins",
+      "passkeys sign in through Clerk's hosted page in the auth session; create them on the web",
+    ],
+  };
+}
+
 /** The one `--app-group`, checked, if given. */
 function appGroupOption(options: CapabilityOptions): string | undefined {
   if (options.appGroups.length > 1) throw new Error("--app-group takes one App Group.");
@@ -647,6 +680,15 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
       "openAuthSession(url, { callbackScheme }) (and completeAuthSession() on a web callback page)",
     options: ["schemes"],
     configure: configureAuthSession,
+  },
+  clerk: {
+    npm: "@aparajita/capacitor-secure-storage",
+    version: "^8.0.1",
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "installClerkMobileBridge({ scheme, nativeClerk: true }) from denext/mobile/clerk " +
+      "(<ClerkProvider> signs in: Keychain / Keystore token cache, OAuth in the auth session)",
+    options: ["schemes"],
+    configure: configureClerk,
   },
   push: {
     npm: "@capacitor/push-notifications",

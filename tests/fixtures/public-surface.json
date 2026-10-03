@@ -1330,6 +1330,18 @@
     "installClerkDesktopBridge:function",
     "startClerkBrowserSignIn:function"
   ],
+  "denext/mobile/clerk": [
+    "ClerkBrowserSignInOptions:interface",
+    "ClerkLike:interface",
+    "ClerkMobileBridge:interface",
+    "ClerkMobileBridgeOptions:interface",
+    "ClerkMobileBrowserSignInOptions:interface",
+    "ClerkOAuthTransport:interface",
+    "ClerkPasskeysAdapter:interface",
+    "ClerkTokenCache:interface",
+    "installClerkMobileBridge:function",
+    "startClerkMobileBrowserSignIn:function"
+  ],
   "denext/desktop/window": [
     "CloseRequestHandler:typeAlias",
     "DesktopBridgeError:interface",

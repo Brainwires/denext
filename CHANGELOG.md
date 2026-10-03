@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **`denext/mobile/clerk`: Clerk in the Capacitor shell.** `installClerkMobileBridge({ scheme,
+  nativeClerk: true })` (from `instrumentation-client.ts`) lets the app's own `<ClerkProvider>`
+  (`@clerk/nextjs`, `@clerk/react`) sign in inside the iOS / Android app, as
+  `denext/desktop/clerk` does in a Deno Desktop window: clerk-js in native mode with the client JWT
+  in the Keychain / Keystore (memory without the plugin, never IndexedDB), Google / GitHub through
+  `openAuthSession` back to `<scheme>://app/` (only that session's redirect; stray Clerk callbacks
+  never reach `onDeepLink`), and passkeys through Clerk's hosted page with `state` + S256 PKCE
+  (`startClerkMobileBrowserSignIn`). `denext mobile add clerk --scheme <scheme>` installs the
+  auth-session and secure-storage plugins, registers the scheme and prints the Clerk-side steps.
+  The shared native-mode and hosted-auth code moved to `src/runtime/clerk-native.ts`;
+  `denext/desktop/clerk`'s exports are unchanged. examples/clerk gains the mobile leg.
 - **A docs page for every example.** `/docs/examples/<name>` renders the example's own README
   (the single source; relative links become GitHub URLs, a link to another example becomes its
   page) under a "Run it" block, its category, tags and a GitHub source link, with related examples
