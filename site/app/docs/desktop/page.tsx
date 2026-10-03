@@ -1898,7 +1898,8 @@ desktop: {
         <code>void* fn(void* context)</code> (a <code>Deno.UnsafeFnPointer</code>, a{" "}
         <code>Deno.UnsafeCallback</code>, or a pointer from{" "}
         <code>dlsym</code>) on the UI thread, queued behind the UI work already posted, and resolves
-        with its pointer-sized return value as a <code>bigint</code> (the pointer's type is{" "}
+        with its pointer-sized return value as a <code>bigint</code> (the pointer&apos;s type is
+        {" "}
         <code>DesktopMainThreadFn</code>, from{" "}
         <code>denext/desktop</code>). It is FFI, so it is full trust: grant <code>ffi</code> in{" "}
         <code>desktop.extraPermissions</code>, and a wrong pointer or signature crashes the app. A
@@ -1914,7 +1915,7 @@ desktop: {
       <Code lang="ts">
         {`// desktop/extensions/dock.ts: runs in the Deno process only (macOS)
 import { defineDesktopExtension } from "denext/desktop";
-const c = (s: string) => new TextEncoder().encode(\`\${s}\\0\`);
+const c = (s: string) => new TextEncoder().encode(s + "\\0");
 const dl = Deno.dlopen("/usr/lib/libSystem.B.dylib", {
   dlopen: { parameters: ["buffer", "i32"], result: "pointer" },
   dlsym: { parameters: ["pointer", "buffer"], result: "pointer" },
@@ -2216,32 +2217,25 @@ export default { desktop: { preload: "./desktop/preload.ts" } };`}
         untrusted input. <code>denext desktop run</code> and <code>dev</code>{" "}
         windows never take the single-instance lock.
       </p>
-      <Code lang="tsx">
+      <Code lang="ts">
         {`// denext.config.ts → desktop: { app: { deepLinks: ["myapp"], singleInstance: true },
 //                               capabilities: { fs: true } }
-"use client";
-import { useEffect, useState } from "denext";
-import { readFile, useDeepLink, useOpenFile } from "denext/mobile";
+import { onDeepLink, onOpenFile, readFile } from "denext/mobile";
 import { claimDeepLinkScheme, deepLinkSchemeOwner } from "denext/desktop/client";
 
-export function AppShell() {
-  // myapp://threads/42 navigates to /threads/42 (route: false leaves it to you)
-  useDeepLink(({ url, launch }) => console.log("opened by", url, launch ? "(cold start)" : ""), {
-    accept: { schemes: ["myapp"] },
-  });
-  useOpenFile(async ({ handle, name }) => {
-    openDocument(name, await readFile("", { directory: { picked: handle } }));
-  });
-  return <SchemeCheck />;
-}
+// Once, at startup (the app shell; useDeepLink / useOpenFile are the hook forms).
+// myapp://threads/42 navigates to /threads/42 (route: false leaves it to you).
+onDeepLink(({ url, launch }) => console.log(launch ? "launched by" : "opened", url), {
+  accept: { schemes: ["myapp"] },
+});
+onOpenFile(async ({ handle, name }) => {
+  openDocument(name, await readFile("", { directory: { picked: handle } }));
+});
 
-function SchemeCheck() {
-  // advisory: which app gets myapp: links right now ("self" | "other" | "none")
-  const [owner, setOwner] = useState<string>();
-  useEffect(() => void deepLinkSchemeOwner("myapp").then((o) => setOwner(o.owner)), []);
-  return owner === "other"
-    ? <button type="button" onClick={() => claimDeepLinkScheme("myapp")}>Open myapp: links here</button>
-    : null;
+// Advisory: which app gets myapp: links right now ("self" | "other" | "none").
+if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
+  // claimDeepLinkScheme must run in the user's click on this banner's button
+  showBanner("Open myapp: links in this app", () => claimDeepLinkScheme("myapp"));
 }`}
       </Code>
       <p>
