@@ -1,26 +1,14 @@
-// A protected Server Component: the middleware already refused signed-out visitors, and
-// `auth.protect()` here checks again (Clerk recommends the check at the resource itself).
-import { auth, currentUser } from "@clerk/nextjs/server";
+// The protected page. On the web the middleware already refuses signed-out visitors
+// (`auth.protect()` in middleware.ts). The content runs in the browser so the page also exists in
+// the static export the Capacitor shell and the Deno Desktop window load: it sends a signed-out
+// user to sign in, and asks the server to verify the session through `GET /api/me`.
+import { ProtectedContent } from "../account-panel.tsx";
 
-export const dynamic = "force-dynamic";
-
-export default async function Protected() {
-  const { userId, sessionId } = await auth.protect();
-  const user = await currentUser();
+export default function Protected() {
   return (
     <main>
       <h1>Protected page</h1>
-      <div class="card">
-        <p>
-          Rendered on the server for <strong>{user?.primaryEmailAddress?.emailAddress}</strong>.
-        </p>
-        <p>
-          User id: <code id="user-id">{userId}</code>
-        </p>
-        <p>
-          Session id: <code id="session-id">{sessionId}</code>
-        </p>
-      </div>
+      <ProtectedContent />
     </main>
   );
 }

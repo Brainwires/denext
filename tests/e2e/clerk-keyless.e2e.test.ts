@@ -2,13 +2,16 @@
 // `auth()` from `@clerk/nextjs`, running on denext) against session tokens signed with a key
 // pair generated here. `CLERK_JWT_KEY` (the PEM public key) makes Clerk verify networklessly, so
 // no request leaves the machine: a valid token passes, and a missing, expired, tampered or
-// foreign-signed one is refused. The keyed flows are tests/e2e/clerk.e2e.test.ts.
+// foreign-signed one is refused. The protected page is a static page whose check runs in the
+// browser: the middleware still sends a signed-out browser to sign in, and `denext export` writes
+// it (`out/protected/index.html`, what the Capacitor shell and the Deno Desktop window load). The
+// keyed flows are tests/e2e/clerk.e2e.test.ts.
 //
 // Opt-in + NETWORK-REQUIRED (npm install of the example): `deno task test:e2e`.
 
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { encodeBase64, encodeBase64Url } from "@std/encoding";
-import { fromFileUrl } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { assert } from "@std/assert";
 import { runDeno, startCliServer } from "./harness.ts";
 
@@ -81,6 +84,7 @@ Deno.test({
   );
   assert(built.ok, "denext build failed:\n" + built.out);
   const server = await startCliServer(EXAMPLE, 90_000);
+  let serverClosed = false;
   const me = async (token?: string) => {
     const res = await fetch(server.origin + "/api/me", {
       headers: token ? { authorization: `Bearer ${token}` } : {},
@@ -127,8 +131,35 @@ Deno.test({
     await t.step("not a JWT: 401", async () => {
       assertEquals((await me("definitely-not-a-jwt")).status, 401);
     });
-  } finally {
+    await t.step("signed out: the middleware sends a browser away from /protected", async () => {
+      const res = await fetch(server.origin + "/protected", {
+        redirect: "manual",
+        headers: { accept: "text/html", "sec-fetch-dest": "document" },
+      });
+      await res.body?.cancel();
+      assertEquals(res.status, 307);
+    });
+    // The export takes the example's .denext lock: the server goes first.
     await server.close();
+    serverClosed = true;
+    await t.step(
+      "the protected page exports: the shells load out/protected/index.html",
+      async () => {
+        const exported = await runDeno(
+          ["run", "-A", "--node-modules-dir=none", CLI, "export", "."],
+          EXAMPLE,
+          600_000,
+        );
+        assert(exported.ok, "denext export failed:\n" + exported.out);
+        const html = await Deno.readTextFile(join(EXAMPLE, "out/protected/index.html"));
+        assertStringIncludes(html, "Protected page");
+        // Its content is the browser's to fill in: no user is rendered into the file.
+        assert(!html.includes("user_denext_e2e"));
+        await Deno.stat(join(EXAMPLE, "out/index.html"));
+      },
+    );
+  } finally {
+    if (!serverClosed) await server.close();
     for (const [k, v] of Object.entries(prior)) {
       if (v === undefined) Deno.env.delete(k);
       else Deno.env.set(k, v);

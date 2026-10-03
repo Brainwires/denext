@@ -1,6 +1,6 @@
 // Keyed e2e for examples/clerk: `@clerk/nextjs` on denext against a REAL Clerk development
-// instance, in headless Chromium — the middleware, `<ClerkProvider>`, `auth()` in a Server
-// Component and in a `defineApi` route.
+// instance, in headless Chromium — the middleware, `<ClerkProvider>`, the protected page's
+// client-side check and `auth()` in a `defineApi` route.
 //
 // Needs the instance's keys: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY + CLERK_SECRET_KEY (or
 // CLERK_TEST_PUBLISHABLE_KEY + CLERK_TEST_SECRET_KEY, the CI secret names) in the environment,
@@ -244,12 +244,18 @@ Deno.test({
         const api = await callApi(page);
         assertEquals(api.status, 200, api.body);
         assertEquals(JSON.parse(api.body).userId, userId);
-        // The cookie session reaches a Server Component through the middleware + auth().
+        // The protected page: the middleware lets the cookie session through, and the page (it
+        // runs in the browser, so it also exports) shows the user and the server's verdict on
+        // its bearer token from GET /api/me.
         await page.goto(server.origin + "/protected", { waitUntil: "load" });
         await pollFor(
           page,
-          `document.querySelector("#user-id")?.textContent === ${JSON.stringify(userId)}`,
+          `document.querySelector("#protected-me")?.textContent.startsWith("200 ")`,
         );
+        const verdict = String(
+          await page.evaluate(`document.querySelector("#protected-me").textContent`),
+        );
+        assertEquals(JSON.parse(verdict.slice("200 ".length)).userId, userId);
         assertStringIncludes(String(await page.evaluate("document.body.textContent")), email);
         // Sign out: the API refuses again.
         await page.goto(server.origin + "/", { waitUntil: "load" });

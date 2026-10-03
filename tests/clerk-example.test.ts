@@ -164,6 +164,29 @@ Deno.test("clerk example: the preload installs the Clerk bridge synchronously", 
   assertStringIncludes(api, "createApi().use(clerkSession)");
 });
 
+Deno.test("clerk example: the protected page exports and checks the session in the browser", async () => {
+  // A static page (no force-dynamic, no server-only Clerk helper), so `denext export` writes it
+  // for the Capacitor shell and the Deno Desktop window; the middleware still guards it on the web.
+  const page = await Deno.readTextFile(join(EXAMPLE, "app/protected/page.tsx"));
+  assert(!page.includes("force-dynamic"));
+  assert(!page.includes("@clerk/nextjs/server"));
+  assertStringIncludes(page, "<ProtectedContent />");
+  const mw = await Deno.readTextFile(join(EXAMPLE, "middleware.ts"));
+  assertStringIncludes(mw, '"/protected(.*)"');
+  // Signed out: Clerk's sign-in modal (never a navigation a native shell would open outside the
+  // app). Signed in: the server verifies the bearer token through GET /api/me.
+  const panel = await Deno.readTextFile(join(EXAMPLE, "app/account-panel.tsx"));
+  const content = panel.slice(panel.indexOf("export function ProtectedContent"));
+  assertStringIncludes(content, '<SignInButton mode="modal" />');
+  assertStringIncludes(content, 'apiUrl("/api/me")');
+  assertStringIncludes(content, "authorization: `Bearer ${token}`");
+  assertStringIncludes(content, 'id="protected-me"');
+  // The header links to it with a plain anchor (the shell serves the exported page).
+  const header = await Deno.readTextFile(join(EXAMPLE, "app/header.tsx"));
+  assertStringIncludes(header, "<Nav />");
+  assertStringIncludes(panel, '<a href="/protected">');
+});
+
 Deno.test("clerk example: keys are never committed", async () => {
   // .env.example ships empty values; .env / .env.local are git-ignored.
   const example = await Deno.readTextFile(join(EXAMPLE, ".env.example"));

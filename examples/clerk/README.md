@@ -7,15 +7,18 @@ development instance in test mode. What runs where:
 - `middleware.ts` — `clerkMiddleware()` with `createRouteMatcher`, from `@clerk/nextjs/server`;
 - `app/layout.tsx` — `<ClerkProvider>` from `@clerk/nextjs`, with `<Show>`, `<SignInButton>` and
   `<UserButton>` in the header;
-- `app/protected/page.tsx` — a Server Component reading `auth()` and `currentUser()`;
+- `app/protected/page.tsx` — a static page whose content (`ProtectedContent` in
+  `app/account-panel.tsx`) runs in the browser, so it is also in the export the Capacitor shell and
+  the Deno Desktop window load: signed out it offers Clerk's sign-in modal, signed in it shows the
+  user and the server's verdict on the session token from `GET /api/me`;
 - `app/api/me/route.ts` — a `defineApi` route whose user id comes from the verified session token
   (`auth()`); signed out, it answers 401;
 - `desktop/preload.ts` — the same `<ClerkProvider>` in a Deno Desktop window, through
   `installClerkDesktopBridge` from `denext/desktop/clerk`.
 
 Clerk now prints a deprecation notice for `createRouteMatcher` (it recommends checking at the
-resource): the example does both — the matcher in `middleware.ts`, and `auth.protect()` / `auth()`
-in the page and the route.
+resource): the example does both — the matcher in `middleware.ts` (which keeps signed-out browsers
+off `/protected` on the web), and `auth()` in the route the protected page calls.
 
 `@clerk/nextjs` runs unchanged: denext's compat pipeline aliases its `next/*` and `react` imports to
 denext, renders its `"use client"` components as islands and serves its `"use server"` action.
@@ -171,14 +174,18 @@ xcrun devicectl device install app --device <device id> ../build/Build/Products/
   links, passkey RP pinning, the preload), the setup screen, the Frontend API host decoding.
 - `tests/e2e/clerk.e2e.test.ts` (keyed, web): creates a `+clerk_test` user through the Backend API,
   signs in with the code `424242` and with the password in headless Chromium against `denext start`
-  and against `denext dev`, calls `/api/me`, loads the protected page, signs out, refuses a forged
-  token, and deletes the user. It reads `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` (or
-  `CLERK_TEST_*`, the CI secret names) from the environment or `.env` / `.env.local`, and is skipped
-  without them:
+  and against `denext dev`, calls `/api/me`, loads the protected page (it shows the email and a 200
+  from `/api/me`), signs out, refuses a forged token, and deletes the user. It reads
+  `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` (or `CLERK_TEST_*`, the CI secret names)
+  from the environment or `.env` / `.env.local`, and is skipped without them:
 
   ```sh
   deno test -A tests/e2e/clerk.e2e.test.ts      # from the repo root
   ```
+- `tests/e2e/clerk-keyless.e2e.test.ts` (no Clerk account): session tokens signed with a local key
+  (`CLERK_JWT_KEY`) — valid ones pass, missing / expired / tampered / foreign ones get 401 — the
+  middleware turning a signed-out browser away from `/protected`, and `denext export` writing
+  `out/protected/index.html`.
 - `e2e/desktop-test.ts` (keyed, desktop): packages the app, launches it, signs in with the code in
   the real window, calls `/api/me` through the proxy, relaunches and checks the session survived
   (the keychain), signs out. Skipped until the instance allows `denextclerk://app` (step 3). It
