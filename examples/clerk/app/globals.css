@@ -19,6 +19,10 @@
 }
 body {
   margin: 0;
+  /* Keep content inside the safe area (notch, status bar, home indicator) in the Capacitor shell;
+     every inset is 0 in a browser or desktop window. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
   background: var(--bg);
   color: var(--fg);
 }

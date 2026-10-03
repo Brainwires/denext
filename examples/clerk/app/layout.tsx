@@ -14,6 +14,11 @@ export const metadata = {
   description: "Clerk sign-in on the web, Deno Desktop and Capacitor, from one denext app.",
 };
 
+// `viewport-fit=cover` lets the page draw edge to edge in the Capacitor shell and makes the
+// `env(safe-area-inset-*)` values real, so globals.css can keep content out of the notch and the
+// home indicator.
+export const viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   if (!hasPublishableKey()) {
     return (
