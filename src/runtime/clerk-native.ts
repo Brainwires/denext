@@ -163,6 +163,16 @@ export function adoptNativeClerk(
   passkeys: ClerkPasskeysAdapter | undefined,
 ): void {
   const g = globalThis as { Clerk?: unknown };
+  // `@clerk/nextjs` sets `window.__internal_onBeforeSetActive` to run its `invalidateCacheAction`
+  // server action before a session change, and `setActive` waits for it. A native shell serves a
+  // static export: the action has no server there, its promise never settles, and sign-in hangs.
+  // In native mode there are no cookies for that action to invalidate, so the hook resolves at once.
+  Object.defineProperty(globalThis, "__internal_onBeforeSetActive", {
+    configurable: true,
+    enumerable: false,
+    get: () => () => Promise.resolve(),
+    set: () => {},
+  });
   let current = g.Clerk;
   if (isClerkInstance(current)) makeClerkNative(current, bridge, passkeys);
   Object.defineProperty(globalThis, "Clerk", {

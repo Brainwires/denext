@@ -306,6 +306,12 @@ Deno.test("clerk bridge: nativeClerk switches the SDK's hotloaded clerk-js to na
         sdk.clerk.__internal_isWebAuthnPlatformAuthenticatorSupported,
         passkeys.isPlatformAuthenticatorSupported,
       );
+      // @clerk/nextjs's pre-setActive server action cannot run in a static export: it resolves.
+      (globalThis as { __internal_onBeforeSetActive?: unknown }).__internal_onBeforeSetActive =
+        () => new Promise(() => {});
+      await (globalThis as unknown as {
+        __internal_onBeforeSetActive: (i: string) => Promise<void>;
+      }).__internal_onBeforeSetActive("sign-in");
       // Re-assigning the same instance does not hook it twice; a non-instance is left alone.
       g.Clerk = sdk.clerk;
       assertEquals(sdk.before.length, 1);
@@ -313,6 +319,8 @@ Deno.test("clerk bridge: nativeClerk switches the SDK's hotloaded clerk-js to na
       assertEquals((g.Clerk as { loaded: boolean }).loaded, false);
     } finally {
       delete g.Clerk;
+      delete (globalThis as { __internal_onBeforeSetActive?: unknown })
+        .__internal_onBeforeSetActive;
     }
   });
   // Off by default: an assigned instance is untouched (the @clerk/electron/react path).

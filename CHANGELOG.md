@@ -489,6 +489,10 @@ and this project adheres to
   `desktopRuntimeEnv`, so it builds on the stock runtime with none of the default installers) and
   says to run `--regenerate-scripts`; `--format` is not passed to a script that cannot read it,
   with a warning that it is ignored.
+- **Clerk in a native shell: an `@clerk/nextjs` sign-in no longer hangs.** Its provider runs a
+  server action before every `setActive` and waits for it; a Deno Desktop window or a Capacitor
+  shell serves a static export, where the action never answers. In native mode (`nativeClerk`)
+  that hook now resolves at once (there are no cookies to invalidate).
 - **`denext desktop run` and `dev` open a window again.** Deno 2.9.7's `deno desktop` only
   compiles: the verbs left a `<name>.app` in the project folder, opened no window, and that build
   had no permissions (`NotCapable: PORT`). Both now build into a temporary directory outside the

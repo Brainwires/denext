@@ -37,9 +37,8 @@ async function inShell(
   fn: () => unknown,
   platform = "ios",
 ): Promise<void> {
-  const saved = ["Capacitor", "Clerk", "__clerk_internal_electron"].map((k) =>
-    [k, Object.getOwnPropertyDescriptor(g, k)] as const
-  );
+  const saved = ["Capacitor", "Clerk", "__clerk_internal_electron", "__internal_onBeforeSetActive"]
+    .map((k) => [k, Object.getOwnPropertyDescriptor(g, k)] as const);
   Object.defineProperty(g, "Capacitor", {
     configurable: true,
     writable: true,
