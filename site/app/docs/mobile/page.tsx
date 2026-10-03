@@ -73,7 +73,15 @@ export default function Mobile() {
         The shell loads denext&apos;s static export (
         <code>denext export</code> →{" "}
         <code>out/</code>), so the app inside it is static files: route handlers, Server Actions and
-        per-request rendering need a server the app calls over the network.
+        per-request rendering need a server the app calls over the network. A multi-page export
+        routes correctly in the shell: Capacitor answers every path without an extension with the
+        root <code>index.html</code>{" "}
+        (it assumes a single-page app), so the native files denext writes serve <code>/about</code>
+        {" "}
+        from <code>about/index.html</code> (or{" "}
+        <code>about.html</code>); an app with no denext native plugin gets them from{" "}
+        <code>denext mobile add export-routes</code> (<code>denext mobile doctor</code>{" "}
+        flags a shell without them).
       </p>
       <p>
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}

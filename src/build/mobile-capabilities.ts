@@ -43,6 +43,7 @@ import { checkAppGroup } from "./mobile-app-group.ts";
 import { applicationTargetName, targetBuildSetting } from "./pbxproj.ts";
 import { CAPACITOR_CONFIGS, capacitorConfigFile, readCapacitorConfig } from "./capacitor-config.ts";
 import { addOfflineScreenToProject } from "./mobile-offline-screen.ts";
+import { EXPORT_ROUTES_INSTALL } from "./mobile-export-routes-install.ts";
 import { privacyEntriesFor, privacyLabels, writePrivacyManifests } from "./mobile-privacy.ts";
 import { PLATFORM_CAPABILITIES } from "./mobile-capabilities-platform.ts";
 import { NATIVE_MODULE_CAPABILITY } from "./mobile-native-module.ts";
@@ -877,6 +878,12 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
     notes: "installOfflineScreen() (an overlay while the network is gone; server.errorPath shows " +
       "offline.html when the app cannot load)",
     configure: configureOfflineScreen,
+  },
+  "export-routes": {
+    capacitorMajor: CAPACITOR_MAJOR,
+    notes: "an exported multi-page app's links load their own pages (/route → route/index.html; " +
+      "every denext native feature includes it, this adds it to an app with none)",
+    configure: () => ({ install: EXPORT_ROUTES_INSTALL }),
   },
   // app-review, app-update, screen-orientation, media-library, privacy-screen, tracking,
   // background, restore: ./mobile-capabilities-platform.ts.

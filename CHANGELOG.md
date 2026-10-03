@@ -430,6 +430,18 @@ and this project adheres to
 
 ### Fixed
 
+- **An exported multi-page app's links work in the Capacitor shell.** Capacitor's iOS router
+  and Android local server answer every path without an extension with the root `index.html`
+  (a single-page-app assumption), so `<a href="/protected">` loaded the home page. Every
+  generated `DenextBridgeViewController` (OTA, auth-session and registering-only) now overrides
+  `router()` with `DenextExportRouter`, and every composed `MainActivity` registers
+  `DenextExportRoutes`, a `BridgeWebViewClient` in front of the bridge: `/route` loads
+  `route/index.html` or `route.html` when the UI served (bundled or over the air) has it, and
+  any other path is still `index.html`, so SPA client routes keep working. Re-running any
+  `denext mobile add` / `add-ota` upgrades an unedited file (template generations bumped:
+  OTA 6, auth-session 3, app-extension 3, MainActivity 4); `denext mobile add export-routes`
+  installs it in an app with no denext plugin, and `denext mobile doctor` flags a multi-page
+  export whose shell lacks it. Ship a new binary.
 - **A desktop notification permission request settles when the OS never answers.** The
   `notifications` capability's prompting `permission` request (behind `requestPermission("notifications")`
   and `requestPushPermission()` in a Deno Desktop window) waited forever when macOS never answered

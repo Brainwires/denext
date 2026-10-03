@@ -273,6 +273,71 @@ const bridgeFrameGuard: Check = {
   },
 };
 
+/** The single-page names a static export may hold beside its pages (not routes of their own). */
+const NON_ROUTE_HTML = new Set(["index.html", "404.html", "500.html", "200.html", "offline.html"]);
+
+/**
+ * The export's first page beyond the root one (`protected/index.html`, `about.html`), as a
+ * webDir-relative path, or null for a single-page export. Folders starting with `_` or `.`
+ * (`_denext/`, `_next/`) hold assets, not pages.
+ */
+async function nestedPage(webDir: string): Promise<string | null> {
+  for await (const e of walk(webDir, { includeDirs: false, exts: [".html"] })) {
+    const rel = posixRelative(webDir, e.path);
+    if (/(?:^|\/)[_.][^/]*\//.test(rel)) continue;
+    const name = rel.slice(rel.lastIndexOf("/") + 1);
+    if (rel.includes("/") ? name === "index.html" : !NON_ROUTE_HTML.has(name)) return rel;
+  }
+  return null;
+}
+
+/** Every `MainActivity.java`/`.kt` of the Android app, as text. */
+async function mainActivities(root: string): Promise<string[]> {
+  const dir = join(root, "android/app/src/main/java");
+  if (!(await isDir(dir))) return [];
+  const out: string[] = [];
+  for await (
+    const e of walk(dir, { includeDirs: false, match: [/[\\/]MainActivity\.(?:java|kt)$/] })
+  ) {
+    out.push(await Deno.readTextFile(e.path));
+  }
+  return out;
+}
+
+/** What marks a shell that routes an exported page to its own HTML, per platform. */
+const IOS_EXPORT_ROUTER = "DenextExportRouter";
+const ANDROID_EXPORT_ROUTES = "DenextExportRoutes";
+
+const exportRoutes: Check = {
+  id: "export-routes",
+  profiles: ["store", "release"],
+  applies: (p) => Promise.resolve(p.webDir !== null && (p.hasIos || p.hasAndroid)),
+  run: async (p) => {
+    const page = p.webDir === null ? null : await nestedPage(p.webDir);
+    if (page === null) return [];
+    const missing: string[] = [];
+    if (p.hasIos) {
+      const bridge = await readText(join(p.root, BRIDGE_VIEW_CONTROLLER));
+      if (bridge === null || !bridge.includes(IOS_EXPORT_ROUTER)) missing.push("iOS");
+    }
+    if (p.hasAndroid) {
+      const activities = await mainActivities(p.root);
+      if (!activities.some((t) => t.includes(ANDROID_EXPORT_ROUTES))) missing.push("Android");
+    }
+    if (missing.length === 0) return [];
+    return [{
+      check: "export-routes",
+      level: "error",
+      message: `${p.webDirName}/ is a multi-page export (${p.webDirName}/${page}), but the ` +
+        `${missing.join(" and ")} shell answers every path without an extension with the ` +
+        "root index.html: a link to another page loads the home page",
+      fix: "run `denext mobile add export-routes` (or re-run the `denext mobile add` / " +
+        "`add-ota` that wrote the native files: an unedited one is upgraded); then ship a new " +
+        "binary",
+    }];
+  },
+};
+
 /** Whether an allowNavigation entry allows every host. */
 function wildcardHost(entry: unknown): boolean {
   return typeof entry === "string" && /^(?:[a-z]+:\/\/)?\*(?:\/.*)?$/i.test(entry.trim());
@@ -848,6 +913,7 @@ const CHECKS: readonly Check[] = [
   legacyBridge,
   allowNavigation,
   bridgeFrameGuard,
+  exportRoutes,
   androidDebuggable,
   productionLogging,
   csp,
