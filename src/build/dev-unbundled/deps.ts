@@ -22,7 +22,14 @@ import {
   dependencySignature,
 } from "./react-native.ts";
 import { compatDepUrl, ensureMergedConfig, libraryDepUrl } from "./resolve.ts";
-import { DEP_ENTRYPOINTS, depSlug, NPM_PREFIX, type UnbundledState } from "./state.ts";
+import {
+  crawlModuleGraph,
+  DEP_ENTRYPOINTS,
+  depSlug,
+  norm,
+  NPM_PREFIX,
+  type UnbundledState,
+} from "./state.ts";
 import { transform } from "./transform.ts";
 
 /** Bundle the native denext `@dep` set once (shared core hoisted into one chunk). */
@@ -171,17 +178,53 @@ export default (m.default ?? m);
 
 /** One npm optimizeDeps pass over every discovered specifier (see ensureNpmBundle). */
 async function buildNpmBundle(st: UnbundledState): Promise<void> {
-  const specs = [...st.npmSpecs];
-  const entryPoints: Record<string, string> = {};
-  for (const s of specs) entryPoints[depSlug(s)] = s;
   await ensureDir(st.npmDir);
   // A rebuild renames the shared chunks: a page that already loaded the previous bundle (a
   // module discovered a new package after the first build) would fetch chunks that are gone.
   const underLivePage = st.npmBuiltOnce;
-  await npmBuild(st, entryPoints);
-  st.npmBuilt = new Set(specs);
-  st.npmBuiltOnce = true;
+  do {
+    // A rebuild waits a moment first: a lazily loaded route discovers its packages in a burst
+    // of module requests, and they should ride one build (and one reload), not one each.
+    if (st.npmBuiltOnce) await new Promise((r) => setTimeout(r, NPM_REBUILD_DEBOUNCE_MS));
+    const specs = [...st.npmSpecs];
+    const entryPoints: Record<string, string> = {};
+    for (const s of specs) entryPoints[depSlug(s)] = s;
+    await npmBuild(st, entryPoints);
+    st.npmBuilds++;
+    st.npmBuilt = new Set(specs);
+    st.npmBuiltOnce = true;
+  } while (!npmBundleCurrent(st));
   if (underLivePage) st.opts.onDepsRebuilt?.();
+}
+
+/** How long a rebuild under a live page waits to batch a burst of newly found packages. */
+const NPM_REBUILD_DEBOUNCE_MS = 400;
+
+/** Whether the npm bundle holds every specifier found so far. */
+function npmBundleCurrent(st: UnbundledState): boolean {
+  return [...st.npmSpecs].every((s) => st.npmBuilt.has(s));
+}
+
+/**
+ * compat: crawl the app's import graph from `roots` (the SPA entry, a route's modules, the
+ * Flight islands) before the npm bundle builds, so the first build already holds every package
+ * the page will import. Without it each module request found a few packages at a time and every
+ * find rebuilt the bundle and reloaded the page: T3 Code's graph never finished loading. The
+ * crawl runs in the background; {@link ensureNpmBundle} waits for it. Each root is crawled once.
+ */
+export function prewarmNpmBundle(st: UnbundledState, roots: readonly string[]): void {
+  if (!st.compat || st.opts.reactNative) return;
+  const fresh = roots.map(norm).filter((abs) => !st.npmCrawledRoots.has(abs));
+  if (fresh.length === 0) return;
+  for (const abs of fresh) st.npmCrawledRoots.add(abs);
+  const previous = st.npmCrawl;
+  const crawl: Promise<void> = (async () => {
+    await previous;
+    await crawlModuleGraph(fresh, (abs) => transform(st, abs));
+  })().catch(() => {}).finally(() => {
+    if (st.npmCrawl === crawl) st.npmCrawl = null;
+  });
+  st.npmCrawl = crawl;
 }
 
 /**
@@ -271,11 +314,13 @@ export async function refreshReactNativeDeps(st: UnbundledState): Promise<boolea
  * a newly-transformed module discovers a spec not yet in the bundle.
  */
 export async function ensureNpmBundle(st: UnbundledState): Promise<void> {
+  // The graph crawl first: the bundle then builds once with everything it found.
+  while (st.npmCrawl) await st.npmCrawl;
   while (st.npmBuilding) await st.npmBuilding;
   if (st.opts.reactNative) {
     // React Native mode: re-checked once per batch of edits (a new specifier or name).
     if (st.npmCheckedEpoch === st.graphEpoch && st.npmBuiltSig !== null) return;
-  } else if (st.npmSpecs.size === 0 || [...st.npmSpecs].every((s) => st.npmBuilt.has(s))) return;
+  } else if (st.npmSpecs.size === 0 || npmBundleCurrent(st)) return;
   st.npmBuilding = st.opts.reactNative ? ensureReactNativeBundle(st) : buildNpmBundle(st);
   try {
     await st.npmBuilding;

@@ -8,7 +8,7 @@ import { scanDirective } from "../directives.ts";
 import { routeNeedsHydration } from "../hydration.ts";
 import { type BoundaryManifest, crawlLocalModules, isFrameworkSource } from "../module-graph.ts";
 import { findServerOnlyLeaks, formatServerOnlyLeaks } from "../server-only-scan.ts";
-import { ensureClientDeps, ensureNpmBundle } from "./deps.ts";
+import { ensureClientDeps, ensureNpmBundle, prewarmNpmBundle } from "./deps.ts";
 import { ENTRY_PATH, norm, type UnbundledState } from "./state.ts";
 import { transformGeneratedEntry } from "./transform.ts";
 
@@ -40,6 +40,7 @@ export function supportsRoute(route: PageRoute): boolean {
  */
 export async function serveEntry(st: UnbundledState, route: PageRoute): Promise<string> {
   await assertNoDevServerOnlyLeaks(st, route);
+  prewarmNpmBundle(st, routeSourceFiles(route));
   return await transformGeneratedEntry(
     st,
     generateRouteEntry(route, {
@@ -115,6 +116,11 @@ export async function serveFlightEntry(
 ): Promise<string> {
   await ensureClientDeps(st);
   noteNpmServerRefs(st, boundary);
+  prewarmNpmBundle(
+    st,
+    [...boundary.client.values()].map((ref) => fromFileUrl(ref.url))
+      .filter((abs) => !inNodeModules(abs)),
+  );
   return transformGeneratedEntry(
     st,
     generateFlightEntry(
@@ -160,6 +166,8 @@ export async function serveSpaEntry(st: UnbundledState): Promise<string> {
   // React Native mode: start the dependency bundle now, while the page fetches the app modules.
   if (st.opts.reactNative) void ensureNpmBundle(st).catch(() => {});
   const abs = norm(st.opts.spaEntry!);
+  // compat: crawl the app's graph now, so the npm bundle builds once with every package in it.
+  prewarmNpmBundle(st, [abs]);
   // `__denextDev` FIRST: `installDevtools()` no-ops unless the flag is set, and the SPA
   // shell's dev script (which sets it for the App Router) runs after this module.
   const src = `// denext generated SPA entry (dev, unbundled) — do not edit.\n` +

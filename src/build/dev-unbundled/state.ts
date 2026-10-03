@@ -229,6 +229,15 @@ export interface UnbundledState {
   npmBuiltOnce: boolean;
   npmBuilt: Set<string>;
   npmBuilding: Promise<void> | null;
+  /**
+   * compat: the crawl of the app's import graph in progress (see `prewarmNpmBundle`), which the
+   * npm bundle waits for so its first build already holds every package the page imports.
+   */
+  npmCrawl: Promise<void> | null;
+  /** compat: the graph roots already crawled (an entry is crawled once). */
+  readonly npmCrawledRoots: Set<string>;
+  /** compat: how many times the npm bundle has been built (diagnostics and tests). */
+  npmBuilds: number;
   depsBuilt: Promise<void> | null;
   runtimeBuilt: Promise<void> | null;
   mergedConfigPath: string | null;
@@ -267,6 +276,9 @@ export function createUnbundledState(opts: UnbundledDevOptions): UnbundledState 
     npmBuiltOnce: false,
     npmBuilt: new Set(),
     npmBuilding: null,
+    npmCrawl: null,
+    npmCrawledRoots: new Set(),
+    npmBuilds: 0,
     depsBuilt: null,
     runtimeBuilt: null,
     mergedConfigPath: null,
@@ -294,4 +306,29 @@ export function addImporter(st: UnbundledState, dep: string, importer: string): 
   let set = st.importers.get(dep);
   if (!set) st.importers.set(dep, set = new Set());
   set.add(importer);
+}
+
+/**
+ * Transform every module reachable from `roots` (breadth-first, each once): the transforms note
+ * the packages each module imports, so a dependency bundle built afterwards already holds every
+ * specifier the page will request. A module that fails to transform is skipped; it fails again,
+ * visibly, when the page loads it.
+ */
+export async function crawlModuleGraph(
+  roots: readonly string[],
+  transformModule: (abs: string) => Promise<{ deps: Array<{ abs: string }> }>,
+): Promise<void> {
+  const seen = new Set<string>();
+  let level = [...roots];
+  while (level.length > 0) {
+    const next: string[] = [];
+    await Promise.all(level.map(async (abs) => {
+      if (seen.has(abs)) return;
+      seen.add(abs);
+      try {
+        for (const dep of (await transformModule(abs)).deps) next.push(dep.abs);
+      } catch { /* a module that does not transform fails again when the page loads it */ }
+    }));
+    level = next.filter((abs) => !seen.has(abs));
+  }
 }
