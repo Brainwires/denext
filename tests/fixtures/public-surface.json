@@ -1181,6 +1181,7 @@
     "subscribeBoundaries:function"
   ],
   "denext/desktop": [
+    "BuildDesktopTarballOptions:interface",
     "BuildLinuxPackageOptions:interface",
     "BuildMsiOptions:interface",
     "DEFAULT_DESKTOP_INSTALLERS:variable",
@@ -1231,6 +1232,7 @@
     "buildDesktopDeb:function",
     "buildDesktopMsi:function",
     "buildDesktopRpm:function",
+    "buildDesktopTarball:function",
     "createDesktopHandler:function",
     "defineDesktopExtension:function",
     "desktopAppName:function",
