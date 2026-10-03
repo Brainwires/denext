@@ -437,7 +437,7 @@ the bundle.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; the custom origin requires runtime 2.9.7-denext.7+, older ones start with every desktop endpoint refused; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -450,7 +450,7 @@ top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `sin
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
 custom-scheme callback (a declared scheme, PKCE S256 mandatory, exact redirect + `state`, owner-checked;
 `claimDeepLinkScheme` only on a user action) — on macOS it runs in `ASWebAuthenticationSession` (a real
-`cancelled`; `preferEphemeral` for a private session), and where the system browser has the sign-in
+`cancelled`; `preferEphemeral` for a private session; a page cancel, the timeout or leaving the page closes the sheet), and where the system browser has the sign-in
 (Windows, Linux, the loopback flow) denext shows a Cancel overlay (`cancelOverlay: false` to render
 your own wired to `signal`); `installClerkDesktopBridge()` from `denext/desktop/clerk`
 makes `@clerk/electron`'s React provider and `passkeys` run unchanged
