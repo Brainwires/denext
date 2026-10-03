@@ -4,6 +4,7 @@
 import { denoLoaderPlugins } from "../deno-loader-plugins.ts";
 import * as esbuild from "esbuild";
 import { ensureDir } from "@std/fs";
+import { join } from "@std/path";
 import {
   BROWSER_CONDITIONS,
   browserProcessShimPath,
@@ -187,9 +188,7 @@ async function buildNpmBundle(st: UnbundledState): Promise<void> {
     // of module requests, and they should ride one build (and one reload), not one each.
     if (st.npmBuiltOnce) await new Promise((r) => setTimeout(r, NPM_REBUILD_DEBOUNCE_MS));
     const specs = [...st.npmSpecs];
-    const entryPoints: Record<string, string> = {};
-    for (const s of specs) entryPoints[depSlug(s)] = s;
-    await npmBuild(st, entryPoints);
+    await npmBuildIsolated(st, specs);
     st.npmBuilds++;
     st.npmBuilt = new Set(specs);
     st.npmBuiltOnce = true;
@@ -227,6 +226,87 @@ export function prewarmNpmBundle(st: UnbundledState, roots: readonly string[]): 
   st.npmCrawl = crawl;
 }
 
+/** The npm bundle's entry points: one per specifier, named by its slug. */
+function npmEntries(specs: readonly string[]): Record<string, string> {
+  const entryPoints: Record<string, string> = {};
+  for (const s of specs) entryPoints[depSlug(s)] = s;
+  return entryPoints;
+}
+
+/** The text of an esbuild failure (its `errors` list), or the error's message. */
+function buildErrorText(err: unknown): string {
+  const errors = (err as { errors?: esbuild.Message[] })?.errors;
+  if (Array.isArray(errors) && errors.length > 0) {
+    return errors.map((e) =>
+      e.location ? `${e.location.file}:${e.location.line}:${e.location.column}: ${e.text}` : e.text
+    ).join("\n");
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The module served for a specifier whose package fails to bundle for the browser: it names the
+ * package and the build errors in the console (the dev Console tab captures it) and throws, so
+ * only the modules that import it fail — never every npm module of the page.
+ */
+export function npmErrorModule(spec: string, errors: string): string {
+  const msg = `denext dev: the npm package "${spec}" failed to bundle for the browser:\n${errors}`;
+  return `const message = ${JSON.stringify(msg)};\nconsole.error(message);\n` +
+    `throw new Error(message);\n`;
+}
+
+/**
+ * Bisect `specs` (whose build failed with `err`) down to the specifiers that fail on their own,
+ * by trial builds that write nothing. Each failing specifier lands in `out` with its errors.
+ */
+async function findFailingSpecs(
+  st: UnbundledState,
+  specs: readonly string[],
+  err: unknown,
+  out: Map<string, string>,
+): Promise<void> {
+  if (specs.length === 1) {
+    out.set(specs[0], buildErrorText(err));
+    return;
+  }
+  const mid = specs.length >> 1;
+  for (const half of [specs.slice(0, mid), specs.slice(mid)]) {
+    try {
+      await npmBuild(st, npmEntries(half), false);
+    } catch (e) {
+      await findFailingSpecs(st, half, e, out);
+    }
+  }
+}
+
+/**
+ * Build the npm bundle for `specs` in one pass. When that fails, one broken package must not
+ * fail every npm module: the specifiers that fail on their own are found by bisection, the rest
+ * are bundled together (one instance per shared package, as before), and each failing one is
+ * served as {@link npmErrorModule}. Rethrows when no single specifier is to blame. Returns the
+ * failing specifiers with their errors. Exported for testing.
+ */
+export async function npmBuildIsolated(
+  st: UnbundledState,
+  specs: readonly string[],
+): Promise<Map<string, string>> {
+  const failures = new Map<string, string>();
+  try {
+    await npmBuild(st, npmEntries(specs));
+    return failures;
+  } catch (err) {
+    await findFailingSpecs(st, specs, err, failures);
+    if (failures.size === 0) throw err;
+  }
+  const good = specs.filter((s) => !failures.has(s));
+  if (good.length > 0) await npmBuild(st, npmEntries(good));
+  for (const [spec, errors] of failures) {
+    console.error(`denext dev: the npm package "${spec}" failed to bundle:\n${errors}`);
+    await Deno.writeTextFile(join(st.npmDir, `${depSlug(spec)}.js`), npmErrorModule(spec, errors));
+  }
+  return failures;
+}
+
 /**
  * One esbuild pass into the npm dir: the dependency bundle, or a `?worker` module one of its
  * packages imports. Vite-style asset imports (`x.mp3?url`, `?raw`, `?inline`, `?worker`), which
@@ -235,11 +315,16 @@ export function prewarmNpmBundle(st: UnbundledState, roots: readonly string[]): 
  * (see `rewriteSpecifier`): a bare `./logo.png` loads as a file, and every emitted file's URL
  * is absolute under the npm prefix, so it resolves from any page.
  */
-async function npmBuild(st: UnbundledState, entryPoints: Record<string, string>): Promise<void> {
+async function npmBuild(
+  st: UnbundledState,
+  entryPoints: Record<string, string>,
+  write = true,
+): Promise<void> {
   const workerBuild = (entryPath: string, outName: string) =>
-    npmBuild(st, { [outName]: entryPath });
+    npmBuild(st, { [outName]: entryPath }, write);
   await esbuild.build({
     entryPoints,
+    write,
     outdir: st.npmDir,
     bundle: true,
     splitting: true,
