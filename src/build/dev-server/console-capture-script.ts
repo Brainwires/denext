@@ -21,6 +21,14 @@
 // the module (Chrome: "Failed to fetch dynamically imported module: <url>"; Safari doesn't),
 // the walk starts there.
 //
+// Each module the walk fetches is also tokenized (strings, comments, templates and regex
+// literals skipped) for what it imports by name and what it exports, `export *` chains
+// included, so a link-time failure — an imported name the target does not export, which
+// Safari reports only as "Importing a module script failed" — is named with its importer and
+// the closest export. A module it can't analyze confidently (CommonJS-looking, a destructuring
+// export, an untokenizable literal) is not checked rather than guessed at. The browser's own
+// "does not provide an export named" message is surfaced as soon as it is seen.
+//
 // It also notices a reload loop: when the dev server orders more than
 // {@linkcode RELOAD_LOOP_LIMIT} reloads within {@linkcode RELOAD_LOOP_WINDOW_MS} (a rebuild
 // that keeps re-triggering itself), it says so in the console instead of staying silent.
@@ -68,7 +76,7 @@ export function consoleCaptureScript(devLogPath: string): string {
   var MAX_STR = 2000;
   var DEV_LOG = ${JSON.stringify(devLogPath)};
   var LEVELS = ["log", "info", "warn", "error", "debug"];
-  var IMPORT_ERR = /Importing a module script failed|Failed to fetch dynamically imported module|error loading dynamically imported module|Failed to load module script|does not provide an export named|Cannot find module|does not resolve to a valid URL|Failed to resolve module specifier|disallowed MIME type|MIME type/i;
+  var IMPORT_ERR = /Importing a module script failed|Failed to fetch dynamically imported module|error loading dynamically imported module|Failed to load module script|does not provide an export named|doesn't provide an export named|Importing binding name|import not found|Cannot find module|does not resolve to a valid URL|Failed to resolve module specifier|disallowed MIME type|MIME type/i;
   var entries = [];
   var seq = 0;
   var subs = [];
@@ -258,11 +266,18 @@ export function consoleCaptureScript(devLogPath: string): string {
   }
 
   // ---- errors --------------------------------------------------------------------------
-  function sawImportError(message) {
+  function sawImportError(message, filename) {
     var text = String(message || "");
     if (!IMPORT_ERR.test(text)) return;
     api.importErrorSeen = true;
-    var named = moduleUrlIn(text);
+    // A link error (a name the target doesn't export): said at once, and the walk starts
+    // at the importer when the browser named it.
+    var link = linkErrorIn(text, filename);
+    if (link && !api.linkError) {
+      api.linkError = link;
+      push("error", "diagnosis", linkErrorLine(link), "", link.importer || link.target);
+    }
+    var named = link ? link.importer : moduleUrlIn(text);
     if (named && !api.importErrorUrl) api.importErrorUrl = named;
     if (!autoDiagnosed) {
       autoDiagnosed = true;
@@ -300,7 +315,7 @@ export function consoleCaptureScript(devLogPath: string): string {
     var msg = err ? errorText(err) : (e.message || "Script error");
     var where = e.filename ? " (" + e.filename + (e.lineno ? ":" + e.lineno + (e.colno ? ":" + e.colno : "") : "") + ")" : "";
     push("error", "uncaught", msg + (err ? "" : where), err && err.stack ? String(err.stack) : "", e.filename || "");
-    sawImportError(msg);
+    sawImportError(msg, e.filename);
   }
   function onRejection(e) {
     var r = e && e.reason;
@@ -428,6 +443,7 @@ export function consoleCaptureScript(devLogPath: string): string {
         }
         var syn = syntaxError(text);
         if (syn) return { reason: "does not parse: " + syn, deps: deps };
+        recordLinks(url, text);
         return { deps: deps };
       });
     }, function (err) {
@@ -436,6 +452,302 @@ export function consoleCaptureScript(devLogPath: string): string {
   }
   function looksHtml(text) {
     return /^\\s*<(!doctype|html|head|body|pre|\\!--)/i.test(String(text).slice(0, 200));
+  }
+
+  // ---- the link check: an imported name the target module does not export ----------------
+  // A small tokenizer, not regexes over the text: names, strings and the punctuation the
+  // import/export grammar needs. Comments, template text, regex literals and numbers are
+  // skipped (a template's \${…} is tokenized, as brackets). null when the text does not
+  // tokenize (an unterminated literal) — that module is then not checked.
+  var REGEX_AFTER = { "return": 1, "typeof": 1, "instanceof": 1, "in": 1, "of": 1, "new": 1, "delete": 1,
+    "void": 1, "throw": 1, "case": 1, "do": 1, "else": 1, "yield": 1, "await": 1 };
+  var KEEP_PUNCT = "{}()[];,*.";
+  var mods = {};     // url -> { own, stars, imports, esm, opaque } for each module the walk analyzed
+  var linkSeen = {}; // importer + target + name already reported
+  function idChar(c) {
+    return (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) ||
+      c === 36 || c === 95 || c === 35 || c === 92 || c >= 128;
+  }
+  function tokenize(src) {
+    var toks = [], i = 0, n = src.length, stack = [], pk = "p", pv = ";";
+    function add(k, v) {
+      pk = k; pv = v;
+      if (k === "n" || k === "s" || (k === "p" && KEEP_PUNCT.indexOf(v) !== -1)) toks.push({ k: k, v: v });
+    }
+    function regexOk() {
+      if (pk === "n") return REGEX_AFTER[pv] === 1;
+      return pk === "p" && pv !== ")" && pv !== "]" && pv !== "}";
+    }
+    function str(q) {
+      var s = ++i;
+      for (; i < n; i++) {
+        var c = src.charCodeAt(i);
+        if (c === 92) { i++; continue; }
+        if (c === q) { add("s", src.slice(s, i++)); return true; }
+        if (c === 10 || c === 13) return false;
+      }
+      return false;
+    }
+    function regex() {
+      for (var cls = false, c; ++i < n;) {
+        c = src.charCodeAt(i);
+        if (c === 92) { i++; continue; }
+        if (c === 10 || c === 13) return false;
+        if (c === 91) cls = true;
+        else if (c === 93) cls = false;
+        else if (c === 47 && !cls) {
+          for (i++; i < n && idChar(src.charCodeAt(i)); i++);
+          add("v", "re");
+          return true;
+        }
+      }
+      return false;
+    }
+    function template() { // i: just past a backtick, or past a substitution's closing brace
+      for (; i < n; i++) {
+        var c = src.charCodeAt(i);
+        if (c === 92) { i++; continue; }
+        if (c === 96) { i++; add("v", "tpl"); return true; }
+        if (c === 36 && src.charCodeAt(i + 1) === 123) { i += 2; stack.push(1); add("p", "("); return true; }
+      }
+      return false;
+    }
+    if (src.charCodeAt(0) === 35 && src.charCodeAt(1) === 33) { i = src.indexOf("\\n"); if (i < 0) i = n; }
+    while (i < n) {
+      var c = src.charCodeAt(i);
+      if (c <= 32 || c === 160 || c === 0xfeff || c === 0x2028 || c === 0x2029) { i++; continue; }
+      if (c === 47) {
+        var d = src.charCodeAt(i + 1);
+        if (d === 47) { var nl = src.indexOf("\\n", i); i = nl < 0 ? n : nl; continue; }
+        if (d === 42) { var end = src.indexOf("*/", i + 2); if (end < 0) return null; i = end + 2; continue; }
+        if (regexOk()) { if (!regex()) return null; continue; }
+        i++; add("p", "/"); continue;
+      }
+      if (c === 34 || c === 39) { if (!str(c)) return null; continue; }
+      if (c === 96) { i++; if (!template()) return null; continue; }
+      if (idChar(c)) {
+        var s = i;
+        while (i < n && idChar(src.charCodeAt(i))) i++;
+        if (c >= 48 && c <= 57) add("v", "num"); else add("n", src.slice(s, i));
+        continue;
+      }
+      i++;
+      // a++ / b: a postfix ++ / -- ends an operand, so the slash after it divides
+      if ((c === 43 || c === 45) && src.charCodeAt(i) === c) { i++; add("v", "++"); continue; }
+      if (c === 123) stack.push(0);
+      else if (c === 125 && stack.pop() === 1) { add("p", ")"); if (!template()) return null; continue; }
+      add("p", String.fromCharCode(c));
+    }
+    return toks;
+  }
+  function is(t, v) { return !!t && t.k === "p" && t.v === v; }
+  function isN(t, v) { return !!t && t.k === "n" && t.v === v; }
+  function fromSpec(t, j) { return isN(t[j], "from") && t[j + 1] && t[j + 1].k === "s" ? t[j + 1].v : null; }
+  // { a, b as c, "d" as e } from t[j] (the brace): [local, exported] pairs; the index past
+  // the closing brace, or -1.
+  function nameList(t, j, pairs) {
+    for (j++; j < t.length && !is(t[j], "}");) {
+      var a = t[j].v, b = a;
+      j++;
+      if (isN(t[j], "as") && t[j + 1] && !is(t[j + 1], "}") && !is(t[j + 1], ",")) { b = t[j + 1].v; j += 2; }
+      pairs.push([a, b]);
+      if (is(t[j], ",")) j++;
+    }
+    return j < t.length ? j + 1 : -1;
+  }
+  // export const|let|var a = …, b = …: every declarator's name. false for a destructuring
+  // pattern (not analyzed). Over-collecting a name is safe (it can only hide a report).
+  function declared(t, j, own) {
+    for (var depth = 0, want = true; j < t.length; j++) {
+      var x = t[j];
+      if (want) { if (x.k !== "n") return false; own[x.v] = true; want = false; continue; }
+      if (x.k !== "p") {
+        if (!depth && x.k === "n" && (x.v === "import" || x.v === "export") && !is(t[j - 1], ".")) break;
+        continue;
+      }
+      if (x.v === "{" || x.v === "(" || x.v === "[") depth++;
+      else if (x.v === "}" || x.v === ")" || x.v === "]") { if (!depth) break; depth--; }
+      else if (!depth && x.v === ";") break;
+      else if (!depth && x.v === ",") want = true;
+    }
+    return true;
+  }
+  // What a module imports by name (per specifier) and what it exports: its own names, its
+  // export-star specifiers. opaque when an export statement isn't understood, or the module
+  // looks like CommonJS — its export set is then not trusted.
+  function linkInfo(text) {
+    var t = tokenize(text);
+    if (!t) return null;
+    var info = { own: Object.create(null), stars: [], imports: [], esm: false, opaque: false };
+    for (var i = 0, depth = 0; i < t.length; i++) {
+      var x = t[i];
+      if (x.k === "p") {
+        if (x.v === "{" || x.v === "(" || x.v === "[") depth++;
+        else if (x.v === "}" || x.v === ")" || x.v === "]") depth--;
+        continue;
+      }
+      if (depth || x.k !== "n" || (x.v !== "import" && x.v !== "export") || is(t[i - 1], ".")) continue;
+      var j = i + 1, y = t[j], spec, pairs = [], p;
+      if (!y) break;
+      if (x.v === "import") {
+        if (is(y, "(") || is(y, ".")) continue; // import(…), import.meta
+        info.esm = true;
+        var wanted = [];
+        if (y.k === "n") { wanted.push("default"); j++; if (is(t[j], ",")) j++; }
+        if (is(t[j], "*")) j += 3; // * as ns: nothing to check
+        else if (is(t[j], "{")) {
+          if ((j = nameList(t, j, pairs)) < 0) continue;
+          for (p = 0; p < pairs.length; p++) wanted.push(pairs[p][0]);
+        }
+        if ((spec = fromSpec(t, j)) !== null) { info.imports.push({ spec: spec, names: wanted }); i = j + 1; }
+        continue;
+      }
+      info.esm = true;
+      if (isN(y, "default")) { info.own["default"] = true; continue; }
+      if (is(y, "*")) {
+        var ns = isN(t[j + 1], "as") ? t[j + 2] : null;
+        j += ns ? 3 : 1;
+        if ((spec = fromSpec(t, j)) === null) { info.opaque = true; continue; }
+        if (ns) info.own[ns.v] = true; else info.stars.push(spec);
+        i = j + 1;
+        continue;
+      }
+      if (is(y, "{")) {
+        if ((j = nameList(t, j, pairs)) < 0) { info.opaque = true; continue; }
+        var reexported = [];
+        for (p = 0; p < pairs.length; p++) { info.own[pairs[p][1]] = true; reexported.push(pairs[p][0]); }
+        if ((spec = fromSpec(t, j)) !== null) { info.imports.push({ spec: spec, names: reexported }); i = j + 1; }
+        else i = j - 1;
+        continue;
+      }
+      if (isN(y, "async")) y = t[++j];
+      if (isN(y, "function") || isN(y, "class")) {
+        if (is(t[j + 1], "*")) j++;
+        if (t[j + 1] && t[j + 1].k === "n") info.own[t[j + 1].v] = true; else info.opaque = true;
+        continue;
+      }
+      if (isN(y, "const") || isN(y, "let") || isN(y, "var")) {
+        if (!declared(t, j + 1, info.own)) info.opaque = true;
+        continue;
+      }
+      info.opaque = true;
+    }
+    if (!info.esm && /\\b(?:module\\.exports|exports\\.[\\w$]|require\\s*\\()/.test(text)) info.opaque = true;
+    return info;
+  }
+  function linkTarget(spec, base) {
+    if (isBare(spec)) return "";
+    try { var u = new URL(spec, base).href; return sameOrigin(u) ? u : ""; } catch (_) { return ""; }
+  }
+  function recordLinks(url, text) {
+    var info = linkInfo(text);
+    if (!info) return;
+    for (var i = 0; i < info.imports.length; i++) info.imports[i].url = linkTarget(info.imports[i].spec, url);
+    for (var s = 0; s < info.stars.length; s++) info.stars[s] = linkTarget(info.stars[s], url);
+    mods[url] = info;
+  }
+  // A module's export names: its own, plus (default aside) those of every module its
+  // export-star chain reaches — a cycle-safe closure, bounded, cached per check. null when a
+  // module on the way wasn't fetched, isn't analyzable or the chain is too long.
+  var STAR_CAP = 200;
+  var exportCache = {};
+  function exportsOf(url) {
+    if (url in exportCache) return exportCache[url];
+    var out = Object.create(null), seen = {}, stack = [url], count = 0;
+    while (stack.length) {
+      var u = stack.pop();
+      if (seen[u]) continue;
+      seen[u] = true;
+      var m = mods[u];
+      if (!m || m.opaque || ++count > STAR_CAP) return (exportCache[url] = null);
+      for (var name in m.own) if (u === url || name !== "default") out[name] = true;
+      for (var s = 0; s < m.stars.length; s++) {
+        if (!m.stars[s]) return (exportCache[url] = null);
+        stack.push(m.stars[s]);
+      }
+    }
+    return (exportCache[url] = out);
+  }
+  function editDistance(a, b, max) {
+    if (Math.abs(a.length - b.length) >= max) return max;
+    var prev = [], cur, i, j;
+    for (j = 0; j <= b.length; j++) prev.push(j);
+    for (i = 1; i <= a.length; i++) {
+      cur = [i];
+      for (j = 1; j <= b.length; j++) {
+        cur.push(Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1)));
+      }
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  // The closest export by edit distance (a case-only difference counts as 0), when close.
+  function closestExport(name, ex) {
+    var best = "", bestD = Math.max(2, Math.floor(name.length / 3)) + 1, seen = 0;
+    for (var c in ex) {
+      if (++seen > 500) break;
+      if (c.length > 64) continue;
+      var d = c.toLowerCase() === name.toLowerCase() ? 0 : editDistance(name, c, bestD);
+      if (d < bestD) { best = c; bestD = d; }
+    }
+    return best;
+  }
+  // Every analyzed import edge whose name the target does not export (each reported once).
+  function linkCheck() {
+    exportCache = {};
+    for (var u in mods) {
+      var imports = mods[u].imports;
+      for (var i = 0; i < imports.length; i++) {
+        var im = imports[i];
+        var ex = im.url ? exportsOf(im.url) : null;
+        if (!ex) continue;
+        for (var k = 0; k < im.names.length; k++) {
+          var name = im.names[k], key = u + "\\n" + im.url + "\\n" + name;
+          if (name in ex || linkSeen[key]) continue;
+          linkSeen[key] = true;
+          var hint = closestExport(name, ex);
+          diag.failures.push({ url: im.url, from: u, missing: name, hint: hint,
+            reason: "does not export " + JSON.stringify(name) + (hint ? " (did you mean " + JSON.stringify(hint) + "?)" : "") });
+        }
+      }
+    }
+  }
+  // The browser's own link error, when it says which name: Chrome / Firefox name the
+  // specifier and the name (and an uncaught error's filename is the importer); Safari 17+
+  // names only the binding; older Safari says nothing more than "Importing a module script failed".
+  var LINK_ERR = /requested module ['"]([^'"]+)['"] (?:does not|doesn't) provide an export named:? ?['"]?([^'"\\s]+)/i;
+  var LINK_ERR_NAME = /(?:Importing binding name|import not found:) ?['"]?([^'"\\s]+)/i;
+  function linkErrorIn(text, filename) {
+    var m = LINK_ERR.exec(text), spec = "", name;
+    if (m) { spec = m[1]; name = m[2]; }
+    else if ((m = LINK_ERR_NAME.exec(text))) name = m[1];
+    else return null;
+    var importer = filename && sameOrigin(filename) ? new URL(filename, location.href).href : "";
+    var target = spec && (importer || !/^\\.{1,2}\\//.test(spec)) ? linkTarget(spec, importer || location.href) : "";
+    return { name: name, spec: spec, importer: importer, target: target };
+  }
+  function linkErrorLine(le) {
+    return "boot diagnosis: the browser reports that " + (le.importer || "a module") + " imports " +
+      JSON.stringify(le.name) + " from " + (le.target || le.spec || "a module") + ", which does not export it";
+  }
+  // A browser link error that named no importer: the walked edge it must be, when exactly one fits.
+  function placeLinkError(le) {
+    var found = [];
+    for (var u in mods) {
+      var imports = mods[u].imports;
+      for (var i = 0; i < imports.length; i++) {
+        var im = imports[i];
+        if (im.names.indexOf(le.name) === -1) continue;
+        if (le.spec ? im.spec === le.spec || (le.target && im.url === le.target) : true) found.push({ from: u, url: im.url || im.spec });
+      }
+    }
+    if (found.length !== 1) return;
+    le.importer = found[0].from;
+    le.target = le.target || found[0].url;
+    for (var f = 0; f < diag.failures.length; f++) {
+      if (diag.failures[f].from === le.importer && diag.failures[f].missing === le.name) return;
+    }
+    push("error", "diagnosis", linkErrorLine(le), "", le.importer);
   }
   var running = null;
   // Two passes over one seen-set: static imports first (cap MODULE_CAP); if that finds
@@ -456,6 +768,8 @@ export function consoleCaptureScript(devLogPath: string): string {
     diag = { state: "running", pass: "static", checked: 0, queued: roots.length, failures: [], entry: entry || named, named: named, note: why, capped: false };
     push("info", "diagnosis", "boot diagnosis: walking the module graph from " + roots.join(" and ") + " (" + why + ")", "", diag.entry);
     var seen = {};
+    mods = {};
+    linkSeen = {};
     var queue = [];
     var skipped = []; // edges the static pass did not follow: dynamic, or past its cap
     for (var r = 0; r < roots.length; r++) { seen[roots[r]] = true; queue.push({ url: roots[r], from: "" }); }
@@ -493,6 +807,7 @@ export function consoleCaptureScript(devLogPath: string): string {
       }
       function settled() {
         if (queue.length || active) return pump();
+        linkCheck();
         if (diag.pass === "static" && !diag.failures.length && skipped.length) {
           deepen();
           if (queue.length) return pump();
@@ -529,14 +844,22 @@ export function consoleCaptureScript(devLogPath: string): string {
   function report() {
     var f = diag.failures;
     for (var i = 0; i < f.length && i < 10; i++) {
+      if (f[i].missing != null) {
+        push("error", "diagnosis", "boot diagnosis: " + f[i].from + " imports " + JSON.stringify(f[i].missing) +
+          " from " + f[i].url + ", which does not export it" +
+          (f[i].hint ? " — did you mean " + JSON.stringify(f[i].hint) + "?" : ""), "", f[i].from);
+        continue;
+      }
       push("error", "diagnosis", "boot diagnosis: " + f[i].url + " — " + f[i].reason +
         (f[i].from ? " (imported by " + f[i].from + ")"
           : f[i].url === diag.named ? " (the module the browser's import error names)" : " (the entry module)"), "", f[i].url);
     }
+    if (api.linkError && !api.linkError.importer) placeLinkError(api.linkError);
     if (!f.length) {
       push("info", "diagnosis", "boot diagnosis: " + diag.checked + " module(s) checked" +
         (diag.pass === "deep" ? " (static imports, then dynamic ones)" : "") + ", every one served as JavaScript" +
         (canEval() ? " and parsed" : " (the parse check is off: the page's CSP blocks eval)") +
+        ", every analyzable import naming an export the target has" +
         (diag.capped ? "; stopped at " + (diag.pass === "deep" ? DEEP_CAP : MODULE_CAP) + " modules" : "") +
         ". The failure is likely a runtime error while a module evaluated — see the errors above.", "", diag.entry);
     }
@@ -618,6 +941,7 @@ export function consoleCaptureScript(devLogPath: string): string {
     errorCount: 0,
     importErrorSeen: false,
     importErrorUrl: "",
+    linkError: null,
     reloadLoop: null,
     limit: LIMIT,
     get diagnosis() { return diag; },
@@ -629,6 +953,7 @@ export function consoleCaptureScript(devLogPath: string): string {
     diagnose: diagnose,
     format: format,
     importsOf: importsOf,
+    linkInfo: linkInfo,
     markReload: markReload,
     push: push,
     flush: flush

@@ -461,6 +461,220 @@ Deno.test("boot diagnosis: the deep pass stops at its cap and says so", async ()
   );
 });
 
+// ── The link check: an imported name the target does not export ─────────────────────────────
+
+/** A graph of `/_denext/<name>` modules (the entry is `entry.js`), and a walk over it. */
+async function linkWalk(files: Record<string, string>) {
+  const modules: Record<string, FakeModule> = {};
+  for (const [name, body] of Object.entries(files)) modules[`${ORIGIN}/_denext/${name}`] = { body };
+  const h = setup({ modules, scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })] });
+  const d = await h.store.diagnose("test");
+  const missing = d.failures
+    .filter((f: Any) => f.missing != null)
+    .map((f: Any) => [f.from.slice(ORIGIN.length), f.missing, f.url.slice(ORIGIN.length), f.hint]);
+  return { ...h, d, missing };
+}
+
+const at = (name: string) => `${ORIGIN}/_denext/${name}`;
+
+Deno.test("link check: a missing named export is reported with its importer and a hint", async () => {
+  const { d, missing, store } = await linkWalk({
+    "entry.js": `import { formatDate, parse } from "./util.js";\nformatDate(parse("x"));\n`,
+    "util.js": `export function formatDates() {}\nexport const parse = (s) => s;\n`,
+  });
+  assertEquals(missing, [["/_denext/entry.js", "formatDate", "/_denext/util.js", "formatDates"]]);
+  assertEquals(d.pass, "static", "a link failure ends the walk before the deep pass");
+  assertStringIncludes(d.failures[0].reason, 'does not export "formatDate"');
+  const line = store.entries.find((e: Any) => e.source === "diagnosis" && e.level === "error");
+  assertEquals(
+    line.message,
+    `boot diagnosis: ${at("entry.js")} imports "formatDate" from ${at("util.js")}, ` +
+      `which does not export it — did you mean "formatDates"?`,
+  );
+});
+
+Deno.test("link check: a default import of a module without a default export", async () => {
+  const { missing } = await linkWalk({
+    "entry.js": `import React from "./react.js";\nimport * as all from "./react.js";\n`,
+    // An ESM bundle of a CJS package that only re-exports names (no default).
+    "react.js": `var x = 1;\nexport { x as createElement, x as useState };\n`,
+  });
+  assertEquals(missing, [["/_denext/entry.js", "default", "/_denext/react.js", ""]]);
+});
+
+Deno.test("link check: export * chains resolve (default excluded) without false positives", async () => {
+  const { missing, d } = await linkWalk({
+    "entry.js":
+      `import { a, b, c, deep } from "./index.js";\nimport def, { nope } from "./index.js";\n`,
+    "index.js": `export * from "./ab.js";\nexport * from "./c.js";\nexport default 1;\n`,
+    "ab.js": `export const a = 1, b = 2;\nexport * from "./deep.js";\n`,
+    "c.js": `export function c() {}\nexport default "c's default is not re-exported by *";\n`,
+    "deep.js": `export class deep {}\n`,
+  });
+  assertEquals(missing, [["/_denext/entry.js", "nope", "/_denext/index.js", ""]]);
+  assertEquals(d.failures.length, 1);
+});
+
+Deno.test("link check: export * does not re-export default", async () => {
+  const { missing } = await linkWalk({
+    "entry.js": `import x from "./barrel.js";\n`,
+    "barrel.js": `export * from "./impl.js";\n`,
+    "impl.js": `export default function impl() {}\n`,
+  });
+  assertEquals(missing, [["/_denext/entry.js", "default", "/_denext/barrel.js", ""]]);
+});
+
+Deno.test("link check: aliasing — export { a as b }, as default, and re-exports", async () => {
+  const { missing } = await linkWalk({
+    "entry.js":
+      `import Main, { b, renamed } from "./alias.js";\nimport { a } from "./alias.js";\n` +
+      `export { gone } from "./alias.js";\n`,
+    "alias.js": `const a = 1;\nfunction main() {}\nexport { a as b, main as default };\n` +
+      `export { inner as renamed } from "./inner.js";\n`,
+    "inner.js": `export const inner = 1;\n`,
+  });
+  assertEquals(missing, [
+    ["/_denext/entry.js", "a", "/_denext/alias.js", "b"],
+    ["/_denext/entry.js", "gone", "/_denext/alias.js", ""],
+  ]);
+});
+
+Deno.test("link check: a re-export of a name the source lacks is reported", async () => {
+  const { missing } = await linkWalk({
+    "entry.js": `import { thing } from "./index.js";\n`,
+    "index.js": `export { thing } from "./impl.js";\n`,
+    "impl.js": `export const thingy = 1;\n`,
+  });
+  assertEquals(missing, [["/_denext/index.js", "thing", "/_denext/impl.js", "thingy"]]);
+});
+
+Deno.test("link check: an export * cycle is safe and still resolves every name", async () => {
+  const { missing, d } = await linkWalk({
+    "entry.js": `import { a, b, c } from "./a.js";\nimport { a as a2, missing } from "./b.js";\n`,
+    "a.js": `export * from "./b.js";\nexport const a = 1;\n`,
+    "b.js": `export * from "./a.js";\nexport * from "./c.js";\nexport const b = 2;\n`,
+    "c.js": `export * from "./b.js";\nexport const c = 3;\n`,
+  });
+  assertEquals(d.state, "done");
+  assertEquals(missing, [["/_denext/entry.js", "missing", "/_denext/b.js", ""]]);
+});
+
+Deno.test("link check: strings, comments, templates and regexes don't count as exports", async () => {
+  const { missing } = await linkWalk({
+    "entry.js": `import { real, fake, cmt, blk, tpl, rx } from "./tricky.js";\n`,
+    "tricky.js": [
+      `const s = "export function fake() {}";`,
+      `// export function cmt() {}`,
+      `/* export const blk = 1; */`,
+      "const t = `export const tpl = ${'`export const tpl2`'}`;",
+      `const r = /export function rx() {}/;`,
+      `const ratio = 4 / 2; export function real() {}`,
+    ].join("\n"),
+  });
+  assertEquals(missing.map((m: Any[]) => m[1]), ["fake", "cmt", "blk", "tpl", "rx"]);
+});
+
+Deno.test("link check: a module it can't analyze is skipped, not guessed at", async () => {
+  const { missing, d } = await linkWalk({
+    "entry.js": `import { a } from "./cjs.js";\nimport { b } from "./destructured.js";\n` +
+      `import { c } from "./star-of-cjs.js";\nimport { d } from "./broken.js";\n`,
+    "cjs.js": `module.exports = { a: 1 };\n`,
+    "destructured.js": `export const { b } = { b: 1 };\n`,
+    "star-of-cjs.js": `export * from "./cjs.js";\n`,
+    "broken.js": `export const d = "unterminated;\n`,
+  });
+  assertEquals(missing, []);
+  // broken.js fails the parse check on its own; no link failure is invented for it.
+  assert(d.failures.every((f: Any) => f.missing == null), JSON.stringify(d.failures));
+});
+
+Deno.test("link check: a healthy graph with every import form reports nothing", async () => {
+  const { d, store } = await linkWalk({
+    "entry.js": `import def, { named as local, other } from "./lib.js";\n` +
+      `import * as ns from "./lib.js";\nimport "./side.js";\n` +
+      `export { other } from "./lib.js";\nexport * as all from "./lib.js";\n` +
+      `const lazy = () => import("./lazy.js");\n`,
+    "lib.js": `export default 1;\nexport const named = 1;\nexport async function other() {}\n`,
+    "side.js": `console.log("export const nothing = 1");\n`,
+    "lazy.js": `import def from "./lib.js";\nexport {};\n`,
+  });
+  assertEquals(d.failures, []);
+  assertEquals(d.pass, "deep");
+  assertStringIncludes(store.entries.at(-1).message, "every analyzable import naming an export");
+});
+
+Deno.test("link check: the deep pass checks modules behind a dynamic import too", async () => {
+  const { d, missing } = await linkWalk({
+    "entry.js": `const lazy = () => import("./lazy.js");\n`,
+    "lazy.js": `import { gone } from "./lib.js";\nexport {};\n`,
+    "lib.js": `export const here = 1;\n`,
+  });
+  assertEquals(d.pass, "deep");
+  assertEquals(missing, [["/_denext/lazy.js", "gone", "/_denext/lib.js", ""]]);
+});
+
+Deno.test("link check: Chrome's own message is surfaced with the importer and starts the walk there", async () => {
+  const { store, fire, tick } = setup({
+    modules: {
+      [at("entry.js")]: { body: `export {};\n` },
+      [at("page.js")]: { body: `import { missing } from "/_denext/lib.js";\n` },
+      [at("lib.js")]: { body: `export const missng = 1;\n` },
+    },
+    scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })],
+  });
+  const err = new SyntaxError(
+    "The requested module '/_denext/lib.js' does not provide an export named 'missing'",
+  );
+  fire("error", { error: err, message: err.message, filename: at("page.js") });
+  assertEquals(store.linkError.importer, at("page.js"));
+  assertEquals(store.linkError.target, at("lib.js"));
+  const said = store.entries.find((e: Any) => e.message.includes("the browser reports"));
+  assertEquals(
+    said.message,
+    `boot diagnosis: the browser reports that ${at("page.js")} imports "missing" from ${
+      at("lib.js")
+    }, ` +
+      `which does not export it`,
+  );
+  tick();
+  const d = await store.diagnose();
+  assertEquals(d.named, at("page.js"));
+  assertEquals(d.failures.map((f: Any) => [f.from, f.missing, f.hint]), [[
+    at("page.js"),
+    "missing",
+    "missng",
+  ]]);
+});
+
+Deno.test("link check: a link error without an importer is placed on the walked edge", async () => {
+  const { store, fire, tick } = setup({
+    modules: {
+      [at("entry.js")]: { body: `import { thing } from "./lib.js";\n` },
+      // The browser knows better than the analysis here (lib.js is skipped: CJS-looking).
+      [at("lib.js")]: { body: `module.exports = {};\n` },
+    },
+    scripts: [fakeScript({ type: "module", src: "/_denext/entry.js" })],
+  });
+  fire("unhandledrejection", {
+    reason: new SyntaxError(
+      "The requested module './lib.js' does not provide an export named 'thing'",
+    ),
+  });
+  assertEquals(store.linkError.importer, "");
+  tick();
+  await store.diagnose();
+  assertEquals(store.linkError.importer, at("entry.js"));
+  const lines = store.entries.filter((e: Any) => e.message.includes("the browser reports"));
+  assertEquals(lines.length, 2);
+  assertEquals(
+    lines[1].message,
+    `boot diagnosis: the browser reports that ${at("entry.js")} imports "thing" from ${
+      at("lib.js")
+    }, ` +
+      `which does not export it`,
+  );
+});
+
 // ── The reload loop ──────────────────────────────────────────────────────────────────────────
 
 /** A sessionStorage holding `n` dev-ordered reloads `agoMs` back, plus this load's mark. */

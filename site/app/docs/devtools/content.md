@@ -340,8 +340,21 @@ page, say), imports a bare specifier no import map resolves, or does not parse
 (only where the page's CSP allows `eval`). When that static graph loads, a deep
 pass follows what it skipped — string-literal dynamic `import()`s, `new URL("./worker.ts",
 import.meta.url)` and `import.meta.resolve()` script modules, and static imports
-past the cap — up to 2000 modules, logging progress as it goes. Each failure is
-logged with the module's URL, the reason and the module that imported it;
+past the cap — up to 2000 modules, logging progress as it goes. It also catches
+link-time failures, which Safari reports only as "Importing a module script failed":
+each walked module is tokenized (strings, comments, templates and regex literals
+skipped) for the names it imports — named, default, and `export { a } from`
+re-exports — and the names it exports, `export { a as b }`, `export default` and
+`export *` chains included (cycle-safe). A name the target does not export is
+logged as `<importer> imports "<name>" from <target>, which does not export it`,
+with the closest export as a hint ("did you mean …?"). That covers a renamed
+export, a missing re-export and a default import of an npm bundle that has none
+(a CommonJS / ES module interop mismatch); a module it can't analyze confidently
+(CommonJS-looking, a destructuring export) is skipped rather than guessed at. When
+the browser names the failure itself (Chrome: "does not provide an export named
+'X'"), that is shown at once with the importer, and the walk starts there. Each
+other failure is logged with the module's URL, the reason and the module that
+imported it;
 progress shows at the top of the tab, and **diagnose boot** runs it on demand. If
 the panel itself never mounted, the dev-reload script shows the errors and the
 diagnosis in a plain list at the bottom of the page.

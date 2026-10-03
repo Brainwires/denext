@@ -480,6 +480,14 @@ and this project adheres to
   `import.meta.resolve()` script modules, and static edges past the cap, up to 2000 modules,
   with progress in the Console. When the dev server orders more than 3 reloads in 30 s, the
   Console says the page is in a reload loop.
+- **The boot diagnosis names link-time failures.** An imported name the target module does not
+  export (a renamed export, a missing re-export, a default import of an npm bundle without one)
+  fails at link time, which Safari reports only as "Importing a module script failed" and the
+  walk did not detect. Each walked module is now tokenized for the names it imports and exports
+  (`export *` chains resolved, cycle-safe; strings, comments, templates and regexes ignored), and
+  every missing name is reported as `<importer> imports "<name>" from <target>, which does not
+  export it`, with the closest export as a hint. Modules it can't analyze confidently are
+  skipped. Chrome's "does not provide an export named 'X'" is surfaced at once with its importer.
 - **The unbundled dev npm prebundle honours `package.json` `browser` fields**, as esbuild does
   (a string replaces the main entry, the object form remaps files and bare specifiers, `false` is
   an empty module), so a package such as jszip resolves to its browser build instead of its Node
