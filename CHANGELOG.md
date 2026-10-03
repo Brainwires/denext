@@ -489,6 +489,10 @@ and this project adheres to
   `desktopRuntimeEnv`, so it builds on the stock runtime with none of the default installers) and
   says to run `--regenerate-scripts`; `--format` is not passed to a script that cannot read it,
   with a warning that it is ignored.
+- **`denext mobile add` in a denext project installs with Deno.** A project with its own
+  `deno.lock` (deno.json + package.json, `deno install`) got `npm install`, which fails on a
+  Deno-managed `node_modules`; it now runs `deno add npm:<package>` (written into package.json).
+  A `deno.lock` further up (a Deno repository holding an npm Capacitor project) does not count.
 - **Clerk in a native shell: an `@clerk/nextjs` sign-in no longer hangs.** Its provider runs a
   server action before every `setActive` and waits for it; a Deno Desktop window or a Capacitor
   shell serves a static export, where the action never answers. In native mode (`nativeClerk`)

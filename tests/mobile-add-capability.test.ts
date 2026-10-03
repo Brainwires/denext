@@ -1302,3 +1302,25 @@ Deno.test("mobile add barcode: raises Android minSdkVersion to 26, never lowers 
   assertEquals(withGradleMinSdk("minSdkVersion = 28\n", 26), "minSdkVersion = 28\n");
   assertEquals(withGradleMinSdk("ext { }\n", 26), null);
 });
+
+Deno.test("mobile add: a denext project's own deno.lock installs with `deno add npm:` (not up the walk)", async () => {
+  await inProject({ "deno.lock": "{}" }, async (dir) => {
+    const plan = await planMobileCapabilities({ capabilities: ["haptics", "share"], cwd: dir });
+    assertEquals(plan.packageManager, "deno");
+    assertEquals(plan.lockfile, "deno.lock");
+    assertEquals(plan.install, {
+      cmd: "deno",
+      args: ["add", "npm:@capacitor/haptics@^8.0.2", "npm:@capacitor/share@^8.0.2"],
+      cwd: dir,
+    });
+  });
+  // A Deno repository's deno.lock above an npm Capacitor project does not make it a Deno one.
+  await inWorkspace(
+    { ".git/HEAD": "", "deno.lock": "{}" },
+    async (root) => assertEquals((await planIn(root)).packageManager, "npm"),
+  );
+  // An npm-family lockfile beside it wins.
+  await inProject({ "deno.lock": "{}", "package-lock.json": "" }, async (dir) => {
+    assertEquals((await planIn(dir)).packageManager, "npm");
+  });
+});

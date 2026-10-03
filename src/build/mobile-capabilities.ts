@@ -888,7 +888,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
 };
 
 /** A package manager `denext mobile add` can drive. */
-export type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
+export type PackageManager = "npm" | "pnpm" | "yarn" | "bun" | "deno";
 
 /** A subprocess to run: `cmd args…` in `cwd`. */
 export interface PlannedCommand {
@@ -1019,6 +1019,9 @@ const LOCKFILES: ReadonlyArray<readonly [string, PackageManager]> = [
   ["bun.lock", "bun"],
   ["bun.lockb", "bun"],
   ["yarn.lock", "yarn"],
+  // A denext project (deno.json + package.json, `deno install`): last, so an npm-family lockfile
+  // beside it wins.
+  ["deno.lock", "deno"],
 ];
 
 async function exists(path: string): Promise<boolean> {
@@ -1144,14 +1147,19 @@ async function packageManagerFieldIn(dir: string): Promise<PackageManager | unde
  * The package manager, walking up from the Capacitor project `root` to the repository root
  * (the first folder holding `.git`) or the filesystem root, so a project inside a workspace
  * (pnpm, yarn, bun, npm) uses the workspace's manager. Precedence: the nearest lockfile
- * (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder); then the
- * nearest `package.json` `packageManager` field; then npm.
+ * (`pnpm-workspace.yaml` counting as pnpm's, after a lockfile in the same folder; a `deno.lock`
+ * only in `root` itself, for a denext project installed with `deno install`); then the nearest
+ * `package.json` `packageManager` field; then npm.
  */
 async function detectPackageManager(root: string): Promise<DetectedPackageManager> {
   const dirs = await workspaceAncestors(root);
   for (const dir of dirs) {
     const found = await lockfileIn(dir);
-    if (found) return { manager: found.manager, lockfile: posixRelative(root, found.path) };
+    // A deno.lock names the project's manager only in the project itself: an npm project nested
+    // in a Deno repository is still an npm project.
+    if (found && (found.manager !== "deno" || dir === root)) {
+      return { manager: found.manager, lockfile: posixRelative(root, found.path) };
+    }
   }
   for (const dir of dirs) {
     const manager = await packageManagerFieldIn(dir);
@@ -1169,6 +1177,15 @@ function addCommand(
   cwd: string,
   exact: boolean,
 ): PlannedCommand {
+  // `deno add` writes npm packages into package.json when there is one; the spec carries the
+  // version (pinned exactly when `exact`, see the caller), so there is no exact flag.
+  if (manager === "deno") {
+    return {
+      cmd: "deno",
+      args: ["add", ...specs.map((s) => `npm:${s}`)],
+      cwd,
+    };
+  }
   const verb = manager === "npm" ? "install" : "add";
   const flag = !exact
     ? []
