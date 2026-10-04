@@ -77,14 +77,21 @@ async function runCli(
   args: string[],
   cwd?: string,
 ): Promise<{ code: number; out: string; err: string }> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "--config", DENO_JSON, CLI, ...args],
-    cwd,
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  const run = () =>
+    new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", "--config", DENO_JSON, CLI, ...args],
+      cwd,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+  // A child the OS killed (a signal, under a loaded full-suite run) says nothing about the CLI:
+  // run it once more. A CLI that exits on its own, with any code, is never retried.
+  let result = await run();
+  if (result.signal !== null) result = await run();
   const decoder = new TextDecoder();
-  return { code, out: decoder.decode(stdout), err: decoder.decode(stderr) };
+  const { code, stdout, stderr, signal } = result;
+  const err = decoder.decode(stderr) + (signal === null ? "" : `\n(killed by ${signal})`);
+  return { code, out: decoder.decode(stdout), err };
 }
 
 /** Two throwaway dirs: a denext project (has denext.config.ts) and a plain directory. */
@@ -160,6 +167,7 @@ Deno.test("--help lists the verbs the last `denext commands` run found, while th
     );
     // Before any discovery, help points at the verb that does it.
     const cold = await runCli(["--help", dir]);
+    assertEquals(cold.code, 0, cold.err);
     assertStringIncludes(cold.out, FOOTER);
     assert(!cold.out.includes("Load fixtures"), "nothing is listed before a discovery");
 
@@ -178,6 +186,7 @@ Deno.test("--help lists the verbs the last `denext commands` run found, while th
     // A change to a file the verb set depends on makes the listing untrustworthy again.
     await Deno.writeTextFile(join(dir, "deno.json"), '{ "tasks": {} }');
     const stale = await runCli(["--help", dir]);
+    assertEquals(stale.code, 0, stale.err);
     assert(!stale.out.includes("Load fixtures"), "a stale listing is not printed");
     assertStringIncludes(stale.out, FOOTER);
   } finally {
@@ -193,8 +202,11 @@ Deno.test("a project verb never shadows a built-in in the help table", async () 
       join(dir, "denext.config.ts"),
       'export default { commands: [{ name: "dev", summary: "Mine", run: () => {} }] };\n',
     );
-    await runCli(["commands", "--cwd", dir]);
+    const listed = await runCli(["commands", "--cwd", dir]);
+    assertEquals(listed.code, 0, listed.err);
     const res = await runCli(["--help", dir]);
+    assertEquals(res.code, 0, res.err);
+    assertStringIncludes(res.out, "Usage: denext <command> [options]");
     assert(!res.out.includes("Mine"), "a built-in's name is never listed as a project verb");
   } finally {
     await Deno.remove(dir, { recursive: true });
