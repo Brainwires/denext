@@ -9,19 +9,23 @@
 //     key baked into the app at package time (`desktop.update.publicKey` → `.deno-desktop/app.json`;
 //     the `denext ota keygen` key format). A missing or bad signature is `signature` /
 //     `invalid_manifest`, and an app without a baked key cannot update at all (`not_configured`).
-//  2. THIS APP, A NEWER VERSION. The manifest's `app` must equal `desktop.app.identifier`
-//     (`wrong_app`) and its `version` must be strictly newer than the running deno.json `version`
-//     (`downgrade`; the same version is `available: false`). `minVersion` marks older versions as
-//     `required` and never permits a downgrade. A version that failed to start and was rolled back
-//     is refused (`rejected`).
+//  2. THIS APP, A NEWER VERSION, A FRESH MANIFEST. The manifest's `app` must equal
+//     `desktop.app.identifier` (`wrong_app`) and its `version` must be strictly newer than the
+//     running deno.json `version` (`downgrade`; the same version is `available: false`).
+//     `minVersion` marks older versions as `required` and never permits a downgrade. Every version
+//     that failed to start and was rolled back is refused (`rejected`). The manifest must carry
+//     `expiresAt` (refused at or after it: `expired`) and `sequence` (lower than the highest this
+//     install accepted: `replayed`), so an old manifest served again can't hide a newer release.
 //  3. VERIFIED BYTES. https only (`insecure_url`; loopback http behind the dev-only flag), the
 //     download stops at the declared size (`size_exceeded`) and must hash to the signed SHA-256
 //     (`integrity`), the archive is extracted with tar-slip / symlink / special-file refusal
-//     (`unsafe_archive`), and it must be this app's shape (`bundle_mismatch`).
+//     (`unsafe_archive`), and it must be this app's shape (`bundle_mismatch`) built as the offered
+//     version (the version compiled into it: `version_mismatch`).
 //  4. OS CODE SIGNATURE. macOS: `codesign --verify --deep --strict`, the SAME Team ID as the
 //     running app, Gatekeeper (`spctl --assess --type execute`, so the update must be NOTARIZED: a
 //     Developer ID build that is not, or an Apple Development build, is refused) and the same
-//     signing identifier; Windows: `WinVerifyTrust` with the SAME signer subject (`os_signature`).
+//     signing identifier; Windows: `WinVerifyTrust` of EVERY PE file with the SAME signer issuer
+//     and subject (`os_signature`).
 //     An unsigned / ad-hoc running app (a dev build) needs the dev-only `allowUnsignedDev`.
 //  5. ATOMIC SWAP, CONFIRM OR ROLL BACK. A helper swaps the install once the app has exited (an
 //     atomic exchange on macOS / Linux), keeps the previous app as `<name>.old`, and relaunches. The
@@ -41,11 +45,14 @@ export type AppUpdateErrorCode =
   | "downgrade"
   | "rejected"
   | "no_platform"
+  | "expired"
+  | "replayed"
   | "insecure_url"
   | "size_exceeded"
   | "integrity"
   | "unsafe_archive"
   | "bundle_mismatch"
+  | "version_mismatch"
   | "os_signature"
   | "install_not_writable"
   | "unsupported_layout"
@@ -62,11 +69,14 @@ const CODES: ReadonlySet<string> = new Set<AppUpdateErrorCode>([
   "downgrade",
   "rejected",
   "no_platform",
+  "expired",
+  "replayed",
   "insecure_url",
   "size_exceeded",
   "integrity",
   "unsafe_archive",
   "bundle_mismatch",
+  "version_mismatch",
   "os_signature",
   "install_not_writable",
   "unsupported_layout",
@@ -127,6 +137,10 @@ export interface AppUpdateCheck {
   readonly publishedAt: string | null;
   /** The archive size in bytes, or `null` when nothing is available. */
   readonly size: number | null;
+  /** The manifest's `sequence` (its release counter), or `null` when nothing is available. */
+  readonly sequence: number | null;
+  /** When installed apps stop accepting the manifest (RFC 3339), or `null` when nothing is. */
+  readonly expiresAt: string | null;
 }
 
 /** Download progress, in bytes. */
@@ -170,6 +184,13 @@ export interface AppUpdateStatus {
   readonly pendingVersion: string | null;
   /** The last version rolled back after failing to start. */
   readonly rejected: string | null;
+  /**
+   * Every version rolled back after failing to start (and newer than the last confirmed one),
+   * oldest first: none of them is offered again.
+   */
+  readonly rejectedVersions: readonly string[];
+  /** The highest manifest `sequence` this install has accepted (a lower one is `replayed`). */
+  readonly manifestSequence: number | null;
   /** The previous version, when this launch follows an update. */
   readonly updatedFrom: string | null;
   /** The version rolled back, when this launch follows a rollback. */
@@ -188,6 +209,8 @@ interface RuntimeUpdater {
     releaseNotes: string | null;
     publishedAt: string | null;
     size: number | null;
+    sequence?: number | null;
+    expiresAt?: string | null;
   }>;
   download(options: Record<string, unknown>): Promise<{ version: string; size: number }>;
   stage(options: Record<string, unknown>): Promise<{
@@ -273,6 +296,8 @@ export async function checkForAppUpdate(config: AppUpdaterConfig): Promise<AppUp
     releaseNotes: r.releaseNotes,
     publishedAt: r.publishedAt,
     size: r.size,
+    sequence: r.sequence ?? null,
+    expiresAt: r.expiresAt ?? null,
   };
 }
 
@@ -332,7 +357,8 @@ export function installAppUpdateAndRelaunch(
 
 /**
  * Confirm the running version after an update, once the app has shown it is healthy (its window
- * loaded, its backend answered): the previous app is deleted and the update is final. An update
+ * loaded, its backend answered): the update is final, and the previous app is moved aside and
+ * deleted in the background (the call does not wait for the deletion). An update
  * not confirmed by its next launch is rolled back and that version is refused from then on. A no-op
  * (`false`) when no update is pending, so it is safe to call on every launch. `runDesktop` calls it
  * once the window has loaded unless `desktop.update.autoConfirm` is `false`.

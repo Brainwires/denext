@@ -72,7 +72,15 @@ export interface KitchenSetup {
   /** `main` (every check), or a full-app update phase of the window test ({@link PHASE_CHECKS}). */
   readonly phase: string;
   readonly updateUrls:
-    | { good: string; badSignature: string; downgrade: string; wrongApp: string; real: string }
+    | {
+      good: string;
+      badSignature: string;
+      downgrade: string;
+      wrongApp: string;
+      expired: string;
+      replayed: string;
+      real: string;
+    }
     | null;
   readonly os: "darwin" | "windows" | "linux";
   readonly target: string;
@@ -687,7 +695,24 @@ const nativeChecks: Check[] = [
     assert(r.ok, `check failed: ${r.code}: ${r.message}`);
     eq(r.result.available, true, "available");
     eq(r.result.version, "99.0.0", "version");
-    return `${r.result.currentVersion} → ${r.result.version}`;
+    assert(Number.isSafeInteger(r.result.sequence), `sequence ${r.result.sequence}`);
+    assert(r.result.expiresAt && Date.parse(r.result.expiresAt) > Date.now(), "expiresAt");
+    const status = await kitchen.updateStatus({});
+    eq(status?.manifestSequence, r.result.sequence, "the install's recorded sequence");
+    return `${r.result.currentVersion} → ${r.result.version} (sequence ${r.result.sequence})`;
+  }],
+  ["updater: an expired manifest is refused (expired)", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("no local update server");
+    const r = await kitchen.updateCheck({ url: setup.updateUrls.expired });
+    eq(r.ok ? `available: ${r.result.available}` : r.code, "expired", "the check");
+    return "expired";
+  }],
+  ["updater: a lower sequence than accepted is refused (replayed)", async ({ setup }) => {
+    if (!setup.updateUrls) throw new Skip("no local update server");
+    // Runs after the newer manifest's check recorded its sequence as the install's floor.
+    const r = await kitchen.updateCheck({ url: setup.updateUrls.replayed });
+    eq(r.ok ? `available: ${r.result.available}` : r.code, "replayed", "the check");
+    return "replayed";
   }],
   ["updater: another key's signature is refused", async ({ setup }) => {
     if (!setup.updateUrls) throw new Skip("no local update server");
@@ -1096,6 +1121,10 @@ export const PHASE_CHECKS: Readonly<Record<string, readonly Check[]>> = {
       eq(s.trial, false, "trial");
       eq(s.rolledBackFrom, UPDATE_VERSION, "rolledBackFrom");
       eq(s.rejected, UPDATE_VERSION, "rejected");
+      assert(
+        s.rejectedVersions?.includes(UPDATE_VERSION),
+        `rejectedVersions ${s.rejectedVersions}`,
+      );
       return `back on ${s.version}, ${s.rolledBackFrom} rejected`;
     }],
     ["update rollback: the rolled-back version is refused from then on", async ({ setup }) => {

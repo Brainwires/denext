@@ -159,13 +159,16 @@ export default defineDesktopExtension({
           autorun: state !== null,
           phase: state?.phase ?? "main",
           // The runner serves signed manifests here: a valid newer one, one signed by another key,
-          // one offering an older version, one for another app, and a real update to install.
+          // one offering an older version, one for another app, an expired one, one replaying a
+          // lower sequence, and a real update to install.
           updateUrls: updateBase
             ? {
               good: `${updateBase}good.json`,
               badSignature: `${updateBase}bad-signature.json`,
               downgrade: `${updateBase}downgrade.json`,
               wrongApp: `${updateBase}wrong-app.json`,
+              expired: `${updateBase}expired.json`,
+              replayed: `${updateBase}replayed.json`,
               real: `${updateBase}real.json`,
             }
             : null,

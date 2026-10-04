@@ -256,8 +256,20 @@ async function installBrowserStub(): Promise<string> {
 
 // --- signed update manifests on loopback -------------------------------------------------------
 
+/**
+ * The release counter every manifest of this run carries (the runtime refuses a lower one than an
+ * install accepted, `replayed`): the run's start in Unix seconds, so a later run never goes below.
+ */
+const SEQUENCE = Math.floor(Date.now() / 1000);
+/** A manifest's expiry, `days` from now (negative: already expired). */
+const expiresIn = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+
 /** One signed manifest payload offering `version` of `app` for this platform (never downloaded). */
-function manifest(version: string, app = APP_ID): AppUpdatePayload {
+function manifest(
+  version: string,
+  app = APP_ID,
+  fresh: { expiresAt?: string; sequence?: number } = {},
+): AppUpdatePayload {
   const platform = `${Deno.build.target}-webview`;
   return {
     schema: 1,
@@ -273,6 +285,8 @@ function manifest(version: string, app = APP_ID): AppUpdatePayload {
     },
     releaseNotes: "kitchen sink window test",
     publishedAt: new Date().toISOString(),
+    expiresAt: fresh.expiresAt ?? expiresIn(30),
+    sequence: fresh.sequence ?? SEQUENCE,
   };
 }
 
@@ -331,6 +345,9 @@ async function startUpdateServer(
   docs["/bad-signature.json"] = await sign(manifest("99.0.0"), other);
   docs["/downgrade.json"] = await sign(manifest("0.0.1"), key);
   docs["/wrong-app.json"] = await sign(manifest("99.0.0", "dev.denext.another-app"), key);
+  // signAppUpdatePayload validates the shape only, not the clock: an expired manifest still signs.
+  docs["/expired.json"] = await sign(manifest("99.0.0", APP_ID, { expiresAt: expiresIn(-1) }), key);
+  docs["/replayed.json"] = await sign(manifest("99.0.0", APP_ID, { sequence: SEQUENCE - 1 }), key);
   if (update) {
     log(`packing the update build ${update}`);
     const { sha256, size } = await writeAppUpdateArchive(update, archiveFile);
@@ -343,6 +360,8 @@ async function startUpdateServer(
         platforms: { [platform]: { url: `${base}update.tar.gz`, sha256, size, kind: "bundle" } },
         releaseNotes: "kitchen sink window test: the update build",
         publishedAt: new Date().toISOString(),
+        expiresAt: expiresIn(30),
+        sequence: SEQUENCE,
       },
       key,
       keys.publicKey,

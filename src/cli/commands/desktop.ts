@@ -93,7 +93,8 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
     "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
     "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
-    "                                         Sign a full-app update (archive + app-update.json)",
+    "                                         Sign a full-app update (archive + app-update.json)\n" +
+    "  denext desktop publish-update --resign Re-sign the published manifest before it expires",
   positionals: [
     {
       name: "action",

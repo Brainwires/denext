@@ -10,6 +10,14 @@
 // parses it (no JSON canonicalization to disagree on). There is no unsigned output: publishing
 // without a key is an error.
 //
+// Every manifest carries two signed freshness fields the runtime requires (a manifest without
+// either is `invalid_manifest`): `expiresAt` (RFC 3339; refused at or after it, `expired`), so an
+// old manifest an attacker keeps serving stops working, and `sequence` (an integer that only
+// grows; lower than the highest an install accepted is `replayed`), so a replayed older manifest
+// can't hide a newer release. `publish-update` defaults them to 30 days from now and the Unix time
+// in seconds at signing (never below the existing manifest's); `--resign` re-signs the existing
+// manifest with fresh values, which a publisher runs on a schedule shorter than the expiry.
+//
 // The archive holds exactly one top-level entry (the artifact, under its own name) with POSIX
 // modes and symlinks preserved (a macOS framework's `Versions/Current`), which is what the
 // runtime's safe extractor accepts. Extended attributes are not carried: an app whose code
@@ -18,6 +26,7 @@
 import { createHash } from "node:crypto";
 import { basename, join } from "@std/path";
 import { fromBase64, otaPublicKeyOf, parseOtaPublicKey, toBase64 } from "./ota-signing.ts";
+import { checkArtifactVersion } from "./app-update-version.ts";
 
 /** What the signature covers before the signed string (the runtime's `SIGNATURE_DOMAIN`). */
 const APP_UPDATE_SIGNATURE_DOMAIN = "denext-app-update-v1\n";
@@ -25,6 +34,11 @@ const APP_UPDATE_SIGNATURE_DOMAIN = "denext-app-update-v1\n";
 const APP_UPDATE_SCHEMA = 1;
 /** The manifest file name `publish-update` writes. */
 export const APP_UPDATE_MANIFEST_FILE = "app-update.json";
+/** How long a manifest stays valid when no expiry is given: re-sign it before then. */
+export const APP_UPDATE_DEFAULT_EXPIRY_DAYS = 30;
+/** The largest `sequence` the runtime accepts (`Number.MAX_SAFE_INTEGER`). */
+const MAX_SEQUENCE = Number.MAX_SAFE_INTEGER;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One platform's archive in the manifest. */
 export interface AppUpdatePlatformEntry {
@@ -52,6 +66,13 @@ export interface AppUpdatePayload {
   readonly releaseNotes?: string;
   /** ISO 8601. */
   readonly publishedAt: string;
+  /** RFC 3339: installed apps refuse the manifest from this time on (`expired`). Re-sign before. */
+  readonly expiresAt: string;
+  /**
+   * A release counter that only grows (default: the Unix time in seconds at signing): an install
+   * remembers the highest it accepted and refuses a lower one (`replayed`).
+   */
+  readonly sequence: number;
 }
 
 /** The served manifest: the signed payload string and its signature. */
@@ -298,6 +319,34 @@ export async function writeAppUpdateArchive(
 // The manifest.
 
 /**
+ * Parse an RFC 3339 timestamp the way the runtime does (`YYYY-MM-DDTHH:MM:SS[.fraction]`, then `Z`
+ * or `±HH:MM`; 20 to 64 characters; a real calendar date) into Unix milliseconds, the fraction
+ * dropped. `null` for anything else.
+ *
+ * @param text The timestamp.
+ * @returns Unix milliseconds, or `null`.
+ */
+export function parseRfc3339(text: string): number | null {
+  if (text.length < 20 || text.length > 64) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+    .exec(text);
+  if (!m) return null;
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map(Number);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  if (days === undefined || day < 1 || day > days || hour > 23 || minute > 59 || second > 60) {
+    return null;
+  }
+  let offset = 0;
+  if (m[7] !== "Z") {
+    const [oh, om] = m[7].slice(1).split(":").map(Number);
+    if (oh > 23 || om > 59) return null;
+    offset = (m[7][0] === "-" ? -1 : 1) * (oh * 60 + om) * 60_000;
+  }
+  return Date.UTC(year, month - 1, day, hour, minute, second) - offset;
+}
+
+/**
  * Check a payload the way the runtime does (shape, semver, platform keys, https URLs, hashes), so
  * a bad manifest is refused when it is published rather than by every installed app.
  *
@@ -311,6 +360,12 @@ export function validateAppUpdatePayload(p: AppUpdatePayload): void {
     throw new Error(`minVersion ${p.minVersion} is not a semver`);
   }
   if (!p.publishedAt || p.publishedAt.length > 64) throw new Error("publishedAt is required");
+  if (typeof p.expiresAt !== "string" || parseRfc3339(p.expiresAt) === null) {
+    throw new Error(`expiresAt ${p.expiresAt} is not an RFC 3339 timestamp`);
+  }
+  if (!Number.isSafeInteger(p.sequence) || p.sequence < 0) {
+    throw new Error(`sequence must be an integer 0..${MAX_SEQUENCE}`);
+  }
   const keys = Object.keys(p.platforms);
   if (keys.length === 0) throw new Error("no platforms");
   for (const key of keys) validatePlatformEntry(key, p.platforms[key]);
@@ -403,13 +458,31 @@ export async function verifyAppUpdateEnvelope(
   return JSON.parse(e.signed) as AppUpdatePayload;
 }
 
+/** When a manifest expires and which `sequence` it carries (see {@linkcode resolveFreshness}). */
+export interface AppUpdateFreshnessOptions {
+  /** An explicit expiry (RFC 3339). Exclusive with {@link expiresInDays}. */
+  readonly expiresAt?: string;
+  /** Days from now until it expires (default {@linkcode APP_UPDATE_DEFAULT_EXPIRY_DAYS}). */
+  readonly expiresInDays?: number;
+  /**
+   * An explicit sequence (default: the Unix time in seconds, raised to the existing manifest's).
+   * Refused when it is below the existing manifest's: installs that saw that one would refuse it.
+   */
+  readonly sequence?: number;
+  /** The signing time (default: now; tests pin it). */
+  readonly now?: Date;
+}
+
 /** What {@linkcode publishAppUpdate} needs. */
-export interface PublishAppUpdateOptions {
+export interface PublishAppUpdateOptions extends AppUpdateFreshnessOptions {
   /** The packaged `.app` / app directory / `.AppImage`. */
   readonly artifact: string;
   /** `desktop.app.identifier`. */
   readonly app: string;
-  /** The version being published (the artifact's deno.json `version`). */
+  /**
+   * The version being published: the artifact's deno.json `version` at packaging. The version
+   * compiled into the artifact must be this one (`version_mismatch` otherwise).
+   */
   readonly version: string;
   /** The https URL the archives are served under (the archive name is appended). */
   readonly urlBase: string;
@@ -434,53 +507,59 @@ export interface PublishAppUpdateResult {
   readonly size: number;
   /** The platforms the manifest now lists. */
   readonly platforms: string[];
+  /** When the manifest expires (RFC 3339): re-sign it before then. */
+  readonly expiresAt: string;
+  /** The manifest's sequence. */
+  readonly sequence: number;
 }
 
-/**
- * The payload of the manifest already at `path` when it is the SAME release (app + version), so
- * its other platforms carry over — verified first against the public half of `key`: re-signing
- * an entry nobody verified would put this key's signature on whatever a writable output
- * directory (a CI cache, a shared bucket) was made to hold. A manifest for another release is
- * replaced, so nothing of it is trusted; `null` when there is none.
- *
- * @throws Error when the file is not a manifest, or a same-release one is unsigned, does not
- *   verify, or was signed with another key.
- */
-async function readExistingRelease(
-  path: string,
-  key: CryptoKey,
-  app: string,
-  version: string,
-): Promise<AppUpdatePayload | null> {
+/** An existing `app-update.json`, parsed but not verified. */
+interface ExistingManifest {
+  readonly envelope: Partial<AppUpdateEnvelope>;
+  readonly payload: AppUpdatePayload;
+}
+
+/** The manifest at `path`, parsed but not verified; `null` when there is none. */
+async function readManifestFile(path: string): Promise<ExistingManifest | null> {
   let text: string;
   try {
     text = await Deno.readTextFile(path);
   } catch {
     return null;
   }
-  let env: Partial<AppUpdateEnvelope>;
-  let payload: AppUpdatePayload;
   try {
-    env = JSON.parse(text) as Partial<AppUpdateEnvelope>;
-    payload = JSON.parse(String(env.signed)) as AppUpdatePayload;
+    const envelope = JSON.parse(text) as Partial<AppUpdateEnvelope>;
+    return { envelope, payload: JSON.parse(String(envelope.signed)) as AppUpdatePayload };
   } catch {
     throw new Error(`${path} is not an app-update manifest`);
   }
-  if (payload?.app !== app || payload.version !== version) return null;
-  let publicKey: string;
+}
+
+/** The public half of `key` (base64 SPKI); throws when the key is not extractable. */
+async function publicKeyOf(key: CryptoKey, path: string): Promise<string> {
   try {
-    publicKey = await otaPublicKeyOf(key);
+    return await otaPublicKeyOf(key);
   } catch {
     throw new Error(
       `cannot verify the existing ${path}: the signing key is not extractable ` +
         "(import it with importOtaSigningKey / loadOtaSigningKey)",
     );
   }
+}
+
+/** `existing` verified against the public half of `key`, or the reason it does not verify. */
+async function verifyExisting(
+  existing: ExistingManifest,
+  key: CryptoKey,
+  path: string,
+  action: "merge into" | "re-sign" = "merge into",
+): Promise<AppUpdatePayload> {
+  const publicKey = await publicKeyOf(key, path);
   try {
-    return await verifyAppUpdateEnvelope(env, publicKey);
+    return await verifyAppUpdateEnvelope(existing.envelope, publicKey);
   } catch (err) {
     throw new Error(
-      `refusing to merge into ${path}: ${err instanceof Error ? err.message : err} with this ` +
+      `refusing to ${action} ${path}: ${err instanceof Error ? err.message : err} with this ` +
         "signing key (unsigned, tampered with, or signed with another key). Re-publish every " +
         "platform of this release into an empty directory, or remove the file.",
     );
@@ -488,9 +567,101 @@ async function readExistingRelease(
 }
 
 /**
+ * What the manifest already at `path` contributes: the payload of the SAME release (app +
+ * version), so its other platforms carry over, and the sequence floor a new signature must not go
+ * below. Both are taken only from a manifest that verifies against the public half of `key`:
+ * re-signing an entry nobody verified would put this key's signature on whatever a writable output
+ * directory (a CI cache, a shared bucket) was made to hold. A same-release manifest that does not
+ * verify is an error; another release's is replaced, its sequence counted only when it verifies.
+ */
+async function readExistingRelease(
+  path: string,
+  key: CryptoKey,
+  app: string,
+  version: string,
+): Promise<{ same: AppUpdatePayload | null; floor: number | null }> {
+  const existing = await readManifestFile(path);
+  if (existing === null) return { same: null, floor: null };
+  if (existing.payload?.app === app && existing.payload.version === version) {
+    const same = await verifyExisting(existing, key, path);
+    return { same, floor: sequenceOf(same) };
+  }
+  // Another release: replaced. Its sequence still bounds ours when it is genuinely ours.
+  const verified = await verifyExisting(existing, key, path).catch(() => null);
+  const floor = sequenceOf(verified);
+  return { same: null, floor: floor === null ? null : Math.min(floor + 1, MAX_SEQUENCE) };
+}
+
+/** A verified payload's sequence, when it has a valid one. */
+function sequenceOf(p: AppUpdatePayload | null): number | null {
+  return p && Number.isSafeInteger(p.sequence) && p.sequence >= 0 ? p.sequence : null;
+}
+
+/**
+ * The `expiresAt` and `sequence` to sign: an explicit expiry, else `expiresInDays` (default
+ * {@linkcode APP_UPDATE_DEFAULT_EXPIRY_DAYS}) from `now`; an explicit sequence, else the Unix time
+ * in seconds — at least `floor` (the existing manifest's) either way, an explicit one below it
+ * being an error.
+ *
+ * @param o The options.
+ * @param floor The lowest sequence installs may still accept, or `null`.
+ * @returns The values.
+ * @throws Error on an expiry that is not RFC 3339 or not in the future, or a sequence out of range.
+ */
+export function resolveFreshness(
+  o: AppUpdateFreshnessOptions,
+  floor: number | null,
+): { expiresAt: string; sequence: number } {
+  const now = (o.now ?? new Date()).getTime();
+  return { expiresAt: resolveExpiry(o, now), sequence: resolveSequence(o.sequence, floor, now) };
+}
+
+/** The `expiresAt` to sign: the explicit one (RFC 3339, in the future), else `now` + days. */
+function resolveExpiry(o: AppUpdateFreshnessOptions, now: number): string {
+  if (o.expiresAt !== undefined && o.expiresInDays !== undefined) {
+    throw new Error("pass either an expiry time or a number of days, not both");
+  }
+  if (o.expiresAt !== undefined) {
+    const at = parseRfc3339(o.expiresAt);
+    if (at === null) throw new Error(`expiresAt ${o.expiresAt} is not an RFC 3339 timestamp`);
+    if (at <= now) throw new Error(`expiresAt ${o.expiresAt} is not in the future`);
+    return o.expiresAt;
+  }
+  const days = o.expiresInDays ?? APP_UPDATE_DEFAULT_EXPIRY_DAYS;
+  if (!(Number.isFinite(days) && days > 0 && days <= 3650)) {
+    throw new Error(`the expiry must be 0 < days <= 3650 (got ${days})`);
+  }
+  return new Date(now + Math.round(days * DAY_MS)).toISOString();
+}
+
+/** The `sequence` to sign: the explicit one (never below `floor`), else the Unix seconds. */
+function resolveSequence(explicit: number | undefined, floor: number | null, now: number): number {
+  if (explicit === undefined) return Math.max(Math.floor(now / 1000), floor ?? 0);
+  if (!Number.isSafeInteger(explicit) || explicit < 0) {
+    throw new Error(`sequence must be an integer 0..${MAX_SEQUENCE}`);
+  }
+  if (floor !== null && explicit < floor) {
+    throw new Error(
+      `sequence ${explicit} is below ${floor} (the existing manifest's): installs that ` +
+        "accepted that one would refuse it as replayed",
+    );
+  }
+  return explicit;
+}
+
+/** Sign `payload` and write it to `manifest` (atomically: a temp file, then a rename). */
+async function writeManifest(manifest: string, payload: AppUpdatePayload, key: CryptoKey) {
+  const envelope = await signAppUpdatePayload(payload, key);
+  const tmp = `${manifest}.tmp`;
+  await Deno.writeTextFile(tmp, JSON.stringify(envelope, null, 2) + "\n");
+  await Deno.rename(tmp, manifest);
+}
+
+/**
  * Pack `artifact`, then write (or extend) the signed `app-update.json` in `outDir`: an existing
  * manifest for the same app and version keeps its other platforms, so running this once per
  * platform build yields one manifest for all of them; a manifest for another version is replaced.
+ * The artifact must carry `version` (the version compiled into it), else nothing is written.
  *
  * @param o The options.
  * @returns What was written.
@@ -503,15 +674,18 @@ export async function publishAppUpdate(
   if (base.protocol !== "https:") throw new Error("--url-base must be https");
   const platform = o.platform ?? await appUpdatePlatformKey(o.artifact);
   if (!isAppUpdatePlatform(platform)) throw new Error(`unsupported platform key ${platform}`);
+  await checkArtifactVersion(o.artifact, platform, o.version);
+  const manifest = join(o.outDir, APP_UPDATE_MANIFEST_FILE);
+  // Another platform of the SAME release keeps its entry (and its notes / minVersion unless
+  // given) — only once that manifest verifies against this signing key. Read before packing, so a
+  // refusal leaves nothing behind.
+  const { same, floor } = await readExistingRelease(manifest, o.key, o.app, o.version);
+  const fresh = resolveFreshness(o, floor);
   const safeApp = o.app.replace(/[^A-Za-z0-9._-]/g, "_");
   const archiveName = `${safeApp}-${o.version}-${platform}.tar.gz`;
   await Deno.mkdir(o.outDir, { recursive: true });
   const archive = join(o.outDir, archiveName);
   const { sha256, size } = await writeAppUpdateArchive(o.artifact, archive);
-  const manifest = join(o.outDir, APP_UPDATE_MANIFEST_FILE);
-  // Another platform of the SAME release keeps its entry (and its notes / minVersion unless
-  // given) — only once that manifest verifies against this signing key.
-  const same = await readExistingRelease(manifest, o.key, o.app, o.version);
   const minVersion = o.minVersion ?? same?.minVersion;
   const releaseNotes = o.releaseNotes ?? same?.releaseNotes;
   const payload: AppUpdatePayload = {
@@ -524,12 +698,10 @@ export async function publishAppUpdate(
       [platform]: { url: new URL(archiveName, base).href, sha256, size, kind: "bundle" },
     },
     ...(releaseNotes !== undefined ? { releaseNotes } : {}),
-    publishedAt: o.publishedAt ?? new Date().toISOString(),
+    publishedAt: o.publishedAt ?? (o.now ?? new Date()).toISOString(),
+    ...fresh,
   };
-  const envelope = await signAppUpdatePayload(payload, o.key);
-  const tmp = `${manifest}.tmp`;
-  await Deno.writeTextFile(tmp, JSON.stringify(envelope, null, 2) + "\n");
-  await Deno.rename(tmp, manifest);
+  await writeManifest(manifest, payload, o.key);
   return {
     archive,
     manifest,
@@ -537,7 +709,37 @@ export async function publishAppUpdate(
     sha256,
     size,
     platforms: Object.keys(payload.platforms).sort(),
+    ...fresh,
   };
+}
+
+/** What {@linkcode resignAppUpdate} needs. */
+export interface ResignAppUpdateOptions extends AppUpdateFreshnessOptions {
+  /** The `app-update.json` to re-sign in place. */
+  readonly manifest: string;
+  /** The signing key it was signed with. */
+  readonly key: CryptoKey;
+}
+
+/**
+ * Re-sign an existing manifest with a fresh `expiresAt` and a `sequence` at least its own — what
+ * a publisher runs on a schedule shorter than the expiry, so installed apps keep accepting the
+ * current release (an expired manifest is refused, `expired`). Nothing else changes, and the
+ * manifest must verify against `key` first.
+ *
+ * @param o The options.
+ * @returns The new expiry, sequence and the release it covers.
+ * @throws Error when there is no manifest, or it does not verify against `key`.
+ */
+export async function resignAppUpdate(
+  o: ResignAppUpdateOptions,
+): Promise<{ app: string; version: string; expiresAt: string; sequence: number }> {
+  const existing = await readManifestFile(o.manifest);
+  if (existing === null) throw new Error(`no manifest at ${o.manifest} to re-sign`);
+  const current = await verifyExisting(existing, o.key, o.manifest, "re-sign");
+  const fresh = resolveFreshness(o, sequenceOf(current));
+  await writeManifest(o.manifest, { ...current, ...fresh }, o.key);
+  return { app: current.app, version: current.version, ...fresh };
 }
 
 /** The outcome of one external command (for {@linkcode macNotarizationWarning}). */
