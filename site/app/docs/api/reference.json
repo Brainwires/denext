@@ -16188,6 +16188,23 @@
           "denextOnly": true
         },
         {
+          "name": "desktopPeFiles",
+          "slug": "desktopPeFiles",
+          "kind": "function",
+          "signature": "desktopPeFiles(dir: string): Promise<string[]>",
+          "doc": "Every PE file under a Windows bundle directory, recursively, sorted (symlinks are not followed). The runtime refuses an update of a signed app unless EVERY PE file in it carries the running app's signature — the .exe, <App>.dll, WebView2Loader.dll, the app-local VC++ runtime, CEF's DLLs and helpers and any .node addon — so all of them are signed, third-party files included.",
+          "docFull": "Every PE file under a Windows bundle directory, recursively, sorted (symlinks are not\nfollowed). The runtime refuses an update of a signed app unless EVERY PE file in it carries the\nrunning app's signature — the `.exe`, `<App>.dll`, `WebView2Loader.dll`, the app-local VC++\nruntime, CEF's DLLs and helpers and any `.node` addon — so all of them are signed, third-party\nfiles included.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            }
+          ],
+          "returns": "The PE files' paths.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopPermissions",
           "slug": "DesktopPermissions",
           "kind": "interface",
@@ -16313,6 +16330,39 @@
           "signature": "interface DesktopServeInfo",
           "doc": "The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: \"memory\" is not in the stock Deno.NetAddr type.",
           "docFull": "The part of `Deno.ServeHandlerInfo` the gates read. Typed loosely because `transport: \"memory\"`\nis not in the stock `Deno.NetAddr` type.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopSignWindows",
+          "slug": "desktopSignWindows",
+          "kind": "function",
+          "signature": "desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>",
+          "doc": "Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD, timestamped by DENEXT_SIGN_TIMESTAMP_URL), batched a few dozen files per signtool sign call. Without a certificate, or without signtool (off Windows), nothing is signed and a warning says so. The password, which signtool takes only as /p, is redacted from a failure message.",
+          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`, timestamped by `DENEXT_SIGN_TIMESTAMP_URL`), batched a few\ndozen files per `signtool sign` call. Without a certificate, or without `signtool` (off\nWindows), nothing is signed and a warning says so. The password, which signtool takes only as\n`/p`, is redacted from a failure message.",
+          "params": [
+            {
+              "name": "files",
+              "doc": "The files to sign (a bundle's PE files from desktopPeFiles, or an .msi)."
+            },
+            {
+              "name": "deps",
+              "doc": "The command runner, tool probe, environment and warning sink."
+            }
+          ],
+          "returns": "Whether the files were signed.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopSignWindowsDeps",
+          "slug": "DesktopSignWindowsDeps",
+          "kind": "interface",
+          "signature": "interface DesktopSignWindowsDeps",
+          "doc": "What desktopSignWindows runs commands and reads settings through (tests stub them).",
+          "docFull": "What {@linkcode desktopSignWindows} runs commands and reads settings through (tests stub them).",
           "params": [],
           "returns": "",
           "examples": [],

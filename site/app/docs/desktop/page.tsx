@@ -1126,8 +1126,11 @@ if (found.available) {
         (<code>os_signature</code>): on macOS{" "}
         <code>codesign --verify --deep --strict</code>, the same Team ID as the running app,
         Gatekeeper (<code>spctl --assess --type execute</code>) and the same signing identifier; on
-        Windows a trusted Authenticode signature with the same signer as the running executable.
-        Linux has no OS signature; the manifest signature and the hash are the whole check there.
+        Windows a trusted Authenticode signature with the same signer as the running executable, on
+        every PE file of the update (the scaffolded <code>scripts/package-windows.ts</code>{" "}
+        signs them all; an older script signs only the <code>.exe</code>: run{" "}
+        <code>denext desktop package --regenerate-scripts</code>). Linux has no OS signature; the
+        manifest signature and the hash are the whole check there.
       </p>
       <p>
         <strong>On macOS the update must be notarized.</strong>{" "}
@@ -2623,9 +2626,13 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           <code>.pkg</code> (unsigned without it).
         </li>
         <li>
-          <code>DENEXT_WINDOWS_CERT</code> — a code-signing <code>.pfx</code> for Authenticode (the
-          {" "}
-          <code>.exe</code> and the <code>.msi</code>); unset, nothing is signed.{" "}
+          <code>DENEXT_WINDOWS_CERT</code> — a code-signing <code>.pfx</code>{" "}
+          for Authenticode: every PE file in the bundle (the <code>.exe</code>,{" "}
+          <code>&lt;App&gt;.dll</code>,{" "}
+          <code>WebView2Loader.dll</code>, the app-local VC++ runtime, CEF&apos;s DLLs and helpers,
+          any <code>.node</code>, found by their header, third-party ones included), then the{" "}
+          <code>.msi</code>. A full-app update of a signed app is refused unless every PE file in it
+          carries the running app&apos;s signature. Unset, nothing is signed.{" "}
           <code>DENEXT_WINDOWS_CERT_PASSWORD</code> is its password (redacted from errors) and{" "}
           <code>DENEXT_SIGN_TIMESTAMP_URL</code>{" "}
           an RFC 3161 timestamp server (default DigiCert&apos;s).

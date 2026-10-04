@@ -547,3 +547,110 @@ export async function buildDesktopBundle(
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
   return o.out;
 }
+
+/** How many files one `signtool sign` call takes (keeps the command line short on Windows). */
+const SIGN_BATCH = 32;
+/** The RFC-3161 timestamp server used when `DENEXT_SIGN_TIMESTAMP_URL` is unset. */
+const DEFAULT_TIMESTAMP_URL = "http://timestamp.digicert.com";
+
+/**
+ * Whether `path` holds a PE image: `MZ`, then `PE\0\0` at the offset the DOS header's
+ * `e_lfanew` names. The header decides, not the extension: an `.exe`, a `.dll`, a CEF helper or a
+ * native `.node` addon are all PE files, and a renamed one still is.
+ */
+async function isPeFile(path: string): Promise<boolean> {
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(path, { read: true });
+  } catch {
+    return false;
+  }
+  try {
+    const dos = new Uint8Array(64);
+    if ((await file.read(dos)) !== 64 || dos[0] !== 0x4d || dos[1] !== 0x5a) return false;
+    const peAt = new DataView(dos.buffer).getUint32(0x3c, true);
+    if (peAt < 64 || peAt > 64 * 1024 * 1024) return false;
+    await file.seek(peAt, Deno.SeekMode.Start);
+    const sig = new Uint8Array(4);
+    if ((await file.read(sig)) !== 4) return false;
+    return sig[0] === 0x50 && sig[1] === 0x45 && sig[2] === 0 && sig[3] === 0;
+  } finally {
+    file.close();
+  }
+}
+
+/**
+ * Every PE file under a Windows bundle directory, recursively, sorted (symlinks are not
+ * followed). The runtime refuses an update of a signed app unless EVERY PE file in it carries the
+ * running app's signature — the `.exe`, `<App>.dll`, `WebView2Loader.dll`, the app-local VC++
+ * runtime, CEF's DLLs and helpers and any `.node` addon — so all of them are signed, third-party
+ * files included.
+ *
+ * @param dir The bundle directory.
+ * @returns The PE files' paths.
+ */
+export async function desktopPeFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (d: string) => {
+    for await (const e of Deno.readDir(d)) {
+      const path = join(d, e.name);
+      if (e.isDirectory) await walk(path);
+      else if (e.isFile && await isPeFile(path)) out.push(path);
+    }
+  };
+  await walk(dir);
+  return out.sort();
+}
+
+/** What {@linkcode desktopSignWindows} runs commands and reads settings through (tests stub them). */
+export interface DesktopSignWindowsDeps {
+  /** Runs a command (default {@linkcode desktopRun}). */
+  readonly run?: typeof desktopRun;
+  /** Whether a tool resolves (default {@linkcode desktopHasTool}). */
+  readonly has?: (cmd: string) => Promise<boolean>;
+  /** Reads an environment variable (default `Deno.env.get`). */
+  readonly env?: (name: string) => string | undefined;
+  /** Prints a warning (default `console.warn`). */
+  readonly warn?: (message: string) => void;
+}
+
+/**
+ * Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password
+ * `DENEXT_WINDOWS_CERT_PASSWORD`, timestamped by `DENEXT_SIGN_TIMESTAMP_URL`), batched a few
+ * dozen files per `signtool sign` call. Without a certificate, or without `signtool` (off
+ * Windows), nothing is signed and a warning says so. The password, which signtool takes only as
+ * `/p`, is redacted from a failure message.
+ *
+ * @param files The files to sign (a bundle's PE files from {@linkcode desktopPeFiles}, or an .msi).
+ * @param deps The command runner, tool probe, environment and warning sink.
+ * @returns Whether the files were signed.
+ */
+export async function desktopSignWindows(
+  files: readonly string[],
+  deps: DesktopSignWindowsDeps = {},
+): Promise<boolean> {
+  const env = deps.env ?? ((name: string) => Deno.env.get(name));
+  const warn = deps.warn ?? ((message: string) => console.warn(message));
+  if (files.length === 0) return false;
+  const what = files.length === 1 ? files[0] : `${files.length} files`;
+  const cert = env("DENEXT_WINDOWS_CERT");
+  if (!cert) {
+    warn(`  no DENEXT_WINDOWS_CERT set — ${what} not Authenticode-signed.`);
+    return false;
+  }
+  if (!(await (deps.has ?? desktopHasTool)("signtool"))) {
+    warn(`  signtool not found (Windows SDK) — ${what} not signed; sign on a Windows host/CI.`);
+    return false;
+  }
+  const timestamp = env("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
+  const args = ["sign", "/f", cert, "/fd", "sha256", "/tr", timestamp, "/td", "sha256"];
+  const pass = env("DENEXT_WINDOWS_CERT_PASSWORD");
+  if (pass) args.push("/p", pass);
+  const run = deps.run ?? desktopRun;
+  for (let i = 0; i < files.length; i += SIGN_BATCH) {
+    await run(["signtool", ...args, ...files.slice(i, i + SIGN_BATCH)], undefined, {
+      secrets: pass ? [pass] : [],
+    });
+  }
+  return true;
+}

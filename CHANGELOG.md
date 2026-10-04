@@ -80,6 +80,17 @@ and this project adheres to
   `callbacks.session` (revoke the user's native sessions after a role change). Decided: both
   stay documented behavior rather than new options.
 
+- **Windows packaging signs every PE file of the bundle, so signed full-app updates install.**
+  `scripts/package-windows.ts` Authenticode-signed only the `.exe`, but the pinned runtime refuses
+  an update of a signed Windows app unless every PE file in it (`<App>.dll`, `WebView2Loader.dll`,
+  the app-local VC++ runtime, CEF's DLLs and helpers, any `.node`) carries the running app's
+  signature, so every signed Windows update was refused. The script now finds the bundle's PE files
+  by their MZ/PE header (`desktopPeFiles`) and signs them all, third-party ones included, in
+  batched `signtool` calls (`desktopSignWindows`, the password still redacted) before the `.msi` /
+  `.zip` is built, then signs the `.msi`. Without `DENEXT_WINDOWS_CERT` or `signtool` it signs
+  nothing and says so, as before. **Run `denext desktop package --regenerate-scripts`** to update
+  an existing project's script.
+
 ### Security
 
 - **`auth()`'s native bearer path goes through the same cache guards as the cookie path.** A
