@@ -218,7 +218,12 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         copies (<code>ios/App/App/capacitor.config.json</code>,{" "}
         <code>android/app/src/main/assets/capacitor.config.json</code>) itself, so they stop
         pointing at the dev server even when the closing <code>cap copy</code>{" "}
-        fails; then run your export and <code>npx cap copy</code> before a release build.
+        fails; then run your export and <code>npx cap copy</code> before a release build.{" "}
+        <code>denext mobile build --release</code>{" "}
+        (and the fastlane lanes, which run it) refuses while that backup is on disk, or while the
+        Capacitor config's <code>server</code> names a LAN / loopback <code>http</code> URL or sets
+        {" "}
+        <code>cleartext</code>, unless a flavor's <code>serverUrl</code> sets the server on purpose.
       </p>
       <p>
         On iOS, <code>cleartext</code> does nothing (it is Android's{" "}

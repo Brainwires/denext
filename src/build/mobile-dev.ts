@@ -258,8 +258,29 @@ function backupTargets(root: string, backup: unknown): BackupTargets {
   return { files, native: native as BackedUpFile[] };
 }
 
-/** True for an `http:` URL on a loopback or private-LAN host: a dev server, never production. */
-function isDevServerUrl(value: unknown): boolean {
+/**
+ * Whether a `denext mobile dev` session's backup is on disk: a session is running, or one was
+ * killed and left the Capacitor config pointing at the dev server.
+ *
+ * @param root The Capacitor project.
+ * @returns True when `.denext/mobile-dev-backup.json` exists.
+ */
+export async function mobileDevBackupPresent(root: string): Promise<boolean> {
+  try {
+    await Deno.lstat(backupPath(root));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True for an `http:` URL on a loopback or private-LAN host: a dev server, never production.
+ *
+ * @param value A `server.url` value.
+ * @returns Whether it names a dev server.
+ */
+export function isDevServerUrl(value: unknown): boolean {
   if (typeof value !== "string") return false;
   let url: URL;
   try {

@@ -367,6 +367,88 @@ Deno.test("mobile build: run applies the flavor around the native build, restore
   }
 });
 
+Deno.test("mobile build --release: refuses a dev server.url / cleartext or a left mobile-dev backup; a flavor's serverUrl is deliberate", async () => {
+  const dir = await project();
+  try {
+    const ran: string[] = [];
+    const deps = {
+      log: () => {},
+      run: (c: BuildCommand) => {
+        ran.push(c.cmd);
+        return Promise.resolve({ code: 1 });
+      },
+    };
+    const cap = join(dir, "capacitor.config.json");
+    const base = { appId: "dev.example", appName: "Receipts", webDir: "out" };
+    const release = () => planMobileBuild(options(dir, { release: true, skipExport: true }));
+    // A dev session's server block (LAN http + cleartext) is refused before anything runs.
+    await Deno.writeTextFile(
+      cap,
+      JSON.stringify({ ...base, server: { url: "http://192.168.1.5:3000", cleartext: true } }),
+    );
+    await assertRejects(
+      async () => runMobileBuild(await release(), {}, deps),
+      Error,
+      "server.url is a dev server (http://192.168.1.5:3000)",
+    );
+    // Cleartext alone (a https url, but plain http allowed) is refused too.
+    await Deno.writeTextFile(
+      cap,
+      JSON.stringify({ ...base, server: { url: "https://app.example", cleartext: true } }),
+    );
+    await assertRejects(
+      async () => runMobileBuild(await release(), {}, deps),
+      Error,
+      "server.cleartext is true",
+    );
+    // A TS config is read the same way.
+    await Deno.remove(cap);
+    await Deno.writeTextFile(
+      join(dir, "capacitor.config.ts"),
+      'export default { appId: "dev.example", webDir: "out", server: { url: "http://localhost:3000" } };\n',
+    );
+    await assertRejects(
+      async () => runMobileBuild(await release(), {}, deps),
+      Error,
+      "dev server (http://localhost:3000)",
+    );
+    await Deno.remove(join(dir, "capacitor.config.ts"));
+    await Deno.writeTextFile(cap, JSON.stringify(base));
+    // A mobile-dev backup on disk: the session's config may still be live.
+    await Deno.mkdir(join(dir, ".denext"), { recursive: true });
+    await Deno.writeTextFile(join(dir, ".denext", "mobile-dev-backup.json"), "{}");
+    await assertRejects(
+      async () => runMobileBuild(await release(), {}, deps),
+      Error,
+      "mobile dev --restore",
+    );
+    assertEquals(ran, [], "nothing ran for a refused release");
+    // A debug build is not gated.
+    await assertRejects(
+      async () =>
+        runMobileBuild(await planMobileBuild(options(dir, { skipExport: true })), {}, deps),
+      Error,
+      "exited with 1",
+    );
+    await Deno.remove(join(dir, ".denext", "mobile-dev-backup.json"));
+    // A flavor that sets the server on purpose passes the gate (and reaches the build).
+    await Deno.writeTextFile(
+      cap,
+      JSON.stringify({ ...base, server: { url: "http://10.0.0.2:8080", cleartext: true } }),
+    );
+    const flavored = await planMobileBuild(options(dir, {
+      release: true,
+      skipExport: true,
+      flavor: { name: "lab", config: { serverUrl: "http://10.0.0.2:8080" } },
+    }));
+    ran.length = 0;
+    await assertRejects(() => runMobileBuild(flavored, {}, deps), Error, "exited with 1");
+    assertEquals(ran, ["npx"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("mobile build: a failed native build still restores the flavor edits", async () => {
   const dir = await project();
   try {

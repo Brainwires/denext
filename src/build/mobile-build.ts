@@ -25,6 +25,8 @@ import { toPosixPath } from "./mobile-paths.ts";
 import type { MobileFlavorConfig } from "../server/config.ts";
 import type { PlannedCommand } from "./mobile-capabilities.ts";
 import { checkArtifact } from "./mobile-artifact.ts";
+import { capacitorConfigFile, readCapacitorConfig } from "./capacitor-config.ts";
+import { isDevServerUrl, mobileDevBackupPresent } from "./mobile-dev.ts";
 import {
   androidVersions,
   applyAndroidVersions,
@@ -642,6 +644,48 @@ async function applyEdits(
   }
 }
 
+/** Why the Capacitor config's `server` block must not ship in a release, or undefined. */
+async function devServerProblem(root: string): Promise<string | undefined> {
+  const file = await capacitorConfigFile(root);
+  if (!file) return undefined;
+  const config = await readCapacitorConfig(file, await Deno.readTextFile(file));
+  const server = config?.server as Record<string, unknown> | undefined;
+  if (typeof server !== "object" || server === null) return undefined;
+  if (isDevServerUrl(server.url)) return `server.url is a dev server (${server.url})`;
+  if (server.cleartext === true) return "server.cleartext is true (plain http)";
+  return undefined;
+}
+
+/**
+ * Refuse a release build that would ship pointing at a dev server: a `denext mobile dev`
+ * session's backup is on disk (the config is still the session's), or the Capacitor config's
+ * `server` block names a LAN / loopback `http` URL or allows cleartext. A flavor's `serverUrl`
+ * sets the server deliberately and is not second-guessed. `cap sync` rewrites the native copies
+ * from this config, so checking it covers them.
+ *
+ * @param plan The plan about to run.
+ * @throws {Error} When the release would carry a dev server.
+ */
+async function assertReleaseServer(plan: MobileBuildPlan): Promise<void> {
+  if (plan.configuration !== "Release") return;
+  if (await mobileDevBackupPresent(plan.root)) {
+    throw new Error(
+      "a `denext mobile dev` session is running, or a killed one left its backup " +
+        "(.denext/mobile-dev-backup.json): the Capacitor config still points at the dev " +
+        "server. End the session, or run `denext mobile dev --restore`, then build again",
+    );
+  }
+  if (plan.flavor?.config.serverUrl) return;
+  const problem = await devServerProblem(plan.root);
+  if (problem) {
+    throw new Error(
+      `the Capacitor config's ${problem}: a release would load its UI from it. Remove it ` +
+        "(`denext mobile dev --restore` puts back a config a dev session left), or set the " +
+        "server deliberately with a flavor's `serverUrl`",
+    );
+  }
+}
+
 /**
  * Run a plan: the commands in order with the flavor applied around the native build, then copy
  * the artifact out and write its sidecar. Every temporary edit is restored, on failure too.
@@ -656,6 +700,7 @@ export async function runMobileBuild(
   opts: { versionName?: string; buildNumber?: number },
   deps: MobileBuildDeps,
 ): Promise<BuildArtifact> {
+  await assertReleaseServer(plan);
   const snapshot = new NativeSnapshot(plan.root);
   const exportFirst = plan.commands[0]?.args.includes("export") ? 1 : 0;
   try {

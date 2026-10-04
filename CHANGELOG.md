@@ -79,6 +79,12 @@ and this project adheres to
   neither a JS / TS / JSON module under the project nor part of the app's module graph; an unknown
   extension is no longer parsed as TSX. Off loopback, `/_denext/*` also requires the browser's
   `Sec-Fetch-Site: same-origin`: a client that sends neither it nor an `Origin` is refused.
+- **`denext mobile build --release` refuses to ship a dev server.** A killed `denext mobile dev`
+  session left `server.url` (the LAN dev server) and `cleartext` in the Capacitor config, and the
+  next release build (or fastlane lane) shipped an app that loaded its UI over plain http from that
+  address. A release build now refuses while `.denext/mobile-dev-backup.json` is on disk, or while
+  the config's `server` names a LAN / loopback `http` URL or sets `cleartext: true`, unless a
+  flavor's `serverUrl` sets the server deliberately.
 
 ## [3.1.0] - 2026-10-03
 
