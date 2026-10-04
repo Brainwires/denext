@@ -68,6 +68,11 @@ and this project adheres to
   symlinked source file (it could point outside the project); and the MCP tools' `dir` and
   `denext_render`'s `component` are refused when a symlink inside the project leads out of it.
 
+- **The Android share receiver bounds a whole share, and cleans up after itself.** One stream was
+  capped at 256 MB, but a share could list any number of streams; it now copies at most 32 and
+  512 MB per share, and deletes earlier shares' copies older than a day. Re-run
+  `denext mobile add share-extension` to upgrade an unedited plugin.
+
 ### Security
 
 - **`auth()`'s native bearer path goes through the same cache guards as the cookie path.** A
