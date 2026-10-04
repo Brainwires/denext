@@ -224,6 +224,49 @@ Deno.test("desktop auth-session: { cancel: true } ends the open session (499 can
   assertEquals(await idle.json(), { cancelled: false });
 });
 
+Deno.test("desktop auth-session: a keyed session is bound to its page (cancel must name it; its request going away ends it)", async () => {
+  resetDesktopAuthSessionForTesting();
+  const KEY = "page-a-0123456789abcdef";
+  const open = handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL, session: KEY }),
+    TOKEN,
+    noopBrowser,
+  );
+  await new Promise((r) => setTimeout(r, 60));
+  // Another window's cancel (no key, or its own key) does not end this page's session.
+  for (const body of [{ cancel: true }, { cancel: true, session: "page-b-0123456789abcdef" }]) {
+    const other = await handleDesktopAuthSession(req(body), TOKEN, noopBrowser);
+    assertEquals(await other.json(), { cancelled: false });
+  }
+  const mine = await handleDesktopAuthSession(
+    req({ cancel: true, session: KEY }),
+    TOKEN,
+    noopBrowser,
+  );
+  assertEquals(await mine.json(), { cancelled: true });
+  assertEquals((await open).status, 499);
+  // A malformed key is refused outright.
+  const bad = await handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL, session: "short" }),
+    TOKEN,
+    noopBrowser,
+  );
+  assertEquals(bad.status, 400);
+  // The starting page going away (its request aborted) ends the session as cancelled.
+  const page = new AbortController();
+  const start = req({ authUrl: VALID_AUTH_URL, session: KEY });
+  const gone = handleDesktopAuthSession(
+    new Request(start, { signal: page.signal }),
+    TOKEN,
+    noopBrowser,
+  );
+  await new Promise((r) => setTimeout(r, 60));
+  page.abort();
+  const res = await gone;
+  assertEquals(res.status, 499);
+  await res.body?.cancel();
+});
+
 Deno.test("desktop auth-session: a cancel goes through the same gate (token, origin)", async () => {
   resetDesktopAuthSessionForTesting();
   const open = handleDesktopAuthSession(

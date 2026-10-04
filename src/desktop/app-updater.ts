@@ -315,8 +315,8 @@ export async function downloadAppUpdate(
  * `desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).
  *
  * @param options `force: true` exits even when a `beforequit` / `close` listener refuses.
- * @returns `quitting: false` when the app refused to quit (the helper then waits up to five
- *   minutes for it to exit before giving up, leaving the app as it was).
+ * @returns `quitting: false` when the app refused to quit: the runtime withdraws the install
+ *   request and the helper stands down, leaving the app as it was.
  * @throws {@linkcode AppUpdateError} `not_staged` when nothing was staged in this run.
  */
 export function installAppUpdateAndRelaunch(

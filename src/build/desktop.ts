@@ -557,7 +557,8 @@ export interface DesktopPageGlobals {
  * caller additionally limits it to the memory world. With a `preloadKey`, the preload is framed by
  * two more scripts that set `globalThis.__denextPreloadKey` before it and delete it after (even
  * when the preload throws), so only code the preload runs synchronously can read the key — the
- * proof `denext/desktop/clerk` presents for its Clerk-only session binding.
+ * proof `denext/desktop/clerk` presents for its Clerk-only session binding. The setting script
+ * removes its own element as it runs, so the key cannot be read back from `document.scripts`.
  *
  * `page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the
  * WebSocket relay origin, and — with the token — the web `Notification` shim, appended to the
@@ -587,7 +588,9 @@ export async function injectDesktopGlobal(
   const withPreload = token !== null && preload !== undefined;
   const scripts = !withPreload ? [body] : preloadKey === undefined ? [body, preload] : [
     body,
-    `globalThis.${PRELOAD_KEY_GLOBAL}=${JSON.stringify(preloadKey)}`,
+    // The element removes itself as it runs: its text would otherwise sit in `document.scripts`
+    // for any page script to read the key back out of.
+    `globalThis.${PRELOAD_KEY_GLOBAL}=${JSON.stringify(preloadKey)};${REMOVE_CURRENT_SCRIPT}`,
     preload,
     `delete globalThis.${PRELOAD_KEY_GLOBAL}`,
   ];
@@ -615,6 +618,9 @@ const NOTIFICATION_SHIM_INLINE = inlineSafeScript(DESKTOP_NOTIFICATION_SHIM_JS);
 
 /** The one-shot global the preload key is handed to `desktop.preload` in. */
 const PRELOAD_KEY_GLOBAL = "__denextPreloadKey";
+
+/** Detach the running inline `<script>` from the document (it has already been parsed). */
+const REMOVE_CURRENT_SCRIPT = "document.currentScript&&document.currentScript.remove()";
 
 /** The export dir: `outDir` (relative to the entry module when given), else `out/`. */
 /** The static-export dir to serve: `outDir` (relative to `importMetaUrl` when given), else `out/`. */

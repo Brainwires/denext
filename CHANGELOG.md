@@ -130,6 +130,14 @@ and this project adheres to
   whatever opened it. They now act only in the window `openAuthSession` opened (named
   `denext-auth-session`), and `maybeCompleteAuthSession` also requires the page's URL to start with
   the `redirectUrl` given to `openAuthSessionAsync`, unless `skipRedirectCheck`, as Expo's does.
+- **Desktop hardening.** The script that hands `desktop.preload` its key now removes its own
+  element, so page code cannot read the key back from `document.scripts`; `denext/desktop/clerk`'s
+  OAuth transport opens only a Clerk OAuth URL (one whose `redirect_uri` is the Frontend API's
+  `/v1/oauth_callback`, on the instance's host or Clerk's own domains); `shell.openExternal` and
+  the auth-session browser launch open the normalized `URL.href` they checked, not the raw
+  string; `shell.openPath` also refuses `.pyz`, `.pyzw`, `.pyc`, `.theme`, `.themepack`, `.rdp`
+  and `.wsb`; and a loopback auth session is bound to the page that started it, as a
+  custom-scheme one is (a cancel must name its session key, and the page going away ends it).
 
 ## [3.1.0] - 2026-10-03
 

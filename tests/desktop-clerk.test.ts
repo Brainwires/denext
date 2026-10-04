@@ -147,6 +147,47 @@ Deno.test("clerk bridge: open() runs the custom-scheme session exactly like @cle
   });
 });
 
+Deno.test("clerk bridge: open() only takes a Clerk OAuth URL (redirect_uri = the FAPI's oauth_callback)", async () => {
+  const starts: unknown[] = [];
+  await inDesktop({
+    authSession: {
+      start: (a) => (starts.push(a), { url: "t3code://app/?rotating_token_nonce=n" }),
+    },
+  }, async () => {
+    const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+    for (
+      const url of [
+        "https://evil.example/phish", // no redirect_uri at all
+        "https://evil.example/a?redirect_uri=https%3A%2F%2Fevil.example%2Fcb",
+        "https://idp.example/a?redirect_uri=http%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      ]
+    ) {
+      await assertRejects(() => t.open(url), TypeError, "not a Clerk OAuth URL");
+    }
+    assertEquals(starts, [], "nothing reached the auth session");
+    // With the Clerk instance loaded, its Frontend API host is pinned too.
+    const clerk = { frontendApi: "clerk.example.com" } as unknown as ClerkLike;
+    const pinned = installClerkDesktopBridge({ getClerk: () => clerk })!.bridge.oauthTransport;
+    await assertRejects(
+      () =>
+        pinned.open(
+          "https://idp.example/a?redirect_uri=https%3A%2F%2Fother.example%2Fv1%2Foauth_callback",
+        ),
+      TypeError,
+      "not a Clerk OAuth URL",
+    );
+    await pinned.open(
+      "https://idp.example/a?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+    );
+    await pinned.open("https://clerk.example.com/v1/client/sign_ins/x");
+    // A development instance's shared credentials call back on Clerk's own domain.
+    await pinned.open(
+      "https://idp.example/a?redirect_uri=https%3A%2F%2Fhappy-cat-1.clerk.accounts.dev%2Fv1%2Foauth_callback",
+    );
+    assertEquals(starts.length, 3);
+  });
+});
+
 Deno.test("clerk bridge: the OAuth session is bound — OS sheet when there is one, else the preload key", async () => {
   const run = async (osSession: boolean, preloadKey?: string) => {
     const starts: Record<string, unknown>[] = [];
@@ -163,7 +204,9 @@ Deno.test("clerk bridge: the OAuth session is bound — OS sheet when there is o
       if (preloadKey) gk.__denextPreloadKey = preloadKey;
       const t = installClerkDesktopBridge()!.bridge.oauthTransport;
       delete gk.__denextPreloadKey; // what the injected script does after the preload
-      await t.open("https://accounts.google.com/o/oauth2/auth?state=x");
+      await t.open(
+        "https://accounts.google.com/o/oauth2/auth?state=x&redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      );
     });
     return starts[0];
   };
@@ -192,7 +235,11 @@ Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear e
     authSession: { capabilities: () => ({ osSession: false, ephemeral: false }), start: owned },
   }, async () => {
     const t = installClerkDesktopBridge()!.bridge.oauthTransport;
-    const err = await assertRejects(() => t.open("https://accounts.google.com/o/oauth2/auth"));
+    const err = await assertRejects(() =>
+      t.open(
+        "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      )
+    );
     const e = err as Error & { code?: string; handler?: string };
     assertEquals(e.code, "scheme_owned_by_other_app");
     assertEquals(e.handler, "com.t3tools.t3code");
@@ -200,7 +247,10 @@ Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear e
     assertStringIncludes(e.message, 'claimDeepLinkScheme("t3code")');
     // The transport is free again for the retry after the user claims the scheme.
     await assertRejects(
-      () => t.open("https://accounts.google.com/o/oauth2/auth"),
+      () =>
+        t.open(
+          "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+        ),
       Error,
       "t3code:",
     );
@@ -220,7 +270,11 @@ Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear e
     },
   }, async () => {
     const t = installClerkDesktopBridge()!.bridge.oauthTransport;
-    const err = await assertRejects(() => t.open("https://accounts.google.com/o/oauth2/auth"));
+    const err = await assertRejects(() =>
+      t.open(
+        "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      )
+    );
     assertEquals((err as { code?: string }).code, "timeout");
     assertStringIncludes((err as Error).message, "no callback within the timeout");
   });
@@ -282,9 +336,15 @@ Deno.test("clerk bridge: nativeClerk switches the SDK's hotloaded clerk-js to na
         open(u: URL): Promise<{ callbackUrl: string }>;
       };
       assertEquals(await transport.getRedirectUrl(), "t3code://app/");
-      const cb = await transport.open(new URL("https://accounts.google.com/o/oauth2/auth?x=1"));
+      const cb = await transport.open(
+        new URL(
+          "https://accounts.google.com/o/oauth2/auth?x=1&redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+        ),
+      );
       assertEquals(cb.callbackUrl, "t3code://app/?rotating_token_nonce=n1");
-      assertEquals(opened, ["https://accounts.google.com/o/oauth2/auth?x=1"]);
+      assertEquals(opened, [
+        "https://accounts.google.com/o/oauth2/auth?x=1&redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+      ]);
       // Requests carry no cookies, `_is_native`, and the saved client JWT; responses save it.
       const req: Record<string, unknown> = {
         url: new URL("https://x.clerk.accounts.dev/v1/client"),

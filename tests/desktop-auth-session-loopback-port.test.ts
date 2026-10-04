@@ -149,7 +149,8 @@ Deno.test("startDesktopAuthSession: sends loopbackPort; port_in_use comes back t
       startDesktopAuthSession(url, { loopbackPort: 1455, cancelOverlay: false })
     );
     assertEquals((err as { code?: string }).code, "port_in_use");
-    assertEquals(body, { authUrl: url, loopbackPort: 1455 });
+    const { session: _session, ...sent } = body as Record<string, unknown>;
+    assertEquals(sent, { authUrl: url, loopbackPort: 1455 });
   } finally {
     globalThis.fetch = origFetch;
     g.__denext = origDenext;

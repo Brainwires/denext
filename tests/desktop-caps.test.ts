@@ -734,6 +734,21 @@ Deno.test("shell: every spawn gets the bridge deadline's signal; the default spa
   await assertRejects(() => runShellTool("sleep", ["1"], undefined, abort.signal), DesktopCapError);
 });
 
+Deno.test("shell.openExternal opens the normalized href it checked, not the raw string", async () => {
+  const spawned: string[][] = [];
+  const cap = shellCapability({
+    dirs: { data: "/d", cache: "/c", documents: "/o" },
+    config: { openExternal: ["https:"], openPath: false, reveal: false, trash: false },
+    spawn: (_cmd, args) => {
+      spawned.push(args);
+      return Promise.resolve();
+    },
+  });
+  await call(cap, "openExternal", { url: '  https://Example.com/a b?q="x"  ' });
+  const opened = spawned[0][spawned[0].length - 1];
+  assertEquals(opened, "https://example.com/a%20b?q=%22x%22");
+});
+
 Deno.test("shell SECURITY: the Windows trash is spawned with the path in env, never argv", async () => {
   const root = await Deno.makeTempDir({ prefix: "denext-shell-wtrash-" });
   try {
@@ -760,6 +775,10 @@ Deno.test("shell SECURITY: the Windows trash is spawned with the path in env, ne
 
 Deno.test("shell.openPath SECURITY: programs, scripts and launchers are refused (fs write + open ≠ RCE)", async () => {
   for (const bad of ["x.bat", "X.CMD", "a.vbs", "s.hta", "l.lnk", "t.terminal", "c.command"]) {
+    assert(isExecutableOpenTarget(`/app/data/${bad}`), bad);
+  }
+  // Python zipapps / bytecode, Windows themes, Remote Desktop and Sandbox configs run too.
+  for (const bad of ["a.pyz", "a.pyzw", "a.pyc", "t.theme", "t.themepack", "r.rdp", "s.wsb"]) {
     assert(isExecutableOpenTarget(`/app/data/${bad}`), bad);
   }
   assert(isExecutableOpenTarget("C:\\app\\data\\x.bat. . "), "trailing dots/spaces are ignored");

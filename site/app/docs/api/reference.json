@@ -11701,7 +11701,7 @@
           "kind": "function",
           "signature": "act<T>(callback: () => T | Promise<T>): Promise<T>",
           "doc": "act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.",
-          "docFull": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending\nstate updates and effects synchronously, and returns a thenable so both sync\nand async usage work.",
+          "docFull": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending\nstate updates and effects synchronously, and returns a thenable so both sync\nand async usage work.\n\nLike React's, the returned promise settles only once the work the callback set off\nhas gone quiet: after the callback (and its promise) it yields a macrotask and flushes\nagain, repeating while that turn rendered, committed or queued effects. So an\nun-awaited promise chain started inside `act` — an async click handler whose\n`.then` sets state — has committed by the time `await act(...)` returns.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -14428,7 +14428,7 @@
           "kind": "function",
           "signature": "act<T>(callback: () => T | Promise<T>): Promise<T>",
           "doc": "act(callback) — the React test helper. Runs callback, flushes all pending state updates and effects synchronously, and returns a thenable so both sync and async usage work.",
-          "docFull": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending\nstate updates and effects synchronously, and returns a thenable so both sync\nand async usage work.",
+          "docFull": "`act(callback)` — the React test helper. Runs `callback`, flushes all pending\nstate updates and effects synchronously, and returns a thenable so both sync\nand async usage work.\n\nLike React's, the returned promise settles only once the work the callback set off\nhas gone quiet: after the callback (and its promise) it yields a macrotask and flushes\nagain, repeating while that turn rendered, committed or queued effects. So an\nun-awaited promise chain started inside `act` — an async click handler whose\n`.then` sets state — has committed by the time `await act(...)` returns.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16423,7 +16423,7 @@
           "kind": "function",
           "signature": "injectDesktopGlobal(html: string, token: string | null, beacon?: boolean, preload?: string, preloadKey?: string, page?: DesktopPageGlobals): Promise<string>",
           "doc": "Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.",
-          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.\n\n`preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline\nscript right after the global — so it runs after `__denext` exists and before any page script —\nwith its own hash. It is injected only together with the token (a top-level document); the\ncaller additionally limits it to the memory world. With a `preloadKey`, the preload is framed by\ntwo more scripts that set `globalThis.__denextPreloadKey` before it and delete it after (even\nwhen the preload throws), so only code the preload runs synchronously can read the key — the\nproof `denext/desktop/clerk` presents for its Clerk-only session binding.\n\n`page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the\nWebSocket relay origin, and — with the token — the web `Notification` shim, appended to the\nsame script (one CSP hash) so it is in place before any page script runs.",
+          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.\n\n`preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline\nscript right after the global — so it runs after `__denext` exists and before any page script —\nwith its own hash. It is injected only together with the token (a top-level document); the\ncaller additionally limits it to the memory world. With a `preloadKey`, the preload is framed by\ntwo more scripts that set `globalThis.__denextPreloadKey` before it and delete it after (even\nwhen the preload throws), so only code the preload runs synchronously can read the key — the\nproof `denext/desktop/clerk` presents for its Clerk-only session binding. The setting script\nremoves its own element as it runs, so the key cannot be read back from `document.scripts`.\n\n`page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the\nWebSocket relay origin, and — with the token — the web `Notification` shim, appended to the\nsame script (one CSP hash) so it is in place before any page script runs.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -17056,7 +17056,7 @@
               "doc": "force: true exits even when a beforequit / close listener refuses."
             }
           ],
-          "returns": "quitting: false when the app refused to quit (the helper then waits up to five minutes for it to exit before giving up, leaving the app as it was).",
+          "returns": "quitting: false when the app refused to quit: the runtime withdraws the install request and the helper stands down, leaving the app as it was.",
           "examples": [],
           "denextOnly": true
         },
@@ -17963,7 +17963,7 @@
           "doc": "Finish a web openAuthSession: call it on the callback page the provider redirects the popup to (an https page of the same origin). It posts this page's full URL (code, state and all) to the window that opened the popup, addressed to this origin only, then closes the popup. Not needed inside the native shell, where the callback never loads a page.",
           "docFull": "Finish a web {@linkcode openAuthSession}: call it on the callback page the provider redirects\nthe popup to (an https page of the same origin). It posts this page's full URL (`code`,\n`state` and all) to the window that opened the popup, addressed to this origin only, then\ncloses the popup. Not needed inside the native shell, where the callback never loads a page.",
           "params": [],
-          "returns": "true when it posted to an opener; false when this page has no opener (it was opened directly, or the provider's Cross-Origin-Opener-Policy severed it), so the page can fall back to handling the callback itself.",
+          "returns": "true when it posted to an opener; false when this page is not the auth-session popup (its window is not named denext-auth-session) or has no opener (it was opened directly, or the provider's Cross-Origin-Opener-Policy severed it), so the page can fall back to handling the callback itself.",
           "examples": [
             "```tsx\n// app/auth/callback/complete.tsx\n\"use client\";\nimport { useEffect } from \"denext\";\nimport { completeAuthSession } from \"denext/mobile\";\n\nexport function Complete() {\n  useEffect(() => {\n    if (!completeAuthSession()) location.replace(\"/login\");\n  }, []);\n  return <p>Signing you in…</p>;\n}\n```"
           ],
@@ -20353,7 +20353,7 @@
           "kind": "typeAlias",
           "signature": "type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch",
           "doc": "The code of a native DenextOta refusal, carried on an error result:",
-          "docFull": "The `code` of a native `DenextOta` refusal, carried on an `error` result:\n\n- `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;\n- `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`\n  (the native side recomputes it from the file list), does not match;\n- `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;\n- `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the\n  manifest's `signature` is missing or does not verify;\n- `insecure`: the binary embeds no key and `baseUrl` is plain `http` to a host other than\n  loopback (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);\n- `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,\n  or it has none after a sequenced manifest was accepted;\n- `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS\n  `CFBundleVersion`, Android `versionCode`);\n- `native_mismatch`: the manifest's `nativeFingerprint` differs from the one the app binary\n  embeds (`denext mobile fingerprint --write`): the UI was built for another native layer.\n  Checked only when both carry one.\n\nThe trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,\n`native_mismatch`, and\n`invalid` for a malformed or oversized manifest) run before any file is downloaded, and a\nrefusal leaves the running UI and any staged one as they were.",
+          "docFull": "The `code` of a native `DenextOta` refusal, carried on an `error` result:\n\n- `invalid`: a malformed request or manifest; `busy`, `rejected`: see the results;\n- `download`: a file could not be fetched; `integrity`: a file, or the manifest's `version`\n  (the native side recomputes it from the file list), does not match;\n- `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;\n- `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the\n  manifest's `signature` is missing or does not verify;\n- `insecure`: the binary pins origins (`denext mobile add-ota --ota-origin`) and `baseUrl` is on\n  none of them, or it embeds no key and `baseUrl` is neither a pinned https origin nor loopback\n  (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);\n- `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,\n  or it has none after a sequenced manifest was accepted;\n- `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS\n  `CFBundleVersion`, Android `versionCode`);\n- `native_mismatch`: the manifest's `nativeFingerprint` differs from the one the app binary\n  embeds (`denext mobile fingerprint --write`): the UI was built for another native layer.\n  Checked only when both carry one.\n\nThe trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,\n`native_mismatch`, and\n`invalid` for a malformed or oversized manifest) run before any file is downloaded, and a\nrefusal leaves the running UI and any staged one as they were.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -26072,6 +26072,30 @@
           "denextOnly": false
         },
         {
+          "name": "DocumentScanningOptions",
+          "slug": "DocumentScanningOptions",
+          "kind": "typeAlias",
+          "signature": "type DocumentScanningOptions = object",
+          "doc": "Options for CameraView.scanDocumentAsync.",
+          "docFull": "Options for {@linkcode CameraView.scanDocumentAsync}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "DocumentScanningResult",
+          "slug": "DocumentScanningResult",
+          "kind": "typeAlias",
+          "signature": "type DocumentScanningResult = object",
+          "doc": "What CameraView.scanDocumentAsync returns.",
+          "docFull": "What {@linkcode CameraView.scanDocumentAsync} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "FlashMode",
           "slug": "FlashMode",
           "kind": "typeAlias",
@@ -26090,6 +26114,18 @@
           "signature": "type ImageType = png | jpg",
           "doc": "The image format of a picture.",
           "docFull": "The image format of a picture.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "LensInfo",
+          "slug": "LensInfo",
+          "kind": "typeAlias",
+          "signature": "type LensInfo = object",
+          "doc": "A camera (lens) the device has, as getAvailableLensesAsync lists it.",
+          "docFull": "A camera (lens) the device has, as `getAvailableLensesAsync` lists it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -26162,6 +26198,18 @@
           "signature": "class PictureRef",
           "doc": "A picture held in memory until saved: what takePictureAsync({ pictureRef: true }) resolves with.",
           "docFull": "A picture held in memory until saved: what `takePictureAsync({ pictureRef: true })`\nresolves with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "RecordingProgress",
+          "slug": "RecordingProgress",
+          "kind": "typeAlias",
+          "signature": "type RecordingProgress = object",
+          "doc": "A recording's progress, for onRecordingProgress.",
+          "docFull": "A recording's progress, for `onRecordingProgress`.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -26818,6 +26866,23 @@
           "returns": "A promise that settles at once.",
           "examples": [],
           "denextOnly": false
+        },
+        {
+          "name": "setToolsButtonVisible",
+          "slug": "setToolsButtonVisible",
+          "kind": "function",
+          "signature": "setToolsButtonVisible(_visible: boolean): void",
+          "doc": "Show or hide the dev menu's floating tools button: there is none here.",
+          "docFull": "Show or hide the dev menu's floating tools button: there is none here.",
+          "params": [
+            {
+              "name": "_visible",
+              "doc": "Whether to show it (ignored)."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
         }
       ]
     },
@@ -27205,6 +27270,18 @@
       "module": "denext/expo/expo",
       "symbols": [
         {
+          "name": "CodedError",
+          "slug": "CodedError",
+          "kind": "class",
+          "signature": "class CodedError",
+          "doc": "Expo's CodedError (expo-modules-core, re-exported by expo): an Error with a code that tells errors apart without subclassing.",
+          "docFull": "Expo's `CodedError` (expo-modules-core, re-exported by `expo`): an `Error` with a `code`\nthat tells errors apart without subclassing.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "createPermissionHook",
           "slug": "createPermissionHook",
           "kind": "function",
@@ -27218,6 +27295,18 @@
             }
           ],
           "returns": "The hook.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "createSnapshotFriendlyRef",
+          "slug": "createSnapshotFriendlyRef",
+          "kind": "function",
+          "signature": "createSnapshotFriendlyRef<T>(): object",
+          "doc": "A ref object ({ current: null }), as Expo's snapshot-friendly ref is.",
+          "docFull": "A ref object (`{ current: null }`), as Expo's snapshot-friendly ref is.",
+          "params": [],
+          "returns": "The ref.",
           "examples": [],
           "denextOnly": false
         },
@@ -27240,6 +27329,30 @@
           "signature": "class EventEmitter<Events>",
           "doc": "A typed event emitter, as Expo modules use.",
           "docFull": "A typed event emitter, as Expo modules use.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "EventSubscription",
+          "slug": "EventSubscription",
+          "kind": "typeAlias",
+          "signature": "type EventSubscription = Subscription",
+          "doc": "Expo's name for a listener subscription (EventSubscription in expo-modules-core).",
+          "docFull": "Expo's name for a listener subscription (`EventSubscription` in expo-modules-core).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ExpoPlatform",
+          "slug": "ExpoPlatform",
+          "kind": "interface",
+          "signature": "interface ExpoPlatform",
+          "doc": "Expo's Platform (expo-modules-core): the web build's, which is what runs here.",
+          "docFull": "Expo's `Platform` (expo-modules-core): the web build's, which is what runs here.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -27380,6 +27493,30 @@
           "denextOnly": false
         },
         {
+          "name": "Platform",
+          "slug": "Platform",
+          "kind": "variable",
+          "signature": "Platform: ExpoPlatform",
+          "doc": "Expo's Platform: OS is \"web\" and select picks web, then default (as Expo's web build; React Native's own Platform from react-native is the one that reports the Capacitor shell). The DOM facts are read when asked, so importing it is safe anywhere.",
+          "docFull": "Expo's `Platform`: `OS` is `\"web\"` and `select` picks `web`, then `default` (as Expo's web\nbuild; React Native's own `Platform` from `react-native` is the one that reports the\nCapacitor shell). The DOM facts are read when asked, so importing it is safe anywhere.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "PlatformSelectOSType",
+          "slug": "PlatformSelectOSType",
+          "kind": "typeAlias",
+          "signature": "type PlatformSelectOSType = ios | android | macos | windows | web | native | electron | default",
+          "doc": "A platform key Platform.select matches (native never matches here).",
+          "docFull": "A platform key `Platform.select` matches (`native` never matches here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "registerRootComponent",
           "slug": "registerRootComponent",
           "kind": "function",
@@ -27414,6 +27551,30 @@
             }
           ],
           "returns": "The module.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ReleasingSharedObjectLifecycle",
+          "slug": "ReleasingSharedObjectLifecycle",
+          "kind": "typeAlias",
+          "signature": "type ReleasingSharedObjectLifecycle<TSharedObject> = object",
+          "doc": "How useReleasingSharedObjectWithLifecycle creates, updates and releases.",
+          "docFull": "How {@linkcode useReleasingSharedObjectWithLifecycle} creates, updates and releases.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "ReleasingSharedObjectLifecycleContext",
+          "slug": "ReleasingSharedObjectLifecycleContext",
+          "kind": "typeAlias",
+          "signature": "type ReleasingSharedObjectLifecycleContext = object",
+          "doc": "What ReleasingSharedObjectLifecycle's callbacks receive.",
+          "docFull": "What {@linkcode ReleasingSharedObjectLifecycle}'s callbacks receive.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": false
         },
@@ -27526,6 +27687,18 @@
           "denextOnly": false
         },
         {
+          "name": "UnavailabilityError",
+          "slug": "UnavailabilityError",
+          "kind": "class",
+          "signature": "class UnavailabilityError",
+          "doc": "Expo's UnavailabilityError: a CodedError (ERR_UNAVAILABLE) for a method or property the running platform does not have. The platform is always web here (the Capacitor shell runs the web build).",
+          "docFull": "Expo's `UnavailabilityError`: a {@linkcode CodedError} (`ERR_UNAVAILABLE`) for a method or\nproperty the running platform does not have. The platform is always `web` here (the\nCapacitor shell runs the web build).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "useEvent",
           "slug": "useEvent",
           "kind": "function",
@@ -27571,6 +27744,72 @@
               "doc": "The listener (the latest one is always called)."
             }
           ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useReleasingSharedObject",
+          "slug": "useReleasingSharedObject",
+          "kind": "function",
+          "signature": "useReleasingSharedObject<TSharedObject>(factory: () => TSharedObject, dependencies: DependencyList): TSharedObject",
+          "doc": "A shared object for the component's lifetime: factory's result, released on unmount and replaced (the old one released) when dependencies change.",
+          "docFull": "A shared object for the component's lifetime: `factory`'s result, released on unmount and\nreplaced (the old one released) when `dependencies` change.",
+          "params": [
+            {
+              "name": "factory",
+              "doc": "Create the object."
+            },
+            {
+              "name": "dependencies",
+              "doc": "When to replace it."
+            }
+          ],
+          "returns": "The object.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "useReleasingSharedObjectWithLifecycle",
+          "slug": "useReleasingSharedObjectWithLifecycle",
+          "kind": "function",
+          "signature": "useReleasingSharedObjectWithLifecycle<TSharedObject>(lifecycle: ReleasingSharedObjectLifecycle<TSharedObject>, dependencies: DependencyList): TSharedObject",
+          "doc": "A shared object for the component's lifetime, made by lifecycle.factory and released (by lifecycle.release, else its release()) on unmount or when the dependencies change. With shouldRecreate returning false, a dependency change calls update on the same object instead. Hiding the component in an <Activity> does not release it. Expo's own semantics.",
+          "docFull": "A shared object for the component's lifetime, made by `lifecycle.factory` and released (by\n`lifecycle.release`, else its `release()`) on unmount or when the dependencies change.\nWith `shouldRecreate` returning false, a dependency change calls `update` on the same object\ninstead. Hiding the component in an `<Activity>` does not release it. Expo's own semantics.",
+          "params": [
+            {
+              "name": "lifecycle",
+              "doc": "How the object is created, updated and released."
+            },
+            {
+              "name": "dependencies",
+              "doc": "When to recreate (or update) it."
+            }
+          ],
+          "returns": "The object.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "uuid",
+          "slug": "uuid-var",
+          "kind": "variable",
+          "signature": "uuid: UUID",
+          "doc": "Expo's uuid: v4() over the platform's CSPRNG, v5(name, namespace) over SHA-1.",
+          "docFull": "Expo's `uuid`: `v4()` over the platform's CSPRNG, `v5(name, namespace)` over SHA-1.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "UUID",
+          "slug": "UUID-iface",
+          "kind": "interface",
+          "signature": "interface UUID",
+          "doc": "The shape of Expo's uuid export.",
+          "docFull": "The shape of Expo's `uuid` export.",
+          "params": [],
           "returns": "",
           "examples": [],
           "denextOnly": false
@@ -27802,12 +28041,36 @@
           "denextOnly": false
         },
         {
+          "name": "FileCanPreviewOptions",
+          "slug": "FileCanPreviewOptions",
+          "kind": "typeAlias",
+          "signature": "type FileCanPreviewOptions = object",
+          "doc": "Options for File.canPreview.",
+          "docFull": "Options for {@linkcode File.canPreview}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "FileCreateOptions",
           "slug": "FileCreateOptions",
           "kind": "interface",
           "signature": "interface FileCreateOptions",
           "doc": "Options for File.create.",
           "docFull": "Options for {@linkcode File.create}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "FileDigestAlgorithm",
+          "slug": "FileDigestAlgorithm",
+          "kind": "typeAlias",
+          "signature": "type FileDigestAlgorithm = MD5 | SHA-1 | SHA-256 | SHA-384 | SHA-512",
+          "doc": "A hash algorithm File.digest takes.",
+          "docFull": "A hash algorithm {@linkcode File.digest} takes.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -27832,6 +28095,18 @@
           "signature": "enum FileMode",
           "doc": "A file-handle mode (file handles are not provided; kept for API compatibility).",
           "docFull": "A file-handle mode (file handles are not provided; kept for API compatibility).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "FilePreviewOptions",
+          "slug": "FilePreviewOptions",
+          "kind": "typeAlias",
+          "signature": "type FilePreviewOptions = object",
+          "doc": "Options for File.preview.",
+          "docFull": "Options for {@linkcode File.preview}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -28853,6 +29128,42 @@
           "denextOnly": false
         },
         {
+          "name": "FontFaceDefinition",
+          "slug": "FontFaceDefinition",
+          "kind": "typeAlias",
+          "signature": "type FontFaceDefinition = object",
+          "doc": "One face of a FontFamilyDefinition.",
+          "docFull": "One face of a {@linkcode FontFamilyDefinition}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "FontFamilyDefinition",
+          "slug": "FontFamilyDefinition",
+          "kind": "typeAlias",
+          "signature": "type FontFamilyDefinition = object",
+          "doc": "A font family made of several faces (weights and styles) under one name.",
+          "docFull": "A font family made of several faces (weights and styles) under one name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "FontMap",
+          "slug": "FontMap",
+          "kind": "typeAlias",
+          "signature": "type FontMap = string | Record<string, FontSource> | FontFamilyDefinition[]",
+          "doc": "What loadAsync and useFonts take.",
+          "docFull": "What {@linkcode loadAsync} and {@linkcode useFonts} take.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "FontResource",
           "slug": "FontResource",
           "kind": "interface",
@@ -28926,13 +29237,13 @@
           "name": "loadAsync",
           "slug": "loadAsync",
           "kind": "function",
-          "signature": "loadAsync(fontFamilyOrFontMap: string | Record<string, FontSource>, source?: FontSource): Promise<void>",
-          "doc": "Load fonts: one family and its source, or a map of families to sources.",
-          "docFull": "Load fonts: one family and its source, or a map of families to sources.",
+          "signature": "loadAsync(fontFamilyOrFontMap: FontMap, source?: FontSource): Promise<void>",
+          "doc": "Load fonts: one family and its source, a map of families to sources, or (SDK 58) font families with several faces each.",
+          "docFull": "Load fonts: one family and its source, a map of families to sources, or (SDK 58) font\nfamilies with several faces each.",
           "params": [
             {
               "name": "fontFamilyOrFontMap",
-              "doc": "A family name, or { family: source }."
+              "doc": "A family name, { family: source }, or [{ fontFamily, fontDefinitions }]."
             },
             {
               "name": "source",
@@ -28959,17 +29270,17 @@
           "name": "unloadAsync",
           "slug": "unloadAsync",
           "kind": "function",
-          "signature": "unloadAsync(fontFamilyOrFontMap: string | Record<string, UnloadFontOptions>, _options?: UnloadFontOptions): Promise<void>",
-          "doc": "Unload fonts.",
-          "docFull": "Unload fonts.",
+          "signature": "unloadAsync(fontFamilyOrFontMap: string | Record<string, UnloadFontOptions>, options?: UnloadFontOptions): Promise<void>",
+          "doc": "Unload fonts: a family's faces (the ones matching options: its weight, style and display; every face without options), or a map of families to such options.",
+          "docFull": "Unload fonts: a family's faces (the ones matching `options`: its `weight`, `style` and\n`display`; every face without options), or a map of families to such options.",
           "params": [
             {
               "name": "fontFamilyOrFontMap",
-              "doc": "A family, or a map of families."
+              "doc": "A family, or a map of families to options."
             },
             {
-              "name": "_options",
-              "doc": "Ignored."
+              "name": "options",
+              "doc": "Which faces of the one family to remove."
             }
           ],
           "returns": "A promise that settles once removed.",
@@ -28980,9 +29291,9 @@
           "name": "UnloadFontOptions",
           "slug": "UnloadFontOptions",
           "kind": "typeAlias",
-          "signature": "type UnloadFontOptions = Pick<FontResource, display>",
-          "doc": "Options for unloadAsync.",
-          "docFull": "Options for {@linkcode unloadAsync}.",
+          "signature": "type UnloadFontOptions = Pick<FontResource, display | weight | style>",
+          "doc": "Options for unloadAsync: which faces of the family to remove.",
+          "docFull": "Options for {@linkcode unloadAsync}: which faces of the family to remove.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -28992,13 +29303,13 @@
           "name": "useFonts",
           "slug": "useFonts",
           "kind": "function",
-          "signature": "useFonts(map: string | Record<string, FontSource>): tuple",
+          "signature": "useFonts(map: FontMap): tuple",
           "doc": "Load fonts for a component: [loaded, error].",
           "docFull": "Load fonts for a component: `[loaded, error]`.",
           "params": [
             {
               "name": "map",
-              "doc": "A family, or { family: source }."
+              "doc": "A family, { family: source }, or [{ fontFamily, fontDefinitions }]."
             }
           ],
           "returns": "Whether every font is loaded, and the load error if one failed.",
@@ -30402,6 +30713,23 @@
           "denextOnly": false
         },
         {
+          "name": "unwrapDevLaunchURL",
+          "slug": "unwrapDevLaunchURL",
+          "kind": "function",
+          "signature": "unwrapDevLaunchURL(url: string): string",
+          "doc": "The URL the app should handle for a launch URL that may carry Expo's development launcher commands: the target named by __expo_url (or, on the legacy expo-development-client host, url), else url without its reserved __expo_* parameters. A URL that does not parse, or carries no command, comes back unchanged; a legacy launch URL without a target is \"\". The same pure function as Expo's.",
+          "docFull": "The URL the app should handle for a launch URL that may carry Expo's development launcher\ncommands: the target named by `__expo_url` (or, on the legacy `expo-development-client`\nhost, `url`), else `url` without its reserved `__expo_*` parameters. A URL that does not\nparse, or carries no command, comes back unchanged; a legacy launch URL without a target is\n`\"\"`. The same pure function as Expo's.",
+          "params": [
+            {
+              "name": "url",
+              "doc": "A URL the app received (getInitialURL(), a URL event)."
+            }
+          ],
+          "returns": "The URL to handle.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "URLListener",
           "slug": "URLListener",
           "kind": "typeAlias",
@@ -30713,7 +31041,7 @@
           "name": "getBackgroundPermissionsAsync",
           "slug": "getBackgroundPermissionsAsync",
           "kind": "function",
-          "signature": "getBackgroundPermissionsAsync(): Promise<PermissionResponse>",
+          "signature": "getBackgroundPermissionsAsync(): Promise<LocationPermissionResponse>",
           "doc": "The background location permission: always denied here (this shim provides no background location; denext/mobile has watchPositionInBackground).",
           "docFull": "The background location permission: always denied here (this shim provides no background\nlocation; `denext/mobile` has `watchPositionInBackground`).",
           "params": [],
@@ -31095,7 +31423,7 @@
           "name": "requestBackgroundPermissionsAsync",
           "slug": "requestBackgroundPermissionsAsync",
           "kind": "function",
-          "signature": "requestBackgroundPermissionsAsync(): Promise<PermissionResponse>",
+          "signature": "requestBackgroundPermissionsAsync(): Promise<LocationPermissionResponse>",
           "doc": "Ask for background location: always denied here (this shim provides no background location).",
           "docFull": "Ask for background location: always denied here (this shim provides no background location).",
           "params": [],
@@ -31234,6 +31562,18 @@
     {
       "module": "denext/expo/maps",
       "symbols": [
+        {
+          "name": "AppleMapPointOfInterestCategory",
+          "slug": "AppleMapPointOfInterestCategory",
+          "kind": "enum",
+          "signature": "enum AppleMapPointOfInterestCategory",
+          "doc": "Apple Maps' point-of-interest categories (MapKit's MKPointOfInterestCategory), for a map's point-of-interest filter (accepted and ignored by the native map view here).",
+          "docFull": "Apple Maps' point-of-interest categories (MapKit's `MKPointOfInterestCategory`), for a\nmap's point-of-interest filter (accepted and ignored by the native map view here).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
         {
           "name": "AppleMaps",
           "slug": "AppleMaps",
@@ -31509,6 +31849,18 @@
           "denextOnly": false
         },
         {
+          "name": "AlbumMetadata",
+          "slug": "AlbumMetadata",
+          "kind": "typeAlias",
+          "signature": "type AlbumMetadata = object",
+          "doc": "An album's id, title and kind, as Album.getAlbumsMetadata lists them.",
+          "docFull": "An album's id, title and kind, as {@linkcode Album.getAlbumsMetadata} lists them.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "albumNeedsMigrationAsync",
           "slug": "albumNeedsMigrationAsync",
           "kind": "function",
@@ -31517,6 +31869,18 @@
           "docFull": "Whether an album needs Android's scoped-storage migration: never here.",
           "params": [],
           "returns": "false.",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AlbumType",
+          "slug": "AlbumType",
+          "kind": "enum",
+          "signature": "enum AlbumType",
+          "doc": "The kind of an album: one the user (or an app) made, or a system smart album.",
+          "docFull": "The kind of an album: one the user (or an app) made, or a system smart album.",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": false
         },
@@ -31539,6 +31903,30 @@
           "signature": "enum AssetField",
           "doc": "The fields a Query filters and sorts by.",
           "docFull": "The fields a {@linkcode Query} filters and sorts by.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AssetUriOptions",
+          "slug": "AssetUriOptions",
+          "kind": "typeAlias",
+          "signature": "type AssetUriOptions = object",
+          "doc": "Options for Asset.getUri.",
+          "docFull": "Options for {@linkcode Asset.getUri}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "AssetUriVersion",
+          "slug": "AssetUriVersion",
+          "kind": "enum",
+          "signature": "enum AssetUriVersion",
+          "doc": "Which version of an asset getUri asks for (both are the listing's thumbnail here).",
+          "docFull": "Which version of an asset `getUri` asks for (both are the listing's thumbnail here).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -33507,6 +33895,18 @@
           "denextOnly": false
         },
         {
+          "name": "NotificationDelivery",
+          "slug": "NotificationDelivery",
+          "kind": "typeAlias",
+          "signature": "type NotificationDelivery = bestEffort | alarmClock",
+          "doc": "How exactly an Android notification fires (see DateTriggerInput.delivery).",
+          "docFull": "How exactly an Android notification fires (see {@linkcode DateTriggerInput.delivery}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "NotificationHandler",
           "slug": "NotificationHandler",
           "kind": "interface",
@@ -34623,10 +35023,10 @@
           "slug": "isAvailableAsync",
           "kind": "function",
           "signature": "isAvailableAsync(): Promise<boolean>",
-          "doc": "Whether the store is available: always, here (the web fallback is IndexedDB).",
-          "docFull": "Whether the store is available: always, here (the web fallback is IndexedDB).",
+          "doc": "Whether a secure store is available: the iOS Keychain / Android Keystore plugin in the shell, or the OS keychain in a Deno Desktop window. false on the web, where values would land in plain IndexedDB (Expo's web build has no secure store either).",
+          "docFull": "Whether a secure store is available: the iOS Keychain / Android Keystore plugin in the shell,\nor the OS keychain in a Deno Desktop window. `false` on the web, where values would land in\nplain IndexedDB (Expo's web build has no secure store either).",
           "params": [],
-          "returns": "true.",
+          "returns": "Whether stored values are kept secret.",
           "examples": [],
           "denextOnly": false
         },
@@ -36642,9 +37042,21 @@
           "name": "LazyColumn",
           "slug": "LazyColumn",
           "kind": "variable",
-          "signature": "LazyColumn: (props: StubProps) => VNode",
-          "doc": "Stand-in for Jetpack Compose's LazyColumn: its children in a column.",
-          "docFull": "Stand-in for Jetpack Compose's `LazyColumn`: its children in a column.",
+          "signature": "LazyColumn: parenthesized & object",
+          "doc": "Stand-in for Jetpack Compose's LazyColumn (and LazyColumn.Items): a column.",
+          "docFull": "Stand-in for Jetpack Compose's `LazyColumn` (and `LazyColumn.Items`): a column.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "LazyItems",
+          "slug": "LazyItems",
+          "kind": "variable",
+          "signature": "LazyItems: (props: StubProps) => VNode",
+          "doc": "Stand-in for Jetpack Compose's LazyItems: a row per data item, laid out by the LazyColumn / LazyRow around it.",
+          "docFull": "Stand-in for Jetpack Compose's `LazyItems`: a row per `data` item, laid out by the\n`LazyColumn` / `LazyRow` around it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -36654,9 +37066,9 @@
           "name": "LazyRow",
           "slug": "LazyRow",
           "kind": "variable",
-          "signature": "LazyRow: (props: StubProps) => VNode",
-          "doc": "Stand-in for Jetpack Compose's LazyRow: its children in a row.",
-          "docFull": "Stand-in for Jetpack Compose's `LazyRow`: its children in a row.",
+          "signature": "LazyRow: parenthesized & object",
+          "doc": "Stand-in for Jetpack Compose's LazyRow (and LazyRow.Items): its children in a row.",
+          "docFull": "Stand-in for Jetpack Compose's `LazyRow` (and `LazyRow.Items`): its children in a row.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -37291,7 +37703,7 @@
           "name": "VerticalSlider",
           "slug": "VerticalSlider",
           "kind": "variable",
-          "signature": "VerticalSlider: (props: StubProps) => VNode",
+          "signature": "VerticalSlider: parenthesized & object",
           "doc": "Stand-in for Jetpack Compose's VerticalSlider: its children only.",
           "docFull": "Stand-in for Jetpack Compose's `VerticalSlider`: its children only.",
           "params": [],
@@ -37419,6 +37831,18 @@
           "signature": "combinedClickable: (...args: unknown[]) => StubModifier",
           "doc": "Stand-in for the combinedClickable modifier: an inert config.",
           "docFull": "Stand-in for the `combinedClickable` modifier: an inert config.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "cornerRadius",
+          "slug": "cornerRadius",
+          "kind": "variable",
+          "signature": "cornerRadius: (...args: unknown[]) => StubModifier",
+          "doc": "Stand-in for the cornerRadius modifier: an inert config.",
+          "docFull": "Stand-in for the `cornerRadius` modifier: an inert config.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -37603,12 +38027,36 @@
           "denextOnly": false
         },
         {
+          "name": "IntrinsicSize",
+          "slug": "IntrinsicSize",
+          "kind": "variable",
+          "signature": "IntrinsicSize: object",
+          "doc": "Compose's intrinsic sizes, for width / height (IntrinsicSize.Min).",
+          "docFull": "Compose's intrinsic sizes, for `width` / `height` (`IntrinsicSize.Min`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "keyframes",
           "slug": "keyframes",
           "kind": "variable",
           "signature": "keyframes: (...args: unknown[]) => StubModifier",
           "doc": "Stand-in for the keyframes modifier: an inert config.",
           "docFull": "Stand-in for the `keyframes` modifier: an inert config.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "maskClip",
+          "slug": "maskClip",
+          "kind": "variable",
+          "signature": "maskClip: (...args: unknown[]) => StubModifier",
+          "doc": "Stand-in for the maskClip modifier: an inert config.",
+          "docFull": "Stand-in for the `maskClip` modifier: an inert config.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -38319,9 +38767,21 @@
           "name": "LazyHStack",
           "slug": "LazyHStack",
           "kind": "variable",
-          "signature": "LazyHStack: (props: StubProps) => VNode",
-          "doc": "Stand-in for SwiftUI's LazyHStack: its children in a row.",
-          "docFull": "Stand-in for SwiftUI's `LazyHStack`: its children in a row.",
+          "signature": "LazyHStack: parenthesized & object",
+          "doc": "Stand-in for SwiftUI's LazyHStack (and LazyHStack.ForEach): its children in a row.",
+          "docFull": "Stand-in for SwiftUI's `LazyHStack` (and `LazyHStack.ForEach`): its children in a row.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "LazyHStackForEach",
+          "slug": "LazyHStackForEach",
+          "kind": "variable",
+          "signature": "LazyHStackForEach: (props: StubProps) => VNode",
+          "doc": "Stand-in for SwiftUI's LazyHStackForEach: a row per data item, side by side.",
+          "docFull": "Stand-in for SwiftUI's `LazyHStackForEach`: a row per `data` item, side by side.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -38331,9 +38791,21 @@
           "name": "LazyVStack",
           "slug": "LazyVStack",
           "kind": "variable",
-          "signature": "LazyVStack: (props: StubProps) => VNode",
-          "doc": "Stand-in for SwiftUI's LazyVStack: its children in a column.",
-          "docFull": "Stand-in for SwiftUI's `LazyVStack`: its children in a column.",
+          "signature": "LazyVStack: parenthesized & object",
+          "doc": "Stand-in for SwiftUI's LazyVStack (and LazyVStack.ForEach): its children in a column.",
+          "docFull": "Stand-in for SwiftUI's `LazyVStack` (and `LazyVStack.ForEach`): its children in a column.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "LazyVStackForEach",
+          "slug": "LazyVStackForEach",
+          "kind": "variable",
+          "signature": "LazyVStackForEach: (props: StubProps) => VNode",
+          "doc": "Stand-in for SwiftUI's LazyVStackForEach: a row per data item, in a column.",
+          "docFull": "Stand-in for SwiftUI's `LazyVStackForEach`: a row per `data` item, in a column.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -38439,9 +38911,9 @@
           "name": "NavigationSplitView",
           "slug": "NavigationSplitView",
           "kind": "variable",
-          "signature": "NavigationSplitView: (props: StubProps) => VNode",
-          "doc": "Stand-in for SwiftUI's NavigationSplitView: its children in a column.",
-          "docFull": "Stand-in for SwiftUI's `NavigationSplitView`: its children in a column.",
+          "signature": "NavigationSplitView: parenthesized & object",
+          "doc": "Stand-in for SwiftUI's NavigationSplitView (with its Sidebar, Content and Detail columns): its columns one under the other.",
+          "docFull": "Stand-in for SwiftUI's `NavigationSplitView` (with its `Sidebar`, `Content` and `Detail`\ncolumns): its columns one under the other.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -38751,9 +39223,9 @@
           "name": "Toolbar",
           "slug": "Toolbar",
           "kind": "variable",
-          "signature": "Toolbar: (props: StubProps) => VNode",
-          "doc": "Stand-in for SwiftUI's Toolbar: its children in a column.",
-          "docFull": "Stand-in for SwiftUI's `Toolbar`: its children in a column.",
+          "signature": "Toolbar: parenthesized & object",
+          "doc": "Stand-in for SwiftUI's Toolbar (and Toolbar.Content): its children in a column.",
+          "docFull": "Stand-in for SwiftUI's `Toolbar` (and `Toolbar.Content`): its children in a column.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -40295,6 +40767,18 @@
           "denextOnly": false
         },
         {
+          "name": "preferredColorScheme",
+          "slug": "preferredColorScheme",
+          "kind": "variable",
+          "signature": "preferredColorScheme: (...args: unknown[]) => StubModifier",
+          "doc": "Stand-in for the preferredColorScheme modifier: an inert config.",
+          "docFull": "Stand-in for the `preferredColorScheme` modifier: an inert config.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
           "name": "presentationBackground",
           "slug": "presentationBackground",
           "kind": "variable",
@@ -40313,6 +40797,18 @@
           "signature": "presentationBackgroundInteraction: (...args: unknown[]) => StubModifier",
           "doc": "Stand-in for the presentationBackgroundInteraction modifier: an inert config.",
           "docFull": "Stand-in for the `presentationBackgroundInteraction` modifier: an inert config.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "presentationCornerRadius",
+          "slug": "presentationCornerRadius",
+          "kind": "variable",
+          "signature": "presentationCornerRadius: (...args: unknown[]) => StubModifier",
+          "doc": "Stand-in for the presentationCornerRadius modifier: an inert config.",
+          "docFull": "Stand-in for the `presentationCornerRadius` modifier: an inert config.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -41497,16 +41993,16 @@
           "name": "maybeCompleteAuthSession",
           "slug": "maybeCompleteAuthSession",
           "kind": "function",
-          "signature": "maybeCompleteAuthSession(_options?: WebBrowserCompleteAuthSessionOptions): WebBrowserCompleteAuthSessionResult",
-          "doc": "On a web redirect page opened by openAuthSessionAsync: hand this page's URL back to the opener and close the popup.",
-          "docFull": "On a web redirect page opened by {@linkcode openAuthSessionAsync}: hand this page's URL\nback to the opener and close the popup.",
+          "signature": "maybeCompleteAuthSession(options?: WebBrowserCompleteAuthSessionOptions): WebBrowserCompleteAuthSessionResult",
+          "doc": "On a web redirect page opened by openAuthSessionAsync: hand this page's URL back to the opener and close the popup — only in the auth-session popup itself, and (unless skipRedirectCheck) only when this page's URL starts with the redirectUrl that openAuthSessionAsync was given, as Expo checks.",
+          "docFull": "On a web redirect page opened by {@linkcode openAuthSessionAsync}: hand this page's URL\nback to the opener and close the popup — only in the auth-session popup itself, and (unless\n`skipRedirectCheck`) only when this page's URL starts with the `redirectUrl` that\n`openAuthSessionAsync` was given, as Expo checks.",
           "params": [
             {
-              "name": "_options",
-              "doc": "Accepted for compatibility."
+              "name": "options",
+              "doc": "skipRedirectCheck hands the URL back without comparing it."
             }
           ],
-          "returns": "success when handed back, failed when this page has no opener.",
+          "returns": "success when handed back, failed (with the reason) otherwise.",
           "examples": [],
           "denextOnly": false
         },
@@ -41807,7 +42303,7 @@
           "name": "createWidget",
           "slug": "createWidget",
           "kind": "function",
-          "signature": "createWidget<PropsType, ConfigurationType>(name: string, widget: (props: PropsType, context: WidgetEnvironment<ConfigurationType>) => unknown): Widget<PropsType, ConfigurationType>",
+          "signature": "createWidget<PropsType, ConfigurationType>(name: string, widget: (props: PropsType, context: WidgetEnvironment<ConfigurationType>) => unknown, initialProps?: PropsType): Widget<PropsType, ConfigurationType>",
           "doc": "Declare a widget.",
           "docFull": "Declare a widget.",
           "params": [
@@ -41818,6 +42314,10 @@
             {
               "name": "widget",
               "doc": "Its layout (never rendered)."
+            },
+            {
+              "name": "initialProps",
+              "doc": "The props its timeline reports before the first update."
             }
           ],
           "returns": "The widget.",
@@ -41927,6 +42427,18 @@
           "signature": "class Widget<PropsType, _ConfigurationType>",
           "doc": "A home-screen widget: its updates store the JSON snapshot the native widget renders.",
           "docFull": "A home-screen widget: its updates store the JSON snapshot the native widget renders.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": false
+        },
+        {
+          "name": "WidgetConfigurationEnum",
+          "slug": "WidgetConfigurationEnum",
+          "kind": "typeAlias",
+          "signature": "type WidgetConfigurationEnum = object",
+          "doc": "One runtime option of a configurable widget's enum parameter.",
+          "docFull": "One runtime option of a configurable widget's enum parameter.",
           "params": [],
           "returns": "",
           "examples": [],

@@ -224,18 +224,61 @@ async function clerkBinding(preloadKey: string | undefined): Promise<SchemeSessi
   return preloadKey ? { binding: "clerk-client-nonce", bindingKey: preloadKey } : {};
 }
 
+/** The path of Clerk's OAuth callback on its Frontend API (every provider's redirect URI). */
+const CLERK_OAUTH_CALLBACK_PATH = "/v1/oauth_callback";
+
+/**
+ * Whether `target` is a Clerk OAuth URL: on the Frontend API itself, or a provider's
+ * authorization URL whose `redirect_uri` is the Frontend API's OAuth callback (over https; on
+ * `fapiHost` or a Clerk-operated domain when the Clerk instance names its host). Anything else is
+ * a page script using the transport to open an arbitrary site in the OS auth session.
+ */
+function isClerkOAuthUrl(target: URL, fapiHost: string | undefined): boolean {
+  if (fapiHost !== undefined && target.host === fapiHost) return true;
+  let redirect: URL;
+  try {
+    redirect = new URL(target.searchParams.get("redirect_uri") ?? "");
+  } catch {
+    return false;
+  }
+  return redirect.protocol === "https:" && redirect.pathname === CLERK_OAUTH_CALLBACK_PATH &&
+    (fapiHost === undefined || redirect.host === fapiHost || isClerkOperatedHost(redirect.host));
+}
+
+/** Clerk's own domains (a development instance's shared OAuth credentials call back there). */
+const CLERK_DOMAINS = ["clerk.accounts.dev", "accounts.dev", "clerk.dev", "clerk.com"];
+
+/** Whether `host` is one of {@linkcode CLERK_DOMAINS} or under one. */
+function isClerkOperatedHost(host: string): boolean {
+  return CLERK_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/** The Clerk instance's Frontend API host (`clerk.example.com`), when it is loaded. */
+function frontendApiHost(getClerk: () => ClerkLike | undefined): string | undefined {
+  const fapi = (getClerk() as { frontendApi?: unknown } | undefined)?.frontendApi;
+  return typeof fapi === "string" && fapi !== "" ? fapi.replace(/^https?:\/\//, "") : undefined;
+}
+
 /** The OAuth transport (`@clerk/electron`'s main-process semantics, see the module docs). */
 function oauthTransport(
   redirectUrl: () => string,
   preloadKey: string | undefined,
+  getClerk: () => ClerkLike | undefined,
 ): ClerkOAuthTransport {
   let pending = false;
   return {
     getRedirectUrl: () => Promise.resolve().then(redirectUrl),
     open: async (url) => {
       if (pending) throw new Error("Clerk: an OAuth flow is already pending.");
-      if (new URL(url).protocol !== "https:") {
+      const target = new URL(url);
+      if (target.protocol !== "https:") {
         throw new TypeError(`Clerk: refusing to open unsupported OAuth URL protocol: ${url}`);
+      }
+      if (!isClerkOAuthUrl(target, frontendApiHost(getClerk))) {
+        throw new TypeError(
+          `Clerk: refusing to open ${target.origin}: not a Clerk OAuth URL (its redirect_uri ` +
+            `must be the Frontend API's ${CLERK_OAUTH_CALLBACK_PATH})`,
+        );
       }
       const redirect = redirectUrl();
       pending = true;
@@ -359,6 +402,7 @@ export function installClerkDesktopBridge(
     oauthTransport: oauthTransport(
       redirectUrl,
       typeof preloadKey === "string" ? preloadKey : undefined,
+      options.getClerk ?? defaultClerk,
     ),
   };
   const g = globalThis as {

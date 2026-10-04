@@ -41,6 +41,10 @@ const SUCCESS_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8"
 let busy = false;
 /** Ends the open session as `cancelled` (set while one is open). */
 let cancelOpen: (() => void) | undefined;
+/** The open session's key (the starting page's), which a cancel must name; none for a keyless start. */
+let openSessionKey: string | undefined;
+/** A session key: what the starting page keeps to cancel its own session. */
+const SESSION_KEY = /^[A-Za-z0-9-]{16,128}$/;
 /** What the open session's wait resolves with when the page cancels it. */
 const CANCELLED = Symbol("cancelled");
 
@@ -129,7 +133,8 @@ export function browserLaunchArgs(os: typeof Deno.build.os, url: string): [strin
  * @param url The authorization URL.
  */
 export async function defaultOpenBrowser(url: string): Promise<void> {
-  const [cmd, args] = browserLaunchArgs(Deno.build.os, url);
+  // The normalized href (a URL the callers already validated as absolute https).
+  const [cmd, args] = browserLaunchArgs(Deno.build.os, new URL(url).href);
   await new Deno.Command(cmd, { args, stdout: "null", stderr: "null" }).output();
 }
 
@@ -187,6 +192,14 @@ interface AuthStart {
   timeoutMs: number | undefined;
   /** The fixed loopback port (RFC 8252 §7.3 allows one), else an ephemeral port is chosen. */
   loopbackPort?: number;
+  /** The starting page's session key (its cancel must name it). */
+  session?: string;
+}
+
+/** A cancel request, naming the session it ends. */
+interface AuthCancel {
+  cancel: true;
+  session?: string;
 }
 
 /**
@@ -207,41 +220,67 @@ function parseLoopbackPort(raw: unknown, redirectUri: URL): number | undefined |
 /** The JSON body: `{ cancel: true }` (end the open session), or an https `authUrl` with a
  * loopback, fragment-less `redirect_uri` + optional positive `timeoutMs` (all 400 `invalid`).
  * Returns the parsed inputs or the error Response. */
-async function parseAuthBody(request: Request): Promise<AuthStart | { cancel: true } | Response> {
-  let payload: { authUrl?: unknown; timeoutMs?: unknown; cancel?: unknown; loopbackPort?: unknown };
+async function parseAuthBody(request: Request): Promise<AuthStart | AuthCancel | Response> {
+  let payload: AuthPayload;
   try {
-    payload = await request.json();
+    payload = await request.json() ?? {};
   } catch {
     return fail(400, "invalid", "body must be JSON");
   }
-  if (payload?.cancel === true) return { cancel: true };
-  const { authUrl, timeoutMs } = payload ?? {};
+  const session = payload.session;
+  if (session !== undefined && (typeof session !== "string" || !SESSION_KEY.test(session))) {
+    return fail(400, "invalid", "session must be a 16–128 character key");
+  }
+  if (payload.cancel === true) {
+    return session === undefined ? { cancel: true } : { cancel: true, session };
+  }
+  const start = parseAuthStart(payload);
+  if (start instanceof Response) return start;
+  return session === undefined ? start : { ...start, session };
+}
 
-  let authParsed: URL;
+/** A start or cancel request's JSON body, as received. */
+interface AuthPayload {
+  authUrl?: unknown;
+  timeoutMs?: unknown;
+  cancel?: unknown;
+  loopbackPort?: unknown;
+  session?: unknown;
+}
+
+/** The `authUrl` as an absolute https URL with a loopback `redirect_uri`, or the 400. */
+function parseAuthUrl(authUrl: unknown): { authUrl: URL; redirectUri: URL } | Response {
+  let parsed: URL;
   try {
-    authParsed = new URL(typeof authUrl === "string" ? authUrl : "");
+    parsed = new URL(typeof authUrl === "string" ? authUrl : "");
   } catch {
     return fail(400, "invalid", "authUrl must be an absolute https: URL");
   }
-  if (authParsed.protocol !== "https:") {
+  if (parsed.protocol !== "https:") {
     return fail(400, "invalid", "authUrl must be an absolute https: URL");
   }
-  const redirectUriStr = authParsed.searchParams.get("redirect_uri");
-  if (redirectUriStr === null || !isLoopbackRedirect(redirectUriStr)) {
+  const redirect = parsed.searchParams.get("redirect_uri");
+  if (redirect === null || !isLoopbackRedirect(redirect)) {
     return fail(400, "invalid", "redirect_uri must be a loopback http: URI without a fragment");
   }
+  return { authUrl: parsed, redirectUri: new URL(redirect) };
+}
+
+/** A start request's inputs (everything but the session key), or the 400. */
+function parseAuthStart(payload: AuthPayload): AuthStart | Response {
+  const urls = parseAuthUrl(payload.authUrl);
+  if (urls instanceof Response) return urls;
+  const { timeoutMs } = payload;
   if (
     timeoutMs !== undefined &&
     (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0)
   ) {
     return fail(400, "invalid", "timeoutMs must be a positive number of milliseconds");
   }
-  const redirectUri = new URL(redirectUriStr);
-  const loopbackPort = parseLoopbackPort(payload.loopbackPort, redirectUri);
+  const loopbackPort = parseLoopbackPort(payload.loopbackPort, urls.redirectUri);
   if (loopbackPort instanceof Response) return loopbackPort;
   return {
-    authUrl: authParsed,
-    redirectUri,
+    ...urls,
     timeoutMs: timeoutMs as number | undefined,
     ...(loopbackPort !== undefined ? { loopbackPort } : {}),
   };
@@ -251,7 +290,7 @@ async function validateAuthRequest(
   request: Request,
   token: string,
   access: DesktopRequestAccess,
-): Promise<AuthStart | { cancel: true } | Response> {
+): Promise<AuthStart | AuthCancel | Response> {
   return validateAuthHeaders(request, token, access) ?? await parseAuthBody(request);
 }
 
@@ -276,9 +315,12 @@ async function validateAuthRequest(
  * `loopbackPort` already in use: 409 `{code:"port_in_use"}`), and a timeout
  * (408 `{code:"timeout"}`). On success: 200 `{ url }`.
  *
- * A body of `{ cancel: true }` (behind the same checks 1–4) ends the open session instead: the
- * page's cancel, since the system browser reports no cancellation. That session answers 499
- * `{code:"cancelled"}`, and the cancel request 200 `{ cancelled }` (whether one was open).
+ * A body of `{ cancel: true, session }` (behind the same checks 1–4) ends the open session
+ * instead: the page's cancel, since the system browser reports no cancellation. A session started
+ * with a `session` key is bound to that page, as a scheme session is: only a cancel naming the
+ * key ends it, and so does its own start request going away (the page reloaded or navigated).
+ * That session answers 499 `{code:"cancelled"}`, and the cancel request 200 `{ cancelled }`
+ * (whether it ended one).
  */
 export async function handleDesktopAuthSession(
   request: Request,
@@ -289,7 +331,11 @@ export async function handleDesktopAuthSession(
   const parsed = await validateAuthRequest(request, token, access);
   if (parsed instanceof Response) return parsed;
   if ("cancel" in parsed) {
-    const open = cancelOpen;
+    // Bound to the starting page, as a scheme session is: a session started with a key ends only
+    // on a cancel naming it, not on one from another window of the app.
+    const open = openSessionKey === undefined || parsed.session === openSessionKey
+      ? cancelOpen
+      : undefined;
     open?.();
     return Response.json({ cancelled: open !== undefined });
   }
@@ -306,8 +352,11 @@ export async function handleDesktopAuthSession(
     const bound = bindCallbackListener(redirectUri, parsed.loopbackPort, (url) => onCallback(url));
     if (bound instanceof Response) return bound;
     server = bound.server;
+    openSessionKey = parsed.session;
     const callbackUrl = await new Promise<string | null | typeof CANCELLED>((resolve) => {
       cancelOpen = () => resolve(CANCELLED);
+      // The starting page going away (a reload, a navigation) drops its request: end its session.
+      request.signal?.addEventListener("abort", () => resolve(CANCELLED), { once: true });
       onCallback = resolve;
       const rewrittenAuth = new URL(authParsed.href);
       rewrittenAuth.searchParams.set("redirect_uri", bound.redirect);
@@ -326,6 +375,7 @@ export async function handleDesktopAuthSession(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
     cancelOpen = undefined;
+    openSessionKey = undefined;
     if (server) await server.shutdown().catch(() => {});
     busy = false;
   }
@@ -394,4 +444,5 @@ function bindCallbackListener(
 export function resetDesktopAuthSessionForTesting(): void {
   busy = false;
   cancelOpen = undefined;
+  openSessionKey = undefined;
 }

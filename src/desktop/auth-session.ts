@@ -108,8 +108,13 @@ export async function startDesktopAuthSession(
   }
   const signal = opts?.signal;
   if (signal?.aborted) throw authSessionError("cancelled", "the sign-in was cancelled");
+  // This page's key for the session: only a cancel naming it ends the session (not another window).
+  const session = crypto.randomUUID();
   const cancel = () =>
-    void postAuthSession(token, { cancel: true }).then((r) => r.body?.cancel(), () => {});
+    void postAuthSession(token, { cancel: true, session }).then(
+      (r) => r.body?.cancel(),
+      () => {},
+    );
   signal?.addEventListener("abort", cancel, { once: true });
   const hideOverlay = opts?.cancelOverlay === false
     ? () => {}
@@ -119,6 +124,7 @@ export async function startDesktopAuthSession(
   try {
     res = await postAuthSession(token, {
       authUrl: url,
+      session,
       timeoutMs: opts?.timeoutMs,
       ...(opts?.loopbackPort !== undefined ? { loopbackPort: opts.loopbackPort } : {}),
     });
