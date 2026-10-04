@@ -42,6 +42,8 @@ export interface SpaDevServerOptions {
   unbundled?: boolean;
   /** Extra dev origins (hosts) allowed to reach the `/_denext/*` dev endpoints. */
   allowedDevOrigins?: string[];
+  /** The session token a non-loopback bind requires (see `DevServerOptions.devToken`). */
+  devToken?: string;
 }
 
 /** The unbundled SPA's separately-extracted stylesheet URL. */

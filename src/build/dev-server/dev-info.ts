@@ -16,11 +16,13 @@ import { join } from "@std/path";
  * @param outDir The project's `.denext` directory.
  * @param devOrigins The extra origins the dev origin gate allows.
  * @param info The address the server listens on.
+ * @param token The session token of a non-loopback bind, if any.
  */
 export function writeDevInfo(
   outDir: string,
   devOrigins: readonly string[],
   info: { hostname: string; port: number },
+  token?: string,
 ): void {
   try {
     Deno.mkdirSync(outDir, { recursive: true });
@@ -33,6 +35,9 @@ export function writeDevInfo(
         devOrigins,
         pid: Deno.pid,
         startedAt: Date.now(),
+        // A non-loopback bind's session token, so `denext mobile dev` / `desktop dev` can attach
+        // to this server (the file is the developer's own; `/_denext/@fs` never serves it).
+        ...(token ? { token } : {}),
       }),
     );
   } catch { /* best-effort — a read-only FS just means no MCP discovery */ }

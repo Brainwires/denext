@@ -8,6 +8,7 @@ import { createSpaDevHandler } from "./dev-handler.ts";
 import { createSpaDevState, type SpaDevServerOptions } from "./dev-state.ts";
 import { watch } from "./dev-watch.ts";
 import { removeDevInfo, writeDevInfo } from "../dev-server/dev-info.ts";
+import { withDevTokenGate, withDevTokenParam } from "../dev-server/dev-token.ts";
 
 /** Start the SPA dev server for `options.paths`. */
 export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer {
@@ -31,17 +32,18 @@ export function startSpaDevServer(options: SpaDevServerOptions): Deno.HttpServer
       onListen: (info) => {
         // `.denext/dev.json`, as `denext dev` writes for the App Router: what lets
         // `denext_dev_logs` find this server and read the page's console back.
-        writeDevInfo(outDir, options.allowedDevOrigins ?? [], info);
+        writeDevInfo(outDir, options.allowedDevOrigins ?? [], info, options.devToken);
         if (options.onListen) options.onListen(info);
         else {
-          console.log(
-            `\n  denext dev (SPA)  ▸  http://${displayHost(info.hostname)}:${info.port}\n` +
-              `  entry ${st.spa.entry}\n`,
+          const url = withDevTokenParam(
+            `http://${displayHost(info.hostname)}:${info.port}`,
+            options.devToken,
           );
+          console.log(`\n  denext dev (SPA)  ▸  ${url}\n  entry ${st.spa.entry}\n`);
         }
       },
     },
-    serve,
+    withDevTokenGate(serve, options.devToken),
   );
   const cleanup = () => removeDevInfo(outDir);
   options.signal?.addEventListener("abort", cleanup, { once: true });

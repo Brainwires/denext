@@ -380,7 +380,7 @@
       "name": "dev",
       "summary": "Start the dev server",
       "usage": "denext dev [dir] [options]",
-      "description": "Without --port, an open port is auto-selected starting at 3000.\nWith --port, that exact port is required and the server errors if it is taken.\nThe dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\nexplicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\nbinds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.",
+      "description": "Without --port, an open port is auto-selected starting at 3000.\nWith --port, that exact port is required and the server errors if it is taken.\nThe dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\nexplicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\nbinds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.\nA non-loopback bind (--lan, --host) prints its URL with a session token\n(?__denext_dev=…): other machines need it for every request; this one does not.",
       "flags": [
         {
           "name": "port",

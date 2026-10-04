@@ -64,6 +64,12 @@ export interface DevServerOptions {
    */
   allowedDevOrigins?: string[];
   /**
+   * The session token a non-loopback bind requires of every request from another machine
+   * (`dev-server/dev-token.ts`). Default: derived from `hostname` (none on loopback; else
+   * `DENEXT_DEV_TOKEN`, or a fresh one).
+   */
+  devToken?: string;
+  /**
    * Force the unbundled per-module dev loop on (`true`) or off (`false`), overriding the
    * `DENEXT_DEV_UNBUNDLED` env default. An explicit option keeps mode selection per-server
    * — a process-global env var can't distinguish two servers running concurrently (e.g. in

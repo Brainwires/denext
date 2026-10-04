@@ -256,8 +256,18 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         </a>{" "}
         (or{" "}
         <code>--allowed-dev-origin</code>) lists any other host. Anything on the network that can
-        reach an allowed address can load the dev app and its source, so use <code>--lan</code>{" "}
-        on a network you trust.
+        reach an allowed address could load the dev app and its source, so a network bind carries a
+        session token: the printed URL and its QR code end in{" "}
+        <code>?__denext_dev=…</code>. The first request with it sets an HttpOnly,{" "}
+        <code>SameSite=Strict</code>{" "}
+        cookie and redirects to the clean URL; from then on every request from another machine —
+        pages,{" "}
+        <code>/_denext/*</code>, the module graph, the reload stream and the Live socket — needs
+        that cookie (or the <code>x-denext-dev-token</code> header) and is a <code>403</code>{" "}
+        without it. Requests from this machine's loopback need nothing. The token is new on each
+        run. <code>denext mobile dev --lan</code> writes the tokened URL into{" "}
+        <code>server.url</code>, and <code>denext desktop dev --lan</code>{" "}
+        sends it from the window's dev proxy.
       </p>
 
       <h2 id="the-denextmobile-runtime">

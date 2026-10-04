@@ -13,6 +13,7 @@ import { build } from "../../build/build.ts";
 import { staticExport } from "../../build/export.ts";
 import { applyPatchesAtBoot } from "./patch.ts";
 import { lanBanner, pickLanAddress } from "../../build/dev-server/lan.ts";
+import { devSessionToken, withDevTokenParam } from "../../build/dev-server/dev-token.ts";
 import { devOriginError } from "../../server/config-validate.ts";
 import { SOURCEMAPS_ENV } from "../../build/hidden-sourcemaps.ts";
 
@@ -81,15 +82,23 @@ export function allowedDevOriginFlag(
  */
 function devBind(
   ctx: CommandContext,
-): { hostname?: string; onListen?: (info: { hostname: string; port: number }) => void } {
+): {
+  hostname?: string;
+  devToken?: string;
+  onListen?: (info: { hostname: string; port: number }) => void;
+} {
   const host = ctx.flags.host as string | undefined;
-  if (ctx.flags.lan !== true) return { hostname: host };
+  if (ctx.flags.lan !== true) return { hostname: host, devToken: devSessionToken(host) };
   if (host !== undefined) fail("denext dev: --lan picks the address itself; drop --host.");
   const address = pickLanAddress();
   if (!address) fail("denext dev --lan: this machine has no LAN IPv4 address (is Wi-Fi on?).");
+  // A LAN bind: the printed URL (and its QR code) carries the session token.
+  const devToken = devSessionToken(address);
   return {
     hostname: address,
-    onListen: ({ port }) => console.log(lanBanner(`http://${address}:${port}`)),
+    devToken,
+    onListen: ({ port }) =>
+      console.log(lanBanner(withDevTokenParam(`http://${address}:${port}`, devToken))),
   };
 }
 
@@ -124,7 +133,9 @@ export const devCommand: CommandSpec = {
     "The dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\n" +
     "explicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\n" +
     "binds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n" +
-    "--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.",
+    "--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.\n" +
+    "A non-loopback bind (--lan, --host) prints its URL with a session token\n" +
+    "(?__denext_dev=…): other machines need it for every request; this one does not.",
   run: async (ctx) => {
     const allowed = allowedDevOriginFlag(ctx.flags["allowed-dev-origin"]);
     if (!allowed.ok) fail(`denext dev: ${allowed.error}`);
@@ -138,6 +149,7 @@ export const devCommand: CommandSpec = {
       paths,
       port: port ?? 3000,
       hostname: bind.hostname,
+      devToken: bind.devToken,
       onListen: bind.onListen,
       allowedDevOrigins: allowed.origins,
       strictPort: port !== undefined,

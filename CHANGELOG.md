@@ -103,6 +103,18 @@ and this project adheres to
   neither a JS / TS / JSON module under the project nor part of the app's module graph; an unknown
   extension is no longer parsed as TSX. Off loopback, `/_denext/*` also requires the browser's
   `Sec-Fetch-Site: same-origin`: a client that sends neither it nor an `Origin` is refused.
+- **A dev server bound to a network address requires a session token.** `Host`, `Origin` and
+  `Sec-Fetch-Site` are only headers to a client that is not a browser, so with `--lan` or `--host`
+  any machine on the network could still read every module through `/_denext/@fs` (server-only
+  ones included), the captured console from `/_denext/dev-state`, and launch the editor. Such a
+  bind now prints its URL (and QR code) with `?__denext_dev=<token>`, a fresh 256-bit token per
+  run; the first request trades it for an HttpOnly, `SameSite=Strict` cookie and redirects to the
+  clean URL, and every request whose socket peer is not this machine's loopback (pages, every
+  `/_denext/*` route, the reload stream, the Live socket) needs the cookie, the
+  `x-denext-dev-token` header or the query, else `403`. The peer address decides, never `Host`.
+  `denext mobile dev --lan` writes the tokened URL into `server.url`, `denext desktop dev --lan`'s
+  window proxy sends the header, and an attached server's token is read from its
+  `.denext/dev.json`. Loopback binds are unchanged.
 - **`denext mobile build --release` refuses to ship a dev server.** A killed `denext mobile dev`
   session left `server.url` (the LAN dev server) and `cleartext` in the Capacitor config, and the
   next release build (or fastlane lane) shipped an app that loaded its UI over plain http from that

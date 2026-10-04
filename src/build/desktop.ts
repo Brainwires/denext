@@ -35,6 +35,7 @@ import {
   resolveDesktopWsOrigin,
 } from "../desktop/transport.ts";
 import { sha256Base64 } from "../server/csp.ts";
+import { devProxyTokenHeaders } from "./dev-server/dev-token.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-confirm.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
@@ -1047,13 +1048,16 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // In live-reload mode, forward everything (that is not a local endpoint) to the dev server.
   // `allowNonLoopback` is set because the loopback rule is the CLI's job (and `--lan` may opt in);
   // `proxyToBackend` forwards to the target regardless of prefixes.
+  // A LAN dev server's session token rides the dev URL (`?__denext_dev=…`, from `desktop dev
+  // --lan`); every proxied request carries it upstream as a header.
+  const devTokenHeaders = devUrl ? devProxyTokenHeaders(devUrl) : {};
   const devProxy: DesktopProxyFn | undefined = devUrl && proxy
     ? (req, url) =>
       proxy.proxyToBackend(req, url, {
         target: devUrl,
         prefixes: [],
         allowNonLoopback: devDecision.proxy && devDecision.allowNonLoopback,
-      })
+      }, devTokenHeaders)
     : undefined;
   // The capability bridge over the compiled allowlist (default deny — no capabilities means every
   // RPC answers `unavailable`), plus the app-event capabilities of denext's pinned runtime (deep

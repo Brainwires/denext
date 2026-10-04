@@ -265,11 +265,11 @@ Per-request observability is code, not config: export `onRequest(info)` from
   hand — `denext dev --lan` and an explicit `--host` allow the address they
   bind (`--host 0.0.0.0` allows this machine's own addresses), and
   `--allowed-dev-origin <origin>` (repeatable, or comma-separated) adds entries
-  for one run. A listed host lets a browser on another device load the app's
-  transformed source: off loopback, a request must carry the browser's
-  `Sec-Fetch-Site: same-origin` (a bare client such as `curl` from another
-  machine is refused), and cross-site pages are refused (`Sec-Fetch-Site` /
-  `Origin`). `/_denext/@fs` never serves a dotfile or dot-directory (`.env*`,
+  for one run. A network bind also requires its session token from every
+  other machine (the URL `denext dev` prints carries it; see
+  [Live reload on a device](/docs/mobile#live-reload-on-a-device)), and off
+  loopback a request must carry the browser's `Sec-Fetch-Site: same-origin`;
+  cross-site pages are refused (`Sec-Fetch-Site` / `Origin`). `/_denext/@fs` never serves a dotfile or dot-directory (`.env*`,
   `.git/`, `.denext/`), a key store (`*.pem`, `*.key`, `*.p12`, …) or a file
   that is not a JS / TS / JSON module outside the app's own module graph. See
   [Live reload on a device](/docs/mobile#live-reload-on-a-device). An entry may
