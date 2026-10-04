@@ -29,7 +29,11 @@ import {
   writeAppUpdateArchive,
 } from "../src/build/app-update.ts";
 import { extractArchive } from "../src/build/safe-extract.ts";
-import { generateOtaKeyPair, importOtaSigningKey } from "../src/build/ota-signing.ts";
+import {
+  generateOtaKeyPair,
+  importOtaSigningKey,
+  otaPublicKeyOf,
+} from "../src/build/ota-signing.ts";
 import {
   DESKTOP_APP_CONFIG_FILE,
   syncDesktopAppConfigAt,
@@ -350,6 +354,86 @@ Deno.test("publishAppUpdate: signed manifest + archive; another platform of the 
         }),
       Error,
       "https",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("otaPublicKeyOf: the public half of an imported signing key", async () => {
+  const { key, publicKey } = await keys();
+  assertEquals(await otaPublicKeyOf(key), publicKey);
+});
+
+Deno.test("publishAppUpdate: an existing same-release manifest merges only when it verifies against the signing key", async () => {
+  const { key } = await keys();
+  const other = await keys();
+  const dir = await Deno.makeTempDir();
+  try {
+    const app = await fakeApp(dir, "App.app");
+    const out = join(dir, "updates");
+    const manifest = join(out, APP_UPDATE_MANIFEST_FILE);
+    await Deno.mkdir(out, { recursive: true });
+    const common = {
+      app: "com.example.app",
+      urlBase: "https://u.example.com/rel",
+      outDir: out,
+      key,
+      artifact: app,
+      version: "2.0.0",
+      platform: "x86_64-apple-darwin-webview",
+    };
+    const evil = payload({
+      platforms: {
+        "aarch64-apple-darwin-webview": {
+          url: "https://evil.example.com/a.tar.gz",
+          sha256: "b".repeat(64),
+          size: 10,
+          kind: "bundle",
+        },
+      },
+    });
+    const refuses = async (text: string) => {
+      await Deno.writeTextFile(manifest, text);
+      await assertRejects(() => publishAppUpdate(common), Error, "refusing to merge");
+      assertEquals(await Deno.readTextFile(manifest), text, "the manifest was rewritten");
+    };
+    // Unsigned, signed with another key, and tampered after signing: all refused, file untouched.
+    await refuses(JSON.stringify({ signed: JSON.stringify(evil), signature: "" }));
+    await refuses(JSON.stringify(await signAppUpdatePayload(evil, other.key)));
+    const genuine = await signAppUpdatePayload(payload(), key);
+    await refuses(JSON.stringify({ ...genuine, signed: JSON.stringify(evil) }));
+    // Not a manifest at all.
+    await Deno.writeTextFile(manifest, "not json");
+    await assertRejects(() => publishAppUpdate(common), Error, "not an app-update manifest");
+    // A key that can't be exported can't verify, so it can't merge either.
+    const sealed = await crypto.subtle.generateKey(
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign", "verify"],
+    );
+    await Deno.writeTextFile(manifest, JSON.stringify(genuine));
+    await assertRejects(
+      () => publishAppUpdate({ ...common, key: sealed.privateKey }),
+      Error,
+      "not extractable",
+    );
+    // Another release signed with another key is replaced, nothing of it carried over.
+    await Deno.writeTextFile(
+      manifest,
+      JSON.stringify(await signAppUpdatePayload(payload({ version: "1.0.0" }), other.key)),
+    );
+    const replaced = await publishAppUpdate(common);
+    assertEquals(replaced.platforms, ["x86_64-apple-darwin-webview"]);
+    // The genuine same-release manifest merges.
+    await Deno.writeTextFile(manifest, JSON.stringify(genuine));
+    const merged = await publishAppUpdate(common);
+    assertEquals(
+      merged.platforms,
+      [
+        ...Object.keys(payload().platforms),
+        "x86_64-apple-darwin-webview",
+      ].sort(),
     );
   } finally {
     await Deno.remove(dir, { recursive: true });

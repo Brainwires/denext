@@ -63,16 +63,36 @@ export async function importOtaSigningKey(pem: string): Promise<CryptoKey> {
   const der = pemBody(pem, "PRIVATE KEY");
   if (!der) throw new Error("the signing key is not a -----BEGIN PRIVATE KEY----- (PKCS#8) PEM");
   try {
+    // Extractable so {@linkcode otaPublicKeyOf} can derive the public half (a publisher verifies
+    // what it is about to re-sign); the key never leaves the process either way.
     return await crypto.subtle.importKey(
       "pkcs8",
       der as BufferSource,
       KEY_ALGORITHM,
-      false,
+      true,
       ["sign"],
     );
   } catch {
     throw new Error("the signing key is not an ECDSA P-256 private key");
   }
+}
+
+/**
+ * The base64 SPKI public key of a signing key (as `denext ota keygen` writes to `<out>.pub`).
+ *
+ * @param key An extractable ECDSA P-256 private key ({@linkcode importOtaSigningKey} imports one).
+ * @throws When the key is not extractable or not an EC key.
+ */
+export async function otaPublicKeyOf(key: CryptoKey): Promise<string> {
+  const { kty, crv, x, y } = await crypto.subtle.exportKey("jwk", key);
+  const pub = await crypto.subtle.importKey(
+    "jwk",
+    { kty, crv, x, y, ext: true },
+    KEY_ALGORITHM,
+    true,
+    ["verify"],
+  );
+  return toBase64(new Uint8Array(await crypto.subtle.exportKey("spki", pub)));
 }
 
 /**

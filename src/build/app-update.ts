@@ -17,7 +17,7 @@
 
 import { createHash } from "node:crypto";
 import { basename, join } from "@std/path";
-import { fromBase64, parseOtaPublicKey, toBase64 } from "./ota-signing.ts";
+import { fromBase64, otaPublicKeyOf, parseOtaPublicKey, toBase64 } from "./ota-signing.ts";
 
 /** What the signature covers before the signed string (the runtime's `SIGNATURE_DOMAIN`). */
 const APP_UPDATE_SIGNATURE_DOMAIN = "denext-app-update-v1\n";
@@ -436,17 +436,55 @@ export interface PublishAppUpdateResult {
   readonly platforms: string[];
 }
 
-/** The payload of an existing manifest at `path` (unverified: the publisher's own file). */
-async function readExistingPayload(path: string): Promise<AppUpdatePayload | null> {
+/**
+ * The payload of the manifest already at `path` when it is the SAME release (app + version), so
+ * its other platforms carry over — verified first against the public half of `key`: re-signing
+ * an entry nobody verified would put this key's signature on whatever a writable output
+ * directory (a CI cache, a shared bucket) was made to hold. A manifest for another release is
+ * replaced, so nothing of it is trusted; `null` when there is none.
+ *
+ * @throws Error when the file is not a manifest, or a same-release one is unsigned, does not
+ *   verify, or was signed with another key.
+ */
+async function readExistingRelease(
+  path: string,
+  key: CryptoKey,
+  app: string,
+  version: string,
+): Promise<AppUpdatePayload | null> {
   let text: string;
   try {
     text = await Deno.readTextFile(path);
   } catch {
     return null;
   }
-  const env = JSON.parse(text) as Partial<AppUpdateEnvelope>;
-  if (typeof env.signed !== "string") throw new Error(`${path} is not an app-update manifest`);
-  return JSON.parse(env.signed) as AppUpdatePayload;
+  let env: Partial<AppUpdateEnvelope>;
+  let payload: AppUpdatePayload;
+  try {
+    env = JSON.parse(text) as Partial<AppUpdateEnvelope>;
+    payload = JSON.parse(String(env.signed)) as AppUpdatePayload;
+  } catch {
+    throw new Error(`${path} is not an app-update manifest`);
+  }
+  if (payload?.app !== app || payload.version !== version) return null;
+  let publicKey: string;
+  try {
+    publicKey = await otaPublicKeyOf(key);
+  } catch {
+    throw new Error(
+      `cannot verify the existing ${path}: the signing key is not extractable ` +
+        "(import it with importOtaSigningKey / loadOtaSigningKey)",
+    );
+  }
+  try {
+    return await verifyAppUpdateEnvelope(env, publicKey);
+  } catch (err) {
+    throw new Error(
+      `refusing to merge into ${path}: ${err instanceof Error ? err.message : err} with this ` +
+        "signing key (unsigned, tampered with, or signed with another key). Re-publish every " +
+        "platform of this release into an empty directory, or remove the file.",
+    );
+  }
 }
 
 /**
@@ -471,9 +509,9 @@ export async function publishAppUpdate(
   const archive = join(o.outDir, archiveName);
   const { sha256, size } = await writeAppUpdateArchive(o.artifact, archive);
   const manifest = join(o.outDir, APP_UPDATE_MANIFEST_FILE);
-  const existing = await readExistingPayload(manifest);
-  // Another platform of the SAME release keeps its entry (and its notes / minVersion unless given).
-  const same = existing?.app === o.app && existing.version === o.version ? existing : null;
+  // Another platform of the SAME release keeps its entry (and its notes / minVersion unless
+  // given) — only once that manifest verifies against this signing key.
+  const same = await readExistingRelease(manifest, o.key, o.app, o.version);
   const minVersion = o.minVersion ?? same?.minVersion;
   const releaseNotes = o.releaseNotes ?? same?.releaseNotes;
   const payload: AppUpdatePayload = {

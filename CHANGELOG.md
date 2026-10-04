@@ -65,6 +65,12 @@ and this project adheres to
   it. The `Authorization` header is now read through `headers()`, so a bearer read answers
   `private, no-store` and is never stored, postpones under PPR, throws inside `"use cache"`, and
   reads signed out under `dynamic = "force-static"`.
+- **`denext desktop publish-update` verifies a manifest before it merges into it.** Publishing
+  another platform of a release kept the existing `app-update.json`'s entries without checking its
+  signature, then signed the result, so whoever could write the output directory (a CI cache, a
+  shared bucket) got their own platform entries signed with the app's key. The existing manifest
+  of the same release must now verify against the public half of the signing key; an unsigned,
+  tampered or foreign-key manifest is refused with an error, and the file is left as it was.
 
 ## [3.1.0] - 2026-10-03
 

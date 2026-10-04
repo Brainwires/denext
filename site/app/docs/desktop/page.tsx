@@ -1104,9 +1104,10 @@ if (found.available) {
         </code>{" "}
         with <code>--key ota.key</code> or{" "}
         <code>DENEXT_OTA_SIGNING_KEY</code>: it writes the archive and a signed{" "}
-        <code>app-update.json</code>, adding each platform of the same version to it. Upload both.
-        The version comes from deno.json, the identifier from{" "}
-        <code>desktop.app.identifier</code>, the platform key (<code>
+        <code>app-update.json</code>, adding each platform of the same version to it (an existing
+        manifest for that version must verify against the same key first, or it refuses rather than
+        re-sign entries nobody checked). Upload both. The version comes from deno.json, the
+        identifier from <code>desktop.app.identifier</code>, the platform key (<code>
           &lt;rust target&gt;-&lt;webview|cef&gt;
         </code>, <code>-appimage</code> for an AppImage) from the artifact;{" "}
         <code>--min-version</code> marks older versions as <code>required</code>,{" "}
