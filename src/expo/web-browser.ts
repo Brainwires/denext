@@ -19,7 +19,7 @@
  * @module
  */
 
-import { openExternal } from "../mobile/bridge.ts";
+import { isNativeShell, openExternal } from "../mobile/bridge.ts";
 import {
   AUTH_SESSION_WINDOW,
   type AuthSessionError,
@@ -203,6 +203,14 @@ export async function openAuthSessionAsync(
   redirectUrl?: string | null,
   options: AuthSessionOpenOptions = {},
 ): Promise<WebBrowserAuthSessionResult> {
+  if (isNativeShell() && /^https?:/i.test(redirectUrl ?? "")) {
+    // The native session ends only on a redirect to the app's own scheme: an http(s) redirect
+    // would leave it waiting for good. Refuse up front, as nothing could complete it.
+    throw new TypeError(
+      `openAuthSessionAsync: redirectUrl "${redirectUrl}" must use the app's custom scheme ` +
+        "(myapp://…) in the native shell; http(s) redirects only complete on the web",
+    );
+  }
   rememberRedirect(redirectUrl);
   try {
     const result = await openAuthSession(url, {

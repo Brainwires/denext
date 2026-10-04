@@ -119,9 +119,22 @@ function uuidv5(name: string, namespace: string | number[]): string {
   return formatUuid(bytes);
 }
 
-/** Expo's `uuid`: `v4()` over `crypto.randomUUID`, `v5(name, namespace)` over SHA-1. */
+/**
+ * A version 4 UUID: `crypto.randomUUID()` where it exists, else 16 bytes from
+ * `crypto.getRandomValues` — `randomUUID` is limited to secure contexts, so a page served over
+ * plain http (a dev server on the LAN) has only the latter, as Expo's own fallback does.
+ */
+function uuidv4(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return formatUuid(bytes);
+}
+
+/** Expo's `uuid`: `v4()` over the platform's CSPRNG, `v5(name, namespace)` over SHA-1. */
 export const uuid: UUID = {
-  v4: () => crypto.randomUUID(),
+  v4: uuidv4,
   v5: uuidv5,
   namespace: Uuidv5Namespace,
 };

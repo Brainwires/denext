@@ -55,6 +55,12 @@ and this project adheres to
   denext's new `denext/react/compiler-runtime` entry (only `c`, as React's module, on the same hook
   instance as the app's components), and `denext codemod` rewrites it to `denext/compiler-runtime`,
   which the compat build now also takes from the shared runtime.
+- **`expo`'s `uuid.v4()` works outside a secure context again.** It called
+  `crypto.randomUUID()`, which a page served over plain http (a dev server on the LAN) does not
+  have; it now falls back to `crypto.getRandomValues`, as Expo's does.
+- **`expo-web-browser`'s `openAuthSessionAsync` refuses an http(s) `redirectUrl` in the native
+  shell** instead of waiting forever: a native session ends only on a redirect to the app's own
+  scheme.
 
 ### Security
 

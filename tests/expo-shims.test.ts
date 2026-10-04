@@ -360,6 +360,16 @@ Deno.test("expo-web-browser: openBrowserAsync → Browser; auth session results 
     });
   });
   assertEquals(WebBrowser.maybeCompleteAuthSession().type, "failed");
+  // An https redirect can never end a native session: refused up front, nothing started.
+  const never = recorder(["start"], { start: new Promise(() => {}) });
+  await inShell({ DenextAuthSession: never.plugin }, async () => {
+    await assertRejects(
+      () => WebBrowser.openAuthSessionAsync("https://auth.test/a", "https://app.test/cb"),
+      TypeError,
+      "must use the app's custom scheme",
+    );
+  });
+  assertEquals(never.calls, []);
 });
 
 Deno.test("expo-web-browser: maybeCompleteAuthSession completes only the auth-session popup on the expected redirect", async () => {
@@ -1190,6 +1200,24 @@ Deno.test("expo (SDK 58): Platform, uuid and the coded errors are Expo's web bui
   assertEquals(missing.code, "ERR_UNAVAILABLE");
   assertMatch(missing.message, /ExpoThing\.doIt is not available on web/);
   assertEquals(Expo.createSnapshotFriendlyRef<number>(), { current: null });
+});
+
+Deno.test("expo uuid.v4: falls back to getRandomValues outside a secure context (no randomUUID)", () => {
+  const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(crypto), "randomUUID");
+  const v4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  Object.defineProperty(crypto, "randomUUID", { configurable: true, value: undefined });
+  try {
+    const ids = new Set(Array.from({ length: 64 }, () => Expo.uuid.v4()));
+    assertEquals(ids.size, 64);
+    for (const id of ids) assertMatch(id, v4);
+  } finally {
+    delete (crypto as { randomUUID?: unknown }).randomUUID;
+    if (desc && !Object.getOwnPropertyDescriptor(Object.getPrototypeOf(crypto), "randomUUID")) {
+      Object.defineProperty(Object.getPrototypeOf(crypto), "randomUUID", desc);
+    }
+  }
+  assertEquals(typeof crypto.randomUUID, "function", "restored");
+  assertMatch(Expo.uuid.v4(), v4);
 });
 
 Deno.test("expo (SDK 58): useReleasingSharedObject releases on unmount and on a dependency change", async () => {
