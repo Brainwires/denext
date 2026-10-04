@@ -10,6 +10,40 @@ and this project adheres to
 
 ### Changed
 
+- **Deno Desktop: denext adopts the runtime 2.9.7-denext.9 contract.** These need that runtime
+  and do not work with an older one:
+  - **The page's WebSockets dial the relay with its per-launch token.** The runtime publishes
+    `DENO_DESKTOP_WS_URL` (`ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>`) and refuses an
+    upgrade without the token (403). denext injects it into the app's top-level page as
+    `__denext.wsUrl`, never into a frame. `desktopWebSocketUrl(path)` and the Live client append
+    the page's path, and `Deno.serve` sees `GET <path>`; a bare query (`"?room=1"`) is now accepted
+    too. `desktopWsOrigin()` is replaced by `desktopWsUrl()`, the relay URL with the token
+    (`DENO_DESKTOP_WS_ORIGIN_ENV` → `DENO_DESKTOP_WS_URL_ENV`).
+  - **Capabilities that need it bake an unscoped `--allow-sys`.** The runtime refuses reading or
+    watching the clipboard, global shortcuts, `setLaunchAtLogin`, OS notifications (scheduled or
+    `new Notification()`) and forcing a deep-link scheme back (`registerScheme({ force })`)
+    without it, and a partial `--allow-sys=<names>` does not satisfy it. So `clipboard`,
+    `global-shortcuts`, `launch-at-login` and `notifications`, and any `desktop.app.deepLinks`
+    scheme, add `--allow-sys` to the package flags. `denext desktop add` reports these
+    capabilities as BROAD trust.
+  - **Full-app update manifests carry `expiresAt` and `sequence`.** The runtime refuses a manifest
+    without them (`invalid_manifest`), one past its `expiresAt` (`expired`), and one with a lower
+    `sequence` than the install accepted before (`replayed`). `denext desktop publish-update` signs
+    both: an expiry 30 days out (`--expires-in <days>`, or `--expires-at <RFC 3339>`) and the Unix
+    time in seconds (`--sequence <n>`). The sequence is never below the existing manifest's, and
+    a new release's is above it. **A published manifest must be re-signed before it expires**:
+    `denext desktop publish-update --resign` re-signs the one in `--out` without the artifact, and
+    `resignAppUpdate()` is the API for it.
+  - **The publisher checks the version the artifact was built as.** The runtime refuses to stage
+    an update whose compiled deno.json `version` (and, on macOS, `CFBundleShortVersionString`) is
+    not the manifest's (`version_mismatch`). `publish-update` reads the version back from the
+    artifact and refuses before it signs anything.
+  - **`denext/desktop/updater` follows the runtime's updater.** It adds the codes `expired`,
+    `replayed` and `version_mismatch`. `checkForAppUpdate()` returns the manifest's `sequence` and
+    `expiresAt`. `appUpdateStatus()` returns `rejectedVersions` (every version rolled back, none
+    offered again) and `manifestSequence`. `confirmAppUpdate()` returns without waiting for the
+    previous app to be deleted.
+
 - **React Native mode's Expo shims follow Expo SDK 58.** Every `denext/expo/*` shim is matched
   against the SDK 58 release T3 Code's app pins (the others against their latest SDK 58 release),
   and `denext/expo/manifest` and the [Expo APIs](https://denext.dev/docs/react-native#expo-apis)
@@ -92,6 +126,19 @@ and this project adheres to
   an existing project's script.
 
 ### Security
+
+- **Deno Desktop: the native JS bridge serves only the app origin.** The packaged app's
+  `laufey-launch.json` now writes `"bridgeOrigins"`: the app origin (`desktop.app.origin`, else
+  `app://localhost`) and nothing broader. Without it, the bridge was pinned to every origin of the
+  app's custom scheme. With the default origin it was pinned to no origin, so it served any
+  document the window navigated to. `desktop.app.bridgeOrigins` adds other documents explicitly;
+  each also needs `bind(name, fn, { origins })`.
+- **Desktop endpoints refuse requests from other origins' documents.** The runtime's scheme
+  bridge marks a request from another origin's document with `x-deno-desktop-cross-origin: 1`.
+  Every `/_denext/desktop/*` endpoint now refuses a marked request (403) before any gate or
+  `onRequest` runs, even one that carries the token and the app `Origin`. This adds a layer and
+  does not replace the per-launch token: an engine that sends neither `Origin` nor
+  `Sec-Fetch-Site` leaves a foreign request unmarked.
 
 - **`auth()`'s native bearer path goes through the same cache guards as the cookie path.** A
   `Bearer nat_…` session was read straight off the request, so it did not mark the render

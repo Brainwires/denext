@@ -1111,19 +1111,47 @@ if (found.available) {
           &lt;rust target&gt;-&lt;webview|cef&gt;
         </code>, <code>-appimage</code> for an AppImage) from the artifact;{" "}
         <code>--min-version</code> marks older versions as <code>required</code>,{" "}
-        <code>--notes</code> sets the release notes.
+        <code>--notes</code>{" "}
+        sets the release notes. The artifact must have been packaged as the version you publish: it
+        reads the version compiled into the app back and refuses a mismatch (<code>
+          version_mismatch
+        </code>) before it signs.
+      </p>
+      <p>
+        <strong>Every manifest expires: re-sign it before it does.</strong> The manifest carries
+        {" "}
+        <code>expiresAt</code> and <code>sequence</code>, both signed. Installed apps refuse it from
+        {" "}
+        <code>expiresAt</code>{" "}
+        on (<code>expired</code>), so an attacker who controls the update host can&apos;t keep
+        serving an old manifest to hide a newer release. Installed apps also refuse a{" "}
+        <code>sequence</code> lower than the highest they accepted (<code>replayed</code>).{" "}
+        <code>publish-update</code>{" "}
+        sets the expiry 30 days out (<code>--expires-in &lt;days&gt;</code> or{" "}
+        <code>--expires-at &lt;RFC 3339&gt;</code>) and the sequence to the Unix time in seconds (
+        <code>--sequence &lt;n&gt;</code>). The sequence is never lower than the existing
+        manifest&apos;s, and a new release&apos;s is higher. Before the expiry, run{" "}
+        <code>denext desktop publish-update --resign</code> with the same key (and{" "}
+        <code>--out</code>). It re-signs the published <code>app-update.json</code>{" "}
+        with a fresh expiry and needs no artifact. Then upload the new file, for example from a
+        scheduled CI job that runs more often than the expiry. A manifest that is allowed to expire
+        stops every installed app from updating until you re-sign it.
       </p>
       <p>
         <strong>What the runtime checks before it writes anything at the install.</strong>{" "}
         The manifest&apos;s ECDSA P-256 signature against the baked key (<code>signature</code>),
         the app identifier (<code>wrong_app</code>), a version strictly newer than the running one
         (<code>downgrade</code>; the same version is simply not available), not a version that was
-        rolled back (<code>rejected</code>), this platform&apos;s entry (<code>no_platform</code>),
-        an https URL (<code>insecure_url</code>), a download that stops at the declared size (
+        rolled back (<code>rejected</code>), a manifest that has not expired (<code>expired</code>)
+        and whose <code>sequence</code> is not below the one this install accepted (
+        <code>replayed</code>), this platform&apos;s entry (<code>no_platform</code>), an https URL
+        (<code>insecure_url</code>), a download that stops at the declared size (
         <code>size_exceeded</code>) and matches its SHA-256 (<code>integrity</code>), an archive
         without traversal, escaping links or special files (<code>unsafe_archive</code>) that holds
-        this app (<code>bundle_mismatch</code>), and the operating system&apos;s code signature
-        (<code>os_signature</code>): on macOS{" "}
+        this app (<code>bundle_mismatch</code>) built as the manifest&apos;s version (
+        <code>version_mismatch</code>), and the operating system&apos;s code signature (<code>
+          os_signature
+        </code>): on macOS{" "}
         <code>codesign --verify --deep --strict</code>, the same Team ID as the running app,
         Gatekeeper (<code>spctl --assess --type execute</code>) and the same signing identifier; on
         Windows a trusted Authenticode signature with the same signer as the running executable, on
@@ -1173,7 +1201,9 @@ if (found.available) {
         yourself; it is a no-op when no update is pending, so it is safe on every launch.{" "}
         <code>appUpdateStatus()</code>{" "}
         reports the running version, whether updates can run here (and why not), the update phase, a
-        version on trial, the last one rolled back and where this launch came from (<code>
+        version on trial, the last one rolled back (<code>rejectedVersions</code>{" "}
+        lists all of them), the highest manifest <code>sequence</code>{" "}
+        accepted (<code>manifestSequence</code>) and where this launch came from (<code>
           null
         </code>{" "}
         outside the pinned runtime). A refusal throws an <code>AppUpdateError</code> whose{" "}
@@ -1221,9 +1251,13 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
         <code>--allow-run</code> / <code>--allow-ffi</code> / <code>--allow-sys</code> (plus a broad
         {" "}
         <code>--allow-write</code>{" "}
-        when a capability writes) that the enabled capabilities actually need. A project scaffolded
-        before 2.11 keeps its older scripts until you refresh them —{" "}
-        <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
+        when a capability writes) that the enabled capabilities actually need. The clipboard, global
+        shortcuts, launch at login and notifications capabilities, and any{" "}
+        <code>desktop.app.deepLinks</code>{" "}
+        scheme (claiming it back from another app), need an unscoped <code>--allow-sys</code>{" "}
+        under the pinned runtime. A list of names (<code>--allow-sys=osRelease</code>) does not
+        satisfy them. A project scaffolded before 2.11 keeps its older scripts until you refresh
+        them — <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
         of any file it changes.
@@ -1355,8 +1389,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               (the OS&apos;s own notifications, scheduled and repeating; pinned runtime, the WebView
               Notification API otherwise)
             </td>
-            <td>none (a runtime API)</td>
-            <td>none</td>
+            <td>
+              unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -1380,8 +1416,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               {" "}
               (text, HTML and PNG images; the WebView clipboard under the stock runtime)
             </td>
-            <td>none (a runtime API)</td>
-            <td>none</td>
+            <td>
+              unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -1403,8 +1441,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               <code>registerShortcut</code>, <code>unregisterShortcut</code>,{" "}
               <code>listShortcuts</code> (<code>denext/desktop/app</code>; pinned runtime)
             </td>
-            <td>none (a runtime API)</td>
-            <td>none</td>
+            <td>
+              unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -1415,8 +1455,10 @@ denext desktop add dialogs --dry-run               # the config diff + permissio
               (<code>denext/desktop/app</code>; login item · <code>Run</code>{" "}
               value · XDG autostart; pinned runtime)
             </td>
-            <td>none (a runtime API)</td>
-            <td>none</td>
+            <td>
+              unscoped <code>--allow-sys</code> (the pinned runtime requires it)
+            </td>
+            <td>broad</td>
           </tr>
           <tr>
             <td>
@@ -2194,27 +2236,35 @@ export default {
           (the origin and identifier), add it to <code>compile.include</code> in{" "}
           <code>deno.json</code> (keeping your other entries), and put a{" "}
           <code>laufey-launch.json</code> in the packaged app (<code>Contents/Resources</code>{" "}
-          on macOS, next to the executable on Windows and Linux) with the app id and the origin's
-          scheme. <code>denext desktop run</code> and <code>dev</code> write the same{" "}
-          <code>app.json</code>. Run <code>denext desktop package --regenerate-scripts</code>{" "}
+          on macOS, next to the executable on Windows and Linux) with the app id, the origin's
+          scheme and <code>"bridgeOrigins"</code>: the native JS bridge (<code>bind()</code>{" "}
+          handlers) serves the app origin only. To let another document call a binding, such as an
+          identity provider page the window navigates to, list its origin in{" "}
+          <code>desktop.app.bridgeOrigins</code> and in that binding&apos;s{" "}
+          <code>bind(name, fn, {"{ origins }"})</code>. <code>denext desktop run</code> and{" "}
+          <code>dev</code> write the same <code>app.json</code>. Run{" "}
+          <code>denext desktop package --regenerate-scripts</code>{" "}
           to adopt this in an older project.
         </li>
         <li>
           In the window, the app's server code reads the origin from{" "}
-          <code>DENO_DESKTOP_APP_ORIGIN</code>. WebSockets cannot use the custom scheme: the page
-          dials the loopback relay in <code>DENO_DESKTOP_WS_ORIGIN</code>{" "}
-          (<code>ws://127.0.0.1:&lt;port&gt;</code>), which admits only requests whose{" "}
-          <code>Origin</code> is the app origin.
+          <code>DENO_DESKTOP_APP_ORIGIN</code>. WebSockets cannot use the custom scheme, so the page
+          dials the loopback relay at <code>DENO_DESKTOP_WS_URL</code>{" "}
+          (<code>ws://127.0.0.1:&lt;port&gt;/.deno-desktop-relay/&lt;token&gt;</code>). The relay
+          admits only requests that carry its per-launch token and whose <code>Origin</code>{" "}
+          is the app origin. It strips the prefix, so the server sees{" "}
+          <code>GET /your/path</code>. Child processes do not inherit the variable.
         </li>
         <li>
-          The desktop runtime hands the relay to the page as{" "}
-          <code>__denext.wsOrigin</code>. denext&apos;s Live client (<code>&lt;Live&gt;</code>,{" "}
-          <code>useLive</code>,{" "}
-          <code>usePresence</code>, channels and subscriptions) dials it on its own; for your own
-          sockets, <code>desktopWebSocketUrl(path)</code> from <code>denext/desktop/client</code>
-          {" "}
-          returns the relay URL in such a window and <code>ws(s)://&lt;host&gt;</code>{" "}
-          everywhere else (<code>desktopWsOrigin()</code> returns just the relay origin):
+          The desktop runtime hands the relay URL to the app&apos;s top-level page as{" "}
+          <code>__denext.wsUrl</code>. It never goes to a frame, because it carries the token.
+          denext&apos;s Live client (<code>&lt;Live&gt;</code>, <code>useLive</code>,{" "}
+          <code>usePresence</code>, channels and subscriptions) dials it on its own. For your own
+          sockets, use <code>desktopWebSocketUrl(path)</code> from{" "}
+          <code>denext/desktop/client</code>. In such a window it returns the relay URL with{" "}
+          <code>path</code> appended (a <code>/path</code> or a bare <code>?query</code>), and{" "}
+          <code>ws(s)://&lt;host&gt;</code> everywhere else. <code>desktopWsUrl()</code>{" "}
+          returns the relay URL itself.
           <Code lang="ts">
             {`import { desktopWebSocketUrl } from "denext/desktop/client";
 
@@ -2379,9 +2429,15 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           (as <code>Deno.serve</code>{" "}
           reports it, never from the URL, which a client can forge) and carries the token; an{" "}
           <code>Origin</code>, when present, must be the app origin exactly, and a request without
-          one is accepted only over the in-process transport. A WebSocket upgrade must carry the app
-          origin, checked by the runtime's relay and again by the app. The runtime is detected at
-          startup from{" "}
+          one is accepted only over the in-process transport. A WebSocket upgrade must carry the
+          relay's per-launch token and the app origin. The runtime's relay checks both, and the app
+          checks the origin again. The runtime marks a request from another origin's document (
+          <code>x-deno-desktop-cross-origin</code>, as far as the engine reports <code>Origin</code>
+          {" "}
+          / <code>Sec-Fetch-Site</code>), and no <code>/_denext/desktop/*</code>{" "}
+          endpoint serves a marked request. The window's native JS bridge serves only the app origin
+          (<code>desktop.app.bridgeOrigins</code>{" "}
+          adds others). The runtime is detected at startup from{" "}
           <code>DENO_DESKTOP_APP_ORIGIN</code>; without it the loopback rules above apply unchanged.
         </li>
         <li>
@@ -2402,7 +2458,9 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           <code>keep-awake</code>, <code>secure-store</code>, <code>dialogs</code> — whose{" "}
           <code>osascript</code> / <code>powershell.exe</code>{" "}
           are script interpreters — and your extensions) are full trust: that program or library can
-          do anything the user can.
+          do anything the user can. The clipboard, global shortcuts, launch at login, notifications
+          and deep-link capabilities need an unscoped <code>--allow-sys</code>{" "}
+          under the pinned runtime, which also lets the app read every system-information API.
         </li>
         <li>
           <strong>Errors carry codes, not internals.</strong>{" "}

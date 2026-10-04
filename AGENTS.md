@@ -431,7 +431,9 @@ packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtensi
 `desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
 confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
 leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/package-*.ts` derive
-`--allow-*` from `desktop.capabilities` instead of `-A`, and
+`--allow-*` from `desktop.capabilities` instead of `-A` (`clipboard`, `global-shortcuts`,
+`launch-at-login`, `notifications` and declared `desktop.app.deepLinks` bake an unscoped
+`--allow-sys`, which the pinned runtime requires for them), and
 `denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
 a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
 `denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
@@ -439,8 +441,9 @@ a diff for each changed file). Installers: `desktop.installers.{macos,linux,wind
 the bundle.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
-packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; the custom origin requires runtime 2.9.7-denext.7+, older ones start with every desktop endpoint refused; what it changes and why: https://denext.dev/docs/desktop-runtime;
+packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
+origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext needs runtime 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -462,9 +465,10 @@ Native passkeys are macOS (needs the associated-domains entitlement: `desktop.ma
 provisioningProfile, entitlements }` signs it in with the profile) and Windows only; Linux has no OS
 passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
 only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
-Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay: denext's Live
+Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay with its
+per-launch token (`DENO_DESKTOP_WS_URL`, injected only into the app's top-level page): denext's Live
 client does this itself; for your own sockets use `desktopWebSocketUrl(path)` from
-`denext/desktop/client`. With `notifications` enabled, the web `new Notification(...)` /
+`denext/desktop/client` (never the bare relay origin: it answers 403). With `notifications` enabled, the web `new Notification(...)` /
 `Notification.requestPermission()` / `onclick` work, backed by the OS (no icons or buttons).
 `openAuthSession(url, { loopbackPort: 1455 })` uses a fixed loopback port for a provider with a
 registered `http://localhost:<port>/…` redirect (`port_in_use` when taken). `desktop.denoFlags`
@@ -490,7 +494,10 @@ the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 `applyDesktopUpdate`), and full-app updates under the pinned runtime (`checkForAppUpdate` /
 `downloadAppUpdate` / `installAppUpdateAndRelaunch` / `confirmAppUpdate`: a signed manifest from
 `denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build), an atomic
-bundle swap that rolls back if the new version never confirms).
+bundle swap that rolls back if the new version never confirms). The manifest expires (`expiresAt`,
+default 30 days, `expired`) and carries a growing `sequence` (`replayed`): re-sign it before it
+expires with `denext desktop publish-update --resign`; the artifact must be built as the version
+published (`version_mismatch`).
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
