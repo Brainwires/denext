@@ -508,6 +508,36 @@ Deno.test("mobile build: the crash backup restores a killed build's edits; --bum
   }
 });
 
+Deno.test("mobile build: a planted crash-backup index cannot write or delete outside the project", async () => {
+  const parent = await Deno.makeTempDir({ prefix: "denext_mobile_escape_" });
+  const dir = join(parent, "app");
+  await Deno.mkdir(dir);
+  try {
+    const victim = join(parent, "victim.txt");
+    await Deno.writeTextFile(victim, "keep me");
+    const backup = join(dir, ".denext", "mobile-build", "backup");
+    await Deno.mkdir(join(backup, "files", "a"), { recursive: true });
+    await Deno.writeTextFile(join(parent, "planted.txt"), "planted");
+    await Deno.writeTextFile(
+      join(backup, "index.json"),
+      JSON.stringify({
+        "a/../../victim.txt": false, // delete outside
+        "../victim.txt": false,
+        [victim]: false, // absolute
+        "a/../../written.txt": true, // write outside (from a source outside files/ too)
+        "ok.txt": false,
+      }),
+    );
+    await Deno.writeTextFile(join(dir, "ok.txt"), "temp");
+    assertEquals(await restoreInterruptedBuild(dir), ["ok.txt"]);
+    assertEquals(await Deno.readTextFile(victim), "keep me");
+    await assertRejects(() => Deno.stat(join(parent, "written.txt")));
+    await assertRejects(() => Deno.stat(join(dir, "ok.txt")), Deno.errors.NotFound);
+  } finally {
+    await Deno.remove(parent, { recursive: true });
+  }
+});
+
 Deno.test("mobile build: formatCommand quotes arguments and lists env by name only", () => {
   assertEquals(
     formatCommand({ cmd: "x", args: ["a b", "it's", "plain"], cwd: ".", env: { SECRET: "v" } }),

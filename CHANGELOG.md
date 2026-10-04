@@ -62,6 +62,12 @@ and this project adheres to
   shell** instead of waiting forever: a native session ends only on a redirect to the app's own
   scheme.
 
+- **Three path checks now follow real paths, not just the text.** `denext mobile build`'s crash
+  restore resolves each entry of its on-disk index and skips one outside the project (an
+  `a/../../x` entry got through the old `..` prefix test); `denext codemod` no longer rewrites a
+  symlinked source file (it could point outside the project); and the MCP tools' `dir` and
+  `denext_render`'s `component` are refused when a symlink inside the project leads out of it.
+
 ### Security
 
 - **`auth()`'s native bearer path goes through the same cache guards as the cookie path.** A

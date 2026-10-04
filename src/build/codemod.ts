@@ -500,7 +500,8 @@ async function collectSources(dir: string): Promise<string[]> {
     for (const e of entries) {
       if (e.isDirectory) {
         if (!SKIP_DIRS.has(e.name)) await walk(join(d, e.name));
-      } else if (SOURCE_EXT.test(e.name)) {
+      } else if (e.isFile && SOURCE_EXT.test(e.name)) {
+        // A symlink is not followed: it could point at (and get rewritten) a file outside.
         out.push(join(d, e.name));
       }
     }

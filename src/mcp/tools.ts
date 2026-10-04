@@ -6,6 +6,7 @@
 // result shape.
 
 import { isAbsolute, relative, resolve } from "@std/path";
+import { realPathOfNearestSync, within } from "../ui/security.ts";
 import { GENERATE_KINDS, generateArtifact, type GenerateKind } from "../build/generate.ts";
 import { collectDoctorReport, doctorReportMarkdown } from "../cli/commands/doctor.ts";
 import { runCodemod } from "../build/codemod.ts";
@@ -93,7 +94,10 @@ function projectDir(raw: unknown): string {
   const abs = resolve(base, str(raw, "."));
   if (toolRoot === null) return abs;
   const rel = relative(toolRoot, abs);
-  if (rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel)) {
+  const lexicallyOut = rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") ||
+    isAbsolute(rel);
+  // A symlinked directory inside the project can point anywhere: the real paths decide.
+  if (lexicallyOut || !within(realPathOfNearestSync(abs), realPathOfNearestSync(toolRoot))) {
     throw new Error(`dir must be inside the project denext mcp was started in (${toolRoot})`);
   }
   return abs;

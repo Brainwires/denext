@@ -19,7 +19,8 @@ import {
 } from "../src/build/dev-events.ts";
 import { fetchDevState, readDevInfo } from "../src/mcp/dev-client.ts";
 import { llmsFull, llmsIndex } from "../scripts/gen-llms-txt.ts";
-import { fromFileUrl } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
+import { symlinkDir } from "./helpers/symlink.ts";
 
 const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
 
@@ -462,6 +463,39 @@ Deno.test("runTool: with a tool root armed, `dir` outside the project is refused
     // Inside the root (the default ".") still resolves — the error is about the app, not the dir.
     const inside = await runTool("denext_list_routes", { dir: "." });
     assert(!String(inside.content[0].text).includes("must be inside"), "'.' is the root");
+  } finally {
+    setToolRoot(null);
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("runTool: a symlinked dir or component inside the root that points outside is refused", async () => {
+  const { setToolRoot } = await import("../src/mcp/tools.ts");
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-mcp-root-" }));
+  const outside = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-mcp-outside-" }));
+  await Deno.writeTextFile(
+    join(outside, "evil.tsx"),
+    "globalThis.__denextMcpEscaped = true;\nexport default () => null;\n",
+  );
+  await symlinkDir(outside, join(root, "linked"));
+  setToolRoot(root);
+  try {
+    const dir = await runTool("denext_list_routes", { dir: "linked" });
+    assert(dir.isError, "a symlinked directory out of the root is refused");
+    assertStringIncludes(dir.content[0].text, "must be inside the project");
+    setToolRoot(null);
+    const component = await runTool("denext_render", {
+      dir: root,
+      component: "linked/evil.tsx",
+    });
+    assertEquals(component.isError, true);
+    assertStringIncludes(component.content[0].text, "escapes the project");
+    assertEquals(
+      (globalThis as { __denextMcpEscaped?: boolean }).__denextMcpEscaped,
+      undefined,
+      "the module outside was never imported",
+    );
   } finally {
     setToolRoot(null);
     await Deno.remove(root, { recursive: true });

@@ -3,6 +3,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { rewriteSource, runCodemod } from "../src/build/codemod.ts";
+import { FILE_SYMLINKS } from "./helpers/symlink.ts";
 
 Deno.test("rewrites react named imports to denext", () => {
   const r = rewriteSource(`import { useState, useEffect } from "react";`);
@@ -235,4 +236,26 @@ Deno.test("side-effect imports: a mapped specifier is rewritten, an unmapped nex
   assertEquals(mapped.rewrites[0], { from: "react", to: "denext" });
   const unmapped = rewriteSource(`import "next/not-a-module";`);
   assertEquals(unmapped.code, `import "next/not-a-module";`);
+});
+
+Deno.test({
+  name: "runCodemod does not follow a symlinked file out of the project",
+  ignore: !FILE_SYMLINKS,
+  async fn() {
+    const dir = await Deno.makeTempDir();
+    const outside = await Deno.makeTempDir();
+    try {
+      const target = join(outside, "shared.tsx");
+      const source = `import { useState } from "react";\n`;
+      await Deno.writeTextFile(target, source);
+      await Deno.symlink(target, join(dir, "link.tsx"));
+      await Deno.writeTextFile(join(dir, "own.tsx"), source);
+      const report = await runCodemod(dir, { write: true });
+      assertEquals(report.files.map((f) => f.path), ["own.tsx"]);
+      assertEquals(await Deno.readTextFile(target), source, "the outside file is untouched");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+      await Deno.remove(outside, { recursive: true });
+    }
+  },
 });

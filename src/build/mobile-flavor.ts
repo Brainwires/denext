@@ -9,7 +9,7 @@
 // build.gradle, strings.xml, capacitor.config.*); a shape they do not recognise is reported,
 // never guessed at.
 
-import { dirname, join, relative } from "@std/path";
+import { dirname, isAbsolute, join, relative, resolve } from "@std/path";
 import { posixRelative } from "./mobile-paths.ts";
 import type { MobileConfig, MobileFlavorConfig } from "../server/config.ts";
 import {
@@ -103,6 +103,12 @@ export class NativeSnapshot {
   }
 }
 
+/** Whether `path` (absolute) is strictly inside `dir`. */
+function inside(dir: string, path: string): boolean {
+  const rel = relative(resolve(dir), path);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
 /**
  * Restore what an interrupted build left (the on-disk backup), if anything.
  *
@@ -119,9 +125,13 @@ export async function restoreInterruptedBuild(root: string): Promise<string[]> {
   }
   const restored: string[] = [];
   for (const [rel, existed] of Object.entries(index)) {
-    if (rel.startsWith("..")) continue;
-    const target = join(root, rel);
-    if (existed) await Deno.writeFile(target, await Deno.readFile(join(dir, "files", rel)));
+    // The index is a file on disk: a planted `a/../../x` or absolute entry must not turn the
+    // restore into a write (or delete) outside the project.
+    const target = resolve(root, rel);
+    if (!inside(root, target)) continue;
+    const source = resolve(dir, "files", rel);
+    if (!inside(join(dir, "files"), source)) continue;
+    if (existed) await Deno.writeFile(target, await Deno.readFile(source));
     else await Deno.remove(target).catch(() => {});
     restored.push(rel);
   }
