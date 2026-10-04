@@ -384,9 +384,7 @@ export async function writeAsStringAsync(
   options: WritingOptions = {},
 ): Promise<void> {
   const bytes = toBytes(contents, options.encoding);
-  if (options.append) appendBytes(fileUri, bytes);
-  else writeBytes(fileUri, bytes);
-  await settled();
+  await (options.append ? appendBytes(fileUri, bytes) : writeBytes(fileUri, bytes));
 }
 
 /**

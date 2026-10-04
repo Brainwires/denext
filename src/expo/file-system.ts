@@ -8,8 +8,8 @@
  * - `exists`, `size`, `info()`, `list()`, `create()`, `writeSync()`, `delete()`,
  *   `copySync()`, `moveSync()` and `rename()` act at once on an index the shim keeps (in
  *   `localStorage`, so it survives a reload), and reach the real files in order, in the
- *   background; `write()` (async since SDK 58) does the same and settles once the write is on
- *   disk;
+ *   background; `write()` (async since SDK 58) does the same, settles once the write is on
+ *   disk and rejects if it could not be made;
  * - `text()`, `bytes()`, `base64()`, `arrayBuffer()` and `json()` wait for those writes, so
  *   they always see them;
  * - `textSync()`, `bytesSync()` and `base64Sync()` answer only for files written or read in
@@ -50,7 +50,6 @@ import {
   parentUri,
   readBytes,
   remove,
-  settled,
   stat,
   toBytes,
   writeBytes,
@@ -355,18 +354,18 @@ export class File extends FileSystemEntry {
   /**
    * Write `content` (text, base64 text, or bytes), replacing or appending. The file reads back
    * the new content at once (`exists`, `size`, the readers); the promise settles once the
-   * write has reached the real file (a failure there is logged, as the background writes are).
+   * write has reached the real file, and rejects if it could not.
    *
    * @param content The content.
    * @param options The encoding, and whether to append.
    * @returns A promise that settles once the change is on disk.
    */
-  async write(
-    content: string | Uint8Array | ArrayBuffer,
-    options: FileWriteOptions = {},
-  ): Promise<void> {
-    this.writeSync(content, options);
-    await settled();
+  write(content: string | Uint8Array | ArrayBuffer, options: FileWriteOptions = {}): Promise<void> {
+    try {
+      return this.#writeNow(content, options);
+    } catch (err) {
+      return Promise.reject(err);
+    }
   }
 
   /**
@@ -377,12 +376,16 @@ export class File extends FileSystemEntry {
    * @param options The encoding, and whether to append.
    */
   writeSync(content: string | Uint8Array | ArrayBuffer, options: FileWriteOptions = {}): void {
+    void this.#writeNow(content, options);
+  }
+
+  /** Apply a write now; the promise is its write to the real file (failures are logged too). */
+  #writeNow(content: string | Uint8Array | ArrayBuffer, options: FileWriteOptions): Promise<void> {
     const bytes = toBytes(
       content instanceof ArrayBuffer ? new Uint8Array(content) : content,
       options.encoding,
     );
-    if (options.append) appendBytes(this.uri, bytes);
-    else writeBytes(this.uri, bytes);
+    return options.append ? appendBytes(this.uri, bytes) : writeBytes(this.uri, bytes);
   }
 
   /**

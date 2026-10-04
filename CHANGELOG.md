@@ -17,7 +17,7 @@ and this project adheres to
   and a synchronous `v5`), `CodedError` / `UnavailabilityError`, `createSnapshotFriendlyRef` and
   `useReleasingSharedObject` / `useReleasingSharedObjectWithLifecycle` (released on unmount or a
   dependency change; with `shouldRecreate: false`, `update` is called on the same object);
-  `File.write` is async (it settles once the write is on disk) beside the new `writeSync`, with
+  `File.write` is async (it settles once the write is on disk, and rejects if it fails) beside the new `writeSync`, with
   `digest()` (WebCrypto; MD5 rejects) and `canPreview` / `preview` as Expo's web build; `expo-font`
   loads font families (`[{ fontFamily, fontDefinitions }]`, a `FontFace` per weight / style, Expo's
   `ERR_FONT_API` checks) and unloads single faces by weight / style; `expo-camera`'s

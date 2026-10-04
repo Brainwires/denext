@@ -1295,6 +1295,44 @@ Deno.test("expo-file-system (SDK 58): write is async, writeSync immediate; diges
   resetFileSystemForTesting();
 });
 
+Deno.test("expo-file-system: an awaited write rejects when the real file can't be written; the queue goes on", async () => {
+  resetFileSystemForTesting();
+  const disk = new Map<string, string>();
+  const key = (o: Any) => `${o.directory}/${o.path}`;
+  const Filesystem = {
+    writeFile: (o: Any) =>
+      o.path.startsWith("full")
+        ? Promise.reject(new Error("disk full"))
+        : Promise.resolve(void disk.set(key(o), o.data)),
+    readFile: (o: Any) => Promise.resolve({ data: disk.get(key(o)) }),
+    deleteFile: (o: Any) => Promise.resolve(void disk.delete(key(o))),
+  };
+  const warn = console.warn;
+  const warned: unknown[][] = [];
+  console.warn = (...args: unknown[]) => void warned.push(args);
+  try {
+    await inShell({ Filesystem }, async () => {
+      await assertRejects(
+        () => new File(Paths.document, "full.txt").write("x"),
+        Error,
+        "disk full",
+      );
+      await assertRejects(
+        () => Legacy.writeAsStringAsync(Legacy.documentDirectory + "full2.txt", "x"),
+        Error,
+        "disk full",
+      );
+      new File(Paths.document, "full3.txt").writeSync("x"); // fire-and-forget: logged only
+      await new File(Paths.document, "ok.txt").write("fine");
+      assertEquals(disk.get("DOCUMENTS/ok.txt"), btoa("fine"), "later writes still land");
+    }, { localStorage: memoryStorage() });
+  } finally {
+    console.warn = warn;
+    resetFileSystemForTesting();
+  }
+  assertEquals(warned.length, 3, "every failed persist is still logged");
+});
+
 Deno.test("expo-audio (SDK 58): the recorder state counts the recorded bytes", async () => {
   class FakeRecorder {
     static isTypeSupported = () => true;
