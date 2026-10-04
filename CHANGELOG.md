@@ -8,6 +8,32 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **React Native mode's Expo shims follow Expo SDK 58.** Every `denext/expo/*` shim is matched
+  against the SDK 58 release T3 Code's app pins (the others against their latest SDK 58 release),
+  and `denext/expo/manifest` and the [Expo APIs](https://denext.dev/docs/react-native#expo-apis)
+  table say so. What SDK 58 added is provided: `expo`'s `Platform` (Expo's web build), `uuid` (`v4`,
+  and a synchronous `v5`), `CodedError` / `UnavailabilityError`, `createSnapshotFriendlyRef` and
+  `useReleasingSharedObject` / `useReleasingSharedObjectWithLifecycle` (released on unmount or a
+  dependency change; with `shouldRecreate: false`, `update` is called on the same object);
+  `File.write` is async (it settles once the write is on disk) beside the new `writeSync`, with
+  `digest()` (WebCrypto; MD5 rejects) and `canPreview` / `preview` as Expo's web build; `expo-font`
+  loads font families (`[{ fontFamily, fontDefinitions }]`, a `FontFace` per weight / style, Expo's
+  `ERR_FONT_API` checks) and unloads single faces by weight / style; `expo-camera`'s
+  `onRecordingProgress` / `progressUpdateInterval`, `getAvailableLensesAsync`'s `LensInfo` and the
+  document scanner statics (unavailable, as on the web); `expo-media-library`'s `AlbumType`,
+  `AssetUriVersion`, `Album.getType` / `getAlbumsMetadata` / `getSmartAlbums`; `expo-notifications`'
+  `threadIdentifier` (grouped) and `delivery: "alarmClock"` (an exact alarm); `expo-image`'s
+  `transition.skipOnCacheHit`, `accessibilityElementsHidden`; `expo-audio`'s recorder `fileSize`;
+  `expo-widgets`' `initialProps` and `setConfigurationParameterEnum` (a no-op); `expo-linking`'s
+  `unwrapDevLaunchURL`; expo-dev-client's `setToolsButtonVisible`; Apple Maps'
+  `PointOfInterestCategory`; and `@expo/ui`'s new views and modifiers, whose data-driven lists
+  (`List.ForEach`, `LazyVStack.ForEach`, `LazyColumn.Items`, … with `data`, `keyExtractor` and a
+  render function) render a row per item. `expo-sqlite`'s `libSQLOptions` is gone, as in SDK 58.
+  Shim errors are `CodedError`s now (`code` unchanged). `getAvailableLensesAsync` lists every video
+  input, labelled or not.
+
 ## [3.1.0] - 2026-10-03
 
 ### Added
