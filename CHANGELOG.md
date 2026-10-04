@@ -95,6 +95,13 @@ and this project adheres to
   from loopback only:** re-run `add-ota` with `--public-key` or `--ota-origin` and ship a new
   binary. `denext mobile doctor --release` fails when OTA is installed without a key (check
   `ota-signing`). The templates are generation 7.
+- **`denext mcp init` no longer splices an unchecked denext pin into the `mcp` task.** The
+  version of the project's `jsr:@denext/denext@…` import was taken as anything up to the next `/`,
+  so a cloned repository's `deno.json` could put shell syntax (`;`, `|`, `$( )`) into the
+  `deno task mcp` command an MCP client then runs. A pin's version must now be a semver range
+  (letters, digits, `. - ^ ~ * < > =`), anything else is ignored with a warning; `mcp init` uses
+  its own version when the pin holds `<`, `>` or `*` (the task shell's redirections and globs), and
+  `addMcp` refuses any CLI that is not `jsr:@denext/denext[@<version>]/cli`.
 
 ## [3.1.0] - 2026-10-03
 
