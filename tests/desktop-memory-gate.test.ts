@@ -20,9 +20,11 @@ import {
   shouldInjectDesktopToken,
 } from "../src/build/desktop.ts";
 import {
+  DESKTOP_CROSS_ORIGIN_HEADER,
   DESKTOP_RELAY_HEADER,
   type DesktopServeInfo,
   type DesktopTrust,
+  isCrossOriginMarked,
   isRelayConnection,
   memoryGate,
 } from "../src/desktop/transport.ts";
@@ -531,6 +533,83 @@ Deno.test("relay: the page's own WebSocket upgrade still reaches the app", async
     assertEquals(await upgrade(null), 403);
     assertEquals(await upgrade(APP), 200);
     assertEquals(reached, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+const CROSS = { "x-deno-desktop-cross-origin": "1" };
+
+Deno.test("cross-origin mark: isCrossOriginMarked reads the runtime's mark, and only it", () => {
+  assert(isCrossOriginMarked(new Request(`${MEM}/`, { headers: CROSS })));
+  assert(
+    isCrossOriginMarked(new Request(`${MEM}/`, { headers: { [DESKTOP_CROSS_ORIGIN_HEADER]: "" } })),
+  );
+  assert(!isCrossOriginMarked(new Request(`${MEM}/`)));
+  assert(!isCrossOriginMarked(new Request(`${MEM}/`, { headers: RELAY })));
+});
+
+Deno.test("cross-origin mark: no desktop endpoint serves a marked request", async () => {
+  const dir = await exportDir();
+  try {
+    let quit = 0;
+    let escaped = 0;
+    const bridge = createDesktopBridge([echoCapability], { trust: MEMORY });
+    const handle = createDesktopHandler(
+      { authSessionEnabled: true, onRequest: () => (escaped++, null) },
+      dir,
+      undefined,
+      TOKEN,
+      () => {},
+      undefined,
+      false,
+      bridge,
+      () => quit++,
+      MEMORY,
+    );
+    const send = async (path: string, o: Req) => {
+      const request = req(path, o);
+      return (await handle(request, new URL(request.url), MEM_INFO)).status;
+    };
+    // Every endpoint, with the token and the exact app Origin: the mark alone refuses it.
+    for (
+      const path of [
+        "/_denext/desktop/rpc",
+        "/_denext/desktop/quit",
+        "/_denext/desktop/booted",
+        "/_denext/desktop/auth-session",
+        "/_denext/desktop/anything",
+      ]
+    ) {
+      assertEquals(await send(path, { origin: APP, headers: CROSS, body: rpcBody }), 403, path);
+    }
+    assertEquals(
+      await send("/_denext/desktop/events", { method: "GET", origin: APP, headers: CROSS }),
+      403,
+    );
+    // Refused before the onRequest escape hatch sees it, and nothing ran.
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(escaped, 0);
+    assertEquals(quit, 0);
+    // The same request unmarked is served.
+    assertEquals(await send("/_denext/desktop/rpc", { origin: APP, body: rpcBody }), 200);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("cross-origin mark: a marked page request is still served (form_post callbacks)", async () => {
+  const dir = await exportDir();
+  try {
+    const handle = memoryHandler(dir);
+    const request = req("/", {
+      method: "GET",
+      token: null,
+      headers: { ...CROSS, "sec-fetch-dest": "document", "sec-fetch-site": "cross-site" },
+    });
+    const res = await handle(request, new URL(request.url), MEM_INFO);
+    assertEquals(res.status, 200);
+    await res.body?.cancel();
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

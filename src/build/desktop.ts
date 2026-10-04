@@ -28,6 +28,7 @@ import {
   DESKTOP_WS_URL_ENV,
   type DesktopServeInfo,
   type DesktopTrust,
+  isCrossOriginMarked,
   isRelayConnection,
   LOOPBACK_TRUST,
   memoryGate,
@@ -762,6 +763,20 @@ export function shouldInjectDesktopToken(
 const DESKTOP_ENDPOINT_PREFIX = "/_denext/desktop/";
 
 /**
+ * A `/_denext/desktop/*` request the runtime's scheme bridge marked as coming from another
+ * origin's document ({@linkcode isCrossOriginMarked}): refused (403) whatever else it carries,
+ * before any gate or the `onRequest` escape hatch sees it. Defense in depth: the endpoints' real
+ * gate is the per-launch token, and an engine that discloses no `Origin` / `Sec-Fetch-Site`
+ * leaves a foreign request unmarked. `null` to proceed.
+ */
+function refuseCrossOriginEndpoint(request: Request, url: URL): Response | null {
+  if (!url.pathname.startsWith(DESKTOP_ENDPOINT_PREFIX) || !isCrossOriginMarked(request)) {
+    return null;
+  }
+  return new Response("forbidden", { status: 403 });
+}
+
+/**
  * The app side of the WebSocket check in the memory world: an upgrade reaches `Deno.serve` only
  * through the runtime's loopback relay, which admits nothing but an `Origin` equal to the app
  * origin — checked again here (memory transport + that exact `Origin`, which an upgrade must carry)
@@ -879,10 +894,12 @@ export function createDesktopHandler(
   };
 
   return async (request, url, info) => {
-    // Memory world: a WebSocket upgrade must carry the exact app origin (the relay checked it
-    // too) — before even the onRequest escape hatch, so no app code sees a foreign upgrade.
-    const foreignWs = refuseForeignWebSocket(request, url, trust, info);
-    if (foreignWs) return foreignWs;
+    // A desktop endpoint request marked cross-origin is refused, and in the memory world a
+    // WebSocket upgrade must carry the exact app origin (the relay checked it too) — before even
+    // the onRequest escape hatch, so no app code sees either.
+    const foreign = refuseCrossOriginEndpoint(request, url) ??
+      refuseForeignWebSocket(request, url, trust, info);
+    if (foreign) return foreign;
     if (options.onRequest) {
       const r = await options.onRequest(request, url);
       if (r) return r;

@@ -15,10 +15,13 @@
  *   report exactly that URL — so a request is trusted only when `info` says memory (see
  *   {@linkcode isMemoryTransport}). Trust = the memory transport AND the per-launch token; an `Origin`, when present, must equal the app origin
  *   byte for byte, and a request without one is accepted only because it came over the memory
- *   transport. WebSocket upgrades arrive through the runtime's loopback relay, which admits only an
- *   `Origin` equal to the app origin; the app checks the same again. The runtime marks what it
- *   relays ({@linkcode isRelayConnection}); on such a request nothing but an upgrade with the exact
- *   `Origin` is accepted, and no per-launch token is ever injected.
+ *   transport. WebSocket upgrades arrive through the runtime's loopback relay, which admits only a
+ *   request target carrying its per-launch relay token (`DENO_DESKTOP_WS_URL`) and an `Origin`
+ *   equal to the app origin; the app checks the `Origin` again. The runtime marks what it relays
+ *   ({@linkcode isRelayConnection}); on such a request nothing but an upgrade with the exact
+ *   `Origin` is accepted, and no per-launch token is ever injected. Its scheme bridge also marks a
+ *   request from another origin's document ({@linkcode isCrossOriginMarked}), which no
+ *   `/_denext/desktop/*` endpoint accepts.
  * - **`loopback`** — the stock Deno Desktop runtime (no memory transport, no published origin). The
  *   page runs at `http://127.0.0.1:<port>` and the gates keep their loopback rules: a loopback
  *   `Host` (the DNS-rebinding defence) and an `Origin` equal to `http://<Host>`.
@@ -219,6 +222,33 @@ export const DESKTOP_RELAY_HEADER = "x-deno-desktop-relay";
 export function isRelayConnection(request: Request): boolean {
   try {
     return request.headers.has(DESKTOP_RELAY_HEADER);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * The request header the denext-pinned runtime's scheme bridge sets (exactly once, after dropping
+ * every copy a client sent) on a request from a document that is not the app's own, as far as the
+ * engine discloses it: an `Origin` that is present and not exactly the app origin (`null`
+ * included), or a `Sec-Fetch-Site` other than `same-origin` / `none`. The request is still
+ * forwarded (an identity provider's `form_post` callback is a legitimate cross-site POST), and its
+ * ABSENCE proves nothing on its own: an engine that sends neither header leaves a foreign request
+ * unmarked. Defense in depth next to the per-launch token, never a gate by itself.
+ */
+export const DESKTOP_CROSS_ORIGIN_HEADER = "x-deno-desktop-cross-origin";
+
+/**
+ * Whether the runtime marked `request` as coming from another origin's document
+ * ({@linkcode DESKTOP_CROSS_ORIGIN_HEADER}). The header's presence is the mark, whatever its
+ * value; headers that cannot be read count as marked (fail closed).
+ *
+ * @param request The request.
+ * @returns Whether it is cross-origin-marked.
+ */
+export function isCrossOriginMarked(request: Request): boolean {
+  try {
+    return request.headers.has(DESKTOP_CROSS_ORIGIN_HEADER);
   } catch {
     return true;
   }
