@@ -141,10 +141,15 @@ Deno.test("desktop add: a config whose desktop value is code is refused with the
 });
 
 Deno.test("desktop permission flags: per OS, unioned, unscoped where a picked path needs it", () => {
-  assertEquals(
-    desktopPermissionFlags(["clipboard", "context-menu", "notifications"], "darwin"),
-    [],
-  );
+  assertEquals(desktopPermissionFlags(["context-menu", "passkeys"], "darwin"), []);
+  // The pinned runtime's clipboard reads, global shortcuts, launch at login and OS notifications
+  // need an UNSCOPED --allow-sys, which absorbs a scoped one.
+  for (const cap of ["clipboard", "global-shortcuts", "launch-at-login", "notifications"]) {
+    for (const os of ["darwin", "windows", "linux"] as const) {
+      assertEquals(desktopPermissionFlags([cap], os), ["--allow-sys"], `${cap} ${os}`);
+    }
+  }
+  assertEquals(desktopPermissionFlags(["device", "clipboard"], "linux"), ["--allow-sys"]);
   assertEquals(desktopPermissionFlags(["keep-awake", "shell"], "darwin"), [
     "--allow-run=caffeinate,open,osascript",
   ]);
@@ -218,9 +223,7 @@ Deno.test("desktopBuildFlags: the full capability set on Windows, least-privileg
     keepAwake: true,
     secureStore: true,
     dialogs: true,
-    clipboard: true, // a runtime API: contributes no flags
-    contextMenu: true, // a runtime API
-    notifications: true, // a runtime API
+    contextMenu: true, // a runtime API: contributes no flags
   });
   assertEquals(desktopBuildFlags(config, "windows"), [
     ...DESKTOP_BASELINE_FLAGS,
@@ -228,6 +231,35 @@ Deno.test("desktopBuildFlags: the full capability set on Windows, least-privileg
     "--allow-sys=osRelease",
     "--allow-run=explorer.exe,powershell.exe,rundll32.exe",
     "--allow-ffi=kernel32.dll",
+  ]);
+  // A capability that needs the unscoped --allow-sys widens the scoped one: a partial
+  // `--allow-sys=<names>` would leave them NotCapable under the pinned runtime.
+  const withRuntimeApis = caps({
+    ...(config as { desktop: { capabilities: Record<string, unknown> } }).desktop.capabilities,
+    clipboard: true,
+    notifications: true,
+  });
+  assertEquals(desktopBuildFlags(withRuntimeApis, "windows"), [
+    ...DESKTOP_BASELINE_FLAGS,
+    "--allow-write",
+    "--allow-sys",
+    "--allow-run=explorer.exe,powershell.exe,rundll32.exe",
+    "--allow-ffi=kernel32.dll",
+  ]);
+});
+
+Deno.test("desktopBuildFlags: declared deep-link schemes bake the unscoped --allow-sys", () => {
+  // Claiming a scheme back (`registerScheme({ force: true })`) needs it under the pinned runtime.
+  const links = { desktop: { app: { deepLinks: ["myapp"] }, capabilities: { device: true } } };
+  for (const os of ["darwin", "windows", "linux"] as const) {
+    assertEquals(desktopBuildFlags(links, os), [...DESKTOP_BASELINE_FLAGS, "--allow-sys"], os);
+  }
+  // No schemes (or an empty list): nothing added.
+  assertEquals(desktopBuildFlags({ desktop: { app: { deepLinks: [] } } }, "linux"), [
+    ...DESKTOP_BASELINE_FLAGS,
+  ]);
+  assertEquals(desktopBuildFlags({ desktop: { app: { origin: "myapp://app" } } }, "linux"), [
+    ...DESKTOP_BASELINE_FLAGS,
   ]);
 });
 

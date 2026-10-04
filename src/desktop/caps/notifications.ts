@@ -623,7 +623,9 @@ export function notificationsCapability(
       capabilities: {
         handler: () => ({ ...nativeApi(api()).capabilities(), categories: true }),
       },
+      // Posting an OS notification needs an UNSCOPED `--allow-sys` under the pinned runtime.
       schedule: {
+        permissions: { sys: ["*"] },
         handler: async (args) => {
           const req = scheduleRequest(args);
           await serial(() => schedule(req));
@@ -700,6 +702,7 @@ export function notificationsCapability(
       },
       // The page's web `Notification` (the injected shim): show now, close, and its clicks.
       webShow: {
+        permissions: { sys: ["*"] },
         handler: async (args, ctx) => {
           const a = record(args, "arguments");
           if (typeof a.key !== "string" || !WEB_KEY.test(a.key)) {

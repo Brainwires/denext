@@ -134,6 +134,12 @@ async function writeContent(clip: DesktopNativeClipboard, args: unknown): Promis
 }
 
 /**
+ * What reading the clipboard needs under denext's pinned runtime: an UNSCOPED `--allow-sys`
+ * (`Deno.errors.NotCapable` otherwise); writing needs nothing.
+ */
+const READ_PERMISSIONS = { sys: ["*"] } as const;
+
+/**
  * Build the `clipboard` capability.
  *
  * @param options The runtime API (tests).
@@ -150,7 +156,10 @@ export function clipboardCapability(options: ClipboardCapabilityOptions = {}): D
           return { text: true, ...supports(clip) };
         },
       },
-      readText: { handler: async () => await readFormat(nativeClipboard(api()), "text") },
+      readText: {
+        permissions: READ_PERMISSIONS,
+        handler: async () => await readFormat(nativeClipboard(api()), "text"),
+      },
       writeText: {
         handler: async (args) => {
           const text = optionalString((args as { text?: unknown } | null)?.text, "text");
@@ -159,6 +168,7 @@ export function clipboardCapability(options: ClipboardCapabilityOptions = {}): D
         },
       },
       read: {
+        permissions: READ_PERMISSIONS,
         handler: async (args) =>
           await readFormat(nativeClipboard(api()), (args as { format?: unknown } | null)?.format),
       },
@@ -169,6 +179,7 @@ export function clipboardCapability(options: ClipboardCapabilityOptions = {}): D
         },
       },
       formats: {
+        permissions: READ_PERMISSIONS,
         handler: async () => {
           const clip = nativeClipboard(api());
           if (typeof clip.availableFormats !== "function") return [];

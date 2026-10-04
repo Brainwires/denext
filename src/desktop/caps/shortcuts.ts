@@ -100,8 +100,10 @@ export function shortcutsCapability(options: ShortcutsCapabilityOptions = {}): D
     methods: {
       capabilities: { handler: () => nativeShortcuts(api()).capabilities() },
       register: {
-        // The Wayland portal asks the user: no deadline.
+        // The Wayland portal asks the user: no deadline. The pinned runtime needs an UNSCOPED
+        // `--allow-sys` to register.
         timeoutMs: false,
+        permissions: { sys: ["*"] },
         handler: async (args, ctx) => {
           const s = nativeShortcuts(api());
           const acc = accelerator(args);

@@ -55,7 +55,9 @@ export function launchAtLoginCapability(
     name: "launchAtLogin",
     methods: {
       get: { handler: async () => ({ state: state(await nativeLogin(api()).get()) }) },
+      // Writing the OS login entry needs an UNSCOPED `--allow-sys` under the pinned runtime.
       set: {
+        permissions: { sys: ["*"] },
         handler: async (args) => {
           const enabled = (args as { enabled?: unknown } | null)?.enabled;
           if (typeof enabled !== "boolean") {
