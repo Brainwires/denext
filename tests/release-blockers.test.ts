@@ -3,18 +3,19 @@
 // soft-navigation body cap, the pages-router range, the bundle failure hint, and the
 // stable-release changelog fold.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import { entrypointArg, isStandaloneBinary } from "../src/cli/self-exec.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
 import { PAGES_ROUTER_SPEC } from "../src/build/migrate.ts";
 import { bundleFailureMessage, minDepAgeArgs } from "../src/build/bundle.ts";
-import { fsPathAllowed } from "../src/build/dev-unbundled/handler.ts";
+import { fsPathAllowed, handle as handleUnbundled } from "../src/build/dev-unbundled/handler.ts";
 import {
   createUnbundledState,
   FS_PREFIX,
   fsPathOfUrl,
   fsUrlPath,
+  loaderFor,
 } from "../src/build/dev-unbundled/state.ts";
 import { createApp } from "../src/server/app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
@@ -89,6 +90,64 @@ Deno.test("dev @fs: only project files (real paths) or graph-known modules are s
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(outside, { recursive: true });
   }
+});
+
+Deno.test("dev @fs: dotfiles, key stores and non-module files are never served", async () => {
+  const dir = await Deno.realPath(await Deno.makeTempDir());
+  try {
+    const secret = "SECRET_TOKEN=hunter2";
+    await Deno.mkdir(join(dir, ".git"));
+    await Deno.mkdir(join(dir, ".denext"));
+    await Deno.mkdir(join(dir, "certs"));
+    for (const f of [".env", ".env.local", ".git/config", ".denext/dev.json", "notes.txt"]) {
+      await Deno.writeTextFile(join(dir, f), secret);
+    }
+    for (const f of ["server.pem", "server.key", "id.p12"]) {
+      await Deno.writeTextFile(join(dir, "certs", f), secret);
+    }
+    await Deno.writeTextFile(join(dir, "page.tsx"), "export default () => null;");
+    const st = createUnbundledState({
+      projectDir: dir,
+      appDir: dir,
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, ".denext"),
+    });
+    const manifest = { pages: [], api: [] } as unknown as RouteManifest;
+    for (
+      const f of [
+        ".env",
+        ".env.local",
+        ".git/config",
+        ".denext/dev.json",
+        "notes.txt",
+        "certs/server.pem",
+        "certs/server.key",
+        "certs/id.p12",
+      ]
+    ) {
+      const abs = join(dir, f);
+      assert(!fsPathAllowed(st, abs), `${f} must not be served`);
+      const res = await handleUnbundled(st, new URL(fsUrlPath(abs), "http://localhost"), manifest);
+      assertEquals(res?.status, 403, f);
+      assert(!(await res!.text()).includes("hunter2"), `${f} leaked`);
+    }
+    // Even a graph edge to a denied file does not open it.
+    st.importers.set(join(dir, ".env"), new Set([join(dir, "page.tsx")]));
+    assert(!fsPathAllowed(st, join(dir, ".env")));
+    // The app's own modules still are.
+    assert(fsPathAllowed(st, join(dir, "page.tsx")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("dev @fs: an unknown extension has no loader — it is not parsed as TSX", () => {
+  assertEquals(loaderFor("/a/page.tsx"), "tsx");
+  assertEquals(loaderFor("/a/x.mts"), "ts");
+  assertEquals(loaderFor("/a/x.cjs"), "js");
+  assertEquals(loaderFor("/a/x.json"), "json");
+  assertThrows(() => loaderFor("/a/.env"), Error, "not a JS / TS / JSON module");
+  assertThrows(() => loaderFor("/a/notes.txt"), Error, "not a JS / TS / JSON module");
 });
 
 Deno.test("dev @fs URLs carry a platform path as forward slashes behind one leading slash", () => {

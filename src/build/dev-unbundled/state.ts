@@ -105,16 +105,18 @@ export function norm(p: string): string {
 }
 
 /**
- * esbuild loader for a source path's extension (default tsx — permissive for JSX). With
- * `jsxInJs` (React Native mode) a `.js` module parses as JSX, as Metro's Babel preset does.
+ * esbuild loader for a source path's extension. With `jsxInJs` (React Native mode) a `.js`
+ * module parses as JSX, as Metro's Babel preset does. Any other extension is not a module and
+ * throws: parsing an arbitrary file as TSX would echo its text back in the error.
  */
 export function loaderFor(path: string, jsxInJs = false): esbuild.Loader {
-  if (path.endsWith(".ts")) return "ts";
+  if (/\.[cm]?ts$/.test(path)) return "ts";
+  if (path.endsWith(".tsx")) return "tsx";
   if (jsxInJs && path.endsWith(".js")) return "jsx";
-  if (path.endsWith(".js") || path.endsWith(".mjs") || path.endsWith(".cjs")) return "js";
+  if (/\.[cm]?js$/.test(path)) return "js";
   if (path.endsWith(".json")) return "json";
   if (path.endsWith(".jsx")) return "jsx";
-  return "tsx";
+  throw new Error(`not a JS / TS / JSON module: ${path}`);
 }
 
 /** A cached module transform: its source mtime, the emitted JS, and its dep edges. */

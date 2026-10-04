@@ -71,6 +71,14 @@ and this project adheres to
   shared bucket) got their own platform entries signed with the app's key. The existing manifest
   of the same release must now verify against the public half of the signing key; an unsigned,
   tampered or foreign-key manifest is refused with an error, and the file is left as it was.
+- **The dev server's `/_denext/@fs` serves modules, not arbitrary project files.** With the
+  server bound to a LAN address (`--lan`, `--host`), any machine on the network could read any
+  file under the project, `.env` included, by sending the bound address as its `Host` (any file
+  was parsed as TSX, and `KEY=value` parses). `@fs` now refuses dotfiles and dot-directories
+  (`.env*`, `.git/`, `.denext/`), key stores (`*.pem`, `*.key`, `*.p12`, …) and every file that is
+  neither a JS / TS / JSON module under the project nor part of the app's module graph; an unknown
+  extension is no longer parsed as TSX. Off loopback, `/_denext/*` also requires the browser's
+  `Sec-Fetch-Site: same-origin`: a client that sends neither it nor an `Origin` is refused.
 
 ## [3.1.0] - 2026-10-03
 

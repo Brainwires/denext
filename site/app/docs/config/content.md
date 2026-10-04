@@ -265,9 +265,13 @@ Per-request observability is code, not config: export `onRequest(info)` from
   hand — `denext dev --lan` and an explicit `--host` allow the address they
   bind (`--host 0.0.0.0` allows this machine's own addresses), and
   `--allowed-dev-origin <origin>` (repeatable, or comma-separated) adds entries
-  for one run. A listed host is trusted like loopback: a device that can reach
-  it can read the app's transformed source. Cross-site pages are still refused
-  (`Sec-Fetch-Site` / `Origin`). See
+  for one run. A listed host lets a browser on another device load the app's
+  transformed source: off loopback, a request must carry the browser's
+  `Sec-Fetch-Site: same-origin` (a bare client such as `curl` from another
+  machine is refused), and cross-site pages are refused (`Sec-Fetch-Site` /
+  `Origin`). `/_denext/@fs` never serves a dotfile or dot-directory (`.env*`,
+  `.git/`, `.denext/`), a key store (`*.pem`, `*.key`, `*.p12`, …) or a file
+  that is not a JS / TS / JSON module outside the app's own module graph. See
   [Live reload on a device](/docs/mobile#live-reload-on-a-device). An entry may
   also be a Deno Desktop app's custom-scheme origin (`"myapp://app"`, validated
   as [`desktop.app.origin`](/docs/desktop#desktop-app-origin) is): it admits a

@@ -1,12 +1,13 @@
 // Unbundled dev: HTTP handling — one function per URL class under `/_denext/`.
 
-import { extname, join } from "@std/path";
+import { basename, extname, join, relative } from "@std/path";
 import { contentType } from "@std/media-types";
 import { withinDir } from "../dev-server/dev-endpoints.ts";
 import type { RouteManifest } from "../../router/manifest.ts";
 import { ensureClientDeps, ensureNpmBundle } from "./deps.ts";
 import { serveEntry, serveSpaEntry } from "./entries.ts";
 import { rewriteRuntimeBridges } from "./react-native.ts";
+import { CODE_FILE } from "./resolve.ts";
 import {
   DEP_PREFIX,
   EMPTY_MODULE,
@@ -94,17 +95,39 @@ async function serveNpm(st: UnbundledState, path: string): Promise<Response> {
 }
 
 /**
- * Whether `/_denext/@fs<abs>` may serve `abs`: a file under the project (real paths on both
- * sides, so an in-project symlink pointing outside is refused) or a module the dev graph
- * itself imported (a workspace package or the local framework checkout). Anything else is
- * an arbitrary-file read and is refused.
+ * Files `/_denext/@fs` never serves, wherever they sit (Vite's `server.fs.deny`): dotfiles and
+ * dot-directories (`.env*`, `.git/`, `.denext/`, `.ssh/`, …) and key / certificate stores.
+ */
+const FS_DENIED_NAME = /^\.|\.(?:pem|key|p12|pfx|p8|jks|keystore|crt|cer|der|mobileprovision)$/i;
+
+/** Whether a path segment of `rel` (separated by `/` or `\`) is denied by {@link FS_DENIED_NAME}. */
+function deniedSegment(rel: string): boolean {
+  return rel.split(/[\\/]/).some((segment) => segment !== "" && FS_DENIED_NAME.test(segment));
+}
+
+/**
+ * Whether `/_denext/@fs<abs>` may serve `abs`. Never a denied file (a dotfile or dot-directory
+ * inside the project, or one named like a key store anywhere). Otherwise a module the dev graph
+ * itself imported (a workspace package or the local framework checkout), or a JS / TS / JSON
+ * source under the project (real paths on both sides, so an in-project symlink pointing outside
+ * is refused). Anything else — an arbitrary file, a non-module asset — is refused: the transform
+ * would read it and echo its text back in an error.
  */
 export function fsPathAllowed(st: UnbundledState, abs: string): boolean {
+  let real: string;
+  let root: string;
+  try {
+    real = Deno.realPathSync(abs);
+    root = Deno.realPathSync(st.opts.projectDir);
+  } catch {
+    return false;
+  }
+  const inProject = withinDir(real, root);
+  const denied = inProject ? deniedSegment(relative(root, real)) : deniedSegment(basename(real));
+  if (denied || deniedSegment(basename(abs))) return false;
   if (st.importers.has(abs) || st.known.has(abs)) return true;
   try {
-    const real = Deno.realPathSync(abs);
-    const root = Deno.realPathSync(st.opts.projectDir);
-    return withinDir(real, root) && Deno.statSync(real).isFile;
+    return inProject && CODE_FILE.test(real) && Deno.statSync(real).isFile;
   } catch {
     return false;
   }
@@ -118,7 +141,9 @@ function serveFs(st: UnbundledState, path: string): Promise<Response> {
   } catch {
     return Promise.resolve(js("// bad @fs path", 400));
   }
-  if (!fsPathAllowed(st, abs)) return Promise.resolve(js("// forbidden: outside the project", 403));
+  if (!fsPathAllowed(st, abs)) {
+    return Promise.resolve(js("// forbidden: not a project module", 403));
+  }
   return serveJs(abs, async () => (await transform(st, abs)).code);
 }
 
