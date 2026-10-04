@@ -73,6 +73,13 @@ and this project adheres to
   512 MB per share, and deletes earlier shares' copies older than a day. Re-run
   `denext mobile add share-extension` to upgrade an unedited plugin.
 
+- **Documented: a native sign-in can complete silently, and a native session keeps its claims.**
+  The [app backend guide](https://denext.dev/docs/app-backend) now says that an OAuth provider
+  with a browser session may sign the user straight back in (set the provider's
+  `authorizationParams.prompt` to make it ask), and that a refresh does not re-run
+  `callbacks.session` (revoke the user's native sessions after a role change). Decided: both
+  stay documented behavior rather than new options.
+
 ### Security
 
 - **`auth()`'s native bearer path goes through the same cache guards as the cookie path.** A
