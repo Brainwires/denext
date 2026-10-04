@@ -8,6 +8,7 @@ import {
   DEFAULT_DESKTOP_APP_ORIGIN,
   desktopAppIdentifierError,
   desktopSchemeError,
+  normalizeDesktopBridgeOrigin,
   parseDesktopAppOrigin,
   RESERVED_DESKTOP_SCHEMES,
 } from "../src/desktop/app-origin.ts";
@@ -148,7 +149,11 @@ Deno.test("config: desktop.app.origin requires a valid identifier (runtime seman
 
 Deno.test("config: deepLinks, singleInstance, inspectable, preload and the window keys", () => {
   validateDesktop({
-    app: { deepLinks: ["t3code", "t3code-dev"], singleInstance: true },
+    app: {
+      deepLinks: ["t3code", "t3code-dev"],
+      singleInstance: true,
+      bridgeOrigins: ["https://idp.example", "dev://*", "*"],
+    },
     inspectable: false,
     preload: "./preload.ts",
     window: { width: 1200, height: 800, title: "T3", resizable: true },
@@ -162,6 +167,9 @@ Deno.test("config: deepLinks, singleInstance, inspectable, preload and the windo
     [{ app: { deepLinks: ["https"] } }, "desktop.app.deepLinks[0]"],
     [{ app: { deepLinks: [1] } }, "desktop.app.deepLinks[0]"],
     [{ app: { singleInstance: "yes" } }, "desktop.app.singleInstance"],
+    [{ app: { bridgeOrigins: "https://idp.example" } }, "desktop.app.bridgeOrigins"],
+    [{ app: { bridgeOrigins: ["https://idp.example/login"] } }, "desktop.app.bridgeOrigins[0]"],
+    [{ app: { bridgeOrigins: ["*", 5] } }, "desktop.app.bridgeOrigins[1]"],
     [{ app: [] }, "desktop.app"],
     [{ inspectable: 1 }, "desktop.inspectable"],
     [{ preload: "" }, "desktop.preload"],
@@ -181,6 +189,37 @@ Deno.test("config: deepLinks, singleInstance, inspectable, preload and the windo
     const err = assertThrows(() => validateDesktop(desktop), Error, undefined, field);
     assertStringIncludes(String(err), `\`${field}`, field);
   }
+});
+
+Deno.test("normalizeDesktopBridgeOrigin: laufey's entry forms, as a browser serializes them", () => {
+  const cases: Array<[string, string | null]> = [
+    ["*", "*"],
+    ["myapp://app", "myapp://app"],
+    ["MyApp://App/", "myapp://app"],
+    ["myapp://*", "myapp://*"],
+    ["MyApp://*/", "myapp://*"],
+    ["https://Example.com:443/", "https://example.com"],
+    ["https://example.com:8443", "https://example.com:8443"],
+    ["http://127.0.0.1:80", "http://127.0.0.1"],
+    ["http://127.0.0.1:5173", "http://127.0.0.1:5173"],
+    ["http://[::1]:5173", "http://[::1]:5173"],
+    ["custom://host:80", "custom://host:80"], // only a special scheme drops its default port
+    // Not an entry.
+    ["", null],
+    ["**", null],
+    ["example.com", null],
+    ["https://example.com/path", null],
+    ["https://example.com?q", null],
+    ["https://u@example.com", null],
+    ["https://*.example.com", null],
+    ["https://example.com:99999", null],
+    ["https://", null],
+    ["file:///tmp", null],
+    ["data://x", null],
+    ["about://blank", null],
+    ["1http://x", null],
+  ];
+  for (const [entry, want] of cases) assertEquals(normalizeDesktopBridgeOrigin(entry), want, entry);
 });
 
 Deno.test("trust: no published origin is the stock loopback world", () => {

@@ -17,6 +17,7 @@ import { COMMUNITY_ALIASES } from "../react-native-compat/manifest.ts";
 import {
   desktopAppIdentifierError,
   desktopSchemeError,
+  normalizeDesktopBridgeOrigin,
   originWithoutIdentifierMessage,
   parseDesktopAppOrigin,
 } from "../desktop/app-origin.ts";
@@ -250,13 +251,30 @@ function validateDeepLinks(deepLinks: unknown, fail: Fail): void {
   });
 }
 
-/** `desktop.app`: origin + identifier, deep-link schemes, singleInstance. */
+/** `desktop.app.bridgeOrigins`: origins, `<scheme>://*` or `*`. */
+function validateBridgeOrigins(origins: unknown, fail: Fail): void {
+  if (origins === undefined) return;
+  if (!Array.isArray(origins)) {
+    fail("desktop.app.bridgeOrigins", "must be an array of origins");
+  }
+  (origins as unknown[]).forEach((entry, i) => {
+    if (typeof entry !== "string" || normalizeDesktopBridgeOrigin(entry) === null) {
+      fail(
+        `desktop.app.bridgeOrigins[${i}]`,
+        'must be an origin ("https://idp.example"), "<scheme>://*" or "*"',
+      );
+    }
+  });
+}
+
+/** `desktop.app`: origin + identifier, deep-link schemes, singleInstance, bridge origins. */
 function validateDesktopApp(app: unknown, fail: Fail): void {
   if (app === undefined) return;
   if (!isPlainObject(app)) fail("desktop.app", "must be an object");
   const a = app as Record<string, unknown>;
   validateDesktopOrigin(a, fail);
   validateDeepLinks(a.deepLinks, fail);
+  validateBridgeOrigins(a.bridgeOrigins, fail);
   if (a.singleInstance !== undefined && typeof a.singleInstance !== "boolean") {
     fail("desktop.app.singleInstance", "must be a boolean");
   }

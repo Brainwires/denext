@@ -818,6 +818,17 @@ export interface DesktopConfig {
      * `denext desktop run` / `dev` windows (a dev window must not hand itself to an installed copy).
      */
     singleInstance?: boolean;
+    /**
+     * Documents besides the app's own whose JavaScript may reach the window's native bridge
+     * (`BrowserWindow.bind` handlers in `desktop.ts`), e.g. an identity provider's page the window
+     * navigates to: each an origin (`"https://idp.example"`), `"<scheme>://*"` (every origin of a
+     * scheme) or `"*"` (every document). Default: none — the bridge serves only the app origin
+     * (`desktop.app.origin`, `app://localhost` when unset). Written, after the app origin, to the
+     * packaged app's `laufey-launch.json` `"bridgeOrigins"`; a binding still answers such a
+     * document only when its `bind(name, fn, { origins })` lists it too. Needs denext's pinned
+     * runtime.
+     */
+    bridgeOrigins?: string[];
   };
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;

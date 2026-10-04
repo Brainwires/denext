@@ -199,3 +199,48 @@ export function originWithoutIdentifierMessage(origin: string): string {
     "origin, so without a per-app identifier two apps with the same origin could share it. Set a " +
     'reverse-DNS identifier, e.g. desktop: { app: { identifier: "com.example.myapp" } }.';
 }
+
+/** The ports WHATWG special schemes leave out of a serialized origin. */
+const DEFAULT_PORTS: Readonly<Record<string, number>> = {
+  http: 80,
+  https: 443,
+  ws: 80,
+  wss: 443,
+  ftp: 21,
+};
+/** Schemes whose documents have opaque origins: never a bridge origin. */
+const OPAQUE_SCHEMES: ReadonlySet<string> = new Set([
+  "file",
+  "data",
+  "about",
+  "javascript",
+  "blob",
+]);
+
+/**
+ * One `desktop.app.bridgeOrigins` entry in the form the webview backend keeps
+ * (`laufey-launch.json` `"bridgeOrigins"`): `"*"` (every document), `"<scheme>://*"` (every origin
+ * of a scheme), or an origin `"<scheme>://<host>[:<port>]"` (nothing after the host and port but an
+ * optional `/`), serialized as a browser serializes it — lowercase, a scheme's default port left
+ * out. `null` for anything else (a path, a query, credentials, an opaque-origin scheme).
+ *
+ * @param entry The configured entry.
+ * @returns The normalized entry, or `null` when it is not one.
+ */
+export function normalizeDesktopBridgeOrigin(entry: string): string | null {
+  if (entry === "*") return "*";
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/(.*)$/.exec(entry);
+  if (!m) return null;
+  const scheme = m[1].toLowerCase();
+  if (OPAQUE_SCHEMES.has(scheme)) return null;
+  const rest = m[2].endsWith("/") ? m[2].slice(0, -1) : m[2];
+  if (rest === "*") return `${scheme}://*`;
+  const hp = /^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~-]+)(?::(\d{1,5}))?$/.exec(rest);
+  if (!hp) return null;
+  const port = hp[2] === undefined ? undefined : Number(hp[2]);
+  if (port !== undefined && port > 65535) return null;
+  const host = hp[1].toLowerCase();
+  return port === undefined || port === DEFAULT_PORTS[scheme]
+    ? `${scheme}://${host}`
+    : `${scheme}://${host}:${port}`;
+}
