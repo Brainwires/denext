@@ -262,6 +262,77 @@ Deno.test("@expo/ui stand-ins: modifiers are inert configs; the helpers behave",
   root.unmount();
 });
 
+Deno.test("@expo/ui stand-ins (SDK 58): data-driven lists render a row per item", async () => {
+  resetNativeViewWarningsForTesting();
+  const items = [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }];
+  const row: Any = ({ item, index }: { item: { label: string }; index: number }) =>
+    h("i", null, `${index}:${item.label}`);
+  const html: string[] = [];
+  await quietly(() => {
+    for (
+      const view of [
+        h(
+          SwiftUI.List as Any,
+          null,
+          h(SwiftUI.ListForEach as Any, {
+            data: items,
+            keyExtractor: (item: { id: string }) => item.id,
+            children: row,
+          }),
+        ),
+        h(SwiftUI.LazyVStack.ForEach as Any, { data: items, keyExtractor: (i: Any) => i.id }, row),
+        h(SwiftUI.LazyHStackForEach as Any, { data: items, keyExtractor: (i: Any) => i.id }, row),
+        h(
+          Compose.LazyColumn as Any,
+          null,
+          h(Compose.LazyColumn.Items as Any, { data: items, keyExtractor: (i: Any) => i.id }, row),
+        ),
+        h(Compose.LazyRow.Items as Any, { data: items, keyExtractor: (i: Any) => i.id }, row),
+      ]
+    ) {
+      const mounted = mount(() => view);
+      html.push(mounted.container.innerHTML);
+      mounted.root.unmount();
+    }
+  });
+  for (const out of html) {
+    assert(out.includes("<i>0:Alpha</i><i>1:Beta</i>"), out);
+  }
+  assert(html[2].includes("flex-direction:row"), "LazyHStackForEach lays out a row");
+  assertEquals(SwiftUI.LazyHStack.ForEach, SwiftUI.LazyHStackForEach);
+  assertEquals(Compose.LazyRow.Items, Compose.LazyItems);
+  // The statics of SDK 58's new views are stand-ins too.
+  for (
+    const view of [
+      SwiftUI.NavigationSplitView.Sidebar,
+      SwiftUI.NavigationSplitView.Content,
+      SwiftUI.NavigationSplitView.Detail,
+      SwiftUI.Toolbar.Content,
+      Compose.VerticalSlider.Thumb,
+      Compose.VerticalSlider.Track,
+    ]
+  ) {
+    assertEquals(typeof view, "function");
+  }
+});
+
+Deno.test("@expo/ui stand-ins (SDK 58): the new modifiers are inert configs", () => {
+  assertEquals(ComposeModifiers.IntrinsicSize, { Min: "min", Max: "max" });
+  assertEquals(ComposeModifiers.cornerRadius(8), { $type: "cornerRadius", $args: [8] });
+  assertEquals(ComposeModifiers.maskClip("circle").$type, "maskClip");
+  assertEquals(SwiftUIModifiers.preferredColorScheme("dark").$type, "preferredColorScheme");
+  assertEquals(SwiftUIModifiers.presentationCornerRadius(null), {
+    $type: "presentationCornerRadius",
+    $args: [null],
+  });
+});
+
+Deno.test("expo-maps (SDK 58): Apple Maps' point-of-interest categories", () => {
+  assertEquals(Maps.AppleMaps.PointOfInterestCategory.CAFE, "CAFE");
+  assertEquals(Maps.AppleMaps.PointOfInterestCategory, Maps.AppleMapPointOfInterestCategory);
+  assertEquals(Object.keys(Maps.AppleMapPointOfInterestCategory).length, 73);
+});
+
 // ---- expo-notifications: getExpoPushTokenAsync ----------------------------------------------------
 
 Deno.test("expo-notifications: getExpoPushTokenAsync rejects with guidance, never a fake token", async () => {

@@ -525,7 +525,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   stand-ins, `Appearance.setColorScheme` is added, expo-router's route context is
   generated from `app/`, and the shell gets Expo web's root style. —
   `src/build/react-native.ts`.
-- **`denext/expo/*`** — 35 drop-in `expo-*` shims (Expo SDK 57) over
+- **`denext/expo/*`** — 35 drop-in `expo-*` shims (Expo SDK 58) over
   `denext/mobile` and web APIs (haptics, secure-store, file-system, sqlite,
   notifications, auth-session, web-browser, widgets, …), aliased automatically
   in `reactNative` mode; `denext/expo/manifest` lists each one's status and

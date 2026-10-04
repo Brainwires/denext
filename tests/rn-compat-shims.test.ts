@@ -201,7 +201,48 @@ Deno.test("expo-media-library: save, albums and the newest assets over @capacito
   });
 });
 
-Deno.test("expo-media-library: SDK 57's class API (Asset, Album, Query) over the same plugin", async () => {
+Deno.test("expo-media-library (SDK 58): album types, metadata, smart albums and URI versions", async () => {
+  const { Album, AlbumType, AssetUriVersion, Query } = MediaLibrary;
+  assertEquals([AlbumType.ALBUM, AlbumType.SMART_ALBUM], ["album", "smartAlbum"]);
+  assertEquals([AssetUriVersion.CURRENT, AssetUriVersion.ORIGINAL], ["current", "original"]);
+  const media = fakePlugin(["savePhoto", "saveVideo", "getAlbums", "createAlbum", "getMedias"], {
+    getAlbums: {
+      albums: [
+        { identifier: "A1", name: "Trips", type: "user" },
+        { identifier: "S1", name: "Recents", type: "smart" },
+        { identifier: "D1", name: "Shared", type: "shared" },
+      ],
+    },
+    getMedias: { medias: [{ identifier: "M1", data: "data:image/jpeg;base64,AA" }] },
+  });
+  await inShell("ios", { Media: media.plugin }, async () => {
+    assertEquals(await Album.getAlbumsMetadata(), [
+      { id: "A1", title: "Trips", type: AlbumType.ALBUM },
+      { id: "S1", title: "Recents", type: AlbumType.SMART_ALBUM },
+      { id: "D1", title: "Shared", type: AlbumType.ALBUM },
+    ]);
+    assertEquals((await Album.getSmartAlbums()).map((a) => a.id), ["S1"]);
+    assertEquals(await new Album("S1").getType(), "smartAlbum");
+    assertEquals(await new Album("A1").getType(), "album");
+    await assertRejects(() => new Album("gone").getType(), Error, "not found");
+    const [asset] = await new Query().exe();
+    assertEquals(
+      await asset.getUri({ version: AssetUriVersion.ORIGINAL }),
+      "data:image/jpeg;base64,AA",
+    );
+  });
+  // Android's plugin reports no type: the metadata says null, getType a regular album.
+  const android = fakePlugin(["savePhoto", "saveVideo", "getAlbums", "createAlbum", "getMedias"], {
+    getAlbums: { albums: [{ identifier: "/Pictures/Saved", name: "Saved" }] },
+  });
+  await inShell("android", { Media: android.plugin }, async () => {
+    assertEquals((await Album.getAlbumsMetadata())[0].type, null);
+    assertEquals(await new Album("/Pictures/Saved").getType(), "album");
+    assertEquals(await Album.getSmartAlbums(), []);
+  });
+});
+
+Deno.test("expo-media-library: SDK 58's class API (Asset, Album, Query) over the same plugin", async () => {
   const { Album, Asset, AssetField, MediaType, Query } = MediaLibrary;
   assertEquals([MediaType.IMAGE, MediaLibraryLegacy.MediaType.photo], ["image", "photo"]);
   const media = fakePlugin(["savePhoto", "saveVideo", "getAlbums", "createAlbum", "getMedias"], {

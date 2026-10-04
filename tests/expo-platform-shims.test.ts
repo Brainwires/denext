@@ -101,6 +101,8 @@ Deno.test("expo-location: permissions, current / last known position, watch with
     assertEquals([fg.status, fg.granted, fg.android?.accuracy], ["granted", true, "coarse"]);
     const bg = await Location.getBackgroundPermissionsAsync();
     assertEquals([bg.status, bg.canAskAgain], ["denied", false]);
+    // SDK 58: the background answer is a LocationPermissionResponse too.
+    assertEquals([bg.ios?.scope, bg.android?.accuracy], ["none", "none"]);
     const here = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
     assertEquals(here.coords, {
       latitude: 1,
@@ -422,4 +424,67 @@ Deno.test("expo-linking: openSettings opens the app's settings in the shell", as
   await withGlobals({}, async () => {
     await assertRejects(() => Linking.openSettings(), Error, "web page cannot");
   });
+});
+
+Deno.test("expo-notifications (SDK 58): threadIdentifier groups; alarmClock delivery is exact", async () => {
+  resetLocalNotificationsForTesting();
+  const pending: Any[] = [];
+  const local = fakePlugin(LOCAL_METHODS);
+  local.plugin.schedule = (arg: Any) => {
+    pending.push(...arg.notifications);
+    return Promise.resolve({ notifications: [] });
+  };
+  await inShell("android", { LocalNotifications: local.plugin }, async () => {
+    await Notifications.scheduleNotificationAsync({
+      content: { title: "Build", body: "Done", threadIdentifier: "thread-1" },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: Date.now() + 60_000,
+        delivery: "alarmClock",
+      },
+    });
+    await Notifications.scheduleNotificationAsync({
+      content: { title: "Daily", body: "Again" },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour: 9,
+        minute: 0,
+        delivery: "bestEffort",
+      },
+    });
+  });
+  assertEquals([pending[0].group, pending[0].threadIdentifier], ["thread-1", "thread-1"]);
+  assertEquals(pending[0].schedule.allowWhileIdle, true);
+  assertEquals([pending[1].group, pending[1].schedule.allowWhileIdle], [undefined, undefined]);
+  // setNotificationHandler(null) removes the handler (T3's foreground-notification hook).
+  Notifications.setNotificationHandler({
+    handleNotification: () =>
+      Promise.resolve({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      }),
+  });
+  Notifications.setNotificationHandler(null);
+});
+
+Deno.test("expo-linking (SDK 58): unwrapDevLaunchURL strips Expo's launcher commands", () => {
+  assertEquals(
+    Linking.unwrapDevLaunchURL(
+      "myapp://expo-development-client/?url=http%3A%2F%2F10.0.0.5%3A8081%2F--%2Fprofile",
+    ),
+    "http://10.0.0.5:8081/--/profile",
+  );
+  assertEquals(Linking.unwrapDevLaunchURL("myapp://expo-development-client/"), "");
+  assertEquals(
+    Linking.unwrapDevLaunchURL("myapp://open?__expo_url=myapp%3A%2F%2Fthreads%2F1&x=1"),
+    "myapp://threads/1",
+  );
+  assertEquals(
+    Linking.unwrapDevLaunchURL("myapp://login?__expo_disable_fab=1&next=home"),
+    "myapp://login?next=home",
+  );
+  assertEquals(Linking.unwrapDevLaunchURL("myapp://login?next=home"), "myapp://login?next=home");
+  assertEquals(Linking.unwrapDevLaunchURL("not a url"), "not a url");
 });

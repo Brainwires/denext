@@ -275,15 +275,21 @@ function fakeCamera() {
     ondataavailable?: (e: unknown) => void;
     onstop?: () => void;
     onerror?: (e: unknown) => void;
+    onpause?: () => void;
+    onresume?: () => void;
+    timeslice?: number;
     constructor(public stream: unknown) {}
-    start() {
+    start(timeslice?: number) {
       this.state = "recording";
+      this.timeslice = timeslice;
     }
     pause() {
       this.state = "paused";
+      this.onpause?.();
     }
     resume() {
       this.state = "recording";
+      this.onresume?.();
     }
     stop() {
       this.state = "inactive";
@@ -372,7 +378,9 @@ Deno.test("expo-camera: the preview takes pictures and records video through its
     assert(pictureRef instanceof PictureRef);
     assertEquals((await pictureRef.savePictureAsync({ base64: true })).base64, "QUJD");
     assertEquals(await ref.current!.getAvailablePictureSizesAsync(), ["1920x1080"]);
-    assertEquals(await ref.current!.getAvailableLensesAsync(), ["Back Camera"]);
+    assertEquals(await ref.current!.getAvailableLensesAsync(), [
+      { deviceType: "videoinput", localizedName: "Back Camera" },
+    ]);
     assert(ref.current!.getSupportedFeatures().toggleRecordingAsyncAvailable);
     assert(cam.calls.some(([m, c]) => m === "constraints" && (c as Any).advanced[0].torch));
 
@@ -384,6 +392,62 @@ Deno.test("expo-camera: the preview takes pictures and records video through its
     assertMatch((await recording)!.uri, /^blob:/);
     root.unmount();
     assert(cam.calls.some(([m]) => m === "stop"), "the track stops on unmount");
+  });
+});
+
+Deno.test("expo-camera (SDK 58): onRecordingProgress while recording; no document scanner", async () => {
+  assertEquals(CameraView.isDocumentScannerAvailable, false);
+  assertEquals(await CameraView.scanDocumentAsync({ requestPdf: true }), null);
+  const cam = fakeCamera();
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  await withGlobals(cam.globals, async () => {
+    const ref: { current: CameraViewHandle | null } = { current: null };
+    const progress: Array<{ duration: number; fileSize: number; maxDuration?: number }> = [];
+    const { root } = mount(() =>
+      h(CameraView as Any, { ref, onRecordingProgress: (p: Any) => progress.push(p) })
+    );
+    await tick();
+    const recording = ref.current!.recordAsync({ maxDuration: 30, progressUpdateInterval: 0.01 });
+    await wait(250);
+    assert(progress.length >= 1, "reported while recording");
+    assert(progress.every((p) => p.fileSize === 0 && p.maxDuration === 30 && p.duration > 0));
+    await ref.current!.toggleRecordingAsync(); // pause
+    const paused = progress.length;
+    await wait(250);
+    assertEquals(progress.length, paused, "nothing while paused");
+    await ref.current!.toggleRecordingAsync(); // resume
+    ref.current!.stopRecording();
+    assertMatch((await recording)!.uri, /^blob:/);
+    root.unmount();
+  });
+});
+
+Deno.test("expo-image (SDK 58): skipOnCacheHit skips the fade for a cached image; aria-hidden", async () => {
+  const web = fakeWeb({ "https://x/a.png": "abcd" });
+  await withGlobals(web.globals, async () => {
+    assert(await Image.prefetch(["https://x/a.png"], "disk"));
+    const render = (skipOnCacheHit: string) =>
+      mount(() =>
+        h(Image as Any, {
+          source: { uri: "https://x/a.png" },
+          cachePolicy: "disk",
+          transition: { duration: 150, skipOnCacheHit },
+          accessibilityElementsHidden: true,
+        })
+      );
+    const skipped = render("all");
+    await tick();
+    const img = skipped.container.firstChild;
+    assertMatch(img.getAttribute("src"), /^blob:/);
+    assertEquals(img.getAttribute("aria-hidden"), "true");
+    assertEquals(img.style.getPropertyValue("transition"), "", "a disk hit does not fade");
+    skipped.root.unmount();
+    const memoryOnly = render("memory");
+    await tick();
+    const faded = memoryOnly.container.firstChild.firstChild;
+    assertEquals(faded.style.getPropertyValue("transition"), "opacity 150ms ease-in-out");
+    memoryOnly.root.unmount();
+    assert(await Image.clearDiskCache());
   });
 });
 

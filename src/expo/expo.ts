@@ -18,6 +18,10 @@
  *   `registerWebModule`, `useEvent` and `useEventListener` work for JS-implemented modules,
  *   and `new EventEmitter(nativeModule)` (the pre-SDK 52 form) listens to its native events.
  * - `fetch` (from `expo/fetch`) is the platform's streaming `fetch`.
+ * - SDK 58's additions: `CodedError` / `UnavailabilityError`, `Platform` (Expo's web build:
+ *   `OS` is `"web"`), `uuid` (`v4`, and a synchronous `v5`), `createSnapshotFriendlyRef`, and
+ *   `useReleasingSharedObject` / `useReleasingSharedObjectWithLifecycle` (Expo's semantics: an
+ *   object released on unmount or replaced when its dependencies change).
  *
  * @example
  * ```ts
@@ -33,21 +37,28 @@
 import { h } from "../jsx/jsx-runtime.ts";
 import type { Component } from "../jsx/types.ts";
 import { createRoot } from "../client/mod.ts";
-import { useEffect, useRef, useState } from "../runtime/hooks.ts";
+import type { DependencyList } from "../compat/react-types.ts";
+import { useEffect, useInsertionEffect, useRef, useState } from "../runtime/hooks.ts";
 import {
+  CodedError,
   createPermissionHook,
   type PermissionExpiration,
   type PermissionHookOptions,
   type PermissionResponse,
   PermissionStatus,
   type Subscription,
+  UnavailabilityError,
 } from "./internal/common.ts";
+import { type UUID, uuid } from "./internal/uuid.ts";
 import * as RN from "./internal/react-native.ts";
 import { nativeModule, nativeModuleName } from "../mobile/native-module.ts";
 import { nativeHostComponent } from "../react-native/native-modules.ts";
 
-export { createPermissionHook, PermissionStatus };
+export { CodedError, createPermissionHook, PermissionStatus, UnavailabilityError, uuid };
 export type { PermissionExpiration, PermissionHookOptions, PermissionResponse, Subscription };
+export type { UUID };
+/** Expo's name for a listener subscription (`EventSubscription` in expo-modules-core). */
+export type EventSubscription = Subscription;
 
 /** The id of the element the app mounts into. */
 const ROOT_ID = "root";
@@ -383,6 +394,252 @@ export function useEventListener(
     );
     return () => sub.remove();
   }, [emitter, eventName]);
+}
+
+/** A platform key `Platform.select` matches (`native` never matches here). */
+export type PlatformSelectOSType =
+  | "ios"
+  | "android"
+  | "macos"
+  | "windows"
+  | "web"
+  | "native"
+  | "electron"
+  | "default";
+
+/** Expo's `Platform` (expo-modules-core): the web build's, which is what runs here. */
+export interface ExpoPlatform {
+  /** The platform the JS runs as: `"web"` (the Capacitor shell runs the web build too). */
+  readonly OS: string;
+  /** The value for `web`, else `default`. */
+  select<T>(specifics: { [platform in PlatformSelectOSType]?: T }): T | undefined;
+  /** Whether there is a DOM (false in SSR and tests without one). */
+  readonly isDOMAvailable: boolean;
+  /** Whether `window` takes event listeners. */
+  readonly canUseEventListeners: boolean;
+  /** Whether `window.screen` can be read. */
+  readonly canUseViewport: boolean;
+  /** Whether the JS runs in a remote debugger: never. */
+  readonly isAsyncDebugging: boolean;
+  /** Whether the app runs on a Meta Quest: never here. */
+  readonly isQuest: boolean;
+}
+
+/** The page's `window`, when there is one with a document. */
+function domWindow(): (Window & typeof globalThis) | undefined {
+  const win = (globalThis as { window?: Window & typeof globalThis }).window;
+  return typeof win?.document?.createElement === "function" ? win : undefined;
+}
+
+/**
+ * Expo's `Platform`: `OS` is `"web"` and `select` picks `web`, then `default` (as Expo's web
+ * build; React Native's own `Platform` from `react-native` is the one that reports the
+ * Capacitor shell). The DOM facts are read when asked, so importing it is safe anywhere.
+ */
+export const Platform: ExpoPlatform = {
+  OS: "web",
+  select<T>(specifics: { [platform in PlatformSelectOSType]?: T }): T | undefined {
+    if (Object.hasOwn(specifics, "web")) return specifics.web;
+    return Object.hasOwn(specifics, "default") ? specifics.default : undefined;
+  },
+  get isDOMAvailable() {
+    return domWindow() !== undefined;
+  },
+  get canUseEventListeners() {
+    return typeof domWindow()?.addEventListener === "function";
+  },
+  get canUseViewport() {
+    return !!domWindow()?.screen;
+  },
+  isAsyncDebugging: false,
+  isQuest: false,
+};
+
+/**
+ * A ref object (`{ current: null }`), as Expo's snapshot-friendly ref is.
+ *
+ * @returns The ref.
+ */
+export function createSnapshotFriendlyRef<T>(): { current: T | null } {
+  return { current: null };
+}
+
+/** A shared object as the releasing hooks use it. */
+interface Releasable {
+  /** Release it. */
+  release(): void;
+}
+
+/** What {@linkcode ReleasingSharedObjectLifecycle}'s callbacks receive. */
+export type ReleasingSharedObjectLifecycleContext = {
+  /** The dependencies the object was last committed with. */
+  previousDependencies: DependencyList;
+  /** The new dependencies. */
+  dependencies: DependencyList;
+};
+
+/** How {@linkcode useReleasingSharedObjectWithLifecycle} creates, updates and releases. */
+export type ReleasingSharedObjectLifecycle<TSharedObject> = {
+  /** Create the object. */
+  factory: () => TSharedObject;
+  /**
+   * Whether a dependency change replaces the object (the default) or keeps it (`false`: then
+   * `update` is called with the change).
+   */
+  shouldRecreate?: (
+    object: TSharedObject,
+    context: ReleasingSharedObjectLifecycleContext,
+  ) => boolean;
+  /** Apply a dependency change to a kept object (it stays alive until this settles). */
+  update?: (
+    object: TSharedObject,
+    context: ReleasingSharedObjectLifecycleContext,
+  ) => void | Promise<void>;
+  /** Release the object (default: its `release()`). */
+  release?: (object: TSharedObject) => void;
+};
+
+/** A created object, retained while effects or pending updates use it. */
+class SharedObjectResource<T> {
+  retainCount = 0;
+  disposed = false;
+  release: (object: T) => void = (object) => (object as Releasable | null)?.release();
+
+  constructor(readonly object: T) {}
+
+  /** Retain it; the result releases this hold (the object goes once none is left). */
+  retain(): () => void {
+    if (this.disposed) {
+      throw new Error(
+        "Cannot reuse a released shared object. Remount the component to create a new one.",
+      );
+    }
+    this.retainCount++;
+    return () => {
+      if (--this.retainCount > 0) return;
+      // After effect replay and a consumer's synchronous cleanup have run.
+      Promise.resolve().then(() => {
+        if (this.retainCount === 0 && !this.disposed) {
+          this.disposed = true;
+          if (this.object != null) this.release(this.object);
+        }
+      }).catch((error) => console.error(error));
+    };
+  }
+
+  /** Keep the object alive until `task` settles. */
+  track(task: void | Promise<void>): void {
+    if (!task) return;
+    const done = this.retain();
+    Promise.resolve(task).catch((error) => console.error(error)).then(done);
+  }
+}
+
+/** A render's choice of object, with the dependencies it was chosen for. */
+interface Snapshot<T> {
+  resource: SharedObjectResource<T>;
+  dependencies: DependencyList;
+}
+
+/** Whether two dependency lists are equal item by item (`Object.is`). */
+function sameDependencies(a: DependencyList, b: DependencyList): boolean {
+  return a.length === b.length && b.every((value, i) => Object.is(value, a[i]));
+}
+
+/** The object a render uses: the render's candidate, the committed one, or a new one. */
+function selectSnapshot<T>(
+  lifecycle: ReleasingSharedObjectLifecycle<T>,
+  dependencies: DependencyList,
+  candidate: Snapshot<T> | undefined,
+  committed: Snapshot<T> | undefined,
+): Snapshot<T> {
+  if (
+    candidate && !candidate.resource.disposed &&
+    sameDependencies(candidate.dependencies, dependencies)
+  ) {
+    return candidate;
+  }
+  const previous = committed?.resource.disposed ? undefined : committed;
+  if (previous && sameDependencies(previous.dependencies, dependencies)) return previous;
+  if (
+    previous && previous.resource.object != null &&
+    lifecycle.shouldRecreate?.(previous.resource.object, {
+        previousDependencies: previous.dependencies,
+        dependencies,
+      }) === false
+  ) {
+    return { resource: previous.resource, dependencies: [...dependencies] };
+  }
+  return {
+    resource: new SharedObjectResource(lifecycle.factory()),
+    dependencies: [...dependencies],
+  };
+}
+
+/**
+ * A shared object for the component's lifetime, made by `lifecycle.factory` and released (by
+ * `lifecycle.release`, else its `release()`) on unmount or when the dependencies change.
+ * With `shouldRecreate` returning false, a dependency change calls `update` on the same object
+ * instead. Hiding the component in an `<Activity>` does not release it. Expo's own semantics.
+ *
+ * @param lifecycle How the object is created, updated and released.
+ * @param dependencies When to recreate (or update) it.
+ * @returns The object.
+ */
+export function useReleasingSharedObjectWithLifecycle<TSharedObject>(
+  lifecycle: ReleasingSharedObjectLifecycle<TSharedObject>,
+  dependencies: DependencyList,
+): TSharedObject {
+  const state = useRef<{
+    candidate?: Snapshot<TSharedObject>;
+    committed?: Snapshot<TSharedObject>;
+  }>({});
+  const selected = selectSnapshot(
+    lifecycle,
+    dependencies,
+    state.current.candidate,
+    state.current.committed,
+  );
+  state.current.candidate = selected;
+  const resource = selected.resource;
+  // An insertion effect, so an <Activity> hiding the component does not release it.
+  useInsertionEffect(() => {
+    resource.release = lifecycle.release ?? ((object) => (object as Releasable | null)?.release());
+    return resource.retain();
+  });
+  // Still retained after the insertion cleanup, so a useEffect cleanup can use the object.
+  useEffect(() => resource.retain(), [resource]);
+  useEffect(() => {
+    const previous = state.current.committed;
+    state.current.committed = selected;
+    if (
+      previous?.resource === resource &&
+      !sameDependencies(previous.dependencies, selected.dependencies)
+    ) {
+      resource.track(
+        lifecycle.update?.(resource.object, {
+          previousDependencies: previous.dependencies,
+          dependencies: selected.dependencies,
+        }),
+      );
+    }
+  });
+  return resource.object;
+}
+
+/**
+ * A shared object for the component's lifetime: `factory`'s result, released on unmount and
+ * replaced (the old one released) when `dependencies` change.
+ *
+ * @param factory Create the object.
+ * @param dependencies When to replace it.
+ * @returns The object.
+ */
+export function useReleasingSharedObject<TSharedObject>(
+  factory: () => TSharedObject,
+  dependencies: DependencyList,
+): TSharedObject {
+  return useReleasingSharedObjectWithLifecycle({ factory }, dependencies);
 }
 
 /**

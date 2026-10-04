@@ -123,6 +123,11 @@ export class VideoPlayer {
   #muted = false;
   /** How often `timeUpdate` fires, in seconds (0: never). */
   timeUpdateEventInterval = 0;
+  /**
+   * The largest resolution an adaptive stream may pick (accepted and ignored: the browser or
+   * AVPlayer chooses).
+   */
+  maxResolution: { width: number; height: number } | null = null;
 
   /**
    * Create it.
@@ -362,6 +367,8 @@ export interface PlayerBuilderOptions {
   seekBackwardIncrement?: number;
   /** The seek-forward increment, in seconds (ignored). */
   seekForwardIncrement?: number;
+  /** Whether the display switches frame rate to match the video (ignored). */
+  videoChangeFrameRateStrategy?: "off" | "onlyIfSeamless";
 }
 
 /**
@@ -418,6 +425,8 @@ export interface VideoViewProps {
   allowsFullscreen?: boolean;
   /** Allow Picture in Picture (ignored). */
   allowsPictureInPicture?: boolean;
+  /** Android: show the controls when playback starts or pauses (ignored). */
+  controllerAutoShow?: boolean;
   /** The style. */
   style?: unknown;
   /** Other view props. */

@@ -6,8 +6,10 @@
  * throws at import, so a screen that imports `@expo/ui/swift-ui` builds and loads; give it a web layout
  * of its own (a `.web.tsx` file beside it) for a real web UI.
  *
- * Generated from the export list of `@expo/ui` 57.0.20, a superset of the 57.0.14 that
- * `src/expo/manifest.ts` pins; `deno task parity:native` checks the names.
+ * Generated from the export list of `@expo/ui` 57.0.20 and brought up to the 58.0.11 that
+ * `src/expo/manifest.ts` pins; `deno task parity:native` checks the names. A data-driven
+ * list (`List.ForEach` / `ListForEach`, `LazyVStack.ForEach`, … with `data`, `keyExtractor`
+ * and a render function as `children`) renders one row per item.
  *
  * @example
  * ```ts
@@ -197,19 +199,33 @@ export const LabeledContent: (props: StubProps) => VNode = /* @__PURE__ */ stubV
 /** Stand-in for SwiftUI's `HStack`: its children in a row. */
 export const HStack: (props: StubProps) => VNode = /* @__PURE__ */ stubView(PKG, "HStack", "row");
 
-/** Stand-in for SwiftUI's `LazyHStack`: its children in a row. */
-export const LazyHStack: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
+/** Stand-in for SwiftUI's `LazyHStackForEach`: a row per `data` item, side by side. */
+export const LazyHStackForEach: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
   PKG,
-  "LazyHStack",
+  "LazyHStackForEach",
   "row",
 );
 
-/** Stand-in for SwiftUI's `LazyVStack`: its children in a column. */
-export const LazyVStack: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
+/** Stand-in for SwiftUI's `LazyVStackForEach`: a row per `data` item, in a column. */
+export const LazyVStackForEach: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
   PKG,
-  "LazyVStack",
+  "LazyVStackForEach",
   "column",
 );
+
+/** Stand-in for SwiftUI's `LazyHStack` (and `LazyHStack.ForEach`): its children in a row. */
+export const LazyHStack: ((props: StubProps) => VNode) & {
+  ForEach: (props: StubProps) => VNode;
+} = /* @__PURE__ */ Object.assign(stubView(PKG, "LazyHStack", "row"), {
+  ForEach: LazyHStackForEach,
+});
+
+/** Stand-in for SwiftUI's `LazyVStack` (and `LazyVStack.ForEach`): its children in a column. */
+export const LazyVStack: ((props: StubProps) => VNode) & {
+  ForEach: (props: StubProps) => VNode;
+} = /* @__PURE__ */ Object.assign(stubView(PKG, "LazyVStack", "column"), {
+  ForEach: LazyVStackForEach,
+});
 
 /** Stand-in for SwiftUI's `VStack`: its children in a column. */
 export const VStack: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
@@ -255,12 +271,19 @@ export const NavigationLink: (props: StubProps) => VNode = /* @__PURE__ */ stubV
   "button",
 );
 
-/** Stand-in for SwiftUI's `NavigationSplitView`: its children in a column. */
-export const NavigationSplitView: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
-  PKG,
-  "NavigationSplitView",
-  "column",
-);
+/**
+ * Stand-in for SwiftUI's `NavigationSplitView` (with its `Sidebar`, `Content` and `Detail`
+ * columns): its columns one under the other.
+ */
+export const NavigationSplitView: ((props: StubProps) => VNode) & {
+  Sidebar: (props: StubProps) => VNode;
+  Content: (props: StubProps) => VNode;
+  Detail: (props: StubProps) => VNode;
+} = /* @__PURE__ */ Object.assign(stubView(PKG, "NavigationSplitView", "column"), {
+  Sidebar: stubView(PKG, "NavigationSplitView.Sidebar", "column"),
+  Content: stubView(PKG, "NavigationSplitView.Content", "column"),
+  Detail: stubView(PKG, "NavigationSplitView.Detail", "column"),
+});
 
 /** Stand-in for SwiftUI's `NavigationStack`: its children in a column. */
 export const NavigationStack: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
@@ -356,12 +379,12 @@ export const ToolbarItem: (props: StubProps) => VNode = /* @__PURE__ */ stubView
   "children",
 );
 
-/** Stand-in for SwiftUI's `Toolbar`: its children in a column. */
-export const Toolbar: (props: StubProps) => VNode = /* @__PURE__ */ stubView(
-  PKG,
-  "Toolbar",
-  "column",
-);
+/** Stand-in for SwiftUI's `Toolbar` (and `Toolbar.Content`): its children in a column. */
+export const Toolbar: ((props: StubProps) => VNode) & {
+  Content: (props: StubProps) => VNode;
+} = /* @__PURE__ */ Object.assign(stubView(PKG, "Toolbar", "column"), {
+  Content: stubView(PKG, "Toolbar.Content", "children"),
+});
 
 /** Stand-in for SwiftUI's `Toggle`: its children only. */
 export const Toggle: (props: StubProps) => VNode = /* @__PURE__ */ stubView(

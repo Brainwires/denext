@@ -37,7 +37,11 @@ export interface GlassViewProps {
   /** The glass style (default `regular`; `none` draws no glass). */
   glassEffectStyle?: GlassStyle | GlassEffectStyleConfig;
   /** A tint colour over the glass. */
-  tintColor?: string;
+  /**
+   * The tint: a color string, or (in React Native mode) a `PlatformColor` / `DynamicColorIOS`
+   * value react-native-web resolves.
+   */
+  tintColor?: string | Readonly<Record<string, unknown>>;
   /** React to touches (ignored). */
   isInteractive?: boolean;
   /** The colour scheme (`dark` darkens the tint). */

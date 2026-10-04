@@ -337,6 +337,11 @@ export function useAudioPlayerStatus(player: AudioPlayer): AudioStatus {
 export interface RecordingOptions {
   /** The file extension. */
   extension?: string;
+  /**
+   * The recording's file name (ignored: the recording is a `blob:` URL, named by the browser
+   * when saved).
+   */
+  fileName?: string;
   /** The sample rate. */
   sampleRate?: number;
   /** The channel count. */
@@ -400,6 +405,11 @@ export interface RecorderState {
   isRecording: boolean;
   /** How long it has recorded, in ms. */
   durationMillis: number;
+  /**
+   * The bytes recorded so far: what `MediaRecorder` has delivered (all of it once stopped;
+   * while recording, it grows as the browser hands over data, as in Expo's web build).
+   */
+  fileSize: number;
   /** Whether the media services reset (never here). */
   mediaServicesDidReset: boolean;
   /** The input level in dBFS (-160 silent to 0), with `isMeteringEnabled`. */
@@ -563,6 +573,7 @@ export class AudioRecorder {
       canRecord: this.#recorder !== undefined && this.#stream !== undefined,
       isRecording: this.isRecording,
       durationMillis: this.#duration(),
+      fileSize: this.#chunks.reduce((total, chunk) => total + chunk.size, 0),
       mediaServicesDidReset: false,
       ...(metering === undefined ? {} : { metering }),
       url: this.uri,

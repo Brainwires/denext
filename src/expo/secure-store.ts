@@ -51,6 +51,11 @@ export interface SecureStoreOptions {
   keychainService?: string;
   /** Ask for biometrics before the value can be read (set it when storing). */
   requireAuthentication?: boolean;
+  /**
+   * Android: whether the prompt asks for a confirmation tap after a passive biometric (ignored:
+   * the biometrics plugin's prompt decides).
+   */
+  requireConfirmation?: boolean;
   /** The biometric prompt's reason, when reading a gated value. */
   authenticationPrompt?: string;
   /** The Keychain accessibility class (ignored here). */

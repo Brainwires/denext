@@ -100,6 +100,86 @@ export enum AppleMapsMapType {
   IMAGERY = "IMAGERY",
 }
 
+/**
+ * Apple Maps' point-of-interest categories (MapKit's `MKPointOfInterestCategory`), for a
+ * map's point-of-interest filter (accepted and ignored by the native map view here).
+ */
+export enum AppleMapPointOfInterestCategory {
+  MUSEUM = "MUSEUM",
+  MUSIC_VENUE = "MUSIC_VENUE",
+  THEATER = "THEATER",
+  LIBRARY = "LIBRARY",
+  PLANETARIUM = "PLANETARIUM",
+  SCHOOL = "SCHOOL",
+  UNIVERSITY = "UNIVERSITY",
+  MOVIE_THEATER = "MOVIE_THEATER",
+  NIGHTLIFE = "NIGHTLIFE",
+  FIRE_STATION = "FIRE_STATION",
+  HOSPITAL = "HOSPITAL",
+  PHARMACY = "PHARMACY",
+  POLICE = "POLICE",
+  CASTLE = "CASTLE",
+  FORTRESS = "FORTRESS",
+  LANDMARK = "LANDMARK",
+  NATIONAL_MONUMENT = "NATIONAL_MONUMENT",
+  BAKERY = "BAKERY",
+  BREWERY = "BREWERY",
+  CAFE = "CAFE",
+  DISTILLERY = "DISTILLERY",
+  FOOD_MARKET = "FOOD_MARKET",
+  RESTAURANT = "RESTAURANT",
+  WINERY = "WINERY",
+  ANIMAL_SERVICE = "ANIMAL_SERVICE",
+  ATM = "ATM",
+  AUTOMOTIVE_REPAIR = "AUTOMOTIVE_REPAIR",
+  BANK = "BANK",
+  BEAUTY = "BEAUTY",
+  EV_CHARGER = "EV_CHARGER",
+  FITNESS_CENTER = "FITNESS_CENTER",
+  LAUNDRY = "LAUNDRY",
+  MAILBOX = "MAILBOX",
+  POST_OFFICE = "POST_OFFICE",
+  RESTROOM = "RESTROOM",
+  SPA = "SPA",
+  STORE = "STORE",
+  AMUSEMENT_PARK = "AMUSEMENT_PARK",
+  AQUARIUM = "AQUARIUM",
+  BEACH = "BEACH",
+  CAMPGROUND = "CAMPGROUND",
+  FAIRGROUND = "FAIRGROUND",
+  MARINA = "MARINA",
+  NATIONAL_PARK = "NATIONAL_PARK",
+  PARK = "PARK",
+  RV_PARK = "RV_PARK",
+  ZOO = "ZOO",
+  BASEBALL = "BASEBALL",
+  BASKETBALL = "BASKETBALL",
+  BOWLING = "BOWLING",
+  GO_KART = "GO_KART",
+  GOLF = "GOLF",
+  HIKING = "HIKING",
+  MINI_GOLF = "MINI_GOLF",
+  ROCK_CLIMBING = "ROCK_CLIMBING",
+  SKATE_PARK = "SKATE_PARK",
+  SKATING = "SKATING",
+  SKIING = "SKIING",
+  SOCCER = "SOCCER",
+  STADIUM = "STADIUM",
+  TENNIS = "TENNIS",
+  VOLLEYBALL = "VOLLEYBALL",
+  AIRPORT = "AIRPORT",
+  CAR_RENTAL = "CAR_RENTAL",
+  CONVENTION_CENTER = "CONVENTION_CENTER",
+  GAS_STATION = "GAS_STATION",
+  HOTEL = "HOTEL",
+  PARKING = "PARKING",
+  PUBLIC_TRANSPORT = "PUBLIC_TRANSPORT",
+  FISHING = "FISHING",
+  KAYAKING = "KAYAKING",
+  SURFING = "SURFING",
+  SWIMMING = "SWIMMING",
+}
+
 /** Apple Maps' polyline contour styles. */
 export enum AppleMapsContourStyle {
   /** Straight segments. */
@@ -329,12 +409,15 @@ export const AppleMaps: {
   MapColorScheme: typeof AppleMapsColorScheme;
   /** The polyline contour styles. */
   ContourStyle: typeof AppleMapsContourStyle;
+  /** The point-of-interest categories. */
+  PointOfInterestCategory: typeof AppleMapPointOfInterestCategory;
 } = {
   View: /* @__PURE__ */ mapView("AppleMaps.View"),
   MapType: AppleMapsMapType,
   MapStyleElevation: AppleMapsMapStyleElevation,
   MapColorScheme: AppleMapsColorScheme,
   ContourStyle: AppleMapsContourStyle,
+  PointOfInterestCategory: AppleMapPointOfInterestCategory,
 };
 
 /**

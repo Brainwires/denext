@@ -188,6 +188,39 @@ export function parse(url: string): ParsedURL {
   };
 }
 
+/** The prefix of the query parameters Expo reserves for its launcher commands. */
+const RESERVED_PREFIX = "__expo_";
+/** The legacy development-client host (`<scheme>://expo-development-client/?url=…`). */
+const LEGACY_DEV_HOST = "expo-development-client";
+
+/**
+ * The URL the app should handle for a launch URL that may carry Expo's development launcher
+ * commands: the target named by `__expo_url` (or, on the legacy `expo-development-client`
+ * host, `url`), else `url` without its reserved `__expo_*` parameters. A URL that does not
+ * parse, or carries no command, comes back unchanged; a legacy launch URL without a target is
+ * `""`. The same pure function as Expo's.
+ *
+ * @param url A URL the app received (`getInitialURL()`, a URL event).
+ * @returns The URL to handle.
+ */
+export function unwrapDevLaunchURL(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  const legacy = parsed.hostname === LEGACY_DEV_HOST;
+  const target = parsed.searchParams.get(`${RESERVED_PREFIX}url`) ??
+    (legacy ? parsed.searchParams.get("url") : null);
+  if (target !== null) return target;
+  if (legacy) return "";
+  const reserved = [...parsed.searchParams.keys()].filter((k) => k.startsWith(RESERVED_PREFIX));
+  if (reserved.length === 0) return url;
+  for (const key of reserved) parsed.searchParams.delete(key);
+  return parsed.toString();
+}
+
 /**
  * The URL that launched the app: `@capacitor/app`'s launch URL in the native shell, the
  * page's URL on the web.

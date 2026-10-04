@@ -44,17 +44,60 @@ export function nativeOnly(pkg: string, name: string): Error {
 }
 
 /**
- * Expo's `UnavailabilityError` (code `ERR_UNAVAILABLE`): what a shim throws for a call that
- * has no implementation on this platform, as the Expo package does on a platform without it.
+ * Expo's `CodedError` (expo-modules-core, re-exported by `expo`): an `Error` with a `code`
+ * that tells errors apart without subclassing.
+ */
+export class CodedError extends Error {
+  /** The error's code (`"ERR_UNAVAILABLE"`, …). */
+  code: string;
+  /** Extra details, when the thrower has any. */
+  info?: unknown;
+
+  /**
+   * Create it.
+   *
+   * @param code The code.
+   * @param message The message.
+   */
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/**
+ * Expo's `UnavailabilityError`: a {@linkcode CodedError} (`ERR_UNAVAILABLE`) for a method or
+ * property the running platform does not have. The platform is always `web` here (the
+ * Capacitor shell runs the web build).
+ */
+export class UnavailabilityError extends CodedError {
+  /**
+   * Create it.
+   *
+   * @param moduleName The module (`"ExpoHaptics"`).
+   * @param propertyName The method or property (`"impactAsync"`).
+   */
+  constructor(moduleName: string, propertyName: string) {
+    super(
+      "ERR_UNAVAILABLE",
+      `The method or property ${moduleName}.${propertyName} is not available on web, are you ` +
+        "sure you've linked all the native dependencies properly?",
+    );
+  }
+}
+
+/**
+ * The `ERR_UNAVAILABLE` {@linkcode CodedError} a shim throws for a call that has no
+ * implementation on this platform, as the Expo package does on a platform without it.
  *
  * @param pkg The package (`"expo-application"`).
  * @param name The call (`"getAndroidId"`).
  * @param why Where it is available, or what to use instead.
  */
-export function unavailable(pkg: string, name: string, why: string): Error & { code: string } {
-  return Object.assign(
-    new Error(`denext/expo: ${pkg}'s ${name} is not available here. ${why}`),
-    { code: "ERR_UNAVAILABLE" },
+export function unavailable(pkg: string, name: string, why: string): CodedError {
+  return new CodedError(
+    "ERR_UNAVAILABLE",
+    `denext/expo: ${pkg}'s ${name} is not available here. ${why}`,
   );
 }
 

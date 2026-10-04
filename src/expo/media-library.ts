@@ -1,5 +1,5 @@
 /**
- * `expo-media-library` for denext: SDK 57's class API (`Asset`, `Album`, `Query` and the
+ * `expo-media-library` for denext: SDK 58's class API (`Asset`, `Album`, `Query` and the
  * `MediaType` / `AssetField` / `MediaSubtype` enums) over `denext/mobile`'s
  * {@linkcode saveToLibrary} / {@linkcode getAlbums} / {@linkcode createAlbum} /
  * {@linkcode getRecentMedia} (`@capacitor-community/media`: `denext mobile add media-library`)
@@ -27,6 +27,7 @@ import {
   createAlbum,
   getAlbums,
   getRecentMedia,
+  type MediaAlbum,
   type MediaItem,
   saveToLibrary,
 } from "../mobile/media-library.ts";
@@ -121,6 +122,44 @@ export enum MediaSubtype {
   VIDEO_CINEMATIC = "videoCinematic",
 }
 
+/** The kind of an album: one the user (or an app) made, or a system smart album. */
+export enum AlbumType {
+  /** A regular album. */
+  ALBUM = "album",
+  /** A smart album the system keeps (Favorites, Recents, Screenshots, …; iOS). */
+  SMART_ALBUM = "smartAlbum",
+}
+
+/** Which version of an asset `getUri` asks for (both are the listing's thumbnail here). */
+export enum AssetUriVersion {
+  /** The asset with its edits. */
+  CURRENT = "current",
+  /** The original, unedited asset. */
+  ORIGINAL = "original",
+}
+
+/** Options for {@linkcode Asset.getUri}. */
+export type AssetUriOptions = {
+  /** The version (ignored here). */
+  version?: AssetUriVersion;
+};
+
+/** An album's id, title and kind, as {@linkcode Album.getAlbumsMetadata} lists them. */
+export type AlbumMetadata = {
+  /** Its id. */
+  id: string;
+  /** Its name. */
+  title: string;
+  /** Its kind, or null when the platform does not say (Android). */
+  type: AlbumType | null;
+};
+
+/** The {@linkcode AlbumType} of a plugin album's `type`, or null when it has none. */
+function albumTypeOf(type: MediaAlbum["type"]): AlbumType | null {
+  if (type === "smart") return AlbumType.SMART_ALBUM;
+  return type === undefined ? null : AlbumType.ALBUM;
+}
+
 const PKG = "expo-media-library";
 const HINT = "denext maps saving, albums and the newest assets only.";
 
@@ -213,8 +252,12 @@ export class Asset {
     return Promise.resolve([]);
   }
 
-  /** Its URI: a thumbnail `data:` URL from a listing, the saved file after `create`. */
-  getUri(): Promise<string> {
+  /**
+   * Its URI: a thumbnail `data:` URL from a listing, the saved file after `create`.
+   *
+   * @param _options The version to read (ignored: both are the same URI here).
+   */
+  getUri(_options?: AssetUriOptions): Promise<string> {
     return fact(factsOf(this).uri, "getUri");
   }
 
@@ -360,6 +403,13 @@ export class Album {
     return found.name;
   }
 
+  /** Its kind: a smart album or a regular one (Android albums are regular). */
+  async getType(): Promise<AlbumType> {
+    const found = (await getAlbums()).find((a) => a.id === this.id);
+    if (!found) throw unavailable(PKG, "Album.getType", "The album was not found.");
+    return albumTypeOf(found.type) ?? AlbumType.ALBUM;
+  }
+
   /** Delete it (not provided). */
   delete(): Promise<void> {
     return notProvided("Album.delete");
@@ -426,6 +476,26 @@ export class Album {
    */
   static async getAll(): Promise<Album[]> {
     return (await getAlbums()).map((a) => albumWith(a.id, a.name));
+  }
+
+  /**
+   * Every album's id, title and kind in one listing (none outside the shell).
+   *
+   * @returns The albums' metadata.
+   */
+  static async getAlbumsMetadata(): Promise<AlbumMetadata[]> {
+    return (await getAlbums()).map((a) => ({ id: a.id, title: a.name, type: albumTypeOf(a.type) }));
+  }
+
+  /**
+   * The system's smart albums (iOS: Favorites, Recents, …; none elsewhere).
+   *
+   * @returns The albums.
+   */
+  static async getSmartAlbums(): Promise<Album[]> {
+    return (await getAlbums()).filter((a) => a.type === "smart").map((a) =>
+      albumWith(a.id, a.name)
+    );
   }
 }
 

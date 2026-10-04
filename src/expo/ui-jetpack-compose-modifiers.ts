@@ -4,7 +4,7 @@
  * `denext/expo/ui/jetpack-compose` render with web layout and ignore their modifiers.
  * Importing and calling them never throws.
  *
- * Generated from the export list of `@expo/ui` 57.0.20, a superset of the 57.0.14 that
+ * Generated from the export list of `@expo/ui` 57.0.20 and brought up to the 58.0.11 that
  * `src/expo/manifest.ts` pins; `deno task parity:native` checks the names.
  *
  * @example
@@ -232,3 +232,22 @@ export const horizontalScroll: (...args: unknown[]) => StubModifier = /* @__PURE
 /** Stand-in for the `createViewModifierEventListener` modifier: an inert config. */
 export const createViewModifierEventListener: (...args: unknown[]) => StubModifier =
   /* @__PURE__ */ stubModifier("createViewModifierEventListener");
+
+/** Compose's intrinsic sizes, for `width` / `height` (`IntrinsicSize.Min`). */
+export const IntrinsicSize: { readonly Min: "min"; readonly Max: "max" } = {
+  Min: "min",
+  Max: "max",
+};
+
+/** One of {@linkcode IntrinsicSize}'s values. */
+export type IntrinsicSize = (typeof IntrinsicSize)[keyof typeof IntrinsicSize];
+
+/** Stand-in for the `cornerRadius` modifier: an inert config. */
+export const cornerRadius: (...args: unknown[]) => StubModifier = /* @__PURE__ */ stubModifier(
+  "cornerRadius",
+);
+
+/** Stand-in for the `maskClip` modifier: an inert config. */
+export const maskClip: (...args: unknown[]) => StubModifier = /* @__PURE__ */ stubModifier(
+  "maskClip",
+);

@@ -42,6 +42,7 @@ import { Image } from "../src/expo/image.ts";
 import {
   AudioPlayer,
   AudioPlaylist,
+  AudioRecorder,
   AudioStream,
   NativeAudioModule,
   RecordingPresets,
@@ -982,7 +983,7 @@ Deno.test("expo native-module classes are stand-ins that throw when constructed"
   assertEquals(Updates.ExpoUpdatesModule.name, "ExpoUpdatesModule");
 });
 
-Deno.test("expo-file-system: the legacy top-level functions warn and throw as in SDK 57", async () => {
+Deno.test("expo-file-system: the legacy top-level functions warn and throw as in SDK 58", async () => {
   const warnings: unknown[] = [];
   const warn = console.warn;
   console.warn = (message: unknown) => void warnings.push(message);
@@ -1059,4 +1060,272 @@ Deno.test("expo functions accept Expo's extra parameters", async () => {
   assert(seen instanceof VideoPlayer);
   assertEquals(setUp, seen);
   root.unmount?.();
+});
+
+// ---- Expo SDK 58 additions -------------------------------------------------
+
+Deno.test("expo (SDK 58): Platform, uuid and the coded errors are Expo's web build's", () => {
+  assertEquals(Expo.Platform.OS, "web");
+  assertEquals(Expo.Platform.select({ ios: 1, web: 2, default: 3 }), 2);
+  assertEquals(Expo.Platform.select({ ios: 1, native: 4, default: 3 }), 3);
+  assertEquals(Expo.Platform.select({ ios: 1 }), undefined);
+  assertEquals([Expo.Platform.isAsyncDebugging, Expo.Platform.isQuest], [false, false]);
+  assertEquals(Expo.Platform.isDOMAvailable, false, "no window in Deno");
+  assertEquals(Expo.Platform.canUseEventListeners, false);
+  // RFC 4122 / Expo's v5: the SHA-1 of the namespace bytes and the UTF-8 name.
+  assertEquals(
+    Expo.uuid.v5("hello.example.com", Expo.uuid.namespace.dns),
+    "fdda765f-fc57-5604-a269-52a7df8164ec",
+  );
+  assertEquals(
+    Expo.uuid.v5("https://denext.dev/é", "6ba7b811-9dad-11d1-80b4-00c04fd430c8"),
+    "378b8fd7-66d7-571c-a759-cda5a794f785",
+  );
+  const dnsBytes = [...Expo.uuid.namespace.dns.replaceAll("-", "").matchAll(/../g)].map((m) =>
+    parseInt(m[0], 16)
+  );
+  assertEquals(
+    Expo.uuid.v5("hello.example.com", dnsBytes),
+    "fdda765f-fc57-5604-a269-52a7df8164ec",
+  );
+  // A name past one 64-byte SHA-1 block.
+  assertEquals(
+    Expo.uuid.v5(
+      "https://denext.dev/docs/react-native#expo-apis?".repeat(4),
+      Expo.uuid.namespace.url,
+    ),
+    "12417472-69a2-5c62-b2d6-004d3b93cd67",
+  );
+  assertThrows(() => Expo.uuid.v5("x", [1, 2]), TypeError, "16 byte");
+  assertMatch(
+    Expo.uuid.v4(),
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+
+  const coded = new Expo.CodedError("ERR_X", "boom");
+  assert(coded instanceof Error);
+  assertEquals([coded.code, coded.message], ["ERR_X", "boom"]);
+  const missing = new Expo.UnavailabilityError("ExpoThing", "doIt");
+  assert(missing instanceof Expo.CodedError);
+  assertEquals(missing.code, "ERR_UNAVAILABLE");
+  assertMatch(missing.message, /ExpoThing\.doIt is not available on web/);
+  assertEquals(Expo.createSnapshotFriendlyRef<number>(), { current: null });
+});
+
+Deno.test("expo (SDK 58): useReleasingSharedObject releases on unmount and on a dependency change", async () => {
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const log: string[] = [];
+  class Thing extends Expo.SharedObject {
+    constructor(readonly id: string) {
+      super();
+      log.push(`make ${id}`);
+    }
+    override release(): void {
+      log.push(`release ${this.id}`);
+    }
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  let seen: Thing | undefined;
+  function Probe(props: { id: string }) {
+    seen = Expo.useReleasingSharedObject(() => new Thing(props.id), [props.id]);
+    return null;
+  }
+  const root = createRoot(container as Any);
+  root.render(h(Probe as Any, { id: "a" }));
+  flushSync();
+  const first = seen;
+  root.render(h(Probe as Any, { id: "a" }));
+  flushSync();
+  assertEquals(seen, first, "same dependencies: the same object");
+  root.render(h(Probe as Any, { id: "b" }));
+  flushSync();
+  await settle();
+  assertEquals(log, ["make a", "make b", "release a"]);
+  root.unmount?.();
+  await settle();
+  assertEquals(log, ["make a", "make b", "release a", "release b"]);
+
+  // With shouldRecreate: false a dependency change updates the same object instead.
+  const updates: string[] = [];
+  let kept: Thing | undefined;
+  function Keeper(props: { n: number }) {
+    kept = Expo.useReleasingSharedObjectWithLifecycle({
+      factory: () => new Thing("k"),
+      shouldRecreate: () => false,
+      update: (object, { previousDependencies, dependencies }) =>
+        void updates.push(`${object.id} ${previousDependencies} -> ${dependencies}`),
+      release: (object) => log.push(`custom release ${object.id}`),
+    }, [props.n]);
+    return null;
+  }
+  log.length = 0;
+  const root2 = createRoot(container as Any);
+  root2.render(h(Keeper as Any, { n: 1 }));
+  flushSync();
+  const keptFirst = kept;
+  root2.render(h(Keeper as Any, { n: 2 }));
+  flushSync();
+  await settle();
+  assertEquals(kept, keptFirst);
+  assertEquals(updates, ["k 1 -> 2"]);
+  root2.unmount?.();
+  await settle();
+  assertEquals(log, ["make k", "custom release k"]);
+});
+
+Deno.test("expo-dev-client / expo-widgets (SDK 58): tools button, initial props, enum options", async () => {
+  DevClient.setToolsButtonVisible(false);
+  const widget = Widgets.createWidget("Usage", () => null, { title: "Weekly" });
+  const [initial] = await widget.getTimeline();
+  assertEquals(initial.props, { title: "Weekly" });
+  assert(initial.date instanceof Date);
+  widget.setConfigurationParameterEnum("period", [{ name: "Week", value: "week" }]);
+  assertEquals(await Widgets.createWidget("Bare", () => null).getTimeline(), []);
+});
+
+Deno.test("expo-font (SDK 58): families load a face per weight and style; unload by face", async () => {
+  const added: Any[] = [];
+  const removed: Any[] = [];
+  class FakeFontFace {
+    weight: string;
+    style: string;
+    display: string;
+    constructor(readonly family: string, readonly source: string, opts: Any) {
+      this.weight = opts.weight ?? "normal";
+      this.style = opts.style ?? "normal";
+      this.display = opts.display;
+    }
+    load() {
+      return Promise.resolve(this);
+    }
+  }
+  const document = {
+    fonts: { add: (f: unknown) => added.push(f), delete: (f: unknown) => removed.push(f) },
+  };
+  await withGlobals({ FontFace: FakeFontFace, document }, async () => {
+    await Font.loadAsync([{
+      fontFamily: "Inter",
+      fontDefinitions: [
+        { path: "/fonts/inter-regular.ttf", weight: 400 },
+        { path: { uri: "/fonts/inter-bold.ttf", weight: "bold" } },
+        { path: "/fonts/inter-italic.ttf", weight: 400, style: "italic" },
+      ],
+    }]);
+    assert(Font.isLoaded("Inter"));
+    assertEquals(
+      added.map((f) => [f.source, f.weight, f.style]),
+      [
+        ['url("/fonts/inter-regular.ttf")', "400", "normal"],
+        ['url("/fonts/inter-bold.ttf")', "bold", "normal"],
+        ['url("/fonts/inter-italic.ttf")', "400", "italic"],
+      ],
+    );
+    await Font.unloadAsync("Inter", { weight: 700 });
+    assertEquals(removed.map((f) => f.source), ['url("/fonts/inter-bold.ttf")']);
+    assert(Font.isLoaded("Inter"), "the other faces stay");
+    await Font.unloadAsync("Inter", { style: "italic" });
+    await Font.unloadAsync("Inter");
+    assertEquals(Font.isLoaded("Inter"), false);
+    assertEquals(removed.length, 3);
+
+    const err = await Font.loadAsync([{
+      fontFamily: "Dup",
+      fontDefinitions: [
+        { path: "/a.ttf", weight: 400, style: "normal" },
+        { path: "/b.ttf", weight: "normal", style: "normal" },
+      ],
+    }]).catch((e) => e);
+    assertEquals([err instanceof Expo.CodedError, err.code], [true, "ERR_FONT_API"]);
+    assertMatch(err.message, /two faces with weight 400/);
+    await assertRejects(
+      () => Font.loadAsync([{ fontFamily: "Empty", fontDefinitions: [] }]),
+      Error,
+      "No font faces",
+    );
+    await assertRejects(
+      () =>
+        Font.loadAsync([
+          { fontFamily: "Twice", fontDefinitions: [{ path: "/a.ttf" }] },
+          { fontFamily: "Twice", fontDefinitions: [{ path: "/b.ttf" }] },
+        ]),
+      Error,
+      "declared more than once",
+    );
+    await assertRejects(
+      () => Font.loadAsync([{ fontFamily: "X", fontDefinitions: [{ path: "/a.ttf" }] }], "/b"),
+      Error,
+      "second argument",
+    );
+    await Font.unloadAllAsync();
+  });
+});
+
+Deno.test("expo-file-system (SDK 58): write is async, writeSync immediate; digest and preview", async () => {
+  resetFileSystemForTesting();
+  const disk = new Map<string, string>();
+  const key = (o: Any) => `${o.directory}/${o.path}`;
+  const Filesystem = {
+    writeFile: (o: Any) => Promise.resolve(void disk.set(key(o), o.data)),
+    readFile: (o: Any) =>
+      disk.has(key(o))
+        ? Promise.resolve({ data: disk.get(key(o)) })
+        : Promise.reject(new Error("nope")),
+    deleteFile: (o: Any) => Promise.resolve(void disk.delete(key(o))),
+  };
+  await inShell({ Filesystem }, async () => {
+    const file = new File(Paths.document, "a.txt");
+    const written = file.write("abc");
+    assert(written instanceof Promise);
+    assertEquals(file.textSync(), "abc", "readable before the promise settles");
+    await written;
+    assert(disk.has("DOCUMENTS/a.txt"), "on disk once it settles");
+    file.writeSync(new Uint8Array([100]).buffer, { append: true });
+    assertEquals(file.textSync(), "abcd");
+    assertEquals(
+      await file.digest("SHA-256"),
+      "88d4266fd4e6338d13b845fcf289579d209c897823b9217da3e161936f031589",
+    );
+    assertEquals(await file.digest("SHA-1"), "81fe8bfe87576c3ecb22426f8e57847382917acf");
+    const md5 = await file.digest("MD5").catch((e) => e);
+    assertEquals(md5.code, "ERR_UNAVAILABLE");
+    assertEquals(await file.canPreview({ mimeType: "text/plain" }), false);
+    await assertRejects(() => file.preview({ title: "a" }), Error, "File.preview");
+  }, { localStorage: memoryStorage() });
+  resetFileSystemForTesting();
+});
+
+Deno.test("expo-audio (SDK 58): the recorder state counts the recorded bytes", async () => {
+  class FakeRecorder {
+    static isTypeSupported = () => true;
+    state = "inactive";
+    mimeType = "audio/webm";
+    ondataavailable: ((e: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    start() {
+      this.state = "recording";
+    }
+    stop() {
+      this.state = "inactive";
+      this.ondataavailable?.({ data: new Blob(["abcde"]) });
+      this.onstop?.();
+    }
+  }
+  const navigator = {
+    mediaDevices: {
+      getUserMedia: () => Promise.resolve({ getTracks: () => [{ stop() {} }] }),
+    },
+  };
+  await withGlobals({ MediaRecorder: FakeRecorder, navigator }, async () => {
+    const recorder = new AudioRecorder({ ...RecordingPresets.HIGH_QUALITY, fileName: "memo" });
+    await recorder.prepareToRecordAsync();
+    recorder.record();
+    assertEquals(recorder.getStatus().fileSize, 0);
+    await recorder.stop();
+    const status = recorder.getStatus();
+    assertEquals([status.fileSize, status.isRecording], [5, false]);
+    assert(status.url?.startsWith("blob:"));
+    URL.revokeObjectURL(status.url!);
+  });
 });

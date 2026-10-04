@@ -8,7 +8,8 @@
  *   from the app's files.
  * - `placeholder` (a URL, a source, or a hash) shows until the image loads, fitted by
  *   `placeholderContentFit`; hashes are decoded in JS (no canvas needed). `transition` fades
- *   the image in (a number of ms, or `{ duration, timing }`; every effect is a cross-dissolve).
+ *   the image in (a number of ms, or `{ duration, timing, skipOnCacheHit }`; every effect is a
+ *   cross-dissolve, skipped for a cached image as `skipOnCacheHit` says).
  * - `contentFit` / `contentPosition` are CSS `object-fit` / `object-position`; `blurRadius` is a
  *   CSS blur. `recyclingKey` shows the placeholder again when it changes.
  * - `cachePolicy` is best effort: `"disk"` / `"memory-disk"` read an image
@@ -22,7 +23,8 @@
  * The statics: `prefetch`, `loadAsync`, `clearMemoryCache`, `clearDiskCache`,
  * `getCachePathAsync`, `writeToCacheAsync`, `readFromCacheAsync`, `configureCache` (accepted,
  * limits not enforced), `generateBlurhashAsync` / `generateThumbhashAsync` (need a canvas),
- * and `Image.Image` ({@linkcode ImageRef}). Not provided: `tintColor` (ignored) and animated
+ * and `Image.Image` ({@linkcode ImageRef}). `accessibilityElementsHidden` is `aria-hidden`.
+ * Not provided: `tintColor` and `svgVariables` (ignored) and animated
  * image control (`startAnimating` / `stopAnimating` resolve without effect).
  *
  * @example
@@ -100,6 +102,11 @@ export interface ImageTransition {
   timing?: "ease-in-out" | "ease-in" | "ease-out" | "linear";
   /** The effect (`cross-dissolve`; others fall back to it, `null` disables it). */
   effect?: string | null;
+  /**
+   * Skip the fade when the image comes from a cache: `memory` (this session's loads),
+   * `all` (the disk cache too), or `none` (the default).
+   */
+  skipOnCacheHit?: "none" | "memory" | "all" | null;
 }
 
 /** The ref handle of an {@linkcode Image}. */
@@ -140,6 +147,10 @@ export interface ImageProps {
   blurRadius?: number;
   /** A tint color (not provided: ignored). */
   tintColor?: string | null;
+  /** An SVG's variables (iOS SF Symbol / SVG rendering; ignored here). */
+  svgVariables?: Record<string, string | number> | null;
+  /** Hide the image from assistive technology (`aria-hidden`). */
+  accessibilityElementsHidden?: boolean;
   /** Alt text. */
   alt?: string;
   /** Alt text (React Native name). */
@@ -211,13 +222,16 @@ function placeholderUri(placeholder: ImageProps["placeholder"]): string | null {
   return sourceUri(first);
 }
 
-/** A cached blob URL of `uri` under `policy`, or null. */
+/** Which cache an image came from. */
+type CacheHit = "memory" | "disk" | null;
+
+/** A cached blob URL of `uri` under `policy` and the cache it came from, or null. */
 async function cachedUri(uri: string, policy: ImageCachePolicy | null | undefined): Promise<
-  string | null
+  { url: string; from: "memory" | "disk" } | null
 > {
   if (policy === "memory" || policy === "memory-disk") {
     const hit = memoryCache.get(uri);
-    if (hit) return hit;
+    if (hit) return { url: hit, from: "memory" };
   }
   if (policy !== "disk" && policy !== "memory-disk") return null;
   const caches = cacheStorage();
@@ -225,7 +239,7 @@ async function cachedUri(uri: string, policy: ImageCachePolicy | null | undefine
   if (!response) return null;
   const url = URL.createObjectURL(await response.blob());
   if (policy === "memory-disk") memoryCache.set(uri, url);
-  return url;
+  return { url, from: "disk" };
 }
 
 /** Whether a URL is a remote one a cache can hold. */
@@ -233,12 +247,20 @@ function cacheable(uri: string): boolean {
   return /^https?:/i.test(uri);
 }
 
-/** A URL the platform can load for `uri`: an app file's blob, a cached copy, or the URL. */
-function useLoadableUri(uri: string | null, policy: ImageProps["cachePolicy"]): string | null {
+/**
+ * A URL the platform can load for `uri` (an app file's blob, a cached copy, or the URL), and
+ * the cache it came from.
+ */
+function useLoadableUri(
+  uri: string | null,
+  policy: ImageProps["cachePolicy"],
+): { uri: string | null; hit: CacheHit } {
   const local = uri !== null && backing(uri) !== null;
   const cached = uri !== null && !local && cacheable(uri) && !!policy && policy !== "none";
   const [resolved, setResolved] = useState<string | null>(local || cached ? null : uri);
+  const [hit, setHit] = useState<CacheHit>(null);
   useEffect(() => {
+    setHit(null);
     if (!local && !cached) {
       setResolved(uri);
       return;
@@ -246,7 +268,11 @@ function useLoadableUri(uri: string | null, policy: ImageProps["cachePolicy"]): 
     let active = true;
     let url: string | undefined;
     if (cached) {
-      cachedUri(uri!, policy).then((hit) => active && setResolved(hit ?? uri), () => {
+      cachedUri(uri!, policy).then((found) => {
+        if (!active) return;
+        setHit(found?.from ?? null);
+        setResolved(found?.url ?? uri);
+      }, () => {
         if (active) setResolved(uri);
       });
       return () => void (active = false);
@@ -261,7 +287,7 @@ function useLoadableUri(uri: string | null, policy: ImageProps["cachePolicy"]): 
       if (url) URL.revokeObjectURL(url);
     };
   }, [uri, policy]);
-  return resolved;
+  return { uri: resolved, hit };
 }
 
 /** `contentPosition` as CSS `object-position`. */
@@ -284,6 +310,14 @@ function cssTransition(transition: ImageProps["transition"]): string | undefined
   return `opacity ${t.duration}ms ${t.timing ?? "ease-in-out"}`;
 }
 
+/** The image's fade: none when `skipOnCacheHit` covers the cache it came from. */
+function fadeOf(props: ImageProps, load: ImageLoad): string | undefined {
+  const skip = typeof props.transition === "object" ? props.transition?.skipOnCacheHit : null;
+  if (load.cacheHit === "memory" && (skip === "memory" || skip === "all")) return undefined;
+  if (load.cacheHit === "disk" && skip === "all") return undefined;
+  return cssTransition(props.transition);
+}
+
 /** The fill a layer takes in its box. */
 const FILL = { position: "absolute", top: 0, left: 0, width: "100%", height: "100%" };
 
@@ -298,6 +332,8 @@ function needsLayers(props: ImageProps): boolean {
 interface ImageLoad {
   /** The URL to show. */
   uri: string | null;
+  /** The cache the URL came from, if any. */
+  cacheHit: CacheHit;
   /** The current load's key (recycling key, URL and reload count). */
   key: string;
   /** Whether the current load has finished. */
@@ -314,7 +350,7 @@ interface ImageLoad {
 function useImageLoad(props: ImageProps): ImageLoad {
   const { onLoadStart, onLoad, onError, onLoadEnd, onDisplay } = props;
   const [reloads, setReloads] = useState(0);
-  const uri = useLoadableUri(sourceUri(props.source), props.cachePolicy);
+  const { uri, hit } = useLoadableUri(sourceUri(props.source), props.cachePolicy);
   const key = `${props.recyclingKey ?? ""}|${uri ?? ""}|${reloads}`;
   const [shownKey, setShownKey] = useState<string | null>(null);
   const latest = useRef({ onLoadStart, onLoad, onError, onLoadEnd, onDisplay });
@@ -332,6 +368,7 @@ function useImageLoad(props: ImageProps): ImageLoad {
   }, [key]);
   return {
     uri,
+    cacheHit: hit,
     key,
     reloads,
     shown: shownKey === key,
@@ -362,6 +399,8 @@ function hostProps(props: ImageProps): Record<string, unknown> {
     recyclingKey: _r,
     blurRadius: _b,
     tintColor: _tint,
+    svgVariables: _sv,
+    accessibilityElementsHidden: hidden,
     alt: _a,
     accessibilityLabel: _al,
     style: _st,
@@ -373,7 +412,7 @@ function hostProps(props: ImageProps): Record<string, unknown> {
     onDisplay: _d,
     ...rest
   } = props;
-  return rest;
+  return hidden ? { ...rest, "aria-hidden": true } : rest;
 }
 
 /** The image through react-native-web's `Image`. */
@@ -398,7 +437,7 @@ function imageElement(
   imageStyle: Record<string, unknown>,
   extra: Record<string, unknown>,
 ): VNode {
-  const fade = cssTransition(props.transition);
+  const fade = fadeOf(props, load);
   return h("img", {
     ...extra,
     key: load.reloads,
@@ -423,7 +462,7 @@ function imageElement(
 /** The image as a view holding the placeholder `<img>` (until loaded) and the image's. */
 function layeredImage(props: ImageProps, load: ImageLoad): VNode {
   const holder = props.placeholder !== undefined ? placeholderUri(props.placeholder) : null;
-  const fade = cssTransition(props.transition);
+  const fade = fadeOf(props, load);
   if (!holder && !fade && !hasReactNative()) {
     return imageElement(props, load, flattenStyle(props.style), hostProps(props));
   }

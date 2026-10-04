@@ -199,11 +199,49 @@ export interface CameraRecordingOptions {
   maxDuration?: number;
   /** Stop once the recording reaches this many bytes. */
   maxFileSize?: number;
+  /**
+   * How often `onRecordingProgress` is called, in seconds (default 0.5; at least 0.1).
+   */
+  progressUpdateInterval?: number;
   /** Mirror the video (not applied). */
   mirror?: boolean;
   /** The codec (the browser picks one MediaRecorder supports). */
   codec?: VideoCodec;
 }
+
+/** A recording's progress, for `onRecordingProgress`. */
+export type RecordingProgress = {
+  /** The seconds recorded so far (pauses excluded). */
+  duration: number;
+  /** The bytes recorded so far (what `MediaRecorder` has delivered). */
+  fileSize: number;
+  /** The `maxDuration` passed to `recordAsync`, when one was. */
+  maxDuration?: number;
+};
+
+/** A camera (lens) the device has, as `getAvailableLensesAsync` lists it. */
+export type LensInfo = {
+  /** The device's kind: always `"videoinput"` here (the web does not tell lenses apart). */
+  deviceType: string;
+  /** Its label (empty until the camera permission is granted). */
+  localizedName: string;
+};
+
+/** Options for {@linkcode CameraView.scanDocumentAsync}. */
+export type DocumentScanningOptions = {
+  /** Also produce a PDF. */
+  requestPdf?: boolean;
+  /** The JPEG quality, 0–1. */
+  quality?: number;
+};
+
+/** What {@linkcode CameraView.scanDocumentAsync} returns. */
+export type DocumentScanningResult = {
+  /** The pages' image URIs. */
+  pages: string[];
+  /** The PDF's URI, when asked for. */
+  pdfUri?: string;
+};
 
 /** Options for {@linkcode CameraView.launchScanner}. */
 export interface ScanningOptions {
@@ -247,6 +285,11 @@ export interface CameraViewProps {
   onBarcodeScanned?: (result: BarcodeScanningResult) => void;
   /** Called once the preview runs. */
   onCameraReady?: () => void;
+  /**
+   * Called while `recordAsync` records (every `progressUpdateInterval`, not while paused) with
+   * the duration and size so far; set it before the recording starts.
+   */
+  onRecordingProgress?: (event: RecordingProgress) => void;
   /** Called when the camera or the scanner cannot run (no camera, permission refused). */
   onMountError?: (event: { message: string }) => void;
   /** A ref to the {@linkcode CameraViewHandle}. */
@@ -398,6 +441,12 @@ export class CameraNativeModule {
   declare readonly launchScanner: (options?: Record<string, unknown>) => Promise<void>;
   /** Close the system scanner UI. */
   declare readonly dismissScanner: () => Promise<void>;
+  /** Whether the system document scanner is available (never, here). */
+  declare readonly isDocumentScannerAvailable: boolean;
+  /** Open the system document scanner. */
+  declare readonly scanDocumentAsync: (
+    options?: DocumentScanningOptions,
+  ) => Promise<DocumentScanningResult | null>;
   /** Decode the barcodes in an image. */
   declare readonly scanFromURLAsync: (
     url: string,
@@ -547,8 +596,8 @@ export interface CameraViewHandle {
   resumePreview(): Promise<void>;
   /** The picture sizes (`"<width>x<height>"`) the track supports at most. */
   getAvailablePictureSizesAsync(): Promise<string[]>;
-  /** The cameras' labels. */
-  getAvailableLensesAsync(): Promise<string[]>;
+  /** The cameras the device has. */
+  getAvailableLensesAsync(): Promise<LensInfo[]>;
   /** What this view supports. */
   getSupportedFeatures(): {
     isModernBarcodeScannerAvailable: boolean;
@@ -568,6 +617,8 @@ interface LiveCamera {
   stream: MediaStream | null;
   recording: Recording | null;
   mirrored: boolean;
+  /** The view's latest `onRecordingProgress`. */
+  onProgress?: (event: RecordingProgress) => void;
 }
 
 /** Take a picture with the shell's camera plugin (no preview is running). */
@@ -641,6 +692,7 @@ function startRecording(live: LiveCamera, options: CameraRecordingOptions): Reco
   const chunks: Blob[] = [];
   let size = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const progress = recordingProgress(live, recorder, options, () => size);
   const done = new Promise<{ uri: string } | undefined>((resolve, reject) => {
     recorder.ondataavailable = (event: BlobEvent) => {
       if (!event.data?.size) return;
@@ -652,6 +704,7 @@ function startRecording(live: LiveCamera, options: CameraRecordingOptions): Reco
     };
     recorder.onstop = () => {
       clearTimeout(timer);
+      progress.stop();
       live.recording = null;
       if (chunks.length === 0) return resolve(undefined);
       const blob = new Blob(chunks, { type: recorder.mimeType || chunks[0].type });
@@ -659,6 +712,7 @@ function startRecording(live: LiveCamera, options: CameraRecordingOptions): Reco
     };
     recorder.onerror = (event: Event) => {
       clearTimeout(timer);
+      progress.stop();
       live.recording = null;
       reject((event as { error?: Error }).error ?? new Error("Recording failed"));
     };
@@ -669,8 +723,41 @@ function startRecording(live: LiveCamera, options: CameraRecordingOptions): Reco
       options.maxDuration * 1000,
     );
   }
-  recorder.start(options.maxFileSize ? 1000 : undefined);
+  recorder.start(options.maxFileSize ? 1000 : progress.timeslice);
   return { recorder, done };
+}
+
+/**
+ * Report a recording's progress to the view's `onRecordingProgress` every
+ * `progressUpdateInterval` seconds while it records (not while paused).
+ */
+function recordingProgress(
+  live: LiveCamera,
+  recorder: MediaRecorder,
+  options: CameraRecordingOptions,
+  bytes: () => number,
+): { stop(): void; timeslice: number | undefined } {
+  const intervalMs = Math.max(0.1, options.progressUpdateInterval ?? 0.5) * 1000;
+  let recorded = 0;
+  let since = Date.now();
+  recorder.onpause = () => {
+    recorded += Date.now() - since;
+  };
+  recorder.onresume = () => {
+    since = Date.now();
+  };
+  // Only a view with the callback when the recording starts is reported to (no idle timer).
+  if (!live.onProgress) return { stop: () => {}, timeslice: undefined };
+  const tick = setInterval(() => {
+    if (recorder.state !== "recording") return;
+    live.onProgress?.({
+      duration: (recorded + Date.now() - since) / 1000,
+      fileSize: bytes(),
+      ...(options.maxDuration ? { maxDuration: options.maxDuration } : {}),
+    });
+  }, intervalMs);
+  // Deliver the data as it records, so fileSize grows.
+  return { stop: () => clearInterval(tick), timeslice: intervalMs };
 }
 
 /** The imperative handle over a mounted view's live parts. */
@@ -714,7 +801,10 @@ function cameraHandle(live: LiveCamera): CameraViewHandle {
     },
     async getAvailableLensesAsync() {
       const devices = await mediaDevices()?.enumerateDevices?.() ?? [];
-      return devices.filter((d) => d.kind === "videoinput").map((d) => d.label).filter(Boolean);
+      return devices.filter((d) => d.kind === "videoinput").map((d) => ({
+        deviceType: d.kind,
+        localizedName: d.label,
+      }));
     },
     getSupportedFeatures: () => ({
       isModernBarcodeScannerAvailable: scannerAvailable(),
@@ -794,6 +884,7 @@ export function CameraView(props: CameraViewProps): VNode {
     onBarcodeScanned,
     onCameraReady,
     onMountError,
+    onRecordingProgress,
     facing = "back",
     mode = "picture",
     mute = false,
@@ -808,6 +899,7 @@ export function CameraView(props: CameraViewProps): VNode {
     ...rest
   } = props;
   const live = useRef<LiveCamera>({ video: null, stream: null, recording: null, mirrored: false });
+  live.current.onProgress = onRecordingProgress;
   const handleRef = useRef<CameraViewHandle | null>(null);
   handleRef.current ??= cameraHandle(live.current);
   useImperativeHandle(ref as never, () => handleRef.current!, []);
@@ -940,6 +1032,20 @@ CameraView.launchScanner = async (options?: ScanningOptions): Promise<void> => {
 
 /** Close the scanner (it closes itself once it reads a code or is cancelled). */
 CameraView.dismissScanner = (): Promise<void> => Promise.resolve();
+
+/** Whether the system document scanner is available: never here (as Expo's web build). */
+CameraView.isDocumentScannerAvailable = false as boolean;
+
+/**
+ * Open the system document scanner: there is none here, so it resolves `null` (as Expo's web
+ * build, and as a cancelled scan).
+ *
+ * @param _options The PDF and quality options (ignored).
+ * @returns `null`.
+ */
+CameraView.scanDocumentAsync = (
+  _options?: DocumentScanningOptions,
+): Promise<DocumentScanningResult | null> => Promise.resolve(null);
 
 /**
  * Listen for codes read by {@linkcode CameraView.launchScanner}.
