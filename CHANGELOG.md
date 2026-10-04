@@ -56,6 +56,16 @@ and this project adheres to
   instance as the app's components), and `denext codemod` rewrites it to `denext/compiler-runtime`,
   which the compat build now also takes from the shared runtime.
 
+### Security
+
+- **`auth()`'s native bearer path goes through the same cache guards as the cookie path.** A
+  `Bearer nat_…` session was read straight off the request, so it did not mark the render
+  dynamic: an ISR page (`revalidate`) rendered for a native app's user was stored and served to
+  the next visitor, a PPR prerender baked it into the shell, and a `"use cache"` function cached
+  it. The `Authorization` header is now read through `headers()`, so a bearer read answers
+  `private, no-store` and is never stored, postpones under PPR, throws inside `"use cache"`, and
+  reads signed out under `dynamic = "force-static"`.
+
 ## [3.1.0] - 2026-10-03
 
 ### Added

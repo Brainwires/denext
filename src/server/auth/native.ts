@@ -780,7 +780,19 @@ export async function verifyNativeAccessToken(
  * @returns The `nat_…` token, or `undefined`.
  */
 export function nativeBearerToken(request: Request | undefined): string | undefined {
-  const header = request?.headers.get("authorization");
+  return nativeBearerOf(request?.headers.get("authorization"));
+}
+
+/**
+ * {@link nativeBearerToken} over an `Authorization` header value already read — `auth()` reads
+ * it through the guarded `headers()` so a bearer session marks the render dynamic, postpones
+ * under PPR, throws in a `"use cache"` scope and reads empty under `force-static`, exactly as
+ * the cookie session does.
+ *
+ * @param header The `Authorization` header value, if any.
+ * @returns The `nat_…` token, or `undefined`.
+ */
+export function nativeBearerOf(header: string | null | undefined): string | undefined {
   if (!header) return undefined;
   const space = header.indexOf(" ");
   if (space < 0 || header.slice(0, space).toLowerCase() !== "bearer") return undefined;
