@@ -38,6 +38,7 @@
     "react-dom/server": "jsr:@denext/denext@^3.1.0/react-dom/server",
     "react/jsx-runtime": "jsr:@denext/denext@^3.1.0/react/jsx-runtime",
     "react/jsx-dev-runtime": "jsr:@denext/denext@^3.1.0/react/jsx-dev-runtime",
+    "react/compiler-runtime": "jsr:@denext/denext@^3.1.0/react/compiler-runtime",
     "react-is": "jsr:@denext/denext@^3.1.0/react-is",
     "next": "jsr:@denext/denext@^3.1.0/next",
     "next-intl": "jsr:@denext/denext@^3.1.0/next-intl",
