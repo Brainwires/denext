@@ -106,6 +106,27 @@ function warnNativeFallback(): void {
   );
 }
 
+/** The key {@linkcode secureStoreIsSecret} reads to learn whether the desktop keychain answers. */
+const DESKTOP_PROBE_KEY = "denext.secure-store.probe";
+
+/**
+ * Whether {@linkcode secureStore} keeps values in a secret store here: the native SecureStorage
+ * plugin in the shell, or the OS keychain in a Deno Desktop window with `secure-store` enabled.
+ * `false` on the web and in a shell without the plugin, where the IndexedDB fallback is NOT
+ * secret. Internal: the Expo and `react-native-keychain` shims' availability answers.
+ *
+ * @returns Whether stored values are kept secret.
+ */
+export async function secureStoreIsSecret(): Promise<boolean> {
+  if (securePlugin()) return true;
+  if (!onDesktop()) return false;
+  try {
+    return (await viaDesktop("secureStore", (d) => d.secureGet(DESKTOP_PROBE_KEY))) !== undefined;
+  } catch {
+    return false; // the keychain refused (Windows fails closed): not a secret store
+  }
+}
+
 /** Refuse an empty or non-string key (the native plugin rejects one too). */
 function checkKey(fn: string, key: string): void {
   if (typeof key !== "string" || key === "") {
@@ -243,6 +264,14 @@ export const secureStore: SecureStore = {
           ? WHEN_PASSCODE_SET_THIS_DEVICE_ONLY
           : WHEN_UNLOCKED,
       });
+    }
+    // A gated value promises protection the plaintext fallback cannot give: refuse it.
+    if (options?.requireBiometric === true) {
+      throw new TypeError(
+        "secureStore.set: requireBiometric needs a secret store (the shell's secure-storage " +
+          "plugin or the desktop keychain); the web fallback is plain IndexedDB, so the value " +
+          "was not stored",
+      );
     }
     warnNativeFallback();
     await withStore("readwrite", (s) => s.put(data, key));

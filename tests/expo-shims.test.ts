@@ -3,7 +3,14 @@
 // globals, asserting the Expo-shaped results and the plugin calls. Every global a test
 // installs is restored.
 
-import { assert, assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import type { VNode } from "../src/jsx/types.ts";
@@ -193,6 +200,28 @@ Deno.test("expo-secure-store: async get/set/delete through SecureStorage; keycha
   assertEquals("getItem" in SecureStore, false, "the sync API is omitted");
 });
 
+Deno.test("expo-secure-store: on the web it is not available, and a requireAuthentication value is refused, not stored in IndexedDB", async () => {
+  let opened = 0;
+  const indexedDB = {
+    open() {
+      opened++;
+      throw new Error("IndexedDB opened");
+    },
+  };
+  await withGlobals({ indexedDB }, async () => {
+    assertEquals(await SecureStore.isAvailableAsync(), false, "plain IndexedDB is not secret");
+    await assertRejects(
+      () => SecureStore.setItemAsync("token", "tok", { requireAuthentication: true }),
+      TypeError,
+      "requireBiometric needs a secret store",
+    );
+    assertEquals(opened, 0, "the gated value never reached the plaintext store");
+    // An ungated value still takes the documented web fallback.
+    await assertRejects(() => SecureStore.setItemAsync("plain", "v"), Error, "IndexedDB opened");
+    assertEquals(opened, 1);
+  });
+});
+
 // ---- sharing / splash / keep-awake -----------------------------------------
 
 Deno.test("expo-sharing, expo-splash-screen, expo-keep-awake over their plugins", async () => {
@@ -331,6 +360,57 @@ Deno.test("expo-web-browser: openBrowserAsync → Browser; auth session results 
     });
   });
   assertEquals(WebBrowser.maybeCompleteAuthSession().type, "failed");
+});
+
+Deno.test("expo-web-browser: maybeCompleteAuthSession completes only the auth-session popup on the expected redirect", async () => {
+  const store = new Map<string, string>();
+  const localStorage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
+  };
+  const posted: unknown[] = [];
+  const page = (href: string, name: string | undefined) => ({
+    localStorage,
+    name,
+    location: { origin: "https://app.test", href },
+    opener: { postMessage: (m: unknown) => void posted.push(m) },
+    close: () => {},
+  });
+  // openAuthSessionAsync on the web remembers the redirect (the popup itself is not opened here).
+  await withGlobals({ localStorage, open: () => null, Capacitor: undefined }, async () => {
+    await assertRejects(() =>
+      WebBrowser.openAuthSessionAsync("https://auth.test/a", "https://app.test/cb")
+    );
+  });
+  assertEquals(store.get("denext-auth-session:redirect"), "https://app.test/cb");
+  // Not the popup: refused, whatever the URL.
+  await withGlobals(page("https://app.test/cb?code=1", "x"), () => {
+    assertEquals(
+      WebBrowser.maybeCompleteAuthSession().message,
+      "No auth session is currently in progress",
+    );
+  });
+  // The popup on another page of the origin: refused.
+  await withGlobals(page("https://app.test/other?code=1", "denext-auth-session"), () => {
+    assertStringIncludes(WebBrowser.maybeCompleteAuthSession().message, "do not match");
+  });
+  assertEquals(posted, []);
+  // The popup on the redirect: completes, and the remembered redirect is cleared.
+  await withGlobals(page("https://app.test/cb?code=2", "denext-auth-session"), () => {
+    assertEquals(WebBrowser.maybeCompleteAuthSession(), { type: "success", message: "" });
+  });
+  assertEquals(posted.length, 1);
+  assertEquals(store.has("denext-auth-session:redirect"), false);
+  // No remembered redirect: refused, unless skipRedirectCheck.
+  await withGlobals(page("https://app.test/elsewhere?code=3", "denext-auth-session"), () => {
+    assertStringIncludes(WebBrowser.maybeCompleteAuthSession().message, "redirect URL");
+    assertEquals(
+      WebBrowser.maybeCompleteAuthSession({ skipRedirectCheck: true }).type,
+      "success",
+    );
+  });
+  assertEquals(posted.length, 2);
 });
 
 Deno.test("expo-auth-session: redirect URI, PKCE authorization URL, return-URL parsing", async () => {

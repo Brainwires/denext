@@ -21,6 +21,7 @@
 
 import { openExternal } from "../mobile/bridge.ts";
 import {
+  AUTH_SESSION_WINDOW,
   type AuthSessionError,
   completeAuthSession,
   openAuthSession,
@@ -140,7 +141,7 @@ export interface WebBrowserCustomTabsResults {
 
 /** Options for {@linkcode maybeCompleteAuthSession}. */
 export interface WebBrowserCompleteAuthSessionOptions {
-  /** Skip the redirect check (there is none here). */
+  /** Hand the URL back without checking it starts with the session's redirect URL. */
   skipRedirectCheck?: boolean;
 }
 
@@ -202,6 +203,7 @@ export async function openAuthSessionAsync(
   redirectUrl?: string | null,
   options: AuthSessionOpenOptions = {},
 ): Promise<WebBrowserAuthSessionResult> {
+  rememberRedirect(redirectUrl);
   try {
     const result = await openAuthSession(url, {
       callbackScheme: callbackScheme(redirectUrl),
@@ -217,22 +219,74 @@ export async function openAuthSessionAsync(
   }
 }
 
+/** Where the expected web redirect URL is kept for the popup's {@linkcode maybeCompleteAuthSession}. */
+const REDIRECT_KEY = "denext-auth-session:redirect";
+
+/** The page's `localStorage`, or undefined (SSR, storage blocked). */
+function storage(): Storage | undefined {
+  try {
+    return (globalThis as { localStorage?: Storage }).localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keep an `http(s)` redirect URL for the popup to check its own URL against (as Expo's does). */
+function rememberRedirect(redirectUrl: string | null | undefined): void {
+  if (!redirectUrl || !/^https?:/i.test(redirectUrl)) return;
+  try {
+    storage()?.setItem(REDIRECT_KEY, redirectUrl);
+  } catch {
+    // Storage blocked: the popup's check then fails closed unless skipRedirectCheck.
+  }
+}
+
 /** Dismiss the auth session: not controllable here (it ends on redirect or cancel). */
 export function dismissAuthSession(): void {}
 
 /**
  * On a web redirect page opened by {@linkcode openAuthSessionAsync}: hand this page's URL
- * back to the opener and close the popup.
+ * back to the opener and close the popup — only in the auth-session popup itself, and (unless
+ * `skipRedirectCheck`) only when this page's URL starts with the `redirectUrl` that
+ * `openAuthSessionAsync` was given, as Expo checks.
  *
- * @param _options Accepted for compatibility.
- * @returns `success` when handed back, `failed` when this page has no opener.
+ * @param options `skipRedirectCheck` hands the URL back without comparing it.
+ * @returns `success` when handed back, `failed` (with the reason) otherwise.
  */
 export function maybeCompleteAuthSession(
-  _options?: WebBrowserCompleteAuthSessionOptions,
+  options?: WebBrowserCompleteAuthSessionOptions,
 ): WebBrowserCompleteAuthSessionResult {
-  return completeAuthSession()
-    ? { type: "success", message: "" }
-    : { type: "failed", message: "Not an auth session popup (no opener)" };
+  const g = globalThis as { name?: string; location?: { href: string } };
+  if (g.name !== AUTH_SESSION_WINDOW) {
+    return { type: "failed", message: "No auth session is currently in progress" };
+  }
+  if (options?.skipRedirectCheck !== true) {
+    let expected: string | null | undefined;
+    try {
+      expected = storage()?.getItem(REDIRECT_KEY);
+    } catch {
+      expected = undefined;
+    }
+    if (!expected) {
+      return { type: "failed", message: "Could not find the redirect URL of the auth session" };
+    }
+    const url = g.location?.href ?? "";
+    if (!url.startsWith(expected)) {
+      return {
+        type: "failed",
+        message: `Current URL "${url}" and original redirect URL "${expected}" do not match.`,
+      };
+    }
+  }
+  if (!completeAuthSession()) {
+    return { type: "failed", message: "Not an auth session popup (no opener)" };
+  }
+  try {
+    storage()?.removeItem(REDIRECT_KEY);
+  } catch {
+    // Storage blocked: nothing to clean.
+  }
+  return { type: "success", message: "" };
 }
 
 /**

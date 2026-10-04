@@ -10,8 +10,9 @@
  * for Face ID / Touch ID / a fingerprint first (`denext mobile add biometrics`), with
  * `authenticationPrompt` as the reason. **The gate is in denext's code, not a Keychain access
  * control** (the secure-storage plugin has none), so it is weaker than Expo's: native code in
- * the app could read the item. On the web a gated value cannot be read (no biometrics). The
- * accessibility class and access group are accepted and ignored.
+ * the app could read the item. On the web, which has no secret store, `isAvailableAsync()` is
+ * `false` and a `requireAuthentication` value is refused rather than stored in plain IndexedDB.
+ * The accessibility class and access group are accepted and ignored.
  *
  * @example
  * ```ts
@@ -25,7 +26,7 @@
  */
 
 import { biometricPlugin } from "../mobile/biometrics.ts";
-import { secureStore } from "../mobile/secure-store.ts";
+import { secureStore, secureStoreIsSecret } from "../mobile/secure-store.ts";
 
 /** A Keychain accessibility class (accepted and ignored here). */
 export type KeychainAccessibilityConstant = number;
@@ -78,12 +79,14 @@ function storeKey(fn: string, key: string, options?: SecureStoreOptions): string
 }
 
 /**
- * Whether the store is available: always, here (the web fallback is IndexedDB).
+ * Whether a secure store is available: the iOS Keychain / Android Keystore plugin in the shell,
+ * or the OS keychain in a Deno Desktop window. `false` on the web, where values would land in
+ * plain IndexedDB (Expo's web build has no secure store either).
  *
- * @returns `true`.
+ * @returns Whether stored values are kept secret.
  */
 export function isAvailableAsync(): Promise<boolean> {
-  return Promise.resolve(true);
+  return secureStoreIsSecret();
 }
 
 /**

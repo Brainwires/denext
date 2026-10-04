@@ -102,6 +102,17 @@ and this project adheres to
   (letters, digits, `. - ^ ~ * < > =`), anything else is ignored with a warning; `mcp init` uses
   its own version when the pin holds `<`, `>` or `*` (the task shell's redirections and globs), and
   `addMcp` refuses any CLI that is not `jsr:@denext/denext[@<version>]/cli`.
+- **No secret store, no "secure" answer.** `expo-secure-store`'s `isAvailableAsync()` was always
+  `true`, so on the web an app kept its tokens in plain IndexedDB believing them protected. It is
+  now `true` only with the shell's secure-storage plugin or the desktop keychain. A
+  `secureStore.set(…, { requireBiometric: true })` (and `requireAuthentication`) without one is
+  refused instead of stored in the clear, and `react-native-keychain`'s access-controlled sets
+  resolve `false` there and `canImplyAuthentication()` is `false`.
+- **`completeAuthSession` / `maybeCompleteAuthSession` complete only the auth-session popup.** Any
+  same-origin window that loaded the callback page posted its URL (the authorization code) to
+  whatever opened it. They now act only in the window `openAuthSession` opened (named
+  `denext-auth-session`), and `maybeCompleteAuthSession` also requires the page's URL to start with
+  the `redirectUrl` given to `openAuthSessionAsync`, unless `skipRedirectCheck`, as Expo's does.
 
 ## [3.1.0] - 2026-10-03
 

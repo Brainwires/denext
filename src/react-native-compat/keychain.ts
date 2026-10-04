@@ -11,7 +11,10 @@
  * a refusal resolves `false`, as the package's does. That gate is enforced by denext's code,
  * not by the Keychain item (see `secureStore`'s `requireBiometric`). `accessible`,
  * `securityLevel`, `storage`, `accessGroup` and `cloudSync` are accepted and do not change how
- * the value is stored. Shared web credentials (iOS password AutoFill) are not available.
+ * the value is stored. Shared web credentials (iOS password AutoFill) are not available. Where
+ * there is no secret store (the web's plain IndexedDB fallback), an access-controlled set
+ * resolves `false` instead of storing the value in the clear, and `canImplyAuthentication` is
+ * `false`.
  *
  * @example
  * ```ts
@@ -25,7 +28,7 @@
  * @module
  */
 
-import { secureStore } from "../mobile/secure-store.ts";
+import { secureStore, secureStoreIsSecret } from "../mobile/secure-store.ts";
 import { authenticateBiometric, isBiometricAvailable } from "../mobile/biometrics.ts";
 import { nativePlatform } from "../mobile/bridge.ts";
 
@@ -282,6 +285,16 @@ async function index(service: string, present: boolean): Promise<void> {
   await secureStore.set(INDEX, JSON.stringify([...list]));
 }
 
+/**
+ * Whether an entry stored with `options` keeps its promise: an access-controlled one needs a
+ * secret store under it (the shell's plugin, the desktop keychain), never the web's plain
+ * IndexedDB fallback.
+ */
+async function gateHolds(options?: SetOptions): Promise<boolean> {
+  const control = options?.accessControl;
+  return !(control && GATED.has(control)) || await secureStoreIsSecret();
+}
+
 /** The entry for `options`' access control. */
 function entryFor(username: string, password: string, options?: SetOptions): Stored {
   const control = options?.accessControl;
@@ -302,6 +315,7 @@ export async function setGenericPassword(
   options?: SetOptions,
 ): Promise<false | Result> {
   const service = serviceOf(options);
+  if (!(await gateHolds(options))) return false;
   try {
     await put(GENERIC + service, entryFor(username, password, options));
     await index(service, true);
@@ -393,6 +407,7 @@ export async function setInternetCredentials(
   password: string,
   options?: SetOptions,
 ): Promise<false | Result> {
+  if (!(await gateHolds(options))) return false;
   try {
     await put(INTERNET + server, entryFor(username, password, options));
   } catch {
@@ -457,6 +472,7 @@ export async function getSupportedBiometryType(): Promise<BIOMETRY_TYPE | null> 
 export async function canImplyAuthentication(
   options?: AuthenticationTypeOption,
 ): Promise<boolean> {
+  if (!(await secureStoreIsSecret())) return false; // the web fallback protects nothing
   const status = await isBiometricAvailable();
   if (options?.authenticationType === AUTHENTICATION_TYPE.BIOMETRICS) return status.available;
   return status.available || status.deviceSecure;

@@ -529,10 +529,11 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     status: "partial",
     omitted: ["getItem", "setItem"],
     notes: "The sync getItem/setItem run over JSI in Expo; the Capacitor bridge is async. " +
-      "Keychain/Keystore natively; on the web an IndexedDB store that is NOT secret. " +
-      "requireAuthentication gates reads behind denext/mobile's authenticateBiometric (`denext " +
-      "mobile add biometrics`): enforced in denext's code, not by a Keychain access control " +
-      "(the plugin has none), and unreadable on the web. Accessibility options are ignored.",
+      "Keychain/Keystore natively (or the desktop keychain); on the web an IndexedDB store that " +
+      "is NOT secret, so isAvailableAsync() is false there. requireAuthentication gates reads " +
+      "behind denext/mobile's authenticateBiometric (`denext mobile add biometrics`): enforced " +
+      "in denext's code, not by a Keychain access control (the plugin has none); without a " +
+      "secret store it is refused, never stored. Accessibility options are ignored.",
   },
   "expo-sharing": {
     module: "./sharing.ts",
@@ -652,7 +653,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
     pinned: "58.0.4",
     status: "partial",
     notes: "openBrowserAsync → openExternal (reports opened, no dismissal); " +
-      "openAuthSessionAsync → openAuthSession; maybeCompleteAuthSession → completeAuthSession. " +
+      "openAuthSessionAsync → openAuthSession; maybeCompleteAuthSession → completeAuthSession, " +
+      "only in the auth-session popup and on the session's redirect URL (unless " +
+      "skipRedirectCheck), as Expo checks. " +
       "The Custom Tabs warm-up calls do nothing.",
   },
   "expo-widgets": {

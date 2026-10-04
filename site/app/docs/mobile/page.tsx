@@ -1314,9 +1314,10 @@ export async function signIn() {
           <strong>Web:</strong> a popup (call it from a click handler, or it is blocked:{" "}
           <code>unsupported</code>). Use an https page of your origin as the redirect URI and call
           {" "}
-          <code>completeAuthSession()</code>{" "}
-          there: it posts the page's URL to the opener, addressed to this origin only, and closes
-          the popup. A popup closed without a callback rejects{" "}
+          <code>completeAuthSession()</code> there: in the popup <code>openAuthSession</code>{" "}
+          opened (its window is named <code>denext-auth-session</code>; any other window gets{" "}
+          <code>false</code>) it posts the page's URL to the opener, addressed to this origin only,
+          and closes the popup. A popup closed without a callback rejects{" "}
           <code>cancelled</code>. A provider that sends{" "}
           <code>Cross-Origin-Opener-Policy: same-origin</code>{" "}
           cuts the popup off from the page; use a full-page redirect for it.
