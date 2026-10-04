@@ -2603,6 +2603,18 @@ denext ota manifest out --sign ota.key           # adds "signature" to _denext/o
         installed binary embedding the old public key refuses the new signatures.
       </p>
       <p>
+        <strong>Pinned origins.</strong> <code>add-ota --ota-origin https://ota.example.com</code>
+        {" "}
+        (repeatable, or comma-separated; https only, plain http only to loopback) writes the
+        Info.plist string <code>DenextOtaOrigins</code> and the <code>dev.denext.ota.ORIGINS</code>
+        {" "}
+        meta-data, and the app then refuses a <code>baseUrl</code> on any other origin (code{" "}
+        <code>insecure</code>), signed or not. A binary with no public key accepts an unsigned UI
+        only from a pinned https origin or loopback: any script in the page can call the plugin, so
+        an unsigned update from whatever server it names would replace the UI for good.{" "}
+        <code>denext mobile doctor --release</code> fails when OTA is installed without a key.
+      </p>
+      <p>
         <strong>Release order and the native gate.</strong> Signing also stamps a{" "}
         <code>sequence</code>: the current Unix time in seconds, or{" "}
         <code>--sequence N</code>. Each device remembers the highest sequence it has accepted and

@@ -27,6 +27,7 @@ import {
 import { dictGet, parsePlist, type PlistDict, type PlistNode } from "./plist-value.ts";
 import { leakedCssShimKeys } from "./css-config-guard.ts";
 import { fastlaneFindings } from "./mobile-fastlane.ts";
+import { manifestMetaDataValue } from "./mobile-native-config.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -904,6 +905,53 @@ const fastlane: Check = {
     })),
 };
 
+/** Where `denext mobile add-ota` writes each platform's OTA store. */
+const OTA_STORES = {
+  iOS: "ios/App/App/DenextOtaStore.swift",
+  Android: "android/app/src/main/java/dev/denext/ota/DenextOtaStore.java",
+} as const;
+
+/** Whether the iOS Info.plist / Android manifest embeds an OTA public key. */
+function otaKeyEmbedded(p: MobileProject, platform: keyof typeof OTA_STORES): boolean {
+  if (platform === "iOS") {
+    const key = p.infoPlist ? dictGet(p.infoPlist, "DenextOtaPublicKey") : undefined;
+    return key?.kind === "string" && key.text.trim() !== "";
+  }
+  const meta = p.androidManifest
+    ? manifestMetaDataValue(p.androidManifest, "dev.denext.ota.PUBLIC_KEY")
+    : undefined;
+  return (meta ?? "").trim() !== "";
+}
+
+/**
+ * Over-the-air updates without a public key: a script in the page can call the OTA plugin, so an
+ * unsigned UI is only as trustworthy as every origin it may come from. A release embeds the key.
+ */
+const otaSigning: Check = {
+  id: "ota-signing",
+  profiles: ["release"],
+  applies: async (p) =>
+    (await readText(join(p.root, OTA_STORES.iOS))) !== null ||
+    (await readText(join(p.root, OTA_STORES.Android))) !== null,
+  run: async (p) => {
+    const findings: MobileDoctorFinding[] = [];
+    for (const platform of ["iOS", "Android"] as const) {
+      if ((await readText(join(p.root, OTA_STORES[platform]))) === null) continue;
+      if (otaKeyEmbedded(p, platform)) continue;
+      findings.push({
+        check: "ota-signing",
+        level: "error",
+        message: `${platform}: over-the-air UI updates are installed without a public key, so ` +
+          "the app accepts an unsigned UI (a script injected into the page can install one " +
+          "that persists)",
+        fix: "`denext ota keygen`, then `denext mobile add-ota --public-key <key>.pub`; sign " +
+          "every manifest (`--sign` / DENEXT_OTA_SIGNING_KEY) and ship a new binary",
+      });
+    }
+    return findings;
+  },
+};
+
 /** Every check, in report order. */
 const CHECKS: readonly Check[] = [
   serverUrl,
@@ -927,6 +975,7 @@ const CHECKS: readonly Check[] = [
   webStorage,
   cssShimLeak,
   fastlane,
+  otaSigning,
 ];
 
 /** The ids of the checks a profile runs (for docs and `--json`). */

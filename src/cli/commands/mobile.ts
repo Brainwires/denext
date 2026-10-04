@@ -44,7 +44,11 @@ import {
   OTA_SIGNING_KEY_ENV,
   parseOtaPublicKey,
 } from "../../build/ota-signing.ts";
-import { type AddOtaReport, addOtaToProject } from "../../build/mobile-ota-install.ts";
+import {
+  type AddOtaReport,
+  addOtaToProject,
+  parseOtaOrigins,
+} from "../../build/mobile-ota-install.ts";
 import {
   computeNativeFingerprint,
   diffNativeFingerprints,
@@ -384,11 +388,18 @@ function printReport(report: AddOtaReport, dryRun: boolean): void {
         "  UI). Re-run `denext mobile add-ota` after every denext upgrade.",
     );
   }
-  if (report.unsignedPlatforms.length > 0) {
+  if (report.unpinnedPlatforms.length > 0) {
+    console.log(
+      `\n  Note: no public key embedded and no origin pinned (${
+        report.unpinnedPlatforms.join(", ")
+      }), so OTA accepts an update from loopback only: pass --public-key, or\n` +
+        "  --ota-origin https://<your OTA server> to accept unsigned updates from it.",
+    );
+  } else if (report.unsignedPlatforms.length > 0) {
     console.log(
       `\n  Note: no public key embedded (${
         report.unsignedPlatforms.join(", ")
-      }), so unsigned OTA only works over https or loopback.`,
+      }), so OTA accepts unsigned updates from the pinned origins (and loopback) only.`,
     );
   }
 }
@@ -429,7 +440,15 @@ async function addOta(ctx: CommandContext): Promise<void> {
   const dryRun = ctx.flags["dry-run"] === true;
   let report: AddOtaReport;
   try {
-    report = await addOtaToProject({ dir, force: ctx.flags.force === true, publicKey, dryRun });
+    const flag = ctx.flags["ota-origin"];
+    const origins = typeof flag === "string" ? parseOtaOrigins([flag]) : undefined;
+    report = await addOtaToProject({
+      dir,
+      force: ctx.flags.force === true,
+      publicKey,
+      origins,
+      dryRun,
+    });
   } catch (err) {
     fail(`denext mobile add-ota: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -888,6 +907,14 @@ const mobileCommandSpec: Omit<CommandSpec, "run"> = {
       valueName: "<file>",
       help:
         "Embed this OTA public key (base64 SPKI or PUBLIC KEY PEM) so the app verifies signatures",
+    },
+    {
+      name: "ota-origin",
+      type: "string",
+      repeatable: true,
+      valueName: "<origin>",
+      help:
+        "add-ota: pin an https origin the app takes UI updates from; the only one unsigned updates come from (repeatable, or comma-separated)",
     },
     {
       name: "dir",

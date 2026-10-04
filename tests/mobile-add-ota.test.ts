@@ -3,9 +3,9 @@
 // MainActivity, embeds the OTA public key, reports customised ones as manual steps, and is
 // idempotent.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { join } from "@std/path";
-import { addOtaToProject } from "../src/build/mobile-ota-install.ts";
+import { addOtaToProject, parseOtaOrigins } from "../src/build/mobile-ota-install.ts";
 import {
   isPristineOtaTemplate,
   OTA_ANDROID_FILES,
@@ -445,12 +445,12 @@ async function addOtaVerb(dir: string, flags: Record<string, string | boolean>):
   return lines;
 }
 
-Deno.test("denext mobile add-ota --public-key takes base64 SPKI or a PEM; no key prints the https note", async () => {
+Deno.test("denext mobile add-ota --public-key takes base64 SPKI or a PEM; no key prints the loopback-only note", async () => {
   const dir = await keyedProject();
   try {
     const plain = await addOtaVerb(dir, {});
     assert(
-      plain.some((l) => l.includes("unsigned OTA only works over https or loopback")),
+      plain.some((l) => l.includes("OTA accepts an update from loopback only")),
       plain.join("\n"),
     );
     const { publicKey } = await generateOtaKeyPair();
@@ -458,7 +458,7 @@ Deno.test("denext mobile add-ota --public-key takes base64 SPKI or a PEM; no key
       "-----END PUBLIC KEY-----\n";
     await Deno.writeTextFile(join(dir, "ota.pem"), pem);
     const keyed = await addOtaVerb(dir, { "public-key": join(dir, "ota.pem") });
-    assert(!keyed.some((l) => l.includes("unsigned OTA")), keyed.join("\n"));
+    assert(!keyed.some((l) => l.includes("no public key embedded")), keyed.join("\n"));
     assertStringIncludes(await read(dir, INFO_PLIST), `<string>${publicKey}</string>`);
     assertStringIncludes(await read(dir, ANDROID_MANIFEST), `android:value="${publicKey}"`);
     // `denext ota keygen`'s .pub (one base64 line) works as is.
@@ -537,10 +537,24 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
   assertStringIncludes(policy, `code: "signature"`);
   assertStringIncludes(policy, `case .invalid:\n            throw OtaError(code: "signature"`);
   assertStringIncludes(policy, `code: "insecure"`);
+  // Pinned origins (Info.plist DenextOtaOrigins) gate every baseUrl, checked before the key.
+  assertStringIncludes(store, `static let originsInfoKey = "DenextOtaOrigins"`);
+  assert(
+    policy.indexOf("!pinnedOrigins.isEmpty && !isPinnedOrigin(baseUrl)") <
+      policy.indexOf("switch publicKey"),
+    policy,
+  );
+  // Unsigned: a pinned https origin or loopback only — not any https server.
   assertStringIncludes(
     policy,
-    `baseUrl.scheme?.lowercased() == "https" || loopbackHosts.contains(host)`,
+    `let pinnedHttps = baseUrl.scheme?.lowercased() == "https" && isPinnedOrigin(baseUrl)`,
   );
+  assertStringIncludes(policy, "guard pinnedHttps || loopbackHosts.contains(host) else");
+  assert(!policy.includes(`baseUrl.scheme?.lowercased() == "https" || loopbackHosts`), policy);
+  const pinned = body(store, "static func isPinnedOrigin(");
+  assertStringIncludes(pinned, "pin.scheme?.lowercased() == url.scheme?.lowercased()");
+  assertStringIncludes(pinned, "pin.host?.lowercased() == url.host?.lowercased()");
+  assertStringIncludes(pinned, "effectivePort(pin) == effectivePort(url)");
   // The Android emulator's host alias is not loopback on iOS.
   assertStringIncludes(
     store,
@@ -603,7 +617,27 @@ Deno.test("native templates: Android recomputes the version and enforces the sig
   assertStringIncludes(store, "static byte[] rawSignatureToDer(byte[] raw)");
   const policy = body(store, "void checkTrust(");
   assertStringIncludes(policy, `new OtaException(\n                    "insecure"`);
-  assertStringIncludes(policy, `!"https".equalsIgnoreCase(base.getScheme()) && !loopback`);
+  // Pinned origins (meta-data dev.denext.ota.ORIGINS) gate every base, checked before the key.
+  assertStringIncludes(store, `ORIGINS_META = "dev.denext.ota.ORIGINS"`);
+  assert(
+    policy.indexOf("!pins.isEmpty() && !pinned && !loopback") <
+      policy.indexOf("publicKeyMetaData()"),
+    policy,
+  );
+  // Unsigned: a pinned https origin or loopback only — not any https server.
+  assertStringIncludes(
+    policy,
+    `if (!(pinned && "https".equalsIgnoreCase(base.getScheme())) && !loopback) {`,
+  );
+  assert(!policy.includes(`!"https".equalsIgnoreCase(base.getScheme()) && !loopback`), policy);
+  const pinnedFn = body(store, "static boolean isPinnedOrigin(");
+  assertStringIncludes(
+    pinnedFn,
+    "pin.getScheme().equalsIgnoreCase(String.valueOf(uri.getScheme()))",
+  );
+  assertStringIncludes(pinnedFn, "pin.getHost().equalsIgnoreCase(String.valueOf(uri.getHost()))");
+  assertStringIncludes(pinnedFn, "effectivePort(pin) == effectivePort(uri)");
+  assertStringIncludes(store, `String.valueOf(value).split("[\\\\s,]+")`);
   // 10.0.2.2 (the emulator's host) counts as loopback only in a debuggable build.
   assertStringIncludes(
     policy,
@@ -877,7 +911,7 @@ Deno.test("add-ota: the unsigned note follows the files, not the flag", async ()
     await addOtaToProject({ dir, publicKey: (await generateOtaKeyPair()).publicKey });
     // Re-run without --public-key: the key embedded earlier is still there, so no note.
     const again = await addOtaVerb(dir, {});
-    assert(!again.some((l) => l.includes("unsigned OTA")), again.join("\n"));
+    assert(!again.some((l) => l.includes("no public key embedded")), again.join("\n"));
     assertEquals((await addOtaToProject({ dir })).unsignedPlatforms, []);
     // Drop the Android key by hand: the note names that platform only.
     const manifest = await read(dir, ANDROID_MANIFEST);
@@ -888,10 +922,71 @@ Deno.test("add-ota: the unsigned note follows the files, not the flag", async ()
     const lines = await addOtaVerb(dir, {});
     assert(
       lines.some((l) =>
-        l.includes("(Android)") && l.includes("unsigned OTA only works over https or loopback")
+        l.includes("(Android)") && l.includes("OTA accepts an update from loopback only")
       ),
       lines.join("\n"),
     );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("parseOtaOrigins: https origins (http only to loopback), no path, deduplicated", () => {
+  assertEquals(
+    parseOtaOrigins([
+      "https://ota.example.com, https://cdn.example.com:8443",
+      "https://ota.example.com/",
+    ]),
+    ["https://ota.example.com", "https://cdn.example.com:8443"],
+  );
+  assertEquals(parseOtaOrigins(["http://localhost:3000"]), ["http://localhost:3000"]);
+  assertThrows(() => parseOtaOrigins(["http://ota.example.com"]), Error, "must be https");
+  assertThrows(() => parseOtaOrigins(["https://ota.example.com/ui"]), Error, "no path");
+  assertThrows(() => parseOtaOrigins(["https://u:p@ota.example.com"]), Error, "no path");
+  assertThrows(() => parseOtaOrigins(["ota.example.com"]), Error, "not a URL");
+});
+
+Deno.test("add-ota: origins are pinned in Info.plist and AndroidManifest; unpinned unsigned platforms are reported", async () => {
+  const dir = await keyedProject();
+  try {
+    const bare = await addOtaToProject({ dir });
+    assertEquals(bare.unsignedPlatforms, ["iOS", "Android"]);
+    assertEquals(bare.unpinnedPlatforms, ["iOS", "Android"]);
+    const origins = ["https://ota.example.com", "https://cdn.example.com:8443"];
+    const pinned = await addOtaToProject({ dir, origins });
+    assertEquals(pinned.manual, []);
+    assertEquals(pinned.unsignedPlatforms, ["iOS", "Android"]);
+    assertEquals(pinned.unpinnedPlatforms, []);
+    const plist = await read(dir, INFO_PLIST);
+    assertStringIncludes(
+      plist,
+      "\t<key>DenextOtaOrigins</key>\n\t<string>https://ota.example.com https://cdn.example.com:8443</string>",
+    );
+    const manifest = await read(dir, ANDROID_MANIFEST);
+    assertStringIncludes(
+      manifest,
+      '<meta-data android:name="dev.denext.ota.ORIGINS" android:value="https://ota.example.com https://cdn.example.com:8443" />',
+    );
+    // Idempotent; a new list replaces the old one; no flag leaves the pins alone.
+    assertEquals((await addOtaToProject({ dir, origins })).written, []);
+    await addOtaToProject({ dir, origins: ["https://new.example.com"] });
+    assertEquals((await read(dir, INFO_PLIST)).split("DenextOtaOrigins").length, 2);
+    assertStringIncludes(
+      await read(dir, ANDROID_MANIFEST),
+      'android:value="https://new.example.com"',
+    );
+    assertEquals((await addOtaToProject({ dir })).unpinnedPlatforms, []);
+    // The CLI flag (repeatable flags arrive comma-joined) pins too, and prints the pinned note.
+    const lines = await addOtaVerb(dir, {
+      "ota-origin": "https://a.example.com,https://b.example.com",
+    });
+    assertStringIncludes(
+      await read(dir, INFO_PLIST),
+      "<string>https://a.example.com https://b.example.com</string>",
+    );
+    assert(lines.some((l) => l.includes("from the pinned origins")), lines.join("\n"));
+    const refused = await addOtaVerbFails(dir, { "ota-origin": "http://ota.example.com" });
+    assert(refused.errors.join("\n").includes("must be https"), refused.errors.join("\n"));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

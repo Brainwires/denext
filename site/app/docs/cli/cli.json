@@ -752,6 +752,12 @@
           "description": "Embed this OTA public key (base64 SPKI or PUBLIC KEY PEM) so the app verifies signatures"
         },
         {
+          "name": "ota-origin",
+          "type": "string",
+          "valueName": "<origin>",
+          "description": "add-ota: pin an https origin the app takes UI updates from; the only one unsigned updates come from (repeatable, or comma-separated)"
+        },
+        {
           "name": "dir",
           "type": "string",
           "valueName": "<dir>",

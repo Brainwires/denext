@@ -33,8 +33,9 @@ import { isOtaManifest, OTA_MANIFEST_PATH, type OtaManifest } from "./ota-manife
  * - `not_staged`: {@linkcode applyUiUpdate} named a version that is not staged;
  * - `signature`: the app binary embeds a public key (`denext mobile add-ota --public-key`) and the
  *   manifest's `signature` is missing or does not verify;
- * - `insecure`: the binary embeds no key and `baseUrl` is plain `http` to a host other than
- *   loopback (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);
+ * - `insecure`: the binary pins origins (`denext mobile add-ota --ota-origin`) and `baseUrl` is on
+ *   none of them, or it embeds no key and `baseUrl` is neither a pinned https origin nor loopback
+ *   (`localhost`, `127.0.0.1`, `::1`, and `10.0.2.2` in a debuggable Android build);
  * - `downgrade`: the manifest's `sequence` is lower than the highest this device has accepted,
  *   or it has none after a sequenced manifest was accepted;
  * - `native_too_old`: the manifest's `minNative` is above the app binary's build number (iOS

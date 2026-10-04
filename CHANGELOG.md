@@ -85,6 +85,16 @@ and this project adheres to
   address. A release build now refuses while `.denext/mobile-dev-backup.json` is on disk, or while
   the config's `server` names a LAN / loopback `http` URL or sets `cleartext: true`, unless a
   flavor's `serverUrl` sets the server deliberately.
+- **Unsigned over-the-air updates come only from pinned origins.** An app without an OTA public
+  key accepted an unsigned UI from any https `baseUrl`, and a script injected into the page can call
+  the plugin, so one XSS could install a UI that persisted across launches.
+  `denext mobile add-ota --ota-origin <https origin>` (repeatable) now pins the origins in Info.plist
+  (`DenextOtaOrigins`) and AndroidManifest (`dev.denext.ota.ORIGINS`); the native store refuses
+  every other `baseUrl` (code `insecure`), and without a key accepts an unsigned UI only from a
+  pinned https origin or loopback. **An app with neither a key nor a pinned origin now accepts OTA
+  from loopback only:** re-run `add-ota` with `--public-key` or `--ota-origin` and ship a new
+  binary. `denext mobile doctor --release` fails when OTA is installed without a key (check
+  `ota-signing`). The templates are generation 7.
 
 ## [3.1.0] - 2026-10-03
 
