@@ -30,40 +30,30 @@
  */
 
 import { parseDesktopAppOrigin } from "./app-origin.ts";
+import { parseDesktopRelayUrl } from "./ws-origin.ts";
 
 /** The env var the denext-pinned runtime publishes the page origin in (`myapp://app`). */
 export const DESKTOP_APP_ORIGIN_ENV = "DENO_DESKTOP_APP_ORIGIN";
 /**
- * The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in
- * (`ws://127.0.0.1:<port>`): the address the page dials for a WebSocket to its own server.
+ * The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in, per-launch
+ * token included (`ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>`): the URL the page dials,
+ * with its own path appended, for a WebSocket to its own server. The runtime keeps it to its own
+ * process (child processes don't inherit it).
  */
-export const DESKTOP_WS_ORIGIN_ENV = "DENO_DESKTOP_WS_ORIGIN";
-
-/** The hosts the runtime's WebSocket relay may listen on (it binds loopback only). */
-const RELAY_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "[::1]", "localhost"]);
+export const DESKTOP_WS_URL_ENV = "DENO_DESKTOP_WS_URL";
 
 /**
- * The relay origin the page dials for a WebSocket to its own server (injected as
- * `globalThis.__denext.wsOrigin`), from the runtime-published `DENO_DESKTOP_WS_ORIGIN`: a `ws:`
- * origin on a loopback host with a port, nothing else. Anything else (unset, unparseable, a path,
- * a remote host) is `undefined`, so the page keeps dialing its own host. Pure.
+ * The relay URL the page dials for a WebSocket to its own server (injected as
+ * `globalThis.__denext.wsUrl`), from the runtime-published `DENO_DESKTOP_WS_URL`: `ws:` on a
+ * loopback host with a port and the path `/.deno-desktop-relay/<64 lowercase hex>`, nothing else.
+ * Anything else (unset, unparseable, another path, a remote host) is `undefined`, so the page keeps
+ * dialing its own host. Pure.
  *
- * @param published The `DENO_DESKTOP_WS_ORIGIN` value, if any.
- * @returns The normalized origin (`ws://127.0.0.1:51234`), or `undefined`.
+ * @param published The `DENO_DESKTOP_WS_URL` value, if any.
+ * @returns The normalized URL, or `undefined`.
  */
-export function resolveDesktopWsOrigin(published: string | undefined): string | undefined {
-  if (!published) return undefined;
-  let url: URL;
-  try {
-    url = new URL(published);
-  } catch {
-    return undefined;
-  }
-  if (url.protocol !== "ws:" || !RELAY_HOSTS.has(url.hostname) || url.port === "") return undefined;
-  if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
-    return undefined;
-  }
-  return `ws://${url.host}`;
+export function resolveDesktopWsUrl(published: string | undefined): string | undefined {
+  return parseDesktopRelayUrl(published);
 }
 
 /** The desktop world the app runs in (see the module docs). */

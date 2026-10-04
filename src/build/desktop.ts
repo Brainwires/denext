@@ -25,14 +25,14 @@ import {
 } from "../desktop/auth-session-runtime.ts";
 import {
   DESKTOP_APP_ORIGIN_ENV,
-  DESKTOP_WS_ORIGIN_ENV,
+  DESKTOP_WS_URL_ENV,
   type DesktopServeInfo,
   type DesktopTrust,
   isRelayConnection,
   LOOPBACK_TRUST,
   memoryGate,
   resolveDesktopTrust,
-  resolveDesktopWsOrigin,
+  resolveDesktopWsUrl,
 } from "../desktop/transport.ts";
 import { sha256Base64 } from "../server/csp.ts";
 import { devProxyTokenHeaders } from "./dev-server/dev-token.ts";
@@ -88,7 +88,7 @@ export {
 // signature uses.
 export {
   DESKTOP_APP_ORIGIN_ENV,
-  DESKTOP_WS_ORIGIN_ENV,
+  DESKTOP_WS_URL_ENV,
   type DesktopServeInfo,
   type DesktopTrust,
 } from "../desktop/transport.ts";
@@ -534,17 +534,32 @@ const QUIT_OVERRIDE_JS = ";(function(){var c=window.close;window.close=function(
  */
 export interface DesktopPageGlobals {
   /**
-   * The runtime's WebSocket relay origin (`ws://127.0.0.1:<port>`): where the page dials a
-   * WebSocket to its own server when it runs at a custom app origin (denext's pinned runtime).
-   * Injected with or without the token: it is an address, not a credential.
+   * The runtime's WebSocket relay URL (`ws://127.0.0.1:<port>/.deno-desktop-relay/<token>`): where
+   * the page dials a WebSocket to its own server (with its path appended) when it runs at a custom
+   * app origin (denext's pinned runtime). It carries the relay's per-launch token, so it is
+   * injected only together with the desktop token (a top-level document of the app).
    */
-  readonly wsOrigin?: string;
+  readonly wsUrl?: string;
   /**
    * Install the web `Notification` shim (`src/desktop/notification-shim.ts`), backed by the
    * `notifications` capability. Only with the token (it posts through the bridge); the handler sets
    * it in the memory world when the capability is enabled.
    */
   readonly notifications?: boolean;
+}
+
+/**
+ * The `globalThis.__denext` value: the desktop marker and the OS, plus — only with the per-launch
+ * token — the token and the relay URL (which carries the relay's own token).
+ */
+function desktopGlobals(token: string | null, page: DesktopPageGlobals): Record<string, unknown> {
+  if (token === null) return { desktop: true, os: Deno.build.os };
+  return {
+    desktop: true,
+    token,
+    os: Deno.build.os,
+    ...(page.wsUrl ? { wsUrl: page.wsUrl } : {}),
+  };
 }
 
 /**
@@ -565,7 +580,7 @@ export interface DesktopPageGlobals {
  * removes its own element as it runs, so the key cannot be read back from `document.scripts`.
  *
  * `page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the
- * WebSocket relay origin, and — with the token — the web `Notification` shim, appended to the
+ * WebSocket relay URL and — both only with the token — the web `Notification` shim, appended to the
  * same script (one CSP hash) so it is in place before any page script runs.
  */
 export async function injectDesktopGlobal(
@@ -579,13 +594,7 @@ export async function injectDesktopGlobal(
   // A null token marks the window desktop WITHOUT handing it the per-launch token (the --lan
   // live-reload case): runtimePlatform() reads "desktop", but the token-gated endpoints stay
   // unreachable, and the boot beacon (which needs the token) is not injected.
-  const globals = {
-    desktop: true,
-    ...(token !== null ? { token } : {}),
-    os: Deno.build.os,
-    ...(page.wsOrigin ? { wsOrigin: page.wsOrigin } : {}),
-  };
-  const body = `globalThis.__denext=${JSON.stringify(globals)}` +
+  const body = `globalThis.__denext=${JSON.stringify(desktopGlobals(token, page))}` +
     (token !== null ? QUIT_OVERRIDE_JS : "") +
     (token !== null && page.notifications === true ? NOTIFICATION_SHIM_INLINE : "") +
     (token !== null && beacon ? BOOT_BEACON_JS : "");
@@ -802,7 +811,7 @@ export function createDesktopHandler(
   trust: DesktopTrust = LOOPBACK_TRUST,
   preload?: string,
   preloadKey?: string,
-  wsOrigin?: string,
+  wsUrl?: string,
 ): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response> {
   const proxyCfg = options.proxy;
   const indexHtmlPath = join(outDir, "index.html");
@@ -815,7 +824,7 @@ export function createDesktopHandler(
   // shim when the `notifications` capability is on (the pinned runtime's OS notifications).
   const memory = trust.kind === "memory";
   const page: DesktopPageGlobals = {
-    ...(memory && wsOrigin ? { wsOrigin } : {}),
+    ...(memory && wsUrl ? { wsUrl } : {}),
     ...(memory && options.capabilities?.some((c) => c.name === "notifications")
       ? { notifications: true }
       : {}),
@@ -1113,9 +1122,9 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     trust,
     await loadDesktopPreload(outDir, devDecision.proxy),
     preloadKey,
-    // The relay the page's WebSockets dial (Live, `desktopWebSocketUrl`): published by the pinned
-    // runtime next to the app origin.
-    resolveDesktopWsOrigin(Deno.env.get(DESKTOP_WS_ORIGIN_ENV)),
+    // The relay the page's WebSockets dial (Live, `desktopWebSocketUrl`), per-launch token included:
+    // published by the pinned runtime next to the app origin.
+    resolveDesktopWsUrl(Deno.env.get(DESKTOP_WS_URL_ENV)),
   );
   // Under the pinned runtime `DENO_SERVE_ADDRESS=memory:…` overrides this port/hostname, so the
   // server listens on the in-process memory transport; under the stock runtime it is loopback.

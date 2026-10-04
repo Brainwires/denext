@@ -46,7 +46,7 @@ import {
 import {
   desktopExtension,
   desktopWebSocketUrl,
-  desktopWsOrigin,
+  desktopWsUrl,
   onDesktopEvent,
 } from "denext/desktop/client";
 import {
@@ -245,8 +245,9 @@ const runtimeChecks: Check[] = [
   }],
   ["websocket: the page dials the runtime's relay with the app origin", async ({ setup }) => {
     if (!setup.pinnedRuntime) throw new Skip("the stock runtime serves the page on loopback");
-    const relay = desktopWsOrigin();
-    assert(relay, "__denext.wsOrigin is missing");
+    const relay = desktopWsUrl();
+    assert(relay, "__denext.wsUrl is missing");
+    assert(/\/\.deno-desktop-relay\/[0-9a-f]{64}$/.test(relay), "the relay URL has no token");
     const url = desktopWebSocketUrl("/_kitchen/ws");
     assert(url.startsWith(`${relay}/`), `dialed ${url}, not the relay`);
     const ws = new WebSocket(url);
@@ -266,7 +267,7 @@ const runtimeChecks: Check[] = [
     } finally {
       ws.close();
     }
-    return `${relay} · Origin ${location.origin}`;
+    return `${new URL(relay).origin} + token · Origin ${location.origin}`;
   }],
   ["preload: ran first, after the __denext global", () => {
     const p = (globalThis as {
@@ -859,8 +860,8 @@ const securityChecks: Check[] = [
       token: pageToken(),
       origin: location.origin,
     }) as { relay: string | null; probes: Array<{ name: string; status: string }> };
-    assert(relay, "the runtime published no loopback relay (DENO_DESKTOP_WS_ORIGIN)");
-    eq(probes.length, 3, "probes run");
+    assert(relay, "the runtime published no loopback relay (DENO_DESKTOP_WS_URL)");
+    eq(probes.length, 4, "probes run");
     for (const p of probes) {
       assert(!/ (2\d\d|101) /.test(`${p.status} `), `${p.name} was accepted: ${p.status}`);
     }

@@ -1193,7 +1193,7 @@
     "DESKTOP_DEV_LAN_ENV:variable",
     "DESKTOP_DEV_URL_ENV:variable",
     "DESKTOP_INSTALLER_FORMATS:variable",
-    "DESKTOP_WS_ORIGIN_ENV:variable",
+    "DESKTOP_WS_URL_ENV:variable",
     "DesktopAppDirs:interface",
     "DesktopAppSyncReport:interface",
     "DesktopBridge:interface",
@@ -1323,7 +1323,7 @@
     "deepLinkSchemeOwner:function",
     "desktopExtension:function",
     "desktopWebSocketUrl:function",
-    "desktopWsOrigin:function",
+    "desktopWsUrl:function",
     "isDesktopBridgeError:function",
     "onDesktopEvent:function"
   ],

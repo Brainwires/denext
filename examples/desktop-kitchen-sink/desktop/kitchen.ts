@@ -313,10 +313,14 @@ export default defineDesktopExtension({
       handler: async (args) => {
         // The runtime's WebSocket-only loopback relay is the app's one TCP listener in the memory
         // world. Each probe carries the page's real token and the exact app origin, and asks the
-        // bridge to write a marker; the page then checks the marker was never written.
-        const relay = Deno.env.get("DENO_DESKTOP_WS_ORIGIN");
+        // bridge to write a marker; the page then checks the marker was never written. The probes
+        // that carry the relay's own per-launch token get past the relay, so they reach the app's
+        // refusal of relayed requests; the one without it must stop at the relay.
+        const relay = Deno.env.get("DENO_DESKTOP_WS_URL");
         if (!relay) return { relay: null, probes: [] };
-        const port = Number(new URL(relay.replace(/^ws/, "http")).port);
+        const relayUrl = new URL(relay.replace(/^ws/, "http"));
+        const port = Number(relayUrl.port);
+        const prefix = relayUrl.pathname;
         const token = stringField(args, "token");
         const origin = stringField(args, "origin");
         const body = JSON.stringify({
@@ -334,7 +338,7 @@ export default defineDesktopExtension({
               new TextEncoder().encode(body).byteLength
             }\r\n`,
           ) + body;
-        const upgrade = `GET /_denext/desktop/rpc HTTP/1.1\r\n` +
+        const upgrade = `GET ${prefix}/_denext/desktop/rpc HTTP/1.1\r\n` +
           headers(
             "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\n" +
               "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
@@ -342,7 +346,8 @@ export default defineDesktopExtension({
         const probes: Array<{ name: string; status: string }> = [];
         for (
           const [name, request] of [
-            ["POST to the relay", post("/_denext/desktop/rpc")],
+            ["POST to the relay", post(`${prefix}/_denext/desktop/rpc`)],
+            ["POST without the relay token", post("/_denext/desktop/rpc")],
             ["absolute-form http+memory: target", post("http+memory://app/_denext/desktop/rpc")],
             ["WebSocket upgrade to the RPC path", upgrade],
           ] as const
@@ -352,7 +357,8 @@ export default defineDesktopExtension({
             status: await rawRequest(port, request).catch((err) => `error: ${message(err)}`),
           });
         }
-        return { relay, probes };
+        // Never the token itself: the page gets only whether the relay was published.
+        return { relay: relayUrl.origin, probes };
       },
     },
     mainThread: {

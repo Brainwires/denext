@@ -45,7 +45,7 @@ export {
   isDesktopBridgeError,
 } from "./bridge-client.ts";
 // Where the page's own WebSockets go: the runtime's loopback relay under denext's pinned runtime.
-export { desktopWebSocketUrl, desktopWsOrigin } from "./ws-origin.ts";
+export { desktopWebSocketUrl, desktopWsUrl } from "./ws-origin.ts";
 
 /**
  * The slice of a Standard Schema (https://standardschema.dev) the extension typing reads: its
