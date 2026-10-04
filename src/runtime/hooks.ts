@@ -86,8 +86,12 @@ export interface Dispatcher {
  * Fill value for freshly-allocated {@link useMemoCache} slots. Generated code
  * compares a slot against this sentinel to decide whether it holds a real value
  * yet. Exposed so the compiler runtime and hand-written code agree on it.
+ *
+ * It is React's own sentinel (`Symbol.for("react.memo_cache_sentinel")`), which React
+ * Compiler output tests each slot against inline, so code the React Compiler emitted
+ * runs on denext's `useMemoCache` (as its `c` from `react/compiler-runtime`) unchanged.
  */
-export const MEMO_CACHE_SENTINEL: unique symbol = Symbol.for("denext.memo_cache_sentinel");
+export const MEMO_CACHE_SENTINEL: unique symbol = Symbol.for("react.memo_cache_sentinel");
 
 /** A mutable ref object or a callback ref, as accepted by `ref`/`useImperativeHandle`. */
 export type Ref<T> = { current: T | null } | ((value: T | null) => void) | null | undefined;

@@ -172,8 +172,19 @@ function commitLayoutEffects(effects: Fiber[]): void {
   if (pendingPassive.length > 0) schedulePassiveFlush();
 }
 
+let commits = 0;
+
+/**
+ * How many trees have committed so far. An awaited `act` compares it across a macrotask
+ * to learn whether work it did not flush itself (a microtask-scheduled sync render) ran.
+ */
+export function commitCount(): number {
+  return commits;
+}
+
 /** Commit a fully rendered work-in-progress tree, in React's phase order. */
 export function commitRoot(handle: RootHandle, wipRoot: Fiber): void {
+  commits++;
   commitBeforeMutation(wipRoot);
   commitDeletions(wipRoot);
   commitInsertionEffects(wipRoot);
@@ -406,6 +417,11 @@ function schedulePassiveFlush(): void {
     passiveScheduled = false;
     flushPassiveEffects();
   }, 0);
+}
+
+/** Whether a commit queued passive effects (useEffect) that have not run yet. */
+export function hasPendingPassiveEffects(): boolean {
+  return pendingPassive.length > 0;
 }
 
 /** Run all queued passive effects (useEffect). Safe to call repeatedly. */

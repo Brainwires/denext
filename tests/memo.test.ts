@@ -241,3 +241,40 @@ Deno.test("useMemoCache returns a stable, sentinel-initialized array", () => {
   assertStrictEquals(seen[0], seen[1], "the same cache array persists across renders");
   root.unmount();
 });
+
+Deno.test("React Compiler output runs on compiler-runtime's c(): its inline sentinel checks see fresh slots", async () => {
+  // The shape the React Compiler emits in a production build (no dev cache-reset
+  // block): each slot is compared against React's sentinel inline, so an
+  // uninitialized slot that held any other value would be read back as the result.
+  const { c } = await import("../src/runtime/compiler-runtime.ts");
+  const { renderToString } = await import("../src/jsx/render-to-string.ts");
+  const { doc, container } = makeDom();
+  setDocument(asDoc(doc));
+  const labels: unknown[] = [];
+
+  function Compiled(props: { items: string[] }): VNode {
+    const $ = c(2);
+    let t0;
+    if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
+      t0 = (item: string) => item.toUpperCase();
+      $[0] = t0;
+    } else {
+      t0 = $[0] as (item: string) => string;
+    }
+    let t1;
+    if ($[1] === Symbol.for("react.memo_cache_sentinel")) {
+      t1 = props.items.map(t0).join(",");
+      $[1] = t1;
+    } else {
+      t1 = $[1];
+    }
+    labels.push(t1);
+    return h("p", null, t1 as string);
+  }
+
+  const root = createRoot(asEl(container));
+  root.render(h(Compiled, { items: ["a", "b"] }));
+  assertEquals(labels, ["A,B"]);
+  root.unmount();
+  assertEquals(await renderToString(h(Compiled, { items: ["x"] })), "<p>X</p>");
+});

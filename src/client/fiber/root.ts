@@ -12,7 +12,12 @@ import {
   setFlushHandlers,
 } from "./scheduler.ts";
 import { runCommitReport } from "./devtools-seam.ts";
-import { commitDeletion, flushPassiveEffects } from "./commit.ts";
+import {
+  commitCount,
+  commitDeletion,
+  flushPassiveEffects,
+  hasPendingPassiveEffects,
+} from "./commit.ts";
 import { beginConcurrentRender, renderRoot, resumeConcurrent } from "./work-loop.ts";
 import { PORTAL, type VNode, type VNodeChild } from "../../jsx/types.ts";
 import { rootScope } from "../../jsx/tree-id.ts";
@@ -240,12 +245,60 @@ export function flushSync<T>(fn?: () => T): T | undefined {
  * `act(callback)` — the React test helper. Runs `callback`, flushes all pending
  * state updates and effects synchronously, and returns a thenable so both sync
  * and async usage work.
+ *
+ * Like React's, the returned promise settles only once the work the callback set off
+ * has gone quiet: after the callback (and its promise) it yields a macrotask and flushes
+ * again, repeating while that turn rendered, committed or queued effects. So an
+ * un-awaited promise chain started inside `act` — an async click handler whose
+ * `.then` sets state — has committed by the time `await act(...)` returns.
  */
 export function act<T>(callback: () => T | Promise<T>): Promise<T> {
   const result = callback();
   flushSync();
-  return Promise.resolve(result).then((value) => {
+  return Promise.resolve(result).then(async (value) => {
     flushSync();
+    await settleActWork();
     return value;
+  });
+}
+
+/** Macrotask turns an awaited `act` waits through at most (React's loop has no cap). */
+const ACT_SETTLE_TURNS = 100;
+
+async function settleActWork(): Promise<void> {
+  for (let turn = 0; turn < ACT_SETTLE_TURNS; turn++) {
+    const commitsBefore = commitCount();
+    await nextMacrotask();
+    const progressed = commitCount() !== commitsBefore || hasPendingWork();
+    flushSync();
+    if (!progressed) return;
+  }
+}
+
+function hasPendingWork(): boolean {
+  if (hasPendingPassiveEffects()) return true;
+  for (const handle of activeRoots) {
+    if (handle.pendingLanes !== NoLane) return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve on the next macrotask. A MessageChannel, as React's act uses where Node's
+ * `setImmediate` is unavailable: fake timers replace `setTimeout`, which would stall the
+ * wait. Both ports close afterwards so no handle outlives it.
+ */
+function nextMacrotask(): Promise<void> {
+  if (typeof MessageChannel !== "function") {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      channel.port2.close();
+      resolve();
+    };
+    channel.port2.postMessage(null);
   });
 }

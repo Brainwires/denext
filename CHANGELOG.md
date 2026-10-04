@@ -34,6 +34,20 @@ and this project adheres to
   Shim errors are `CodedError`s now (`code` unchanged). `getAvailableLensesAsync` lists every video
   input, labelled or not.
 
+### Fixed
+
+- **An awaited `act` waits for the work its callback set off, as React's does.** It returned
+  after one flush once the callback's promise settled, so a promise chain the callback started
+  without awaiting it (an async click handler whose `.catch` / `.then` sets state, or an effect
+  that does) had not committed when `await act(...)` returned; a test's next step then saw stale
+  DOM (a still-disabled button). It now yields a macrotask and flushes again until a turn does no
+  work.
+- **`useMemoCache` slots start as React's sentinel, so React Compiler output runs on it.**
+  `MEMO_CACHE_SENTINEL` is now `Symbol.for("react.memo_cache_sentinel")`: React Compiler output
+  compares each slot against that symbol inline, so with denext's `c` as its
+  `react/compiler-runtime` a production-mode compiled component read the unmatched sentinel back
+  as a cached value (`symbol is not a function`).
+
 ## [3.1.0] - 2026-10-03
 
 ### Added
