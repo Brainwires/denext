@@ -94,6 +94,8 @@ export const REACT_ALIASES: Record<string, string> = {
   "react-is": "react-is.js",
   "react/jsx-runtime": "jsx-runtime.js",
   "react/jsx-dev-runtime": "jsx-runtime.js",
+  // npm libraries precompiled with the React Compiler import `c` from here.
+  "react/compiler-runtime": "react-compiler-runtime.js",
 };
 
 /**
@@ -184,6 +186,10 @@ export function runtimeEntryPoints(baseUrl: string): Record<string, string> {
     "react-dom-test-utils": u("src/compat/test-utils.ts"),
     "react-is": u("src/compat/react-is.ts"),
     "jsx-runtime": u("src/jsx/jsx-runtime.ts"),
+    // `react/compiler-runtime` (React-Compiler output's `c`) and `denext/compiler-runtime`:
+    // the memo cache must come from the one hooks instance the components render with.
+    "react-compiler-runtime": u("src/compat/react-compiler-runtime.ts"),
+    "compiler-runtime": u("src/runtime/compiler-runtime.ts"),
     // What `react` and the JSX runtime are for importers inside node_modules (see
     // LIBRARY_REACT_ALIASES): the same instance, with library elements recorded.
     "react-lib": u("src/compat/react-lib.ts"),
@@ -651,6 +657,7 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/desktop/app": "desktop-app.js",
   "denext/jsx-runtime": "jsx-runtime.js",
   "denext/jsx-dev-runtime": "jsx-runtime.js",
+  "denext/compiler-runtime": "compiler-runtime.js",
   // The Remix compat client runtime (a migrated Remix app's client components).
   "denext/remix": "remix.js",
   // The `denext/expo/*` shims (see expo-shims.ts).

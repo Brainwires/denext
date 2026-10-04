@@ -3719,6 +3719,9 @@
     "jsxDEV:function",
     "jsxs:function"
   ],
+  "denext/react/compiler-runtime": [
+    "c:variable"
+  ],
   "denext/react-is": [
     "ContextConsumer:variable",
     "ContextProvider:variable",

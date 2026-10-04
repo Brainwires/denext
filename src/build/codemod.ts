@@ -23,6 +23,7 @@ export const SPEC_REWRITE: Record<string, string> = {
   "react-dom/server": "denext/react-dom/server",
   "react/jsx-runtime": "denext/jsx-runtime",
   "react/jsx-dev-runtime": "denext/jsx-dev-runtime",
+  "react/compiler-runtime": "denext/compiler-runtime",
   "react-is": "denext/react-is",
   // next/navigation's whole surface (redirect/notFound + the client hooks) is on
   // the denext main entry.

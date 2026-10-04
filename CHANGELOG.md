@@ -47,6 +47,14 @@ and this project adheres to
   compares each slot against that symbol inline, so with denext's `c` as its
   `react/compiler-runtime` a production-mode compiled component read the unmatched sentinel back
   as a cached value (`symbol is not a function`).
+- **`react/compiler-runtime` resolves to denext wherever `react/jsx-runtime` does.** An npm
+  library shipped precompiled with the React Compiler imports `c` from `react/compiler-runtime`,
+  which no alias covered, so it loaded real React's compiler runtime (a second React, whose hook
+  dispatcher is never installed). The next-compat build (SSR and client), SPA and React Native
+  mode, the unbundled dev loop, `denext migrate`'s and `denext create`'s import maps now map it to
+  denext's new `denext/react/compiler-runtime` entry (only `c`, as React's module, on the same hook
+  instance as the app's components), and `denext codemod` rewrites it to `denext/compiler-runtime`,
+  which the compat build now also takes from the shared runtime.
 
 ## [3.1.0] - 2026-10-03
 

@@ -306,6 +306,7 @@ Deno.test("scaffoldFiles: compatibilityMode adds React + Next import aliases", (
   assertStringIncludes(dj.imports["react"], "/react");
   assertStringIncludes(dj.imports["react-dom"], "/react-dom");
   assertStringIncludes(dj.imports["react/jsx-runtime"], "/react/jsx-runtime");
+  assertStringIncludes(dj.imports["react/compiler-runtime"], "/react/compiler-runtime");
   assertStringIncludes(dj.imports["next/"], "/next/"); // prefix maps all next/* submodules
   assertStringIncludes(dj.imports["react-is"], "/react-is");
   assertStringIncludes(dj.imports["next-intl"], "/next-intl");

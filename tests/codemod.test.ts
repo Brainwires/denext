@@ -15,6 +15,12 @@ Deno.test("react-dom/client → denext/client", () => {
   assertEquals(r.code, `import { createRoot } from "denext/client";`);
 });
 
+Deno.test("react/compiler-runtime → denext/compiler-runtime (React Compiler output)", () => {
+  const r = rewriteSource(`import { c as _c } from "react/compiler-runtime";`);
+  assertEquals(r.code, `import { c as _c } from "denext/compiler-runtime";`);
+  assertEquals(r.rewrites[0], { from: "react/compiler-runtime", to: "denext/compiler-runtime" });
+});
+
 Deno.test("default React import becomes a namespace", () => {
   const r = rewriteSource(`import React from "react";`);
   assertEquals(r.code, `import * as React from "denext";`);

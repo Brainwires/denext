@@ -30,6 +30,11 @@ Deno.test("migrate writes a compat deno.json (skipLibCheck + react→denext alia
       String(cfg.imports["react/jsx-runtime"]).includes("@denext/denext"),
       "jsx-runtime → denext",
     );
+    // React-Compiler-precompiled npm libraries import `c` from here.
+    assert(
+      String(cfg.imports["react/compiler-runtime"]).endsWith("/react/compiler-runtime"),
+      "compiler-runtime → denext",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
