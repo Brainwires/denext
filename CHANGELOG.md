@@ -8,6 +8,43 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking
+
+Each item is described in full under Changed, Fixed or Security below.
+
+- **Deno Desktop needs runtime 2.9.7-denext.9.** An app packaged with an older runtime loses its
+  page's WebSockets and full-app updates (denext warns at startup); repackage with the runtime
+  denext pins.
+- **`desktopWsOrigin()` is removed:** use `desktopWsUrl()` (the relay URL with its per-launch
+  token) or `desktopWebSocketUrl(path)`. `denext/desktop`'s `DESKTOP_WS_ORIGIN_ENV` is now
+  `DESKTOP_WS_URL_ENV`.
+- **Full-app update manifests must carry `expiresAt` and `sequence`.** Re-publish existing
+  manifests with this `publish-update`, and re-sign them (`publish-update --resign`) before they
+  expire (30 days by default); the artifact must be built as the version published.
+- **`clipboard`, `global-shortcuts`, `launch-at-login`, `notifications` and `desktop.app.deepLinks`
+  bake an unscoped `--allow-sys`** into the package flags; a scoped `--allow-sys=<names>` no
+  longer satisfies the runtime.
+- **The native JS bridge serves only the app origin.** Any other document that calls it must be
+  listed in `desktop.app.bridgeOrigins` (and bound with `{ origins }`); `/_denext/desktop/*`
+  refuses requests the runtime marks cross-origin.
+- **A dev server bound to a network address (`--lan`, `--host`) requires its per-run token** from
+  every other machine (`?__denext_dev=…` in the printed URL, then a cookie, or the
+  `x-denext-dev-token` header). `/_denext/@fs` serves only project modules, and off loopback
+  `/_denext/*` requires `Sec-Fetch-Site: same-origin`.
+- **Over-the-air UI updates without a public key are accepted from loopback only** until
+  `denext mobile add-ota --public-key` or `--ota-origin` pins a source; ship a new binary.
+  `denext mobile build --release` refuses a leftover dev `server.url` or `cleartext: true`.
+- **Linux `secureStore` rejects `backend_unavailable`** when `secret-tool`, a Secret Service or an
+  unlocked keyring is missing, instead of reading as "not found".
+- **`expo-secure-store`'s `isAvailableAsync()` is `false` without a real secret store** (the web),
+  and a `requireBiometric` / `requireAuthentication` set there is refused.
+- **`completeAuthSession` / `maybeCompleteAuthSession` act only in the window `openAuthSession`
+  opened.**
+- **Expo SDK 58 shims:** `File.write` is async, `expo-sqlite`'s `libSQLOptions` is gone, and shim
+  errors are `CodedError`s.
+- **Regenerate the desktop package scripts** (`denext desktop package --regenerate-scripts`) so
+  Windows signs every PE file of the bundle.
+
 ### Added
 
 - **`desktopOs()` from `denext/desktop/client`.** It returns the OS a Deno Desktop window runs on
@@ -16,18 +53,12 @@ and this project adheres to
 
 ### Changed
 
-- **The pinned Deno Desktop runtime is 2.9.7-denext.9.** `src/build/desktop-runtime-pin.json`
-  points at the `denext-runtime-v2.9.7-denext.9` release (laufey `1d1ae22`, API 44), so
-  `denext desktop` and the package scripts download it. It carries the contract below: the
-  relay's per-launch token, the scheme bridge's cross-origin mark, bindings limited to the app's
-  own documents, the unscoped `--allow-sys` requirement, and the updater's `expiresAt`,
-  `sequence` and `version_mismatch` checks. Its single-instance helper and worker launches run
-  headless, so the host and runtime classifiers agree. The
-  [runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases) table marks it the
-  current pin.
-
-- **Deno Desktop: denext adopts the runtime 2.9.7-denext.9 contract.** These need that runtime
-  and do not work with an older one:
+- **Deno Desktop: denext pins runtime 2.9.7-denext.9 and adopts its contract.**
+  `src/build/desktop-runtime-pin.json` points at the `denext-runtime-v2.9.7-denext.9` release
+  (laufey `1d1ae22`, API 44), so `denext desktop` and the package scripts download it. Its
+  single-instance helper and worker launches run headless, so the host and runtime classifiers
+  agree. The [runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases) table
+  marks it the current pin. What follows needs that runtime and does not work with an older one:
   - **The page's WebSockets dial the relay with its per-launch token.** The runtime publishes
     `DENO_DESKTOP_WS_URL` (`ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>`) and refuses an
     upgrade without the token (403). denext injects it into the app's top-level page as
@@ -36,7 +67,7 @@ and this project adheres to
     still holds, so only a same-origin frame could get it. `desktopWebSocketUrl(path)` and the Live client append
     the page's path, and `Deno.serve` sees `GET <path>`; a bare query (`"?room=1"`) is now accepted
     too. `desktopWsOrigin()` is replaced by `desktopWsUrl()`, the relay URL with the token
-    (`DENO_DESKTOP_WS_ORIGIN_ENV` → `DENO_DESKTOP_WS_URL_ENV`).
+    (`DESKTOP_WS_ORIGIN_ENV` → `DESKTOP_WS_URL_ENV`).
   - **Capabilities that need it bake an unscoped `--allow-sys`.** The runtime refuses reading or
     watching the clipboard, global shortcuts, `setLaunchAtLogin`, OS notifications (scheduled or
     `new Notification()`) and forcing a deep-link scheme back (`registerScheme({ force })`)

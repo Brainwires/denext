@@ -877,9 +877,11 @@ export default {
         </li>
         <li>
           Add <code>myapp://app/</code>{" "}
-          to the Clerk instance's allowed redirect URLs (Clerk dashboard → Native applications), and
-          the origin <code>myapp://app</code> to its allowed origins (<code>allowed_origins</code>
-          {" "}
+          to the Clerk instance's allowed redirect URLs (Clerk dashboard → Native applications; on
+          Windows and Linux the redirect also carries{" "}
+          <code>?denext_nonce=…</code>, which a development instance accepts against that entry;
+          whether a production instance does is not yet verified), and the origin{" "}
+          <code>myapp://app</code> to its allowed origins (<code>allowed_origins</code>{" "}
           through the Backend API's{" "}
           <code>PATCH /v1/instance</code>). The second is required: the window sends the client JWT
           as <code>Authorization</code> and the WebView adds{" "}

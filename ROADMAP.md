@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> denext **3.1** is in progress on `development`: Deno Desktop at Electron parity through a
+> denext **3.1.1** is in progress on `development`: Deno Desktop at Electron parity through a
 > pinned runtime built from public forks ([Brainwires/deno](https://github.com/Brainwires/deno),
 > [Brainwires/laufey](https://github.com/Brainwires/laufey)).
 
@@ -15,6 +15,13 @@
   Windows Server VM with no TPM, so the live create + sign-in with Windows Hello was skipped for
   3.1.0. Add a vTPM Windows 11 VM (or a Windows 11 PC) and run the CONTRIBUTING manual check.
 
+- **Clerk on Windows and Linux against a production instance:** the redirect carries a per-flow
+  `?denext_nonce=…`, which a development instance accepts against the allowed `myapp://app/`.
+  Confirm with one real sign-in that a production instance's native redirect allowlist matches it
+  too (an exact match would fail the sign-in closed).
+- **The Chromium sandbox for the CEF backend:** CEF runs with `no_sandbox` on every OS, so a
+  renderer exploit runs as the user (the WebView backends sandbox their content processes). Each
+  OS needs its own build, packaging and signing work (laufey `docs/backends.md`).
 - **Navigation guard:** keep foreign origins out of the window; a navigation away from the app
   origin opens in the system browser instead.
 - **Upstream the fork so stock Deno can be used.** Offer every runtime change to denoland/deno
@@ -52,6 +59,9 @@
 - **Capabilities:** background audio with lock-screen controls, multi-select and video image
   picking, file transfer with progress, a notification service extension and badges, SQLite
   encryption, a PowerSync recipe.
+- **React Native 0.88 in the parity ledger:** the baseline is React Native 0.86.3; move it to
+  0.88 once that is final and close the runtime gaps the diff shows (14 against the release
+  candidate).
 - **The parity ledger's React Native gaps:** the 32 `*Base` / `*Component` type aliases, the
   missing members (`AppRegistry`'s headless tasks and others, in
   `scripts/parity/native/baselines/known-gaps.json`), `AppState`'s `memoryWarning`,

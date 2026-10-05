@@ -343,7 +343,8 @@ App extensions: `denext mobile add share-extension | widget --name <N> [--config
 `startLiveActivity`/`updateLiveActivity`/`endLiveActivity` (iOS only; they share an App Group).
 Live reload on a device: `denext mobile dev --lan` points the app's `server.url` at
 `denext dev` for the session (restored on exit); a non-loopback host loads the dev assets only
-when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`). Docs:
+when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`), and a network bind requires its
+per-run token from other machines (the printed URL carries `?__denext_dev=…`). Docs:
 https://denext.dev/docs/mobile
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
@@ -402,7 +403,8 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
-(macOS Keychain, Linux libsecret, Windows PasswordVault) and your `defineDesktopExtension` modules (from
+(macOS Keychain, Linux libsecret, Windows PasswordVault; on Linux a missing `secret-tool`, Secret
+Service or unlocked keyring rejects `backend_unavailable` with the reason) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
 `ctx.runOnMainThread(fnPtr, context?)` calls a C function on the UI thread — full trust, grant `ffi`
 in `desktop.extraPermissions`, `unsupported` on the stock runtime) — but only when `desktop.ts`
@@ -499,10 +501,12 @@ the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 `denext/desktop/updater` (`checkForDesktopUpdate` / `prepareDesktopUpdate` /
 `applyDesktopUpdate`), and full-app updates under the pinned runtime (`checkForAppUpdate` /
 `downloadAppUpdate` / `installAppUpdateAndRelaunch` / `confirmAppUpdate`: a signed manifest from
-`denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build), an atomic
+`denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build; on
+Windows: on every PE file, which the package script signs), an atomic
 bundle swap that rolls back if the new version never confirms). The manifest expires (`expiresAt`,
 default 30 days, `expired`) and carries a growing `sequence` (`replayed`): re-sign it before it
-expires with `denext desktop publish-update --resign`; the artifact must be built as the version
+expires with `denext desktop publish-update --resign` (`publish-update` warns when the manifest in
+`--out` expires within 7 days); the artifact must be built as the version
 published (`version_mismatch`).
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
