@@ -44,10 +44,26 @@ async function powershell(
   env: Record<string, string> = {},
 ): Promise<string> {
   const file = join(dir, `${name}.ps1`);
-  await Deno.writeTextFile(file, `$ErrorActionPreference = 'Stop'\n${script}\n`);
+  await Deno.writeTextFile(
+    file,
+    "$ErrorActionPreference = 'Stop'\n" +
+      // The Cert: drive and New-SelfSignedCertificate: loaded explicitly (see PSModulePath below).
+      "Import-Module Microsoft.PowerShell.Security, PKI\n" +
+      `${script}\n`,
+  );
+  // Windows PowerShell's own module path: a PSModulePath inherited from PowerShell 7 (a pwsh CI
+  // step) points it at modules it cannot load, and the Cert: drive is then missing.
+  const windir = Deno.env.get("SystemRoot") ?? "C:\\Windows";
+  const programFiles = Deno.env.get("ProgramFiles") ?? "C:\\Program Files";
   const out = await new Deno.Command("powershell.exe", {
     args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
-    env,
+    env: {
+      PSModulePath: [
+        join(windir, "System32", "WindowsPowerShell", "v1.0", "Modules"),
+        join(programFiles, "WindowsPowerShell", "Modules"),
+      ].join(";"),
+      ...env,
+    },
     stdout: "piped",
     stderr: "piped",
   }).output();
