@@ -36,6 +36,8 @@ Each item is described in full under Changed, Fixed or Security below.
   `denext mobile build --release` refuses a leftover dev `server.url` or `cleartext: true`.
 - **Linux `secureStore` rejects `backend_unavailable`** when `secret-tool`, a Secret Service or an
   unlocked keyring is missing, instead of reading as "not found".
+- **`WindowCapabilities`' index signature is `boolean | string | null`** (it carries
+  `sessionType` and `cookieEncryption` now): read an unknown key as `=== true`.
 - **`expo-secure-store`'s `isAvailableAsync()` is `false` without a real secret store** (the web),
   and a `requireBiometric` / `requireAuthentication` set there is refused.
 - **`completeAuthSession` / `maybeCompleteAuthSession` act only in the window `openAuthSession`
@@ -44,6 +46,8 @@ Each item is described in full under Changed, Fixed or Security below.
   errors are `CodedError`s.
 - **Regenerate the desktop package scripts** (`denext desktop package --regenerate-scripts`) so
   Windows signs every PE file of the bundle.
+- **The desktop `fs` capability's cache folder moved** to a `denext` sub-folder on macOS and Linux;
+  files a page stored with `directory: "cache"` before are not found there.
 
 ### Added
 
@@ -58,8 +62,32 @@ Each item is described in full under Changed, Fixed or Security below.
   `desktop-window.yml`) it trusts both for the run: a full-app update signed by the other
   certificate is refused (`os_signature`), the same signer's stages as `authenticode`, installs,
   is confirmed and is still running after a relaunch. Elsewhere those checks skip with the reason.
+- **`denext desktop doctor [--linux] [--json]`.** It reports the pinned Deno Desktop runtime
+  (version, cache, whether `deno` matches it, whether it has the session probe) and, on Linux, what
+  the session provides, read over D-Bus with `busctl` or `gdbus`: the session type, a tray host,
+  the Secret Service and its lock state, `secret-tool`, a notification server and the
+  xdg-desktop-portal interfaces with their versions. Each missing piece comes with a fix (the
+  AppIndicator extension, `libsecret-tools`, unlocking the keyring, a portal backend); an error
+  exits 1.
+- **`appCapabilities()` and `windowCapabilities()` report the runtime's session probe.**
+  `appCapabilities()` adds `trayReason`, `trayHost`, `secretService`, `sessionType` and
+  `cookieEncryption`, and `windowCapabilities()` adds `sessionType` and `cookieEncryption`, from
+  `Deno.desktop.platformFeatures()` (runtime 2.9.7-denext.10). Under an older runtime each fact
+  reads `"unknown"`.
 
 ### Changed
+
+- **A tray icon follows the session instead of assuming one can be shown.** `appCapabilities().tray`
+  is `false` where the runtime's probe finds no tray host (stock GNOME without the AppIndicator
+  extension), with the runtime's `trayReason`; `createTray` then rejects `unsupported` with the
+  reason in `error.data.reason`, as it does when `new Deno.Tray()` throws `NotSupported`, instead
+  of returning a dead icon. A tray-only app (its window hidden) gets its window shown
+  (`error.data.windowShown`).
+- **Every `unsupported` from the `app`, `window` and `globalShortcuts` capabilities carries a
+  reason** in `error.data.reason` (and in the message): which runtime API is missing, or what the
+  session lacks.
+- **The desktop kitchen sink's tray and badge checks pass, or skip with the runtime's reason**
+  (the CI's Linux session has no tray host).
 
 - **Deno Desktop: denext pins runtime 2.9.7-denext.9 and adopts its contract.**
   `src/build/desktop-runtime-pin.json` points at the `denext-runtime-v2.9.7-denext.9` release
@@ -294,6 +322,14 @@ Each item is described in full under Changed, Fixed or Security below.
   string; `shell.openPath` also refuses `.pyz`, `.pyzw`, `.pyc`, `.theme`, `.themepack`, `.rdp`
   and `.wsb`; and a loopback auth session is bound to the page that started it, as a
   custom-scheme one is (a cancel must name its session key, and the page going away ends it).
+- **Deno Desktop: the `fs` capability's `directory: "cache"` no longer shares a folder with the web
+  engine.** On macOS it was `~/Library/Caches/<identifier>`, where Chromium (CEF) keeps the app's
+  HTTP and code caches (`CEF/Default/…`) and WKWebView its own (`WebKit/…`); on Linux it was
+  `~/.cache/<identifier>`, where WebKitGTK's default context keeps `WebKitCache`. A page could
+  list, read and rewrite those caches. The cache root is now a folder of its own,
+  `~/Library/Caches/<identifier>/denext` and `$XDG_CACHE_HOME/<identifier>/denext` (Windows'
+  `%LOCALAPPDATA%\<identifier>\Cache` already was one). Files stored there before are not
+  moved.
 
 ## [3.1.0] - 2026-10-03
 

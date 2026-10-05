@@ -28,6 +28,7 @@ import { dictGet, parsePlist, type PlistDict, type PlistNode } from "./plist-val
 import { leakedCssShimKeys } from "./css-config-guard.ts";
 import { fastlaneFindings } from "./mobile-fastlane.ts";
 import { manifestMetaDataValue } from "./mobile-native-config.ts";
+import { formatDoctorFindings } from "./doctor-format.ts";
 
 /** Which question the doctor answers. */
 export type MobileDoctorProfile = "store" | "release";
@@ -1012,25 +1013,5 @@ export async function runMobileDoctor(opts: MobileDoctorOptions): Promise<Mobile
  * @returns The text, without a trailing newline.
  */
 export function formatMobileDoctor(report: MobileDoctorReport): string {
-  const lines = report.checks.map((id) => {
-    const found = report.findings.filter((f) => f.check === id);
-    const mark = found.some((f) => f.level === "error") ? "✖" : found.length > 0 ? "!" : "✔";
-    return `  ${mark} ${id}`;
-  });
-  for (const f of report.findings) {
-    lines.push(
-      "",
-      `  ${f.level === "error" ? "ERROR  " : "WARNING"} [${f.check}] ${f.message}`,
-      `          fix: ${f.fix}`,
-    );
-  }
-  const errors = report.findings.filter((f) => f.level === "error").length;
-  const warnings = report.findings.length - errors;
-  lines.push(
-    "",
-    errors + warnings === 0
-      ? "  All checks passed."
-      : `  ${errors} error(s), ${warnings} warning(s).`,
-  );
-  return lines.join("\n");
+  return formatDoctorFindings(report.checks, report.findings).join("\n");
 }

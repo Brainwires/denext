@@ -53,6 +53,12 @@ export default function Desktop() {
           <code>codesign</code> on macOS, Authenticode where <code>signtool</code>{" "}
           runs) and wrap the installers, into <code>dist/</code>.
         </li>
+        <li>
+          <code>denext desktop doctor</code>{" "}
+          — check the pinned runtime and, on Linux, what the session provides (tray host, keyring,
+          portals), with a fix for each gap (see{" "}
+          <a href="#desktop-linux-session">What the session provides</a>).
+        </li>
       </ul>
       <p>
         The scaffolded <code>deno task desktop</code> / <code>deno task desktop:package</code> (and
@@ -500,6 +506,45 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         and the AppImage leave it to the machine. There is no code-signing/notarization step on
         Linux.
       </Callout>
+
+      <h3 id="desktop-linux-session">What the session provides</h3>
+      <p>
+        Linux desktops differ in what they run: a tray host, a Secret Service (and whether it is
+        unlocked), a notification server, the xdg-desktop-portal interfaces. The runtime probes the
+        session itself instead of guessing from the desktop&apos;s name (
+        <code>Deno.desktop.platformFeatures()</code>, runtime 2.9.7-denext.10 and later), and denext
+        passes the facts on: <code>appCapabilities()</code> reports <code>trayHost</code>,{" "}
+        <code>trayReason</code>, <code>secretService</code>, <code>sessionType</code> and{" "}
+        <code>cookieEncryption</code>, and <code>windowCapabilities()</code> reports{" "}
+        <code>sessionType</code> and{" "}
+        <code>cookieEncryption</code>. Under an older runtime each fact reads{" "}
+        <code>"unknown"</code>. A missing feature rejects <code>unsupported</code>{" "}
+        with the reason in <code>error.data.reason</code>, never silently.
+      </p>
+      <p>
+        With the login keyring locked and no one to answer the unlock prompt (a headless or ssh
+        session), the CEF backend starts Chromium with <code>--password-store=basic</code>{" "}
+        instead of waiting forever for the key: the app works, its cookies are stored unencrypted,
+        and <code>cookieEncryption</code> reads <code>"basic"</code>.
+      </p>
+      <p>
+        <code>denext desktop doctor</code>{" "}
+        checks a machine before you ship to it: the pinned runtime and whether <code>deno</code>
+        {" "}
+        matches it, and on Linux (or with{" "}
+        <code>--linux</code>) the session type, the D-Bus session bus, a tray host, the Secret
+        Service and its lock state,{" "}
+        <code>secret-tool</code>, a notification server and the portal interfaces with their
+        versions. It reads the session bus with <code>busctl</code> or <code>gdbus</code>{" "}
+        (never starting or unlocking the keyring), prints a fix for each missing piece (the
+        AppIndicator extension,{" "}
+        <code>libsecret-tools</code>, unlocking the keyring, a portal backend), and exits 1 on an
+        error. <code>--json</code> prints the report as data.
+      </p>
+      <Code lang="bash">
+        {`denext desktop doctor          # the runtime; on Linux the session too
+denext desktop doctor --json   # the same as JSON (CI)`}
+      </Code>
 
       <h2 id="desktop-installers">Installers</h2>
       <p>
@@ -1937,7 +1982,13 @@ await bounce({ critical: true }); // until the app is focused`}
           AppIndicator area) with a tooltip, a menu and click events; <code>update</code>,{" "}
           <code>getBounds</code> and <code>destroy</code>{" "}
           are on the handle. A page load removes the trays the previous page created (their handlers
-          went with it), so create them at startup.
+          went with it), so create them at startup. Where no icon can be shown (a Linux session with
+          no tray host, such as stock GNOME without the AppIndicator extension),{" "}
+          <code>appCapabilities()</code> reports <code>tray: false</code> with a{" "}
+          <code>trayReason</code>, and <code>createTray</code> rejects <code>unsupported</code>{" "}
+          with that reason in{" "}
+          <code>error.data.reason</code>. A tray-only app (its window hidden) gets its window shown
+          instead (<code>error.data.windowShown</code>), so it is never left unreachable.
         </li>
         <li>
           <code>setBadge</code>{" "}

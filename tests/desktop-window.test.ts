@@ -820,3 +820,34 @@ Deno.test("resolver: the window settings and app folders reach runDesktop", asyn
     "desktop.backdrop",
   );
 });
+
+Deno.test("window: capabilities carry the session probe's facts; unknown without the probe", async () => {
+  const before = await setup().call("capabilities") as Record<string, unknown>;
+  assertEquals([before.sessionType, before.cookieEncryption], ["unknown", "unknown"]);
+  const probed = await setup({
+    api: fakeApi({
+      platformFeatures: () => ({ os: "linux", sessionType: "wayland", cookieEncryption: "basic" }),
+    }),
+  }).call("capabilities") as Record<string, unknown>;
+  assertEquals([probed.sessionType, probed.cookieEncryption], ["wayland", "basic"]);
+  assertEquals(probed.closeGuard, true, "the window's own keys are unchanged");
+});
+
+Deno.test("window: unsupported says why (data.reason)", async () => {
+  const win = new StockWindow();
+  const ctl = createWindowController({ window: win, emit: () => {} });
+  const call = (m: string, a: unknown = {}) =>
+    Promise.resolve().then(() => ctl.capability.methods[m].handler(a, ctx()));
+  const err = await assertRejects(() => call("maximize"), DesktopCapError);
+  assertEquals(err.data, { reason: "this Deno Desktop runtime has no BrowserWindow.maximize" });
+  const screens = await assertRejects(() => call("screens"), DesktopCapError);
+  assert(
+    String((screens.data as { reason?: unknown }).reason).includes("pinned runtime adds it"),
+  );
+  const none = createWindowController({ window: undefined, emit: () => {} });
+  const noWin = await assertRejects(
+    () => Promise.resolve().then(() => none.capability.methods.state.handler({}, ctx())),
+    DesktopCapError,
+  );
+  assertEquals(noWin.data, { reason: "no window was adopted (not a desktop run)" });
+});

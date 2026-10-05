@@ -342,3 +342,44 @@ Deno.test("global shortcuts: capabilities, shared registrations, idempotent unre
     assertEquals(hits.includes("y"), false);
   });
 });
+
+Deno.test("appCapabilities: the session facts pass a whitelist; anything else reads unknown", async () => {
+  let wire: Record<string, unknown> = {
+    tray: false,
+    trayReason: "no StatusNotifierWatcher",
+    trayHost: false,
+    secretService: "locked",
+    sessionType: "wayland",
+    cookieEncryption: "basic",
+  };
+  await inDesktop({ app: { capabilities: () => wire } }, async () => {
+    let caps = await appCapabilities();
+    assertEquals(
+      [caps.tray, caps.trayReason, caps.trayHost, caps.secretService, caps.sessionType],
+      [false, "no StatusNotifierWatcher", false, "locked", "wayland"],
+    );
+    assertEquals(caps.cookieEncryption, "basic");
+    // An older runtime (no probe facts): unknown; a tray with no reason says it was not reported.
+    wire = { tray: false };
+    caps = await appCapabilities();
+    assertEquals(
+      [caps.trayReason, caps.trayHost, caps.secretService, caps.sessionType, caps.cookieEncryption],
+      ["not reported", "unknown", "unknown", "unknown", "unknown"],
+    );
+    // Values outside the whitelist never reach the page; null passes where it is meaningful.
+    wire = {
+      tray: true,
+      trayReason: "",
+      trayHost: "yes",
+      secretService: "<script>",
+      sessionType: null,
+      cookieEncryption: null,
+    };
+    caps = await appCapabilities();
+    assertEquals(
+      [caps.tray, caps.trayReason, caps.trayHost, caps.secretService, caps.sessionType],
+      [true, null, "unknown", "unknown", null],
+    );
+    assertEquals(caps.cookieEncryption, null);
+  });
+});

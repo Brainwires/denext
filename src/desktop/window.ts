@@ -134,8 +134,19 @@ export interface WindowCapabilities {
   readonly closeGuard: boolean;
   /** Window sizes and positions are CSS (device-independent) pixels on this backend. */
   readonly dipGeometry: boolean;
+  /**
+   * Linux: `"wayland"` (windows cannot be placed), `"x11"`, `"tty"` or `"unknown"`; `null` on macOS
+   * and Windows. `"unknown"` before runtime 2.9.7-denext.10 (no `platformFeatures()` probe).
+   */
+  readonly sessionType: "wayland" | "x11" | "tty" | "unknown" | null;
+  /**
+   * CEF's cookie store: `"os"` (encrypted) or `"basic"` (unencrypted: the Linux login keyring was
+   * locked with no one to unlock it); `null` on the WebView backends, `"unknown"` before runtime
+   * 2.9.7-denext.10.
+   */
+  readonly cookieEncryption: "os" | "basic" | "unknown" | null;
   /** Any other key the runtime reports. */
-  readonly [key: string]: boolean;
+  readonly [key: string]: boolean | string | null;
 }
 
 /** A title bar style: `"hidden"` draws the page under a transparent title bar. */

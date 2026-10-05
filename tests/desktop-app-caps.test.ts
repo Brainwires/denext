@@ -1175,6 +1175,11 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     icons: false,
     tooltips: false,
     tray: true,
+    trayReason: null,
+    trayHost: "unknown",
+    secretService: "unknown",
+    sessionType: "unknown",
+    cookieEncryption: "unknown",
     badge: false,
     bounce: false,
     dockMenu: false,
@@ -1221,4 +1226,292 @@ Deno.test("app: the runtime's Deno.Tray and Deno.dock are used when none is inje
     const caps = await call(cap, "capabilities") as Record<string, boolean>;
     assertEquals([caps.tray, caps.badge], [false, false]);
   });
+});
+
+// --- the runtime's session probe (Deno.desktop.platformFeatures, runtime 2.9.7-denext.10) ------
+
+/** What a Linux session with no tray host (stock GNOME) answers. */
+const NO_TRAY_HOST = {
+  os: "linux",
+  sessionType: "wayland",
+  desktopHint: "GNOME",
+  sessionBus: true,
+  trayHost: false,
+  trayReason: "no StatusNotifierWatcher (GNOME needs the AppIndicator extension)",
+  trayClicks: false,
+  trayTooltip: true,
+  secretService: "locked",
+  secretServicePrompt: false,
+  portalVersions: { FileChooser: 4 },
+  cookieEncryption: "basic",
+};
+
+/** The `unsupported` error a call rejects with. */
+async function unsupportedOf(p: Promise<unknown>) {
+  try {
+    await p;
+  } catch (err) {
+    const e = err as { code?: unknown; message?: unknown; data?: Record<string, unknown> };
+    return { code: e.code, message: String(e.message), data: e.data };
+  }
+  throw new Error("expected a rejection");
+}
+
+/** A window that records `show()`. */
+function hiddenWindow(visible = false) {
+  return Object.assign(new EventTarget(), {
+    shown: 0,
+    isVisible: () => visible,
+    show() {
+      this.shown++;
+    },
+  });
+}
+
+Deno.test("app: with the probe, a session with no tray host reports tray false with the runtime's reason", async () => {
+  FakeTray.made = [];
+  const cap = createAppController({
+    window: undefined,
+    api: { platformFeatures: () => NO_TRAY_HOST },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  }).capability;
+  const caps = await call(cap, "capabilities") as Record<string, unknown>;
+  assertEquals(
+    [caps.tray, caps.trayReason, caps.trayHost],
+    [false, NO_TRAY_HOST.trayReason, false],
+  );
+  assertEquals(
+    [caps.secretService, caps.sessionType, caps.cookieEncryption],
+    ["locked", "wayland", "basic"],
+  );
+  const err = await unsupportedOf(call(cap, "createTray", { icon: PNG }));
+  assertEquals(err.code, "unsupported");
+  assertEquals(err.data, { reason: NO_TRAY_HOST.trayReason, windowShown: false });
+  assert(err.message.includes("AppIndicator"), err.message);
+  assertEquals(FakeTray.made.length, 0, "no dead tray is created");
+});
+
+Deno.test("app: a tray-only app (window hidden) gets its window shown when no tray can be shown", async () => {
+  const win = hiddenWindow(false);
+  const cap = createAppController({
+    window: win,
+    api: { platformFeatures: () => NO_TRAY_HOST },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  }).capability;
+  const err = await unsupportedOf(call(cap, "createTray", { icon: PNG }));
+  assertEquals(err.data?.windowShown, true);
+  assertEquals(win.shown, 1);
+  // A visible window is left alone.
+  const shown = hiddenWindow(true);
+  const cap2 = createAppController({
+    window: shown,
+    api: { platformFeatures: () => NO_TRAY_HOST },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  }).capability;
+  assertEquals(
+    (await unsupportedOf(call(cap2, "createTray", { icon: PNG }))).data?.windowShown,
+    false,
+  );
+  assertEquals(shown.shown, 0);
+  // A window whose show() throws (closed) still yields the unsupported error.
+  const broken = Object.assign(new EventTarget(), {
+    isVisible: () => false,
+    show: () => {
+      throw new Error("gone");
+    },
+  });
+  const cap3 = createAppController({
+    window: broken,
+    api: { platformFeatures: () => NO_TRAY_HOST },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  }).capability;
+  assertEquals(
+    (await unsupportedOf(call(cap3, "createTray", { icon: PNG }))).data?.windowShown,
+    false,
+  );
+});
+
+/** A `Deno.Tray` whose constructor throws like the runtime with no tray host. */
+class NoHostTray extends FakeTray {
+  constructor() {
+    super();
+    const err = new Error(
+      "Tray icons are not available here: no StatusNotifierWatcher and no XEmbed tray",
+    );
+    err.name = "NotSupported";
+    throw err;
+  }
+}
+
+/** A `Deno.Tray` whose constructor fails some other way. */
+class BrokenTray extends FakeTray {
+  constructor() {
+    super();
+    throw new TypeError("boom");
+  }
+}
+
+Deno.test("app: the runtime's NotSupported from new Deno.Tray() becomes unsupported with its reason", async () => {
+  const win = hiddenWindow(false);
+  const cap = createAppController({
+    window: win,
+    // A host that left after the probe answered, or a runtime that only throws.
+    api: { platformFeatures: () => ({ ...NO_TRAY_HOST, trayHost: true, trayReason: null }) },
+    emit: () => {},
+    Tray: NoHostTray,
+    os: "linux",
+  }).capability;
+  const err = await unsupportedOf(call(cap, "createTray", { icon: PNG }));
+  assertEquals(err.code, "unsupported");
+  assertEquals(err.data, {
+    reason: "no StatusNotifierWatcher and no XEmbed tray",
+    windowShown: true,
+  });
+  // A NotSupported with no reason in it still has one.
+  class Bare extends FakeTray {
+    constructor() {
+      super();
+      const e = new Error("");
+      e.name = "NotSupported";
+      throw e;
+    }
+  }
+  const bare = createAppController({ window: undefined, emit: () => {}, Tray: Bare, os: "linux" });
+  assertEquals((await unsupportedOf(call(bare.capability, "createTray", { icon: PNG }))).data, {
+    reason: "no tray host",
+    windowShown: false,
+  });
+  // Any other failure is not dressed up as unsupported.
+  const broken = createAppController({
+    window: undefined,
+    emit: () => {},
+    Tray: BrokenTray,
+    os: "linux",
+  });
+  await assertRejects(
+    () => call(broken.capability, "createTray", { icon: PNG }) as Promise<unknown>,
+    TypeError,
+    "boom",
+  );
+  // The failed attempts used no tray id: the next tray is "1".
+  const ok = createAppController({
+    window: undefined,
+    emit: () => {},
+    Tray: FakeTray,
+    os: "linux",
+  });
+  assertEquals(await call(ok.capability, "createTray", { icon: PNG }), { id: "1" });
+});
+
+Deno.test("app: without the probe (denext.9), a throwing or odd probe, every fact reads unknown", async () => {
+  for (
+    const platformFeatures of [
+      undefined,
+      () => null,
+      () => "linux",
+      () => {
+        throw new Error("probe failed");
+      },
+      () => ({ trayHost: "yes", secretService: "maybe", sessionType: 7, cookieEncryption: "aes" }),
+    ]
+  ) {
+    const cap = createAppController({
+      window: undefined,
+      api: platformFeatures ? { platformFeatures } : {},
+      emit: () => {},
+      Tray: FakeTray,
+      os: "linux",
+    }).capability;
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    assertEquals(
+      [caps.tray, caps.trayReason, caps.trayHost, caps.secretService, caps.sessionType],
+      [true, null, "unknown", "unknown", "unknown"],
+    );
+    assertEquals(caps.cookieEncryption, "unknown");
+  }
+  // macOS / the WebView backends: null session type and cookie store pass through as null.
+  const mac = createAppController({
+    window: undefined,
+    api: {
+      platformFeatures: () => ({
+        os: "macos",
+        sessionType: null,
+        trayHost: true,
+        trayReason: "ignored when there is a host",
+        secretService: "os",
+        cookieEncryption: null,
+      }),
+    },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "darwin",
+  }).capability;
+  const caps = await call(mac, "capabilities") as Record<string, unknown>;
+  assertEquals(
+    [caps.tray, caps.trayReason, caps.trayHost, caps.secretService, caps.sessionType],
+    [true, null, true, "os", null],
+  );
+  assertEquals(caps.cookieEncryption, null);
+});
+
+Deno.test("app: no Deno.Tray, Deno.dock or app menu — unsupported carries a reason", async () => {
+  const cap = createAppController({ window: undefined, emit: () => {}, os: "linux" }).capability;
+  if ((Deno as unknown as { Tray?: unknown }).Tray === undefined) {
+    const tray = await unsupportedOf(call(cap, "createTray", { icon: PNG }));
+    assertEquals(tray.data?.reason, "this Deno Desktop runtime has no API for it");
+    const caps = await call(cap, "capabilities") as Record<string, unknown>;
+    assertEquals([caps.tray, caps.trayReason], [
+      false,
+      "this Deno Desktop runtime has no API for it",
+    ]);
+  }
+  assertEquals(
+    (await unsupportedOf(call(cap, "setAppMenu", { menu: [] }))).data?.reason,
+    "no app window",
+  );
+  const withWin = createAppController({ window: new EventTarget(), emit: () => {}, os: "linux" });
+  assertEquals(
+    (await unsupportedOf(call(withWin.capability, "setAppMenu", { menu: [] }))).data?.reason,
+    "this Deno Desktop runtime has no BrowserWindow.setApplicationMenu",
+  );
+  assertEquals(
+    (await unsupportedOf(call(cap, "setBadge", { text: "1" }))).data?.reason,
+    "this Deno Desktop runtime has no Deno.dock",
+  );
+  const reason = (await unsupportedOf(call(cap, "bounce", {}))).data?.reason;
+  assertEquals(reason, "this Deno Desktop runtime has no Deno.dock");
+});
+
+Deno.test("globalShortcuts: not_supported carries the runtime's message as the reason", async () => {
+  const fail = (message: string) => {
+    const err = Object.assign(new Error(message), { code: "not_supported" });
+    return Promise.reject(err);
+  };
+  let message = "the GlobalShortcuts portal is not available";
+  const cap = shortcutsCapability({
+    api: {
+      shortcuts: {
+        register: () => fail(message),
+        unregister: () => false,
+        unregisterAll: () => {},
+        list: () => [],
+        canonicalize: (a: string) => a,
+        capabilities: () => ({ globalShortcuts: false, userBinds: false }),
+        addEventListener: () => {},
+      } as unknown as DesktopAppApi["shortcuts"],
+    },
+  });
+  const err = await unsupportedOf(call(cap, "register", { accelerator: "Ctrl+K" }));
+  assertEquals([err.code, err.data?.reason], ["unsupported", message]);
+  message = "";
+  const bare = await unsupportedOf(call(cap, "register", { accelerator: "Ctrl+J" }));
+  assertEquals(bare.data?.reason, "no global shortcuts in this session");
 });

@@ -208,6 +208,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Notifications:** Linux has no scheduler (delivered while the app runs, late after a quit) and
   a click after quit can't start the app; macOS shows them only from a signed bundle; a repeat is
   scheduled 16 ahead; buttons carry a title only; `data` is capped at 4 KiB.
+- **Linux sessions differ in what they provide.** With no tray host (stock GNOME without the
+  AppIndicator extension, a bare X server) `createTray` rejects `unsupported` with the reason and
+  a tray-only app shows its window instead. With the login keyring locked and no one to answer the
+  unlock prompt (a headless or ssh session, a missing prompter), the CEF backend starts with
+  `--password-store=basic`: its cookies are stored unencrypted, and
+  `appCapabilities().cookieEncryption` reads `"basic"`. Both come from the runtime's session probe
+  (runtime 2.9.7-denext.10); `denext desktop doctor --linux` lists what the session lacks, with
+  fixes.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
   its own window; CEF gets no paths from a file drop (use the webview backend).
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):

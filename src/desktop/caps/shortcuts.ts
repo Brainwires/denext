@@ -63,7 +63,11 @@ function registerError(err: unknown): DesktopCapError {
     case "invalid":
       return new DesktopCapError("validation", message);
     case "not_supported":
-      return new DesktopCapError("unsupported", message, { status: 501 });
+      // The runtime's message is the reason (Wayland without the GlobalShortcuts portal, …).
+      return new DesktopCapError("unsupported", message, {
+        status: 501,
+        data: { reason: message || "no global shortcuts in this session" },
+      });
     case "conflict":
     case "already_registered":
     case "denied":

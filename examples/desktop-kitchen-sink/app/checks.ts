@@ -35,6 +35,7 @@ import {
   bounce,
   createTray,
   getLaunchAtLogin,
+  isDesktopBridgeError,
   listShortcuts,
   onAppMenuItem,
   registerShortcut,
@@ -176,6 +177,39 @@ async function sizes(): Promise<string> {
     b ? `${b.width}x${b.height}` : "null";
   return `inner ${innerWidth}x${innerHeight}, content ${box(st?.contentBounds)}, ` +
     `frame ${box(st?.bounds)}, min ${st?.minimumSize}, max ${st?.maximumSize}`;
+}
+
+/**
+ * Why a geometry check cannot pass here, when the compositor overrode the request: the window
+ * stays unmaximized yet covers its screen's work area (a tiling window manager such as Sway tiles
+ * every window to its slot), so `setWindowBounds` / `maximizeWindow` cannot change it. The runtime
+ * reports no tiling fact (`windowCapabilities()` / the session probe), so this reads the outcome.
+ * `null` when the window does not fill the screen: a real failure, reported as one.
+ */
+async function compositorOwnsGeometry(asked: string): Promise<string | null> {
+  const st = await getWindowState().catch(() => null);
+  const frame = st?.bounds ?? st?.contentBounds;
+  if (!st || !frame || st.maximized || st.fullscreen) return null;
+  const screen = st.screen ?? (await getScreens().catch(() => [])).find((s) => s.isPrimary);
+  if (!screen) return null;
+  // 90% in both dimensions: a tiled window loses only the gaps and the bar to the screen.
+  const fills = (r: { width: number; height: number }) =>
+    frame.width >= r.width * 0.9 && frame.height >= r.height * 0.9;
+  if (!fills(screen.workArea) && !fills(screen.bounds)) return null;
+  return `the compositor controls this window's geometry (a tiling window manager): asked ` +
+    `${asked}, the window stays ${frame.width}x${frame.height}, unmaximized, filling the ` +
+    `${screen.workArea.width}x${screen.workArea.height} work area`;
+}
+
+/** Run `step`; when it fails because the compositor owns the geometry, skip with that reason. */
+async function unlessTiled<T>(asked: string, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (err) {
+    const reason = await compositorOwnsGeometry(asked);
+    if (reason) throw new Skip(reason);
+    throw err;
+  }
 }
 
 /** The error code a rejected bridge call carries. */
@@ -488,12 +522,13 @@ const windowChecks: Check[] = [
     // clamps a window to the work area, so ask for a size that fits it and assert exactly that.
     const { width, height, why } = await fittingSize(900, 700);
     await setWindowSize(width, height);
-    await waitFor(
-      () => near(innerWidth, width) && near(innerHeight, height),
-      `${width}x${height}`,
-      5000,
-      sizes,
-    );
+    await unlessTiled(`${width}x${height}`, () =>
+      waitFor(
+        () => near(innerWidth, width) && near(innerHeight, height),
+        `${width}x${height}`,
+        5000,
+        sizes,
+      ));
     const state = await getWindowState();
     assert(state.contentBounds, "no contentBounds");
     assert(
@@ -511,12 +546,13 @@ const windowChecks: Check[] = [
         "minimumSize",
       );
       await setWindowSize(300, 200);
-      await waitFor(
-        () => near(innerWidth, 640) && near(innerHeight, 480),
-        "640x480 (the minimum)",
-        5000,
-        sizes,
-      );
+      await unlessTiled("300x200 (clamped to the 640x480 minimum)", () =>
+        waitFor(
+          () => near(innerWidth, 640) && near(innerHeight, 480),
+          "640x480 (the minimum)",
+          5000,
+          sizes,
+        ));
       const small = `${innerWidth}x${innerHeight}`;
       await setMaximumWindowSize(820, 620);
       await setWindowSize(1400, 1100);
@@ -536,7 +572,10 @@ const windowChecks: Check[] = [
   }],
   ["window: maximize / unmaximize", async () => {
     await maximizeWindow();
-    await waitFor(async () => (await getWindowState()).maximized, "maximized");
+    await unlessTiled(
+      "maximized",
+      () => waitFor(async () => (await getWindowState()).maximized, "maximized"),
+    );
     await unmaximizeWindow();
     await waitFor(
       async () => !(await getWindowState()).maximized,
@@ -1300,41 +1339,52 @@ const appChecks: Check[] = [
     }
     return `menu set; click → ${got[0]}`;
   }],
-  ["tray: create, bounds, update, destroy", async ({ setup }) => {
-    const caps = await appCapabilities();
-    eq(caps.tray, true, "appCapabilities().tray");
-    const tray = await createTray({
-      icon: PNG_1X1,
-      tooltip: "denext kitchen sink",
-      menu: [{ id: "show", label: "Show" }, "separator", { role: "quit" }],
-    });
-    try {
-      await sleep(300);
-      const bounds = await tray.getBounds();
-      if (setup.os === "darwin") {
-        assert(bounds && bounds.width > 0, `bounds ${JSON.stringify(bounds)}`);
+  [
+    "tray: create, bounds, update, destroy (or skip with the runtime's reason)",
+    async ({ setup }) => {
+      const caps = await appCapabilities();
+      // A session with no tray host (stock GNOME, the CI's Xvfb) is reported, never a dead icon.
+      if (!caps.tray) throw new Skip(`no tray icon here: ${caps.trayReason ?? "not reported"}`);
+      const tray = await createTray({
+        icon: PNG_1X1,
+        tooltip: "denext kitchen sink",
+        menu: [{ id: "show", label: "Show" }, "separator", { role: "quit" }],
+      }).catch((err) => {
+        if (!isDesktopBridgeError(err) || err.code !== "unsupported") throw err;
+        const reason = (err.data as { reason?: unknown } | undefined)?.reason;
+        throw new Skip(`createTray(): ${typeof reason === "string" ? reason : err.message}`);
+      });
+      try {
+        await sleep(300);
+        const bounds = await tray.getBounds();
+        if (setup.os === "darwin") {
+          assert(bounds && bounds.width > 0, `bounds ${JSON.stringify(bounds)}`);
+        }
+        await tray.update({ tooltip: null, menu: [{ id: "show", label: "Show again" }] });
+        return `bounds ${bounds ? `${bounds.width}x${bounds.height}` : "null (not reported here)"}`;
+      } finally {
+        await tray.destroy();
       }
-      await tray.update({ tooltip: null, menu: [{ id: "show", label: "Show again" }] });
-      return `bounds ${bounds ? `${bounds.width}x${bounds.height}` : "null (not reported here)"}`;
-    } finally {
-      await tray.destroy();
-    }
-  }],
-  ["dock: badge, attention and the Dock menu", async ({ setup }) => {
-    const caps = await appCapabilities();
-    eq(caps.badge, true, "appCapabilities().badge");
-    await setBadge(3);
-    await setBadge(null);
-    await bounce();
-    eq(caps.dockMenu, setup.os === "darwin", "appCapabilities().dockMenu");
-    await setQuickActions([{ id: "kitchen-chat", title: "New chat" }]);
-    const applied = await raw("app").setDockMenu({
-      menu: [{ id: "kitchen-chat", label: "New chat" }],
-    });
-    eq(applied?.applied, setup.os === "darwin", "the Dock menu applied");
-    await setQuickActions([]);
-    return `badge + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
-  }],
+    },
+  ],
+  [
+    "dock: badge, attention and the Dock menu (or skip with the runtime's reason)",
+    async ({ setup }) => {
+      const caps = await appCapabilities();
+      if (!caps.badge) throw new Skip("no badge here: this runtime has no Deno.dock");
+      await setBadge(3);
+      await setBadge(null);
+      await bounce();
+      eq(caps.dockMenu, setup.os === "darwin", "appCapabilities().dockMenu");
+      await setQuickActions([{ id: "kitchen-chat", title: "New chat" }]);
+      const applied = await raw("app").setDockMenu({
+        menu: [{ id: "kitchen-chat", label: "New chat" }],
+      });
+      eq(applied?.applied, setup.os === "darwin", "the Dock menu applied");
+      await setQuickActions([]);
+      return `badge + bounce; Dock menu ${applied?.applied ? "set" : "n/a here"}`;
+    },
+  ],
   ["notifications: permission status from the OS", async () => {
     const caps = await raw("notifications").capabilities({});
     const state = await checkPermission("notifications");

@@ -244,6 +244,12 @@ export interface DesktopAppApi {
   screens?(): DesktopScreen[];
   /** What window features this backend supports (`fileDialogs`, `state`, `fileDragOut`, …). */
   windowCapabilities?(): Record<string, boolean>;
+  /**
+   * What this session provides (runtime 2.9.7-denext.10 and later): the tray host, the Secret
+   * Service, the session type, the portal versions, the cookie store. `null` outside a desktop
+   * app; absent on older runtimes. Read through `caps/platform.ts`, which validates it.
+   */
+  platformFeatures?(): unknown;
   /** Electron's `app.quit()`: cancelable `beforequit`, then every window's cancelable `close`. */
   quit?(): boolean;
   /** The OS's own file dialogs. */

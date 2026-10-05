@@ -37,6 +37,7 @@ import { base64ToBytes } from "../../mobile/base64.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import type { DesktopAppApi, DesktopRect, DesktopScreen } from "../launch-events.ts";
+import { platformFacts } from "./platform.ts";
 import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
 import { PickedPaths } from "../picked-paths.ts";
 import { DEFAULT_VIBRANCY } from "../window-config.ts";
@@ -178,13 +179,21 @@ export interface WindowController {
   acceptDrop(detail: unknown): Promise<void>;
 }
 
-/** `unsupported` (501): this runtime / backend has no such window feature. */
-function unsupported(what: string): DesktopCapError {
-  return new DesktopCapError(
-    "unsupported",
-    `this Deno Desktop runtime cannot ${what} (denext's pinned runtime adds it)`,
-    { status: 501 },
-  );
+/** Why a window feature is missing when nothing more specific is known. */
+const NO_API = "this Deno Desktop runtime has no API for it (denext's pinned runtime adds it)";
+
+/**
+ * `unsupported` (501): this runtime / backend has no such window feature. The reason is in the
+ * message and, for the page, in `data.reason`.
+ *
+ * @param what What the window cannot do ("list the displays").
+ * @param reason Why (default: the runtime has no API for it).
+ */
+function unsupported(what: string, reason: string = NO_API): DesktopCapError {
+  return new DesktopCapError("unsupported", `the window cannot ${what}: ${reason}`, {
+    status: 501,
+    data: { reason },
+  });
 }
 
 /** A `validation` error. */
@@ -254,7 +263,7 @@ function stateOf(win: BrowserWindowLike): Record<string, unknown> {
 function capabilitiesOf(
   win: BrowserWindowLike | undefined,
   api: DesktopAppApi | undefined,
-): Record<string, boolean> {
+): Record<string, boolean | string | null> {
   let reported: Record<string, boolean> | undefined;
   try {
     reported = api?.windowCapabilities?.();
@@ -262,6 +271,7 @@ function capabilitiesOf(
     reported = undefined;
   }
   const has = (name: keyof BrowserWindowLike) => typeof win?.[name] === "function";
+  const facts = platformFacts(api);
   return {
     state: has("maximize"),
     stateEvents: false,
@@ -291,6 +301,10 @@ function capabilitiesOf(
     // places windows in device-independent pixels; WebView2 used physical pixels before.
     dipGeometry: typeof api?.shortcuts === "object" ||
       Deno.build.os !== "windows",
+    // The session facts that bear on the window (`"unknown"` before runtime 2.9.7-denext.10):
+    // Wayland cannot place windows; CEF's cookie store may be unencrypted.
+    sessionType: facts.sessionType,
+    cookieEncryption: facts.cookieEncryption,
   };
 }
 
@@ -339,7 +353,7 @@ export function createWindowController(options: WindowControllerOptions): Window
 
   /** The window, or `unsupported` outside the desktop runtime. */
   const need = (): BrowserWindowLike => {
-    if (!win) throw unsupported("reach its window");
+    if (!win) throw unsupported("reach its window", "no window was adopted (not a desktop run)");
     return win;
   };
 
@@ -351,7 +365,9 @@ export function createWindowController(options: WindowControllerOptions): Window
   ): unknown => {
     const w = need();
     const fn = w[name] as ((...a: unknown[]) => unknown) | undefined;
-    if (typeof fn !== "function") throw unsupported(what);
+    if (typeof fn !== "function") {
+      throw unsupported(what, `this Deno Desktop runtime has no BrowserWindow.${String(name)}`);
+    }
     return fn.apply(w, args);
   };
 

@@ -412,7 +412,11 @@ buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
 is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
-`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. `registerShortcut(accel, fn)`
+`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
+`createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
+reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` from the runtime's probe
+(`"unknown"` before runtime denext.10), and `denext desktop doctor [--linux]` lists what the session lacks,
+with fixes. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's

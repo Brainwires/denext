@@ -12,6 +12,7 @@
 //            cross-builds Linux and Windows from any OS, macOS packages on a Mac.
 //   add      enable Deno Desktop capabilities in desktop.capabilities (./desktop-add.ts)
 //   publish-update  pack a packaged app into a signed full-app update (archive + app-update.json)
+//   doctor   the pinned runtime and, on Linux, what the session provides (./desktop-doctor.ts)
 //
 // `run`/`build`/`package` serve a static export over loopback. `dev` is the desktop half of
 // dev-server attach (the Metro model): the window proxies to `denext dev` so the CSP and the dev
@@ -39,6 +40,7 @@ import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
 import { desktopPublishUpdate, PUBLISH_UPDATE_FLAGS } from "./desktop-publish-update.ts";
+import { DESKTOP_DOCTOR_FLAGS, desktopDoctor } from "./desktop-doctor.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
@@ -94,11 +96,13 @@ export const desktopCommand: CommandSpec = {
     "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
     "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
     "                                         Sign a full-app update (archive + app-update.json)\n" +
-    "  denext desktop publish-update --resign Re-sign the published manifest before it expires",
+    "  denext desktop publish-update --resign Re-sign the published manifest before it expires\n" +
+    "  denext desktop doctor                  The pinned runtime, and on Linux the session's tray host,\n" +
+    "                                         Secret Service and portals, each with a fix (--json)",
   positionals: [
     {
       name: "action",
-      help: "run | build | dev | package | add | publish-update (default: run)",
+      help: "run | build | dev | package | add | publish-update | doctor (default: run)",
     },
     { name: "dir", help: "Project directory (default: .)" },
   ],
@@ -163,6 +167,7 @@ export const desktopCommand: CommandSpec = {
     },
     ...DESKTOP_ADD_FLAGS,
     ...PUBLISH_UPDATE_FLAGS,
+    ...DESKTOP_DOCTOR_FLAGS,
   ],
   run: async (ctx) => {
     const action = ctx.positionals[0] ?? "run";
@@ -177,9 +182,10 @@ export const desktopCommand: CommandSpec = {
     if (action === "package") return await packageDesktop(ctx, dir);
     if (action === "add") return await desktopAdd(ctx);
     if (action === "publish-update") return await desktopPublishUpdate(ctx, dir);
+    if (action === "doctor") return void await desktopDoctor(ctx, dir);
     console.error(
       `denext desktop: unknown action "${action}" (expected run | build | dev | package | add | ` +
-        `publish-update).`,
+        `publish-update | doctor).`,
     );
     Deno.exit(1);
   },

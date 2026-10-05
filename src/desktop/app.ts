@@ -110,6 +110,22 @@ export interface AppMenuRoleItem {
 /** One entry of an application, tray or Dock menu. */
 export type AppMenuItem = AppMenuAction | AppSubmenu | AppMenuRoleItem | "separator";
 
+/** A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer). */
+export type PlatformUnknown = "unknown";
+
+/**
+ * The Secret Service's state, as the runtime reads it without starting or unlocking it: `"os"` on
+ * macOS and Windows (Keychain, DPAPI); on Linux `"locked"` also covers a missing default keyring
+ * and `"activatable"` is installed but not running.
+ */
+export type SecretServiceState =
+  | "available"
+  | "locked"
+  | "activatable"
+  | "absent"
+  | "no-session-bus"
+  | "os";
+
 /** What this OS and runtime can do ({@linkcode appCapabilities}). */
 export interface AppCapabilities {
   /** {@linkcode setAppMenu} works. */
@@ -122,6 +138,22 @@ export interface AppCapabilities {
   readonly tooltips: boolean;
   /** {@linkcode createTray} works. */
   readonly tray: boolean;
+  /** Why {@linkcode createTray} does not work here (`null` when it does): the runtime's reason. */
+  readonly trayReason: string | null;
+  /**
+   * A tray host runs in this session (Linux: a StatusNotifierWatcher, as GNOME has only with the
+   * AppIndicator extension, or an XEmbed tray), as the runtime probed it.
+   */
+  readonly trayHost: boolean | PlatformUnknown;
+  /** The Secret Service behind the secure store (and CEF's cookie key). */
+  readonly secretService: SecretServiceState | PlatformUnknown;
+  /** Linux: `"wayland"`, `"x11"`, `"tty"` (no graphical session) or `"unknown"`; `null` elsewhere. */
+  readonly sessionType: "wayland" | "x11" | "tty" | PlatformUnknown | null;
+  /**
+   * CEF's cookie store: `"os"` (encrypted with a key the OS keeps) or `"basic"` (unencrypted: the
+   * Linux login keyring was locked with no one to unlock it); `null` on the WebView backends.
+   */
+  readonly cookieEncryption: "os" | "basic" | PlatformUnknown | null;
   /** {@linkcode setBadge} works. */
   readonly badge: boolean;
   /** {@linkcode bounce} works. */
@@ -148,20 +180,48 @@ function menuWire(menu: readonly AppMenuItem[]): unknown[] {
   });
 }
 
+/** `raw[key]` when it is one of `allowed`, else `"unknown"`. */
+function oneOf<T>(raw: Record<string, unknown> | null, key: string, allowed: readonly T[]) {
+  const value = raw?.[key] as T;
+  return allowed.includes(value) ? value : "unknown";
+}
+
+const SECRET_STATES = [
+  "available",
+  "locked",
+  "activatable",
+  "absent",
+  "no-session-bus",
+  "os",
+] as const;
+
 /**
- * What the application menu, tray and Dock can do on this OS and runtime.
+ * What the application menu, tray and Dock can do on this OS and runtime, plus the session facts
+ * the runtime probed (`Deno.desktop.platformFeatures()`, runtime 2.9.7-denext.10 and later): the
+ * tray host, the Secret Service, the session type and the cookie store. A fact an older runtime
+ * cannot report reads `"unknown"`.
  *
  * @returns The capabilities.
  */
 export async function appCapabilities(): Promise<AppCapabilities> {
   const raw = await desktopRpc<Record<string, unknown>>("app", "capabilities", {});
   const flag = (k: string) => raw?.[k] === true;
+  const reason = raw?.trayReason;
   return {
     appMenu: flag("appMenu"),
     accelerators: flag("accelerators"),
     icons: flag("icons"),
     tooltips: flag("tooltips"),
     tray: flag("tray"),
+    trayReason: typeof reason === "string" && reason !== ""
+      ? reason
+      : flag("tray")
+      ? null
+      : "not reported",
+    trayHost: oneOf(raw, "trayHost", [true, false]),
+    secretService: oneOf(raw, "secretService", SECRET_STATES),
+    sessionType: oneOf(raw, "sessionType", ["wayland", "x11", "tty", null] as const),
+    cookieEncryption: oneOf(raw, "cookieEncryption", ["os", "basic", null] as const),
     badge: flag("badge"),
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
@@ -282,7 +342,10 @@ function trayWire(options: Partial<TrayOptions>): Record<string, unknown> {
  * area, Linux's AppIndicator area).
  *
  * @param options The icon, tooltip and menu.
- * @returns The tray icon. It rejects `unsupported` where the runtime has no tray.
+ * @returns The tray icon. It rejects `unsupported` where no tray icon can be shown: a runtime with
+ * no tray, or a session with no tray host (stock GNOME without the AppIndicator extension). The
+ * error's `data.reason` says which; when the window was hidden (a tray-only app) the runtime shows
+ * it, and `data.windowShown` is `true`. {@linkcode appCapabilities} reports the same up front.
  * @example
  * ```ts
  * import { createTray } from "denext/desktop/app";

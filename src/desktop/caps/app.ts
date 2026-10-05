@@ -11,6 +11,12 @@
  * OS has no other). A badge is the Dock icon's on macOS, the taskbar button's overlay on Windows,
  * and a prefix of the window title on Linux.
  *
+ * Tray icons follow the runtime's probe of the session (`Deno.desktop.platformFeatures()`, runtime
+ * 2.9.7-denext.10 and later): where no tray host runs (stock GNOME without the AppIndicator
+ * extension), `capabilities` reports `tray: false` with the runtime's reason and `createTray`
+ * rejects `unsupported` with it, never a dead icon. A tray-only app (its window hidden) gets its
+ * window shown instead, so it is never unreachable. Without the probe the facts read `"unknown"`.
+ *
  * Clicks are PULLED (an `action` signal, then `take`), so each is delivered once, never again after
  * a reload. A new page load removes the trays the previous page created (their click handlers went
  * with it); the application menu and the dock menu stay until the new page sets its own.
@@ -24,6 +30,7 @@ import { base64ToBytes } from "../../mobile/base64.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import type { DesktopAppApi, DesktopMenuItem } from "../launch-events.ts";
 import { clickedId, nativeMenu } from "./menu.ts";
+import { platformFacts, reasonText } from "./platform.ts";
 import { createPullQueue } from "./queue.ts";
 
 /** The most tray icons the page may hold. */
@@ -85,11 +92,37 @@ function invalid(message: string): DesktopCapError {
   return new DesktopCapError("validation", message);
 }
 
-/** `unsupported` (501): this runtime lacks it. */
-function unsupported(what: string): DesktopCapError {
-  return new DesktopCapError("unsupported", `${what} is not available in this runtime`, {
+/** Why a feature is missing when the runtime does not say: it has no API for it. */
+const NO_API = "this Deno Desktop runtime has no API for it";
+
+/** Why the badge / attention request is missing. */
+const NO_DOCK = "this Deno Desktop runtime has no Deno.dock";
+
+/**
+ * `unsupported` (501), with the reason in the message and as `data.reason` for the page.
+ *
+ * @param what The feature ("a tray icon").
+ * @param reason Why it is missing here (default: the runtime has no API for it).
+ * @param extra More detail for the page (`data`).
+ */
+function unsupported(
+  what: string,
+  reason: string = NO_API,
+  extra: Record<string, unknown> = {},
+): DesktopCapError {
+  return new DesktopCapError("unsupported", `${what} is not available here: ${reason}`, {
     status: 501,
+    data: { reason, ...extra },
   });
+}
+
+/** The reason in a runtime's `NotSupported` from `new Deno.Tray()`, or `undefined` for another error. */
+function trayNotSupported(err: unknown): string | undefined {
+  const name = (err as { name?: unknown } | null)?.name;
+  if (name !== "NotSupported") return undefined;
+  const message = err instanceof Error ? err.message : "";
+  // The runtime words it "Tray icons are not available here: <reason>".
+  return reasonText(message.replace(/^.*?not available here:\s*/i, "")) ?? "no tray host";
 }
 
 /** The arguments object (or `{}`). */
@@ -145,7 +178,11 @@ export function createAppController(options: AppControllerOptions): AppControlle
   const dock = options.dock ?? chrome.dock;
   const os = options.os ?? Deno.build.os;
   const win = options.window as
-    | (EventTarget & { setApplicationMenu?(menu: DesktopMenuItem[]): void })
+    | (EventTarget & {
+      setApplicationMenu?(menu: DesktopMenuItem[]): void;
+      isVisible?(): boolean;
+      show?(): void;
+    })
     | undefined;
   const queue = createPullQueue<AppAction>(() => options.emit("app", "action", null));
   const trays = new Map<string, LiveTray>();
@@ -154,6 +191,8 @@ export function createAppController(options: AppControllerOptions): AppControlle
   let nextTray = 1;
   let installed = false;
 
+  const menuMissing = () =>
+    win ? "this Deno Desktop runtime has no BrowserWindow.setApplicationMenu" : "no app window";
   const menuCaps = () => options.api?.menuCapabilities?.() ?? {};
   const dockMenuWorks = () => os === "darwin" && typeof dock?.setMenu === "function";
 
@@ -178,13 +217,52 @@ export function createAppController(options: AppControllerOptions): AppControlle
     }
   };
 
+  /**
+   * Why no tray icon can be shown here (`undefined` when one can): no `Deno.Tray`, or the probe
+   * found no tray host.
+   */
+  const trayMissing = (): string | undefined => {
+    if (!Tray) return NO_API;
+    const facts = platformFacts(options.api);
+    return facts.trayHost === false
+      ? facts.trayReason ?? "no tray host in this session"
+      : undefined;
+  };
+
+  /**
+   * `unsupported` for a tray icon, after showing a hidden window: a tray-only app would otherwise
+   * be left with no way in. `data.windowShown` says whether it did.
+   */
+  const noTray = (reason: string): DesktopCapError => {
+    let windowShown = false;
+    try {
+      if (win?.isVisible?.() === false && typeof win.show === "function") {
+        win.show();
+        windowShown = true;
+      }
+    } catch { /* the window is gone; nothing to show */ }
+    return unsupported("a tray icon", reason, { windowShown });
+  };
+
+  /** A new `Deno.Tray`, or `unsupported` with the runtime's reason when it has no tray host. */
+  const newTray = (T: new () => TrayLike): TrayLike => {
+    try {
+      return new T();
+    } catch (err) {
+      const reason = trayNotSupported(err);
+      if (reason !== undefined) throw noTray(reason);
+      throw err;
+    }
+  };
+
   const createTray = (args: unknown) => {
-    if (!Tray) throw unsupported("a tray icon");
+    const missing = trayMissing();
+    if (missing !== undefined) throw noTray(missing);
     if (trays.size >= MAX_TRAYS) throw invalid(`at most ${MAX_TRAYS} tray icons`);
     const a = argsOf(args);
     const icon = png(a.icon, "icon");
+    const live: LiveTray = { tray: newTray(Tray!), ids: new Set() };
     const id = String(nextTray++);
-    const live: LiveTray = { tray: new Tray(), ids: new Set() };
     live.tray.setIcon(icon);
     applyTray(live, { ...a, icon: undefined });
     live.tray.addEventListener(
@@ -220,12 +298,19 @@ export function createAppController(options: AppControllerOptions): AppControlle
       capabilities: {
         handler: () => {
           const caps = menuCaps();
+          const facts = platformFacts(options.api);
+          const trayReason = trayMissing() ?? null;
           return {
             appMenu: caps.appMenu ?? typeof win?.setApplicationMenu === "function",
             accelerators: caps.accelerators === true,
             icons: caps.icons === true,
             tooltips: caps.tooltips === true,
-            tray: Tray !== undefined,
+            tray: trayReason === null,
+            trayReason,
+            trayHost: facts.trayHost,
+            secretService: facts.secretService,
+            sessionType: facts.sessionType,
+            cookieEncryption: facts.cookieEncryption,
             badge: typeof dock?.setBadge === "function",
             bounce: typeof dock?.bounce === "function",
             dockMenu: dockMenuWorks(),
@@ -234,7 +319,9 @@ export function createAppController(options: AppControllerOptions): AppControlle
       },
       setAppMenu: {
         handler: (args) => {
-          if (typeof win?.setApplicationMenu !== "function") throw unsupported("an app menu");
+          if (typeof win?.setApplicationMenu !== "function") {
+            throw unsupported("an app menu", menuMissing());
+          }
           const { items, ids } = nativeMenu(argsOf(args).menu);
           win.setApplicationMenu(items);
           appMenuIds = ids;
@@ -255,7 +342,7 @@ export function createAppController(options: AppControllerOptions): AppControlle
       },
       setBadge: {
         handler: (args) => {
-          if (typeof dock?.setBadge !== "function") throw unsupported("a badge");
+          if (typeof dock?.setBadge !== "function") throw unsupported("a badge", NO_DOCK);
           // The runtime takes a string: `null` would show as the text "null"; "" clears the badge.
           dock.setBadge(shortText(argsOf(args).text, "text") ?? "");
           return null;
@@ -263,7 +350,9 @@ export function createAppController(options: AppControllerOptions): AppControlle
       },
       bounce: {
         handler: (args) => {
-          if (typeof dock?.bounce !== "function") throw unsupported("an attention request");
+          if (typeof dock?.bounce !== "function") {
+            throw unsupported("an attention request", NO_DOCK);
+          }
           dock.bounce(argsOf(args).critical === true);
           return null;
         },
