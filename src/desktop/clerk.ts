@@ -12,7 +12,8 @@
  *     the app's identifier);
  *   - `oauthTransport.getRedirectUrl()` is the page origin plus `/` (`t3code://app/`), exactly what
  *     `@clerk/electron`'s main process returns for `createClerkBridge({ renderer: { scheme, host }
- *     })`; `oauthTransport.open(url)` opens the provider in the system browser and resolves
+ *     })`, plus a per-flow `?denext_nonce=…` on Windows and Linux (see below);
+ *     `oauthTransport.open(url)` opens the provider in the system browser and resolves
  *     `{ callbackUrl }` once a deep link to that redirect URL (same scheme, host and path) comes
  *     back, one flow at a time, giving up after 180 s — the main process's semantics — over
  *     `openAuthSession`'s custom-scheme flow (scheme declared, owner checked, callback consumed
