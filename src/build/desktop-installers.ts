@@ -782,13 +782,16 @@ function oneLine(s: string): string {
  * code is expanded by the launcher into exactly one argv element (no shell, no re-splitting), and
  * the value is a URL that starts with its scheme, so it can never be read as an option; it stays
  * the last token, with no `--` that a runtime predating `--` handling would take as the URL.
+ * `Icon` names the app id, the name {@linkcode stageLinuxRoot} installs the icon under in the
+ * hicolor theme (and pixmaps); with no icon to install, the entry names none.
  *
  * @param meta The package metadata.
+ * @param icon Whether the package installs an icon (default `true`).
  * @returns The entry text.
  */
-export function linuxDesktopEntry(meta: DesktopPackageMeta): string {
+export function linuxDesktopEntry(meta: DesktopPackageMeta, icon = true): string {
   const pkg = debianPackageName(meta.name);
-  const id = /^[A-Za-z0-9.-]+$/.test(meta.identifier) ? meta.identifier : `com.deno.desktop.${pkg}`;
+  const id = linuxAppId(meta);
   const env = `LAUFEY_APP_ID=${id}${meta.singleInstance ? " LAUFEY_SINGLE_INSTANCE=1" : ""}`;
   const mime = meta.deepLinks.map((s) => `x-scheme-handler/${s};`).join("");
   return [
@@ -797,13 +800,24 @@ export function linuxDesktopEntry(meta: DesktopPackageMeta): string {
     `Name=${oneLine(meta.name)}`,
     `Comment=${oneLine(meta.description)}`,
     `Exec=env ${env} ${pkg}${mime ? " %u" : ""}`,
-    `Icon=${pkg}`,
+    ...(icon ? [`Icon=${id}`] : []),
     `StartupWMClass=${id}`,
     "Terminal=false",
     "Categories=Utility;",
     ...(mime ? [`MimeType=${mime}`] : []),
     "",
   ].join("\n");
+}
+
+/**
+ * The app id a Linux package installs under: `desktop.app.identifier` when it is a valid
+ * `.desktop` file id, else `com.deno.desktop.<package>`. It names the `.desktop` entry, the
+ * window's `StartupWMClass` and the icon.
+ */
+function linuxAppId(meta: DesktopPackageMeta): string {
+  return /^[A-Za-z0-9.-]+$/.test(meta.identifier)
+    ? meta.identifier
+    : `com.deno.desktop.${debianPackageName(meta.name)}`;
 }
 
 /** The width × height of a PNG (its IHDR), or `undefined` for anything else. */
@@ -814,8 +828,52 @@ function pngSize(bytes: Uint8Array): [number, number] | undefined {
   return [v.getUint32(16), v.getUint32(20)];
 }
 
-/** The hicolor sizes an icon theme lists (an icon of another size goes to pixmaps only). */
+/** The hicolor sizes an icon theme lists. */
 const HICOLOR_SIZES = [16, 22, 24, 32, 48, 64, 96, 128, 256, 512];
+
+/**
+ * The hicolor directory size for a square icon of `size` pixels: its own size when the theme lists
+ * it, else the largest listed size below it (a launcher scales the bigger image down); `undefined`
+ * below 16 px.
+ */
+function hicolorSize(size: number): number | undefined {
+  return HICOLOR_SIZES.filter((s) => s <= size).at(-1);
+}
+
+/**
+ * The Linux packages' install hooks: refresh the desktop-entry database (the `MimeType`
+ * scheme handlers) and the hicolor icon cache, where those tools exist; a missing tool or a
+ * failed refresh never fails the install.
+ */
+const LINUX_REFRESH = [
+  "command -v update-desktop-database >/dev/null 2>&1 && " +
+  "update-desktop-database -q /usr/share/applications || :",
+  "command -v gtk-update-icon-cache >/dev/null 2>&1 && " +
+  "gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || :",
+];
+
+/**
+ * The `.deb` maintainer script `name` (`postinst` / `postrm`): {@linkcode LINUX_REFRESH} (dpkg's
+ * own triggers do the same on Debian / Ubuntu; this covers a system without them).
+ *
+ * @param name The script.
+ * @returns The script text.
+ */
+export function debMaintainerScript(name: "postinst" | "postrm"): string {
+  // postrm: after a remove or a purge; an upgrade's old-version postrm leaves it to the postinst.
+  const when = name === "postinst" ? "configure" : "remove|purge";
+  return [
+    "#!/bin/sh",
+    "set -e",
+    'case "$1" in',
+    `  ${when})`,
+    ...LINUX_REFRESH.map((l) => `    ${l}`),
+    "    ;;",
+    "esac",
+    "exit 0",
+    "",
+  ].join("\n");
+}
 
 /** Copy `src` into `dest` recursively, keeping executable bits and symlinks. */
 async function copyTree(src: string, dest: string): Promise<void> {
@@ -838,8 +896,10 @@ async function copyTree(src: string, dest: string): Promise<void> {
 /**
  * Lay out the installed filesystem of a Linux package under `root`: the bundle at
  * `/usr/lib/<package>/`, a `/usr/bin/<package>` link to its launcher, the `.desktop` entry, and the
- * bundle's `AppIcon.png` as `/usr/share/pixmaps/<package>.png` (and in the hicolor theme when it is
- * a square theme size).
+ * bundle's icon under the app id: `AppIcon.png` as `/usr/share/pixmaps/<id>.png` and, when it is
+ * square, `/usr/share/icons/hicolor/<n>x<n>/apps/<id>.png` (the theme size at or below it), and an
+ * `AppIcon.svg` as `/usr/share/icons/hicolor/scalable/apps/<id>.svg`. The entry's `Icon=` names
+ * that id, or is left out when the bundle has no icon.
  *
  * @param bundleDir The finished bundle directory.
  * @param exe The launcher's file name inside the bundle.
@@ -859,24 +919,27 @@ export async function stageLinuxRoot(
   // `type`: Windows refuses a link whose (relative) target it cannot resolve from the cwd unless
   // told its kind — a Linux package built on Windows.
   await Deno.symlink(`../lib/${pkg}/${exe}`, join(root, "usr", "bin", pkg), { type: "file" });
+  const id = linuxAppId(meta);
+  const entry = `${id}.desktop`;
+  const owned = [`/usr/lib/${pkg}`, `/usr/bin/${pkg}`, `/usr/share/applications/${entry}`];
+  const icons: Array<[string, Uint8Array]> = [];
+  const png = await Deno.readFile(join(bundleDir, "AppIcon.png")).catch(() => undefined);
+  const size = png && pngSize(png);
+  if (png && size) {
+    icons.push([`usr/share/pixmaps/${id}.png`, png]);
+    const theme = size[0] === size[1] ? hicolorSize(size[0]) : undefined;
+    if (theme) icons.push([`usr/share/icons/hicolor/${theme}x${theme}/apps/${id}.png`, png]);
+  }
+  const svg = await Deno.readFile(join(bundleDir, "AppIcon.svg")).catch(() => undefined);
+  if (svg) icons.push([`usr/share/icons/hicolor/scalable/apps/${id}.svg`, svg]);
+  for (const [t, bytes] of icons) {
+    await Deno.mkdir(dirname(join(root, t)), { recursive: true });
+    await Deno.writeFile(join(root, t), bytes);
+    owned.push(`/${t}`);
+  }
   const apps = join(root, "usr", "share", "applications");
   await Deno.mkdir(apps, { recursive: true });
-  const entry = `${linuxDesktopEntry(meta).match(/^StartupWMClass=(.*)$/m)![1]}.desktop`;
-  await Deno.writeTextFile(join(apps, entry), linuxDesktopEntry(meta));
-  const owned = [`/usr/lib/${pkg}`, `/usr/bin/${pkg}`, `/usr/share/applications/${entry}`];
-  const icon = await Deno.readFile(join(bundleDir, "AppIcon.png")).catch(() => undefined);
-  const size = icon && pngSize(icon);
-  if (icon && size) {
-    const targets = [`usr/share/pixmaps/${pkg}.png`];
-    if (size[0] === size[1] && HICOLOR_SIZES.includes(size[0])) {
-      targets.push(`usr/share/icons/hicolor/${size[0]}x${size[0]}/apps/${pkg}.png`);
-    }
-    for (const t of targets) {
-      await Deno.mkdir(dirname(join(root, t)), { recursive: true });
-      await Deno.writeFile(join(root, t), icon);
-      owned.push(`/${t}`);
-    }
-  }
+  await Deno.writeTextFile(join(apps, entry), linuxDesktopEntry(meta, icons.length > 0));
   return owned;
 }
 
@@ -1031,7 +1094,8 @@ function buildTime(): number {
  * Build a `.deb` for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written
  * here), so it cross-builds from any OS. Installs into `/usr/lib/<package>` with a
  * `/usr/bin/<package>` link, the `.desktop` entry (deep-link schemes as `x-scheme-handler/*`) and
- * the icon; the desktop and icon databases are refreshed by their own dpkg triggers.
+ * the icon; the `postinst` / `postrm` refresh the desktop and icon databases
+ * ({@linkcode debMaintainerScript}).
  *
  * @param o What to build.
  * @returns The `.deb` path.
@@ -1047,6 +1111,11 @@ export async function buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<stri
     const mtime = buildTime();
     await Deno.mkdir(controlDir);
     await Deno.writeTextFile(join(controlDir, "control"), debControl(o.meta, o.arch, kib));
+    for (const script of ["postinst", "postrm"] as const) {
+      const file = join(controlDir, script);
+      await Deno.writeTextFile(file, debMaintainerScript(script));
+      if (Deno.build.os !== "windows") await Deno.chmod(file, 0o755);
+    }
     const control = await gzipBytes(
       await tarEntries(controlDir, await walkBundle(controlDir), mtime),
     );
@@ -1095,7 +1164,9 @@ export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promis
 /**
  * The `rpmbuild` spec for a staged Linux root: the files are copied as staged (no strip, no
  * debuginfo, no automatic dependency scan), `Requires` names the backend's shared libraries by
- * soname (every RPM distro provides those, whatever it calls the package).
+ * soname (every RPM distro provides those, whatever it calls the package) and `libsecret` (its
+ * `secret-tool`) when the secure store is on; `%post` / `%postun` refresh the desktop and icon
+ * databases.
  *
  * @param meta The package metadata.
  * @param stage The staged root ({@linkcode stageLinuxRoot}).
@@ -1129,6 +1200,13 @@ export function rpmSpec(meta: DesktopPackageMeta, stage: string, owned: readonly
     "%install",
     "mkdir -p %{buildroot}",
     `cp -a '${lit(stage.replaceAll("'", "'\\''"))}'/. %{buildroot}/`,
+    "",
+    // Scriptlets run under /bin/sh; `|| :` keeps a missing tool from failing the transaction.
+    "%post",
+    ...LINUX_REFRESH,
+    "",
+    "%postun",
+    ...LINUX_REFRESH,
     "",
     "%files",
     "%defattr(-,root,root,-)",

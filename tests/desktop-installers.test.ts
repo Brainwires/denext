@@ -17,6 +17,7 @@ import {
   bundleFileMode,
   debControl,
   debianPackageName,
+  debMaintainerScript,
   DEFAULT_DESKTOP_INSTALLERS,
   desktopInstallerPlan,
   desktopPackageMeta,
@@ -232,7 +233,9 @@ Deno.test("linux: the .desktop entry launches with the app id and claims the sch
   assert(exec.endsWith(" %u") && exec.indexOf("%") === exec.length - 2);
   assertStringIncludes(entry, "StartupWMClass=com.acme.myapp\n");
   assertStringIncludes(entry, "MimeType=x-scheme-handler/myapp;x-scheme-handler/myapp-dev;\n");
-  assertStringIncludes(entry, "Icon=my-app\n");
+  // The icon is installed under the app id, which the entry names.
+  assertStringIncludes(entry, "Icon=com.acme.myapp\n");
+  assert(!linuxDesktopEntry(META, false).includes("Icon="), "no icon installed: no Icon=");
   const plain = linuxDesktopEntry({ ...META, deepLinks: [], singleInstance: false, name: "A\nB" });
   assertStringIncludes(plain, "Exec=env LAUFEY_APP_ID=com.acme.myapp a-b\n");
   assert(!plain.includes("MimeType"));
@@ -287,6 +290,22 @@ Deno.test("linux: control and spec carry the version, arch, deps and owned paths
   assertStringIncludes(spec, "Requires: libwebkit2gtk-4.1.so.0()(64bit)\n");
   assertStringIncludes(spec, "cp -a '/tmp/it'\\''s'/. %{buildroot}/\n");
   assertStringIncludes(spec, "%files\n%defattr(-,root,root,-)\n/usr/lib/my-app\n/usr/bin/my-app\n");
+});
+
+Deno.test("linux: the .rpm scriptlets and .deb maintainer scripts refresh the databases", () => {
+  const spec = rpmSpec(META, "/tmp/s", []);
+  for (const section of ["%post", "%postun"]) {
+    const body = spec.split(`\n${section}\n`)[1].split("\n\n")[0];
+    assertStringIncludes(body, "update-desktop-database -q /usr/share/applications || :");
+    assertStringIncludes(body, "gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || :");
+  }
+  assert(spec.indexOf("%postun") < spec.indexOf("%files"), "scriptlets before %files");
+  const postinst = debMaintainerScript("postinst");
+  assert(postinst.startsWith("#!/bin/sh\nset -e\n"));
+  assertStringIncludes(postinst, "  configure)\n    command -v update-desktop-database");
+  assertStringIncludes(postinst, "gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || :");
+  assertStringIncludes(debMaintainerScript("postrm"), "  remove|purge)\n");
+  assert(postinst.endsWith("esac\nexit 0\n"));
 });
 
 Deno.test("linux: secure-store adds the secret-tool package (libsecret-tools / libsecret)", () => {
@@ -386,18 +405,20 @@ Deno.test("deb: a real .deb of a bundle, read back member by member", {
     assertEquals(new TextDecoder().decode(members.get("debian-binary")), "2.0\n");
     const control = await readTarGz(members.get("control.tar.gz")!);
     assertStringIncludes(control.get("./control")![2], "Architecture: amd64\n");
+    for (const script of ["postinst", "postrm"] as const) {
+      assertEquals(control.get(`./${script}`), ["0", 0o755, debMaintainerScript(script)]);
+    }
     const data = await readTarGz(members.get("data.tar.gz")!);
     assertEquals(data.get("./usr/bin/my-app"), ["2", 0o777, "../lib/my-app/My-App-x64"]);
     assertEquals(data.get("./usr/lib/my-app/My-App-x64")?.slice(0, 2), ["0", 0o755]);
     assertEquals(data.get("./usr/lib/my-app/laufey-launch.json")?.[2], '{"inspectable":false}\n');
     assertEquals(data.get("./usr/lib/my-app/sub/data.txt")?.[2].length, 700);
     assertEquals(data.get("./usr/lib/my-app/sub/")?.[0], "5");
-    assertStringIncludes(
-      data.get("./usr/share/applications/com.acme.myapp.desktop")![2],
-      "MimeType=x-scheme-handler/myapp;",
-    );
-    assert(data.has("./usr/share/pixmaps/my-app.png"));
-    assert(data.has("./usr/share/icons/hicolor/64x64/apps/my-app.png"));
+    const entry = data.get("./usr/share/applications/com.acme.myapp.desktop")![2];
+    assertStringIncludes(entry, "MimeType=x-scheme-handler/myapp;");
+    assertStringIncludes(entry, "Icon=com.acme.myapp\n");
+    assert(data.has("./usr/share/pixmaps/com.acme.myapp.png"));
+    assert(data.has("./usr/share/icons/hicolor/64x64/apps/com.acme.myapp.png"));
     // dpkg itself agrees, where it is installed (the Linux CI legs).
     let dpkg: Deno.CommandOutput | null = null;
     try {
@@ -413,7 +434,7 @@ Deno.test("deb: a real .deb of a bundle, read back member by member", {
   }
 });
 
-Deno.test("stage: owned paths, and a non-theme-size icon goes to pixmaps only", {
+Deno.test("stage: owned paths; a non-theme-size icon goes to the theme size below it", {
   ignore: Deno.build.os === "windows",
 }, async () => {
   const dir = await Deno.makeTempDir();
@@ -429,10 +450,59 @@ Deno.test("stage: owned paths, and a non-theme-size icon goes to pixmaps only", 
       "/usr/lib/my-app",
       "/usr/bin/my-app",
       "/usr/share/applications/com.acme.myapp.desktop",
-      "/usr/share/pixmaps/my-app.png",
+      "/usr/share/pixmaps/com.acme.myapp.png",
+      "/usr/share/icons/hicolor/512x512/apps/com.acme.myapp.png",
     ]);
     const paths = (await walkBundle(join(dir, "root"))).map((e) => e.path);
     assert(paths.includes("usr/lib/my-app/sub/data.txt"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("stage: an SVG icon is scalable; a non-square PNG is pixmaps only", {
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "b");
+    await fakeLinuxBundle(bundle);
+    const png = await Deno.readFile(join(bundle, "AppIcon.png"));
+    new DataView(png.buffer).setUint32(20, 32); // 64x32
+    await Deno.writeFile(join(bundle, "AppIcon.png"), png);
+    await Deno.writeTextFile(join(bundle, "AppIcon.svg"), "<svg/>");
+    const root = join(dir, "root");
+    const owned = await stageLinuxRoot(bundle, "My-App-x64", META, root);
+    assertEquals(owned.slice(3), [
+      "/usr/share/pixmaps/com.acme.myapp.png",
+      "/usr/share/icons/hicolor/scalable/apps/com.acme.myapp.svg",
+    ]);
+    assertEquals(
+      await Deno.readTextFile(
+        join(root, "usr/share/icons/hicolor/scalable/apps/com.acme.myapp.svg"),
+      ),
+      "<svg/>",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("stage: a bundle with no icon installs none, and the entry names none", {
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "b");
+    await fakeLinuxBundle(bundle);
+    await Deno.remove(join(bundle, "AppIcon.png"));
+    const root = join(dir, "root");
+    const owned = await stageLinuxRoot(bundle, "My-App-x64", META, root);
+    assertEquals(owned.length, 3);
+    const entry = await Deno.readTextFile(
+      join(root, "usr/share/applications/com.acme.myapp.desktop"),
+    );
+    assert(!entry.includes("Icon="), entry);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

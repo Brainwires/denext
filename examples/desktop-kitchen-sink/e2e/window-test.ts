@@ -549,13 +549,16 @@ const SEQUENCE = Math.floor(Date.now() / 1000);
 /** A manifest's expiry, `days` from now (negative: already expired). */
 const expiresIn = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
 
-/** One signed manifest payload offering `version` of `app` for this platform (never downloaded). */
+/**
+ * One signed manifest payload offering `version` of `app` for `platform` (never downloaded): the
+ * packaged app's own key, so a CEF build is offered a `-cef` build, not `no_platform`.
+ */
 function manifest(
+  platform: string,
   version: string,
   app = APP_ID,
   fresh: { expiresAt?: string; sequence?: number } = {},
 ): AppUpdatePayload {
-  const platform = `${Deno.build.target}-webview`;
   return {
     schema: 1,
     app,
@@ -606,9 +609,12 @@ interface UpdateServer {
  */
 async function startUpdateServer(
   keys: { privateKeyPem: string; publicKey: string },
+  bundle: string,
   update: string | null,
   signed: { v2a: string; v2b: string } | null,
 ) {
+  // The installed app's platform key, backend included (`<target>-webview` / `<target>-cef`).
+  const platform = await appUpdatePlatformKey(bundle);
   const key = await importOtaSigningKey(keys.privateKeyPem);
   const other = await importOtaSigningKey((await generateOtaKeyPair()).privateKeyPem);
   const docs: Record<string, string> = {};
@@ -630,13 +636,19 @@ async function startUpdateServer(
   const base = `http://127.0.0.1:${server.addr.port}/`;
   const sign = async (payload: AppUpdatePayload, k: CryptoKey) =>
     JSON.stringify(await signAppUpdatePayload(payload, k));
-  docs["/good.json"] = await sign(manifest("99.0.0"), key);
-  docs["/bad-signature.json"] = await sign(manifest("99.0.0"), other);
-  docs["/downgrade.json"] = await sign(manifest("0.0.1"), key);
-  docs["/wrong-app.json"] = await sign(manifest("99.0.0", "dev.denext.another-app"), key);
+  docs["/good.json"] = await sign(manifest(platform, "99.0.0"), key);
+  docs["/bad-signature.json"] = await sign(manifest(platform, "99.0.0"), other);
+  docs["/downgrade.json"] = await sign(manifest(platform, "0.0.1"), key);
+  docs["/wrong-app.json"] = await sign(manifest(platform, "99.0.0", "dev.denext.another-app"), key);
   // signAppUpdatePayload validates the shape only, not the clock: an expired manifest still signs.
-  docs["/expired.json"] = await sign(manifest("99.0.0", APP_ID, { expiresAt: expiresIn(-1) }), key);
-  docs["/replayed.json"] = await sign(manifest("99.0.0", APP_ID, { sequence: SEQUENCE - 1 }), key);
+  docs["/expired.json"] = await sign(
+    manifest(platform, "99.0.0", APP_ID, { expiresAt: expiresIn(-1) }),
+    key,
+  );
+  docs["/replayed.json"] = await sign(
+    manifest(platform, "99.0.0", APP_ID, { sequence: SEQUENCE - 1 }),
+    key,
+  );
   /** Pack `bundle` as `<name>.tar.gz` and serve its signed manifest as `<name>.json`. */
   const offer = async (bundle: string, name: string) => {
     log(`packing the update build ${bundle}`);
@@ -1202,7 +1214,7 @@ async function main(): Promise<void> {
     }
     const bin = await installBrowserStub();
     const signed = withUpdate ? signing?.builds ?? null : null;
-    const updates = await startUpdateServer(keys, update, signed);
+    const updates = await startUpdateServer(keys, bundle, update, signed);
     try {
       const main = await mainPhase(exe, bin, updates.base);
       reports.push(main.report);

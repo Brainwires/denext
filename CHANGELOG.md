@@ -160,6 +160,19 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Fixed
 
+- **The Linux `.deb` and `.rpm` show the app's icon in the launcher and refresh the desktop
+  databases.** The `.desktop` entry's `Icon=` named the package (`Icon=<package>`) while the icon
+  (when the bundle had one) was installed under that name only at an exact hicolor size, so an app
+  whose icon was any other size, or had none, showed no icon. The icon is now installed under the
+  app id, which `Icon=` names: `/usr/share/icons/hicolor/<n>x<n>/apps/<id>.png` (the theme size at
+  or below a square icon's), `/usr/share/pixmaps/<id>.png`, and an `AppIcon.svg` in the bundle as
+  `hicolor/scalable/apps/<id>.svg`; a bundle with no icon gets no `Icon=` line. The `.deb` gains
+  `postinst` / `postrm` and the `.rpm` `%post` / `%postun` scriptlets that refresh the desktop-entry
+  database (the deep-link `x-scheme-handler`s) and the hicolor icon cache, each guarded with
+  `|| :`, so a missing tool never fails an install. (The `.rpm`'s `Requires: libsecret` for
+  `secureStore` was already there.) Checked with real installs: the kitchen sink's `.deb` on
+  Ubuntu 26.04 and its aarch64 `.rpm` on Fedora 44 pass `desktop-file-validate` and GTK resolves
+  the icon.
 - **A forged callback can no longer complete a pending Clerk sign-in on Windows and Linux.** There
   the callback comes back as a deep link, which any program of the same user can also send, and
   Clerk's callback carries no `state`. `denext/desktop/clerk`'s `getRedirectUrl()` now adds a fresh
