@@ -2257,8 +2257,12 @@ export default {
         </li>
         <li>
           The desktop runtime hands the relay URL to the app&apos;s top-level page as{" "}
-          <code>__denext.wsUrl</code>. It never goes to a frame, because it carries the token.
-          denext&apos;s Live client (<code>&lt;Live&gt;</code>, <code>useLive</code>,{" "}
+          <code>__denext.wsUrl</code>, only where the per-launch token goes, because it carries the
+          relay's token. A frame whose request says so (<code>Sec-Fetch-Dest</code>) gets neither.
+          Where the engine omits that header, the <code>Origin</code>{" "}
+          check still holds, so only a same-origin frame (one showing the app&apos;s own pages)
+          could receive it. denext&apos;s Live client (<code>&lt;Live&gt;</code>,{" "}
+          <code>useLive</code>,{" "}
           <code>usePresence</code>, channels and subscriptions) dials it on its own. For your own
           sockets, use <code>desktopWebSocketUrl(path)</code> from{" "}
           <code>denext/desktop/client</code>. In such a window it returns the relay URL with{" "}
@@ -2332,8 +2336,9 @@ export default { desktop: { preload: "./desktop/preload.ts" } };`}
           bundles it per session (restart the session after editing it).
         </li>
         <li>
-          It is not injected into an iframe, and not under the stock runtime (loopback). It needs
-          {" "}
+          It goes only where the per-launch token goes: not into a frame whose request says so (
+          <code>Sec-Fetch-Dest</code>; where the engine omits that header, only a same-origin frame
+          could get it), and not under the stock runtime (loopback). It needs{" "}
           <a href="#desktop-runtime">denext's pinned runtime</a>.
         </li>
         <li>
@@ -2442,10 +2447,13 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         </li>
         <li>
           <strong>The token and the page.</strong>{" "}
-          The runtime injects the token into the top-level document only (never into frames), behind
-          a hash-based CSP, and strips it before anything is proxied. It is per launch and never
-          leaves the machine. But any script running in the page can read it: an XSS in your UI can
-          use every capability you enabled. Keep the strict CSP, do not load remote scripts into the
+          denext injects the token into the top-level document. A frame whose request says so (
+          <code>Sec-Fetch-Dest</code>) gets none; where the engine omits that header, the{" "}
+          <code>Origin</code>{" "}
+          check still holds, so only a same-origin frame could get it. It is injected behind a
+          hash-based CSP and stripped before anything is proxied. It is per launch and never leaves
+          the machine. But any script running in the page can read it: an XSS in your UI can use
+          every capability you enabled. Keep the strict CSP, do not load remote scripts into the
           window, and enable only what you use.
         </li>
         <li>

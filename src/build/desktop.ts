@@ -743,8 +743,12 @@ function requireTokenedPost(
  * Whether the per-launch token may be injected into the document this request fetches: never on
  * a request the runtime relayed from its loopback WebSocket relay (any local process can dial it,
  * so its missing `Origin` / `Sec-Fetch-Dest` prove nothing); otherwise a TOP-LEVEL document only
- * (`Sec-Fetch-Dest`, `document` when absent), so a subframe gets the desktop global without the
- * token. Then, per world: loopback — a LOOPBACK `Host`, so a DNS-rebinding Host gets no token;
+ * (`Sec-Fetch-Dest`, `document` when absent), so a subframe that declares itself gets the desktop
+ * global without the token. Absent stays `document` on purpose: engines send no `Sec-Fetch-*` to a
+ * scheme they don't treat as secure (WKWebView has no API to register one; the Fetch spec sends
+ * them only to potentially trustworthy URLs), so failing closed would strip the token from the
+ * page itself there. Where it is absent, a same-origin frame cannot be told from the page; the
+ * per-world rules below still refuse a request that names another origin. Then, per world: loopback — a LOOPBACK `Host`, so a DNS-rebinding Host gets no token;
  * memory — the in-process memory transport and an `Origin` that is absent or exactly the app
  * origin; refuse — never.
  */

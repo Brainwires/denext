@@ -15,7 +15,9 @@ and this project adheres to
   - **The page's WebSockets dial the relay with its per-launch token.** The runtime publishes
     `DENO_DESKTOP_WS_URL` (`ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>`) and refuses an
     upgrade without the token (403). denext injects it into the app's top-level page as
-    `__denext.wsUrl`, never into a frame. `desktopWebSocketUrl(path)` and the Live client append
+    `__denext.wsUrl`, together with the per-launch token: a frame whose request says so
+    (`Sec-Fetch-Dest`) gets neither, and where the engine omits that header, the `Origin` check
+    still holds, so only a same-origin frame could get it. `desktopWebSocketUrl(path)` and the Live client append
     the page's path, and `Deno.serve` sees `GET <path>`; a bare query (`"?room=1"`) is now accepted
     too. `desktopWsOrigin()` is replaced by `desktopWsUrl()`, the relay URL with the token
     (`DENO_DESKTOP_WS_ORIGIN_ENV` → `DENO_DESKTOP_WS_URL_ENV`).

@@ -466,7 +466,8 @@ provisioningProfile, entitlements }` signs it in with the profile) and Windows o
 passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
 only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
 Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay with its
-per-launch token (`DENO_DESKTOP_WS_URL`, injected only into the app's top-level page): denext's Live
+per-launch token (`DENO_DESKTOP_WS_URL`, injected into the app's top-level page; where the engine
+omits `Sec-Fetch-Dest`, the `Origin` check still holds, so only a same-origin frame could get it): denext's Live
 client does this itself; for your own sockets use `desktopWebSocketUrl(path)` from
 `denext/desktop/client` (never the bare relay origin: it answers 403). With `notifications` enabled, the web `new Notification(...)` /
 `Notification.requestPermission()` / `onclick` work, backed by the OS (no icons or buttons).
