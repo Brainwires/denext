@@ -15514,7 +15514,7 @@
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
-          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsOrigin?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
+          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
           "doc": "The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
           "docFull": "The desktop request handler: the `onRequest` escape hatch, the token-gated local endpoints,\nthen — when `devProxy` is set (`denext desktop dev` only) — the reverse proxy to `denext dev`\nfor EVERYTHING else; otherwise the backend proxy, the export's static assets (`no-store`), the\n`index.html` shell for navigations, else 404. Exported for tests; {@linkcode runDesktop} wires\nit to `Deno.serve`.\n\nRequest order is load-bearing: the token-gated `/_denext/desktop/*` endpoints ({@link\nhandleLocalEndpoint}) run BEFORE the dev proxy, so they are always served LOCALLY and never\nforwarded to the dev server, even in live-reload mode.",
           "params": [],
@@ -15626,12 +15626,12 @@
           "denextOnly": true
         },
         {
-          "name": "DESKTOP_WS_ORIGIN_ENV",
-          "slug": "DESKTOP_WS_ORIGIN_ENV",
+          "name": "DESKTOP_WS_URL_ENV",
+          "slug": "DESKTOP_WS_URL_ENV",
           "kind": "variable",
-          "signature": "DESKTOP_WS_ORIGIN_ENV: DENO_DESKTOP_WS_ORIGIN",
-          "doc": "The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in (ws://127.0.0.1:<port>): the address the page dials for a WebSocket to its own server.",
-          "docFull": "The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in\n(`ws://127.0.0.1:<port>`): the address the page dials for a WebSocket to its own server.",
+          "signature": "DESKTOP_WS_URL_ENV: DENO_DESKTOP_WS_URL",
+          "doc": "The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in, per-launch token included (ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>): the URL the page dials, with its own path appended, for a WebSocket to its own server. The runtime keeps it to its own process (child processes don't inherit it).",
+          "docFull": "The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in, per-launch\ntoken included (`ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>`): the URL the page dials,\nwith its own path appended, for a WebSocket to its own server. The runtime keeps it to its own\nprocess (child processes don't inherit it).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -15695,8 +15695,8 @@
           "slug": "desktopBuildFlags",
           "kind": "function",
           "signature": "desktopBuildFlags(config: unknown, os: DesktopOs): string[]",
-          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's and desktop.update.hosts); - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
-          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it);\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s and `desktop.update.hosts`);\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
+          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's and desktop.update.hosts); - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
+          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it); an unscoped `--allow-sys` when a capability needs it\n  (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`\n  declares a scheme (claiming it back needs it): the pinned runtime refuses those with\n  `NotCapable` under a partial `--allow-sys=<names>`;\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s and `desktop.update.hosts`);\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
           "params": [
             {
               "name": "config",
@@ -16473,7 +16473,7 @@
           "kind": "function",
           "signature": "injectDesktopGlobal(html: string, token: string | null, beacon?: boolean, preload?: string, preloadKey?: string, page?: DesktopPageGlobals): Promise<string>",
           "doc": "Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.",
-          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.\n\n`preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline\nscript right after the global — so it runs after `__denext` exists and before any page script —\nwith its own hash. It is injected only together with the token (a top-level document); the\ncaller additionally limits it to the memory world. With a `preloadKey`, the preload is framed by\ntwo more scripts that set `globalThis.__denextPreloadKey` before it and delete it after (even\nwhen the preload throws), so only code the preload runs synchronously can read the key — the\nproof `denext/desktop/clerk` presents for its Clerk-only session binding. The setting script\nremoves its own element as it runs, so the key cannot be read back from `document.scripts`.\n\n`page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the\nWebSocket relay origin, and — with the token — the web `Notification` shim, appended to the\nsame script (one CSP hash) so it is in place before any page script runs.",
+          "docFull": "Inject `globalThis.__denext = { desktop: true, token }` as an inline `<script>` immediately\nafter the opening `<head>` (falling back to after `<body>`, then to a prepend). The value is\n`JSON.stringify`-escaped. When `beacon` is set, the boot-confirm beacon ({@linkcode\nBOOT_BEACON_JS}) is appended to the SAME script so one CSP hash covers both. When the shell\ncarries a hash-based CSP meta, its `script-src` is extended with this script's `'sha256-…'` so\nthe script survives a strict policy.\n\n`preload` (the bundled `desktop.preload`, already inline-safe) is injected as a SECOND inline\nscript right after the global — so it runs after `__denext` exists and before any page script —\nwith its own hash. It is injected only together with the token (a top-level document); the\ncaller additionally limits it to the memory world. With a `preloadKey`, the preload is framed by\ntwo more scripts that set `globalThis.__denextPreloadKey` before it and delete it after (even\nwhen the preload throws), so only code the preload runs synchronously can read the key — the\nproof `denext/desktop/clerk` presents for its Clerk-only session binding. The setting script\nremoves its own element as it runs, so the key cannot be read back from `document.scripts`.\n\n`page` adds what the page needs from the runtime ({@linkcode DesktopPageGlobals}): the\nWebSocket relay URL and — both only with the token — the web `Notification` shim, appended to the\nsame script (one CSP hash) so it is in place before any page script runs.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16749,8 +16749,8 @@
           "slug": "shouldInjectDesktopToken",
           "kind": "function",
           "signature": "shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean",
-          "doc": "Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe gets the desktop global without the token. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.",
-          "docFull": "Whether the per-launch token may be injected into the document this request fetches: never on\na request the runtime relayed from its loopback WebSocket relay (any local process can dial it,\nso its missing `Origin` / `Sec-Fetch-Dest` prove nothing); otherwise a TOP-LEVEL document only\n(`Sec-Fetch-Dest`, `document` when absent), so a subframe gets the desktop global without the\ntoken. Then, per world: loopback — a LOOPBACK `Host`, so a DNS-rebinding Host gets no token;\nmemory — the in-process memory transport and an `Origin` that is absent or exactly the app\norigin; refuse — never.",
+          "doc": "Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe that declares itself gets the desktop global without the token. Absent stays document on purpose: engines send no Sec-Fetch-* to a scheme they don't treat as secure (WKWebView has no API to register one; the Fetch spec sends them only to potentially trustworthy URLs), so failing closed would strip the token from the page itself there. Where it is absent, a same-origin frame cannot be told from the page; the per-world rules below still refuse a request that names another origin. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.",
+          "docFull": "Whether the per-launch token may be injected into the document this request fetches: never on\na request the runtime relayed from its loopback WebSocket relay (any local process can dial it,\nso its missing `Origin` / `Sec-Fetch-Dest` prove nothing); otherwise a TOP-LEVEL document only\n(`Sec-Fetch-Dest`, `document` when absent), so a subframe that declares itself gets the desktop\nglobal without the token. Absent stays `document` on purpose: engines send no `Sec-Fetch-*` to a\nscheme they don't treat as secure (WKWebView has no API to register one; the Fetch spec sends\nthem only to potentially trustworthy URLs), so failing closed would strip the token from the\npage itself there. Where it is absent, a same-origin frame cannot be told from the page; the\nper-world rules below still refuse a request that names another origin. Then, per world: loopback — a LOOPBACK `Host`, so a DNS-rebinding Host gets no token;\nmemory — the in-process memory transport and an `Origin` that is absent or exactly the app\norigin; refuse — never.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -16790,8 +16790,8 @@
           "slug": "writeLaufeyLaunchConfig",
           "kind": "function",
           "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>",
-          "doc": "Write the packaged app's laufey-launch.json from desktop.app and desktop.inspectable in the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
-          "docFull": "Write the packaged app's `laufey-launch.json` from `desktop.app` and `desktop.inspectable` in the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).\nOn macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
+          "doc": "Write the packaged app's laufey-launch.json from desktop.app and desktop.inspectable in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
+          "docFull": "Write the packaged app's `laufey-launch.json` from `desktop.app` and `desktop.inspectable` in the\nproject's `denext.config.ts` (the bridge pinned to the app origin, {@linkcode\ndesktopBridgeOrigins}) (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`).\nOn macOS call it BEFORE code-signing: the file lives inside the sealed bundle.",
           "params": [
             {
               "name": "entryUrl",
@@ -16855,7 +16855,7 @@
           "name": "AppUpdateErrorCode",
           "slug": "AppUpdateErrorCode",
           "kind": "typeAlias",
-          "signature": "type AppUpdateErrorCode = unsupported | not_configured | invalid_manifest | signature | wrong_app | downgrade | rejected | no_platform | insecure_url | size_exceeded | integrity | unsafe_archive | bundle_mismatch | os_signature | install_not_writable | unsupported_layout | not_staged | busy | io",
+          "signature": "type AppUpdateErrorCode = unsupported | not_configured | invalid_manifest | signature | wrong_app | downgrade | rejected | no_platform | expired | replayed | insecure_url | size_exceeded | integrity | unsafe_archive | bundle_mismatch | version_mismatch | os_signature | install_not_writable | unsupported_layout | not_staged | busy | io",
           "doc": "Why a full-app update step refused (the runtime's codes, plus unsupported).",
           "docFull": "Why a full-app update step refused (the runtime's codes, plus `unsupported`).",
           "params": [],
@@ -16957,8 +16957,8 @@
           "slug": "confirmAppUpdate",
           "kind": "function",
           "signature": "confirmAppUpdate(): boolean",
-          "doc": "Confirm the running version after an update, once the app has shown it is healthy (its window loaded, its backend answered): the previous app is deleted and the update is final. An update not confirmed by its next launch is rolled back and that version is refused from then on. A no-op (false) when no update is pending, so it is safe to call on every launch. runDesktop calls it once the window has loaded unless desktop.update.autoConfirm is false.",
-          "docFull": "Confirm the running version after an update, once the app has shown it is healthy (its window\nloaded, its backend answered): the previous app is deleted and the update is final. An update\nnot confirmed by its next launch is rolled back and that version is refused from then on. A no-op\n(`false`) when no update is pending, so it is safe to call on every launch. `runDesktop` calls it\nonce the window has loaded unless `desktop.update.autoConfirm` is `false`.",
+          "doc": "Confirm the running version after an update, once the app has shown it is healthy (its window loaded, its backend answered): the update is final, and the previous app is moved aside and deleted in the background (the call does not wait for the deletion). An update not confirmed by its next launch is rolled back and that version is refused from then on. A no-op (false) when no update is pending, so it is safe to call on every launch. runDesktop calls it once the window has loaded unless desktop.update.autoConfirm is false.",
+          "docFull": "Confirm the running version after an update, once the app has shown it is healthy (its window\nloaded, its backend answered): the update is final, and the previous app is moved aside and\ndeleted in the background (the call does not wait for the deletion). An update\nnot confirmed by its next launch is rolled back and that version is refused from then on. A no-op\n(`false`) when no update is pending, so it is safe to call on every launch. `runDesktop` calls it\nonce the window has loaded unless `desktop.update.autoConfirm` is `false`.",
           "params": [],
           "returns": "Whether a pending update was confirmed.",
           "examples": [],
@@ -17337,6 +17337,32 @@
           "denextOnly": true
         },
         {
+          "name": "desktopOs",
+          "slug": "desktopOs-fn",
+          "kind": "function",
+          "signature": "desktopOs(): DesktopOs | undefined",
+          "doc": "The operating system this page's Deno Desktop app runs on (\"darwin\", \"windows\", \"linux\", …, Deno's Deno.build.os), or undefined off desktop (the web, iOS, Android, SSR). The desktop runtime hands every page it serves the OS, frames included and under either runtime, so this needs no capability and no bridge call. Read it instead of the injected global, which is private.",
+          "docFull": "The operating system this page's Deno Desktop app runs on (`\"darwin\"`, `\"windows\"`, `\"linux\"`,\n…, Deno's `Deno.build.os`), or `undefined` off desktop (the web, iOS, Android, SSR). The desktop\nruntime hands every page it serves the OS, frames included and under either runtime, so this\nneeds no capability and no bridge call. Read it instead of the injected global, which is\nprivate.",
+          "params": [],
+          "returns": "The OS, or undefined.",
+          "examples": [
+            "```ts\nimport { desktopOs } from \"denext/desktop/client\";\n\nconst shortcut = desktopOs() === \"darwin\" ? \"Cmd+K\" : \"Ctrl+K\";\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopOs",
+          "slug": "DesktopOs-type",
+          "kind": "typeAlias",
+          "signature": "type DesktopOs = darwin | linux | windows | android | freebsd | netbsd | aix | solaris | illumos",
+          "doc": "The operating system a Deno Desktop app runs on, as Deno spells it (Deno.build.os).",
+          "docFull": "The operating system a Deno Desktop app runs on, as Deno spells it (`Deno.build.os`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopRpcOptions",
           "slug": "DesktopRpcOptions",
           "kind": "interface",
@@ -17365,12 +17391,12 @@
           "slug": "desktopWebSocketUrl",
           "kind": "function",
           "signature": "desktopWebSocketUrl(path: string): string",
-          "doc": "The URL for a WebSocket from this page to its own server at path (\"/api/socket\"): the runtime's relay under denext's pinned Deno Desktop runtime (desktopWsOrigin), else wss:// / ws:// on the page's own host. Off a page (no location) it returns path as is.",
-          "docFull": "The URL for a WebSocket from this page to its own server at `path` (`\"/api/socket\"`): the\nruntime's relay under denext's pinned Deno Desktop runtime ({@linkcode desktopWsOrigin}), else\n`wss://` / `ws://` on the page's own host. Off a page (no `location`) it returns `path` as is.",
+          "doc": "The URL for a WebSocket from this page to its own server at path (\"/api/socket\", or a bare query \"?room=1\" for /): the runtime's relay under denext's pinned Deno Desktop runtime (desktopWsUrl; the server then sees GET <path>), else wss:// / ws:// on the page's own host. Off a page (no location) it returns the absolute path as is.",
+          "docFull": "The URL for a WebSocket from this page to its own server at `path` (`\"/api/socket\"`, or a bare\nquery `\"?room=1\"` for `/`): the runtime's relay under denext's pinned Deno Desktop runtime\n({@linkcode desktopWsUrl}; the server then sees `GET <path>`), else `wss://` / `ws://` on the\npage's own host. Off a page (no `location`) it returns the absolute path as is.",
           "params": [
             {
               "name": "path",
-              "doc": "An absolute path, with an optional query (\"/ws?room=1\")."
+              "doc": "An absolute path with an optional query (\"/ws?room=1\"), or a query (\"?room=1\")."
             }
           ],
           "returns": "The WebSocket URL.",
@@ -17380,16 +17406,16 @@
           "denextOnly": true
         },
         {
-          "name": "desktopWsOrigin",
-          "slug": "desktopWsOrigin",
+          "name": "desktopWsUrl",
+          "slug": "desktopWsUrl",
           "kind": "function",
-          "signature": "desktopWsOrigin(): string | undefined",
-          "doc": "The pinned runtime's WebSocket relay origin (ws://127.0.0.1:<port>) when this page runs in a Deno Desktop window at a custom app origin, else undefined (the web, mobile, the stock desktop runtime, SSR). Only a ws: / wss: origin with no path, query or credentials counts.",
-          "docFull": "The pinned runtime's WebSocket relay origin (`ws://127.0.0.1:<port>`) when this page runs in a\nDeno Desktop window at a custom app origin, else `undefined` (the web, mobile, the stock\ndesktop runtime, SSR). Only a `ws:` / `wss:` origin with no path, query or credentials counts.",
+          "signature": "desktopWsUrl(): string | undefined",
+          "doc": "The pinned runtime's WebSocket relay URL (ws://127.0.0.1:<port>/.deno-desktop-relay/<token>) when this page runs in a Deno Desktop window at a custom app origin, else undefined (the web, mobile, the stock desktop runtime, SSR). It carries the relay's per-launch token: append a path to it (desktopWebSocketUrl does), and don't hand it to other code.",
+          "docFull": "The pinned runtime's WebSocket relay URL (`ws://127.0.0.1:<port>/.deno-desktop-relay/<token>`)\nwhen this page runs in a Deno Desktop window at a custom app origin, else `undefined` (the web,\nmobile, the stock desktop runtime, SSR). It carries the relay's per-launch token: append a path\nto it ({@linkcode desktopWebSocketUrl} does), and don't hand it to other code.",
           "params": [],
-          "returns": "The relay origin, or undefined.",
+          "returns": "The relay URL, or undefined.",
           "examples": [
-            "```ts\nimport { desktopWsOrigin } from \"denext/desktop/client\";\n\nconst relay = desktopWsOrigin(); // \"ws://127.0.0.1:51234\" in a pinned-runtime window\n```"
+            "```ts\nimport { desktopWsUrl } from \"denext/desktop/client\";\n\nconst relay = desktopWsUrl(); // \"ws://127.0.0.1:51234/.deno-desktop-relay/<token>\" in a window\n```"
           ],
           "denextOnly": true
         },

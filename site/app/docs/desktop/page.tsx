@@ -174,8 +174,7 @@ export default {
           <code>deno.json</code>, else <code>icons/app.icns</code> / <code>icons/app.ico</code> /
           {" "}
           <code>icons/app.png</code>, else the <code>desktop-icon.png</code>{" "}
-          an export composes. A configured icon that does not exist fails the build. The macOS
-          script picks this up with <code>denext desktop package --regenerate-scripts</code>.
+          an export composes. A configured icon that does not exist fails the build.
         </li>
       </ul>
       <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>
@@ -184,9 +183,8 @@ export default {
         {" "}
         <code>desktop.denoFlags</code>. <code>denext desktop run</code>,{" "}
         <code>denext desktop dev</code>{" "}
-        and the package scripts pass them before the entry (the macOS script once{" "}
-        <code>denext desktop package --regenerate-scripts</code>{" "}
-        has rewritten it; the Linux and Windows builds read them through{" "}
+        and the package scripts pass them before the entry (the macOS script itself; the Linux and
+        Windows builds read them through{" "}
         <code>denext/desktop</code>). The usual case is a pnpm workspace (deno.json{" "}
         <code>nodeModulesDir: "manual"</code>), where <code>deno desktop</code>{" "}
         would otherwise type-check against the workspace&apos;s <code>node_modules</code>{" "}
@@ -566,7 +564,8 @@ denext desktop package --target-os windows --format msi,zip`}
           {" "}
           <code>desktop.app.identifier</code>, the same one{" "}
           <code>deno desktop</code>'s own MSI uses), and uninstalling removes all of it. It is
-          Authenticode-signed with the <code>.exe</code> when <code>DENEXT_WINDOWS_CERT</code>{" "}
+          Authenticode-signed with the same certificate as the app&apos;s executables when{" "}
+          <code>DENEXT_WINDOWS_CERT</code>{" "}
           is set. Without WiX 5 (an installed WiX 6 does not count), or when <code>wix build</code>
           {" "}
           fails, the default <code>.msi</code> falls back to the <code>.zip</code> with a warning.
@@ -590,10 +589,7 @@ denext desktop package --target-os windows --format msi,zip`}
         <code>desktop.app.identifier</code> the app is{" "}
         <code>com.deno.desktop.&lt;name&gt;</code>, which also derives the MSI UpgradeCode: set your
         own before the first release, because changing it later makes the next version install
-        beside the old one instead of upgrading it. A packaging script from before denext 3.1 (no
-        {" "}
-        <code>desktopRuntimeEnv</code>) is warned about too, and does not get <code>--format</code>
-        ; <code>denext desktop package --regenerate-scripts</code> updates it.
+        beside the old one instead of upgrading it.
       </p>
       <Callout kind="note">
         The installers wrap the bundle the script <em>finished</em>, not a second{" "}
@@ -1160,9 +1156,8 @@ if (found.available) {
         Gatekeeper (<code>spctl --assess --type execute</code>) and the same signing identifier; on
         Windows a trusted Authenticode signature with the same signer as the running executable, on
         every PE file of the update (the scaffolded <code>scripts/package-windows.ts</code>{" "}
-        signs them all; an older script signs only the <code>.exe</code>: run{" "}
-        <code>denext desktop package --regenerate-scripts</code>). Linux has no OS signature; the
-        manifest signature and the hash are the whole check there.
+        signs them all). Linux has no OS signature; the manifest signature and the hash are the
+        whole check there.
       </p>
       <p>
         <strong>On macOS the update must be notarized.</strong>{" "}
@@ -1273,8 +1268,7 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>desktop.app.deepLinks</code>{" "}
         scheme (claiming it back from another app), need an unscoped <code>--allow-sys</code>{" "}
         under the pinned runtime. A list of names (<code>--allow-sys=osRelease</code>) does not
-        satisfy them. A project scaffolded before 2.11 keeps its older scripts until you refresh
-        them — <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
+        satisfy them. <code>denext desktop package --regenerate-scripts</code> rewrites{" "}
         <code>scripts/package-*.ts</code> from the current template, keeping a <code>.bak</code>
         {" "}
         of any file it changes.
@@ -2206,12 +2200,10 @@ DENEXT_DESKTOP_RUNTIME_DIR=~/src/deno-runtime denext desktop run   # a local run
                                                       # unverified (runtime development)`}
       </Code>
       <p>
-        An existing project adopts the runtime with{" "}
-        <code>denext desktop package --regenerate-scripts</code> (its scripts gain the{" "}
-        <code>desktopRuntimeEnv</code> call from <code>denext/desktop</code>). The baked{" "}
-        <code>--allow-*</code>{" "}
-        of the packaged app do not change: the download happens in the packaging script, not in the
-        app.
+        The packaging script downloads the runtime (the <code>desktopRuntimeEnv</code> call from
+        {" "}
+        <code>denext/desktop</code>), not the app, so the packaged app&apos;s baked{" "}
+        <code>--allow-*</code> do not change.
       </p>
 
       <h2 id="desktop-app-origin">A stable app origin</h2>
@@ -2259,9 +2251,7 @@ export default {
           identity provider page the window navigates to, list its origin in{" "}
           <code>desktop.app.bridgeOrigins</code> and in that binding&apos;s{" "}
           <code>bind(name, fn, {"{ origins }"})</code>. <code>denext desktop run</code> and{" "}
-          <code>dev</code> write the same <code>app.json</code>. Run{" "}
-          <code>denext desktop package --regenerate-scripts</code>{" "}
-          to adopt this in an older project.
+          <code>dev</code> write the same <code>app.json</code>.
         </li>
         <li>
           In the window, the app's server code reads the origin from{" "}
@@ -2438,8 +2428,8 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         <code>x-denext-desktop-token</code>, an <code>Origin</code> exactly equal to the window's,
         {" "}
         <code>content-type: application/json</code>{" "}
-        (a foreign page cannot send that cross-origin without a preflight, which the runtime
-        refuses), and <code>POST</code>{" "}
+        (a foreign page cannot send that cross-origin without a preflight, which denext&apos;s
+        bridge refuses with a 403 and no CORS grant), and <code>POST</code>{" "}
         for calls. Then the capability allowlist, then the method's input schema. There are no
         bridge endpoints outside the desktop runtime, and off desktop the page never requests one.
       </p>

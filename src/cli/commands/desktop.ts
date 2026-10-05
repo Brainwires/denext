@@ -147,7 +147,7 @@ export const desktopCommand: CommandSpec = {
       type: "boolean",
       help:
         "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), " +
-        "keeping a .bak of any file that differs; adopt the current scripts in an existing project",
+        "keeping a .bak of any file that differs",
     },
     {
       name: "verify-runtime",

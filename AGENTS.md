@@ -435,8 +435,8 @@ leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/packag
 `--allow-*` from `desktop.capabilities` instead of `-A` (`clipboard`, `global-shortcuts`,
 `launch-at-login`, `notifications` and declared `desktop.app.deepLinks` bake an unscoped
 `--allow-sys`, which the pinned runtime requires for them), and
-`denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
-a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
+`denext desktop package --regenerate-scripts` rewrites them from the current template (a `.bak`
+and a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
 `denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
 (+ `.rpm`, AppImage), Windows a per-user-or-machine `.msi` (+ `.zip`); an empty list builds just
 the bundle.

@@ -399,7 +399,8 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`; written to
 `desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
-`desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
+`desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
+(`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, Linux libsecret, Windows PasswordVault) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
@@ -435,16 +436,19 @@ packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtensi
 `desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
 confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
 leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/package-*.ts` derive
-`--allow-*` from `desktop.capabilities` instead of `-A`, and
-`denext desktop package --regenerate-scripts` rewrites an older project's scripts (a `.bak` and
-a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
+`--allow-*` from `desktop.capabilities` instead of `-A` (`clipboard`, `global-shortcuts`,
+`launch-at-login`, `notifications` and declared `desktop.app.deepLinks` bake an unscoped
+`--allow-sys`, which the pinned runtime requires for them), and
+`denext desktop package --regenerate-scripts` rewrites them from the current template (a `.bak`
+and a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
 `denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
 (+ `.rpm`, AppImage), Windows a per-user-or-machine `.msi` (+ `.zip`); an empty list builds just
 the bundle.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
-packaged `laufey-launch.json`. It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; the custom origin requires runtime 2.9.7-denext.7+, older ones start with every desktop endpoint refused; what it changes and why: https://denext.dev/docs/desktop-runtime;
+packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app
+origin; `desktop.app.bridgeOrigins` adds others). It takes effect under denext's pinned Deno Desktop runtime, which
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.7 exactly; denext needs runtime 2.9.7-denext.9; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -466,9 +470,11 @@ Native passkeys are macOS (needs the associated-domains entitlement: `desktop.ma
 provisioningProfile, entitlements }` signs it in with the profile) and Windows only; Linux has no OS
 passkey API, so `denext/desktop/clerk` signs in through the browser. Linux scheduled notifications fire
 only while the app runs (re-armed at launch). OS limits: https://denext.dev/docs/limitations
-Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay: denext's Live
+Under the pinned runtime the page's own WebSockets dial the runtime's loopback relay with its
+per-launch token (`DENO_DESKTOP_WS_URL`, injected into the app's top-level page; where the engine
+omits `Sec-Fetch-Dest`, the `Origin` check still holds, so only a same-origin frame could get it): denext's Live
 client does this itself; for your own sockets use `desktopWebSocketUrl(path)` from
-`denext/desktop/client`. With `notifications` enabled, the web `new Notification(...)` /
+`denext/desktop/client` (never the bare relay origin: it answers 403). With `notifications` enabled, the web `new Notification(...)` /
 `Notification.requestPermission()` / `onclick` work, backed by the OS (no icons or buttons).
 `openAuthSession(url, { loopbackPort: 1455 })` uses a fixed loopback port for a provider with a
 registered `http://localhost:<port>/…` redirect (`port_in_use` when taken). `desktop.denoFlags`
@@ -494,7 +500,10 @@ the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 `applyDesktopUpdate`), and full-app updates under the pinned runtime (`checkForAppUpdate` /
 `downloadAppUpdate` / `installAppUpdateAndRelaunch` / `confirmAppUpdate`: a signed manifest from
 `denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build), an atomic
-bundle swap that rolls back if the new version never confirms).
+bundle swap that rolls back if the new version never confirms). The manifest expires (`expiresAt`,
+default 30 days, `expired`) and carries a growing `sequence` (`replayed`): re-sign it before it
+expires with `denext desktop publish-update --resign`; the artifact must be built as the version
+published (`version_mismatch`).
 
 **An Expo / React Native app on the web:** `reactNative: true` (with `mode: "spa"`) builds the
 app's own source through `react-native-web` (`react-native` → react-native-web, `.web.*` first,
@@ -1905,7 +1914,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface BuildDesktopTarballOptions` — What buildDesktopTarball archives.
 - `interface BuildLinuxPackageOptions` — What buildDesktopDeb / buildDesktopRpm build.
 - `interface BuildMsiOptions` — What buildDesktopMsi builds.
-- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsOrigin?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
 - `DEFAULT_DESKTOP_INSTALLERS: Readonly<Record<DesktopOs, typeOperator>>` — The formats built when neither --format nor desktop.installers.<os> names any.
 - `defineDesktopExtension<C>(capability: C): C` — Define a native desktop extension: a capability that runs in the desktop app's Deno process and that the page calls through denext/desktop/client's desktopExtension. Enable it in desktop.capabilities.extensions (a module path). This is an identity helper — it returns its argument unchanged so a typeof import("./ext.ts") keeps the exact method types the client's typed proxy reads — and it is not a place for side effects (nothing should run at import).
 - `DESKTOP_APP_CONFIG_FILE: .deno-desktop/app.json` — Where the runtime looks for the embedded origin + identifier, relative to the project root.
@@ -1914,12 +1923,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `DESKTOP_DEV_LAN_ENV: DENEXT_DESKTOP_DEV_LAN` — The SECOND dev-only opt-in denext desktop dev --lan sets alongside DESKTOP_DEV_URL_ENV to allow a NON-loopback dev-server target. Without it a non-loopback DENEXT_DESKTOP_DEV_URL is refused at runtime (see desktopDevProxyDecision), so an inherited/hostile env cannot turn a window into a proxy to an arbitrary remote origin.
 - `DESKTOP_DEV_URL_ENV: DENEXT_DESKTOP_DEV_URL` — The env var denext desktop dev sets on the window process to put the runtime into live-reload PROXY mode: its value is the loopback denext dev URL to reverse-proxy to. It is the ONLY switch that turns proxy-all on — a release / run / package invocation never sets it, so those windows serve the static export exactly as before (see runDesktop).
 - `DESKTOP_INSTALLER_FORMATS: object` — Every installer format, by the OS it is built for.
-- `DESKTOP_WS_ORIGIN_ENV: DENO_DESKTOP_WS_ORIGIN` — The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in (ws://127.0.0.1:<port>): the address the page dials for a WebSocket to its own server.
+- `DESKTOP_WS_URL_ENV: DENO_DESKTOP_WS_URL` — The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in, per-launch token included (ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>): the URL the page dials, with its own path appended, for a WebSocket to its own server. The runtime keeps it to its own process (child processes don't inherit it).
 - `interface DesktopAppDirs` — The three per-app storage roots a desktop app uses (absolute paths, not created here).
 - `desktopAppName(entryUrl?: string): Promise<string>` — The app's name for artifact paths: DENEXT_APP_NAME, else desktop.app.name in the project's denext.config.ts, else deno.json desktop.app.name, else "app".
 - `interface DesktopAppSyncReport` — What syncDesktopAppConfig did.
 - `interface DesktopBridge` — The runtime bridge: a request handler for its two paths, and an event emitter.
-- `desktopBuildFlags(config: unknown, os: DesktopOs): string[]` — The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's and desktop.update.hosts); - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.
+- `desktopBuildFlags(config: unknown, os: DesktopOs): string[]` — The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's and desktop.update.hosts); - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.
 - `interface DesktopBundleOptions` — What buildDesktopBundle builds.
 - `interface DesktopCapability` — A desktop capability: a name (its address on the bridge — an extension's name is its cap name), a set of methods, and the event names it may DesktopCapCtx.emit. Built-ins live in ./caps; user extensions are authored with defineDesktopExtension.
 - `interface DesktopCapabilityMethod<I, O>` — One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process.
@@ -1951,6 +1960,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopPackageMeta(entryUrl: string, fallbackName: string): Promise<DesktopPackageMeta>` — packageMetaFrom for the project whose scripts/ holds entryUrl.
 - `interface DesktopPackageMeta` — What every installer says about the app.
 - `interface DesktopPageGlobals` — What the injected globalThis.__denext carries besides the desktop marker and the token (see injectDesktopGlobal).
+- `desktopPeFiles(dir: string): Promise<string[]>` — Every PE file under a Windows bundle directory, recursively, sorted (symlinks are not followed). The runtime refuses an update of a signed app unless EVERY PE file in it carries the running app's signature — the .exe, <App>.dll, WebView2Loader.dll, the app-local VC++ runtime, CEF's DLLs and helpers and any .node addon — so all of them are signed, third-party files included.
 - `interface DesktopPermissions` — The Deno permissions a capability method needs, as --allow-* scopes. The union of every enabled capability's descriptor is what the package scripts bake into the desktop binary instead of -A (least-privilege packaging), and what denext doctor reports. An ffi or run entry means full-trust native code: least-privilege is moot for that surface once it is on.
 - `type DesktopProxyFn = (request: Request, url: URL) => Response | Promise<Response>` — Forward a request the desktop window received to the denext dev server. Injected into createDesktopHandler so tests exercise the dev path with a spy and never spawn a real dev server; runDesktop wires it to proxyToBackend.
 - `desktopRequireTool(tool: string, format: string, explicit: boolean): Promise<boolean>` — desktopToolGate for a tool that must be on PATH (the reason carries the install hint).
@@ -1959,6 +1969,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopRuntime` — What runDesktop hands back once the server is up: the app window, the desktop world the gates enforce, and a hook that pushes an event down the page's bridge stream (what onDesktopEvent(cap, event, …) in denext/desktop/client receives) — the seam OS events (deep links, open-file, …) are emitted through.
 - `desktopRuntimeEnv(entryUrl: string, target?: string): Promise<Record<string, string>>` — The env a scaffolded scripts/package-*.ts adds to its deno desktop command so it builds on denext's pinned Deno Desktop runtime: DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR for target (default: the host), downloaded and verified on first use. Empty under DENEXT_DESKTOP_RUNTIME=stock. The project is the script's parent directory.
 - `interface DesktopServeInfo` — The part of Deno.ServeHandlerInfo the gates read. Typed loosely because transport: "memory" is not in the stock Deno.NetAddr type.
+- `desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>` — Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD, timestamped by DENEXT_SIGN_TIMESTAMP_URL), batched a few dozen files per signtool sign call. Without a certificate, or without signtool (off Windows), nothing is signed and a warning says so. The password, which signtool takes only as /p, is redacted from a failure message.
+- `interface DesktopSignWindowsDeps` — What desktopSignWindows runs commands and reads settings through (tests stub them).
 - `desktopSlug(name: string): string` — A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
 - `desktopToolGate(why: string | undefined, format: string, explicit: boolean): boolean` — Whether why (a reason the tool for format cannot run, or undefined when it can) still lets the format build: a default format is skipped with a warning, an asked-for one fails.
 - `type DesktopTrust = object | object | object` — The desktop world the app runs in (see the module docs).
@@ -1983,17 +1995,17 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `resolveOutDir(options: RunDesktopOptions): string` — The static-export dir to serve: outDir (relative to importMetaUrl when given), else out/.
 - `runDesktop(options?: RunDesktopOptions): Promise<DesktopRuntime>` — Serve a denext SPA export in a deno desktop window. Adopts the initial Deno.BrowserWindow and quits the process on window close; under a plain deno run (no desktop runtime) it just starts the server. Resolves once the server is started, with the window and an event hook (DesktopRuntime).
 - `interface RunDesktopOptions` — Options for runDesktop (and createDesktopHandler): where to serve the static export from, an optional loopback reverse proxy and request escape hatch, the signed self-updater, the enabled capability bridge, the app-support directory, and whether the loopback OAuth endpoint is enabled. The generated desktop.ts entry spreads resolveDesktopCapabilities into it.
-- `shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean` — Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe gets the desktop global without the token. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.
+- `shouldInjectDesktopToken(request: Request, url: URL, trust: DesktopTrust, info?: DesktopServeInfo): boolean` — Whether the per-launch token may be injected into the document this request fetches: never on a request the runtime relayed from its loopback WebSocket relay (any local process can dial it, so its missing Origin / Sec-Fetch-Dest prove nothing); otherwise a TOP-LEVEL document only (Sec-Fetch-Dest, document when absent), so a subframe that declares itself gets the desktop global without the token. Absent stays document on purpose: engines send no Sec-Fetch-* to a scheme they don't treat as secure (WKWebView has no API to register one; the Fetch spec sends them only to potentially trustworthy URLs), so failing closed would strip the token from the page itself there. Where it is absent, a same-origin frame cannot be told from the page; the per-world rules below still refuse a request that names another origin. Then, per world: loopback — a LOOPBACK Host, so a DNS-rebinding Host gets no token; memory — the in-process memory transport and an Origin that is absent or exactly the app origin; refuse — never.
 - `stripDesktopCredentials(request: Request): Request` — The request to forward to the dev server with the desktop credential removed: the per-launch x-denext-desktop-token header is dropped so it never reaches the dev server (invariant: the token gates the LOCAL endpoints only). A WebSocket upgrade is returned untouched — it cannot be reconstructed (Deno.upgradeWebSocket needs the original connection), a browser cannot set a custom header on a WS handshake, and proxyToBackend's WS bridge forwards only host/origin/cookie upstream, never the token. denext injects no desktop-specific cookie (the token lives in globalThis.__denext and this header only), so there is none to strip.
 - `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop.
-- `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>` — Write the packaged app's laufey-launch.json from desktop.app and desktop.inspectable in the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
+- `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>` — Write the packaged app's laufey-launch.json from desktop.app and desktop.inspectable in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS call it BEFORE code-signing: the file lives inside the sealed bundle.
 
 ### `denext/desktop/updater`
 
 - `applyDesktopUpdate(version: string, config: DesktopUpdaterConfig): Promise<void>` — Promote the staged version to the active overlay and flip the "current" pointer atomically. Re-verifies the staged manifest (version + signature) and re-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the accepted sequence is recorded, and the new version starts PENDING — desktopBooted must confirm it or the next resolveDesktopUiDir rolls it back.
 - `interface AppUpdateCheck` — The result of checkForAppUpdate.
 - `class AppUpdateError` — A refusal from the full-app updater, with a machine-readable AppUpdateErrorCode.
-- `type AppUpdateErrorCode = unsupported | not_configured | invalid_manifest | signature | wrong_app | downgrade | rejected | no_platform | insecure_url | size_exceeded | integrity | unsafe_archive | bundle_mismatch | os_signature | install_not_writable | unsupported_layout | not_staged | busy | io` — Why a full-app update step refused (the runtime's codes, plus unsupported).
+- `type AppUpdateErrorCode = unsupported | not_configured | invalid_manifest | signature | wrong_app | downgrade | rejected | no_platform | expired | replayed | insecure_url | size_exceeded | integrity | unsafe_archive | bundle_mismatch | version_mismatch | os_signature | install_not_writable | unsupported_layout | not_staged | busy | io` — Why a full-app update step refused (the runtime's codes, plus unsupported).
 - `interface AppUpdateProgress` — Download progress, in bytes.
 - `interface AppUpdaterConfig` — Where the signed manifest is and how to reach it.
 - `interface AppUpdateStaged` — The result of downloadAppUpdate: the update is verified and staged.
@@ -2001,7 +2013,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface AppUpdateStatus` — appUpdateStatus: what the runtime knows about this app and any pending update.
 - `checkForAppUpdate(config: AppUpdaterConfig): Promise<AppUpdateCheck>` — Fetch and verify the signed manifest. Resolves available: false when it offers the running version; throws on anything that does not verify (see the module's invariants).
 - `checkForDesktopUpdate(config: DesktopUpdaterConfig): Promise<DesktopUpdateCheck>` — Check the feed for a newer, fully-verified UI. Fetches ${feedUrl}/_denext/ota.json, validates its shape, RECOMPUTES the version and refuses a mismatch, VERIFIES the ECDSA signature, and refuses a non-monotonic sequence — all BEFORE reporting anything as available. A version equal to the active overlay resolves { available: false }.
-- `confirmAppUpdate(): boolean` — Confirm the running version after an update, once the app has shown it is healthy (its window loaded, its backend answered): the previous app is deleted and the update is final. An update not confirmed by its next launch is rolled back and that version is refused from then on. A no-op (false) when no update is pending, so it is safe to call on every launch. runDesktop calls it once the window has loaded unless desktop.update.autoConfirm is false.
+- `confirmAppUpdate(): boolean` — Confirm the running version after an update, once the app has shown it is healthy (its window loaded, its backend answered): the update is final, and the previous app is moved aside and deleted in the background (the call does not wait for the deletion). An update not confirmed by its next launch is rolled back and that version is refused from then on. A no-op (false) when no update is pending, so it is safe to call on every launch. runDesktop calls it once the window has loaded unless desktop.update.autoConfirm is false.
 - `desktopBooted(config: DesktopUpdaterConfig): Promise<void>` — Confirm that the active overlay booted. Call it once the app has served and rendered (the desktop runtime calls it behind a short delay after Deno.serve is up). It flips a PENDING pointer to confirmed and clears the watchdog marker, so a crash BEFORE this call leaves the version pending and the next resolveDesktopUiDir rolls it back. Best effort: it never throws.
 - `interface DesktopUpdateCheck` — The result of checkForDesktopUpdate.
 - `class DesktopUpdateError` — A refusal from the updater, carrying a machine-readable DesktopUpdateErrorCode.
@@ -2033,10 +2045,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type DesktopMethodInput<Mth> = conditional` — What the page passes to a method: its input schema's input type, else the handler's argument.
 - `type DesktopMethodOutput<Mth> = conditional` — What a method resolves on the page: its output schema's output type, else the handler's result.
 - `interface DesktopMethodShape` — One extension method as the typing reads it: an input schema, an output schema, a handler.
+- `desktopOs(): DesktopOs | undefined` — The operating system this page's Deno Desktop app runs on ("darwin", "windows", "linux", …, Deno's Deno.build.os), or undefined off desktop (the web, iOS, Android, SSR). The desktop runtime hands every page it serves the OS, frames included and under either runtime, so this needs no capability and no bridge call. Read it instead of the injected global, which is private.
+- `type DesktopOs = darwin | linux | windows | android | freebsd | netbsd | aix | solaris | illumos` — The operating system a Deno Desktop app runs on, as Deno spells it (Deno.build.os).
 - `interface DesktopRpcOptions` — Options for desktopRpc.
 - `interface DesktopSchemaTypes<In, Out>` — The slice of a Standard Schema (https://standardschema.dev) the extension typing reads: its input and output types.
-- `desktopWebSocketUrl(path: string): string` — The URL for a WebSocket from this page to its own server at path ("/api/socket"): the runtime's relay under denext's pinned Deno Desktop runtime (desktopWsOrigin), else wss:// / ws:// on the page's own host. Off a page (no location) it returns path as is.
-- `desktopWsOrigin(): string | undefined` — The pinned runtime's WebSocket relay origin (ws://127.0.0.1:<port>) when this page runs in a Deno Desktop window at a custom app origin, else undefined (the web, mobile, the stock desktop runtime, SSR). Only a ws: / wss: origin with no path, query or credentials counts.
+- `desktopWebSocketUrl(path: string): string` — The URL for a WebSocket from this page to its own server at path ("/api/socket", or a bare query "?room=1" for /): the runtime's relay under denext's pinned Deno Desktop runtime (desktopWsUrl; the server then sees GET <path>), else wss:// / ws:// on the page's own host. Off a page (no location) it returns the absolute path as is.
+- `desktopWsUrl(): string | undefined` — The pinned runtime's WebSocket relay URL (ws://127.0.0.1:<port>/.deno-desktop-relay/<token>) when this page runs in a Deno Desktop window at a custom app origin, else undefined (the web, mobile, the stock desktop runtime, SSR). It carries the relay's per-launch token: append a path to it (desktopWebSocketUrl does), and don't hand it to other code.
 - `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
 - `onDesktopEvent<T>(cap: string, event: string, handler: (data: T) => void): () => void` — Call handler for each event the desktop runtime emits for cap: an extension's name (its handlers emit the events it declares with ctx.emit), or a built-in capability that emits events (today only the echo diagnostic's pong). The first subscription opens the event stream and the last unsubscribe closes it; frames that arrived before a handler for that event subscribed are delivered to it once it does. Off desktop it does nothing.
 
@@ -2680,14 +2694,18 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `CameraView(props: CameraViewProps): VNode` — The camera view. With onBarcodeScanned it opens denext's scanner on mount and reports the first code (with a button to scan again after a cancel). Otherwise it shows a live getUserMedia preview (facing, mode, mute, active, zoom, the torch), and its ref takes pictures and records video (see CameraViewHandle).
 - `interface CameraViewHandle` — The ref handle of a CameraView (what Expo's class instance offers).
 - `interface CameraViewProps` — CameraView props.
+- `type DocumentScanningOptions = object` — Options for CameraView.scanDocumentAsync.
+- `type DocumentScanningResult = object` — What CameraView.scanDocumentAsync returns.
 - `type FlashMode = off | on | auto | screen` — How the camera flashes (applied to the torch where the track supports it).
 - `type ImageType = png | jpg` — The image format of a picture.
+- `type LensInfo = object` — A camera (lens) the device has, as getAvailableLensesAsync lists it.
 - `type PermissionExpiration = never | number` — When a permission expires: "never", or a timestamp.
 - `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
 - `interface PhotoResult` — What PictureRef.savePictureAsync resolves with.
 - `class PictureRef` — A picture held in memory until saved: what takePictureAsync({ pictureRef: true }) resolves with.
+- `type RecordingProgress = object` — A recording's progress, for onRecordingProgress.
 - `interface SavePictureOptions` — Options for PictureRef.savePictureAsync.
 - `scanFromURLAsync(url: string, barcodeTypes?: BarcodeType[]): Promise<BarcodeScanningResult[]>` — Decode the barcodes in the image at url with the browser's BarcodeDetector.
 - `interface ScanningOptions` — Options for CameraView.launchScanner.
@@ -2746,6 +2764,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `hideMenu(): void` — Hide the dev menu: there is none here.
 - `openMenu(): void` — Open the dev menu: there is none here.
 - `registerDevMenuItems(_items: ExpoDevMenuItem[]): Promise<void>` — Add items to the dev menu: there is none here, so they are dropped.
+- `setToolsButtonVisible(_visible: boolean): void` — Show or hide the dev menu's floating tools button: there is none here.
 
 ### `denext/expo/device`
 
@@ -2785,9 +2804,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/expo/expo`
 
+- `class CodedError` — Expo's CodedError (expo-modules-core, re-exported by expo): an Error with a code that tells errors apart without subclassing.
 - `createPermissionHook<P, Options>(methods: object): (options?: PermissionHookOptions<Options>) => tuple` — Expo's createPermissionHook: a hook returning [response, request, get] that reads (or, with request: true, requests) the permission on mount.
+- `createSnapshotFriendlyRef<T>(): object` — A ref object ({ current: null }), as Expo's snapshot-friendly ref is.
 - `disableErrorHandling(): void` — Turn off Expo's global error handler (there is none here): does nothing.
 - `class EventEmitter<Events>` — A typed event emitter, as Expo modules use.
+- `type EventSubscription = Subscription` — Expo's name for a listener subscription (EventSubscription in expo-modules-core).
+- `interface ExpoPlatform` — Expo's Platform (expo-modules-core): the web build's, which is what runs here.
 - `fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>` — expo/fetch: the platform's WinterCG fetch (streaming bodies included).
 - `getExpoGoProjectConfig(): null` — The Expo Go project config: none.
 - `installOnUIRuntime(_uiRuntimeHolder?: object): void` — Install Expo Modules on the worklets UI runtime (there is no UI runtime here): does nothing.
@@ -2798,8 +2821,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
+- `Platform: ExpoPlatform` — Expo's Platform: OS is "web" and select picks web, then default (as Expo's web build; React Native's own Platform from react-native is the one that reports the Capacitor shell). The DOM facts are read when asked, so importing it is safe anywhere.
+- `type PlatformSelectOSType = ios | android | macos | windows | web | native | electron | default` — A platform key Platform.select matches (native never matches here).
 - `registerRootComponent<P>(component: Component<P>): void` — Mount component as the app: react-native-web's AppRegistry in React Native mode (the app key main, as Expo registers it), else denext's createRoot.
 - `registerWebModule<T>(moduleImplementation: T | parenthesized, _moduleName?: string): T` — Register a module implemented in JS: a class is instantiated, an object returned as is.
+- `type ReleasingSharedObjectLifecycle<TSharedObject> = object` — How useReleasingSharedObjectWithLifecycle creates, updates and releases.
+- `type ReleasingSharedObjectLifecycleContext = object` — What ReleasingSharedObjectLifecycle's callbacks receive.
 - `reloadAppAsync(_reason?: string): Promise<void>` — Reload the app (the page).
 - `requireNativeModule<T>(moduleName: string): T` — The native module moduleName: the Capacitor plugin of that name inside the iOS/Android shell, or the desktop extension of that name on Deno Desktop. Its functions take Expo's positional arguments and return Promises. Where neither exists (a browser, a test) it returns a stand-in whose functions throw when called, so a module that asks for it at import time still loads (Expo's web build throws at the requireNativeModule call itself).
 - `requireNativeView<P>(moduleName: string, viewName?: string): Component<P>` — A native view as a component: denext/mobile's native view slot for the type nativeViewType names (the DenextNativeViews plugin, denext mobile add native-views). Its JSON props go to the native factory, a native event name calls the on<Name> prop with { nativeEvent }, style styles the slot and its children are drawn over the view. Where that view type is not registered natively (the web), the children render instead.
@@ -2807,8 +2834,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class SharedObject<Events>` — An object shared with native code: a JS object here, released explicitly.
 - `class SharedRef<Type, Events>` — A reference to a native resource (an image, a file): a JS object here.
 - `interface Subscription` — What Expo's add…Listener functions return.
+- `class UnavailabilityError` — Expo's UnavailabilityError: a CodedError (ERR_UNAVAILABLE) for a method or property the running platform does not have. The platform is always web here (the Capacitor shell runs the web build).
 - `useEvent<T>(emitter: Listenable, eventName: string, initialValue?: T | null): T | null` — The latest payload of eventName on emitter.
 - `useEventListener(emitter: Listenable, eventName: string, listener: (...args: never[]) => void): void` — Call listener for each eventName on emitter while mounted.
+- `useReleasingSharedObject<TSharedObject>(factory: () => TSharedObject, dependencies: DependencyList): TSharedObject` — A shared object for the component's lifetime: factory's result, released on unmount and replaced (the old one released) when dependencies change.
+- `useReleasingSharedObjectWithLifecycle<TSharedObject>(lifecycle: ReleasingSharedObjectLifecycle<TSharedObject>, dependencies: DependencyList): TSharedObject` — A shared object for the component's lifetime, made by lifecycle.factory and released (by lifecycle.release, else its release()) on unmount or when the dependencies change. With shouldRecreate returning false, a dependency change calls update on the same object instead. Hiding the component in an <Activity> does not release it. Expo's own semantics.
+- `uuid: UUID` — Expo's uuid: v4() over the platform's CSPRNG, v5(name, namespace) over SHA-1.
+- `interface UUID` — The shape of Expo's uuid export.
 
 ### `denext/expo/file-system`
 
@@ -2825,9 +2857,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DownloadOptions` — Options for File.downloadFileAsync.
 - `enum EncodingType` — How File.write and the readers carry text.
 - `class File` — A file. The instance is a path: it need not exist.
+- `type FileCanPreviewOptions = object` — Options for File.canPreview.
 - `interface FileCreateOptions` — Options for File.create.
+- `type FileDigestAlgorithm = MD5 | SHA-1 | SHA-256 | SHA-384 | SHA-512` — A hash algorithm File.digest takes.
 - `interface FileInfo` — What File.info reports.
 - `enum FileMode` — A file-handle mode (file handles are not provided; kept for API compatibility).
+- `type FilePreviewOptions = object` — Options for File.preview.
 - `class FileSystemEntry` — What File and Directory share: the URI, copy and move.
 - `interface FileWriteOptions` — Options for File.write.
 - `getContentUriAsync(_fileUri: string): Promise<never>`
@@ -2901,16 +2936,19 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/expo/font`
 
 - `enum FontDisplay` — The CSS font-display value.
+- `type FontFaceDefinition = object` — One face of a FontFamilyDefinition.
+- `type FontFamilyDefinition = object` — A font family made of several faces (weights and styles) under one name.
+- `type FontMap = string | Record<string, FontSource> | FontFamilyDefinition[]` — What loadAsync and useFonts take.
 - `interface FontResource` — A font file source with options.
 - `type FontSource = string | number | FontResource | object` — A font source: a URL, a resource, or anything with a uri / localUri (an Asset).
 - `getLoadedFonts(): string[]` — The families loaded through this module.
 - `isLoaded(fontFamily: string): boolean` — Whether fontFamily is loaded.
 - `isLoading(fontFamily: string): boolean` — Whether fontFamily is loading.
-- `loadAsync(fontFamilyOrFontMap: string | Record<string, FontSource>, source?: FontSource): Promise<void>` — Load fonts: one family and its source, or a map of families to sources.
+- `loadAsync(fontFamilyOrFontMap: FontMap, source?: FontSource): Promise<void>` — Load fonts: one family and its source, a map of families to sources, or (SDK 58) font families with several faces each.
 - `unloadAllAsync(): Promise<void>` — Unload every font loaded through this module.
-- `unloadAsync(fontFamilyOrFontMap: string | Record<string, UnloadFontOptions>, _options?: UnloadFontOptions): Promise<void>` — Unload fonts.
-- `type UnloadFontOptions = Pick<FontResource, display>` — Options for unloadAsync.
-- `useFonts(map: string | Record<string, FontSource>): tuple` — Load fonts for a component: [loaded, error].
+- `unloadAsync(fontFamilyOrFontMap: string | Record<string, UnloadFontOptions>, options?: UnloadFontOptions): Promise<void>` — Unload fonts: a family's faces (the ones matching options: its weight, style and display; every face without options), or a map of families to such options.
+- `type UnloadFontOptions = Pick<FontResource, display | weight | style>` — Options for unloadAsync: which faces of the family to remove.
+- `useFonts(map: FontMap): tuple` — Load fonts for a component: [loaded, error].
 
 ### `denext/expo/glass-effect`
 
@@ -3032,6 +3070,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `sendIntent(_action: string, _extras?: SendIntentExtras[]): Promise<void>` — Send an Android intent: not available to a web view.
 - `interface SendIntentExtras` — An Android intent extra (intents are not available here).
 - `interface Subscription` — What Expo's add…Listener functions return.
+- `unwrapDevLaunchURL(url: string): string` — The URL the app should handle for a launch URL that may carry Expo's development launcher commands: the target named by __expo_url (or, on the legacy expo-development-client host, url), else url without its reserved __expo_* parameters. A URL that does not parse, or carries no command, comes back unchanged; a legacy launch URL without a target is "". The same pure function as Expo's.
 - `type URLListener = (event: EventType) => void` — A URL listener.
 - `useLinkingURL(): string | null` — Hook form of getLinkingURL.
 - `useURL(): string | null` — Hook form: the launch URL, then each link that opens the app while mounted.
@@ -3062,7 +3101,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Geocoder` — A geocoding service for geocodeAsync / reverseGeocodeAsync.
 - `enum GeofencingEventType` — A geofencing event (geofencing is not provided).
 - `enum GeofencingRegionState` — A geofence region's state (geofencing is not provided).
-- `getBackgroundPermissionsAsync(): Promise<PermissionResponse>` — The background location permission: always denied here (this shim provides no background location; denext/mobile has watchPositionInBackground).
+- `getBackgroundPermissionsAsync(): Promise<LocationPermissionResponse>` — The background location permission: always denied here (this shim provides no background location; denext/mobile has watchPositionInBackground).
 - `getCurrentPositionAsync(options?: LocationOptions): Promise<LocationObject>` — The current position.
 - `getForegroundPermissionsAsync(): Promise<LocationPermissionResponse>` — The foreground location permission.
 - `getLastKnownPositionAsync(options?: LocationLastKnownOptions): Promise<LocationObject | null>` — The last known position, or null: the last fix this app got (within maxAge and requiredAccuracy), else a cached fix from the platform when it has one.
@@ -3093,7 +3132,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type PermissionHookOptions<Options> = Options & object` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
 - `enum PermissionStatus` — A permission's state, as expo-modules-core reports it.
-- `requestBackgroundPermissionsAsync(): Promise<PermissionResponse>` — Ask for background location: always denied here (this shim provides no background location).
+- `requestBackgroundPermissionsAsync(): Promise<LocationPermissionResponse>` — Ask for background location: always denied here (this shim provides no background location).
 - `requestForegroundPermissionsAsync(): Promise<LocationPermissionResponse>` — Ask for the foreground location permission.
 - `reverseGeocodeAsync(location: Pick<LocationGeocodedLocation, latitude | longitude>): Promise<LocationGeocodedAddress[]>` — Addresses for coordinates, through the geocoder set with setGeocoder.
 - `setGeocoder(next: Geocoder | null): void` — Plug in a geocoding service (denext only; Expo's native geocoders have no WebView equivalent). Pass null to remove it.
@@ -3108,6 +3147,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/expo/maps`
 
+- `enum AppleMapPointOfInterestCategory` — Apple Maps' point-of-interest categories (MapKit's MKPointOfInterestCategory), for a map's point-of-interest filter (accepted and ignored by the native map view here).
 - `AppleMaps: object` — Apple Maps: the view stand-in and the enums.
 - `enum AppleMapsColorScheme` — Apple Maps' color schemes.
 - `enum AppleMapsContourStyle` — Apple Maps' polyline contour styles.
@@ -3133,9 +3173,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `addAssetsToAlbumAsync(_assets: AssetRef[] | AssetRef, _album: AlbumRef, _copy?: boolean): Promise<boolean>` — Add assets to an album: not provided.
 - `addListener(_listener: (event: object) => void): Subscription` — Listen for library changes: never fires here.
 - `class Album` — An album in the photo library.
+- `type AlbumMetadata = object` — An album's id, title and kind, as Album.getAlbumsMetadata lists them.
 - `albumNeedsMigrationAsync(_album: AlbumRef): Promise<boolean>` — Whether an album needs Android's scoped-storage migration: never here.
+- `enum AlbumType` — The kind of an album: one the user (or an app) made, or a system smart album.
 - `class Asset` — An asset in the photo library.
 - `enum AssetField` — The fields a Query filters and sorts by.
+- `type AssetUriOptions = object` — Options for Asset.getUri.
+- `enum AssetUriVersion` — Which version of an asset getUri asks for (both are the listing's thumbnail here).
 - `createAlbumAsync(albumName: string, _asset?: AssetRef, _copyAsset?: boolean, initialAssetLocalUri?: string): Promise<Album>` — Make an album (or return the one of that name), and save initialAssetLocalUri into it.
 - `createAssetAsync(localUri: string, album?: AlbumRef): Promise<Asset>` — Save localUri to the library, into album when given.
 - `deleteAlbumsAsync(_albums: AlbumRef[] | AlbumRef, _assetRemove?: boolean): Promise<boolean>` — Delete albums: not provided.
@@ -3290,6 +3334,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type NotificationChannelInput = Partial<Omit<NotificationChannel, id>> & object` — What setNotificationChannelAsync takes.
 - `interface NotificationContent` — A notification's content.
 - `type NotificationContentInput = object` — What a scheduled notification shows.
+- `type NotificationDelivery = bestEffort | alarmClock` — How exactly an Android notification fires (see DateTriggerInput.delivery).
 - `interface NotificationHandler` — Decides how foreground notifications are presented.
 - `interface NotificationPermissionsRequest` — Which permissions to request (the iOS flags are accepted and ignored).
 - `interface NotificationPermissionsStatus` — A permission answer with the platform details.
@@ -3384,7 +3429,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `canUseBiometricAuthentication(): boolean` — Whether items can be protected with biometrics: inside the iOS/Android shell with the biometric plugin installed (denext mobile add biometrics). Synchronous, so it cannot tell whether a biometric is enrolled; authenticateBiometric reports that.
 - `deleteItemAsync(key: string, options?: SecureStoreOptions): Promise<void>` — Delete key (a missing key is not an error).
 - `getItemAsync(key: string, options?: SecureStoreOptions): Promise<string | null>` — The value stored under key.
-- `isAvailableAsync(): Promise<boolean>` — Whether the store is available: always, here (the web fallback is IndexedDB).
+- `isAvailableAsync(): Promise<boolean>` — Whether a secure store is available: the iOS Keychain / Android Keystore plugin in the shell, or the OS keychain in a Deno Desktop window. false on the web, where values would land in plain IndexedDB (Expo's web build has no secure store either).
 - `type KeychainAccessibilityConstant = number` — A Keychain accessibility class (accepted and ignored here).
 - `interface SecureStoreOptions` — Options every call takes.
 - `setItemAsync(key: string, value: string, options?: SecureStoreOptions): Promise<void>` — Store value under key.
@@ -3573,8 +3618,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `isDynamicColorAvailable: boolean` — Whether Material You dynamic color is available: never in a web view.
 - `Items: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's Items: its children in a column.
 - `LargeFloatingActionButton: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's LargeFloatingActionButton: a <button> that calls onPress.
-- `LazyColumn: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's LazyColumn: its children in a column.
-- `LazyRow: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's LazyRow: its children in a row.
+- `LazyColumn: parenthesized & object` — Stand-in for Jetpack Compose's LazyColumn (and LazyColumn.Items): a column.
+- `LazyItems: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's LazyItems: a row per data item, laid out by the LazyColumn / LazyRow around it.
+- `LazyRow: parenthesized & object` — Stand-in for Jetpack Compose's LazyRow (and LazyRow.Items): its children in a row.
 - `LinearProgressIndicator: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's LinearProgressIndicator: its children only.
 - `LinearWavyProgressIndicator: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's LinearWavyProgressIndicator: its children only.
 - `ListItem: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's ListItem: its children in a column.
@@ -3625,7 +3671,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useMaterialColors(_options?: unknown): Record<string, string>` — Stand-in for useMaterialColors (a hook): an empty palette (Material You colors come from the Android system, which a web view cannot read).
 - `useNativeState<T>(initialValue: T): ObservableState<T>` — Stand-in for useNativeState: a value holder kept across renders. There are no native views to observe it, so a write does not re-render anything.
 - `VerticalDivider: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's VerticalDivider: its children only.
-- `VerticalSlider: (props: StubProps) => VNode` — Stand-in for Jetpack Compose's VerticalSlider: its children only.
+- `VerticalSlider: parenthesized & object` — Stand-in for Jetpack Compose's VerticalSlider: its children only.
 
 ### `denext/expo/ui/jetpack-compose/modifiers`
 
@@ -3639,6 +3685,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `clickable: (...args: unknown[]) => StubModifier` — Stand-in for the clickable modifier: an inert config.
 - `clip: (...args: unknown[]) => StubModifier` — Stand-in for the clip modifier: an inert config.
 - `combinedClickable: (...args: unknown[]) => StubModifier` — Stand-in for the combinedClickable modifier: an inert config.
+- `cornerRadius: (...args: unknown[]) => StubModifier` — Stand-in for the cornerRadius modifier: an inert config.
 - `createModifier(type: string, params?: Record<string, unknown>): StubModifier` — A modifier config of type (inert here).
 - `createModifierWithEventListener(type: string, eventListener: (args: unknown) => void, params?: Record<string, unknown>): StubModifier` — A modifier config of type with an event listener (never called here).
 - `createViewModifierEventListener: (...args: unknown[]) => StubModifier` — Stand-in for the createViewModifierEventListener modifier: an inert config.
@@ -3652,7 +3699,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `horizontalScroll: (...args: unknown[]) => StubModifier` — Stand-in for the horizontalScroll modifier: an inert config.
 - `imePadding: (...args: unknown[]) => StubModifier` — Stand-in for the imePadding modifier: an inert config.
 - `innerShadow: (...args: unknown[]) => StubModifier` — Stand-in for the innerShadow modifier: an inert config.
+- `IntrinsicSize: object` — Compose's intrinsic sizes, for width / height (IntrinsicSize.Min).
 - `keyframes: (...args: unknown[]) => StubModifier` — Stand-in for the keyframes modifier: an inert config.
+- `maskClip: (...args: unknown[]) => StubModifier` — Stand-in for the maskClip modifier: an inert config.
 - `matchParentSize: (...args: unknown[]) => StubModifier` — Stand-in for the matchParentSize modifier: an inert config.
 - `menuAnchor: (...args: unknown[]) => StubModifier` — Stand-in for the menuAnchor modifier: an inert config.
 - `offset: (...args: unknown[]) => StubModifier` — Stand-in for the offset modifier: an inert config.
@@ -3714,8 +3763,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `Items: (props: StubProps) => VNode` — Stand-in for SwiftUI's Items: its children in a column.
 - `Label: (props: StubProps) => VNode` — Stand-in for SwiftUI's Label: its children as text.
 - `LabeledContent: (props: StubProps) => VNode` — Stand-in for SwiftUI's LabeledContent: its children only.
-- `LazyHStack: (props: StubProps) => VNode` — Stand-in for SwiftUI's LazyHStack: its children in a row.
-- `LazyVStack: (props: StubProps) => VNode` — Stand-in for SwiftUI's LazyVStack: its children in a column.
+- `LazyHStack: parenthesized & object` — Stand-in for SwiftUI's LazyHStack (and LazyHStack.ForEach): its children in a row.
+- `LazyHStackForEach: (props: StubProps) => VNode` — Stand-in for SwiftUI's LazyHStackForEach: a row per data item, side by side.
+- `LazyVStack: parenthesized & object` — Stand-in for SwiftUI's LazyVStack (and LazyVStack.ForEach): its children in a column.
+- `LazyVStackForEach: (props: StubProps) => VNode` — Stand-in for SwiftUI's LazyVStackForEach: a row per data item, in a column.
 - `Link: (props: StubProps) => VNode` — Stand-in for SwiftUI's Link: a <button> that calls onPress.
 - `List: (props: StubProps) => VNode` — Stand-in for SwiftUI's List: its children in a column.
 - `ListForEach: (props: StubProps) => VNode` — Stand-in for SwiftUI's ListForEach: its children in a column.
@@ -3724,7 +3775,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `Namespace: (props: StubProps) => VNode` — Stand-in for SwiftUI's Namespace: its children only.
 - `NavigationDestination: (props: StubProps) => VNode` — Stand-in for SwiftUI's NavigationDestination: its children in a column.
 - `NavigationLink: (props: StubProps) => VNode` — Stand-in for SwiftUI's NavigationLink: a <button> that calls onPress.
-- `NavigationSplitView: (props: StubProps) => VNode` — Stand-in for SwiftUI's NavigationSplitView: its children in a column.
+- `NavigationSplitView: parenthesized & object` — Stand-in for SwiftUI's NavigationSplitView (with its Sidebar, Content and Detail columns): its columns one under the other.
 - `NavigationStack: (props: StubProps) => VNode` — Stand-in for SwiftUI's NavigationStack: its children in a column.
 - `interface ObservableState<T>` — A value shared with native views: here a plain holder (writes do not re-render).
 - `Overlay: (props: StubProps) => VNode` — Stand-in for SwiftUI's Overlay: its children in a column.
@@ -3750,7 +3801,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `Text: (props: StubProps) => VNode` — Stand-in for SwiftUI's Text: its children as text.
 - `TextField: (props: StubProps) => VNode` — Stand-in for SwiftUI's TextField: its children only.
 - `Toggle: (props: StubProps) => VNode` — Stand-in for SwiftUI's Toggle: its children only.
-- `Toolbar: (props: StubProps) => VNode` — Stand-in for SwiftUI's Toolbar: its children in a column.
+- `Toolbar: parenthesized & object` — Stand-in for SwiftUI's Toolbar (and Toolbar.Content): its children in a column.
 - `ToolbarItem: (props: StubProps) => VNode` — Stand-in for SwiftUI's ToolbarItem: its children only.
 - `Trigger: (props: StubProps) => VNode` — Stand-in for SwiftUI's Trigger: its children only.
 - `UnevenRoundedRectangle: (props: StubProps) => VNode` — Stand-in for SwiftUI's UnevenRoundedRectangle: its children only.
@@ -3877,8 +3928,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `overlay: (...args: unknown[]) => StubModifier` — Stand-in for the overlay modifier: an inert config.
 - `padding: (...args: unknown[]) => StubModifier` — Stand-in for the padding modifier: an inert config.
 - `pickerStyle: (...args: unknown[]) => StubModifier` — Stand-in for the pickerStyle modifier: an inert config.
+- `preferredColorScheme: (...args: unknown[]) => StubModifier` — Stand-in for the preferredColorScheme modifier: an inert config.
 - `presentationBackground: (...args: unknown[]) => StubModifier` — Stand-in for the presentationBackground modifier: an inert config.
 - `presentationBackgroundInteraction: (...args: unknown[]) => StubModifier` — Stand-in for the presentationBackgroundInteraction modifier: an inert config.
+- `presentationCornerRadius: (...args: unknown[]) => StubModifier` — Stand-in for the presentationCornerRadius modifier: an inert config.
 - `presentationDetents: (...args: unknown[]) => StubModifier` — Stand-in for the presentationDetents modifier: an inert config.
 - `presentationDragIndicator: (...args: unknown[]) => StubModifier` — Stand-in for the presentationDragIndicator modifier: an inert config.
 - `presentationSizing: (...args: unknown[]) => StubModifier` — Stand-in for the presentationSizing modifier: an inert config.
@@ -3980,7 +4033,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `dismissAuthSession(): void` — Dismiss the auth session: not controllable here (it ends on redirect or cancel).
 - `dismissBrowser(): Promise<object>` — Dismiss the in-app browser: not controllable here.
 - `getCustomTabsSupportingBrowsersAsync(): Promise<WebBrowserCustomTabsResults>` — The browsers supporting Custom Tabs (Android): none are listed here.
-- `maybeCompleteAuthSession(_options?: WebBrowserCompleteAuthSessionOptions): WebBrowserCompleteAuthSessionResult` — On a web redirect page opened by openAuthSessionAsync: hand this page's URL back to the opener and close the popup.
+- `maybeCompleteAuthSession(options?: WebBrowserCompleteAuthSessionOptions): WebBrowserCompleteAuthSessionResult` — On a web redirect page opened by openAuthSessionAsync: hand this page's URL back to the opener and close the popup — only in the auth-session popup itself, and (unless skipRedirectCheck) only when this page's URL starts with the redirectUrl that openAuthSessionAsync was given, as Expo checks.
 - `mayInitWithUrlAsync(_url: string, _browserPackage?: string): Promise<ServiceActionResult>` — Pre-load a URL in a Custom Tabs browser (Android): nothing to do here.
 - `openAuthSessionAsync(url: string, redirectUrl?: string | null, options?: AuthSessionOpenOptions): Promise<WebBrowserAuthSessionResult>` — Sign in through an auth session: open url and resolve with the URL the provider redirects to.
 - `openBrowserAsync(url: string, _options?: WebBrowserOpenOptions): Promise<WebBrowserResult>` — Open url in the in-app browser (native) or a new window (web).
@@ -4003,7 +4056,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `addUserInteractionListener(_listener: (event: UserInteractionEvent) => void): Subscription` — Listen for widget taps: never called here (the generated widgets open the app).
 - `after(date: Date): object` — A dismissal policy: remove the ended activity at date (iOS caps it at four hours).
 - `createLiveActivity<T>(name: string, liveActivity: LiveActivityComponent<T>): LiveActivityFactory<T>` — Declare a Live Activity name.
-- `createWidget<PropsType, ConfigurationType>(name: string, widget: (props: PropsType, context: WidgetEnvironment<ConfigurationType>) => unknown): Widget<PropsType, ConfigurationType>` — Declare a widget.
+- `createWidget<PropsType, ConfigurationType>(name: string, widget: (props: PropsType, context: WidgetEnvironment<ConfigurationType>) => unknown, initialProps?: PropsType): Widget<PropsType, ConfigurationType>` — Declare a widget.
 - `class LiveActivity<T>` — A running Live Activity.
 - `type LiveActivityComponent<T> = (props: T, environment: Record<string, unknown>) => unknown` — A Live Activity layout function (never rendered here).
 - `type LiveActivityDismissalPolicy = default | immediate | object` — How an ended Live Activity is dismissed: at once, the system's default, or at a time.
@@ -4013,6 +4066,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Subscription` — What Expo's add…Listener functions return.
 - `interface UserInteractionEvent` — A widget interaction event (never emitted here).
 - `class Widget<PropsType, _ConfigurationType>` — A home-screen widget: its updates store the JSON snapshot the native widget renders.
+- `type WidgetConfigurationEnum = object` — One runtime option of a configurable widget's enum parameter.
 - `type WidgetEnvironment<T> = object` — What a widget layout receives besides its props (never rendered here).
 - `widgetsDirectory: literal` — The shared widgets folder: none here (widgets read the JSON snapshot, not files).
 - `interface WidgetTimelineEntry<T>` — A widget's timeline entry.
