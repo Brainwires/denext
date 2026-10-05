@@ -5,7 +5,8 @@
 // runtime's (`runtime/ops/desktop_update/embedded.rs`):
 //
 // - Every artifact but an AppImage: `deno desktop` compiles deno.json `version` into the app's
-//   runtime library (`<App>.dll` next to `<App>.exe`, `<App>.so` next to a Linux `<App>`,
+//   runtime library (`<App>.dll` next to `<App>.exe`, or `<App>.runtime.dll` where the CEF backend's
+//   `<App>.exe` is CEF's bootstrap and `<App>.dll` its host; `<App>.so` next to a Linux `<App>`,
 //   `<exe>.dylib` or `libruntime.dylib` in a macOS bundle) as the `app_version` of its standalone
 //   metadata: the magic `d3n0l4nd`, a little-endian u64 length, then the metadata JSON. It must
 //   equal the offered version (semver precedence: build metadata aside).
@@ -110,14 +111,21 @@ async function bundleLibraries(app: string): Promise<{ libs: string[]; plist: st
   };
 }
 
-/** An app directory's runtime libraries: `X.dll` beside `X.exe` (Windows), `X.so` beside `X`. */
+/**
+ * An app directory's runtime libraries: `X.dll` or `X.runtime.dll` beside `X.exe` (Windows; the
+ * CEF backend's `X.dll` is its host, which carries no app metadata and is passed over), `X.so`
+ * beside `X`.
+ */
 async function appDirLibraries(dir: string, windows: boolean): Promise<string[]> {
   const libs: string[] = [];
   for await (const e of Deno.readDir(dir)) {
     if (!e.isFile) continue;
     const ext = windows ? ".dll" : ".so";
     if (!e.name.toLowerCase().endsWith(ext)) continue;
-    const stem = e.name.slice(0, -ext.length);
+    let stem = e.name.slice(0, -ext.length);
+    if (windows && stem.toLowerCase().endsWith(".runtime")) {
+      stem = stem.slice(0, -".runtime".length);
+    }
     if (await isFile(join(dir, windows ? `${stem}.exe` : stem))) libs.push(join(dir, e.name));
   }
   return libs.sort();

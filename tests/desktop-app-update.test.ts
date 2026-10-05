@@ -1045,6 +1045,19 @@ Deno.test("checkArtifactVersion: each layout's runtime library, and Info.plist o
       Error,
       "version_mismatch",
     );
+    // The CEF layout behind CEF's bootstrap: <App>.dll is the host (no metadata), the runtime is
+    // <App>.runtime.dll.
+    const cef = join(dir, "cef");
+    await Deno.mkdir(cef);
+    await Deno.writeFile(join(cef, "My App.exe"), new Uint8Array(4));
+    await Deno.writeFile(join(cef, "My App.dll"), new TextEncoder().encode("MZ the CEF host"));
+    await Deno.writeFile(join(cef, "My App.runtime.dll"), library(metadata("3.0.0")));
+    await checkArtifactVersion(cef, winKey, "3.0.0");
+    await assertRejects(
+      () => checkArtifactVersion(cef, winKey, "3.0.1"),
+      Error,
+      "built as 3.0.0",
+    );
 
     // Linux: <App>.so beside <App>.
     const linux = join(dir, "linux");

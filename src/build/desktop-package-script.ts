@@ -23,7 +23,8 @@ import {
   msiProductVersion,
   readDenoJson,
 } from "./desktop-installers.ts";
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { peVersionWords, stampPeResources } from "./pe-resources.ts";
+import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 
 /** A package script's parsed command line. */
 export interface DesktopPackageArgs {
@@ -544,8 +545,66 @@ export async function buildDesktopBundle(
   const cmd = await desktopBundleCommand(entryUrl, os, o);
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
   await desktopRun(cmd, await desktopRuntimeEnv(entryUrl, o.target));
+  if (os === "windows") {
+    await desktopWindowsCefLayout(
+      o.out,
+      await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl)),
+    );
+  }
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
   return o.out;
+}
+
+/**
+ * The Windows CEF bundle layout behind CEF's bootstrap. A runtime whose laufey runs web content
+ * in Chromium's sandbox on Windows ships CEF's `bootstrap.exe` as laufey's CEF executable and the
+ * CEF host as `laufey.dll` beside it. The stock `deno desktop` (2.9.7) names the executable
+ * `<App>.exe` and writes the runtime to `<App>.dll`, but the bootstrap loads its client, the
+ * host, as `<App>.dll`, and the host loads the runtime as `<App>.runtime.dll`. So this moves
+ * `<App>.dll` to `<App>.runtime.dll` and `laufey.dll` to `<App>.dll`, and gives `<App>.exe` the
+ * app's icon (`AppIcon.ico`, when the bundle has one) and a version resource naming the app in
+ * place of CEF's ("CEF bootstrap" in Task Manager otherwise). Signing comes after this.
+ *
+ * A bundle without `laufey.dll` (the webview backend; a CEF runtime without the sandbox, such as
+ * denext.9) is left as it is.
+ *
+ * @param bundleDir The bundle directory `deno desktop` wrote (`dist/<name>-<label>`).
+ * @param meta The package metadata: the version resource's name, publisher and version.
+ * @returns Whether the bundle had the CEF bootstrap layout (and was rearranged).
+ */
+export async function desktopWindowsCefLayout(
+  bundleDir: string,
+  meta: Pick<DesktopPackageMeta, "name" | "publisher" | "version">,
+): Promise<boolean> {
+  const host = join(bundleDir, "laufey.dll");
+  if (!(await Deno.stat(host).then((s) => s.isFile, () => false))) return false;
+  const stem = basename(bundleDir);
+  if (stem.toLowerCase() === "laufey") {
+    throw new Error(`a CEF app can't be named "laufey": its host library takes that name`);
+  }
+  const exe = join(bundleDir, `${stem}.exe`);
+  const runtime = join(bundleDir, `${stem}.dll`);
+  await Deno.rename(runtime, join(bundleDir, `${stem}.runtime.dll`));
+  await Deno.rename(host, runtime);
+  const icon = await Deno.readFile(join(bundleDir, "AppIcon.ico")).catch(() => undefined);
+  const version = peVersionWords(meta.version);
+  await Deno.writeFile(
+    exe,
+    stampPeResources(await Deno.readFile(exe), {
+      icon,
+      version,
+      strings: {
+        CompanyName: meta.publisher,
+        FileDescription: meta.name,
+        FileVersion: version.join("."),
+        InternalName: stem,
+        OriginalFilename: `${stem}.exe`,
+        ProductName: meta.name,
+        ProductVersion: meta.version,
+      },
+    }),
+  );
+  return true;
 }
 
 /** How many files one `signtool sign` call takes (keeps the command line short on Windows). */

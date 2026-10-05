@@ -21,7 +21,7 @@
 // A single command whose first positional selects the action, since the framework
 // models flat verbs; the second positional is the project dir.
 
-import { dirname, join, resolve } from "@std/path";
+import { dirname, join, resolve, toFileUrl } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { runBuildStep, spawnDenoAndExit } from "../shared.ts";
 import { startOrAttachDevServer, waitForShutdownSignal } from "../dev-attach.ts";
@@ -51,6 +51,8 @@ import {
 } from "../../build/desktop-runtime.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
+import { desktopAppName, desktopWindowsCefLayout } from "../../build/desktop-package-script.ts";
+import { desktopPackageMeta } from "../../build/desktop-installers.ts";
 import { desktopPnpmWorkspaceHint } from "../../build/desktop-deno-flags.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
@@ -283,6 +285,12 @@ function hostDesktopOs(): DesktopOs {
 interface BuiltDesktopWindow {
   readonly exe: string;
   readonly scratch: string;
+  /**
+   * The Windows CEF layout behind CEF's bootstrap (`desktopWindowsCefLayout`): the bootstrap
+   * moves the process to the executable's directory, so the launch names the project directory
+   * in `LAUFEY_CWD` for the host to change back to.
+   */
+  readonly bootstrap: boolean;
 }
 
 /**
@@ -320,7 +328,14 @@ async function buildDesktopWindow(
       stderr: "inherit",
     }).output();
     if (code !== 0) throw new Error(`deno desktop exited with code ${code}`);
-    return { exe: await desktopLaunchExecutable(os, plan.bundle), scratch };
+    // A CEF runtime with Chromium's sandbox on Windows: the bootstrap layout, as packaging does.
+    const scriptUrl = toFileUrl(join(dir, "scripts", "run.ts")).href;
+    const bootstrap = os === "windows" &&
+      await desktopWindowsCefLayout(
+        plan.bundle,
+        await desktopPackageMeta(scriptUrl, await desktopAppName(scriptUrl)),
+      );
+    return { exe: await desktopLaunchExecutable(os, plan.bundle), scratch, bootstrap };
   } catch (err) {
     await removeScratch(scratch);
     throw err;
@@ -343,7 +358,7 @@ function launchDesktopWindow(
 ): DesktopWindow & { readonly code: Promise<number> } {
   const child = new Deno.Command(built.exe, {
     cwd: dir,
-    env,
+    env: built.bootstrap ? { ...env, LAUFEY_CWD: resolve(dir) } : env,
     stdin: "null",
     stdout: "inherit",
     stderr: "inherit",

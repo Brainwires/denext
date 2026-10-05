@@ -77,6 +77,16 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Changed
 
+- **Windows CEF bundles take the layout of CEF's bootstrap**, for a runtime whose CEF backend runs
+  web content in Chromium's sandbox on Windows (its laufey ships CEF's `bootstrap.exe` as the
+  executable and the host as `laufey.dll`): the Windows package script and `denext desktop run` /
+  `dev` move the runtime to `<App>.runtime.dll` and the host to `<App>.dll` (the client library the
+  bootstrap loads), and give `<App>.exe` the app's icon and a version resource naming the app in
+  place of CEF's (written in TypeScript, so a Windows app still packages from any host); the
+  signing step then signs both. `publish-update`'s version check reads `<App>.runtime.dll` too, and
+  `desktop run` / `dev` hand the window the project directory in `LAUFEY_CWD` (the bootstrap starts
+  the process in the executable's directory). A bundle from a runtime without it (denext.9, the
+  webview backend) is left as it is.
 - **A tray icon follows the session instead of assuming one can be shown.** `appCapabilities().tray`
   is `false` where the runtime's probe finds no tray host (stock GNOME without the AppIndicator
   extension), with the runtime's `trayReason`; `createTray` then rejects `unsupported` with the
