@@ -16,6 +16,16 @@ and this project adheres to
 
 ### Changed
 
+- **The pinned Deno Desktop runtime is 2.9.7-denext.9.** `src/build/desktop-runtime-pin.json`
+  points at the `denext-runtime-v2.9.7-denext.9` release (laufey `1d1ae22`, API 44), so
+  `denext desktop` and the package scripts download it. It carries the contract below: the
+  relay's per-launch token, the scheme bridge's cross-origin mark, bindings limited to the app's
+  own documents, the unscoped `--allow-sys` requirement, and the updater's `expiresAt`,
+  `sequence` and `version_mismatch` checks. Its single-instance helper and worker launches run
+  headless, so the host and runtime classifiers agree. The
+  [runtime releases](https://denext.dev/docs/desktop-runtime#runtime-releases) table marks it the
+  current pin.
+
 - **Deno Desktop: denext adopts the runtime 2.9.7-denext.9 contract.** These need that runtime
   and do not work with an older one:
   - **The page's WebSockets dial the relay with its per-launch token.** The runtime publishes
