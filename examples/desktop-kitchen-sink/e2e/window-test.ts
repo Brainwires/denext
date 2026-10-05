@@ -684,6 +684,21 @@ async function startUpdateServer(
 
 // --- launching ---------------------------------------------------------------------------------
 
+/** The packaged app's backend (set once the bundle is known), for the page's skip reasons. */
+let appBackend: "webview" | "cef" | null = null;
+
+/**
+ * The Linux session the app runs in: `XDG_SESSION_TYPE`, else `WAYLAND_DISPLAY` / `DISPLAY`
+ * (`null` off Linux). The page prefers the runtime's own probe and falls back to this.
+ */
+function linuxSessionType(): "wayland" | "x11" | "tty" | null {
+  if (OS !== "linux") return null;
+  const type = Deno.env.get("XDG_SESSION_TYPE");
+  if (type === "wayland" || type === "x11" || type === "tty") return type;
+  if (Deno.env.get("WAYLAND_DISPLAY")) return "wayland";
+  return Deno.env.get("DISPLAY") ? "x11" : null;
+}
+
 /** What the app reads at launch to know the runner started it (see `desktop/kitchen.ts`). */
 async function writeRunnerState(
   phase: "main" | "update" | "trusted",
@@ -693,8 +708,51 @@ async function writeRunnerState(
   await Deno.mkdir(dir, { recursive: true });
   await Deno.writeTextFile(
     join(dir, "kitchen-sink-runner.json"),
-    JSON.stringify({ out: SCRATCH, phase, updateBase }),
+    JSON.stringify({
+      out: SCRATCH,
+      phase,
+      updateBase,
+      sessionType: linuxSessionType(),
+      backend: appBackend,
+    }),
   );
+}
+
+/** A command's trimmed stdout, or `null` when it cannot run or fails. */
+async function stdoutOf(cmd: string[]): Promise<string | null> {
+  try {
+    const out = await new Deno.Command(cmd[0], {
+      args: cmd.slice(1),
+      stdin: "null",
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    return out.success ? new TextDecoder().decode(out.stdout).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Linux: warn when one of this user's logind sessions is locked (a locked screen keeps the window
+ * from the focus, so the clipboard and sizing checks fail). Never unlocks it.
+ */
+async function warnIfScreenLocked(): Promise<void> {
+  if (OS !== "linux") return;
+  const uid = String(Deno.uid());
+  const sessions = await stdoutOf(["loginctl", "list-sessions", "--no-legend"]);
+  for (const line of sessions?.split("\n") ?? []) {
+    const [id, sessionUid] = line.trim().split(/\s+/);
+    if (!id || sessionUid !== uid) continue;
+    const locked = await stdoutOf(["loginctl", "show-session", id, "-p", "LockedHint", "--value"]);
+    if (locked === "yes") {
+      log(
+        `WARNING: screen is locked (logind session ${id}): focus-dependent checks (clipboard, ` +
+          "sizing) will fail",
+      );
+      return;
+    }
+  }
 }
 
 /** The app's environment: the stand-in browser first on PATH. */
@@ -1208,6 +1266,8 @@ async function main(): Promise<void> {
     const bundle = bundleIn(join(ROOT, "dist"));
     const exe = await executableOf(bundle);
     log(`app: ${exe}`);
+    appBackend = (await appUpdatePlatformKey(bundle)).includes("-cef") ? "cef" : "webview";
+    await warnIfScreenLocked();
     const update = withUpdate ? bundleIn(UPDATE_DIST) : null;
     if (update && !(await exists(update))) {
       throw new Error(`no update build at ${update} (package without --no-package)`);

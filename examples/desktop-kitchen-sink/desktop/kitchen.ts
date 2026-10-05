@@ -51,6 +51,10 @@ interface RunnerState {
   readonly phase: string;
   /** The loopback base URL the signed update manifests are served from. */
   readonly updateBase: string | null;
+  /** The Linux session as the runner sees it (`XDG_SESSION_TYPE` / `WAYLAND_DISPLAY`). */
+  readonly sessionType: "wayland" | "x11" | "tty" | null;
+  /** The packaged app's backend (the runner looks for libcef in the bundle). */
+  readonly backend: "webview" | "cef" | null;
 }
 
 /** The runner's state, read once per launch (`null` when the app was opened by hand). */
@@ -69,6 +73,11 @@ function readRunnerState(dataDir: string): Promise<RunnerState | null> {
           ? trustedPhase()
           : s.phase,
         updateBase: typeof s.updateBase === "string" ? s.updateBase : null,
+        sessionType: s.sessionType === "wayland" || s.sessionType === "x11" ||
+            s.sessionType === "tty"
+          ? s.sessionType
+          : null,
+        backend: s.backend === "webview" || s.backend === "cef" ? s.backend : null,
       };
     },
     () => null,
@@ -205,6 +214,9 @@ export default defineDesktopExtension({
           // `desktop.app.origin`: the checks compare the page against the configured origin, so a
           // renamed copy of the kitchen sink (another identifier and scheme) passes too.
           appOrigin: config.desktop.app.origin ?? "",
+          // The runner's session and backend facts, for a runtime that cannot report them itself.
+          sessionType: state?.sessionType ?? null,
+          backend: state?.backend ?? null,
         };
       },
     },

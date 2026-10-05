@@ -96,6 +96,13 @@ export interface KitchenSetup {
   readonly passkeyRpIds: readonly string[];
   /** `desktop.app.origin` (e.g. `kitchensink://app`). */
   readonly appOrigin: string;
+  /**
+   * The runner's view of the Linux session (`XDG_SESSION_TYPE`, else `WAYLAND_DISPLAY` /
+   * `DISPLAY`), for a runtime whose own probe answers `"unknown"`; `null` elsewhere or by hand.
+   */
+  readonly sessionType: "wayland" | "x11" | "tty" | null;
+  /** The packaged app's backend as the runner found it; `null` when the app was opened by hand. */
+  readonly backend: "webview" | "cef" | null;
 }
 
 /** One check's outcome. */
@@ -220,6 +227,23 @@ async function rejection(p: Promise<unknown>): Promise<string> {
     return String((err as { code?: unknown }).code ?? (err as Error).message);
   }
   throw new Error("expected the call to be refused, but it succeeded");
+}
+
+/**
+ * A CEF window in a Wayland session: the runtime's own session probe, else the runner's (a runtime
+ * before 2.9.7-denext.10 answers `"unknown"`); the runner's backend, else CEF's cookie store (only
+ * CEF reports one).
+ */
+function cefOnWayland(
+  caps: Awaited<ReturnType<typeof windowCapabilities>>,
+  setup: KitchenSetup,
+): boolean {
+  const session = caps.sessionType === "unknown" || caps.sessionType === null
+    ? setup.sessionType
+    : caps.sessionType;
+  const cef = setup.backend === "cef" ||
+    caps.cookieEncryption === "os" || caps.cookieEncryption === "basic";
+  return session === "wayland" && cef;
 }
 
 const near = (a: number, b: number) => Math.abs(a - b) <= 2;
@@ -496,7 +520,6 @@ const windowChecks: Check[] = [
         "sizeConstraints",
         "screens",
         "closeGuard",
-        "fileDrop",
       ] as const
     ) {
       eq(caps[k], true, `windowCapabilities().${k}`);
@@ -506,6 +529,20 @@ const windowChecks: Check[] = [
     assert(state.bounds && state.bounds.width > 0, "no window bounds");
     await setWindowTitle("denext kitchen sink — running checks");
     return `${state.bounds.width}x${state.bounds.height}`;
+  }],
+  ["window: file drop (onFileDrop fires)", async ({ setup }) => {
+    const caps = await windowCapabilities();
+    if (caps.fileDrop !== true && cefOnWayland(caps, setup)) {
+      // laufey docs/drag-and-drop.md: CEF hands drag data only to Alloy-style browsers (laufey's
+      // are Chrome style), and under Wayland there is no drag source to ask for the paths.
+      const reason = typeof caps.fileDropReason === "string" && caps.fileDropReason
+        ? caps.fileDropReason
+        : "CEF under Wayland: CEF delivers drag data only to Alloy-style browsers (laufey's are " +
+          "Chrome style) and Wayland has no drag source to ask for the paths";
+      throw new Skip(reason);
+    }
+    eq(caps.fileDrop, true, "windowCapabilities().fileDrop");
+    return "fileDrop";
   }],
   ["window: screens", async () => {
     const screens = await getScreens();
@@ -1582,7 +1619,16 @@ const appChecks: Check[] = [
     const caps = await shortcutCapabilities();
     if (!caps.globalShortcuts) throw new Skip("no global shortcuts in this session");
     let pressed = 0;
-    const s = await registerShortcut("CommandOrControl+Alt+Shift+F9", () => pressed++);
+    const s = await registerShortcut("CommandOrControl+Alt+Shift+F9", () => pressed++).catch(
+      (err) => {
+        // The XDG GlobalShortcuts portal (where the user binds each shortcut): GNOME's asks a
+        // person once, and with no one to approve it the registration comes back `denied`.
+        if (caps.userBinds && (err as { code?: unknown })?.code === "denied") {
+          throw new Skip("the desktop's portal requires user approval for global shortcuts");
+        }
+        throw err;
+      },
+    );
     try {
       assert((await listShortcuts()).includes(s.accelerator), "listShortcuts()");
       await sleep(300);
