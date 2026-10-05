@@ -1238,6 +1238,19 @@ denext desktop add --list                          # every capability, its trust
 denext desktop add dialogs --dry-run               # the config diff + permissions, no write`}
       </Code>
       <p>
+        The OS the window runs on needs no capability: <code>desktopOs()</code> from{" "}
+        <code>denext/desktop/client</code> returns <code>"darwin"</code>, <code>"windows"</code>,
+        {" "}
+        <code>"linux"</code> (Deno&apos;s <code>Deno.build.os</code>), or <code>undefined</code>
+        {" "}
+        off desktop. Read it instead of the injected <code>__denext</code> global, which is private.
+      </p>
+      <Code lang="ts">
+        {`import { desktopOs } from "denext/desktop/client";
+
+const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
+      </Code>
+      <p>
         <code>denext desktop add</code> splices the capability into{" "}
         <code>desktop.capabilities</code> in <code>denext.config.ts</code>{" "}
         (comments and the rest of the file keep their bytes; a key you already customised is kept)

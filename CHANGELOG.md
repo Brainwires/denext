@@ -8,6 +8,12 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`desktopOs()` from `denext/desktop/client`.** It returns the OS a Deno Desktop window runs on
+  (`"darwin"`, `"windows"`, `"linux"`, …, Deno's `Deno.build.os`), or `undefined` off desktop, so
+  apps stop reading the private `__denext.os` global. It needs no capability.
+
 ### Changed
 
 - **Deno Desktop: denext adopts the runtime 2.9.7-denext.9 contract.** These need that runtime

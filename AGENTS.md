@@ -395,7 +395,8 @@ pops. Docs: https://denext.dev/docs/navigation-native
 `keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`; written to
 `desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
-`desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code.
+`desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
+(`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, Linux libsecret, Windows PasswordVault) and your `defineDesktopExtension` modules (from
 `denext/desktop`, listed in `desktop.capabilities.extensions`; a handler's
