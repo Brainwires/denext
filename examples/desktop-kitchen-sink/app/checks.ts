@@ -1039,7 +1039,20 @@ const securityChecks: Check[] = [
         await bridge.tokenCache.clearToken("kitchen-probe");
       }
       eq(await bridge.tokenCache.getToken("kitchen-probe"), null, "getToken after clearToken");
-      eq(await bridge.oauthTransport.getRedirectUrl(), `${setup.appOrigin}/`, "getRedirectUrl()");
+      // macOS signs in through ASWebAuthenticationSession (no nonce); Windows and Linux use the
+      // system browser, so each flow's redirect carries a per-flow `denext_nonce`.
+      const redirect = new URL(await bridge.oauthTransport.getRedirectUrl());
+      eq(
+        `${redirect.protocol}//${redirect.host}${redirect.pathname}`,
+        `${setup.appOrigin}/`,
+        "getRedirectUrl() target",
+      );
+      const nonce = redirect.searchParams.getAll("denext_nonce");
+      if (setup.os === "darwin") eq(nonce.length, 0, "getRedirectUrl() nonce on macOS");
+      else {assert(
+          nonce.length === 1 && /^[A-Za-z0-9_-]{22,}$/.test(nonce[0]),
+          `getRedirectUrl() nonce: ${redirect.search}`,
+        );}
       const refused = await rejection(bridge.oauthTransport.open("http://example.com/oauth"));
       assert(/unsupported OAuth URL protocol/.test(refused), `open(http:) → ${refused}`);
       return `keychain round trip; ${setup.appOrigin}/; http: refused`;
