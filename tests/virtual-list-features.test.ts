@@ -780,27 +780,48 @@ Deno.test("scroll events: scrollEventThrottle limits onScroll; a trailing call c
 // ---- progressive rendering (A6, T1) ------------------------------------------------------------------
 
 Deno.test("progressive: rows entering after mount show a placeholder for one task, then content (A6)", async () => {
-  const screen = await render(list({
-    data: rows(1000),
-    getItemSize: () => 40,
-    viewportSize: 400,
-    overscan: 0,
-    progressive: true,
-    renderPlaceholder: (i) => h("i", null, `…${i}`),
-    renderItem: text,
-  }));
-  assertStringIncludes(screen.html(), "row 0", "the first window renders its content (SSR parity)");
-  assertEquals(screen.html().includes("data-vl-placeholder"), false);
-  await scrollTo(screen, 4000);
-  const placeholders = all(screen).filter((e) => e.getAttribute("data-vl-placeholder") !== null);
-  assertEquals(placeholders.length, 10, "the new rows start as placeholders");
-  assertStringIncludes(screen.html(), "…100");
-  const el = rowAt(screen, 100)!;
-  await wait(120);
-  assertEquals(all(screen).filter((e) => e.getAttribute("data-vl-placeholder") !== null).length, 0);
-  assertStringIncludes(screen.html(), "row 100");
-  assert(rowAt(screen, 100) === el, "the row element is kept; only its content swaps");
-  await screen.unmount();
+  // Frames paint only when the test says so: the content swap is scheduled one task after a
+  // painted frame, so under a loaded event loop it can never land before the assertions.
+  const frames: (() => void)[] = [];
+  const paintFrame = async () => {
+    const due = frames.splice(0);
+    await act(() => {
+      for (const cb of due) cb();
+    });
+    await wait(0); // the task the frame callback queued (timers of equal delay run in order)
+  };
+  await withTempGlobals(
+    { requestAnimationFrame: (cb: () => void) => frames.push(cb) },
+    async () => {
+      const screen = await render(list({
+        data: rows(1000),
+        getItemSize: () => 40,
+        viewportSize: 400,
+        overscan: 0,
+        progressive: true,
+        renderPlaceholder: (i) => h("i", null, `…${i}`),
+        renderItem: text,
+      }));
+      assertStringIncludes(
+        screen.html(),
+        "row 0",
+        "the first window renders its content (SSR parity)",
+      );
+      assertEquals(screen.html().includes("data-vl-placeholder"), false);
+      await scrollTo(screen, 4000);
+      const placeholders = () =>
+        all(screen).filter((e) => e.getAttribute("data-vl-placeholder") !== null).length;
+      assertEquals(placeholders(), 10, "the new rows start as placeholders");
+      assertStringIncludes(screen.html(), "…100");
+      assert(frames.length > 0, "the content waits for a painted frame");
+      const el = rowAt(screen, 100)!;
+      for (let n = 0; n < 20 && frames.length > 0; n++) await paintFrame();
+      assertEquals(placeholders(), 0);
+      assertStringIncludes(screen.html(), "row 100");
+      assert(rowAt(screen, 100) === el, "the row element is kept; only its content swaps");
+      await screen.unmount();
+    },
+  );
 });
 
 Deno.test("progressive: placeholder sizes are never recorded as row sizes", async () => {
