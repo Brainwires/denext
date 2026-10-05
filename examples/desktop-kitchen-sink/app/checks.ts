@@ -80,6 +80,10 @@ export interface KitchenSetup {
       expired: string;
       replayed: string;
       real: string;
+      /** Windows, the trusted-update phases: the update build signed with the app's certificate. */
+      trustedA: string;
+      /** The same build re-signed with another certificate. */
+      trustedB: string;
     }
     | null;
   readonly os: "darwin" | "windows" | "linux";
@@ -1145,6 +1149,76 @@ export const PHASE_CHECKS: Readonly<Record<string, readonly Check[]>> = {
       const r = await kitchen.updateCheck({ url: setup.updateUrls.real });
       eq(r.ok ? `available: ${r.result.available}` : r.code, "rejected", "the check");
       return "rejected";
+    }],
+  ],
+  // Windows only, on a runner that trusts the window test's throwaway code-signing roots (an
+  // elevated CI runner): the runtime's same-signer check is enforced only for a trusted chain.
+  // The installed 1.0.0 is signed with certificate A (`e2e/window-test.ts` "sign" phase).
+  "trusted-install": [
+    ["trusted install: the A-signed 1.0.0, not on trial", async () => {
+      const s = await kitchen.updateStatus({});
+      eq(s?.configured, true, `configured (${s?.reason})`);
+      eq(s.trial, false, "trial");
+      eq(s.version, "1.0.0", "version");
+      return `${s.version} at ${s.install}`;
+    }],
+    [
+      `trusted install: ${UPDATE_VERSION} re-signed with another certificate (B) is refused (os_signature)`,
+      async ({ setup }) => {
+        assert(setup.updateUrls, "no local update server");
+        const r = await kitchen.updateDownload({ url: setup.updateUrls.trustedB }, {
+          timeoutMs: 150_000,
+        });
+        eq(r.ok ? `staged (${r.result.signatureMode})` : r.code, "os_signature", "the download");
+        const s = await kitchen.updateStatus({});
+        eq(s?.version, "1.0.0", "version after the refusal");
+        eq(s.trial, false, "trial after the refusal");
+        return `os_signature: ${r.message}`;
+      },
+    ],
+    [
+      `trusted install: ${UPDATE_VERSION} signed with the same certificate (A) stages as authenticode`,
+      async ({ setup }) => {
+        assert(setup.updateUrls, "no local update server");
+        const r = await kitchen.updateDownload({ url: setup.updateUrls.trustedA }, {
+          timeoutMs: 150_000,
+        });
+        assert(r.ok, `download / stage failed: ${r.code}: ${r.message}`);
+        eq(r.result.version, UPDATE_VERSION, "staged version");
+        eq(r.result.signatureMode, "authenticode", "signature mode");
+        assert(r.result.signer, "no signer reported");
+        return `${r.result.version}, authenticode, signer ${r.result.signer}`;
+      },
+    ],
+  ],
+  "trusted-trial": [
+    [
+      `trusted trial: ${UPDATE_VERSION} runs on trial and confirmAppUpdate() confirms it`,
+      async () => {
+        const s = await kitchen.updateStatus({});
+        eq(s?.version, UPDATE_VERSION, "version");
+        eq(s.trial, true, "trial");
+        eq(s.updatedFrom, "1.0.0", "updatedFrom");
+        const r = await kitchen.updateConfirm({});
+        assert(r.ok, `confirmAppUpdate() threw ${r.code}: ${r.message}`);
+        eq(r.result, true, "confirmAppUpdate()");
+        const after = await kitchen.updateStatus({});
+        eq(after?.pendingVersion ?? null, null, "pendingVersion after confirming");
+        return `${s.version} from ${s.updatedFrom}, confirmed`;
+      },
+    ],
+  ],
+  "trusted-relaunch": [
+    [`trusted relaunch: still ${UPDATE_VERSION}, not on trial, nothing rolled back`, async () => {
+      const s = await kitchen.updateStatus({});
+      eq(s?.version, UPDATE_VERSION, "version");
+      eq(s.trial, false, "trial");
+      eq(s.rolledBackFrom ?? null, null, "rolledBackFrom");
+      assert(
+        !s.rejectedVersions?.includes(UPDATE_VERSION),
+        `rejectedVersions ${s.rejectedVersions}`,
+      );
+      return `${s.version}, confirmed, no rollback`;
     }],
   ],
 };

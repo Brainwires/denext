@@ -50,6 +50,14 @@ Each item is described in full under Changed, Fixed or Security below.
 - **`desktopOs()` from `denext/desktop/client`.** It returns the OS a Deno Desktop window runs on
   (`"darwin"`, `"windows"`, `"linux"`, …, Deno's `Deno.build.os`), or `undefined` off desktop, so
   apps stop reading the private `__denext.os` global. It needs no capability.
+- **The desktop window test covers Windows Authenticode signing.** On every Windows host it
+  creates two throwaway self-signed code-signing certificates, packages 1.0.0 and 99.0.0 with one
+  through the package script, re-signs a copy with the other through `desktopSignWindows`, and
+  checks the signer of every PE file (removing the certificates afterwards). On an elevated runner
+  that sets `KITCHEN_SINK_TRUST_TEST_ROOT=1` (GitHub's hosted Windows runner in
+  `desktop-window.yml`) it trusts both for the run: a full-app update signed by the other
+  certificate is refused (`os_signature`), the same signer's stages as `authenticode`, installs,
+  is confirmed and is still running after a relaunch. Elsewhere those checks skip with the reason.
 
 ### Changed
 

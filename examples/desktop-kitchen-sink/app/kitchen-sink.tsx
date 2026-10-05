@@ -42,7 +42,8 @@ export function KitchenSink() {
     if (autorun) {
       await kitchen.report({ results: all, expected: checksFor(phase).map(([name]) => name) });
       // The install phase: swap in the staged update and relaunch it (the updater quits the app).
-      if (phase === "update-install" && all.every((r) => r.status === "pass")) {
+      const installs = phase === "update-install" || phase === "trusted-install";
+      if (installs && all.every((r) => r.status === "pass")) {
         const r = await kitchen.updateInstall({});
         await kitchen.mark({ name: "update-install", data: JSON.stringify(r) });
         if (r.ok && r.result.quitting) return;

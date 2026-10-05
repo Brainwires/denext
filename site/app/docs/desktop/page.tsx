@@ -1291,7 +1291,13 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         </a>{" "}
         turns each one on, calls it from the page and asserts the result, on Linux, macOS (arm64 and
         Intel) and Windows in CI (<code>.github/workflows/desktop-window.yml</code>); a check a
-        hosted runner can't run reports why it skipped.
+        hosted runner can't run reports why it skipped. On Windows the same test also signs: it
+        creates two throwaway self-signed code-signing certificates, packages builds with one
+        through{" "}
+        <code>scripts/package-windows.ts</code>, re-signs a copy with the other, and checks the
+        signer of every PE file. On an elevated runner (CI) it trusts both certificates for the run,
+        and a full-app update signed by the other certificate is refused (
+        <code>os_signature</code>) while the same signer's installs, is confirmed and stays.
       </Callout>
       <table class="table">
         <thead>

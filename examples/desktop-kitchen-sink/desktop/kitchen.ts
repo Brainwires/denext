@@ -63,7 +63,11 @@ function readRunnerState(dataDir: string): Promise<RunnerState | null> {
       if (typeof s.out !== "string" || typeof s.phase !== "string") return null;
       return {
         out: s.out,
-        phase: s.phase === "update" ? updatePhase() : s.phase,
+        phase: s.phase === "update"
+          ? updatePhase()
+          : s.phase === "trusted"
+          ? trustedPhase()
+          : s.phase,
         updateBase: typeof s.updateBase === "string" ? s.updateBase : null,
       };
     },
@@ -81,6 +85,20 @@ function updatePhase(): string {
   if (status?.rolledBackFrom) return "update-rollback";
   if (status?.trial) return "update-trial";
   return "update-install";
+}
+
+/**
+ * Which launch of the trusted (Authenticode-signed, Windows) update this is: the new version's
+ * trial launch, its relaunch once confirmed (or after a rollback, which that phase's check then
+ * reports), or the original A-signed install that refuses a B-signed build and installs the
+ * A-signed one.
+ */
+function trustedPhase(): string {
+  const status = appUpdateStatus();
+  if (!status) return "trusted-install"; // not configured: that phase's first check says so
+  if (status.trial) return "trusted-trial";
+  if (status.rolledBackFrom || status.version !== "1.0.0") return "trusted-relaunch";
+  return "trusted-install";
 }
 
 /** The runner's scratch folder (`undefined` outside the window test). */
@@ -160,7 +178,8 @@ export default defineDesktopExtension({
           phase: state?.phase ?? "main",
           // The runner serves signed manifests here: a valid newer one, one signed by another key,
           // one offering an older version, one for another app, an expired one, one replaying a
-          // lower sequence, and a real update to install.
+          // lower sequence, a real update to install, and (Windows) the update build signed with
+          // the app's own certificate and with another one.
           updateUrls: updateBase
             ? {
               good: `${updateBase}good.json`,
@@ -170,6 +189,8 @@ export default defineDesktopExtension({
               expired: `${updateBase}expired.json`,
               replayed: `${updateBase}replayed.json`,
               real: `${updateBase}real.json`,
+              trustedA: `${updateBase}trusted-a.json`,
+              trustedB: `${updateBase}trusted-b.json`,
             }
             : null,
           os: Deno.build.os,
