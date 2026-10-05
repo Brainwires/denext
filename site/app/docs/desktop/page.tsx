@@ -1549,6 +1549,21 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>zenity</code>/<code>kdialog</code>, so the page&apos;s{" "}
         <code>&lt;input type=&quot;file&quot;&gt;</code> runs.
       </Callout>
+      <Callout kind="note">
+        <strong>The secure store on Linux.</strong> <code>secure-store</code> runs{" "}
+        <code>secret-tool</code>, which a stock desktop may not ship: it is in{" "}
+        <code>libsecret-tools</code> (Debian / Ubuntu) or <code>libsecret</code> (Fedora), and the
+        {" "}
+        <code>.deb</code> / <code>.rpm</code>{" "}
+        installers depend on it when the capability is on (an AppImage or <code>.tar.gz</code>{" "}
+        user installs it). It also needs a Secret Service provider (GNOME Keyring or KWallet) with
+        the keyring unlocked. When one of those is missing, every call rejects with{" "}
+        <code>backend_unavailable</code>{" "}
+        and a reason naming the fix: the package to install, &quot;no Secret Service provider
+        (gnome-keyring or KWallet)&quot;, no D-Bus session bus, or a locked keyring (including an
+        unlock prompt nobody answers within 20 seconds). It never reads as a missing value:{" "}
+        <code>get</code> returns <code>null</code> only for a key that is really not there.
+      </Callout>
       <p>
         The new desktop-only functions reject with code <code>unavailable</code> elsewhere:{" "}
         <code>openPath</code>, <code>revealInFileManager</code> and <code>moveToTrash</code>;{" "}

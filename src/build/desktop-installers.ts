@@ -183,6 +183,11 @@ export interface DesktopPackageMeta {
   readonly license?: string;
   /** The `deno desktop` backend (`"webview"` unless deno.json `desktop.backend` says otherwise). */
   readonly backend: string;
+  /**
+   * Whether `desktop.capabilities.secureStore` is on: the Linux packages then depend on the
+   * package with `secret-tool` (absent means off).
+   */
+  readonly secureStore?: boolean;
 }
 
 type Obj = Record<string, unknown>;
@@ -250,7 +255,13 @@ export function packageMetaFrom(
     singleInstance: (denoApp.singleInstance ?? cfgApp.singleInstance) === true,
     license: str((deno as Obj | undefined)?.license),
     backend: str(field(deno, "desktop").backend) ?? "webview",
+    secureStore: capabilityOn(field(cfgDesktop, "capabilities"), "secureStore", "secure-store"),
   };
+}
+
+/** Whether a `desktop.capabilities` entry is on (present, not `false` / `null`), by either name. */
+function capabilityOn(caps: Obj, ...names: string[]): boolean {
+  return names.some((n) => caps[n] !== undefined && caps[n] !== false && caps[n] !== null);
 }
 
 /**
@@ -749,6 +760,14 @@ function linuxDeps(backend: string): ReadonlyArray<readonly [string, string]> {
   return LINUX_RUNTIME_DEPS[backend] ?? LINUX_RUNTIME_DEPS.webview;
 }
 
+/**
+ * The packages an enabled capability runs, as (Debian package, RPM package): the secure store's
+ * `secret-tool` (a stock Ubuntu desktop ships libsecret without it).
+ */
+function linuxCapabilityDeps(meta: DesktopPackageMeta): ReadonlyArray<readonly [string, string]> {
+  return meta.secureStore === true ? [["libsecret-tools", "libsecret"]] : [];
+}
+
 /** Strip control characters (a `.desktop` / control value is one line). */
 function oneLine(s: string): string {
   // deno-lint-ignore no-control-regex
@@ -885,7 +904,10 @@ export function debControl(
     `Architecture: ${debianArch(arch)}`,
     `Maintainer: ${oneLine(meta.publisher)}`,
     `Installed-Size: ${installedKiB}`,
-    `Depends: ${linuxDeps(meta.backend).map(([, p]) => p).join(", ")}`,
+    `Depends: ${
+      [...linuxDeps(meta.backend).map(([, p]) => p), ...linuxCapabilityDeps(meta).map(([d]) => d)]
+        .join(", ")
+    }`,
     "Section: utils",
     "Priority: optional",
     `Description: ${oneLine(meta.description)}`,
@@ -1081,7 +1103,10 @@ export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promis
  * @returns The spec text.
  */
 export function rpmSpec(meta: DesktopPackageMeta, stage: string, owned: readonly string[]): string {
-  const requires = linuxDeps(meta.backend).map(([so]) => `Requires: ${so}()(64bit)`);
+  const requires = [
+    ...linuxDeps(meta.backend).map(([so]) => `Requires: ${so}()(64bit)`),
+    ...linuxCapabilityDeps(meta).map(([, rpm]) => `Requires: ${rpm}`),
+  ];
   // rpmbuild expands `%macro` / `%(shell)` / `%{lua:…}` everywhere in the spec, so every value
   // that comes from the project carries its `%` as the literal `%%`.
   const lit = (s: string) => s.replaceAll("%", "%%");

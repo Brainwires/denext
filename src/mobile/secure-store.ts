@@ -207,9 +207,12 @@ async function withStore<T>(
  *   unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the
  *   plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same
  *   entries.
- * - Inside a Deno Desktop window (`denext desktop add secure-store`), the OS keychain: the
- *   macOS Keychain or libsecret, through the desktop runtime. Windows is not supported yet:
- *   there the capability fails closed (a real error, never the plaintext web fallback).
+ * - Inside a Deno Desktop window (`denext desktop add secure-store`), the OS credential store,
+ *   through the desktop runtime: the macOS Keychain, the Windows `PasswordVault`, or the Secret
+ *   Service on Linux (gnome-keyring or KWallet, through `secret-tool`). When that store is not
+ *   usable (Linux without `secret-tool`, without a Secret Service provider, or with the keyring
+ *   locked) the call fails with `backend_unavailable` and says why: a real error, never `null`
+ *   and never the plaintext web fallback.
  * - **On the web it is NOT secret.** The fallback is a plain IndexedDB database
  *   (`denext-secure-store`) that any script on the origin, and anyone with the device's
  *   browser profile, can read. It keeps a web build working; it does not protect anything.

@@ -91,6 +91,15 @@ and this project adheres to
   Clerk binding). A callback without it, with another one, or replayed after the sign-in is
   dropped and never reaches the page, whether or not Clerk binds its `rotating_token_nonce` to the
   client. macOS is unchanged: its OS sheet catches its own callback.
+- **`secureStore` on Linux says why it can't work instead of reading as "not found".**
+  `secret-tool` is not on a stock Ubuntu desktop, and a missing Secret Service or a locked keyring
+  made `get` return `null`. Each case now rejects `backend_unavailable` with the reason: the
+  package to install (`libsecret-tools` on Debian / Ubuntu, `libsecret` on Fedora), "no Secret
+  Service provider (gnome-keyring or KWallet)", no D-Bus session bus, or a locked keyring
+  (`secret-tool search` tells a locked item from a missing one; an unlock prompt nobody answers
+  fails after 20 seconds instead of hanging). `get` returns `null` only for a key that is really
+  not there. With `secureStore` on, the `.deb` depends on `libsecret-tools` and the `.rpm` on
+  `libsecret`.
 - **An awaited `act` waits for the work its callback set off, as React's does.** It returned
   after one flush once the callback's promise settled, so a promise chain the callback started
   without awaiting it (an async click handler whose `.catch` / `.then` sets state, or an effect

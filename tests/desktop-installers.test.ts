@@ -289,6 +289,27 @@ Deno.test("linux: control and spec carry the version, arch, deps and owned paths
   assertStringIncludes(spec, "%files\n%defattr(-,root,root,-)\n/usr/lib/my-app\n/usr/bin/my-app\n");
 });
 
+Deno.test("linux: secure-store adds the secret-tool package (libsecret-tools / libsecret)", () => {
+  assertEquals(META.secureStore, false);
+  assert(!debControl(META, "x86_64", 1).includes("libsecret"), "off: no dependency");
+  assert(!rpmSpec(META, "/tmp/s", []).includes("libsecret"));
+  for (const caps of [{ secureStore: true }, { "secure-store": true }]) {
+    const meta = packageMetaFrom(
+      {},
+      { desktop: { app: { name: "My App" }, capabilities: caps } },
+      "x",
+    );
+    assertEquals(meta.secureStore, true);
+    assertStringIncludes(
+      debControl(meta, "x86_64", 1),
+      "Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libsecret-tools\n",
+    );
+    assertStringIncludes(rpmSpec(meta, "/tmp/s", []), "Requires: libsecret\n");
+  }
+  const off = packageMetaFrom({}, { desktop: { capabilities: { secureStore: false } } }, "x");
+  assertEquals(off.secureStore, false);
+});
+
 /** A fake finished Linux bundle: launcher, runtime library, launch config, a 64×64 icon. */
 async function fakeLinuxBundle(dir: string): Promise<void> {
   await Deno.mkdir(join(dir, "sub"), { recursive: true });

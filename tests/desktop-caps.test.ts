@@ -2038,7 +2038,9 @@ Deno.test("secureStore: an empty or foreign value reads as absent; a non-string 
   const cap = secureStoreCapability({
     service: "svc",
     os: "linux",
-    run: () => Promise.resolve({ code, stdout }),
+    // `search` (the locked-keyring double-check after a silent miss) finds nothing.
+    run: (_cmd, args) =>
+      Promise.resolve(args[0] === "search" ? { code: 0, stdout: "" } : { code, stdout }),
   });
   assertEquals(await call(cap, "get", { key: "k" }), null, "empty stdout");
   stdout = "%%% not base64 %%%";
@@ -2063,8 +2065,9 @@ Deno.test({
     assertEquals(await realSecureRun("cat", [], "secret on stdin"), {
       code: 0,
       stdout: "secret on stdin",
+      stderr: "",
     });
-    assertEquals(await realSecureRun("cat", []), { code: 0, stdout: "" });
+    assertEquals(await realSecureRun("cat", []), { code: 0, stdout: "", stderr: "" });
     assertEquals(
       await rejectCode(realSecureRun("denext-no-such-credential-cli", ["get"])),
       "backend_unavailable",

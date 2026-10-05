@@ -102,7 +102,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     notes:
       "OS keychain via CLI (Keychain `security` / libsecret `secret-tool` / Windows PasswordVault)",
     manual: [
-      "secure-store: Linux users need libsecret and a running Secret Service (GNOME Keyring, KWallet); without one the runtime refuses rather than writing a plain file.",
+      "secure-store: Linux needs secret-tool (libsecret-tools on Debian/Ubuntu, libsecret on Fedora; the .deb / .rpm depend on it) and a running, unlocked Secret Service (GNOME Keyring, KWallet); without them every call fails `backend_unavailable` with the reason, never a plain file.",
       "secure-store: Windows uses WinRT PasswordVault via Windows PowerShell (verified by the Windows CI round-trip).",
     ],
   },
