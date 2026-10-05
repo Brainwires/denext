@@ -171,6 +171,38 @@ export function resolveDesktopTrust(
 }
 
 /**
+ * The first denext Deno Desktop runtime that publishes its WebSocket relay with a per-launch token
+ * ({@linkcode DESKTOP_WS_URL_ENV}) and accepts the full-app update manifests denext publishes
+ * (`expiresAt` + `sequence`); denext needs it or later.
+ */
+export const DESKTOP_RELAY_TOKEN_RUNTIME = "2.9.7-denext.9";
+
+/**
+ * The startup warning for a memory-world app under a runtime older than {@linkcode
+ * DESKTOP_RELAY_TOKEN_RUNTIME}: such a runtime has the memory transport (and, from denext.7, the
+ * relay marking, so the gates keep working) but publishes no {@linkcode DESKTOP_WS_URL_ENV}. Then
+ * the page's WebSockets have nowhere to go and the runtime refuses denext's update manifests. Only
+ * the absence of the variable is a version signal; any other world, or a published value, is
+ * `undefined`. Pure.
+ *
+ * @param trust The decided world ({@linkcode resolveDesktopTrust}).
+ * @param publishedWsUrl The `DENO_DESKTOP_WS_URL` value, if any.
+ * @returns The warning to print once at startup, or `undefined`.
+ */
+export function desktopRuntimeSkewWarning(
+  trust: DesktopTrust,
+  publishedWsUrl: string | undefined,
+): string | undefined {
+  if (trust.kind !== "memory" || (publishedWsUrl !== undefined && publishedWsUrl !== "")) {
+    return undefined;
+  }
+  return `this Deno Desktop runtime is older than ${DESKTOP_RELAY_TOKEN_RUNTIME} (it publishes ` +
+    `no ${DESKTOP_WS_URL_ENV}), so the page's WebSockets (Live, desktopWebSocketUrl) fail and ` +
+    "full-app updates are refused. Repackage the app with the runtime denext pins (unset " +
+    "DENORT_DESKTOP_BIN, LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR).";
+}
+
+/**
  * The part of `Deno.ServeHandlerInfo` the gates read. Typed loosely because `transport: "memory"`
  * is not in the stock `Deno.NetAddr` type.
  */

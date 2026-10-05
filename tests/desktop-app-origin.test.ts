@@ -14,6 +14,9 @@ import {
 } from "../src/desktop/app-origin.ts";
 import {
   DESKTOP_RELAY_MARKING_RUNTIME,
+  DESKTOP_RELAY_TOKEN_RUNTIME,
+  DESKTOP_WS_URL_ENV,
+  desktopRuntimeSkewWarning,
   isMemoryTransport,
   LOOPBACK_TRUST,
   memoryGate,
@@ -262,6 +265,27 @@ Deno.test("trust: a runtime older than denext.7 (no relay marking) is refused", 
   // Default: detected from the running runtime — plain `deno test` has no Deno.desktop.
   assertEquals(resolveDesktopTrust("t3code://app").trust.kind, "refuse");
   assertEquals(resolveDesktopTrust(undefined).trust, LOOPBACK_TRUST);
+});
+
+Deno.test("runtime skew: the memory world without DENO_DESKTOP_WS_URL names denext.9 and the fix", () => {
+  const memory = resolveDesktopTrust("t3code://app", "t3code://app", true).trust;
+  // denext.7 / .8: the memory transport and the relay mark, but no relay URL published.
+  for (const published of [undefined, ""]) {
+    const w = desktopRuntimeSkewWarning(memory, published);
+    assert(w !== undefined, String(published));
+    assertEquals(DESKTOP_RELAY_TOKEN_RUNTIME, "2.9.7-denext.9");
+    assertStringIncludes(w, `older than ${DESKTOP_RELAY_TOKEN_RUNTIME}`);
+    assertStringIncludes(w, DESKTOP_WS_URL_ENV);
+    assertStringIncludes(w, "WebSockets");
+    assertStringIncludes(w, "full-app updates");
+    assertStringIncludes(w, "Repackage the app with the runtime denext pins");
+  }
+  // denext.9+: the relay URL is published.
+  const relay = `ws://127.0.0.1:4321/.deno-desktop-relay/${"a".repeat(64)}`;
+  assertEquals(desktopRuntimeSkewWarning(memory, relay), undefined);
+  // The stock runtime has no relay at all, and a refused world already says why.
+  assertEquals(desktopRuntimeSkewWarning(LOOPBACK_TRUST, undefined), undefined);
+  assertEquals(desktopRuntimeSkewWarning({ kind: "refuse", reason: "x" }, undefined), undefined);
 });
 
 Deno.test("runtimeMarksRelay: feature-detects authSession.cancel (denext.7+), fails closed", () => {

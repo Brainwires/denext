@@ -509,14 +509,19 @@ Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runt
 
 denext needs `2.9.7-denext.9`: under an older runtime the page gets no relay URL (its WebSockets
 fail), the runtime refuses the update manifests denext publishes (it doesn't know `expiresAt` and
-`sequence`), and its laufey ignores the launch file's `bridgeOrigins`. Before that,
-`2.9.7-denext.7` set the floor wherever the app runs at its custom origin. The relay mark
-is how the app tells a request any local process sent through the relay from one its own page
-made, so a window on an older runtime (supplied through `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`,
-`DENEXT_DESKTOP_RUNTIME_DIR` or an older build) gets no per-launch token and every
-`/_denext/desktop/*` endpoint is refused, with a startup message naming the fix. denext detects
-the release by `Deno.desktop.authSession.cancel`, which shipped with the mark. The stock runtime
-has no relay and is unaffected.
+`sequence`), and its laufey ignores the launch file's `bridgeOrigins`. denext detects it at
+startup: an app at its custom origin whose runtime publishes no `DENO_DESKTOP_WS_URL` prints one
+warning that names the runtime as older than `2.9.7-denext.9`, says the page's WebSockets and
+full-app updates won't work, and gives the fix (repackage with the runtime denext pins). The
+endpoints stay up there, since a `denext.7` or `denext.8` runtime still marks relayed requests.
+
+A runtime older than `2.9.7-denext.7` is refused outright wherever the app runs at its custom
+origin. The relay mark is how the app tells a request any local process sent through the relay
+from one its own page made, so a window on such a runtime (supplied through
+`DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`, `DENEXT_DESKTOP_RUNTIME_DIR` or an older build) gets no
+per-launch token and every `/_denext/desktop/*` endpoint is refused, with a startup message naming
+the fix. denext detects that release by `Deno.desktop.authSession.cancel`, which shipped with the
+mark. The stock runtime has no relay and is unaffected by either check.
 
 ## How it's tested
 

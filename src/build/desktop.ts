@@ -26,8 +26,10 @@ import {
 import {
   DESKTOP_APP_ORIGIN_ENV,
   DESKTOP_WS_URL_ENV,
+  desktopRuntimeSkewWarning,
   type DesktopServeInfo,
   type DesktopTrust,
+  type DesktopTrustDecision,
   isCrossOriginMarked,
   isRelayConnection,
   LOOPBACK_TRUST,
@@ -993,6 +995,21 @@ async function loadDesktopPreload(outDir: string, devProxy: boolean): Promise<st
   return await readDesktopPreload(devFile || join(outDir, DESKTOP_PRELOAD_FILE));
 }
 
+/**
+ * Print, once at startup, what is worth knowing about the desktop world: the trust decision's own
+ * warning, a refused world, and a runtime older than the denext.9 contract ({@linkcode
+ * desktopRuntimeSkewWarning}: no relay URL published in the memory world).
+ */
+function reportDesktopWorld(decision: DesktopTrustDecision, publishedWsUrl: string | undefined) {
+  const { trust, warning } = decision;
+  if (warning) console.error(`desktop: ${warning}`);
+  if (trust.kind === "refuse") {
+    console.error(`desktop: ${trust.reason}; every desktop endpoint is refused.`);
+  }
+  const skew = desktopRuntimeSkewWarning(trust, publishedWsUrl);
+  if (skew) console.error(`desktop: ${skew}`);
+}
+
 /** Whether `request` is a browser's top-level navigation (`Sec-Fetch-Mode: navigate`, document). */
 function isPageNavigation(request: Request): boolean {
   return request.headers.get("sec-fetch-mode") === "navigate" &&
@@ -1046,14 +1063,12 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   applyDesktopWindowSettings(appWindow, options.window);
   // Which desktop world this is, decided ONCE from what the runtime published: the pinned runtime's
   // in-process memory transport at a stable origin, or the stock runtime's loopback port.
-  const { trust, warning: trustWarning } = resolveDesktopTrust(
+  const trustDecision = resolveDesktopTrust(
     Deno.env.get(DESKTOP_APP_ORIGIN_ENV),
     options.appOrigin,
   );
-  if (trustWarning) console.error(`desktop: ${trustWarning}`);
-  if (trust.kind === "refuse") {
-    console.error(`desktop: ${trust.reason}; every desktop endpoint is refused.`);
-  }
+  const { trust } = trustDecision;
+  reportDesktopWorld(trustDecision, Deno.env.get(DESKTOP_WS_URL_ENV));
   // A stray WebSocket/proxy rejection must never take down the server process.
   globalThis.addEventListener("unhandledrejection", (e) => {
     e.preventDefault();

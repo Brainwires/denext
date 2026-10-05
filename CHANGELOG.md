@@ -43,6 +43,10 @@ and this project adheres to
     `expiresAt`. `appUpdateStatus()` returns `rejectedVersions` (every version rolled back, none
     offered again) and `manifestSequence`. `confirmAppUpdate()` returns without waiting for the
     previous app to be deleted.
+  - **A runtime older than denext.9 is reported at startup.** An app at its custom origin whose
+    runtime publishes no `DENO_DESKTOP_WS_URL` (a `denext.7` or `denext.8` runtime) prints one
+    warning naming the skew: the page's WebSockets and full-app updates won't work there, and the
+    fix is to repackage with the runtime denext pins.
 
 - **React Native mode's Expo shims follow Expo SDK 58.** Every `denext/expo/*` shim is matched
   against the SDK 58 release T3 Code's app pins (the others against their latest SDK 58 release),
