@@ -35,7 +35,8 @@ and this project adheres to
     time in seconds (`--sequence <n>`). The sequence is never below the existing manifest's, and
     a new release's is above it. **A published manifest must be re-signed before it expires**:
     `denext desktop publish-update --resign` re-signs the one in `--out` without the artifact, and
-    `resignAppUpdate()` is the API for it.
+    `resignAppUpdate()` is the API for it. When the verified manifest already in `--out` expires
+    within 7 days (or already has), `publish-update` warns and points at `--resign`.
   - **The publisher checks the version the artifact was built as.** The runtime refuses to stage
     an update whose compiled deno.json `version` (and, on macOS, `CFBundleShortVersionString`) is
     not the manifest's (`version_mismatch`). `publish-update` reads the version back from the

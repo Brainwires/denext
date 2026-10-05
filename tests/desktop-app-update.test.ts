@@ -15,7 +15,9 @@ import {
 } from "@std/assert";
 import { join } from "@std/path";
 import {
+  APP_UPDATE_EXPIRY_WARNING_DAYS,
   APP_UPDATE_MANIFEST_FILE,
+  appUpdateExpiryWarning,
   type AppUpdatePayload,
   appUpdatePlatformKey,
   isAppUpdatePlatform,
@@ -1098,6 +1100,60 @@ Deno.test("resignAppUpdate: a fresh expiry and a sequence at least the manifest'
       Error,
       "refusing to re-sign",
     );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("appUpdateExpiryWarning: within 7 days (or past) warns with --resign; later or garbage does not", () => {
+  const now = new Date("2026-10-05T00:00:00Z");
+  assertEquals(APP_UPDATE_EXPIRY_WARNING_DAYS, 7);
+  const soon = appUpdateExpiryWarning("2026-10-08T00:00:00Z", now);
+  assert(soon !== null);
+  assertStringIncludes(soon, "expires at 2026-10-08T00:00:00Z (in 3 day(s))");
+  assertStringIncludes(soon, "denext desktop publish-update --resign");
+  assertStringIncludes(appUpdateExpiryWarning("2026-10-12T00:00:00Z", now)!, "in 7 day(s)");
+  assertStringIncludes(appUpdateExpiryWarning("2026-10-01T00:00:00Z", now)!, "expired at");
+  assertEquals(appUpdateExpiryWarning("2026-10-12T00:00:01Z", now), null);
+  assertEquals(appUpdateExpiryWarning("2026-11-01T00:00:00Z", now), null);
+  assertEquals(appUpdateExpiryWarning("not a time", now), null);
+  // The window is configurable.
+  assertEquals(appUpdateExpiryWarning("2026-10-08T00:00:00Z", now, 2), null);
+  assert(appUpdateExpiryWarning("2026-11-01T00:00:00Z", now, 30) !== null);
+});
+
+Deno.test("publishAppUpdate: reports the verified previous manifest's expiry, never an unverified one", async () => {
+  const { key } = await keys();
+  const { key: otherKey } = await keys();
+  const dir = await Deno.makeTempDir();
+  try {
+    const common = {
+      app: "com.example.app",
+      urlBase: "https://u.example.com/rel",
+      outDir: join(dir, "updates"),
+      platform: "aarch64-apple-darwin-webview",
+    };
+    const v1 = await buildAs(await fakeApp(dir, "V1.app"), "1.0.0");
+    const first = await publishAppUpdate({
+      ...common,
+      artifact: v1,
+      version: "1.0.0",
+      key,
+      expiresAt: "2099-01-01T00:00:00Z",
+    });
+    assertEquals(first.previousExpiresAt, undefined);
+    const second = await publishAppUpdate({ ...common, artifact: v1, version: "1.0.0", key });
+    assertEquals(second.previousExpiresAt, "2099-01-01T00:00:00Z");
+    // Another release under another key: the old manifest does not verify, so its expiry is not
+    // read (it is replaced).
+    const v2 = await buildAs(await fakeApp(dir, "V2.app"), "2.0.0");
+    const third = await publishAppUpdate({
+      ...common,
+      artifact: v2,
+      version: "2.0.0",
+      key: otherKey,
+    });
+    assertEquals(third.previousExpiresAt, undefined);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

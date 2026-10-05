@@ -1135,7 +1135,11 @@ if (found.available) {
         <code>--out</code>). It re-signs the published <code>app-update.json</code>{" "}
         with a fresh expiry and needs no artifact. Then upload the new file, for example from a
         scheduled CI job that runs more often than the expiry. A manifest that is allowed to expire
-        stops every installed app from updating until you re-sign it.
+        stops every installed app from updating until you re-sign it. When the manifest already in
+        {" "}
+        <code>--out</code>{" "}
+        (one that verifies against the key) expires within 7 days, or already has,{" "}
+        <code>publish-update</code> warns and points at <code>--resign</code>.
       </p>
       <p>
         <strong>What the runtime checks before it writes anything at the install.</strong>{" "}

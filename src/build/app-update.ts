@@ -39,6 +39,11 @@ export const APP_UPDATE_DEFAULT_EXPIRY_DAYS = 30;
 /** The largest `sequence` the runtime accepts (`Number.MAX_SAFE_INTEGER`). */
 const MAX_SEQUENCE = Number.MAX_SAFE_INTEGER;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/**
+ * How close to its expiry an existing manifest in `--out` is when `publish-update` warns about it
+ * ({@linkcode appUpdateExpiryWarning}), in days.
+ */
+export const APP_UPDATE_EXPIRY_WARNING_DAYS = 7;
 
 /** One platform's archive in the manifest. */
 export interface AppUpdatePlatformEntry {
@@ -511,6 +516,11 @@ export interface PublishAppUpdateResult {
   readonly expiresAt: string;
   /** The manifest's sequence. */
   readonly sequence: number;
+  /**
+   * The `expiresAt` of the manifest that was in `outDir` before, when it verified against the
+   * signing key (see {@linkcode appUpdateExpiryWarning}).
+   */
+  readonly previousExpiresAt?: string;
 }
 
 /** An existing `app-update.json`, parsed but not verified. */
@@ -579,17 +589,59 @@ async function readExistingRelease(
   key: CryptoKey,
   app: string,
   version: string,
-): Promise<{ same: AppUpdatePayload | null; floor: number | null }> {
+): Promise<{ same: AppUpdatePayload | null; floor: number | null; expiresAt?: string }> {
   const existing = await readManifestFile(path);
   if (existing === null) return { same: null, floor: null };
   if (existing.payload?.app === app && existing.payload.version === version) {
     const same = await verifyExisting(existing, key, path);
-    return { same, floor: sequenceOf(same) };
+    return { same, floor: sequenceOf(same), ...expiryOf(same) };
   }
   // Another release: replaced. Its sequence still bounds ours when it is genuinely ours.
   const verified = await verifyExisting(existing, key, path).catch(() => null);
   const floor = sequenceOf(verified);
-  return { same: null, floor: floor === null ? null : Math.min(floor + 1, MAX_SEQUENCE) };
+  return {
+    same: null,
+    floor: floor === null ? null : Math.min(floor + 1, MAX_SEQUENCE),
+    ...expiryOf(verified),
+  };
+}
+
+/** A verified payload's `expiresAt`, when it has a valid one (as a spreadable object). */
+function expiryOf(p: AppUpdatePayload | null): { expiresAt?: string } {
+  return p && typeof p.expiresAt === "string" && parseRfc3339(p.expiresAt) !== null
+    ? { expiresAt: p.expiresAt }
+    : {};
+}
+
+/**
+ * The warning `denext desktop publish-update` prints when the manifest that was already in `--out`
+ * (verified against the signing key) expires within `withinDays` of `now`, or already has: if
+ * that copy is the one being served, installed apps refuse it from its `expiresAt` on, so the new
+ * manifest must be uploaded before then and the publisher should re-sign on a schedule shorter
+ * than the expiry (`--resign`). `null` when it expires later, or `expiresAt` does not parse. Pure.
+ *
+ * @param expiresAt The existing manifest's `expiresAt` (RFC 3339).
+ * @param now The current time (default: now).
+ * @param withinDays How close the expiry must be to warn (default
+ *   {@linkcode APP_UPDATE_EXPIRY_WARNING_DAYS}).
+ * @returns The warning, or `null`.
+ */
+export function appUpdateExpiryWarning(
+  expiresAt: string,
+  now: Date = new Date(),
+  withinDays: number = APP_UPDATE_EXPIRY_WARNING_DAYS,
+): string | null {
+  const at = parseRfc3339(expiresAt);
+  if (at === null) return null;
+  const left = at - now.getTime();
+  if (left > withinDays * DAY_MS) return null;
+  const when = left <= 0
+    ? `expired at ${expiresAt}`
+    : `expires at ${expiresAt} (in ${Math.ceil(left / DAY_MS)} day(s))`;
+  return `the ${APP_UPDATE_MANIFEST_FILE} that was in the output directory ${when}: if that copy ` +
+    "is still the one served, installed apps refuse it from then on, so upload the new one now. " +
+    "Re-sign the served manifest on a schedule shorter than its expiry with " +
+    "`denext desktop publish-update --resign`.";
 }
 
 /** A verified payload's sequence, when it has a valid one. */
@@ -679,7 +731,12 @@ export async function publishAppUpdate(
   // Another platform of the SAME release keeps its entry (and its notes / minVersion unless
   // given) — only once that manifest verifies against this signing key. Read before packing, so a
   // refusal leaves nothing behind.
-  const { same, floor } = await readExistingRelease(manifest, o.key, o.app, o.version);
+  const { same, floor, expiresAt: previousExpiresAt } = await readExistingRelease(
+    manifest,
+    o.key,
+    o.app,
+    o.version,
+  );
   const fresh = resolveFreshness(o, floor);
   const safeApp = o.app.replace(/[^A-Za-z0-9._-]/g, "_");
   const archiveName = `${safeApp}-${o.version}-${platform}.tar.gz`;
@@ -710,6 +767,7 @@ export async function publishAppUpdate(
     size,
     platforms: Object.keys(payload.platforms).sort(),
     ...fresh,
+    ...(previousExpiresAt !== undefined ? { previousExpiresAt } : {}),
   };
 }
 

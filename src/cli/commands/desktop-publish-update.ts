@@ -13,6 +13,7 @@ import { loadOtaSigningKey, OTA_SIGNING_KEY_ENV } from "../../build/ota-signing.
 import {
   APP_UPDATE_DEFAULT_EXPIRY_DAYS,
   APP_UPDATE_MANIFEST_FILE,
+  appUpdateExpiryWarning,
   type AppUpdateFreshnessOptions,
   macNotarizationWarning,
   publishAppUpdate,
@@ -195,7 +196,10 @@ async function publishFromFlags(flags: Record<string, unknown>, dir: string): Pr
     ...fresh,
   });
   const notarization = await macNotarizationWarning(resolve(dir, artifact));
-  if (notarization) console.error(`denext desktop publish-update: warning: ${notarization}`);
+  const expiring = r.previousExpiresAt ? appUpdateExpiryWarning(r.previousExpiresAt) : null;
+  for (const warning of [notarization, expiring]) {
+    if (warning) console.error(`denext desktop publish-update: warning: ${warning}`);
+  }
   console.log(
     `\n  denext desktop — published ${app} ${version} for ${r.platform}\n` +
       `    archive   ${r.archive} (${r.size} bytes, sha256 ${r.sha256})\n` +

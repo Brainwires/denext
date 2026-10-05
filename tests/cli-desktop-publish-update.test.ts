@@ -252,6 +252,12 @@ Deno.test("publish-update: the expiry and sequence flags, and --resign before th
       assertStringIncludes(bad.err, message);
     }
     assertEquals((await read()).sequence, 4e9, "nothing was re-signed");
+    // Publishing over a manifest that expires within 7 days warns and points at --resign.
+    const again = await withoutKeyEnv(() => publish(dir, { ...base, "expires-in": "2" }));
+    assertEquals(again.code, 0, again.err);
+    assertStringIncludes(again.err, `warning: the ${APP_UPDATE_MANIFEST_FILE} that was in the`);
+    assertStringIncludes(again.err, `expires at ${p.expiresAt} (in 2 day(s))`);
+    assertStringIncludes(again.err, "--resign");
     // --resign: no artifact, a fresh expiry, the same release and sequence floor.
     const re = await withoutKeyEnv(() =>
       publish(dir, { resign: true, key: keyFile, "expires-at": "2099-01-01T00:00:00Z" })
@@ -262,6 +268,10 @@ Deno.test("publish-update: the expiry and sequence flags, and --resign before th
     assertEquals(after.expiresAt, "2099-01-01T00:00:00Z");
     assertEquals(after.sequence, 4e9);
     assertEquals(after.platforms, p.platforms);
+    // A manifest far from its expiry is published over without the warning.
+    const fresh = await withoutKeyEnv(() => publish(dir, base));
+    assertEquals(fresh.code, 0, fresh.err);
+    assert(!fresh.err.includes("--resign"), fresh.err);
     // Without a key nothing is re-signed; with no manifest there is nothing to re-sign.
     const unsigned = await withoutKeyEnv(() => publish(dir, { resign: true }));
     assertEquals(unsigned.code, 1);
