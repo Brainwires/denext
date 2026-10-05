@@ -261,6 +261,11 @@ export interface SchemeSessionInternals {
   readonly binding?: string;
   /** The per-launch preload key (see `injectDesktopGlobal`). */
   readonly bindingKey?: string;
+  /**
+   * The per-session callback nonce the caller wrote into the redirect URL (`denext_nonce`); the
+   * callback must carry it back. Mandatory with `binding`.
+   */
+  readonly nonce?: string;
 }
 
 /** The `authSession.start` arguments: only what was given, plus the page's session key. */
@@ -282,6 +287,7 @@ function schemeStartArgs(
   if (internal.binding !== undefined) {
     Object.assign(args, { binding: internal.binding, bindingKey: internal.bindingKey ?? "" });
   }
+  if (internal.nonce !== undefined) args.nonce = internal.nonce;
   args.session = session;
   return args;
 }

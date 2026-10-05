@@ -194,15 +194,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
-- **A pending Clerk sign-in on Windows and Linux accepts a forged callback.** Clerk's callback
-  carries only its own nonce (no `state` the app can check), so while a sign-in is pending another
-  program can send one; at most it signs the app in to the sender's account. Out-of-session and
-  repeat callbacks are dropped; macOS uses the OS sheet, which no other program can reach.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app
   (an Electron build of the same app, say) handles `myapp:` links, the callback would go to it, so
   `denext/desktop/clerk` refuses with `scheme_owned_by_other_app`; Clerk's native redirect
   allowlist takes no loopback URL to fall back to. Call `claimDeepLinkScheme` from the user's click
-  and sign in again. macOS is unaffected (its sheet catches the callback).
+  and sign in again. macOS is unaffected (its sheet catches the callback). A program that merely
+  sends the app a forged callback is refused: each sign-in's redirect carries a per-session
+  `denext_nonce` the callback must bring back, so the forgery protection does not depend on Clerk
+  binding its `rotating_token_nonce` to the client.
 - **Native passkeys:** none on Linux (no OS API); macOS needs the associated-domains entitlement
   and its provisioning profile (`desktop.macos`);
   the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).

@@ -83,6 +83,14 @@ and this project adheres to
 
 ### Fixed
 
+- **A forged callback can no longer complete a pending Clerk sign-in on Windows and Linux.** There
+  the callback comes back as a deep link, which any program of the same user can also send, and
+  Clerk's callback carries no `state`. `denext/desktop/clerk`'s `getRedirectUrl()` now adds a fresh
+  256-bit `denext_nonce` to the redirect URL of each sign-in, and the runtime completes the session
+  only with a callback that brings that nonce back (compared in constant time; mandatory for the
+  Clerk binding). A callback without it, with another one, or replayed after the sign-in is
+  dropped and never reaches the page, whether or not Clerk binds its `rotating_token_nonce` to the
+  client. macOS is unchanged: its OS sheet catches its own callback.
 - **An awaited `act` waits for the work its callback set off, as React's does.** It returned
   after one flush once the callback's promise settled, so a promise chain the callback started
   without awaiting it (an async click handler whose `.catch` / `.then` sets state, or an effect

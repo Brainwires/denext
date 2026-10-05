@@ -377,3 +377,18 @@ Deno.test("OS auth session: a throwing authSession.cancel() still settles the se
   os.reject("cancelled"); // the sheet's late answer is dropped
   await tick();
 });
+
+Deno.test("OS auth session: a callback nonce is held to the sheet's callback too", async () => {
+  const nonce = "n0nce-0123456789abcdefABCDEF_-xyz";
+  const os = osSession();
+  const { start } = sessions(os.api);
+  const bad = start({ nonce });
+  await started(os.starts);
+  os.resolve("myapp://auth/cb?code=abc&state=st-1"); // no nonce: the sheet's session is over
+  await rejectsCode(bad, "invalid");
+  const run = start({ nonce });
+  await started(os.starts, 2);
+  const genuine = `myapp://auth/cb?code=abc&state=st-1&denext_nonce=${nonce}`;
+  os.resolve(genuine);
+  assertEquals(await run, { url: genuine });
+});

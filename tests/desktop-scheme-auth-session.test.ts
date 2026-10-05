@@ -321,32 +321,94 @@ Deno.test("scheme auth: pkce not-applicable needs a state, unless OS-only or the
   );
 });
 
-Deno.test("scheme auth: the Clerk nonce binding — one callback per pending session, no strays", async () => {
-  const noPkce = authUrl({
-    code_challenge: null,
-    code_challenge_method: null,
-    state: null,
-    redirect_uri: "https://clerk.example.com/v1/oauth_callback",
-  });
-  const { s, start, opened: list } = sessions(schemeApi(["self"]), PRELOAD_KEY);
-  // A forged nonce callback with no session pending is dropped (never routed to the page).
-  assertEquals(s.claim("myapp://app/?rotating_token_nonce=forged"), true);
-  const run = start({
-    url: noPkce,
+/** The Clerk transport's waived-PKCE start, bound by the preload key and a callback nonce. */
+const CLERK_URL = authUrl({
+  code_challenge: null,
+  code_challenge_method: null,
+  state: null,
+  redirect_uri: "https://clerk.example.com/v1/oauth_callback",
+});
+const NONCE = "n0nce-0123456789abcdefABCDEF_-xyz";
+const NONCE_2 = "n0nce-ZYXWVUTSRQPONMLKJIHGFE_-abc";
+function clerkStart(nonce: string | null = NONCE): Record<string, unknown> {
+  return {
+    url: CLERK_URL,
     callbackPrefix: "myapp://app/",
     pkce: "not-applicable",
     reason: "clerk",
     binding: "clerk-client-nonce",
     bindingKey: PRELOAD_KEY,
-  });
+    ...(nonce === null ? {} : { nonce }),
+  };
+}
+
+Deno.test("scheme auth: the Clerk nonce binding — one callback per pending session, no strays", async () => {
+  const { s, start, opened: list } = sessions(schemeApi(["self"]), PRELOAD_KEY);
+  // A forged nonce callback with no session pending is dropped (never routed to the page).
+  assertEquals(s.claim("myapp://app/?rotating_token_nonce=forged"), true);
+  assertEquals(s.claim(`myapp://app/?denext_nonce=${NONCE}`), true);
+  const run = start(clerkStart());
   await opened(list);
   // Another path is not this session's (and, carrying a nonce, is dropped, not routed).
   assertEquals(s.claim("myapp://app/other?rotating_token_nonce=x"), true);
   assertEquals(s.claim("myapp://app/other?plain=1"), false);
-  assert(s.claim("myapp://app/?rotating_token_nonce=first"));
-  assertEquals((await run).url, "myapp://app/?rotating_token_nonce=first");
+  const genuine = `myapp://app/?denext_nonce=${NONCE}&rotating_token_nonce=first`;
+  assert(s.claim(genuine));
+  assertEquals((await run).url, genuine);
   // A second callback after the session settled is ignored (dropped).
   assertEquals(s.claim("myapp://app/?rotating_token_nonce=second"), true);
+});
+
+Deno.test("scheme auth: the Clerk binding needs a callback nonce of at least 128 bits", async () => {
+  const { start, opened: list } = sessions(schemeApi(["self"]), PRELOAD_KEY);
+  await rejectsCode(start(clerkStart(null)), "invalid");
+  for (const bad of ["short-0123456789", "has spaces 0123456789abcdef", "x".repeat(129), ""]) {
+    await rejectsCode(start(clerkStart(bad)), "invalid");
+  }
+  await rejectsCode(start({ ...clerkStart(), nonce: 42 }), "invalid");
+  assertEquals(list, [], "nothing opened");
+});
+
+Deno.test("scheme auth: forged Clerk callbacks (no nonce, wrong nonce, replayed) are swallowed", async () => {
+  const { s, start, opened: list } = sessions(schemeApi(["self"]), PRELOAD_KEY);
+  let settled = false;
+  const run = start(clerkStart()).finally(() => (settled = true));
+  await opened(list);
+  const forged = [
+    "myapp://app/?rotating_token_nonce=attacker", // no nonce
+    `myapp://app/?denext_nonce=${NONCE_2}&rotating_token_nonce=attacker`, // a wrong one
+    `myapp://app/?denext_nonce=${NONCE.slice(0, -1)}&rotating_token_nonce=attacker`, // a prefix
+    `myapp://app/?denext_nonce=${NONCE}&denext_nonce=${NONCE}&rotating_token_nonce=attacker`,
+    `myapp://app/?denext_nonce=&rotating_token_nonce=attacker`,
+  ];
+  for (const url of forged) assert(s.claim(url), `swallowed: ${url}`);
+  await new Promise((r) => setTimeout(r, 5));
+  assertEquals(settled, false, "no forged callback completed the session");
+  const genuine = `myapp://app/?rotating_token_nonce=real&denext_nonce=${NONCE}`;
+  assert(s.claim(genuine));
+  assertEquals((await run).url, genuine);
+  // The genuine callback replayed after use: swallowed, never routed to the page.
+  assert(s.claim(genuine));
+  // ... and it cannot complete the NEXT session, which has its own nonce.
+  let next = false;
+  const run2 = start(clerkStart(NONCE_2)).finally(() => (next = true));
+  await new Promise((r) => setTimeout(r, 5));
+  assert(s.claim(genuine));
+  await new Promise((r) => setTimeout(r, 5));
+  assertEquals(next, false, "a replayed callback did not complete the next session");
+  const genuine2 = `myapp://app/?denext_nonce=${NONCE_2}&rotating_token_nonce=real2`;
+  assert(s.claim(genuine2));
+  assertEquals((await run2).url, genuine2);
+});
+
+Deno.test("scheme auth: a nonce outside the Clerk binding is enforced too", async () => {
+  const { s, start, opened: list } = sessions();
+  const run = start({ nonce: NONCE });
+  await opened(list);
+  assert(s.claim("myapp://auth/cb?code=abc&state=st-1")); // right state, no nonce: swallowed
+  const genuine = `myapp://auth/cb?code=abc&state=st-1&denext_nonce=${NONCE}`;
+  assert(s.claim(genuine));
+  assertEquals((await run).url, genuine);
 });
 
 Deno.test("scheme auth: a browser that fails to open ends the session", async () => {

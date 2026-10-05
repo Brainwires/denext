@@ -223,6 +223,49 @@ Deno.test("clerk bridge: the OAuth session is bound — OS sheet when there is o
   assertEquals([late.binding, late.osSessionOnly], [undefined, undefined]);
 });
 
+Deno.test("clerk bridge: Windows/Linux — getRedirectUrl carries a fresh per-flow nonce that open() binds", async () => {
+  const flows = async (osSession: boolean) => {
+    const out: { redirect: string; start: Record<string, unknown> }[] = [];
+    await inDesktop({
+      authSession: {
+        capabilities: () => ({ osSession, ephemeral: false }),
+        start: (a) => {
+          const args = a as Record<string, unknown>;
+          out.at(-1)!.start = args;
+          return { url: `${args.callbackPrefix}&rotating_token_nonce=n1` };
+        },
+      },
+    }, async () => {
+      const gk = globalThis as { __denextPreloadKey?: string };
+      gk.__denextPreloadKey = "pk-0123456789abcdef";
+      const t = installClerkDesktopBridge()!.bridge.oauthTransport;
+      delete gk.__denextPreloadKey;
+      for (let i = 0; i < 2; i++) {
+        // clerk-js: getRedirectUrl() (sent to Clerk as the sign-in's redirect), then open().
+        out.push({ redirect: String(await t.getRedirectUrl()), start: {} });
+        await t.open(
+          "https://accounts.google.com/o/oauth2/auth?redirect_uri=https%3A%2F%2Fclerk.example.com%2Fv1%2Foauth_callback",
+        );
+      }
+    });
+    return out;
+  };
+  const [a, b] = await flows(false);
+  for (const f of [a, b]) {
+    const nonce = new URL(f.redirect).searchParams.get("denext_nonce") ?? "";
+    assert(/^[A-Za-z0-9_-]{43}$/.test(nonce), `a 256-bit base64url nonce: ${f.redirect}`);
+    assertEquals(f.redirect, `t3code://app/?denext_nonce=${nonce}`);
+    assertEquals(f.start.nonce, nonce, "the runtime gets the nonce Clerk was given");
+    assertEquals(f.start.callbackPrefix, f.redirect);
+    assertEquals(f.start.binding, "clerk-client-nonce");
+  }
+  assert(a.start.nonce !== b.start.nonce, "each flow has its own nonce");
+  // macOS (an OS sheet): the redirect stays the bare origin; the sheet binds the callback.
+  const [mac] = await flows(true);
+  assertEquals(mac.redirect, "t3code://app/");
+  assertEquals([mac.start.nonce, mac.start.osSessionOnly], [undefined, true]);
+});
+
 Deno.test("clerk bridge: another app on the scheme (Windows/Linux) → a clear error naming the fix", async () => {
   const owned = () => {
     throw {

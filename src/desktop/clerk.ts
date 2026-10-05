@@ -24,10 +24,16 @@
  * URL it opens (the provider's), and the callback carries a `rotating_token_nonce` that clerk-js
  * redeems with `signIn.reload({ rotatingTokenNonce })` — a request authenticated by this client's
  * own client JWT (from the token cache, an `Authorization` header) on this client's sign-in
- * resource. Whether Clerk's servers refuse that nonce from a DIFFERENT client cannot be checked
- * from the client code, so the custom scheme is used only when this app handles it
- * (`scheme_owned_by_other_app` otherwise, on Windows and Linux; on macOS the OS sheet catches its
- * own callback). See the desktop docs ("Clerk on Deno Desktop").
+ * resource. Where the callback travels as a deep link (Windows and Linux), any same-user program
+ * can open `<scheme>://app/?rotating_token_nonce=…` while a sign-in is pending, so the transport
+ * does not rely on Clerk binding that nonce to this client: `getRedirectUrl()` writes a fresh
+ * per-session secret (`denext_nonce`, 256 bits) into the redirect URL Clerk returns to, and the
+ * runtime completes the session only with a callback that carries it back (compared in constant
+ * time; a callback without it, with another one or replayed later is swallowed). On macOS the OS
+ * sheet catches its own callback, which never travels as a deep link. The custom scheme is still
+ * used only when this app handles it (`scheme_owned_by_other_app` otherwise, on Windows and
+ * Linux), since a program that receives the real callback learns the nonce too. See the desktop
+ * docs ("Clerk on Deno Desktop").
  *
  * Passkeys and `invalid_rp`: a macOS build not signed by the relying party's Apple team gets
  * `invalid_rp` for every native request. The bridge then stops offering native passkeys for the
@@ -213,15 +219,41 @@ function tokenCache(prefix: string): ClerkTokenCache {
   };
 }
 
+/** The query parameter the per-session callback nonce rides in (the runtime checks it). */
+const CALLBACK_NONCE_PARAM = "denext_nonce";
+
+/** A fresh callback nonce: 32 random bytes, base64url (43 characters, 256 bits). */
+function callbackNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
 /**
  * How a Clerk OAuth session is bound, since Clerk's callback carries no `state` the transport
  * could set: in the OS's auth session where the runtime has one (macOS; the callback goes to the
- * sheet, never through a deep link), else by Clerk's own client-bound `rotating_token_nonce`,
+ * sheet, never through a deep link), else by a per-session callback nonce in the redirect URL,
  * claimed with the preload key (only a bridge installed from `desktop.preload` holds it).
  */
 async function clerkBinding(preloadKey: string | undefined): Promise<SchemeSessionInternals> {
   if (await hasOsAuthSession()) return { osSessionOnly: true };
-  return preloadKey ? { binding: "clerk-client-nonce", bindingKey: preloadKey } : {};
+  return preloadKey
+    ? { binding: "clerk-client-nonce", bindingKey: preloadKey, nonce: callbackNonce() }
+    : {};
+}
+
+/** `base` with the session's callback nonce (when it has one) as `denext_nonce`. */
+function withNonce(base: string, binding: SchemeSessionInternals): string {
+  if (binding.nonce === undefined) return base;
+  const url = new URL(base);
+  url.searchParams.set(CALLBACK_NONCE_PARAM, binding.nonce);
+  return url.href;
+}
+
+/** A flow's redirect URL and binding, made by `getRedirectUrl()` and used by the next `open()`. */
+interface PreparedFlow {
+  readonly redirect: string;
+  readonly binding: SchemeSessionInternals;
 }
 
 /** The path of Clerk's OAuth callback on its Frontend API (every provider's redirect URI). */
@@ -266,8 +298,19 @@ function oauthTransport(
   getClerk: () => ClerkLike | undefined,
 ): ClerkOAuthTransport {
   let pending = false;
+  /** The flow `getRedirectUrl()` prepared (clerk-js calls it right before `open()`). */
+  let prepared: PreparedFlow | undefined;
+  const prepare = async (): Promise<PreparedFlow> => {
+    const base = redirectUrl();
+    const binding = await clerkBinding(preloadKey);
+    return { redirect: withNonce(base, binding), binding };
+  };
   return {
-    getRedirectUrl: () => Promise.resolve().then(redirectUrl),
+    getRedirectUrl: async () => {
+      const flow = await prepare();
+      prepared = flow;
+      return flow.redirect;
+    },
     open: async (url) => {
       if (pending) throw new Error("Clerk: an OAuth flow is already pending.");
       const target = new URL(url);
@@ -280,8 +323,15 @@ function oauthTransport(
             `must be the Frontend API's ${CLERK_OAUTH_CALLBACK_PATH})`,
         );
       }
-      const redirect = redirectUrl();
       pending = true;
+      // The redirect (and its nonce) Clerk was given for this flow; a fresh one when `open()` came
+      // without `getRedirectUrl()` (a nonce Clerk never saw: the session then fails closed).
+      const flow = prepared ?? await prepare().catch((err) => {
+        pending = false;
+        throw err;
+      });
+      prepared = undefined;
+      const redirect = flow.redirect;
       try {
         const { url: callbackUrl } = await startDesktopSchemeAuthSession(url, {
           callbackScheme: schemeOf(redirect),
@@ -289,7 +339,7 @@ function oauthTransport(
           pkce: "not-applicable",
           reason: CLERK_OAUTH_PKCE_REASON,
           timeoutMs: OAUTH_TIMEOUT_MS,
-        }, await clerkBinding(preloadKey));
+        }, flow.binding);
         return { callbackUrl };
       } catch (err) {
         throw explainSchemeOwner(err, schemeOf(redirect));

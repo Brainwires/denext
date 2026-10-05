@@ -907,8 +907,14 @@ export default {
           <code>pkce: "not-applicable"</code>: clerk-js redeems the callback's{" "}
           <code>rotating_token_nonce</code> with{" "}
           <code>signIn.reload()</code>, a request signed by this client's own client JWT on this
-          client's sign-in. Whether Clerk's servers refuse that nonce from another client cannot be
-          read from the client code, so the custom scheme is used only when this app handles it.
+          client's sign-in. On Windows and Linux, where the callback comes back as a deep link that
+          any program of the same user could also send, <code>getRedirectUrl()</code>{" "}
+          adds a fresh 256-bit <code>denext_nonce</code>{" "}
+          to the redirect URL for each sign-in, and only a callback that carries it back completes
+          the sign-in: a forged one (no nonce, another nonce, or a replay of an earlier callback) is
+          dropped, whether or not Clerk binds its own nonce to the client. The custom scheme is
+          still used only when this app handles it, since the app that receives the real callback
+          sees the nonce too. macOS needs no nonce: the OS sheet catches its own callback.
         </li>
         <li>
           <code>window.__clerk_internal_electron_passkeys</code> runs ceremonies through the{" "}
