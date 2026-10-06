@@ -11,12 +11,8 @@ import {
   assertThrows,
 } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
-import {
-  desktopAppName,
-  desktopBundleCommand,
-  desktopIconArgs,
-  prepareDesktopPackage,
-} from "../src/build/desktop-package-script.ts";
+import { inChild } from "./helpers/isolated.ts";
+import { desktopIconArgs } from "../src/build/desktop-package-script.ts";
 import { syncDesktopAppConfigAt } from "../src/build/desktop-app-config.ts";
 import { injectAppConfigRedirects } from "../src/build/css.ts";
 import { packageMetaFrom } from "../src/build/desktop-installers.ts";
@@ -46,17 +42,6 @@ async function project(
   return { dir, entry: toFileUrl(join(dir, "scripts", "package-macos.ts")).href };
 }
 
-/** Run `fn` without `DENEXT_APP_NAME`, restoring it. */
-async function withoutAppNameEnv<T>(fn: () => Promise<T>): Promise<T> {
-  const prev = Deno.env.get("DENEXT_APP_NAME");
-  Deno.env.delete("DENEXT_APP_NAME");
-  try {
-    return await fn();
-  } finally {
-    if (prev !== undefined) Deno.env.set("DENEXT_APP_NAME", prev);
-  }
-}
-
 Deno.test("desktopAppName: DENEXT_APP_NAME, then denext.config.ts, then deno.json", async () => {
   const both = await project(
     { desktop: { app: { name: "From Deno" } } },
@@ -65,19 +50,17 @@ Deno.test("desktopAppName: DENEXT_APP_NAME, then denext.config.ts, then deno.jso
   const denoOnly = await project({ desktop: { app: { name: "From Deno" } } });
   const none = await project({});
   try {
-    await withoutAppNameEnv(async () => {
-      assertEquals(await desktopAppName(both.entry), "From Config");
-      assertEquals(await desktopAppName(denoOnly.entry), "From Deno");
-      assertEquals(await desktopAppName(none.entry), "app");
-    });
-    const prev = Deno.env.get("DENEXT_APP_NAME");
-    Deno.env.set("DENEXT_APP_NAME", "From Env");
-    try {
-      assertEquals(await desktopAppName(both.entry), "From Env");
-    } finally {
-      if (prev === undefined) Deno.env.delete("DENEXT_APP_NAME");
-      else Deno.env.set("DENEXT_APP_NAME", prev);
-    }
+    // Each in its own process: the name reads DENEXT_APP_NAME, which every test shares here.
+    const name = async (entry: string, env: string | undefined) =>
+      (await inChild<string>({
+        imports: `import { desktopAppName } from "@repo/src/build/desktop-package-script.ts";`,
+        body: `return await desktopAppName(${JSON.stringify(entry)});`,
+        env: { DENEXT_APP_NAME: env },
+      })).value;
+    assertEquals(await name(both.entry, undefined), "From Config");
+    assertEquals(await name(denoOnly.entry, undefined), "From Deno");
+    assertEquals(await name(none.entry, undefined), "app");
+    assertEquals(await name(both.entry, "From Env"), "From Env");
   } finally {
     for (const p of [both, denoOnly, none]) await Deno.remove(p.dir, { recursive: true });
   }
@@ -127,26 +110,23 @@ Deno.test({
         `await restoreAppConfig("deno.json", ".denext");\n`,
     },
   );
-  const cwd = Deno.cwd();
-  const prev = Deno.env.get("DENEXT_APP_NAME");
-  Deno.env.delete("DENEXT_APP_NAME");
   try {
     // What the CSS re-exec parent does before it spawns the package script.
     await injectAppConfigRedirects(join(dir, "deno.json"), join(dir, ".denext"), {
       "./app.css": "./.denext/css-shims/app.css.js",
     });
-    Deno.chdir(dir);
-    const { meta } = await prepareDesktopPackage(entry, "linux", {
-      formats: [],
-      add: [],
-      export: true,
+    // In the project's directory, with no DENEXT_APP_NAME: its own process.
+    const { value: meta } = await inChild<{ identifier?: string }>({
+      imports: `import { prepareDesktopPackage } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return (await prepareDesktopPackage(${JSON.stringify(entry)}, "linux", ` +
+        `{ formats: [], add: [], export: true })).meta;`,
+      env: { DENEXT_APP_NAME: undefined },
+      cwd: dir,
     });
     const app = JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))).desktop.app;
     assertEquals([app.name, app.identifier], ["New App", "com.new.app"]);
     assertEquals(meta.identifier, "com.new.app");
   } finally {
-    Deno.chdir(cwd);
-    if (prev !== undefined) Deno.env.set("DENEXT_APP_NAME", prev);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -219,17 +199,16 @@ Deno.test("bundle command (Linux / Windows): the configured icon beats the scrip
     { desktop: { app: { icons: { windows: "brand/app.ico" } } } },
     { "brand/app.ico": "ico", "icons/app.ico": "ico" },
   );
-  const cwd = Deno.cwd();
   try {
-    Deno.chdir(dir);
-    const cmd = await desktopBundleCommand(entry, "windows", {
-      target: "x86_64-pc-windows-msvc",
-      out: "dist/a-x64",
-      icons: ["icons/app.ico"],
+    // The icons resolve against the working directory: its own process.
+    const { value: cmd } = await inChild<string[]>({
+      imports: `import { desktopBundleCommand } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await desktopBundleCommand(${JSON.stringify(entry)}, "windows", ` +
+        `{ target: "x86_64-pc-windows-msvc", out: "dist/a-x64", icons: ["icons/app.ico"] });`,
+      cwd: dir,
     });
     assertStringIncludes(cmd.join(" "), "--icon brand/app.ico --output dist/a-x64 desktop.ts");
   } finally {
-    Deno.chdir(cwd);
     await Deno.remove(dir, { recursive: true });
   }
 });

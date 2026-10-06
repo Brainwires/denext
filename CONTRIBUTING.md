@@ -35,6 +35,13 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
 - **Formatting is `deno fmt`** (no Prettier, no npm), configured under `fmt` in
   `deno.json`; format files under `site` **from the repo root**
   (`deno fmt --config deno.json <paths>`), never from inside `site`.
+- **Tests run in one process.** `deno test --parallel` runs every test file in the same process,
+  so a test that sets or deletes an environment variable, or changes the working directory,
+  changes it for every test running at that moment; restoring it in `finally` is too late for
+  them. Pass the value explicitly, or run the subject in a child process with its own env and
+  cwd (`inChild` from `tests/helpers/isolated.ts`). A file that must change process-wide state
+  goes in `tests/serial-tests.ts`: `deno task test` (`scripts/test-run.ts`) runs those files one
+  at a time after the parallel pass, and `tests/serial-tests.test.ts` fails on an unlisted one.
 - **`deno task test:e2e`** and **`deno task test:migration-bed`** are the two
   network-bound suites `check` never runs; the nightly workflow
   (`.github/workflows/e2e.yml`) does. The e2e suite drives the examples in a real

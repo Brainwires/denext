@@ -96,12 +96,13 @@ jobs:
 
       - name: Verify (fmt, lint, types, tests)
         # The whole-workspace gate (mirrors the `check` task); the e2e suite runs
-        # separately (`deno task test:e2e`). --unstable-kv enables the KV tests.
+        # separately (`deno task test:e2e`). scripts/test-run.ts runs the files that change
+        # process-wide state (tests/serial-tests.ts) after the parallel pass, one at a time.
         run: |
           deno fmt --check
           deno lint
           deno check cli.ts mod.ts
-          deno test -A --unstable-kv --parallel --ignore=tests/e2e/,tests/migration-bed/
+          deno run -A scripts/test-run.ts --ignore=tests/e2e/,tests/migration-bed/
 
       - name: Publish exactly the tagged source
         # `deno publish` refuses a dirty tree. A test that leaves a file behind must not block

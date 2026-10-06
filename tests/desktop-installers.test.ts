@@ -10,6 +10,7 @@ import {
   assertThrows,
 } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
+import { inChild } from "./helpers/isolated.ts";
 import {
   arArchive,
   buildDesktopDeb,
@@ -43,8 +44,6 @@ import {
   wixSource,
 } from "../src/build/desktop-installers.ts";
 import {
-  desktopAppName,
-  desktopBundleCommand,
   desktopHasTool,
   desktopMsiProblem,
   desktopOptionalInstaller,
@@ -55,7 +54,7 @@ import {
   desktopToolGate,
   desktopVersionProblem,
   parseDesktopPackageArgs,
-  prepareDesktopPackage,
+  type prepareDesktopPackage,
 } from "../src/build/desktop-package-script.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -877,20 +876,20 @@ Deno.test("meta warnings: a made-up version or identifier is warned about, a set
 Deno.test("tool probe: an executable on PATH is found without a shell, a plain file is not", async () => {
   if (Deno.build.os === "windows") return;
   const dir = await Deno.makeTempDir();
-  const prev = Deno.env.get("PATH");
   try {
     await Deno.writeTextFile(join(dir, "denext-fake-tool"), "#!/bin/sh\n");
     await Deno.chmod(join(dir, "denext-fake-tool"), 0o755);
     await Deno.writeTextFile(join(dir, "denext-not-exec"), "x");
     await Deno.mkdir(join(dir, "denext-a-dir"));
-    Deno.env.set("PATH", `:${dir}`);
-    assertEquals(await desktopHasTool("denext-fake-tool"), true);
-    assertEquals(await desktopHasTool("denext-not-exec"), false);
-    assertEquals(await desktopHasTool("denext-a-dir"), false);
-    assertEquals(await desktopHasTool("denext-missing"), false);
+    // Its own PATH, in its own process: every other test's subprocesses read this one's.
+    const { value } = await inChild<boolean[]>({
+      imports: `import { desktopHasTool } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await Promise.all(["denext-fake-tool", "denext-not-exec", "denext-a-dir", ` +
+        `"denext-missing"].map((t) => desktopHasTool(t)));`,
+      env: { PATH: `:${dir}` },
+    });
+    assertEquals(value, [true, false, false, false]);
   } finally {
-    if (prev === undefined) Deno.env.delete("PATH");
-    else Deno.env.set("PATH", prev);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -901,29 +900,19 @@ Deno.test("prepare: the plan, the app.json sync and the metadata of a project", 
     await Deno.mkdir(join(dir, "scripts"));
     await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ version: "4.5.6" }));
     const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
-    const prev = Deno.env.get("DENEXT_APP_NAME");
-    Deno.env.set("DENEXT_APP_NAME", "Prepared App");
-    const cwd = Deno.cwd();
-    Deno.chdir(dir);
-    let prepared;
-    try {
-      const run = await warnings(() =>
-        prepareDesktopPackage(entry, "linux", {
-          formats: ["rpm"],
-          add: ["appimage"],
-          export: false,
-        })
-      );
-      prepared = run.value;
-      // deno.json has a version but no identifier: only the identifier is warned about.
-      assertEquals(run.lines.length, 1);
-      assertStringIncludes(run.lines[0], "no desktop.app.identifier");
-    } finally {
-      Deno.chdir(cwd);
-      if (prev === undefined) Deno.env.delete("DENEXT_APP_NAME");
-      else Deno.env.set("DENEXT_APP_NAME", prev);
-    }
-    const { name, plan, meta } = prepared;
+    // The name from the environment and `dist/` in the working directory: its own process.
+    const run = await inChild<Awaited<ReturnType<typeof prepareDesktopPackage>>>({
+      imports: `import { prepareDesktopPackage } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await prepareDesktopPackage(${JSON.stringify(entry)}, "linux", ` +
+        `{ formats: ["rpm"], add: ["appimage"], export: false });`,
+      env: { DENEXT_APP_NAME: "Prepared App" },
+      cwd: dir,
+    });
+    // deno.json has a version but no identifier: only the identifier is warned about.
+    const lines = run.stderr.split("\n").filter((l) => l.trim());
+    assertEquals(lines.length, 1, run.stderr);
+    assertStringIncludes(lines[0], "no desktop.app.identifier");
+    const { name, plan, meta } = run.value;
     assertEquals(name, "Prepared-App");
     assertEquals(plan, { formats: ["rpm", "appimage"], explicit: true });
     assert((await Deno.stat(join(dir, "dist"))).isDirectory);
@@ -935,17 +924,18 @@ Deno.test("prepare: the plan, the app.json sync and the metadata of a project", 
 
 Deno.test("bundle command: least-privilege deno desktop with the target and the first icon", async () => {
   const dir = await Deno.makeTempDir();
-  const cwd = Deno.cwd();
   try {
     await Deno.mkdir(join(dir, "scripts"));
     await Deno.mkdir(join(dir, "icons"));
     await Deno.writeTextFile(join(dir, "icons", "app.png"), "png");
-    Deno.chdir(dir);
     const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
-    const cmd = await desktopBundleCommand(entry, "linux", {
-      target: "x86_64-unknown-linux-gnu",
-      out: "dist/a-x64",
-      icons: ["icons/missing.png", "icons/app.png"],
+    // The icons resolve against the working directory: its own process.
+    const { value: cmd } = await inChild<string[]>({
+      imports: `import { desktopBundleCommand } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await desktopBundleCommand(${JSON.stringify(entry)}, "linux", ` +
+        `{ target: "x86_64-unknown-linux-gnu", out: "dist/a-x64", ` +
+        `icons: ["icons/missing.png", "icons/app.png"] });`,
+      cwd: dir,
     });
     assertEquals(cmd.slice(0, 3), ["deno", "desktop", "--no-prompt"]);
     assert(!cmd.includes("-A"));
@@ -953,7 +943,6 @@ Deno.test("bundle command: least-privilege deno desktop with the target and the 
     assertStringIncludes(cmd.join(" "), "--target x86_64-unknown-linux-gnu");
     assertStringIncludes(cmd.join(" "), "--icon icons/app.png --output dist/a-x64 desktop.ts");
   } finally {
-    Deno.chdir(cwd);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -961,14 +950,12 @@ Deno.test("bundle command: least-privilege deno desktop with the target and the 
 Deno.test("script helpers: the app name, its slug, and a failing command", async () => {
   assertEquals(desktopSlug("  My App! "), "My-App");
   assertEquals(desktopSlug("!!!"), "app");
-  const prev = Deno.env.get("DENEXT_APP_NAME");
-  Deno.env.set("DENEXT_APP_NAME", "From Env");
-  try {
-    assertEquals(await desktopAppName(), "From Env");
-  } finally {
-    if (prev === undefined) Deno.env.delete("DENEXT_APP_NAME");
-    else Deno.env.set("DENEXT_APP_NAME", prev);
-  }
+  const { value: fromEnv } = await inChild<string>({
+    imports: `import { desktopAppName } from "@repo/src/build/desktop-package-script.ts";`,
+    body: `return await desktopAppName();`,
+    env: { DENEXT_APP_NAME: "From Env" },
+  });
+  assertEquals(fromEnv, "From Env");
   await assertRejects(() => desktopRun([Deno.execPath(), "eval", "Deno.exit(3)"]), Error, "(3)");
   // A secret on the command line never reaches the failure message.
   const err = await assertRejects(
@@ -985,24 +972,29 @@ Deno.test("script helpers: the app name, its slug, and a failing command", async
 
 Deno.test('script app name: DENEXT_APP_NAME, else deno.json desktop.app.name, else "app"', async () => {
   const dir = await Deno.makeTempDir();
-  const cwd = Deno.cwd();
-  const prev = Deno.env.get("DENEXT_APP_NAME");
-  Deno.env.delete("DENEXT_APP_NAME");
+  // The name with no DENEXT_APP_NAME, read from the working directory: its own process.
+  const name = async () =>
+    (await inChild<string>({
+      imports: `import { desktopAppName } from "@repo/src/build/desktop-package-script.ts";`,
+      body: `return await desktopAppName();`,
+      env: { DENEXT_APP_NAME: undefined },
+      cwd: dir,
+    })).value;
   try {
-    Deno.chdir(dir);
-    assertEquals(await desktopAppName(), "app"); // no deno.json
-    await Deno.writeTextFile("deno.json", "{ not json");
-    assertEquals(await desktopAppName(), "app"); // an unreadable one
-    await Deno.writeTextFile("deno.json", JSON.stringify({ desktop: { app: { name: "   " } } }));
-    assertEquals(await desktopAppName(), "app"); // a blank name
+    assertEquals(await name(), "app"); // no deno.json
+    await Deno.writeTextFile(join(dir, "deno.json"), "{ not json");
+    assertEquals(await name(), "app"); // an unreadable one
     await Deno.writeTextFile(
-      "deno.json",
+      join(dir, "deno.json"),
+      JSON.stringify({ desktop: { app: { name: "   " } } }),
+    );
+    assertEquals(await name(), "app"); // a blank name
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
       JSON.stringify({ desktop: { app: { name: "  Named App " } } }),
     );
-    assertEquals(await desktopAppName(), "Named App");
+    assertEquals(await name(), "Named App");
   } finally {
-    Deno.chdir(cwd);
-    if (prev !== undefined) Deno.env.set("DENEXT_APP_NAME", prev);
     await Deno.remove(dir, { recursive: true });
   }
 });
