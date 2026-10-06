@@ -106,11 +106,16 @@ export function reasonText(value: unknown): string | null {
   return text === "" ? null : text.slice(0, MAX_REASON);
 }
 
-/** The runtime's raw answer, or `null` when it has no probe / did not answer. */
-function rawFeatures(api: DesktopAppApi | undefined): Record<string, unknown> | null {
+/**
+ * The runtime's raw answer, or `null` when it has no probe / did not answer. The probe is async
+ * (it runs off the JavaScript thread: its first call on Linux may wait for xdg-desktop-portal).
+ */
+async function rawFeatures(
+  api: DesktopAppApi | undefined,
+): Promise<Record<string, unknown> | null> {
   if (typeof api?.platformFeatures !== "function") return null;
   try {
-    const raw = api.platformFeatures();
+    const raw = await api.platformFeatures();
     return typeof raw === "object" && raw !== null ? raw as Record<string, unknown> : null;
   } catch {
     return null;
@@ -124,8 +129,8 @@ function rawFeatures(api: DesktopAppApi | undefined): Record<string, unknown> | 
  * @param api The runtime's app API (`Deno.desktop`), when there is one.
  * @returns The facts (every one `"unknown"` without the probe).
  */
-export function platformFacts(api: DesktopAppApi | undefined): PlatformFacts {
-  const raw = rawFeatures(api);
+export async function platformFacts(api: DesktopAppApi | undefined): Promise<PlatformFacts> {
+  const raw = await rawFeatures(api);
   if (!raw) return UNKNOWN_FACTS;
   const session = raw.sessionType;
   const cookie = raw.cookieEncryption;

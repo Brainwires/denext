@@ -42,7 +42,7 @@
  */
 
 import { bytesToBase64 } from "../mobile/base64.ts";
-import { desktopRpc } from "./bridge-client.ts";
+import { desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
 import { onAppAction } from "./app-actions.ts";
 import { pullQueue } from "./pull.ts";
 
@@ -239,6 +239,23 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
   };
+}
+
+/**
+ * Call `handler` with fresh {@linkcode appCapabilities} whenever the runtime says what the session
+ * provides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went
+ * away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray
+ * icon again when `tray` turns `true`. Older runtimes never call it.
+ *
+ * @param handler Called with the capabilities as they are now.
+ * @returns A function that unsubscribes.
+ */
+export function onAppCapabilitiesChanged(
+  handler: (capabilities: AppCapabilities) => void,
+): () => void {
+  return subscribeDesktopEvent("app", "capabilities", () => {
+    appCapabilities().then(handler, () => {});
+  });
 }
 
 /**

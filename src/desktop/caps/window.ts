@@ -260,10 +260,10 @@ function stateOf(win: BrowserWindowLike): Record<string, unknown> {
 }
 
 /** What the window can do: the runtime's `windowCapabilities()`, else what the stock API has. */
-function capabilitiesOf(
+async function capabilitiesOf(
   win: BrowserWindowLike | undefined,
   api: DesktopAppApi | undefined,
-): Record<string, boolean | string | null> {
+): Promise<Record<string, boolean | string | null>> {
   let reported: Record<string, boolean> | undefined;
   try {
     reported = api?.windowCapabilities?.();
@@ -271,7 +271,7 @@ function capabilitiesOf(
     reported = undefined;
   }
   const has = (name: keyof BrowserWindowLike) => typeof win?.[name] === "function";
-  const facts = platformFacts(api);
+  const facts = await platformFacts(api);
   return {
     state: has("maximize"),
     stateEvents: false,

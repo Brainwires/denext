@@ -826,7 +826,8 @@ Deno.test("window: capabilities carry the session probe's facts; unknown without
   assertEquals([before.sessionType, before.cookieEncryption], ["unknown", "unknown"]);
   const probed = await setup({
     api: fakeApi({
-      platformFeatures: () => ({ os: "linux", sessionType: "wayland", cookieEncryption: "basic" }),
+      platformFeatures: () =>
+        Promise.resolve({ os: "linux", sessionType: "wayland", cookieEncryption: "basic" }),
     }),
   }).call("capabilities") as Record<string, unknown>;
   assertEquals([probed.sessionType, probed.cookieEncryption], ["wayland", "basic"]);

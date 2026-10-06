@@ -416,7 +416,11 @@ buttons, and clicks (the launch click too) routed to `onLocalNotificationTapped`
 `requestPermission("notifications")` / `requestPushPermission()` report the OS setting. `context-menu`
 is the native menu (submenus, `null` on dismiss). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators and roles, `createTray({ icon, tooltip, menu })`,
-`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. `registerShortcut(accel, fn)`
+`setBadge(n)`, `bounce()`; `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
+`createTray` rejects `unsupported` with `error.data.reason` (a hidden window is shown); `appCapabilities()`
+reports `trayHost` / `secretService` / `sessionType` / `cookieEncryption` from the runtime's probe
+(`"unknown"` before runtime denext.10), and `denext desktop doctor [--linux]` lists what the session lacks,
+with fixes. `registerShortcut(accel, fn)`
 needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`. `denext desktop run` / `dev` build the app into a temp dir with the
 packaging scripts' least-privilege flags and launch it (a bare `deno desktop` only compiles). An extension's
@@ -1911,7 +1915,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/desktop`
 
 - `buildDesktopBundle(entryUrl: string, os: linux | windows, o: DesktopBundleOptions): Promise<string>` — Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable.
-- `buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<string>` — Build a .deb for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written here), so it cross-builds from any OS. Installs into /usr/lib/<package> with a /usr/bin/<package> link, the .desktop entry (deep-link schemes as x-scheme-handler/*) and the icon; the desktop and icon databases are refreshed by their own dpkg triggers.
+- `buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<string>` — Build a .deb for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written here), so it cross-builds from any OS. Installs into /usr/lib/<package> with a /usr/bin/<package> link, the .desktop entry (deep-link schemes as x-scheme-handler/*) and the icon; the postinst / postrm refresh the desktop and icon databases (debMaintainerScript).
 - `buildDesktopMsi(o: BuildMsiOptions): Promise<string>` — Author and build the .msi for a finished Windows bundle with WiX 5 (wix build); the .wxs is kept beside the .msi for inspection. Windows-only (WiX builds on Windows).
 - `buildDesktopRpm(o: BuildLinuxPackageOptions): Promise<string>` — Build an .rpm for a finished Linux bundle with rpmbuild (Fedora/RHEL, apt install rpm on Debian/Ubuntu, brew install rpm on macOS). Same installed layout as the .deb.
 - `buildDesktopTarball(o: BuildDesktopTarballOptions): Promise<string>` — The .tar.gz of a finished Linux bundle, written here (ustar + gzip) rather than by the host's tar, so a bundle packaged on Windows keeps its executables' mode bits (see bundleFileMode) and the archive is the same from every host.

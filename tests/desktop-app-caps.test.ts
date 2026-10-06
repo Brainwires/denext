@@ -728,7 +728,7 @@ Deno.test("notifications: capabilities pass on the runtime's Linux reasons (runt
   const caps = (features: Record<string, unknown>) =>
     call(
       notificationsCapability({
-        api: { ...f.api, platformFeatures: () => features },
+        api: { ...f.api, platformFeatures: () => Promise.resolve(features) },
         autoTopUp: false,
       }),
       "capabilities",
@@ -1322,7 +1322,7 @@ Deno.test("app: with the probe, a session with no tray host reports tray false w
   FakeTray.made = [];
   const cap = createAppController({
     window: undefined,
-    api: { platformFeatures: () => NO_TRAY_HOST },
+    api: { platformFeatures: () => Promise.resolve(NO_TRAY_HOST) },
     emit: () => {},
     Tray: FakeTray,
     os: "linux",
@@ -1347,7 +1347,7 @@ Deno.test("app: a tray-only app (window hidden) gets its window shown when no tr
   const win = hiddenWindow(false);
   const cap = createAppController({
     window: win,
-    api: { platformFeatures: () => NO_TRAY_HOST },
+    api: { platformFeatures: () => Promise.resolve(NO_TRAY_HOST) },
     emit: () => {},
     Tray: FakeTray,
     os: "linux",
@@ -1359,7 +1359,7 @@ Deno.test("app: a tray-only app (window hidden) gets its window shown when no tr
   const shown = hiddenWindow(true);
   const cap2 = createAppController({
     window: shown,
-    api: { platformFeatures: () => NO_TRAY_HOST },
+    api: { platformFeatures: () => Promise.resolve(NO_TRAY_HOST) },
     emit: () => {},
     Tray: FakeTray,
     os: "linux",
@@ -1378,7 +1378,7 @@ Deno.test("app: a tray-only app (window hidden) gets its window shown when no tr
   });
   const cap3 = createAppController({
     window: broken,
-    api: { platformFeatures: () => NO_TRAY_HOST },
+    api: { platformFeatures: () => Promise.resolve(NO_TRAY_HOST) },
     emit: () => {},
     Tray: FakeTray,
     os: "linux",
@@ -1414,7 +1414,10 @@ Deno.test("app: the runtime's NotSupported from new Deno.Tray() becomes unsuppor
   const cap = createAppController({
     window: win,
     // A host that left after the probe answered, or a runtime that only throws.
-    api: { platformFeatures: () => ({ ...NO_TRAY_HOST, trayHost: true, trayReason: null }) },
+    api: {
+      platformFeatures: () =>
+        Promise.resolve({ ...NO_TRAY_HOST, trayHost: true, trayReason: null }),
+    },
     emit: () => {},
     Tray: NoHostTray,
     os: "linux",
@@ -1465,12 +1468,19 @@ Deno.test("app: without the probe (denext.9), a throwing or odd probe, every fac
   for (
     const platformFeatures of [
       undefined,
-      () => null,
-      () => "linux",
+      () => Promise.resolve(null),
+      () => Promise.resolve("linux"),
+      () => Promise.reject(new Error("probe failed")),
       () => {
-        throw new Error("probe failed");
+        throw new Error("probe failed before it started");
       },
-      () => ({ trayHost: "yes", secretService: "maybe", sessionType: 7, cookieEncryption: "aes" }),
+      () =>
+        Promise.resolve({
+          trayHost: "yes",
+          secretService: "maybe",
+          sessionType: 7,
+          cookieEncryption: "aes",
+        }),
     ]
   ) {
     const cap = createAppController({
@@ -1491,14 +1501,15 @@ Deno.test("app: without the probe (denext.9), a throwing or odd probe, every fac
   const mac = createAppController({
     window: undefined,
     api: {
-      platformFeatures: () => ({
-        os: "macos",
-        sessionType: null,
-        trayHost: true,
-        trayReason: "ignored when there is a host",
-        secretService: "os",
-        cookieEncryption: null,
-      }),
+      platformFeatures: () =>
+        Promise.resolve({
+          os: "macos",
+          sessionType: null,
+          trayHost: true,
+          trayReason: "ignored when there is a host",
+          secretService: "os",
+          cookieEncryption: null,
+        }),
     },
     emit: () => {},
     Tray: FakeTray,
@@ -1516,7 +1527,7 @@ Deno.test("app: where the badge shows follows the probe (runtime 2.9.7-denext.11
   const capsWith = async (features: Record<string, unknown> | undefined) => {
     const cap = createAppController({
       window: undefined,
-      api: features ? { platformFeatures: () => features } : {},
+      api: features ? { platformFeatures: () => Promise.resolve(features) } : {},
       emit: () => {},
       Tray: FakeTray,
       os: "linux",
@@ -1593,4 +1604,25 @@ Deno.test("globalShortcuts: not_supported carries the runtime's message as the r
   message = "";
   const bare = await unsupportedOf(call(cap, "register", { accelerator: "Ctrl+J" }));
   assertEquals(bare.data?.reason, "no global shortcuts in this session");
+});
+
+Deno.test("app: platformfeatureschanged asks the page to re-read the capabilities", async () => {
+  const api = Object.assign(new EventTarget(), {
+    platformFeatures: () => Promise.resolve({ ...NO_TRAY_HOST, trayHost: true, trayReason: null }),
+  });
+  const events: string[] = [];
+  const ctl = createAppController({
+    window: undefined,
+    api,
+    emit: (cap, event) => events.push(`${cap}:${event}`),
+    Tray: FakeTray,
+    os: "linux",
+  });
+  api.dispatchEvent(new Event("platformfeatureschanged"));
+  assertEquals(events, [], "nothing before install");
+  ctl.install();
+  api.dispatchEvent(new Event("platformfeatureschanged"));
+  assertEquals(events, ["app:capabilities"]);
+  const caps = await call(ctl.capability, "capabilities") as Record<string, unknown>;
+  assertEquals([caps.tray, caps.trayHost], [true, true]);
 });

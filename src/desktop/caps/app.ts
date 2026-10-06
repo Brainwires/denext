@@ -221,9 +221,9 @@ export function createAppController(options: AppControllerOptions): AppControlle
    * Why no tray icon can be shown here (`undefined` when one can): no `Deno.Tray`, or the probe
    * found no tray host.
    */
-  const trayMissing = (): string | undefined => {
+  const trayMissing = async (): Promise<string | undefined> => {
     if (!Tray) return NO_API;
-    const facts = platformFacts(options.api);
+    const facts = await platformFacts(options.api);
     return facts.trayHost === false
       ? facts.trayReason ?? "no tray host in this session"
       : undefined;
@@ -255,8 +255,8 @@ export function createAppController(options: AppControllerOptions): AppControlle
     }
   };
 
-  const createTray = (args: unknown) => {
-    const missing = trayMissing();
+  const createTray = async (args: unknown) => {
+    const missing = await trayMissing();
     if (missing !== undefined) throw noTray(missing);
     if (trays.size >= MAX_TRAYS) throw invalid(`at most ${MAX_TRAYS} tray icons`);
     const a = argsOf(args);
@@ -296,10 +296,10 @@ export function createAppController(options: AppControllerOptions): AppControlle
     name: "app",
     methods: {
       capabilities: {
-        handler: () => {
+        handler: async () => {
           const caps = menuCaps();
-          const facts = platformFacts(options.api);
-          const trayReason = trayMissing() ?? null;
+          const facts = await platformFacts(options.api);
+          const trayReason = (await trayMissing()) ?? null;
           return {
             appMenu: caps.appMenu ?? typeof win?.setApplicationMenu === "function",
             accelerators: caps.accelerators === true,
@@ -399,6 +399,12 @@ export function createAppController(options: AppControllerOptions): AppControlle
         const id = clickedId(e);
         if (id !== undefined && dockMenuIds.has(id)) queue.push({ source: "dock", id });
       });
+      // The session probe's answer may have changed (a tray host came or went): the page re-reads
+      // the capabilities (`onAppCapabilitiesChanged`).
+      options.api?.addEventListener?.(
+        "platformfeatureschanged",
+        () => options.emit("app", "capabilities", null),
+      );
     },
   };
 }

@@ -1426,6 +1426,7 @@
     "getLaunchAtLogin:function",
     "isDesktopBridgeError:function",
     "listShortcuts:function",
+    "onAppCapabilitiesChanged:function",
     "onAppMenuItem:function",
     "registerShortcut:function",
     "setAppMenu:function",

@@ -246,10 +246,12 @@ export interface DesktopAppApi {
   windowCapabilities?(): Record<string, boolean>;
   /**
    * What this session provides (runtime 2.9.7-denext.10 and later): the tray host, the Secret
-   * Service, the session type, the portal versions, the cookie store. `null` outside a desktop
-   * app; absent on older runtimes. Read through `caps/platform.ts`, which validates it.
+   * Service, the session type, the portal versions, the cookie store. Resolves `null` outside a
+   * desktop app; absent on older runtimes. Async: the runtime probes off the JavaScript thread.
+   * Read through `caps/platform.ts`, which validates it. `"platformfeatureschanged"` says it may
+   * have changed (a tray host came or went).
    */
-  platformFeatures?(): unknown;
+  platformFeatures?(): Promise<unknown>;
   /** Electron's `app.quit()`: cancelable `beforequit`, then every window's cancelable `close`. */
   quit?(): boolean;
   /** The OS's own file dialogs. */

@@ -15,6 +15,7 @@ import {
   buildDesktopDeb,
   buildDesktopTarball,
   bundleFileMode,
+  CEF_SANDBOX_HELPER,
   debControl,
   debianPackageName,
   debMaintainerScript,
@@ -28,6 +29,7 @@ import {
   packageMetaFrom,
   packageMetaWarnings,
   planDesktopInstallers,
+  rpmFiles,
   rpmSpec,
   splitFormatList,
   stageLinuxRoot,
@@ -429,6 +431,55 @@ Deno.test("deb: a real .deb of a bundle, read back member by member", {
       assert(dpkg.success);
       assertStringIncludes(new TextDecoder().decode(dpkg.stdout), "Package: my-app");
     }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("deb + rpm: the CEF sandbox helper installs setuid root; nothing else is", {
+  ignore: Deno.build.os === "windows",
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const bundle = join(dir, "My-App-x64");
+    await fakeLinuxBundle(bundle);
+    await Deno.writeTextFile(join(bundle, CEF_SANDBOX_HELPER), "\x7fELFsandbox");
+    await Deno.chmod(join(bundle, CEF_SANDBOX_HELPER), 0o755);
+    // A stray setgid, world-writable file: shipped masked.
+    await Deno.writeTextFile(join(bundle, "loose.bin"), "loose");
+    await Deno.chmod(join(bundle, "loose.bin"), 0o2777);
+    const out = join(dir, "my-app.deb");
+    await buildDesktopDeb({
+      meta: { ...META, backend: "cef" },
+      bundleDir: bundle,
+      exe: "My-App-x64",
+      arch: "x86_64",
+      out,
+    });
+    const data = await readTarGz(readAr(await Deno.readFile(out)).get("data.tar.gz")!);
+    assertEquals(data.get(`./usr/lib/my-app/${CEF_SANDBOX_HELPER}`)?.slice(0, 2), ["0", 0o4755]);
+    assertEquals(data.get("./usr/lib/my-app/loose.bin")?.[1], 0o755);
+    for (const [path, [type, mode]] of data) {
+      if (path.endsWith(`/${CEF_SANDBOX_HELPER}`)) continue;
+      assertEquals(mode & 0o7000, 0, `${path} must not be setuid / setgid / sticky`);
+      if (type !== "2") assertEquals(mode & 0o022, 0, `${path} must not be group/other-writable`);
+    }
+
+    // The .rpm: the app's directory listed entry by entry, the helper alone %attr(4755,root,root).
+    const root = join(dir, "root");
+    const owned = await stageLinuxRoot(bundle, "My-App-x64", META, root);
+    const files = await rpmFiles(root, "my-app", owned);
+    const spec = rpmSpec(META, root, files);
+    const list = spec.split("%defattr(-,root,root,-)\n")[1];
+    assertStringIncludes(list, "%dir /usr/lib/my-app\n");
+    assertStringIncludes(list, `%attr(4755,root,root) /usr/lib/my-app/${CEF_SANDBOX_HELPER}\n`);
+    assertStringIncludes(list, "\n/usr/lib/my-app/sub\n");
+    assertStringIncludes(list, "\n/usr/bin/my-app\n");
+    assertEquals(list.match(/%attr/g)?.length, 1);
+    assert(!list.includes("\n/usr/lib/my-app\n"), "the directory is not owned whole as well");
+    // Without the helper (the WebView backend) the directory is owned whole, as before.
+    await Deno.remove(join(root, "usr/lib/my-app", CEF_SANDBOX_HELPER));
+    assertEquals(await rpmFiles(root, "my-app", owned), owned.map((path) => ({ path })));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

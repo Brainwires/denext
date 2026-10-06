@@ -153,8 +153,8 @@ type NotificationCtor = new (
  * why a scheduled notification waits for the app to run (`schedulePersists` false). `"unknown"` /
  * `null` from an older runtime and on macOS and Windows, where the OS does both.
  */
-function notificationFacts(api: DesktopAppApi | undefined) {
-  const facts = platformFacts(api);
+async function notificationFacts(api: DesktopAppApi | undefined) {
+  const facts = await platformFacts(api);
   return {
     transport: facts.notificationTransport,
     coldStartReason: facts.notificationColdStartReason,
@@ -640,10 +640,10 @@ export function notificationsCapability(
     name: "notifications",
     methods: {
       capabilities: {
-        handler: () => ({
+        handler: async () => ({
           ...nativeApi(api()).capabilities(),
           categories: true,
-          ...notificationFacts(api()),
+          ...await notificationFacts(api()),
         }),
       },
       // Posting an OS notification needs an UNSCOPED `--allow-sys` under the pinned runtime.

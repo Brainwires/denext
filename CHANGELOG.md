@@ -53,6 +53,11 @@ Each item is described in full under Changed, Fixed or Security below.
 
 ### Added
 
+- **`onAppCapabilitiesChanged(handler)` from `denext/desktop/app`.** The runtime's
+  `platformfeatureschanged` event (runtime 2.9.7-denext.10: a tray host started or went away, as
+  when the GNOME AppIndicator extension is enabled while the app runs) reaches the page, and the
+  handler gets fresh `appCapabilities()`; create the tray icon again when `tray` turns `true`.
+
 - **Linux notification and badge facts (runtime 2.9.7-denext.11).** `appCapabilities()` reports
   where the badge shows (`badgeShows`: `"dock"`, `"launcher-entry"` for a count on the app's
   launcher where a dock reads launcher badges, or `"title"`, with `badgeReason`), and the
@@ -88,6 +93,18 @@ Each item is described in full under Changed, Fixed or Security below.
   reads `"unknown"`.
 
 ### Changed
+
+- **denext pins Deno Desktop runtime 2.9.7-denext.10** (laufey `611abcd`, API 45): Linux's session
+  probe (`Deno.desktop.platformFeatures()`) with a live tray host, a CEF cookie store that neither
+  hangs on a keyring no one can unlock nor deletes cookies encrypted with the OS key, Chromium's
+  sandbox for CEF on macOS and Linux, Wayland clipboard / shortcut / sizing / exit fixes, streamed
+  `fetch` bodies on WebKitGTK that arrive as each write does, and `.deb` / `.rpm` icons, scriptlets
+  and a conditional `secret-tool` dependency. The probe is now async in the runtime; the `app`,
+  `window` and `notifications` capabilities await it.
+- **A CEF app's `.deb` and `.rpm` install `chrome-sandbox` root-owned with mode 4755**, so web
+  content runs in Chromium's sandbox where unprivileged user namespaces are restricted (Ubuntu
+  23.10+). The `.rpm` lists the app's directory entry by entry so the helper alone carries
+  `%attr(4755,root,root)`; every other file keeps `0755` / `0644`.
 
 - **Windows CEF bundles take the layout of CEF's bootstrap**, for a runtime whose CEF backend runs
   web content in Chromium's sandbox on Windows (its laufey ships CEF's `bootstrap.exe` as the

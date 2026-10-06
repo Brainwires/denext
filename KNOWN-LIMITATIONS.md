@@ -211,11 +211,27 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Linux sessions differ in what they provide.** With no tray host (stock GNOME without the
   AppIndicator extension, a bare X server) `createTray` rejects `unsupported` with the reason and
   a tray-only app shows its window instead. With the login keyring locked and no one to answer the
-  unlock prompt (a headless or ssh session, a missing prompter), the CEF backend starts with
-  `--password-store=basic`: its cookies are stored unencrypted, and
-  `appCapabilities().cookieEncryption` reads `"basic"`. Both come from the runtime's session probe
-  (runtime 2.9.7-denext.10); `denext desktop doctor --linux` lists what the session lacks, with
-  fixes.
+  unlock prompt (a headless or ssh session, a missing prompter), or on KDE with the wallet not
+  open, the CEF backend starts with `--password-store=basic` when the profile holds no cookies
+  encrypted with the OS key: its cookies are stored with a fixed key (obfuscated, not protected
+  by the OS), and `appCapabilities().cookieEncryption` reads `"basic"`. A profile that does hold
+  such cookies is never switched (Chromium would delete them): the app starts, but every request
+  that carries a cookie waits until someone unlocks the keyring or opens the wallet. All of this
+  comes from the runtime's session probe (runtime 2.9.7-denext.10); `denext desktop doctor
+  --linux` lists what the session lacks, with fixes.
+- **The Linux clipboard** (runtime 2.9.7-denext.10): an app in the background reads it while the
+  session is unlocked, as on macOS and Windows, so read it in response to the user. While the
+  session is locked every read is refused (text and HTML read empty, `clipboardFormats()` lists
+  nothing; writes still work), but only where the screen locker sets logind's `LockedHint`:
+  GNOME and KDE do, many wlroots lockers (swaylock started directly) don't, and where logind
+  can't be asked reads are allowed. An image read takes `image/png`, `image/jpeg`, `image/bmp` or
+  `image/gif` (re-encoded as PNG); another app's other image formats read as no image.
+- **WebKitGTK `fetch` bodies aren't byte streams** (runtime 2.9.7-denext.10): the runtime turns
+  off WebKitGTK's byte-stream fetch source, which held a streamed body's tail back
+  ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)), so on Linux's WebView
+  backend `response.body.getReader({ mode: "byob" })` throws until WebKitGTK ships the fix.
+  Default readers, `text()`, `arrayBuffer()` and `new ReadableStream({ type: "bytes" })` are
+  unaffected.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
   its own window; CEF gets no paths from a file drop (use the webview backend).
 - **Windows CEF apps run behind CEF's bootstrap** (Chromium's sandbox, runtime 2.9.7-denext.11),

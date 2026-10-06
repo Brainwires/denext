@@ -894,6 +894,74 @@ async function copyTree(src: string, dest: string): Promise<void> {
 }
 
 /**
+ * The CEF backend's setuid sandbox helper, at the bundle's root (laufey's `chrome-sandbox`). A
+ * `.deb` / `.rpm` installs it root-owned with mode 4755, so web content runs in Chromium's
+ * sandbox even where unprivileged user namespaces are restricted (Ubuntu 23.10+'s AppArmor);
+ * Chromium uses it only when it cannot create a user namespace. Every other file keeps its
+ * `0o755` / `0o644` ({@linkcode bundleFileMode}): nothing else is setuid, setgid or writable by
+ * group or others. A tarball or an AppImage cannot install it so (the user unpacks it, or it
+ * mounts `nosuid`), and the runtime then turns the sandbox off with a warning.
+ */
+export const CEF_SANDBOX_HELPER = "chrome-sandbox";
+
+/** The mode a system package installs the sandbox helper with (setuid root, `rwsr-xr-x`). */
+const SANDBOX_HELPER_MODE = 0o4755;
+
+/**
+ * A `.deb` data entry's mode: the sandbox helper of the app's install directory is setuid root,
+ * every other entry keeps its own (already masked) mode.
+ *
+ * @param e The staged entry ({@linkcode walkBundle} of the staged root).
+ * @param pkg The package name (the app installs under `usr/lib/<pkg>`).
+ * @returns The entry with the mode the package installs it with.
+ */
+function linuxPackageEntry(e: BundleEntry, pkg: string): BundleEntry {
+  return e.kind === "file" && e.path === `usr/lib/${pkg}/${CEF_SANDBOX_HELPER}`
+    ? { ...e, mode: SANDBOX_HELPER_MODE }
+    : e;
+}
+
+/** One `%files` line of an `.rpm` spec: a path, owned as a directory only, or setuid root. */
+export interface RpmFile {
+  readonly path: string;
+  readonly attr?: "dir" | "setuid";
+}
+
+/**
+ * The `%files` an `.rpm` owns: `owned` as staged, except that when the app ships the sandbox
+ * helper its install directory is listed entry by entry (`%dir` for the directory itself) so the
+ * helper alone carries `%attr(4755,root,root)`; rpm has no per-file override inside a directory
+ * it owns whole.
+ *
+ * @param stage The staged root ({@linkcode stageLinuxRoot}).
+ * @param pkg The package name.
+ * @param owned The installed paths the package owns.
+ * @returns The `%files` entries.
+ */
+export async function rpmFiles(
+  stage: string,
+  pkg: string,
+  owned: readonly string[],
+): Promise<RpmFile[]> {
+  const lib = `/usr/lib/${pkg}`;
+  const libDir = join(stage, "usr", "lib", pkg);
+  const helper = await Deno.lstat(join(libDir, CEF_SANDBOX_HELPER)).catch(() => undefined);
+  if (!helper?.isFile) return owned.map((path) => ({ path }));
+  const names: string[] = [];
+  for await (const e of Deno.readDir(libDir)) names.push(e.name);
+  names.sort();
+  return owned.flatMap((path): RpmFile[] =>
+    path !== lib ? [{ path }] : [
+      { path: lib, attr: "dir" },
+      ...names.map((name): RpmFile => ({
+        path: `${lib}/${name}`,
+        ...(name === CEF_SANDBOX_HELPER ? { attr: "setuid" as const } : {}),
+      })),
+    ]
+  );
+}
+
+/**
  * Lay out the installed filesystem of a Linux package under `root`: the bundle at
  * `/usr/lib/<package>/`, a `/usr/bin/<package>` link to its launcher, the `.desktop` entry, and the
  * bundle's icon under the app id: `AppIcon.png` as `/usr/share/pixmaps/<id>.png` and, when it is
@@ -1106,7 +1174,8 @@ export async function buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<stri
     const stage = join(top, "root");
     const controlDir = join(top, "control");
     await stageLinuxRoot(o.bundleDir, o.exe, o.meta, stage);
-    const entries = await walkBundle(stage);
+    const pkg = debianPackageName(o.meta.name);
+    const entries = (await walkBundle(stage)).map((e) => linuxPackageEntry(e, pkg));
     const kib = Math.ceil(entries.reduce((n, e) => n + e.size, 0) / 1024);
     const mtime = buildTime();
     await Deno.mkdir(controlDir);
@@ -1170,10 +1239,15 @@ export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promis
  *
  * @param meta The package metadata.
  * @param stage The staged root ({@linkcode stageLinuxRoot}).
- * @param owned The installed paths the package owns.
+ * @param owned The installed paths the package owns ({@linkcode rpmFiles}: the sandbox helper
+ *   setuid root).
  * @returns The spec text.
  */
-export function rpmSpec(meta: DesktopPackageMeta, stage: string, owned: readonly string[]): string {
+export function rpmSpec(
+  meta: DesktopPackageMeta,
+  stage: string,
+  owned: readonly (string | RpmFile)[],
+): string {
   const requires = [
     ...linuxDeps(meta.backend).map(([so]) => `Requires: ${so}()(64bit)`),
     ...linuxCapabilityDeps(meta).map(([, rpm]) => `Requires: ${rpm}`),
@@ -1210,7 +1284,15 @@ export function rpmSpec(meta: DesktopPackageMeta, stage: string, owned: readonly
     "",
     "%files",
     "%defattr(-,root,root,-)",
-    ...owned.map(lit),
+    ...owned.map((f) => {
+      const { path, attr } = typeof f === "string" ? { path: f, attr: undefined } : f;
+      const prefix = attr === "dir"
+        ? "%dir "
+        : attr === "setuid"
+        ? `%attr(${SANDBOX_HELPER_MODE.toString(8)},root,root) `
+        : "";
+      return prefix + lit(path);
+    }),
     "",
   ].join("\n");
 }
@@ -1232,8 +1314,9 @@ export async function buildDesktopRpm(o: BuildLinuxPackageOptions): Promise<stri
   try {
     const stage = join(top, "root");
     const owned = await stageLinuxRoot(o.bundleDir, o.exe, o.meta, stage);
+    const files = await rpmFiles(stage, debianPackageName(o.meta.name), owned);
     const spec = join(top, "app.spec");
-    await Deno.writeTextFile(spec, rpmSpec(o.meta, stage, owned));
+    await Deno.writeTextFile(spec, rpmSpec(o.meta, stage, files));
     const rpms = join(top, "rpms");
     await runTool("rpmbuild", [
       "-bb",

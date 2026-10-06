@@ -15411,8 +15411,8 @@
           "slug": "buildDesktopDeb",
           "kind": "function",
           "signature": "buildDesktopDeb(o: BuildLinuxPackageOptions): Promise<string>",
-          "doc": "Build a .deb for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written here), so it cross-builds from any OS. Installs into /usr/lib/<package> with a /usr/bin/<package> link, the .desktop entry (deep-link schemes as x-scheme-handler/*) and the icon; the desktop and icon databases are refreshed by their own dpkg triggers.",
-          "docFull": "Build a `.deb` for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written\nhere), so it cross-builds from any OS. Installs into `/usr/lib/<package>` with a\n`/usr/bin/<package>` link, the `.desktop` entry (deep-link schemes as `x-scheme-handler/*`) and\nthe icon; the desktop and icon databases are refreshed by their own dpkg triggers.",
+          "doc": "Build a .deb for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written here), so it cross-builds from any OS. Installs into /usr/lib/<package> with a /usr/bin/<package> link, the .desktop entry (deep-link schemes as x-scheme-handler/*) and the icon; the postinst / postrm refresh the desktop and icon databases (debMaintainerScript).",
+          "docFull": "Build a `.deb` for a finished Linux bundle, with no packaging tool (ar + ustar + gzip written\nhere), so it cross-builds from any OS. Installs into `/usr/lib/<package>` with a\n`/usr/bin/<package>` link, the `.desktop` entry (deep-link schemes as `x-scheme-handler/*`) and\nthe icon; the `postinst` / `postrm` refresh the desktop and icon databases\n({@linkcode debMaintainerScript}).",
           "params": [
             {
               "name": "o",

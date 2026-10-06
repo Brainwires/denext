@@ -540,6 +540,17 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         and the AppImage leave it to the machine. There is no code-signing/notarization step on
         Linux.
       </Callout>
+      <Callout kind="note">
+        A CEF app runs its web content in Chromium&apos;s sandbox (runtime 2.9.7-denext.10). Where
+        unprivileged user namespaces are restricted (Ubuntu 23.10+), that needs the{" "}
+        <code>chrome-sandbox</code> helper installed root-owned and setuid: the <code>.deb</code>
+        {" "}
+        and <code>.rpm</code>{" "}
+        install it with mode 4755 and every other file without group / other write or special bits.
+        A <code>.tar.gz</code> or an AppImage can&apos;t (the user unpacks it, or it mounts{" "}
+        <code>nosuid</code>), so there the runtime turns the sandbox off with a warning when it has
+        no user namespaces.
+      </Callout>
 
       <h3 id="desktop-linux-session">What the session provides</h3>
       <p>
@@ -557,9 +568,49 @@ deno task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
       </p>
       <p>
         With the login keyring locked and no one to answer the unlock prompt (a headless or ssh
-        session), the CEF backend starts Chromium with <code>--password-store=basic</code>{" "}
-        instead of waiting forever for the key: the app works, its cookies are stored unencrypted,
-        and <code>cookieEncryption</code> reads <code>"basic"</code>.
+        session), or on KDE with the wallet not open, Chromium would wait forever for its cookie
+        key. The CEF backend checks first. A profile with no cookies encrypted with the OS key
+        starts with{" "}
+        <code>--password-store=basic</code>: the app works, its cookies are stored with a fixed key
+        (obfuscated, not protected by the OS), and <code>cookieEncryption</code> reads{" "}
+        <code>"basic"</code>; the profile moves to the OS key the first time a launch can reach it.
+        A profile that already holds such cookies is never switched, since Chromium would delete
+        them: the app starts, and requests that carry a cookie wait until someone unlocks the
+        keyring or opens the wallet.
+      </p>
+      <p>
+        Linux&apos;s <code>clipboard</code>{" "}
+        works whether or not the app has focus (on Wayland too), so an app in the background reads
+        it while the session is unlocked, as on macOS and Windows: read it in response to the user.
+        While the session is locked, reads are refused (text and HTML read empty,{" "}
+        <code>clipboardFormats()</code>{" "}
+        lists nothing; writes still work). That relies on the screen locker setting logind&apos;s
+        {" "}
+        <code>LockedHint</code>, which GNOME and KDE do and many wlroots lockers don&apos;t, and
+        where logind can&apos;t be asked reads are allowed. An image read takes{" "}
+        <code>image/png</code>, <code>image/jpeg</code>, <code>image/bmp</code> or{" "}
+        <code>image/gif</code>{" "}
+        (re-encoded as PNG); another app&apos;s other image formats read as no image.
+      </p>
+      <p>
+        On the Linux WebView backend a <code>fetch</code> response body is not a byte stream:{" "}
+        <code>{`response.body.getReader({ mode: "byob" })`}</code>{" "}
+        throws. The runtime turns off WebKitGTK&apos;s byte-stream fetch source, which held a
+        streamed body&apos;s tail back until more data came
+        (<a href="https://bugs.webkit.org/show_bug.cgi?id=322545">
+          WebKit bug 322545
+        </a>), until WebKitGTK ships the fix. Default readers, <code>text()</code>,{" "}
+        <code>arrayBuffer()</code> and <code>{`new ReadableStream({ type: "bytes" })`}</code>{" "}
+        are unaffected.
+      </p>
+      <p>
+        The probe&apos;s answer can change while the app runs: when a tray host starts or goes away
+        (the GNOME AppIndicator extension enabled, say), <code>onAppCapabilitiesChanged</code> from
+        {" "}
+        <code>denext/desktop/app</code>{" "}
+        calls its handler with fresh capabilities; create the tray icon again when <code>tray</code>
+        {" "}
+        turns <code>true</code>.
       </p>
       <p>
         <code>denext desktop doctor</code>{" "}
